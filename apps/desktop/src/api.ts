@@ -40,6 +40,10 @@ import type {
   WebCaptureInput,
   WebCaptureResult,
   WebSearchResult,
+  KnowledgeTopic,
+  TopicInput,
+  SourceStructure,
+  SourceProcessing,
 } from "@gunther/contracts";
 import { createArtifactSchema, webCaptureSchema } from "@gunther/contracts";
 import { invoke } from "@tauri-apps/api/core";
@@ -198,6 +202,7 @@ async function uploadAsset(
     title,
     fileName: file.name,
     kind,
+    deferProcessing: "true",
   });
   if (knowledgeBaseId) params.set("knowledgeBaseId", knowledgeBaseId);
   if (notes.trim()) params.set("notes", notes.trim().slice(0, 5_000));
@@ -367,6 +372,19 @@ export const knowledgeApi = {
     }),
   saveRecording: uploadRecording,
   captureAsset: uploadAsset,
+  sourceStructure: (id: string, offset = 0, revisionId?: string | null, blockId?: string | null) =>
+    request<SourceStructure>(`/sources/${encodeURIComponent(id)}/structure?offset=${offset}${revisionId ? `&revision_id=${encodeURIComponent(revisionId)}` : ""}${blockId ? `&block_id=${encodeURIComponent(blockId)}` : ""}`),
+  reprocessSource: (id: string) => request<SourceProcessing>(`/sources/${encodeURIComponent(id)}/reprocess`, { method: "POST" }),
+  cancelSourceProcessing: (id: string) => request<SourceProcessing>(`/sources/${encodeURIComponent(id)}/processing/cancel`, { method: "POST" }),
+  topics: (baseId: string) => request<KnowledgeTopic[]>(`/knowledge-bases/${encodeURIComponent(baseId)}/topics`),
+  saveTopic: (baseId: string, payload: TopicInput, id?: string) => request<KnowledgeTopic>(
+    `/knowledge-bases/${encodeURIComponent(baseId)}/topics${id ? `/${encodeURIComponent(id)}` : ""}`,
+    { method: id ? "PATCH" : "POST", body: JSON.stringify(payload) },
+  ),
+  linkTopicEvidence: (baseId: string, topicId: string, blockId: string) => request<KnowledgeTopic>(
+    `/knowledge-bases/${encodeURIComponent(baseId)}/topics/${encodeURIComponent(topicId)}/evidence`,
+    { method: "POST", body: JSON.stringify({ blockId }) },
+  ),
   captureWeb: (payload: WebCaptureInput, expectedWorkspaceId?: string) =>
     request<WebCaptureResult>("/captures/web", {
       method: "POST",

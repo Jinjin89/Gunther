@@ -53,6 +53,25 @@ class Settings(BaseSettings):
     # Production and new local workspaces start as the user's own empty library.
     # Demo content remains opt-in through SEED_DEMO=true for product tours.
     seed_demo: bool = False
+    processing_worker_enabled: bool = True
+    embedding_model_path: Path | None = None
+    embedding_model_version: str = "multilingual-e5-small-v1"
+    docling_python: Path | None = None
+    docling_artifacts_path: Path | None = None
+
+    @field_validator("embedding_model_version")
+    @classmethod
+    def validate_embedding_version(cls, value: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", value):
+            raise ValueError("Use a short model revision or content fingerprint")
+        return value
+
+    @field_validator("embedding_model_path", "docling_python", "docling_artifacts_path")
+    @classmethod
+    def validate_local_model_path(cls, value: Path | None) -> Path | None:
+        if value is not None and not value.is_absolute():
+            raise ValueError("Model/runtime paths must be absolute local paths")
+        return value
 
     @field_validator("api_prefix")
     @classmethod

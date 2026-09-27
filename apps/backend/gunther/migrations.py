@@ -238,6 +238,25 @@ def _create_artifact_history(connection: Connection, metadata: MetaData) -> None
             table.create(bind=connection, checkfirst=True)
 
 
+def _create_structured_knowledge(connection: Connection, metadata: MetaData) -> None:
+    for name in (
+        "source_revisions", "source_index_heads", "content_blocks", "block_embeddings",
+        "processing_jobs", "topic_nodes", "topic_evidence_links",
+    ):
+        if name in metadata.tables:
+            metadata.tables[name].create(bind=connection, checkfirst=True)
+    if "content_blocks" not in metadata.tables:
+        return
+    connection.exec_driver_sql(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5("
+        "block_id UNINDEXED, source_id UNINDEXED, revision_id UNINDEXED, tokens)"
+    )
+    connection.exec_driver_sql(
+        "CREATE TRIGGER IF NOT EXISTS knowledge_fts_delete AFTER DELETE ON content_blocks "
+        "BEGIN DELETE FROM knowledge_fts WHERE block_id = old.id; END"
+    )
+
+
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
 MIGRATIONS: tuple[Migration, ...] = (
@@ -251,6 +270,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(8, "web_snapshot_provenance", _create_web_snapshot_provenance),
     Migration(9, "web_capture_request_identity", _add_web_capture_request_identity),
     Migration(10, "immutable_artifact_history", _create_artifact_history),
+    Migration(11, "structured_knowledge_and_durable_processing", _create_structured_knowledge),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

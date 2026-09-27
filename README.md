@@ -29,7 +29,9 @@ Capture first → Inbox → Libraries → 有依据地问答与审核 → Output
 | 导入已有音频 | 桌面先按块复制到 app-owned IndexedDB，再从服务端已确认 offset 续传；完成初始本地复制后，崩溃重启无需重选原文件 |
 | 手机系统分享 | Android `ACTION_SEND` / `ACTION_SEND_MULTIPLE` 与 iOS Share Extension 接收文本、URL、文件、图片和音频，并交给同一 durable outbox |
 
-macOS OCR 默认使用随桌面 Helper 构建的 Apple Vision 本地适配；其他平台可使用已安装的 Tesseract。OCR 不调用云端。当前 OCR 是有界同步处理，不是后台 Job 队列。
+macOS OCR 默认使用随桌面 Helper 构建的 Apple Vision 本地适配；其他平台可使用已安装的 Tesseract。OCR 不调用云端。桌面文件采集先保存原件，再通过持久化后台任务解析；旧客户端仍可使用同步接口。处理状态、重试、取消与结构化证据在 Sources 中可见。
+
+新增：持久化主题树、跨来源证据归类、按主题问答、FTS5 中英混合检索、不可变来源版本与引用定位。可选本地 E5 与 Docling 接口、运行方式和发布验收边界见 [结构化知识后端说明](docs/KNOWLEDGE_BACKEND_V4.md)。
 
 录音默认优先连接本机 SenseVoice：
 
@@ -61,13 +63,13 @@ Asset / Source
 ```
 
 - Source 保留原件关系与采集 provenance。
-- 回答只在所选 Library / Source 范围内检索，并保存当时的 citation snapshot。若范围内没有可用的结构化 Assertion，Ask 会从已保存的原始 Source 正文中检索少量相关段落，以 `assertionId=null` 的 provisional 来源引用回答；没有足够相关段落时仍返回证据缺口。
+- 回答只在所选 Library / Source / Topic 范围内检索，并保存当时的 citation snapshot。Ask 同时检索结构化 Assertion 与原始证据块，避免已有结论遮蔽相反证据；原文引用包含 source revision、block ID 和定位信息；没有足够相关证据时仍返回证据缺口。
 - Proposal 由用户明确接受后，才物化为 `trusted` KnowledgeUnit revision。
 - 证据不足时应保留缺口，不把模型推测伪装成来源事实。
 
 ### 持久 Outputs / Artifact history
 
-当前数据库 schema 为 **v10**；migration 10 是 `immutable_artifact_history`。Library 的 Outputs 已持久化为不可变 Artifact 版本：
+当前数据库 schema 为 **v11**；migration 11 是 `structured_knowledge_and_durable_processing`。原有 migration 10 的不可变 Outputs 历史保持兼容：
 
 - 按 workspace 与 knowledge base 隔离；
 - 保存 `format`、`audience`、`title`、`content` 与创建时间；

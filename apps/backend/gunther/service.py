@@ -18,12 +18,14 @@ from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from gunther.conversation import GroundingClaim, KnowledgeResponder
 from gunther.database import session_scope
-from gunther.extraction import CandidateAssertion, Extractor
+from gunther.extraction import CandidateAssertion, ExtractionResult, Extractor
+from gunther.knowledge_index import KnowledgeIndex
 from gunther.models import (
     Artifact,
     ArtifactUnitBinding,
     Assertion,
     Asset,
+    ContentBlock,
     Entity,
     EvidenceLink,
     Fragment,
@@ -38,6 +40,8 @@ from gunther.models import (
     SessionBranch,
     SessionMessage,
     Source,
+    SourceIndexHead,
+    SourceRevision,
     WebSnapshot,
     WorkspaceIdentity,
     utc_now,
@@ -92,6 +96,7 @@ from gunther.schemas import (
     WebSnapshotOut,
 )
 from gunther.source_identity import source_fingerprint
+from gunther.topics import topic_block_ids
 
 
 def _id(prefix: str) -> str:
@@ -141,6 +146,7 @@ class KnowledgeService:
         self.sessions = sessions
         self.extractor = extractor
         self.responder = responder
+        self.index = KnowledgeIndex(sessions)
         self._source_import_locks_guard = Lock()
         self._source_import_locks: dict[str, tuple[Lock, int]] = {}
 
@@ -284,6 +290,7 @@ class KnowledgeService:
             created_at=_timestamp(source.created_at),
             assertion_count=len(assertions),
             entity_count=len(entity_ids),
+            processing=self.index.processing(session, source.id),
             asset=(
                 AssetOut(
                     id=asset.id,
@@ -502,6 +509,7 @@ class KnowledgeService:
         payload: CreateSourceInput,
         *,
         initialize_source: Callable[[Session, Source], None] | None = None,
+        defer_processing: bool = False,
     ) -> ImportResultOut:
         content = payload.content.strip()
         content_hash = source_fingerprint(payload.title, payload.kind, content)
@@ -512,6 +520,7 @@ class KnowledgeService:
                 content,
                 content_hash,
                 initialize_source=initialize_source,
+                defer_processing=defer_processing,
             )
 
     def _import_source(
@@ -521,6 +530,7 @@ class KnowledgeService:
         content_hash: str,
         *,
         initialize_source: Callable[[Session, Source], None] | None = None,
+        defer_processing: bool = False,
     ) -> ImportResultOut:
 
         with session_scope(self.sessions) as session:
@@ -537,7 +547,8 @@ class KnowledgeService:
                     payload.knowledge_base_id,
                 )
 
-        extraction = self.extractor.extract(payload.title, content)
+        extraction = (ExtractionResult(assertions=[], mode=self.extractor.mode)
+                      if defer_processing else self.extractor.extract(payload.title, content))
 
         try:
             with session_scope(self.sessions) as session:
@@ -557,6 +568,9 @@ class KnowledgeService:
                     self._ensure_source_memberships(
                         session, payload.knowledge_base_id, [source.id]
                     )
+
+                if not defer_processing:
+                    self.index.add_source(session, source)
 
                 created_entities = 0
                 fragments: dict[str, Fragment] = {}
@@ -1478,6 +1492,18 @@ class KnowledgeService:
                         )
                     ).all()
                 )
+            # Recheck membership on every turn, including persisted session scope.
+            scoped_source_ids = list(session.scalars(select(KnowledgeBaseSource.source_id).where(
+                KnowledgeBaseSource.knowledge_base_id == knowledge_session.knowledge_base_id,
+                KnowledgeBaseSource.source_id.in_(scoped_source_ids),
+            )))
+            block_scope = None
+            if knowledge_session.focus_chapter_id and knowledge_session.focus_chapter_id.startswith(
+                "topic_"
+            ):
+                block_scope = topic_block_ids(
+                    session, knowledge_session.knowledge_base_id, knowledge_session.focus_chapter_id
+                )
             assertion_query = assertion_query.where(Assertion.source_id.in_(scoped_source_ids))
             scoped_sources = (
                 list(
@@ -1492,13 +1518,41 @@ class KnowledgeService:
             )
             available_assertions = list(session.scalars(assertion_query).all())
             ranked_assertions = self._rank_assertions(available_assertions, payload.content)
+            topic_evidence = {}
+            if block_scope is not None:
+                topic_evidence = {
+                    (revision.source_id, block.content): block
+                    for block, revision in session.execute(
+                        select(ContentBlock, SourceRevision)
+                        .join(SourceRevision, SourceRevision.id == ContentBlock.revision_id)
+                        .where(ContentBlock.id.in_(block_scope))
+                        .order_by(ContentBlock.id)
+                    )
+                }
 
             citations: list[ConversationCitationOut] = []
             claims: list[GroundingClaim] = []
             for assertion in ranked_assertions:
-                if not assertion.evidence_links:
+                evidence = next((
+                    item for item in assertion.evidence_links
+                    if item.fragment.source_id == assertion.source_id
+                    and (block_scope is None or (
+                        assertion.source_id, item.fragment.content
+                    ) in topic_evidence)
+                ), None)
+                if evidence is None:
                     continue
-                evidence = assertion.evidence_links[0]
+                if block_scope is not None:
+                    evidence_block = topic_evidence[
+                        (assertion.source_id, evidence.fragment.content)
+                    ]
+                else:
+                    evidence_block = session.scalar(select(ContentBlock).join(
+                        SourceIndexHead, SourceIndexHead.revision_id == ContentBlock.revision_id
+                    ).where(
+                        SourceIndexHead.source_id == assertion.source.id,
+                        ContentBlock.content == evidence.fragment.content,
+                    ).limit(1))
                 citation = ConversationCitationOut(
                     id=_id("cit"),
                     source_id=assertion.source.id,
@@ -1508,6 +1562,9 @@ class KnowledgeService:
                     locator=evidence.fragment.locator,
                     status=assertion.status,
                     confidence=assertion.confidence,
+                    source_revision_id=evidence_block.revision_id if evidence_block else None,
+                    block_id=evidence_block.id if evidence_block else None,
+                    anchor=json.loads(evidence_block.anchor_json) if evidence_block else {},
                 )
                 citations.append(citation)
                 claims.append(
@@ -1523,32 +1580,27 @@ class KnowledgeService:
                     )
                 )
 
-            if not claims:
-                for passage in self._rank_source_passages(scoped_sources, payload.content):
-                    citations.append(
-                        ConversationCitationOut(
-                            id=_id("cit"),
-                            source_id=passage.source.id,
-                            source_title=passage.source.title,
-                            assertion_id=None,
-                            quote=passage.quote,
-                            locator=passage.locator,
-                            status="provisional",
-                            confidence=passage.confidence,
-                        )
-                    )
-                    claims.append(
-                        GroundingClaim(
-                            subject=passage.source.title,
-                            predicate="states",
-                            object=passage.quote,
-                            source_title=passage.source.title,
-                            quote=passage.quote,
-                            locator=passage.locator,
-                            status="provisional",
-                            confidence=passage.confidence,
-                        )
-                    )
+            # Original passages participate even when an extracted claim matched.
+            # Competing evidence must not disappear behind an assertion-only fallback.
+            seen_quotes = {(c.source_id, c.quote) for c in citations}
+            for hit in self.index.retrieve(
+                session, scoped_source_ids, payload.content, block_ids=block_scope,
+            ):
+                if (hit.source.id, hit.block.content) in seen_quotes:
+                    continue
+                seen_quotes.add((hit.source.id, hit.block.content))
+                citations.append(ConversationCitationOut(
+                    id=_id("cit"), source_id=hit.source.id, source_title=hit.source.title,
+                    quote=hit.block.content, locator=hit.block.locator,
+                    status="provisional", confidence=0.0,
+                    source_revision_id=hit.block.revision_id, block_id=hit.block.id,
+                    anchor=json.loads(hit.block.anchor_json),
+                ))
+                claims.append(GroundingClaim(
+                    subject=hit.source.title, predicate="states", object=hit.block.content,
+                    source_title=hit.source.title, quote=hit.block.content,
+                    locator=hit.block.locator, status="provisional", confidence=0.0,
+                ))
 
             history = [(message.role, message.content) for message in knowledge_session.messages]
             response = self.responder.respond(payload.content.strip(), claims, history)

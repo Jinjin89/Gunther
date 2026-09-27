@@ -1,0 +1,203 @@
+"""Lossless evidence blocks for text, OCR pages and timestamped transcripts.
+
+The source body is never modified. Offsets refer to that representation, while
+page/region/time anchors refer to the original media when supplied by a parser.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+
+
+@dataclass
+class ParsedBlock:
+    text: str
+    kind: str = "paragraph"
+    parent: int | None = None
+    headings: list[str] = field(default_factory=list)
+    anchor: dict[str, object] = field(default_factory=dict)
+    locator: str = "Source text"
+    payload: dict[str, object] = field(default_factory=dict)
+
+
+STOPWORDS = frozenset(
+    [
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "can",
+        "could",
+        "do",
+        "does",
+        "for",
+        "from",
+        "how",
+        "i",
+        "in",
+        "is",
+        "it",
+        "its",
+        "me",
+        "of",
+        "on",
+        "or",
+        "our",
+        "should",
+        "that",
+        "the",
+        "their",
+        "these",
+        "this",
+        "to",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "why",
+        "will",
+        "with",
+        "would",
+        "you",
+        "your",
+        "evidence",
+        "supports",
+        "explain",
+        "tell",
+        "about",
+        "please",
+    ]
+)
+_CJK = re.compile(r"[\u3400-\u9fff]+")
+
+
+def search_tokens(value: str) -> list[str]:
+    """Versioned, identical query/index tokenization; no external dictionary needed.
+
+    CJK bigrams support unsegmented Chinese, including two-character terms. Latin
+    identifiers and hyphenated concepts are retained (cell-type is not just cell).
+    """
+    tokens: list[str] = []
+    for word in re.findall(r"[\w]+(?:[-–—][\w]+)*", value.casefold()):
+        runs = _CJK.findall(word)
+        if runs:
+            for run in runs:
+                tokens.extend(run[i : i + 2] for i in range(max(1, len(run) - 1)))
+            word = _CJK.sub(" ", word)
+        for part in word.split():
+            part = re.sub(r"[-–—]+", "", part)
+            if part not in STOPWORDS and len(part) > 1:
+                tokens.append(part)
+    return tokens
+
+
+def parse_content(content: str) -> list[ParsedBlock]:
+    blocks: list[ParsedBlock] = []
+    stack: list[tuple[int, int, str]] = []
+    page: int | None = None
+    region: dict[str, object] = {}
+    offset = 0
+    skip_metadata = content.startswith("# Original file\n")
+    metadata_section = skip_metadata
+    for raw in content.splitlines(keepends=True):
+        line = raw.strip()
+        start = offset + len(raw) - len(raw.lstrip())
+        offset += len(raw)
+        if not line:
+            continue
+        page_match = re.fullmatch(r"<!-- gunther:page=(\d+) -->", line)
+        if page_match:
+            page = int(page_match[1])
+            region = {}
+            continue
+        region_match = re.fullmatch(
+            r"<!-- gunther:ocr-region=(\d+),(\d+),(\d+),(\d+) unit=ppm "
+            r"provider=([\w.-]+)(?: confidence=([\d.]+))? -->",
+            line,
+        )
+        if region_match:
+            region = {
+                "bboxPpm": [int(region_match[i]) for i in range(1, 5)],
+                "provider": region_match[5],
+            }
+            if region_match[6]:
+                region["confidence"] = float(region_match[6])
+            continue
+        if line.startswith("<!--"):
+            continue
+        heading = re.match(r"^(#{1,6})\s+(.+)$", line)
+        if heading:
+            level, title = len(heading[1]), heading[2]
+            if skip_metadata:
+                if title == "Extracted content":
+                    skip_metadata = metadata_section = False
+                    stack.clear()
+                    continue
+                metadata_section = title not in {"Your context", "Extracted content"}
+                if title in {"Original file", "OCR provenance", "Processing note"}:
+                    continue
+            if metadata_section:
+                continue
+            while stack and stack[-1][0] >= level:
+                stack.pop()
+            parent = stack[-1][1] if stack else None
+            headings = [item[2] for item in stack] + [title]
+            blocks.append(
+                ParsedBlock(
+                    title,
+                    "heading",
+                    parent,
+                    headings,
+                    {"charStart": start, "charEnd": offset},
+                    title,
+                )
+            )
+            stack.append((level, len(blocks) - 1, title))
+            continue
+        if metadata_section:
+            continue
+        anchor: dict[str, object] = dict(region)
+        if page is not None:
+            anchor["page"] = page
+        headings = [item[2] for item in stack]
+        locator = f"Page {page}" if page else (headings[-1] if headings else "Source text")
+        timestamp = re.match(r"^\[?(?:(\d+):)?(\d{1,2}):(\d{2})(?:\.\d+)?\]?\s+", line)
+        kind = "paragraph"
+        if timestamp:
+            anchor["startSeconds"] = (
+                int(timestamp[1] or 0) * 3600 + int(timestamp[2]) * 60 + int(timestamp[3])
+            )
+            locator = timestamp[0].strip()
+            kind = "transcript"
+        elif line.count("|") >= 2:
+            kind = "table"
+        # Preserve exact substrings. Sentence boundaries keep quotations short;
+        # bounded slices prevent a giant paragraph from disappearing at truncation.
+        for match in re.finditer(r".+?(?:[.!?。！？](?=\s|$)|$)", line):
+            segment = match[0]
+            for index in range(0, len(segment), 480):
+                piece = segment[index : index + 480]
+                text = piece.strip()
+                if not text:
+                    continue
+                char_start = start + match.start() + index + len(piece) - len(piece.lstrip())
+                blocks.append(
+                    ParsedBlock(
+                        text,
+                        kind,
+                        stack[-1][1] if stack else None,
+                        headings.copy(),
+                        {**anchor, "charStart": char_start, "charEnd": char_start + len(text)},
+                        locator,
+                    )
+                )
+    return blocks

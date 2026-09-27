@@ -821,6 +821,7 @@ class AssetService:
         knowledge_base_id: str | None,
         notes: str,
         expected_size: int | None = None,
+        defer_processing: bool = False,
     ) -> AssetCaptureOut:
         temporary, content_hash, size = await self._receive(
             stream,
@@ -838,6 +839,24 @@ class AssetService:
             temporary.unlink(missing_ok=True)
 
         stored_path = self.assets_dir / asset.relative_path
+        if defer_processing:
+            from gunther.knowledge_index import enqueue
+
+            def initialize(session: Session, source: Source) -> None:
+                source.asset_id = asset.id
+                enqueue(session, source.id, "parse_asset", f"parse_asset:{source.id}:v1")
+
+            imported = self.knowledge_service.import_source(
+                CreateSourceInput(
+                    title=title, kind=kind, knowledge_base_id=knowledge_base_id,
+                    content=self._source_content(asset, "", None, notes),
+                ),
+                initialize_source=initialize, defer_processing=True,
+            )
+            return AssetCaptureOut(
+                asset=self._out(asset), import_result=imported,
+                processing=AssetProcessingOut(note="Original saved. Background processing queued."),
+            )
         extraction = await asyncio.to_thread(
             extract_asset_content,
             stored_path,

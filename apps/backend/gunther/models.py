@@ -248,6 +248,109 @@ class Fragment(Base):
     )
 
 
+class SourceRevision(Base):
+    """Immutable parsed representation; reprocessing never changes old citations."""
+
+    __tablename__ = "source_revisions"
+    __table_args__ = (UniqueConstraint("source_id", "fingerprint"),)
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey("sources.id", ondelete="CASCADE"), index=True)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    parser: Mapped[str] = mapped_column(String(120))
+    state: Mapped[str] = mapped_column(String(24), default="ready")
+    warning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
+class SourceIndexHead(Base):
+    __tablename__ = "source_index_heads"
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("sources.id", ondelete="CASCADE"), primary_key=True
+    )
+    revision_id: Mapped[str] = mapped_column(
+        ForeignKey("source_revisions.id", ondelete="CASCADE"), index=True
+    )
+
+
+class ContentBlock(Base):
+    __tablename__ = "content_blocks"
+    __table_args__ = (UniqueConstraint("revision_id", "ordinal"),)
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    revision_id: Mapped[str] = mapped_column(
+        ForeignKey("source_revisions.id", ondelete="CASCADE"), index=True
+    )
+    parent_id: Mapped[str | None] = mapped_column(
+        ForeignKey("content_blocks.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    ordinal: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(24))
+    content: Mapped[str] = mapped_column(Text)
+    locator: Mapped[str] = mapped_column(String(240))
+    heading_path_json: Mapped[str] = mapped_column(Text, default="[]")
+    anchor_json: Mapped[str] = mapped_column(Text, default="{}")
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class BlockEmbedding(Base):
+    __tablename__ = "block_embeddings"
+    __table_args__ = (UniqueConstraint("block_id", "model"),)
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    block_id: Mapped[str] = mapped_column(
+        ForeignKey("content_blocks.id", ondelete="CASCADE"), index=True
+    )
+    model: Mapped[str] = mapped_column(String(240), index=True)
+    dimensions: Mapped[int] = mapped_column(Integer)
+    vector_json: Mapped[str] = mapped_column(Text)
+
+
+class ProcessingJob(Base):
+    __tablename__ = "processing_jobs"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey("sources.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    dedupe_key: Mapped[str] = mapped_column(String(240), unique=True)
+    revision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("source_revisions.id", ondelete="CASCADE"), nullable=True
+    )
+    model_id: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    state: Mapped[str] = mapped_column(String(24), default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(nullable=True)
+    available_at: Mapped[datetime] = mapped_column(default=utc_now, index=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
+class TopicNode(Base):
+    __tablename__ = "topic_nodes"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    knowledge_base_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"), index=True
+    )
+    parent_id: Mapped[str | None] = mapped_column(
+        ForeignKey("topic_nodes.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    title: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str] = mapped_column(Text, default="")
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
+class TopicEvidenceLink(Base):
+    __tablename__ = "topic_evidence_links"
+    __table_args__ = (UniqueConstraint("topic_id", "block_id"),)
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    topic_id: Mapped[str] = mapped_column(
+        ForeignKey("topic_nodes.id", ondelete="CASCADE"), index=True
+    )
+    block_id: Mapped[str] = mapped_column(
+        ForeignKey("content_blocks.id", ondelete="CASCADE"), index=True
+    )
+
+
 class Entity(Base):
     __tablename__ = "entities"
     __table_args__ = (UniqueConstraint("normalized_label", "type"),)

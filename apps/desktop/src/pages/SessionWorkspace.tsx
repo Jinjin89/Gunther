@@ -45,6 +45,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KnowledgeBase, KnowledgeSource } from "../atlas";
 import { knowledgeApi } from "../api";
 import { WebSnapshotCard } from "../components/WebSnapshotCard";
+import { SourceEvidence } from "../components/SourceEvidence";
+import "../knowledge.css";
 import "../session.css";
 
 interface SessionWorkspaceProps {
@@ -278,7 +280,7 @@ export function Composer({
 function CitationCard({ citation, index, onOpen }: { citation: ConversationCitation; index: number; onOpen: () => void }) {
   return (
     <button className="citation-card" onClick={onOpen} aria-label={`Open source ${citation.sourceTitle}`}>
-      <header><span>{String(index + 1).padStart(2, "0")}</span><small>{citation.status}</small><strong>{Math.round(citation.confidence * 100)}%</strong></header>
+      <header><span>{String(index + 1).padStart(2, "0")}</span><small>{citation.status}</small><strong>{citation.assertionId ? `${Math.round(citation.confidence * 100)}%` : "Source"}</strong></header>
       <h3>{citation.sourceTitle}</h3>
       <blockquote>“{citation.quote}”</blockquote>
       <footer><span><FileText size={11} />{citation.locator}</span><span className={`citation-status is-${citation.status}`}><i />{citation.status === "verified" ? "Trusted" : "Review"}</span></footer>
@@ -286,11 +288,24 @@ function CitationCard({ citation, index, onOpen }: { citation: ConversationCitat
   );
 }
 
-function SourceDetailDrawer({ open, loading, source, onClose }: { open: boolean; loading: boolean; source: SourceDetail | null; onClose: () => void }) {
+function SourceDetailDrawer({ open, loading, source, citation, onClose }: { open: boolean; loading: boolean; source: SourceDetail | null; citation: ConversationCitation | null; onClose: () => void }) {
   if (!open) return null;
   return <div className="source-detail-layer" onMouseDown={onClose} role="presentation"><aside className="source-detail-drawer" onMouseDown={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="Source detail" tabIndex={-1} autoFocus>
     <header><span><small>Preserved source</small><strong>{source?.title ?? "Opening source…"}</strong></span><button onClick={onClose} aria-label="Close source detail"><X size={16} /></button></header>
-    {loading ? <div className="source-detail-loading"><i /><i /><i /></div> : source && <div className="session-source-detail-body"><div className="source-detail-meta"><span><FileText size={13} />{source.kind}</span><span>{source.assertionCount} claims</span><span>{source.entityCount} entities</span><time>{new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(new Date(source.createdAt))}</time></div><div className="source-detail-policy"><ShieldCheck size={15} /><span><strong>Read-only evidence</strong><small>This is the locally preserved original used for extraction. Reviewing a claim never rewrites this source.</small></span></div>{source.webSnapshot && <WebSnapshotCard snapshot={source.webSnapshot} />}{source.assertions.length > 0 && <section className="source-detail-claims"><header><span>Extracted claims</span><small>{source.assertions.length}</small></header>{source.assertions.map((assertion) => <article key={assertion.id}><span><strong>{assertion.subject.label}</strong><em>{assertion.predicate.replace(/_/g, " ")}</em><strong>{assertion.object.label}</strong></span><footer><small>{assertion.status}</small><small>{Math.round(assertion.confidence * 100)}%</small><small>{assertion.evidence[0]?.locator ?? "No locator"}</small></footer></article>)}</section>}<div className="source-detail-content"><span>Original content</span><pre>{source.content}</pre></div></div>}
+    {loading ? <div className="source-detail-loading"><i /><i /><i /></div> : source && <div className="session-source-detail-body">
+      <div className="source-detail-meta"><span><FileText size={13} />{source.kind}</span><span>{source.assertionCount} claims</span><span>{source.entityCount} entities</span><time>{new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(new Date(source.createdAt))}</time></div>
+      <div className="source-detail-policy"><ShieldCheck size={15} /><span><strong>Read-only evidence</strong><small>This is the locally preserved original used for extraction. Reviewing a claim never rewrites this source.</small></span></div>
+      <SourceEvidence sourceId={source.id} assetId={source.asset?.id} revisionId={citation?.sourceRevisionId} blockId={citation?.blockId} />
+      {source.webSnapshot && <WebSnapshotCard snapshot={source.webSnapshot} />}
+      {source.assertions.length > 0 && <section className="source-detail-claims">
+        <header><span>Extracted claims</span><small>{source.assertions.length}</small></header>
+        {source.assertions.map((assertion) => <article key={assertion.id}>
+          <span><strong>{assertion.subject.label}</strong><em>{assertion.predicate.replace(/_/g, " ")}</em><strong>{assertion.object.label}</strong></span>
+          <footer><small>{assertion.status}</small><small>{Math.round(assertion.confidence * 100)}%</small><small>{assertion.evidence[0]?.locator ?? "No locator"}</small></footer>
+        </article>)}
+      </section>}
+      <div className="source-detail-content"><span>Original content</span><pre>{source.content}</pre></div>
+    </div>}
   </aside></div>;
 }
 
@@ -326,7 +341,7 @@ function ContextInspector({
   onToggleSource: (id: string) => void;
   onUseAll: () => void;
   onAdd: () => void;
-  onOpenSource: (id: string) => void;
+  onOpenSource: (id: string, citation?: ConversationCitation) => void;
   onOpenUnit: (unit: KnowledgeUnit) => void;
   onCollapse: () => void;
   readOnly: boolean;
@@ -344,7 +359,7 @@ function ContextInspector({
       {tab === "context" ? <div className="inspector-scroll">
         {selectedMessage ? <>
           <section className="answer-scope"><span className="section-label">Answer scope</span><div className="scope-metrics"><span><strong>{context.assertionsConsidered}</strong><small>claims scanned</small></span><span><strong>{context.sourcesConsidered}</strong><small>sources searched</small></span><span><strong>{context.verifiedAssertions}</strong><small>trusted scanned</small></span></div><p><Info size={12} />This is the retrieval snapshot for the selected answer—not the current library state.</p></section>
-          <section className="citation-section"><header><span className="section-label">Grounding trail</span><small>{selectedMessage.citations.length} citations</small></header>{selectedMessage.citations.length ? selectedMessage.citations.map((citation, index) => <CitationCard key={citation.id} citation={citation} index={index} onOpen={() => onOpenSource(citation.sourceId)} />) : <div className="empty-citations"><CircleAlert size={20} /><strong>Evidence gap</strong><span>No matching claim was found in this session’s source scope.</span></div>}</section>
+          <section className="citation-section"><header><span className="section-label">Grounding trail</span><small>{selectedMessage.citations.length} citations</small></header>{selectedMessage.citations.length ? selectedMessage.citations.map((citation, index) => <CitationCard key={citation.id} citation={citation} index={index} onOpen={() => onOpenSource(citation.sourceId, citation)} />) : <div className="empty-citations"><CircleAlert size={20} /><strong>Evidence gap</strong><span>No matching claim was found in this session’s source scope.</span></div>}</section>
         </> : <>
           <section className="context-overview"><div className={`context-monogram color-${base.color}`}>{base.title.split(" ").slice(0, 2).map((word) => word[0]).join("")}</div><span className="section-label">Current knowledge base</span><h2>{base.title}</h2><p>{base.description}</p></section>
           <section className="knowledge-health"><header><span className="section-label">Knowledge health</span><strong>{base.progress}%</strong></header><div><i style={{ width: `${base.progress}%` }} /></div><ul><li><Check size={12} />{base.chapters.filter((chapter) => chapter.status === "grounded").length} grounded chapters</li><li><Clock3 size={12} />{base.chapters.filter((chapter) => chapter.status !== "grounded").length} chapters still growing</li><li><FileText size={12} />{indexedCount} indexed {indexedCount === 1 ? "source" : "sources"} · {referenceCount} curated {referenceCount === 1 ? "reference" : "references"}</li></ul></section>
@@ -398,6 +413,7 @@ export function SessionWorkspace({ base, selectedChapterId, onChapter, onAdd, on
   const sourceRequest = useRef(0);
   const [sourceDetailId, setSourceDetailId] = useState<string | null>(null);
   const [sourceDetail, setSourceDetail] = useState<SourceDetail | null>(null);
+  const [sourceCitation, setSourceCitation] = useState<ConversationCitation | null>(null);
   const [sourceDetailLoading, setSourceDetailLoading] = useState(false);
 
   const sortSessions = useCallback((items: KnowledgeSessionSummary[]) => [...items].sort((a, b) => Number(b.pinned) - Number(a.pinned) || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()), []);
@@ -721,10 +737,11 @@ export function SessionWorkspace({ base, selectedChapterId, onChapter, onAdd, on
     }
   };
 
-  const openSourceDetail = async (sourceId: string) => {
+  const openSourceDetail = async (sourceId: string, citation?: ConversationCitation) => {
     const requestId = sourceRequest.current + 1;
     sourceRequest.current = requestId;
     setSourceDetailId(sourceId);
+    setSourceCitation(citation ?? null);
     setSourceDetail(null);
     setSourceDetailLoading(true);
     try {
@@ -844,10 +861,10 @@ export function SessionWorkspace({ base, selectedChapterId, onChapter, onAdd, on
           {sending && <div className="thinking-row"><span className="assistant-mark">G</span><span><i /><i /><i /></span><small>Tracing claims and source fragments…</small></div>}
           <div ref={messagesEnd} />
         </div>
-        <Composer value={draft} sending={sending} sourceCount={activeSession?.selectedSourceIds.length ?? 0} chapterTitle={undefined} readOnly={Boolean(activeSession?.archived)} ready={!loading && activeSession !== null} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={() => { setInspectorTab("sources"); setInspectorCollapsed(false); }} />
+        <Composer value={draft} sending={sending} sourceCount={activeSession?.selectedSourceIds.length ?? 0} chapterTitle={focusedChapter?.title} readOnly={Boolean(activeSession?.archived)} ready={!loading && activeSession !== null} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={() => { setInspectorTab("sources"); setInspectorCollapsed(false); }} />
       </main>
-      <ContextInspector base={base} sources={scopeSources} session={activeSession} knowledgeUnits={knowledgeUnits} selectedMessage={selectedMessage} tab={inspectorTab} sourceQuery={sourceQuery} collapsed={inspectorCollapsed} readOnly={Boolean(activeSession?.archived)} onTab={setInspectorTab} onSourceQuery={setSourceQuery} onToggleSource={(id) => void toggleSource(id)} onUseAll={() => { if (activeSession) void patchSession(activeSession.id, { selectedSourceIds: [] }); }} onAdd={onAdd} onOpenSource={(id) => void openSourceDetail(id)} onOpenUnit={(unit) => void openKnowledgeUnitOrigin(unit)} onCollapse={() => setInspectorCollapsed((value) => !value)} />
-      <SourceDetailDrawer open={sourceDetailId !== null} loading={sourceDetailLoading} source={sourceDetail} onClose={closeSourceDetail} />
+      <ContextInspector base={base} sources={scopeSources} session={activeSession} knowledgeUnits={knowledgeUnits} selectedMessage={selectedMessage} tab={inspectorTab} sourceQuery={sourceQuery} collapsed={inspectorCollapsed} readOnly={Boolean(activeSession?.archived)} onTab={setInspectorTab} onSourceQuery={setSourceQuery} onToggleSource={(id) => void toggleSource(id)} onUseAll={() => { if (activeSession) void patchSession(activeSession.id, { selectedSourceIds: [] }); }} onAdd={onAdd} onOpenSource={(id, citation) => void openSourceDetail(id, citation)} onOpenUnit={(unit) => void openKnowledgeUnitOrigin(unit)} onCollapse={() => setInspectorCollapsed((value) => !value)} />
+      <SourceDetailDrawer open={sourceDetailId !== null} loading={sourceDetailLoading} source={sourceDetail} citation={sourceCitation} onClose={closeSourceDetail} />
       {mobileSessionsOpen && <div className="mobile-session-drawer" role="dialog" aria-modal="true" aria-label="Session history"><button className="mobile-session-scrim" onClick={() => setMobileSessionsOpen(false)} aria-label="Close session history" /><div className="mobile-session-sheet"><button className="mobile-session-close" autoFocus onClick={() => setMobileSessionsOpen(false)} aria-label="Close session history"><X size={15} /></button><SessionsSidebar base={base} indexedCount={scopeSources.filter((source) => source.indexed).length} referenceCount={scopeSources.filter((source) => !source.indexed).length} sessions={sessions} archivedSessions={archivedSessions} showArchived={showArchived} activeId={activeId} loading={loading} query={sessionQuery} onQuery={setSessionQuery} onNew={() => { setMobileSessionsOpen(false); void createSession(); }} onOpen={(id) => { setMobileSessionsOpen(false); void loadSession(id); }} onPin={(session) => void patchSession(session.id, { pinned: !session.pinned })} onArchive={(session) => void archiveSession(session)} onToggleArchived={() => void toggleArchived()} onRestore={(session) => void restoreSession(session)} /></div></div>}
     </div>
   );

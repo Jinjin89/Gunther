@@ -99,6 +99,7 @@ class SourceSummaryOut(ApiModel):
     assertion_count: int
     entity_count: int
     asset: AssetOut | None = None
+    processing: dict[str, object] = Field(default_factory=dict)
 
 
 class EntityRefOut(ApiModel):
@@ -496,6 +497,9 @@ class ConversationCitationOut(ApiModel):
     locator: str
     status: AssertionStatus
     confidence: float
+    source_revision_id: str | None = None
+    block_id: str | None = None
+    anchor: dict[str, object] = Field(default_factory=dict)
 
 
 class ConversationContextOut(ApiModel):

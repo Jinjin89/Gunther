@@ -4,8 +4,10 @@ from pathlib import Path
 import pytest
 from sqlalchemy import Column, Integer, MetaData, String, Table, inspect, text
 
-from gunther.database import create_database_engine
+from gunther.database import create_database_engine, create_session_factory, session_scope
+from gunther.knowledge_index import KnowledgeIndex
 from gunther.migrations import (
+    LATEST_SCHEMA_VERSION,
     MIGRATION_TABLE,
     MIGRATIONS,
     Migration,
@@ -15,7 +17,7 @@ from gunther.migrations import (
     get_schema_version,
     run_migrations,
 )
-from gunther.models import Base
+from gunther.models import Base, Source
 from gunther.source_identity import source_fingerprint
 
 
@@ -52,8 +54,9 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (8, "web_snapshot_provenance"),
             (9, "web_capture_request_identity"),
             (10, "immutable_artifact_history"),
+            (11, "structured_knowledge_and_durable_processing"),
         ]
-        assert get_schema_version(engine) == 10
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()
 
@@ -73,7 +76,7 @@ def test_unversioned_legacy_database_is_baselined_without_data_loss(tmp_path: Pa
         with engine.connect() as connection:
             row = connection.execute(text("SELECT id, name FROM items")).one()
         assert row == (1, "keep me")
-        assert get_schema_version(engine) == 10
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()
 
@@ -89,7 +92,55 @@ def test_repeated_startup_is_idempotent(tmp_path: Path) -> None:
             migration_count = connection.execute(
                 text(f"SELECT COUNT(*) FROM {MIGRATION_TABLE}")
             ).scalar_one()
-        assert migration_count == 10
+        assert migration_count == LATEST_SCHEMA_VERSION
+    finally:
+        engine.dispose()
+
+
+def test_v10_upgrade_backfills_evidence_without_rewriting_original(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path)
+    added = {
+        "source_revisions",
+        "source_index_heads",
+        "content_blocks",
+        "block_embeddings",
+        "processing_jobs",
+        "topic_nodes",
+        "topic_evidence_links",
+    }
+    legacy = MetaData()
+    for table in Base.metadata.sorted_tables:
+        if table.name not in added:
+            table.to_metadata(legacy)
+    content = "# Methods\nGenome quality requires careful controls."
+    fingerprint = source_fingerprint("Original", "note", content)
+    try:
+        run_migrations(engine, legacy, MIGRATIONS[:10])
+        sessions = create_session_factory(engine)
+        with session_scope(sessions) as session:
+            session.add(
+                Source(
+                    id="src_legacy",
+                    title="Original",
+                    kind="note",
+                    content=content,
+                    content_hash=fingerprint,
+                )
+            )
+        assert not inspect(engine).has_table("content_blocks")
+        run_migrations(engine, Base.metadata)
+        index = KnowledgeIndex(sessions)
+        assert index.backfill() == 1
+        assert index.backfill() == 0
+        with session_scope(sessions) as session:
+            original = session.get(Source, "src_legacy")
+            assert (original.content, original.content_hash) == (content, fingerprint)
+            assert (
+                index.retrieve(session, [original.id], "genome quality")[0].block.content
+                == content.split("\n")[1]
+            )
+            assert session.execute(text("PRAGMA foreign_key_check")).all() == []
+        assert get_schema_version(engine) == 11
     finally:
         engine.dispose()
 
@@ -106,12 +157,12 @@ def test_failed_migration_rolls_back_schema_and_does_not_advance_version(
             connection.exec_driver_sql("CREATE TABLE should_be_rolled_back (id INTEGER)")
             raise RuntimeError("simulated migration failure")
 
-        plan = (*MIGRATIONS, Migration(11, "failing_change", fail_after_ddl))
+        plan = (*MIGRATIONS, Migration(LATEST_SCHEMA_VERSION + 1, "failing_change", fail_after_ddl))
         with pytest.raises(MigrationExecutionError) as error:
             run_migrations(engine, metadata, plan)
 
         assert isinstance(error.value.__cause__, RuntimeError)
-        assert get_schema_version(engine) == 10
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
         assert not inspect(engine).has_table("should_be_rolled_back")
     finally:
         engine.dispose()
@@ -146,7 +197,7 @@ def test_column_migration_preserves_existing_rows_and_is_safe_if_column_exists(
                 "TEXT NOT NULL DEFAULT 'inbox'",
             )
 
-        plan = (*MIGRATIONS, Migration(11, "documents_state", add_state))
+        plan = (*MIGRATIONS, Migration(LATEST_SCHEMA_VERSION + 1, "documents_state", add_state))
         run_migrations(engine, metadata, plan)
         run_migrations(engine, metadata, plan)
 
@@ -155,7 +206,7 @@ def test_column_migration_preserves_existing_rows_and_is_safe_if_column_exists(
                 text("SELECT id, title, state FROM documents WHERE id = 7")
             ).one()
         assert row == (7, "existing source", "inbox")
-        assert get_schema_version(engine) == 11
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION + 1
     finally:
         engine.dispose()
 
@@ -197,7 +248,7 @@ def test_v1_database_adds_recording_lifecycle_without_touching_existing_data(
             ).one()
         assert marker == (1, "preserve me")
         assert repeated_history == history
-        assert get_schema_version(engine) == 10
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()
 
@@ -240,7 +291,7 @@ def test_v2_database_adds_asset_store_and_source_link_without_data_loss(
                 text("SELECT id, title, asset_id FROM sources WHERE id = 'src_legacy'")
             ).one()
         assert source == ("src_legacy", "Keep this source", None)
-        assert get_schema_version(engine) == 10
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()
 
@@ -329,7 +380,7 @@ def test_v3_database_adds_recording_recovery_fields_without_losing_session(
             None,
             0,
         )
-        assert get_schema_version(engine) == 10
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()
 
@@ -370,7 +421,7 @@ def test_v4_database_rekeys_sources_without_losing_identity_or_content(
         assert row[:3] == ("Legacy title", "note", content)
         assert row[3] == source_fingerprint("Legacy title", "note", content)
         assert row[3] != legacy_hash
-        assert get_schema_version(engine) == 10
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()
 
@@ -406,12 +457,8 @@ def test_v5_database_adds_quick_note_capture_id_without_losing_notes(
                 )
 
         run_migrations(engine, Base.metadata)
-        columns = {
-            column["name"] for column in inspect(engine).get_columns("notebook_notes")
-        }
-        indexes = {
-            index["name"] for index in inspect(engine).get_indexes("notebook_notes")
-        }
+        columns = {column["name"] for column in inspect(engine).get_columns("notebook_notes")}
+        indexes = {index["name"] for index in inspect(engine).get_indexes("notebook_notes")}
         with engine.connect() as connection:
             note = connection.execute(
                 text(
@@ -422,7 +469,7 @@ def test_v5_database_adds_quick_note_capture_id_without_losing_notes(
         assert "client_capture_id" in columns
         assert "ix_notebook_notes_client_capture_id" in indexes
         assert note == ("nte_keep", "Keep me", "Offline thought", None)
-        assert get_schema_version(engine) == 10
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()
 
@@ -441,18 +488,12 @@ def test_v6_database_creates_one_stable_workspace_and_device_tables(
         history = run_migrations(engine, Base.metadata)
         with engine.connect() as connection:
             first_identity = connection.execute(
-                text(
-                    "SELECT singleton_key, workspace_id, display_name "
-                    "FROM workspace_identity"
-                )
+                text("SELECT singleton_key, workspace_id, display_name FROM workspace_identity")
             ).one()
         repeated = run_migrations(engine, Base.metadata)
         with engine.connect() as connection:
             second_identity = connection.execute(
-                text(
-                    "SELECT singleton_key, workspace_id, display_name "
-                    "FROM workspace_identity"
-                )
+                text("SELECT singleton_key, workspace_id, display_name FROM workspace_identity")
             ).one()
 
         inspector = inspect(engine)
@@ -463,7 +504,7 @@ def test_v6_database_creates_one_stable_workspace_and_device_tables(
         assert first_identity[0] == "primary"
         assert str(first_identity[1]).startswith("wsp_")
         assert repeated == history
-        assert get_schema_version(engine) == 10
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()
 
@@ -518,14 +559,11 @@ def test_v7_database_adds_web_snapshot_provenance_without_losing_sources(
             "status",
             "content_type",
             "content_hash",
-        } <= {
-            column["name"] for column in inspector.get_columns("web_snapshots")
-        }
+        } <= {column["name"] for column in inspector.get_columns("web_snapshots")}
         with engine.connect() as connection:
             source = connection.execute(
                 text(
-                    "SELECT title, content, asset_id FROM sources "
-                    "WHERE id = 'src_legacy_web_ready'"
+                    "SELECT title, content, asset_id FROM sources WHERE id = 'src_legacy_web_ready'"
                 )
             ).one()
         assert source == (
@@ -533,7 +571,7 @@ def test_v7_database_adds_web_snapshot_provenance_without_losing_sources(
             content,
             "ast_11111111111111111111111111111111",
         )
-        assert get_schema_version(engine) == 10
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()
 
@@ -551,9 +589,7 @@ def test_v8_web_snapshot_rows_gain_nullable_request_identity_without_data_loss(
         with engine.begin() as connection:
             # Baseline uses current metadata; remove the v9 column to model a
             # database that was genuinely created by the shipped v8 schema.
-            connection.exec_driver_sql(
-                "ALTER TABLE web_snapshots DROP COLUMN request_fingerprint"
-            )
+            connection.exec_driver_sql("ALTER TABLE web_snapshots DROP COLUMN request_fingerprint")
             connection.execute(
                 text(
                     "INSERT INTO assets "
@@ -574,9 +610,7 @@ def test_v8_web_snapshot_rows_gain_nullable_request_identity_without_data_loss(
                 {
                     "id": source_id,
                     "content": content,
-                    "content_hash": source_fingerprint(
-                        "Existing v8 capture", "link", content
-                    ),
+                    "content_hash": source_fingerprint("Existing v8 capture", "link", content),
                     "asset_id": asset_id,
                 },
             )
@@ -619,7 +653,7 @@ def test_v8_web_snapshot_rows_gain_nullable_request_identity_without_data_loss(
             "https://example.com/legacy",
             None,
         )
-        assert get_schema_version(engine) == 10
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()
 
@@ -670,9 +704,7 @@ def test_v9_database_adds_immutable_artifact_history_without_touching_library(
             "revision_snapshot_json",
             "provenance_json",
             "created_at",
-        } == {
-            column["name"] for column in inspector.get_columns("artifacts")
-        }
+        } == {column["name"] for column in inspector.get_columns("artifacts")}
         assert inspector.has_table("artifact_unit_bindings")
         assert {
             "id",
@@ -681,10 +713,7 @@ def test_v9_database_adds_immutable_artifact_history_without_touching_library(
             "unit_id",
             "revision_id",
             "content_hash",
-        } == {
-            column["name"]
-            for column in inspector.get_columns("artifact_unit_bindings")
-        }
+        } == {column["name"] for column in inspector.get_columns("artifact_unit_bindings")}
         assert {
             tuple(constraint["column_names"])
             for constraint in inspector.get_unique_constraints("artifacts")
@@ -694,9 +723,7 @@ def test_v9_database_adds_immutable_artifact_history_without_touching_library(
         }
         assert {
             tuple(constraint["column_names"])
-            for constraint in inspector.get_unique_constraints(
-                "artifact_unit_bindings"
-            )
+            for constraint in inspector.get_unique_constraints("artifact_unit_bindings")
         } >= {
             ("artifact_id", "position"),
             ("artifact_id", "unit_id"),
@@ -712,11 +739,8 @@ def test_v9_database_adds_immutable_artifact_history_without_touching_library(
         }
         with engine.connect() as connection:
             assert connection.execute(
-                text(
-                    "SELECT title, description FROM knowledge_bases "
-                    "WHERE id = 'kept-library'"
-                )
+                text("SELECT title, description FROM knowledge_bases WHERE id = 'kept-library'")
             ).one() == ("Kept library", "Existing content")
-        assert get_schema_version(engine) == 10
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()

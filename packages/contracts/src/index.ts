@@ -102,7 +102,48 @@ export interface SourceSummary {
   assertionCount: number;
   entityCount: number;
   asset?: Asset | null;
+  processing?: SourceProcessing;
 }
+
+export interface SourceProcessing {
+  state: "pending" | "queued" | "running" | "ready" | "partial" | "failed" | "cancelled";
+  jobId: string | null;
+  revisionId: string | null;
+  warning: string | null;
+}
+
+export interface ContentBlock {
+  id: string;
+  parentId: string | null;
+  kind: string;
+  content: string;
+  locator: string;
+  headings: string[];
+  anchor: { page?: number; bboxPpm?: number[]; startSeconds?: number; endSeconds?: number; charStart?: number; charEnd?: number };
+  payload?: Record<string, unknown>;
+}
+
+export interface SourceStructure {
+  sourceId: string;
+  revisionId: string | null;
+  processing: SourceProcessing;
+  parser: string | null;
+  nextOffset: number | null;
+  blocks: ContentBlock[];
+}
+
+export interface KnowledgeTopic {
+  id: string;
+  knowledgeBaseId: string;
+  parentId: string | null;
+  title: string;
+  description: string;
+  position: number;
+  version: number;
+  blockIds: string[];
+}
+
+export type TopicInput = Pick<KnowledgeTopic, "title" | "description" | "parentId" | "position"> & { version?: number };
 
 export const inboxItemTypes = ["source", "quick_note", "knowledge_suggestion"] as const;
 export type InboxItemType = typeof inboxItemTypes[number];
@@ -276,6 +317,9 @@ export interface ConversationCitation {
   locator: string;
   status: AssertionStatus;
   confidence: number;
+  sourceRevisionId?: string | null;
+  blockId?: string | null;
+  anchor?: ContentBlock["anchor"];
 }
 
 export interface ConversationContext {

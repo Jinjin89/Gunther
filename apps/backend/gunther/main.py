@@ -1,3 +1,4 @@
+import asyncio
 import os
 import secrets
 from collections.abc import AsyncIterator
@@ -8,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from gunther.api import router
+from gunther.asset_service import AssetService
 from gunther.config import Settings, get_settings
 from gunther.conversation import create_knowledge_responder
 from gunther.database import Base, create_database_engine, create_session_factory
@@ -17,13 +19,17 @@ from gunther.device_auth import (
     DeviceAuthService,
     parse_bearer_authorization,
 )
+from gunther.document_parser import DoclingParser
 from gunther.extraction import create_extractor
+from gunther.knowledge_api import router as knowledge_router
+from gunther.knowledge_index import LocalEmbedder
 from gunther.lecture import create_lecture_summarizer
 from gunther.migrations import run_migrations
 from gunther.mobile_gateway_runtime import MobileGatewayRuntime
 from gunther.ocr import OcrProvider, create_ocr_provider
 from gunther.online_search import create_online_search
 from gunther.pairing_exchange_guard import PairingExchangeGuard
+from gunther.processing import ProcessingWorker
 from gunther.request_body_limit import RequestBodyLimitMiddleware
 from gunther.service import KnowledgeService
 from gunther.storage_budget import StorageBudget
@@ -60,6 +66,10 @@ def create_app(
         active_settings.deepseek_base_url,
     )
     knowledge_service = KnowledgeService(sessions, extractor, responder)
+    if active_settings.embedding_model_path:
+        knowledge_service.index.embedder = LocalEmbedder(
+            str(active_settings.embedding_model_path), active_settings.embedding_model_version
+        )
     online_search = create_online_search(
         active_settings.openai_api_key,
         active_settings.openai_web_search_model,
@@ -82,13 +92,27 @@ def create_app(
         quota_bytes=active_settings.storage_quota_bytes,
         min_free_bytes=active_settings.storage_min_free_bytes,
     )
+    worker = ProcessingWorker(knowledge_service.index, AssetService(
+        sessions, active_settings.assets_dir, knowledge_service, local_ocr, storage_budget,
+    ), document_parser=(DoclingParser(
+        active_settings.docling_python, active_settings.docling_artifacts_path,
+    ) if active_settings.docling_python and active_settings.docling_artifacts_path else None))
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if active_settings.seed_demo:
             knowledge_service.seed_if_empty()
-        yield
-        engine.dispose()
+        # In-memory SQLite uses a single shared connection: tests drive run_once
+        # explicitly rather than allowing concurrent transactions on that connection.
+        task = (asyncio.create_task(worker.run()) if active_settings.processing_worker_enabled
+                and not active_settings.database_url.endswith(":memory:") else None)
+        try:
+            yield
+        finally:
+            worker.stopping.set()
+            if task:
+                await task
+            engine.dispose()
 
     application = FastAPI(
         title=active_settings.app_name,
@@ -96,6 +120,7 @@ def create_app(
         lifespan=lifespan,
     )
     application.state.knowledge_service = knowledge_service
+    application.state.processing_worker = worker
     application.state.online_search = online_search
     application.state.lecture_summarizer = lecture_summarizer
     application.state.device_auth = device_auth
@@ -221,6 +246,7 @@ def create_app(
         return await call_with_workspace_guard()
 
     application.include_router(router, prefix=active_settings.api_prefix)
+    application.include_router(knowledge_router, prefix=active_settings.api_prefix)
     return application
 
 

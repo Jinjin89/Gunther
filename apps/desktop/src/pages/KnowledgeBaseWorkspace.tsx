@@ -7,6 +7,7 @@ import type {
   SourceDetail,
   SourceKind,
   SourceSummary,
+  KnowledgeTopic,
 } from "@gunther/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -46,6 +47,9 @@ import {
 import type { AtlasMode, AtlasPopulation, AtlasZoom, KnowledgeBase, KnowledgeChapter } from "../atlas";
 import { knowledgeApi, recordingAssetUrl, sourceAssetUrl } from "../api";
 import { WebSnapshotCard } from "../components/WebSnapshotCard";
+import { SourceEvidence } from "../components/SourceEvidence";
+import { TopicManager } from "../components/TopicManager";
+import "../knowledge.css";
 import { SessionWorkspace } from "./SessionWorkspace";
 
 interface KnowledgeBaseWorkspaceProps {
@@ -270,6 +274,15 @@ function MaterialsView({ base, onAdd }: Pick<KnowledgeBaseWorkspaceProps, "base"
   }, [refresh]);
 
   useEffect(() => {
+    if (!sources.some((source) => ["queued", "running", "pending"].includes(source.processing?.state ?? ""))) return;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void knowledgeApi.sources(base.id).then((items) => { if (active) setSources(items); }).catch(() => { if (active) setUnavailable(true); });
+    }, 2500);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [base.id, sources]);
+
+  useEffect(() => {
     const sourceKey = `gunther:open-source:${base.id}`;
     const sourceId = window.localStorage.getItem(sourceKey);
     if (!sourceId) return;
@@ -321,7 +334,7 @@ function MaterialsView({ base, onAdd }: Pick<KnowledgeBaseWorkspaceProps, "base"
       id: source.id,
       title: source.title,
       kind: source.kind as SourceKind | "reference",
-      detail: `${source.assertionCount} candidate claims · ${source.entityCount} entities`,
+      detail: `${source.processing?.state ?? "preserved"} · ${source.assertionCount} candidate claims · ${source.entityCount} entities`,
       date: new Date(source.createdAt).toLocaleDateString(),
       indexed: true,
     }))
@@ -367,6 +380,7 @@ function MaterialsView({ base, onAdd }: Pick<KnowledgeBaseWorkspaceProps, "base"
           {selectedSource && <div className="source-detail-body">
             <div className="source-detail-meta"><span>{materialLabel(selectedSource.kind)}</span><span>{new Date(selectedSource.createdAt).toLocaleString()}</span><span>{selectedSource.assertionCount} suggestions</span></div>
             {selectedSource.webSnapshot && <WebSnapshotCard snapshot={selectedSource.webSnapshot} />}
+            <SourceEvidence key={selectedSource.id} sourceId={selectedSource.id} baseId={base.id} assetId={selectedSource.asset?.id} />
             {selectedSource.asset?.mediaType.startsWith("image/") && <img className="source-image-preview" src={sourceAssetUrl(selectedSource.asset.id)} alt={selectedSource.title} />}
             {selectedSource.asset && !selectedSource.webSnapshot && <section className="source-original-card"><span><FileText size={18} /><span><strong>{selectedSource.asset.originalName}</strong><small>{selectedSource.asset.mediaType} · {selectedSource.asset.sizeBytes >= 1_048_576 ? `${(selectedSource.asset.sizeBytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(selectedSource.asset.sizeBytes / 1024))} KB`} · original unchanged</small></span></span><a href={sourceAssetUrl(selectedSource.asset.id)} download={selectedSource.asset.originalName}><Download size={14} />Download original</a></section>}
             {(() => { const recordingId = selectedSource.content.match(/Local recording:\s*(rec_[a-f0-9]{24})/)?.[1]; return recordingId ? <section className="source-recording-player"><span><AudioLines size={16} /><strong>Original recording</strong></span><audio controls src={recordingAssetUrl(recordingId)} /></section> : null; })()}
@@ -708,13 +722,40 @@ export function StudioView({ base, workspaceId, onNotify, onMode }: Pick<Knowled
 }
 
 export function KnowledgeBaseWorkspace(props: KnowledgeBaseWorkspaceProps) {
+  const [topics, setTopics] = useState<KnowledgeTopic[]>([]);
+  const [topicError, setTopicError] = useState("");
+  const [topicReload, setTopicReload] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setTopics([]);
+    void knowledgeApi.topics(props.base.id).then((items) => { if (active) { setTopics(items); setTopicError(""); } }).catch(() => { if (active) setTopicError("Topics could not be loaded. Existing sources remain available."); });
+    const update = () => setTopicReload((value) => value + 1);
+    window.addEventListener("gunther:topics-updated", update);
+    return () => { active = false; window.removeEventListener("gunther:topics-updated", update); };
+  }, [props.base.id, topicReload]);
+  const topicBase = useMemo(() => ({ ...props.base, chapters: [
+    ...props.base.chapters,
+    ...topics.map((topic): KnowledgeChapter => ({
+      id: topic.id, number: "", title: topic.title, question: topic.description,
+      summary: topic.description, status: "outline", progress: 0, sourceIds: [],
+      takeaways: [], topics: [], decision: { label: "Topic", answer: "Explore linked evidence" },
+    })),
+  ] }), [props.base, topics]);
+  const askTopic = async (id: string) => {
+    try {
+      const session = await knowledgeApi.createSession(props.base.id, { focusChapterId: id, selectedSourceIds: [] });
+      window.localStorage.setItem(`gunther:active-session:${props.base.id}`, session.id);
+      props.onChapter(id); props.onMode("ask");
+    } catch (reason) { props.onNotify(reason instanceof Error ? reason.message : "Could not open topic conversation."); }
+  };
   return (
     <div className="base-workspace">
       <BaseHeader {...props} />
       <div className="base-workspace-body">
         {props.mode === "overview" && <OverviewView {...props} />}
+        {props.mode === "overview" && <>{topicError && <p role="alert">{topicError}</p>}<TopicManager key={props.base.id} baseId={props.base.id} topics={topics} onChange={() => setTopicReload((value) => value + 1)} onAsk={(id) => void askTopic(id)} /></>}
         {props.mode === "sources" && <MaterialsView {...props} />}
-        {props.mode === "ask" && <SessionWorkspace base={props.base} selectedChapterId={props.selectedChapterId} onChapter={props.onChapter} onAdd={props.onAdd} onEvidence={props.onEvidence} onNotify={props.onNotify} />}
+        {props.mode === "ask" && <SessionWorkspace base={topicBase} selectedChapterId={props.selectedChapterId} onChapter={props.onChapter} onAdd={props.onAdd} onEvidence={props.onEvidence} onNotify={props.onNotify} />}
         {props.mode === "outputs" && <StudioView {...props} />}
       </div>
     </div>
