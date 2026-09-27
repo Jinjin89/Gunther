@@ -1,0 +1,71 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Gunther",
+  "version": "0.1.0",
+  "identifier": "com.gunther.knowledge",
+  "build": {
+    "beforeDevCommand": "npm run prepare:sidecar && npm run dev",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "npm run build:bundle",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Gunther — Living Knowledge",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 640,
+        "resizable": true,
+        "fullscreen": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
+      },
+      {
+        "label": "capture",
+        "create": false,
+        "url": "index.html?surface=capture",
+        "title": "Capture — Gunther",
+        "width": 760,
+        "height": 760,
+        "minWidth": 560,
+        "minHeight": 560,
+        "resizable": true,
+        "fullscreen": false,
+        "visible": false,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "alwaysOnTop": false,
+        "visibleOnAllWorkspaces": false,
+        "backgroundThrottling": "disabled"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost blob: http://127.0.0.1:8787 http://localhost:8787; media-src 'self' blob: http://127.0.0.1:8787 http://localhost:8787; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:8787 http://localhost:8787 ws://127.0.0.1:8787 ws://localhost:8787"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Education",
+    "shortDescription": "Build an evidence-backed map of what you learn",
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-",
+      "entitlements": "Entitlements.plist",
+      "files": {
+        "Helpers/GuntherBackend.app": "../../backend/.pyinstaller/dist/GuntherBackend.app"
+      }
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

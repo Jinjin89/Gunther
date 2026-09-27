@@ -1,0 +1,107 @@
+name: Product quality
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-and-desktop-web:
+    name: Backend, desktop web, and real-browser journey
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          package-manager-cache: false
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - name: Install JavaScript dependencies exactly
+        run: npm ci
+      - name: Lint and type-check
+        run: npm run lint
+      - name: Test backend
+        run: npm run test:backend
+      - name: Test desktop
+        run: npm run test:desktop
+      - name: Build production desktop web bundle
+        run: npm run build:desktop:web
+      - name: Validate release scripts
+        run: |
+          node --check scripts/build-backend-sidecar.mjs
+          node --check scripts/smoke_desktop_ui.mjs
+      - name: Exercise the complete product journey in Chrome
+        run: npm run smoke:desktop-ui
+
+  mobile:
+    name: Flutter analysis, tests, and Android package
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.2
+          cache: true
+      - name: Resolve locked mobile dependencies
+        run: flutter pub get
+      - name: Analyze mobile source
+        run: flutter analyze
+      - name: Test mobile behavior
+        run: flutter test
+      - name: Build Android debug candidate
+        run: flutter build apk --debug
+
+  macos-native-candidate:
+    name: macOS native candidate
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          package-manager-cache: false
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - name: Install JavaScript dependencies exactly
+        run: npm ci
+      - name: Build the frozen OCR/backend helper and Tauri bundle
+        run: npm run build:desktop
+      - name: Verify the generated application signature and recording permission
+        run: |
+          app="apps/desktop/src-tauri/target/release/bundle/macos/Gunther.app"
+          codesign --verify --deep --strict "$app"
+          codesign -d --entitlements :- "$app" 2>/dev/null > /tmp/gunther-entitlements.plist
+          test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.audio-input' /tmp/gunther-entitlements.plist)" = "true"
+          /usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$app/Contents/Info.plist" >/dev/null
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Contents/Info.plist")" = "11.0"

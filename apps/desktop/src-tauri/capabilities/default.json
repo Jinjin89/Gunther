@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability for Gunther's main and independent Capture windows",
+  "windows": ["main", "capture"],
+  "permissions": ["core:default", "core:window:allow-start-dragging"]
+}

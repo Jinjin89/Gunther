@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">Gunther Capture menu bar states</title>
+  <desc id="desc">Six Capture glyph states and the recording quick-action menu for macOS.</desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="12" stdDeviation="18" flood-color="#1f2b27" flood-opacity=".12"/>
+    </filter>
+    <style>
+      .sans{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Helvetica Neue",Arial,sans-serif}
+      .label{font-size:15px;font-weight:650;fill:#24332e}
+      .sub{font-size:12px;font-weight:500;fill:#78827e}
+      .menu{font-size:14px;font-weight:520;fill:#202624}
+      .glyph{fill:none;stroke:#27322e;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+      .corner{fill:none;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+    </style>
+  </defs>
+  <rect width="1200" height="720" rx="28" fill="#f3f2ed"/>
+  <text x="64" y="74" class="sans" font-size="29" font-weight="720" fill="#1f2b27">Capture stays with you, not inside a page.</text>
+  <text x="64" y="105" class="sans" font-size="15" font-weight="500" fill="#747d79">A dedicated macOS menu-bar glyph keeps the session visible and controllable while Gunther is hidden.</text>
+
+  <rect x="64" y="142" width="1072" height="54" rx="15" fill="#ffffff" filter="url(#shadow)"/>
+  <circle cx="89" cy="169" r="5" fill="#d7d9d7"/>
+  <circle cx="106" cy="169" r="5" fill="#d7d9d7"/>
+  <circle cx="123" cy="169" r="5" fill="#d7d9d7"/>
+  <text x="148" y="174" class="sans sub">Gunther hidden · Capture continues</text>
+  <g transform="translate(870 157)" stroke="#ff453a">
+    <path class="corner" d="M2 7V2h5M17 2h5v5M22 17v5h-5M7 22H2v-5"/>
+    <circle cx="12" cy="12" r="4" fill="#ff453a" stroke="none"/>
+  </g>
+  <text x="902" y="174" class="sans" font-size="14" font-weight="650" fill="#2c3431">01:24:18</text>
+  <path d="M1075 166l5 6 5-6" fill="none" stroke="#7d8581" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <g transform="translate(64 236)">
+    <rect width="150" height="154" rx="18" fill="#ffffff"/>
+    <g transform="translate(55 24) scale(1.7)" stroke="#27322e">
+      <path class="corner" d="M2 7V2h5M17 2h5v5M22 17v5h-5M7 22H2v-5"/>
+      <circle cx="12" cy="12" r="3.3" fill="none" stroke-width="2"/>
+    </g>
+    <text x="18" y="112" class="sans label">Ready</text>
+    <text x="18" y="134" class="sans sub">hollow source</text>
+  </g>
+
+  <g transform="translate(230 236)">
+    <rect width="150" height="154" rx="18" fill="#ffffff"/>
+    <g transform="translate(55 24) scale(1.7)" stroke="#27322e">
+      <path class="corner" d="M2 7V2h5M17 2h5v5M22 17v5h-5M7 22H2v-5"/>
+      <circle cx="12" cy="12" r="3.2" fill="#27322e" stroke="none"/>
+    </g>
+    <text x="18" y="112" class="sans label">Draft open</text>
+    <text x="18" y="134" class="sans sub">unsaved input</text>
+  </g>
+
+  <g transform="translate(396 236)">
+    <rect width="150" height="154" rx="18" fill="#fff7f6" stroke="#ffd5d1"/>
+    <g transform="translate(55 24) scale(1.7)" stroke="#ff453a">
+      <path class="corner" d="M2 7V2h5M17 2h5v5M22 17v5h-5M7 22H2v-5"/>
+      <circle cx="12" cy="12" r="4" fill="#ff453a" stroke="none"/>
+    </g>
+    <text x="18" y="112" class="sans label" fill="#b52b24">Recording</text>
+    <text x="18" y="134" class="sans sub">red dot + timer</text>
+  </g>
+
+  <g transform="translate(562 236)">
+    <rect width="150" height="154" rx="18" fill="#fffaf1" stroke="#f4d9aa"/>
+    <g transform="translate(55 24) scale(1.7)" stroke="#ff9f0a">
+      <path class="corner" d="M2 7V2h5M17 2h5v5M22 17v5h-5M7 22H2v-5"/>
+      <path d="M9 8v8M15 8v8" fill="none" stroke-width="2.4" stroke-linecap="round"/>
+    </g>
+    <text x="18" y="112" class="sans label" fill="#98600a">Paused</text>
+    <text x="18" y="134" class="sans sub">bars + frozen time</text>
+  </g>
+
+  <g transform="translate(728 236)">
+    <rect width="150" height="154" rx="18" fill="#ffffff"/>
+    <g transform="translate(55 24) scale(1.7)" stroke="#27322e">
+      <path class="corner" d="M2 7V2h5M17 2h5v5M22 17v5h-5M7 22H2v-5"/>
+      <path d="M7.5 12.5l3 3 6-7" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <text x="18" y="112" class="sans label">Review</text>
+    <text x="18" y="134" class="sans sub">finish, then approve</text>
+  </g>
+
+  <g transform="translate(894 236)">
+    <rect width="150" height="154" rx="18" fill="#fff7f6" stroke="#ffd5d1"/>
+    <g transform="translate(55 24) scale(1.7)" stroke="#ff453a">
+      <path class="corner" d="M2 7V2h5M17 2h5v5M22 17v5h-5M7 22H2v-5"/>
+      <path d="M12 7v7M12 17.5v.2" fill="none" stroke-width="2.4" stroke-linecap="round"/>
+    </g>
+    <text x="18" y="112" class="sans label" fill="#b52b24">Attention</text>
+    <text x="18" y="134" class="sans sub">audio remains safe</text>
+  </g>
+
+  <g transform="translate(64 432)">
+    <rect width="510" height="224" rx="22" fill="#ffffff"/>
+    <text x="25" y="38" class="sans" font-size="13" font-weight="700" fill="#7b8580" letter-spacing="1.1">BEHAVIOR</text>
+    <g transform="translate(25 56)" class="sans">
+      <circle cx="12" cy="9" r="9" fill="#e6f1eb"/><path d="M8 9l3 3 6-7" fill="none" stroke="#39705a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="36" y="14" class="label">Close Capture = hide, never stop</text>
+      <circle cx="12" cy="57" r="9" fill="#e6f1eb"/><path d="M8 57h8M12 53v8" fill="none" stroke="#39705a" stroke-width="1.8" stroke-linecap="round"/>
+      <text x="36" y="62" class="label">Every entry returns to one session</text>
+      <circle cx="12" cy="105" r="9" fill="#e6f1eb"/><path d="M8 105h8" fill="none" stroke="#39705a" stroke-width="1.8" stroke-linecap="round"/>
+      <text x="36" y="110" class="label">Finish opens Review, not auto-save</text>
+      <circle cx="12" cy="153" r="9" fill="#fff1d9"/><path d="M12 148v6M12 157v.2" fill="none" stroke="#a66b10" stroke-width="1.8" stroke-linecap="round"/>
+      <text x="36" y="158" class="label">Unsaved work blocks accidental Quit</text>
+    </g>
+  </g>
+
+  <g transform="translate(604 432)" filter="url(#shadow)">
+    <rect width="440" height="224" rx="18" fill="#ffffff"/>
+    <text x="20" y="30" class="sans" font-size="12" font-weight="650" fill="#8a918e">● Recording · 01:24:18</text>
+    <line x1="0" y1="43" x2="440" y2="43" stroke="#e8e9e7"/>
+    <text x="20" y="70" class="sans menu">Open Capture…</text>
+    <text x="20" y="99" class="sans menu">Pause Recording</text>
+    <text x="20" y="128" class="sans menu">Mark Moment</text>
+    <text x="20" y="157" class="sans menu">Finish Recording</text>
+    <line x1="0" y1="173" x2="440" y2="173" stroke="#e8e9e7"/>
+    <text x="20" y="202" class="sans menu">Open Gunther</text>
+    <text x="326" y="202" class="sans menu" fill="#9b4d46">Quit Gunther…</text>
+  </g>
+</svg>

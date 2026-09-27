@@ -1,0 +1,34 @@
+node_modules/
+dist/
+target/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+apps/mobile/build/
+apps/mobile/ios/Pods/
+apps/mobile/ios/.symlinks/
+apps/desktop/src-tauri/gen/
+.uv-cache/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+.DS_Store
+.env
+.env.local
+.env.*
+!.env.example
+# Local knowledge databases, uploaded assets, recordings, and service secrets.
+/data/*
+!/data/.gitkeep
+backups/
+# Generated installers and presentation-rendering scratch files stay local.
+*.apk
+*.dmg
+/artifacts/.ai-knowledge-research-build/
+apps/backend/.pyinstaller/
+apps/desktop/src-tauri/binaries/gunther-backend-*
+coverage/
+.coverage
+*.log

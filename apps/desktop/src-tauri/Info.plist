@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Gunther uses the microphone only when you start a recording, so it can preserve the original audio and create an optional live transcript.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Gunther uses your local network only when you choose to pair a nearby phone with this desktop workspace.</string>
+</dict>
+</plist>

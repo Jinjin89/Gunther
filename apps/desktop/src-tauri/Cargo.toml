@@ -1,0 +1,30 @@
+[package]
+name = "gunther-desktop"
+version = "0.1.0"
+description = "Gunther living knowledge desktop application"
+authors = ["Gunther contributors"]
+edition = "2021"
+
+[lib]
+name = "gunther_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+getrandom = "0.2"
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", features = ["tray-icon"] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+native-smoke = []
+
+[[test]]
+name = "native_quit_guard"
+path = "tests/native_quit_guard.rs"
+harness = false
+required-features = ["native-smoke"]

@@ -1,0 +1,39 @@
+{
+  "name": "gunther",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/desktop",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently --kill-others -n backend,desktop -c blue,green \"npm run dev:backend\" \"npm run dev:desktop\"",
+    "dev:backend": "env UV_CACHE_DIR=.uv-cache uv run --project apps/backend uvicorn --app-dir apps/backend gunther.main:app --reload --port 8787",
+    "dev:desktop": "npm run tauri:dev -w @gunther/desktop",
+    "dev:desktop:web": "npm run dev -w @gunther/desktop",
+    "build": "npm run build:desktop:web",
+    "build:desktop:web": "npm run build -w @gunther/desktop",
+    "build:desktop": "npm run tauri:build -w @gunther/desktop",
+    "test": "npm run test:backend",
+    "test:backend": "env GUNTHER_DESKTOP_SIDECAR=1 UV_CACHE_DIR=.uv-cache uv run --project apps/backend pytest apps/backend",
+    "test:desktop": "npm run test -w @gunther/desktop",
+    "backup:data": "env UV_CACHE_DIR=.uv-cache uv run --project apps/backend python scripts/backup_gunther.py backup",
+    "verify:backup": "env UV_CACHE_DIR=.uv-cache uv run --project apps/backend python scripts/backup_gunther.py verify",
+    "restore:data": "env UV_CACHE_DIR=.uv-cache uv run --project apps/backend python scripts/backup_gunther.py restore",
+    "lint": "env UV_CACHE_DIR=.uv-cache uv run --project apps/backend ruff check apps/backend && npm run typecheck -w @gunther/desktop",
+    "check:desktop": "cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml",
+    "smoke:desktop-ui": "node scripts/smoke_desktop_ui.mjs --allow-write",
+    "mobile:get": "flutter pub get --directory apps/mobile",
+    "mobile:analyze": "flutter analyze apps/mobile",
+    "mobile:test": "cd apps/mobile && flutter test",
+    "check": "npm run lint && npm test && npm run test:desktop && npm run build && npm run check:desktop"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "typescript": "^5.9.2"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}
