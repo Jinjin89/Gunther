@@ -106,7 +106,8 @@ describe("ItemPage navigation", () => {
     expect(onPrevious).toHaveBeenCalledOnce();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(props.onBack).toHaveBeenCalledOnce();
-    expect(props.onTitle).toHaveBeenCalledWith("Captured item");
+    // The title is reported from an effect, which can land after the heading renders.
+    await waitFor(() => expect(props.onTitle).toHaveBeenCalledWith("Captured item"));
   });
 
   it("explains a missing item and retries", async () => {
