@@ -45,6 +45,8 @@ export interface NotebookNote {
   promotedSourceId: string | null;
   createdAt: string;
   updatedAt: string;
+  /** When the note was moved to Trash; absent or null while it is in use. */
+  trashedAt?: string | null;
 }
 
 export const updateAssertionStatusSchema = z.object({
@@ -190,6 +192,27 @@ export interface SourceDetail extends SourceSummary {
   webSnapshot: WebSnapshot | null;
   /** Libraries this source is filed in; empty while it waits in Inbox. */
   knowledgeBases?: InboxKnowledgeBaseRef[];
+  /** When the source was moved to Trash; absent or null while it is in use. */
+  trashedAt?: string | null;
+}
+
+export type TrashItemKind = "source" | "note" | "library";
+
+/** One thing moved to Trash, with everything that went in alongside it. */
+export interface TrashItem {
+  kind: TrashItemKind;
+  id: string;
+  title: string;
+  trashedAt: string;
+  /** Deleted for good at this moment unless restored first. */
+  expiresAt: string;
+  sourceKind: SourceKind | null;
+  /** A library's identity colour. */
+  color: "green" | "blue" | "clay" | null;
+  /** Sources that went to Trash with a library. */
+  itemCount: number;
+  /** Libraries a source or note was filed in when it was trashed. */
+  libraryTitles: string[];
 }
 
 export interface Entity {

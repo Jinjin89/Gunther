@@ -56,6 +56,7 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (10, "immutable_artifact_history"),
             (11, "structured_knowledge_and_durable_processing"),
             (12, "repair_legacy_artifact_tables"),
+            (13, "reversible_trash"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
@@ -875,6 +876,46 @@ def test_unrecognised_output_tables_are_kept_as_legacy_beside_current_ones(
             assert session.scalars(
                 select(Artifact).where(Artifact.workspace_id == workspace_id)
             ).all() == []
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
+    finally:
+        engine.dispose()
+
+
+def test_v12_database_gains_trash_columns_without_touching_rows(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path)
+    trash_columns = {"trashed_at", "trash_batch_id"}
+    try:
+        run_migrations(engine, Base.metadata, MIGRATIONS[:12])
+        with engine.begin() as connection:
+            # Baseline adopts current metadata; remove what v12 did not have.
+            for table_name in ("knowledge_bases", "sources", "notebook_notes"):
+                for column_name in sorted(trash_columns):
+                    connection.exec_driver_sql(f"DROP INDEX ix_{table_name}_{column_name}")
+                    connection.exec_driver_sql(
+                        f"ALTER TABLE {table_name} DROP COLUMN {column_name}"
+                    )
+            connection.execute(
+                text(
+                    "INSERT INTO sources (id, title, kind, content, content_hash, created_at) "
+                    "VALUES ('src_kept', 'Kept', 'note', 'Body', :hash, CURRENT_TIMESTAMP)"
+                ),
+                {"hash": "c" * 64},
+            )
+        assert "trashed_at" not in {c["name"] for c in inspect(engine).get_columns("sources")}
+
+        run_migrations(engine, Base.metadata)
+
+        inspector = inspect(engine)
+        for table_name in ("knowledge_bases", "sources", "notebook_notes"):
+            assert trash_columns <= {c["name"] for c in inspector.get_columns(table_name)}
+            assert {
+                f"ix_{table_name}_trashed_at",
+                f"ix_{table_name}_trash_batch_id",
+            } <= {index["name"] for index in inspector.get_indexes(table_name)}
+        with engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT title, trashed_at FROM sources WHERE id = 'src_kept'")
+            ).one() == ("Kept", None)
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()

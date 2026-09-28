@@ -11,6 +11,7 @@
 - 备份验证会检查文件大小/哈希、SQLite、迁移、数据库—文件关系、Recording ledger 以及 Artifact 内容、manifest 和 revision bindings。
 - `.env`、日志、sidecar 启动 token 和移动 gateway 私钥不进入普通业务备份；秘密材料应单独加密管理。
 - SenseVoice、OCR 与在线 Provider 是派生处理依赖。它们失败时不应删除已经保存的原件。
+- 回收站是应用内的撤销，不是备份：移到回收站的内容 30 天内可恢复（`TRASH_RETENTION_DAYS` 可调）；“永久删除”、清空回收站或到期清理之后，只能从备份恢复。
 
 不要把自动化恢复测试描述成用户真实备份已经演练，也不要承诺“零丢失”。
 

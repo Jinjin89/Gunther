@@ -97,6 +97,7 @@ from gunther.schemas import (
 )
 from gunther.source_identity import source_fingerprint
 from gunther.topics import topic_block_ids
+from gunther.trash import live_membership_source_ids, trashed_library_ids
 
 
 def _id(prefix: str) -> str:
@@ -154,6 +155,22 @@ class KnowledgeService:
     def extraction_mode(self) -> str:
         return self.extractor.mode
 
+    @staticmethod
+    def _live_knowledge_base(
+        session: Session, knowledge_base_id: str
+    ) -> KnowledgeBaseRecord | None:
+        """A library that exists and is not in Trash."""
+
+        knowledge_base = session.get(KnowledgeBaseRecord, knowledge_base_id)
+        return knowledge_base if knowledge_base and knowledge_base.trashed_at is None else None
+
+    def _live_assertion_query(self):
+        """Claims whose source is not in Trash."""
+
+        return self._assertion_query().where(
+            Assertion.source_id.not_in(select(Source.id).where(Source.trashed_at.is_not(None)))
+        )
+
     def _knowledge_base_out(
         self, session: Session, knowledge_base: KnowledgeBaseRecord
     ) -> KnowledgeBaseOut:
@@ -161,7 +178,11 @@ class KnowledgeService:
             session.scalar(
                 select(func.count())
                 .select_from(KnowledgeBaseSource)
-                .where(KnowledgeBaseSource.knowledge_base_id == knowledge_base.id)
+                .join(Source, Source.id == KnowledgeBaseSource.source_id)
+                .where(
+                    KnowledgeBaseSource.knowledge_base_id == knowledge_base.id,
+                    Source.trashed_at.is_(None),
+                )
             )
             or 0
         )
@@ -203,7 +224,9 @@ class KnowledgeService:
     def list_knowledge_bases(self) -> list[KnowledgeBaseOut]:
         with session_scope(self.sessions) as session:
             knowledge_bases = session.scalars(
-                select(KnowledgeBaseRecord).order_by(KnowledgeBaseRecord.updated_at.desc())
+                select(KnowledgeBaseRecord)
+                .where(KnowledgeBaseRecord.trashed_at.is_(None))
+                .order_by(KnowledgeBaseRecord.updated_at.desc())
             ).all()
             return [self._knowledge_base_out(session, item) for item in knowledge_bases]
 
@@ -239,7 +262,7 @@ class KnowledgeService:
         self, knowledge_base_id: str, payload: UpdateKnowledgeBaseInput
     ) -> KnowledgeBaseOut:
         with session_scope(self.sessions) as session:
-            knowledge_base = session.get(KnowledgeBaseRecord, knowledge_base_id)
+            knowledge_base = self._live_knowledge_base(session, knowledge_base_id)
             if knowledge_base is None:
                 raise LookupError(f"Knowledge Base {knowledge_base_id} was not found")
             changed: list[str] = []
@@ -318,17 +341,20 @@ class KnowledgeService:
             promoted_source_id=note.promoted_source_id,
             created_at=_timestamp(note.created_at),
             updated_at=_timestamp(note.updated_at),
+            trashed_at=_timestamp(note.trashed_at) if note.trashed_at else None,
         )
 
     def _ensure_source_memberships(
         self, session: Session, knowledge_base_id: str, source_ids: list[str]
     ) -> None:
-        if session.get(KnowledgeBaseRecord, knowledge_base_id) is None:
+        if self._live_knowledge_base(session, knowledge_base_id) is None:
             raise LookupError(f"Knowledge Base {knowledge_base_id} was not found")
         if not source_ids:
             return
         valid_source_ids = set(
-            session.scalars(select(Source.id).where(Source.id.in_(source_ids))).all()
+            session.scalars(
+                select(Source.id).where(Source.id.in_(source_ids), Source.trashed_at.is_(None))
+            ).all()
         )
         missing_source_ids = set(source_ids) - valid_source_ids
         if missing_source_ids:
@@ -354,12 +380,14 @@ class KnowledgeService:
     def _validate_source_scope(
         self, session: Session, knowledge_base_id: str, source_ids: list[str]
     ) -> None:
-        if session.get(KnowledgeBaseRecord, knowledge_base_id) is None:
+        if self._live_knowledge_base(session, knowledge_base_id) is None:
             raise LookupError(f"Knowledge Base {knowledge_base_id} was not found")
         if not source_ids:
             return
         valid_source_ids = set(
-            session.scalars(select(Source.id).where(Source.id.in_(source_ids))).all()
+            session.scalars(
+                select(Source.id).where(Source.id.in_(source_ids), Source.trashed_at.is_(None))
+            ).all()
         )
         missing_source_ids = set(source_ids) - valid_source_ids
         if missing_source_ids:
@@ -495,6 +523,21 @@ class KnowledgeService:
         source: Source,
         knowledge_base_id: str | None,
     ) -> ImportResultOut:
+        if source.trashed_at is not None:
+            # Capturing something again means it is wanted: bring it back from Trash.
+            source.trashed_at = None
+            source.trash_batch_id = None
+            session.add(
+                Revision(
+                    id=_id("rev"),
+                    target_type="source",
+                    target_id=source.id,
+                    action="restored",
+                    actor="user",
+                    reason="Captured again",
+                )
+            )
+            session.flush()
         if knowledge_base_id:
             self._ensure_source_memberships(session, knowledge_base_id, [source.id])
         return ImportResultOut(
@@ -536,7 +579,7 @@ class KnowledgeService:
         with session_scope(self.sessions) as session:
             if (
                 payload.knowledge_base_id
-                and session.get(KnowledgeBaseRecord, payload.knowledge_base_id) is None
+                and self._live_knowledge_base(session, payload.knowledge_base_id) is None
             ):
                 raise LookupError(f"Knowledge Base {payload.knowledge_base_id} was not found")
             existing = session.scalar(select(Source).where(Source.content_hash == content_hash))
@@ -662,7 +705,11 @@ class KnowledgeService:
 
     def list_sources(self) -> list[SourceSummaryOut]:
         with session_scope(self.sessions) as session:
-            sources = session.scalars(select(Source).order_by(Source.created_at.desc())).all()
+            sources = session.scalars(
+                select(Source)
+                .where(Source.trashed_at.is_(None))
+                .order_by(Source.created_at.desc())
+            ).all()
             return [self._source_summary(session, source) for source in sources]
 
     @staticmethod
@@ -707,18 +754,26 @@ class KnowledgeService:
                     id=knowledge_base.id,
                     title=knowledge_base.title,
                 )
-                for knowledge_base in session.scalars(select(KnowledgeBaseRecord)).all()
+                for knowledge_base in session.scalars(
+                    select(KnowledgeBaseRecord).where(KnowledgeBaseRecord.trashed_at.is_(None))
+                ).all()
             }
 
-            membership_source_ids = select(KnowledgeBaseSource.source_id)
+            # Filed means filed in a library that is not in Trash.
             unfiled_sources = session.scalars(
-                select(Source).where(Source.id.not_in(membership_source_ids))
+                select(Source).where(
+                    Source.id.not_in(live_membership_source_ids()),
+                    Source.trashed_at.is_(None),
+                )
             ).all()
             review_sources = session.scalars(
                 select(Source)
-                .join(KnowledgeBaseSource, KnowledgeBaseSource.source_id == Source.id)
                 .join(Assertion, Assertion.source_id == Source.id)
-                .where(Assertion.status == "provisional")
+                .where(
+                    Source.id.in_(live_membership_source_ids()),
+                    Source.trashed_at.is_(None),
+                    Assertion.status == "provisional",
+                )
                 .distinct()
             ).all()
 
@@ -794,7 +849,9 @@ class KnowledgeService:
                 )
 
             notes = session.scalars(
-                select(NotebookNote).where(NotebookNote.status == "inbox")
+                select(NotebookNote).where(
+                    NotebookNote.status == "inbox", NotebookNote.trashed_at.is_(None)
+                )
             ).all()
             for note in notes:
                 note_knowledge_bases = []
@@ -817,7 +874,8 @@ class KnowledgeService:
 
             proposals = session.scalars(
                 select(KnowledgeProposal).where(
-                    KnowledgeProposal.status.in_(("pending", "held"))
+                    KnowledgeProposal.status.in_(("pending", "held")),
+                    KnowledgeProposal.knowledge_base_id.not_in(trashed_library_ids()),
                 )
             ).all()
             for proposal in proposals:
@@ -850,9 +908,9 @@ class KnowledgeService:
     def file_source(self, source_id: str, payload: FileSourceInput) -> FileSourceOut:
         with session_scope(self.sessions) as session:
             source = session.get(Source, source_id)
-            if source is None:
+            if source is None or source.trashed_at is not None:
                 raise LookupError(f"Source {source_id} was not found")
-            knowledge_base = session.get(KnowledgeBaseRecord, payload.knowledge_base_id)
+            knowledge_base = self._live_knowledge_base(session, payload.knowledge_base_id)
             if knowledge_base is None:
                 raise LookupError(
                     f"Knowledge Base {payload.knowledge_base_id} was not found"
@@ -898,7 +956,7 @@ class KnowledgeService:
         query: str | None = None,
     ) -> list[NotebookNoteOut]:
         with session_scope(self.sessions) as session:
-            statement = select(NotebookNote)
+            statement = select(NotebookNote).where(NotebookNote.trashed_at.is_(None))
             if status:
                 statement = statement.where(NotebookNote.status == status)
             if query and query.strip():
@@ -954,7 +1012,7 @@ class KnowledgeService:
     ) -> NotebookNoteOut:
         with session_scope(self.sessions) as session:
             note = session.get(NotebookNote, note_id)
-            if note is None:
+            if note is None or note.trashed_at is not None:
                 raise LookupError(f"Notebook note {note_id} was not found")
             content_changed = payload.content is not None or payload.title is not None
             if content_changed and note.promoted_source_id:
@@ -984,9 +1042,9 @@ class KnowledgeService:
     ) -> FileNotebookNoteOut:
         with session_scope(self.sessions) as session:
             note = session.get(NotebookNote, note_id)
-            if note is None:
+            if note is None or note.trashed_at is not None:
                 raise LookupError(f"Notebook note {note_id} was not found")
-            if session.get(KnowledgeBaseRecord, payload.knowledge_base_id) is None:
+            if self._live_knowledge_base(session, payload.knowledge_base_id) is None:
                 raise LookupError(
                     f"Knowledge Base {payload.knowledge_base_id} was not found"
                 )
@@ -1052,12 +1110,16 @@ class KnowledgeService:
                     KnowledgeBaseSource,
                     KnowledgeBaseSource.knowledge_base_id == KnowledgeBaseRecord.id,
                 )
-                .where(KnowledgeBaseSource.source_id == source_id)
+                .where(
+                    KnowledgeBaseSource.source_id == source_id,
+                    KnowledgeBaseRecord.trashed_at.is_(None),
+                )
                 .order_by(KnowledgeBaseSource.created_at.asc())
             ).all()
             return SourceDetailOut(
                 **summary.model_dump(),
                 content=source.content,
+                trashed_at=_timestamp(source.trashed_at) if source.trashed_at else None,
                 knowledge_bases=[
                     InboxKnowledgeBaseRefOut(id=base_id, title=title)
                     for base_id, title in knowledge_bases
@@ -1097,13 +1159,15 @@ class KnowledgeService:
             if not source_ids:
                 return []
             sources = session.scalars(
-                select(Source).where(Source.id.in_(source_ids)).order_by(Source.created_at.desc())
+                select(Source)
+                .where(Source.id.in_(source_ids), Source.trashed_at.is_(None))
+                .order_by(Source.created_at.desc())
             ).all()
             return [self._source_summary(session, source) for source in sources]
 
     def list_assertions(self, status: str | None = None, limit: int = 100) -> list[AssertionOut]:
         with session_scope(self.sessions) as session:
-            query = self._assertion_query().order_by(Assertion.created_at.desc()).limit(limit)
+            query = self._live_assertion_query().order_by(Assertion.created_at.desc()).limit(limit)
             if status:
                 query = query.where(Assertion.status == status)
             assertions = session.scalars(query).all()
@@ -1206,7 +1270,7 @@ class KnowledgeService:
     ) -> KnowledgeSessionOut:
         now = utc_now()
         with session_scope(self.sessions) as session:
-            if session.get(KnowledgeBaseRecord, knowledge_base_id) is None:
+            if self._live_knowledge_base(session, knowledge_base_id) is None:
                 raise LookupError(f"Knowledge Base {knowledge_base_id} was not found")
             knowledge_session = KnowledgeSession(
                 id=_id("ses"),
@@ -1500,7 +1564,12 @@ class KnowledgeService:
             knowledge_session = session.scalar(
                 self._session_query().where(KnowledgeSession.id == session_id)
             )
-            if knowledge_session is None:
+            library = (
+                session.get(KnowledgeBaseRecord, knowledge_session.knowledge_base_id)
+                if knowledge_session
+                else None
+            )
+            if knowledge_session is None or (library and library.trashed_at is not None):
                 raise LookupError(f"Session {session_id} was not found")
             if knowledge_session.archived:
                 raise ValueError("Restore the archived session before adding another message")
@@ -1534,6 +1603,9 @@ class KnowledgeService:
             scoped_source_ids = list(session.scalars(select(KnowledgeBaseSource.source_id).where(
                 KnowledgeBaseSource.knowledge_base_id == knowledge_session.knowledge_base_id,
                 KnowledgeBaseSource.source_id.in_(scoped_source_ids),
+                KnowledgeBaseSource.source_id.not_in(
+                    select(Source.id).where(Source.trashed_at.is_not(None))
+                ),
             )))
             block_scope = None
             if knowledge_session.focus_chapter_id and knowledge_session.focus_chapter_id.startswith(
@@ -2086,7 +2158,7 @@ class KnowledgeService:
         self, knowledge_base_id: str, workspace_id: str
     ) -> list[ArtifactSummaryOut]:
         with session_scope(self.sessions) as session:
-            if session.get(KnowledgeBaseRecord, knowledge_base_id) is None:
+            if self._live_knowledge_base(session, knowledge_base_id) is None:
                 raise LookupError(f"Knowledge Base {knowledge_base_id} was not found")
             artifacts = session.scalars(
                 select(Artifact)
@@ -2142,7 +2214,7 @@ class KnowledgeService:
                 workspace = session.get(WorkspaceIdentity, "primary")
                 if workspace is None or workspace.workspace_id != workspace_id:
                     raise LookupError("The verified workspace identity was not found")
-                knowledge_base = session.get(KnowledgeBaseRecord, knowledge_base_id)
+                knowledge_base = self._live_knowledge_base(session, knowledge_base_id)
                 if knowledge_base is None:
                     raise LookupError(
                         f"Knowledge Base {knowledge_base_id} was not found"
@@ -2469,6 +2541,7 @@ class KnowledgeService:
                     .join(KnowledgeUnitRevision)
                     .where(match_all(KnowledgeUnit.title, KnowledgeUnitRevision.content))
                     .where(KnowledgeUnit.status != "deprecated")
+                    .where(KnowledgeUnit.knowledge_base_id.not_in(trashed_library_ids()))
                     .where(
                         KnowledgeUnit.knowledge_base_id.in_(knowledge_base_ids)
                         if scoped
@@ -2505,15 +2578,21 @@ class KnowledgeService:
                     and_(
                         KnowledgeBaseSource.source_id == Source.id,
                         KnowledgeBaseSource.knowledge_base_id.in_(knowledge_base_ids),
+                        KnowledgeBaseSource.knowledge_base_id.not_in(trashed_library_ids()),
                     ),
                 )
                 if scoped
                 else source_query.outerjoin(
-                    KnowledgeBaseSource, KnowledgeBaseSource.source_id == Source.id
+                    KnowledgeBaseSource,
+                    and_(
+                        KnowledgeBaseSource.source_id == Source.id,
+                        KnowledgeBaseSource.knowledge_base_id.not_in(trashed_library_ids()),
+                    ),
                 )
             )
             source_rows = session.execute(
                 source_query.where(match_all(Source.title, Source.content))
+                .where(Source.trashed_at.is_(None))
                 .order_by(Source.created_at.desc())
                 .limit(limit)
             ).all()
@@ -2539,6 +2618,11 @@ class KnowledgeService:
                 .where(
                     match_all(NotebookNote.title, NotebookNote.content),
                     NotebookNote.status != "archived",
+                    NotebookNote.trashed_at.is_(None),
+                    or_(
+                        NotebookNote.knowledge_base_id.is_(None),
+                        NotebookNote.knowledge_base_id.not_in(trashed_library_ids()),
+                    ),
                     NotebookNote.knowledge_base_id.in_(knowledge_base_ids) if scoped else true(),
                 )
                 .order_by(NotebookNote.updated_at.desc())
@@ -2562,6 +2646,7 @@ class KnowledgeService:
                 .where(
                     match_all(KnowledgeSession.title, KnowledgeSession.summary),
                     KnowledgeSession.archived.is_(False),
+                    KnowledgeSession.knowledge_base_id.not_in(trashed_library_ids()),
                     KnowledgeSession.knowledge_base_id.in_(knowledge_base_ids)
                     if scoped
                     else true(),
@@ -2600,7 +2685,7 @@ class KnowledgeService:
 
     def get_graph(self) -> KnowledgeGraphOut:
         with session_scope(self.sessions) as session:
-            assertions = session.scalars(self._assertion_query()).all()
+            assertions = session.scalars(self._live_assertion_query()).all()
             counts: Counter[str] = Counter()
             entities: dict[str, Entity] = {}
             for assertion in assertions:
@@ -2633,23 +2718,35 @@ class KnowledgeService:
             )
 
     def overview(self) -> OverviewOut:
+        live_claim = Assertion.source_id.not_in(
+            select(Source.id).where(Source.trashed_at.is_not(None))
+        )
         with session_scope(self.sessions) as session:
             counts = OverviewCountsOut(
-                sources=session.scalar(select(func.count()).select_from(Source)) or 0,
+                sources=session.scalar(
+                    select(func.count()).select_from(Source).where(Source.trashed_at.is_(None))
+                )
+                or 0,
                 entities=session.scalar(select(func.count()).select_from(Entity)) or 0,
-                assertions=session.scalar(select(func.count()).select_from(Assertion)) or 0,
+                assertions=session.scalar(
+                    select(func.count()).select_from(Assertion).where(live_claim)
+                )
+                or 0,
                 provisional=session.scalar(
                     select(func.count())
                     .select_from(Assertion)
-                    .where(Assertion.status == "provisional")
+                    .where(live_claim, Assertion.status == "provisional")
                 )
                 or 0,
             )
             sources = session.scalars(
-                select(Source).order_by(Source.created_at.desc()).limit(4)
+                select(Source)
+                .where(Source.trashed_at.is_(None))
+                .order_by(Source.created_at.desc())
+                .limit(4)
             ).all()
             assertions = session.scalars(
-                self._assertion_query().order_by(Assertion.created_at.desc()).limit(5)
+                self._live_assertion_query().order_by(Assertion.created_at.desc()).limit(5)
             ).all()
             return OverviewOut(
                 counts=counts,

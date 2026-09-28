@@ -36,6 +36,8 @@ export const SHORTCUTS = [
   { id: "item-previous", keys: ["k", "arrowup"], label: "Previous item", group: "Inbox and items" },
   { id: "item-open", keys: ["enter"], label: "Open the selected item", group: "Inbox and items" },
   { id: "item-primary", keys: ["mod+enter"], label: "File or accept the open item", group: "Inbox and items" },
+  { id: "item-trash", keys: ["mod+backspace"], label: "Move to Trash", group: "Inbox and items" },
+  { id: "undo", keys: ["mod+z"], label: "Undo moving to Trash", group: "Inbox and items" },
   { id: "note-edit", keys: ["e"], label: "Edit the open note", group: "Writing" },
   { id: "note-preview", keys: ["mod+e"], label: "Switch writing and preview", group: "Writing" },
   { id: "format-bold", keys: ["mod+b"], label: "Bold", group: "Writing" },

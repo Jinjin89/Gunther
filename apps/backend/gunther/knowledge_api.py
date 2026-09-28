@@ -158,7 +158,7 @@ def reprocess(source_id: str, request: Request):
     with session_scope(service.sessions) as session:
         session.connection().exec_driver_sql("BEGIN IMMEDIATE")
         source = session.get(Source, source_id)
-        if not source:
+        if not source or source.trashed_at is not None:
             raise HTTPException(404, "Source was not found")
         if not source.asset_id:
             service.index.add_source(session, source)

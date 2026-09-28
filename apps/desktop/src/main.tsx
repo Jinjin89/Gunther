@@ -13,6 +13,7 @@ import "./design/pages.css";
 import "./design/prose.css";
 import "./design/item.css";
 import "./design/shortcuts.css";
+import "./design/trash.css";
 import "./design/legacy.css";
 // Capture's new surface loads after the legacy layer so its layout wins.
 import "./design/capture.css";

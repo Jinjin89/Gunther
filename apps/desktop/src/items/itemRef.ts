@@ -7,7 +7,7 @@ export type ItemRef =
   | { type: "suggestion"; id: string; baseId: string | null };
 
 /** Where the detail page was opened from, so Back returns there. */
-export type ItemOrigin = "home" | "library" | "base" | "notebook" | "inbox" | "settings" | "account";
+export type ItemOrigin = "home" | "library" | "base" | "notebook" | "inbox" | "settings" | "account" | "trash";
 
 export const itemKey = (ref: ItemRef) => `${ref.type}:${ref.id}`;
 

@@ -696,7 +696,7 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
   </>;
 }
 
-export function CreateKnowledgeBaseSheet({ open, base, onClose, onSave }: { open: boolean; base?: KnowledgeBase | undefined; onClose: () => void; onSave: (payload: CreateKnowledgeBaseInput) => Promise<void> }) {
+export function CreateKnowledgeBaseSheet({ open, base, onClose, onSave, onTrash }: { open: boolean; base?: KnowledgeBase | undefined; onClose: () => void; onSave: (payload: CreateKnowledgeBaseInput) => Promise<void>; /** Editing only: move the library, and the sources only it holds, to Trash. */ onTrash?: () => void }) {
   const [title, setTitle] = useState("");
   const [eyebrow, setEyebrow] = useState("Personal knowledge");
   const [question, setQuestion] = useState("");
@@ -746,7 +746,7 @@ export function CreateKnowledgeBaseSheet({ open, base, onClose, onSave }: { open
     <div className="create-base-fields"><label><span>Name</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Decision Science" maxLength={160} /></label><label><span>Field label</span><input value={eyebrow} onChange={(event) => setEyebrow(event.target.value)} placeholder="e.g. Applied reasoning" maxLength={80} /></label><label className="is-wide"><span>Guiding question</span><textarea value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="What do you want this library to help you understand?" rows={2} maxLength={1000} /></label><label className="is-wide"><span>Description</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Describe its scope, boundaries, and intended use." rows={3} maxLength={2000} /></label></div>
     <fieldset className="create-base-color"><legend>Accent</legend>{(["green", "blue", "clay"] as const).map((item) => <button type="button" key={item} className={`color-${item} ${color === item ? "is-active" : ""}`} onClick={() => setColor(item)} aria-label={`Use ${item} accent`}><i />{item}{color === item && <Check size={12} />}</button>)}</fieldset>
     {error && <p className="create-base-error" role="alert"><CircleAlert size={13} />{error}</p>}
-    <footer><span>{base ? "Session history and accepted knowledge stay unchanged." : "Inbox sources can be filed here at any time."}</span><div><button type="button" className="quiet-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={working || !title.trim() || question.trim().length < 3 || description.trim().length < 3}>{working ? "Saving…" : base ? "Save details" : "Create library"}<ArrowRight size={14} /></button></div></footer>
+    <footer>{base && onTrash ? <button type="button" className="quiet-button gx-sheet-trash" onClick={onTrash}><Trash2 size={13} />Move library to Trash</button> : <span>{base ? "Session history and accepted knowledge stay unchanged." : "Inbox sources can be filed here at any time."}</span>}<div><button type="button" className="quiet-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={working || !title.trim() || question.trim().length < 3 || description.trim().length < 3}>{working ? "Saving…" : base ? "Save details" : "Create library"}<ArrowRight size={14} /></button></div></footer>
   </form></section>;
 }
 

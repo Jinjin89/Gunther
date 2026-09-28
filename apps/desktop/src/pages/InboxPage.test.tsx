@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { makeBase, makeInboxItem } from "../test/fixtures";
+import { makeBase, makeInboxItem, makeTrashItem } from "../test/fixtures";
 import { InboxPageV3 } from "./InboxPage";
 
 const api = vi.hoisted(() => ({
@@ -10,6 +10,8 @@ const api = vi.hoisted(() => ({
   fileNote: vi.fn(),
   updateSourceAssertionStatuses: vi.fn(),
   updateProposal: vi.fn(),
+  trashSource: vi.fn(),
+  trashNote: vi.fn(),
 }));
 
 vi.mock("../api", () => ({
@@ -166,6 +168,26 @@ describe("InboxPageV3", () => {
   it("returns focus to the row an item was opened from", async () => {
     renderInbox({ onOpenItem: vi.fn(), focusItemKey: "source:source-review" });
     await waitFor(() => expect(screen.getByRole("button", { name: "Candidate findings" })).toHaveFocus());
+  });
+
+  it("moves a capture to Trash from its row, and leaves suggestions to their own decisions", async () => {
+    api.trashSource.mockResolvedValue(makeTrashItem({ id: unfiled.sourceId!, title: unfiled.title }));
+    const onTrashed = vi.fn();
+    renderInbox({ onTrashed });
+    await userEvent.click(await screen.findByRole("button", { name: `Move “${unfiled.title}” to Trash` }));
+    expect(api.trashSource).toHaveBeenCalledWith(unfiled.sourceId);
+    await waitFor(() => expect(onTrashed).toHaveBeenCalledWith(expect.objectContaining({ title: unfiled.title })));
+    await waitFor(() => expect(api.inbox).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("button", { name: `Move “${heldProposal.title}” to Trash` })).not.toBeInTheDocument();
+  });
+
+  it("moves the focused row to Trash with ⌘⌫", async () => {
+    api.trashSource.mockResolvedValue(makeTrashItem({ id: sourceReview.sourceId!, title: sourceReview.title }));
+    renderInbox({ onTrashed: vi.fn() });
+    const open = await screen.findByRole("button", { name: sourceReview.title });
+    open.focus();
+    await userEvent.keyboard("{Control>}{Meta>}{Backspace}{/Meta}{/Control}");
+    await waitFor(() => expect(api.trashSource).toHaveBeenCalledWith(sourceReview.sourceId));
   });
 
   it("surfaces service failure and recovers through an explicit retry", async () => {

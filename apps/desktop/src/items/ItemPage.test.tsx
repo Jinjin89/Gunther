@@ -2,7 +2,7 @@ import type { Assertion, KnowledgeProposal, NotebookNote, SourceDetail, SourceSt
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { makeBase } from "../test/fixtures";
+import { makeBase, makeTrashItem } from "../test/fixtures";
 import { ItemPage, type ItemPageProps } from "./ItemPage";
 
 const api = vi.hoisted(() => ({
@@ -18,6 +18,9 @@ const api = vi.hoisted(() => ({
   updateProposal: vi.fn(),
   knowledgeBases: vi.fn(),
   reprocessSource: vi.fn(),
+  trashSource: vi.fn(),
+  trashNote: vi.fn(),
+  restoreFromTrash: vi.fn(),
 }));
 
 vi.mock("../api", () => ({
@@ -235,6 +238,60 @@ describe("source pages", () => {
     expect(await screen.findByRole("columnheader", { name: "count" })).toHaveClass("is-number");
     expect(screen.getByText("1,204")).toBeVisible();
     expect(screen.getByText(/Tab-separated/)).toBeVisible();
+  });
+});
+
+describe("moving to Trash", () => {
+  it("moves the open source to Trash from the toolbar, and with ⌘⌫ outside a field", async () => {
+    api.source.mockResolvedValue(source());
+    api.trashSource.mockResolvedValue(makeTrashItem({ id: "src_1", title: "Captured item" }));
+    const onTrashed = vi.fn();
+    renderPage({ onTrashed });
+    await screen.findByRole("heading", { name: "Captured item", level: 1 });
+
+    await userEvent.click(screen.getByRole("button", { name: "Move to Trash" }));
+    expect(api.trashSource).toHaveBeenCalledWith("src_1");
+    await waitFor(() => expect(onTrashed).toHaveBeenCalledWith(expect.objectContaining({ id: "src_1" })));
+
+    const field = document.body.appendChild(document.createElement("input"));
+    field.focus();
+    fireEvent.keyDown(field, { key: "Backspace", ctrlKey: true, metaKey: true });
+    expect(api.trashSource).toHaveBeenCalledTimes(1);
+    field.remove();
+
+    fireEvent.keyDown(window, { key: "Backspace", ctrlKey: true, metaKey: true });
+    await waitFor(() => expect(api.trashSource).toHaveBeenCalledTimes(2));
+  });
+
+  it("moves a note to Trash as a note", async () => {
+    api.notes.mockResolvedValue([note()]);
+    api.trashNote.mockResolvedValue(makeTrashItem({ kind: "note", id: "note_1", title: "Reading plan" }));
+    const onTrashed = vi.fn();
+    renderPage({ item: { type: "note", id: "note_1" }, onTrashed });
+    await userEvent.click(await screen.findByRole("button", { name: "Move to Trash" }));
+    expect(api.trashNote).toHaveBeenCalledWith("note_1");
+    await waitFor(() => expect(onTrashed).toHaveBeenCalledOnce());
+  });
+
+  it("says why a live recording cannot go, and stays", async () => {
+    api.source.mockResolvedValue(source());
+    api.trashSource.mockRejectedValue(new Error("Stop the recording before moving it to Trash."));
+    const { props } = renderPage({ onTrashed: vi.fn() });
+    await userEvent.click(await screen.findByRole("button", { name: "Move to Trash" }));
+    await waitFor(() => expect(props.onNotify).toHaveBeenCalledWith("Stop the recording before moving it to Trash."));
+    expect(props.onTrashed).not.toHaveBeenCalled();
+  });
+
+  it("opens a source that is in Trash with Restore instead of filing", async () => {
+    api.source.mockResolvedValueOnce(source({ trashedAt: "2026-09-27T10:00:00.000Z" })).mockResolvedValue(source());
+    api.restoreFromTrash.mockResolvedValue(makeTrashItem({ id: "src_1" }));
+    const { props } = renderPage({ onTrashed: vi.fn() });
+    expect(await screen.findByText("This source is in Trash")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Move to Trash" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Restore" }));
+    expect(api.restoreFromTrash).toHaveBeenCalledWith("source", "src_1");
+    await waitFor(() => expect(screen.queryByText("This source is in Trash")).not.toBeInTheDocument());
+    expect(props.onNotify).toHaveBeenCalledWith("Restored from Trash.");
   });
 });
 

@@ -68,6 +68,8 @@ class NotebookNoteOut(ApiModel):
     promoted_source_id: str | None
     created_at: str
     updated_at: str
+    # When the note was moved to Trash; unset while it is in use.
+    trashed_at: str | None = None
 
 
 class UpdateAssertionStatusInput(ApiModel):
@@ -179,6 +181,28 @@ class SourceDetailOut(SourceSummaryOut):
     web_snapshot: WebSnapshotOut | None = None
     # Libraries this source is filed in; empty while it waits in Inbox.
     knowledge_bases: list[InboxKnowledgeBaseRefOut] = Field(default_factory=list)
+    # When the source was moved to Trash; unset while it is in use.
+    trashed_at: str | None = None
+
+
+TrashItemKind = Literal["source", "note", "library"]
+
+
+class TrashItemOut(ApiModel):
+    """One thing moved to Trash, with everything that went in alongside it."""
+
+    kind: TrashItemKind
+    id: str
+    title: str
+    trashed_at: str
+    # Deleted for good at this moment unless restored first.
+    expires_at: str
+    source_kind: SourceKind | None = None
+    color: KnowledgeBaseColor | None = None
+    # Sources that went to Trash with a library.
+    item_count: int = 0
+    # Libraries a source or note was filed in when it was trashed.
+    library_titles: list[str] = Field(default_factory=list)
 
 
 class InboxItemOut(ApiModel):

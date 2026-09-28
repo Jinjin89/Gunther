@@ -1,5 +1,5 @@
 import { Check } from "lucide-react";
-import type { CreateKnowledgeBaseInput, CreateSourceInput, NotebookNote } from "@gunther/contracts";
+import type { CreateKnowledgeBaseInput, CreateSourceInput, NotebookNote, TrashItem } from "@gunther/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getKnowledgeBase, type AtlasMode, type KnowledgeBase, type KnowledgeChapter } from "./atlas";
 import { metadataToBase } from "./atlasMetadata";
@@ -10,6 +10,7 @@ import { HomePage, type HomeCaptureKind } from "./pages/HomePage";
 import { InboxPageV3 } from "./pages/InboxPage";
 import { KnowledgeBaseWorkspace } from "./pages/KnowledgeBaseWorkspace";
 import { NotebookPage } from "./pages/NotebookPage";
+import { TrashPage } from "./pages/TrashPage";
 import { knowledgeApi } from "./api";
 import { loadStoredCaptures, removeStoredCapture } from "./localCaptureQueue";
 import { isTauriRuntime, listenForCaptureSaved, listenForMenuCommand, listenForOpenSearch, openCaptureWindow, type MenuCommand } from "./capture/captureBridge";
@@ -18,7 +19,8 @@ import { applyTheme, readThemePreference, resolveTheme, THEME_STORAGE_KEY, watch
 import { ItemPage } from "./items/ItemPage";
 import { itemKey, sameItem, type ItemOrigin, type ItemRef } from "./items/itemRef";
 import { ShortcutSheet } from "./shortcuts/ShortcutSheet";
-import { useEscape, useShortcut } from "./shortcuts/shortcuts";
+import { formatCombo, useEscape, useShortcut } from "./shortcuts/shortcuts";
+import { moveToTrash, restoreFromTrash, trashedMessage } from "./trash/trash";
 import "./atlas.css";
 
 type RecordingContext = "lecture" | "meeting" | "memo";
@@ -27,7 +29,13 @@ const WORKSPACE_ID_STORAGE_KEY = "gunther:workspace-id";
 const PROFILE_STORAGE_KEY = "gunther:profile";
 const DEFAULT_PROFILE_NAME = "Knowledge explorer";
 const DEFAULT_KNOWLEDGE_BASE_MODE: AtlasMode = "ask";
-const VIEW_LABEL: Record<ItemOrigin, string> = { home: "Home", library: "Libraries", base: "Library", notebook: "Notebook", inbox: "Inbox", settings: "Settings", account: "Account" };
+const VIEW_LABEL: Record<ItemOrigin, string> = { home: "Home", library: "Libraries", base: "Library", notebook: "Notebook", inbox: "Inbox", settings: "Settings", account: "Account", trash: "Trash" };
+
+/** A toast's one follow-up, such as Undo after moving something to Trash. */
+interface ToastAction {
+  label: string;
+  run: () => void;
+}
 
 interface OpenItemState {
   ref: ItemRef;
@@ -116,7 +124,7 @@ export default function App() {
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference);
   const [, setSystemThemeVersion] = useState(0);
   const theme = resolveTheme(themePreference);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ id: number; message: string; action?: ToastAction } | null>(null);
   const [focusNoteId, setFocusNoteId] = useState<string | null>(null);
   const [inboxCount, setInboxCount] = useState(0);
   const [searchFocusRequest, setSearchFocusRequest] = useState(0);
@@ -150,10 +158,11 @@ export default function App() {
     setBases(metadata.map(metadataToBase));
   }, []);
 
-  const notify = useCallback((message: string) => {
-    setToast(message);
+  const notify = useCallback((message: string, action?: ToastAction) => {
+    setToast((current) => ({ id: (current?.id ?? 0) + 1, message, ...(action ? { action } : {}) }));
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(null), 2800);
+    // An offer to undo stays long enough to read and reach.
+    toastTimer.current = window.setTimeout(() => setToast(null), action ? 6000 : 2800);
   }, []);
 
   const openCapture = useCallback((kind: CaptureKind | null = null, context: RecordingContext = "lecture", targetBaseId: string | null = null) => {
@@ -232,9 +241,8 @@ export default function App() {
     });
   }, []);
 
-  // A decision was made on the open item: say so, then move to the next one.
-  const resolveItem = useCallback((message: string) => {
-    notify(message);
+  // The open item is done with (decided, or moved to Trash): move to the next one.
+  const advanceItem = useCallback(() => {
     const current = openItemState;
     if (!current) return;
     const index = current.queue.findIndex((candidate) => sameItem(candidate, current.ref));
@@ -249,7 +257,37 @@ export default function App() {
       setHomeResume(current.from === "home");
       setView(current.from);
     }
-  }, [notify, openItemState]);
+  }, [openItemState]);
+
+  const resolveItem = useCallback((message: string) => {
+    notify(message);
+    advanceItem();
+  }, [advanceItem, notify]);
+
+  const undoTrash = useCallback(async (entry: TrashItem) => {
+    try {
+      await restoreFromTrash(entry);
+      if (entry.kind === "library") await refreshKnowledgeBases();
+      notify(`Restored “${entry.title}”.`);
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : `“${entry.title}” could not be restored.`);
+    }
+  }, [notify, refreshKnowledgeBases]);
+
+  // Something went to Trash: offer Undo, and stop showing a library that went.
+  const trashed = useCallback((entry: TrashItem) => {
+    notify(trashedMessage(entry), { label: "Undo", run: () => void undoTrash(entry) });
+    if (entry.kind !== "library") return;
+    setBases((current) => current.filter((base) => base.id !== entry.id));
+    if (view === "base" && activeBaseId === entry.id) navigate("library");
+  }, [activeBaseId, navigate, notify, undoTrash, view]);
+
+  const runToastAction = useCallback(() => {
+    const action = toast?.action;
+    if (!action) return;
+    setToast(null);
+    action.run();
+  }, [toast]);
 
   const openQuickNote = useCallback(async () => {
     try {
@@ -436,6 +474,8 @@ export default function App() {
   useShortcut("mod+/", () => setShortcutsOpen((current) => !current), { allowInModal: shortcutsOpen, enabled: !menuOwnsKeys });
   useShortcut("mod+[", () => navigate("library"), { enabled: view === "base" && !layerOpen });
   useShortcut("mod+n", newNote, { enabled: !layerOpen && !menuOwnsKeys });
+  // ⌘Z inside a field stays the field's own undo.
+  useShortcut("mod+z", runToastAction, { enabled: Boolean(toast?.action), allowInInputs: false });
 
   // Native menu commands (File ▸ New Note, Gunther ▸ Settings…, View ▸ …).
   const menuCommand = useRef<(command: MenuCommand) => void>(() => undefined);
@@ -479,7 +519,7 @@ export default function App() {
             window.dispatchEvent(new CustomEvent("gunther:sources-updated"));
             notify(`Filed “${note.title}” into ${base.title}.`);
           }} />}
-          {view === "inbox" && <AtlasPage><InboxPageV3 bases={bases} onOpenBase={openBase} onOpenNote={(id) => openItem({ type: "note", id }, "inbox")} onOpenItem={(ref, queue) => openItem(ref, "inbox", queue)} focusItemKey={lastItemKey} onCapture={() => openCapture()} onCreateBase={() => setCreateBaseOpen(true)} onCountChange={setInboxCount} onNotify={notify} /></AtlasPage>}
+          {view === "inbox" && <AtlasPage><InboxPageV3 bases={bases} onOpenBase={openBase} onOpenNote={(id) => openItem({ type: "note", id }, "inbox")} onOpenItem={(ref, queue) => openItem(ref, "inbox", queue)} focusItemKey={lastItemKey} onCapture={() => openCapture()} onCreateBase={() => setCreateBaseOpen(true)} onCountChange={setInboxCount} onNotify={notify} onTrashed={trashed} /></AtlasPage>}
           {view === "item" && openItemState && <AtlasPage className="gx-page-item"><ItemPage
             item={openItemState.ref}
             bases={bases}
@@ -499,7 +539,9 @@ export default function App() {
             onCreateBase={() => setCreateBaseOpen(true)}
             onNotify={notify}
             onTitle={setItemTitle}
+            onTrashed={(entry) => { trashed(entry); advanceItem(); }}
           /></AtlasPage>}
+          {view === "trash" && <AtlasPage><TrashPage onNotify={notify} onRestored={(entry) => { if (entry.kind === "library") void refreshKnowledgeBases(); }} /></AtlasPage>}
           {view === "settings" && <AtlasPage><SettingsPageV2 theme={themePreference} onTheme={setThemePreference} onNotify={notify} /></AtlasPage>}
           {view === "account" && <AtlasPage><AccountPageV2 bases={bases} /></AtlasPage>}
         </main>
@@ -533,7 +575,14 @@ export default function App() {
         setView("base");
         notify(`Created “${created.title}”. Capture a source or file one from Inbox.`);
       }} />
-      <CreateKnowledgeBaseSheet open={Boolean(editingBase)} base={editingBase} onClose={() => setEditingBaseId(null)} onSave={async (payload: CreateKnowledgeBaseInput) => {
+      <CreateKnowledgeBaseSheet open={Boolean(editingBase)} base={editingBase} onClose={() => setEditingBaseId(null)} onTrash={() => {
+        if (!editingBase) return;
+        const id = editingBase.id;
+        setEditingBaseId(null);
+        void moveToTrash({ kind: "library", id }).then(trashed).catch((reason: unknown) => {
+          notify(reason instanceof Error ? reason.message : "This library could not be moved to Trash.");
+        });
+      }} onSave={async (payload: CreateKnowledgeBaseInput) => {
         if (!editingBase) return;
         const metadata = await knowledgeApi.updateKnowledgeBase(editingBase.id, payload);
         setBases((current) => current.map((base) => base.id === editingBase.id ? {
@@ -552,7 +601,10 @@ export default function App() {
       }} />
       <EvidenceDrawer base={activeBase} chapter={evidenceChapter} onClose={() => setEvidenceChapter(null)} />
       <ShortcutSheet open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
-      {toast && <div className="atlas-toast" role="status" key={toast}><Check size={14} />{toast}</div>}
+      {toast && <div className="atlas-toast" role="status" key={toast.id}>
+        <Check size={14} />{toast.message}
+        {toast.action && <button type="button" className="gx-toast-action" onClick={runToastAction} aria-label={toast.action.label}>{toast.action.label}<kbd aria-hidden="true">{formatCombo("mod+z")}</kbd></button>}
+      </div>}
     </div>
   );
 }

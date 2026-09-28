@@ -44,6 +44,8 @@ import type {
   TopicInput,
   SourceStructure,
   SourceProcessing,
+  TrashItem,
+  TrashItemKind,
 } from "@gunther/contracts";
 import { createArtifactSchema, webCaptureSchema } from "@gunther/contracts";
 import { invoke } from "@tauri-apps/api/core";
@@ -469,6 +471,15 @@ export const knowledgeApi = {
       method: "POST",
       body: JSON.stringify({ knowledgeBaseId }),
     }),
+  trash: () => request<TrashItem[]>("/trash"),
+  trashSource: (id: string) => request<TrashItem>(`/sources/${encodeURIComponent(id)}/trash`, { method: "POST" }),
+  trashNote: (id: string) => request<TrashItem>(`/notes/${encodeURIComponent(id)}/trash`, { method: "POST" }),
+  trashLibrary: (id: string) => request<TrashItem>(`/knowledge-bases/${encodeURIComponent(id)}/trash`, { method: "POST" }),
+  restoreFromTrash: (kind: TrashItemKind, id: string) =>
+    request<TrashItem>(`/trash/${kind}/${encodeURIComponent(id)}/restore`, { method: "POST" }),
+  deleteForever: (kind: TrashItemKind, id: string) =>
+    request<TrashItem>(`/trash/${kind}/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  emptyTrash: () => request<{ deleted: number }>("/trash", { method: "DELETE" }),
   updateAssertionStatus: (id: string, payload: UpdateAssertionStatusInput) =>
     request<Assertion>(`/assertions/${id}/status`, {
       method: "PATCH",

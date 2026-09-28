@@ -727,7 +727,8 @@ class WebCaptureService:
 
         if intent.knowledge_base_id:
             with session_scope(self.knowledge.sessions) as session:
-                if session.get(KnowledgeBaseRecord, intent.knowledge_base_id) is None:
+                library = session.get(KnowledgeBaseRecord, intent.knowledge_base_id)
+                if library is None or library.trashed_at is not None:
                     raise LookupError(
                         f"Knowledge Base {intent.knowledge_base_id} was not found"
                     )

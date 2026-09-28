@@ -366,6 +366,25 @@ def _create_structured_knowledge(connection: Connection, metadata: MetaData) -> 
     )
 
 
+TRASHABLE_TABLES = ("knowledge_bases", "sources", "notebook_notes")
+
+
+def _add_trash(connection: Connection, _metadata: MetaData) -> None:
+    """Let libraries, sources and notes rest in Trash before permanent deletion."""
+
+    for table_name in TRASHABLE_TABLES:
+        if not inspect(connection).has_table(table_name):
+            continue
+        add_column_if_missing(connection, table_name, "trashed_at", "DATETIME")
+        add_column_if_missing(connection, table_name, "trash_batch_id", "VARCHAR(40)")
+        for column_name in ("trashed_at", "trash_batch_id"):
+            # The names SQLAlchemy gives ``index=True``, so new databases match.
+            connection.exec_driver_sql(
+                f"CREATE INDEX IF NOT EXISTS ix_{table_name}_{column_name} "
+                f"ON {table_name} ({column_name})"
+            )
+
+
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
 MIGRATIONS: tuple[Migration, ...] = (
@@ -381,6 +400,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(10, "immutable_artifact_history", _create_artifact_history),
     Migration(11, "structured_knowledge_and_durable_processing", _create_structured_knowledge),
     Migration(12, "repair_legacy_artifact_tables", _repair_legacy_artifact_tables),
+    Migration(13, "reversible_trash", _add_trash),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

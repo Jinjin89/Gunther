@@ -80,6 +80,10 @@ class KnowledgeBaseRecord(Base):
     status: Mapped[str] = mapped_column(String(24), default="Outline")
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(default=utc_now, index=True)
+    # Set while in Trash. Everything one "Move to Trash" put there shares a batch,
+    # so Restore brings it all back as it was.
+    trashed_at: Mapped[datetime | None] = mapped_column(nullable=True, index=True)
+    trash_batch_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
 
 
 class Asset(Base):
@@ -108,6 +112,10 @@ class Source(Base):
         ForeignKey("assets.id", ondelete="SET NULL"), nullable=True, index=True
     )
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
+    # Set while in Trash. Everything one "Move to Trash" put there shares a batch,
+    # so Restore brings it all back as it was.
+    trashed_at: Mapped[datetime | None] = mapped_column(nullable=True, index=True)
+    trash_batch_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
 
     fragments: Mapped[list[Fragment]] = relationship(back_populates="source", cascade="all, delete")
     assertions: Mapped[list[Assertion]] = relationship(back_populates="source")
@@ -221,6 +229,10 @@ class NotebookNote(Base):
     )
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(default=utc_now, index=True)
+    # Set while in Trash. Everything one "Move to Trash" put there shares a batch,
+    # so Restore brings it all back as it was.
+    trashed_at: Mapped[datetime | None] = mapped_column(nullable=True, index=True)
+    trash_batch_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
 
 
 class KnowledgeBaseSource(Base):

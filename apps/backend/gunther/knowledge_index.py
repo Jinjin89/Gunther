@@ -214,6 +214,7 @@ class KnowledgeIndex:
             sources = session.scalars(
                 select(Source)
                 .where(
+                    Source.trashed_at.is_(None),
                     ~Source.id.in_(select(SourceIndexHead.source_id)),
                     ~Source.id.in_(
                         select(ProcessingJob.source_id).where(ProcessingJob.kind == "parse_asset")

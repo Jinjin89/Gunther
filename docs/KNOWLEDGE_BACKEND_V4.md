@@ -39,6 +39,28 @@ lost edits. API errors do not include underlying model exceptions or local paths
 Removing a library membership is not deletion of a shared original. No new destructive
 delete operation or automatic source cleanup is introduced by this upgrade.
 
+## Trash (schema 13)
+
+Sources, notes and libraries can be moved to Trash (`trashed_at`, `trash_batch_id`).
+Trash only marks rows: text, claims, index entries and original files stay, so Restore is
+exact. Everything one action trashes shares a batch. Trashing a library also trashes the
+sources filed only there (and notes promoted into them); sources also filed elsewhere stay
+where they are. A recording still being captured cannot be trashed. Capturing identical
+content again restores a trashed source.
+
+Trashed items leave Inbox, search, Ask retrieval, library lists, counts, the graph and the
+overview. A source's own page still opens and reports `trashedAt`.
+
+Delete forever is the only destructive path. It deletes a batch's rows and lets foreign
+keys cascade their revisions, blocks, index entries, jobs, claims and memberships; a
+library also takes its topics, conversations, suggestions, trusted knowledge and outputs.
+An original file (asset or recording audio) is removed only after the rows are committed
+and only when no remaining source uses it. Batches older than `TRASH_RETENTION_DAYS`
+(default 30) are deleted the same way, at startup and twice a day.
+
+Schema 12 repairs Output tables left by pre-release builds: missing request identity is
+backfilled, and any other old shape is kept as `artifacts_legacy` beside a fresh table.
+
 ## Retrieval and optional models
 
 Keyword retrieval works without additional services, accounts or models. CJK bigrams

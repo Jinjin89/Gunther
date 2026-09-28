@@ -781,11 +781,64 @@ async function run() {
       "document.querySelector('.studio-document.is-generated') !== null && document.body.innerText.includes('evidence link') && document.body.innerText.includes('revision')",
       "generated output with evidence and revision provenance",
     );
+
+    // Trash: move a capture there from Inbox, undo, restore from the Trash page, delete forever.
+    const trashTitle = `Disposable capture ${marker}`;
+    const trashCreated = await fetch(`${backendOrigin}/api/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: trashTitle, kind: "note", content: `A capture for the Trash flow ${marker}.` }),
+    });
+    if (!trashCreated.ok) throw new SmokeFailure(`Disposable capture was not created (${trashCreated.status})`);
+    const trashSourceId = (await trashCreated.json()).source.id;
+    const inInbox = async () => (await jsonFrom(`${backendOrigin}/api/inbox`)).some((item) => item.sourceId === trashSourceId);
+    const inTrash = async () => (await jsonFrom(`${backendOrigin}/api/trash`)).some((item) => item.id === trashSourceId);
+    const trashFromInbox = async () => {
+      if (!await cdp.evaluate(clickExpression("button", "Inbox"))) throw new SmokeFailure("Inbox navigation was not clickable for Trash");
+      await cdp.evaluate("window.dispatchEvent(new CustomEvent('gunther:inbox-updated'))");
+      // Wait for the row itself: an earlier toast may already show the title.
+      await waitForEvaluation(
+        cdp,
+        `[...document.querySelectorAll('.gx-inbox-trash')].some((button) => !button.disabled && button.getAttribute('aria-label') === ${JSON.stringify(`Move “${trashTitle}” to Trash`)})`,
+        "disposable capture's row in Inbox",
+      );
+      if (!await cdp.evaluate(clickExpression("button", `Move “${trashTitle}” to Trash`))) {
+        throw new SmokeFailure("The Inbox row could not be moved to Trash");
+      }
+      await waitForEvaluation(
+        cdp,
+        `document.querySelector('.atlas-toast')?.textContent.includes(${JSON.stringify(`Moved “${trashTitle}” to Trash.`)}) && document.querySelector('.gx-toast-action') !== null`,
+        "Trash toast offering Undo",
+      );
+      if (!await inTrash() || await inInbox()) throw new SmokeFailure("Moving to Trash did not leave Inbox for Trash");
+    };
+
+    await trashFromInbox();
+    if (!await cdp.evaluate(clickExpression("button", "Undo"))) throw new SmokeFailure("Undo was not clickable");
+    await waitForEvaluation(cdp, `document.querySelector('.atlas-toast')?.textContent.includes(${JSON.stringify(`Restored “${trashTitle}”.`)})`, "Undo confirmation");
+    if (await inTrash() || !await inInbox()) throw new SmokeFailure("Undo did not return the capture to Inbox");
+
+    await trashFromInbox();
+    if (!await cdp.evaluate(clickExpression("button", "Trash"))) throw new SmokeFailure("Trash navigation was not clickable");
+    await waitForEvaluation(cdp, `[...document.querySelectorAll('.gx-trash-row')].some((row) => row.textContent.includes(${JSON.stringify(trashTitle)}))`, "capture listed in Trash");
+    if (!await cdp.evaluate(clickExpression("button", `Restore “${trashTitle}”`))) throw new SmokeFailure("Restore was not clickable in Trash");
+    await waitForEvaluation(cdp, `![...document.querySelectorAll('.gx-trash-row')].some((row) => row.textContent.includes(${JSON.stringify(trashTitle)}))`, "restored capture leaving Trash");
+    if (await inTrash() || !await inInbox()) throw new SmokeFailure("Restoring from the Trash page did not return the capture");
+
+    await trashFromInbox();
+    if (!await cdp.evaluate(clickExpression("button", "Trash"))) throw new SmokeFailure("Trash navigation was not clickable before deleting");
+    await waitForEvaluation(cdp, `[...document.querySelectorAll('.gx-trash-row')].some((row) => row.textContent.includes(${JSON.stringify(trashTitle)}))`, "capture listed in Trash before deleting");
+    if (!await cdp.evaluate(clickExpression("button", `Delete “${trashTitle}” forever`))) throw new SmokeFailure("Delete forever was not clickable");
+    if (!await cdp.evaluate(clickExpression("button", "Delete forever"))) throw new SmokeFailure("Delete forever could not be confirmed");
+    await waitForEvaluation(cdp, `document.querySelector('.atlas-toast')?.textContent.includes(${JSON.stringify(`Deleted “${trashTitle}” for good.`)})`, "permanent deletion confirmation");
+    const deletedSource = await fetch(`${backendOrigin}/api/sources/${encodeURIComponent(trashSourceId)}`);
+    if (deletedSource.status !== 404 || await inTrash()) throw new SmokeFailure("Delete forever left the capture behind");
+
     if (browserErrors.length) throw new SmokeFailure(`Browser errors: ${browserErrors.join(" | ")}`);
 
     result = {
       status: "passed",
-      checks: 35,
+      checks: 44,
       browser: path.basename(chromeBinary),
       knowledgeBaseId: knowledgeBase.id,
       noteId: filedNote.id,
@@ -805,6 +858,9 @@ async function run() {
         "answer promoted through the durable review Inbox",
         "accepted proposal became a trusted evidenced unit",
         "Output generated only from accepted knowledge with revision provenance",
+        "capture moved to Trash from Inbox and brought back with Undo",
+        "capture restored from the Trash page",
+        "capture deleted forever from Trash",
       ],
     };
   } catch (error) {

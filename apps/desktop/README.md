@@ -57,6 +57,8 @@ npm run build:desktop
 
 **Markdown**：渲染使用 react-markdown + remark-gfm（原始 HTML 只显示为文本，远程图片不加载）；书写使用 CodeMirror 6（首次书写时才加载）。
 
+**回收站**：Inbox 行、详情页工具栏与 Library 设置都可以“移到回收站”（⌘⌫），提示条可撤销（⌘Z）。回收站中的内容不出现在 Inbox、搜索与 Ask，可随时恢复；30 天后或“永久删除”时才真正删除，原件只在不再被其他来源使用时移除。
+
 **快捷键**：统一注册表驱动匹配、提示与 ⌘/ 快捷键一览；桌面版中 ⌘N、⌘⇧C、⌘⇧R、⌘K、⌘,、⌘/、⌘⇧L 由原生菜单负责。
 
 界面遵循 [Gunther Design System](../../docs/DESIGN_SYSTEM.md)：白底黑字，颜色只用于 Library、来源类型与状态标识；设计 token 与组件样式位于 `src/design/`。

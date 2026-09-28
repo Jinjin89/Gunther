@@ -1,4 +1,4 @@
-import type { InboxItem, SourceSummary } from "@gunther/contracts";
+import type { InboxItem, SourceSummary, TrashItem } from "@gunther/contracts";
 import type { KnowledgeBase } from "../atlas";
 
 export const makeBase = (overrides: Partial<KnowledgeBase> = {}): KnowledgeBase => ({
@@ -47,3 +47,22 @@ export const makeInboxItem = (overrides: Partial<InboxItem> = {}): InboxItem => 
   updatedAt: "2026-08-29T09:00:00.000Z",
   ...overrides,
 });
+
+const DAY = 86_400_000;
+
+/** An entry in Trash, trashed `trashedDaysAgo` days ago with a 30-day retention. */
+export const makeTrashItem = (overrides: Partial<TrashItem> = {}, trashedDaysAgo = 1): TrashItem => {
+  const trashedAt = Date.now() - trashedDaysAgo * DAY;
+  return {
+    kind: "source",
+    id: "src_trashed",
+    title: "Lecture 3",
+    trashedAt: new Date(trashedAt).toISOString(),
+    expiresAt: new Date(trashedAt + 30 * DAY).toISOString(),
+    sourceKind: "recording",
+    color: null,
+    itemCount: 0,
+    libraryTitles: [],
+    ...overrides,
+  };
+};

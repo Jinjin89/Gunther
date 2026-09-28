@@ -1,4 +1,4 @@
-import type { InboxItem } from "@gunther/contracts";
+import type { InboxItem, TrashItem } from "@gunther/contracts";
 import {
   Archive,
   AudioLines,
@@ -16,6 +16,7 @@ import {
   RotateCcw,
   Sparkles,
   Table2,
+  Trash2,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { knowledgeApi } from "../api";
@@ -24,7 +25,8 @@ import { LibraryGlyph } from "../design/LibraryGlyph";
 import { itemKey, refFromInbox, type ItemRef } from "../items/itemRef";
 import { LibraryPicker } from "../items/LibraryPicker";
 import { inboxPreview } from "../items/sourceContent";
-import { comboKeys, useShortcut } from "../shortcuts/shortcuts";
+import { comboKeys, useShortcut, withShortcut } from "../shortcuts/shortcuts";
+import { moveToTrash } from "../trash/trash";
 
 type InboxFilter = "all" | "unfiled" | "needs_review" | "held";
 
@@ -40,6 +42,8 @@ interface InboxPageProps {
   onCreateBase?: () => void;
   onCountChange?: (count: number) => void;
   onNotify: (message: string) => void;
+  /** An item went to Trash; the host offers Undo. */
+  onTrashed?: (entry: TrashItem) => void;
 }
 
 const KIND = {
@@ -72,7 +76,7 @@ const formatDay = (value: string) => {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 };
 
-export function InboxPageV3({ bases, onOpenBase, onOpenNote, onOpenItem, focusItemKey = null, onCapture, onCreateBase, onCountChange, onNotify }: InboxPageProps) {
+export function InboxPageV3({ bases, onOpenBase, onOpenNote, onOpenItem, focusItemKey = null, onCapture, onCreateBase, onCountChange, onNotify, onTrashed }: InboxPageProps) {
   const [items, setItems] = useState<InboxItem[]>([]);
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [loading, setLoading] = useState(true);
@@ -81,6 +85,7 @@ export function InboxPageV3({ bases, onOpenBase, onOpenNote, onOpenItem, focusIt
   const [targets, setTargets] = useState<Record<string, string>>({});
   const list = useRef<HTMLDivElement>(null);
   const restoredFocus = useRef(false);
+  const refocusIndex = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -168,6 +173,38 @@ export function InboxPageV3({ bases, onOpenBase, onOpenNote, onOpenItem, focusIt
     }
   };
 
+  const trashTarget = (item: InboxItem) => item.sourceId
+    ? { kind: "source" as const, id: item.sourceId }
+    : item.noteId ? { kind: "note" as const, id: item.noteId } : null;
+  const trashItem = async (item: InboxItem) => {
+    const target = trashTarget(item);
+    if (!target) return;
+    setWorkingId(item.id);
+    try {
+      // moveToTrash announces the change, which refreshes this list.
+      onTrashed?.(await moveToTrash(target));
+    } catch (reason) {
+      onNotify(reason instanceof Error ? reason.message : "This item could not be moved to Trash.");
+    } finally {
+      setWorkingId(null);
+    }
+  };
+  // ⌘⌫ on a row moves it to Trash; focus then lands on the row that took its place.
+  const trashFocused = () => {
+    const index = openButtons().findIndex((button) => button.closest("article")?.contains(document.activeElement));
+    const item = visible[index];
+    if (!item || !trashTarget(item)) return;
+    refocusIndex.current = index;
+    void trashItem(item);
+  };
+  useShortcut("mod+backspace", trashFocused, { enabled: visible.length > 0, allowInInputs: false });
+  useEffect(() => {
+    if (refocusIndex.current === null) return;
+    const buttons = openButtons();
+    buttons[Math.min(refocusIndex.current, buttons.length - 1)]?.focus();
+    refocusIndex.current = null;
+  }, [visible]);
+
   const reviewSource = async (item: InboxItem, status: "verified" | "disputed") => {
     if (!item.sourceId) return;
     setWorkingId(item.id);
@@ -252,6 +289,7 @@ export function InboxPageV3({ bases, onOpenBase, onOpenNote, onOpenItem, focusIt
           </div>
           <span className="gx-inbox-go" aria-hidden="true">Open<ChevronRight size={13} /></span>
           <footer>
+            {trashTarget(item) && <button type="button" className="gx-icon-button gx-inbox-trash" disabled={isWorking} onClick={() => void trashItem(item)} aria-label={`Move “${item.title}” to Trash`} title={withShortcut("Move to Trash", "item-trash")}><Trash2 size={14} /></button>}
             {item.state === "unfiled" && <>
               <span className="gx-footer-spacer" />
               {bases.length > 0 && <div className="gx-inbox-picker"><LibraryPicker bases={bases} value={selectedTarget(item)} onChange={(id) => setTargets((current) => ({ ...current, [item.id]: id }))} onCreate={onCreateBase} disabled={isWorking} label="File to library" placement={index > 2 && index === visible.length - 1 ? "above" : "below"} /></div>}
@@ -275,6 +313,7 @@ export function InboxPageV3({ bases, onOpenBase, onOpenNote, onOpenItem, focusIt
         <span><kbd>J</kbd><kbd>K</kbd> move</span>
         <span><kbd>↵</kbd> open</span>
         <span>{comboKeys("mod+enter").map((key) => <kbd key={key}>{key}</kbd>)} file or accept, inside an item</span>
+        <span>{comboKeys("mod+backspace").map((key) => <kbd key={key}>{key}</kbd>)} move to Trash</span>
       </p>
     </>}
 

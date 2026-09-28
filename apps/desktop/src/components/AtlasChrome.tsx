@@ -1,11 +1,11 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
-import { ChevronRight, Home, Inbox, Library, Moon, Plus, Search, Settings, Sun, UserRound } from "lucide-react";
+import { ChevronRight, Home, Inbox, Library, Moon, Plus, Search, Settings, Sun, Trash2, UserRound } from "lucide-react";
 import type { KnowledgeBase } from "../atlas";
 import { BrandMark } from "../design/BrandMark";
 import { LibraryGlyph } from "../design/LibraryGlyph";
 
-export type AtlasView = "home" | "library" | "base" | "notebook" | "inbox" | "settings" | "account" | "item";
+export type AtlasView = "home" | "library" | "base" | "notebook" | "inbox" | "settings" | "account" | "item" | "trash";
 
 export interface BreadcrumbSegment {
   label: string;
@@ -156,6 +156,7 @@ export function AtlasRail({ active, inboxCount, bases = [], basesReady = true, a
 
       <div className="gx-sidebar-spacer" />
       <nav className="gx-nav gx-nav-footer" aria-label="Workspace">
+        {item("trash", "Trash", <Trash2 size={16} />)}
         {item("settings", "Settings", <Settings size={16} />)}
         <button
           type="button"

@@ -62,7 +62,8 @@ class TopicService:
 
     def list(self, base_id: str) -> list[dict[str, object]]:
         with session_scope(self.sessions) as session:
-            if session.get(KnowledgeBaseRecord, base_id) is None:
+            library = session.get(KnowledgeBaseRecord, base_id)
+            if library is None or library.trashed_at is not None:
                 raise LookupError("Knowledge base was not found")
             return [
                 self.out(session, node)
@@ -83,7 +84,8 @@ class TopicService:
             # Serialize tree edits before checking ancestry to prevent concurrent
             # A->B / B->A changes from passing independent cycle checks.
             session.connection().exec_driver_sql("BEGIN IMMEDIATE")
-            if session.get(KnowledgeBaseRecord, base_id) is None:
+            library = session.get(KnowledgeBaseRecord, base_id)
+            if library is None or library.trashed_at is not None:
                 raise LookupError("Knowledge base was not found")
             node = session.get(TopicNode, node_id) if node_id else None
             if node_id and (not node or node.knowledge_base_id != base_id):

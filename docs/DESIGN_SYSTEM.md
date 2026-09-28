@@ -192,6 +192,20 @@ anywhere attaches it. The footer holds **Save to** (Inbox or a library),
 **Discard**, and **Save ⌘↵**; Esc hides Capture (the recording keeps going).
 See `docs/CAPTURE_MENU_BAR_DESIGN_CN.md` for states, closing and quitting.
 
+## Trash
+
+Moving to Trash is reversible, so it is quiet: a trash icon in the item toolbar and on
+Inbox rows, **Move library to Trash** in library settings, and ⌘⌫ outside a text field.
+Nothing asks for confirmation; the toast says what moved (a library names the sources
+that went with it) and offers **Undo** (⌘Z) for six seconds.
+
+The Trash page lists what is resting there, newest first, with when it was trashed and
+the days left (in the danger colour for the last three). **Restore** is a quiet button.
+Deleting is the only irreversible step and the only place the danger colour appears:
+**Delete forever…** and **Empty Trash** each open an inline confirmation in place,
+never a modal. A source opened while in Trash shows a banner with Restore instead of
+its filing controls.
+
 ## Keyboard
 
 One registry (`src/shortcuts/shortcuts.ts`) drives matching, tooltips and the

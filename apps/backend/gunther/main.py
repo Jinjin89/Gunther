@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import secrets
 from collections.abc import AsyncIterator
@@ -33,6 +34,8 @@ from gunther.processing import ProcessingWorker
 from gunther.request_body_limit import RequestBodyLimitMiddleware
 from gunther.service import KnowledgeService
 from gunther.storage_budget import StorageBudget
+from gunther.trash import TrashService
+from gunther.trash_api import router as trash_router
 from gunther.web_capture import (
     PinnedHttpFetcher,
     SystemWebResolver,
@@ -98,17 +101,37 @@ def create_app(
         active_settings.docling_python, active_settings.docling_artifacts_path,
     ) if active_settings.docling_python and active_settings.docling_artifacts_path else None))
 
+    trash_service = TrashService(
+        sessions,
+        assets_dir=active_settings.assets_dir,
+        recordings_dir=active_settings.recordings_dir,
+        retention_days=active_settings.trash_retention_days,
+    )
+
+    async def purge_trash() -> None:
+        """Delete what has rested in Trash past the retention period, twice a day."""
+        while True:
+            try:
+                await asyncio.to_thread(trash_service.purge_expired)
+            except Exception:  # The next pass retries; each batch deletes atomically.
+                logging.getLogger(__name__).warning("Trash cleanup failed", exc_info=True)
+            await asyncio.sleep(12 * 60 * 60)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if active_settings.seed_demo:
             knowledge_service.seed_if_empty()
         # In-memory SQLite uses a single shared connection: tests drive run_once
         # explicitly rather than allowing concurrent transactions on that connection.
+        background = not active_settings.database_url.endswith(":memory:")
         task = (asyncio.create_task(worker.run()) if active_settings.processing_worker_enabled
-                and not active_settings.database_url.endswith(":memory:") else None)
+                and background else None)
+        trash_task = asyncio.create_task(purge_trash()) if background else None
         try:
             yield
         finally:
+            if trash_task:
+                trash_task.cancel()
             worker.stopping.set()
             if task:
                 await task
@@ -121,6 +144,7 @@ def create_app(
     )
     application.state.knowledge_service = knowledge_service
     application.state.processing_worker = worker
+    application.state.trash_service = trash_service
     application.state.online_search = online_search
     application.state.lecture_summarizer = lecture_summarizer
     application.state.device_auth = device_auth
@@ -138,7 +162,7 @@ def create_app(
         CORSMiddleware,
         allow_origins=allowed_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "PATCH", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
 
@@ -247,6 +271,7 @@ def create_app(
 
     application.include_router(router, prefix=active_settings.api_prefix)
     application.include_router(knowledge_router, prefix=active_settings.api_prefix)
+    application.include_router(trash_router, prefix=active_settings.api_prefix)
     return application
 
 

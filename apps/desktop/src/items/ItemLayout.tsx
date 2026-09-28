@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, ChevronDown, ChevronUp, Copy, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, ChevronUp, Copy, Trash2, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { withShortcut } from "../shortcuts/shortcuts";
 
@@ -10,6 +10,8 @@ export interface ItemNavigation {
   position: { index: number; total: number } | null;
   onPrevious: (() => void) | null;
   onNext: (() => void) | null;
+  /** Moves the open item to Trash; absent where an item cannot be trashed. */
+  onTrash?: (() => void) | null;
 }
 
 /** Back, previous / next and the item's own actions. Gains a hairline once the page scrolls. */
@@ -40,6 +42,11 @@ export function ItemToolbar({ nav, actions }: { nav: ItemNavigation; actions?: R
         )}
         <span className="gx-item-toolbar-fill" />
         {actions && <div className="gx-item-actions">{actions}</div>}
+        {nav.onTrash && (
+          <button type="button" className="gx-icon-button gx-item-trash" onClick={nav.onTrash} aria-label="Move to Trash" title={withShortcut("Move to Trash", "item-trash")}>
+            <Trash2 size={15} />
+          </button>
+        )}
       </div>
     </>
   );

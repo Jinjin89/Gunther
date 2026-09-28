@@ -1,9 +1,10 @@
-import type { KnowledgeProposal, NotebookNote, SourceDetail } from "@gunther/contracts";
-import { CircleAlert, RotateCcw } from "lucide-react";
-import { useEffect, useState } from "react";
+import type { KnowledgeProposal, NotebookNote, SourceDetail, TrashItem } from "@gunther/contracts";
+import { CircleAlert, RotateCcw, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { knowledgeApi } from "../api";
 import type { KnowledgeBase } from "../atlas";
 import { useEscape, useShortcut } from "../shortcuts/shortcuts";
+import { moveToTrash, restoreFromTrash } from "../trash/trash";
 import { ItemLayout, ItemSkeleton, type ItemNavigation } from "./ItemLayout";
 import { itemKey, type ItemRef } from "./itemRef";
 import { NoteItem } from "./NoteItem";
@@ -31,6 +32,8 @@ export interface ItemPageProps {
   onCreateBase: () => void;
   onNotify: (message: string) => void;
   onTitle: (title: string) => void;
+  /** The open item went to Trash; the host offers Undo and moves on. */
+  onTrashed?: (entry: TrashItem) => void;
 }
 
 async function loadItem(item: ItemRef): Promise<Loaded> {
@@ -68,13 +71,40 @@ export function ItemPage(props: ItemPageProps) {
     // `key` identifies the item; the object itself may be recreated by the host.
   }, [attempt, key]);
 
+  const current = loaded?.key === key ? loaded : null;
+  const trashing = useRef(false);
+  const inTrash = current?.type === "source" && Boolean(current.source.trashedAt);
+  const canTrash = Boolean(props.onTrashed) && (current?.type === "source" || current?.type === "note") && !inTrash;
+  const trash = async () => {
+    if (!current || current.type === "suggestion" || trashing.current) return;
+    trashing.current = true;
+    try {
+      const entry = await moveToTrash(current.type === "note" ? { kind: "note", id: current.note.id } : { kind: "source", id: current.source.id });
+      props.onTrashed?.(entry);
+    } catch (reason) {
+      props.onNotify(reason instanceof Error ? reason.message : "This item could not be moved to Trash.");
+    } finally {
+      trashing.current = false;
+    }
+  };
+  const restore = async () => {
+    try {
+      await restoreFromTrash({ kind: "source", id: item.id });
+      props.onNotify("Restored from Trash.");
+      setAttempt((value) => value + 1);
+    } catch (reason) {
+      props.onNotify(reason instanceof Error ? reason.message : "This item could not be restored.");
+    }
+  };
+
   useEscape(onBack, true, "blur");
   useShortcut("mod+[", onBack);
   useShortcut("j", () => onNext?.(), { enabled: Boolean(onNext) });
   useShortcut("k", () => onPrevious?.(), { enabled: Boolean(onPrevious) });
+  // ⌘⌫ deletes text inside a field, so it only moves the item from outside one.
+  useShortcut("mod+backspace", () => void trash(), { enabled: canTrash, allowInInputs: false });
 
-  const nav: ItemNavigation = { backLabel: props.backLabel, onBack, position: props.position, onPrevious, onNext };
-  const current = loaded?.key === key ? loaded : null;
+  const nav: ItemNavigation = { backLabel: props.backLabel, onBack, position: props.position, onPrevious, onNext, onTrash: canTrash ? () => void trash() : null };
 
   if (error && !current) {
     return (
@@ -88,6 +118,17 @@ export function ItemPage(props: ItemPageProps) {
     );
   }
   if (!current) return <ItemSkeleton nav={nav} />;
+  if (current.type === "source" && current.source.trashedAt) {
+    return (
+      <ItemLayout nav={nav} header={<header className="gx-item-header"><h1 className="gx-item-title">{current.source.title}</h1></header>}>
+        <div className="gx-banner" role="status">
+          <Trash2 size={16} />
+          <span><strong>This source is in Trash</strong><small>It stays out of Inbox, search and Ask until you restore it.</small></span>
+          <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => void restore()}><RotateCcw size={13} />Restore</button>
+        </div>
+      </ItemLayout>
+    );
+  }
 
   const shared = { bases: props.bases, nav, onResolved: props.onResolved, onOpenBase: props.onOpenBase, onNotify: props.onNotify, onTitle: props.onTitle };
   if (current.type === "note") return <NoteItem key={current.key} note={current.note} {...shared} onOpenNotebook={props.onOpenNotebook} onCreateBase={props.onCreateBase} />;

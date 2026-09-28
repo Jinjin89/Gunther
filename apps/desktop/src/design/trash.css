@@ -1,0 +1,111 @@
+/*
+ * Trash: the page, and the quiet ways into it.
+ *
+ * Nothing here is alarming. Moving to Trash is reversible, so its controls stay
+ * neutral; only the final "Delete forever" step uses the danger colour.
+ */
+
+.gx-trash { width: 100%; max-width: 920px; margin: 0 auto; }
+.gx-trash .gx-banner { margin-bottom: 16px; }
+
+.gx-trash-list {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  list-style: none;
+  border: 1px solid var(--gx-line-2);
+  border-radius: var(--gx-radius-lg);
+  background: var(--gx-surface);
+  overflow: hidden;
+  box-shadow: var(--gx-shadow-xs);
+}
+
+.gx-trash-row {
+  min-height: 64px;
+  padding: 12px 14px 12px 16px;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto auto;
+  align-items: center;
+  column-gap: 14px;
+  border-bottom: 1px solid var(--gx-line);
+  animation: gx-rise 320ms var(--gx-ease) both;
+  animation-delay: calc(var(--i, 0) * 40ms);
+  transition: background-color var(--gx-dur-fast) var(--gx-ease), opacity var(--gx-dur) var(--gx-ease);
+}
+.gx-trash-row:last-child { border-bottom: 0; }
+.gx-trash-row:hover { background: var(--gx-surface-2); }
+.gx-trash-row.is-working { opacity: 0.6; }
+.gx-trash-row > .gx-kind-tile { width: 32px; height: 32px; border-radius: 9px; }
+
+.gx-trash-body { min-width: 0; display: grid; gap: 3px; }
+.gx-trash-body strong {
+  overflow: hidden;
+  color: var(--gx-ink);
+  font-size: var(--gx-text-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gx-trash-body small { overflow: hidden; color: var(--gx-muted); font-size: var(--gx-text-xs); text-overflow: ellipsis; white-space: nowrap; }
+
+.gx-trash-when { display: grid; justify-items: end; gap: 3px; color: var(--gx-faint); font-size: var(--gx-text-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.gx-trash-when .is-soon { color: var(--gx-danger); }
+
+.gx-trash-actions { display: flex; align-items: center; gap: 6px; }
+
+/* An inline "are you sure", in place of the buttons that asked. */
+.gx-trash-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: var(--gx-ink);
+  font-size: var(--gx-text-xs);
+  animation: gx-rise 200ms var(--gx-ease) both;
+}
+.gx-trash-row .gx-trash-confirm { grid-column: 2 / -1; }
+.gx-trash-confirm.is-bar {
+  margin: -6px 0 16px;
+  padding: 9px 10px 9px 16px;
+  border: 1px solid color-mix(in srgb, var(--gx-danger) 24%, transparent);
+  border-radius: var(--gx-radius-lg);
+  background: var(--gx-danger-wash);
+}
+.gx-trash-confirm.is-bar > span { flex: 1; font-size: var(--gx-text-sm); }
+.gx-trash-row .gx-trash-confirm > span { flex: 1; min-width: 180px; text-align: right; }
+
+.gx-btn-danger { border-color: color-mix(in srgb, var(--gx-danger) 36%, transparent); background: var(--gx-surface); color: var(--gx-danger) !important; box-shadow: var(--gx-shadow-xs); }
+.gx-btn-danger:hover:not(:disabled) { background: var(--gx-danger-wash); }
+
+/* The ways in: an Inbox row, the item toolbar, library settings. */
+.gx-inbox-trash { width: 28px; height: 28px; color: var(--gx-faint) !important; }
+.gx-inbox-trash:hover:not(:disabled) { color: var(--gx-ink) !important; }
+.gx-item-trash { margin-left: 4px; color: var(--gx-muted) !important; }
+.gx-sheet-trash { display: inline-flex; align-items: center; gap: 6px; color: var(--gx-muted) !important; }
+.gx-sheet-trash:hover { color: var(--gx-danger) !important; }
+
+/* Undo lives in the toast for a few seconds after a move. */
+.atlas-toast .gx-toast-action {
+  margin-left: 6px;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--gx-on-ink) 28%, transparent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--gx-on-ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.atlas-toast .gx-toast-action:hover { background: color-mix(in srgb, var(--gx-on-ink) 12%, transparent); }
+.atlas-toast .gx-toast-action kbd { margin-left: 6px; opacity: 0.6; font-family: inherit; font-size: 11px; }
+
+@media (max-width: 720px) {
+  .gx-trash-row { grid-template-columns: 32px minmax(0, 1fr); row-gap: 10px; }
+  .gx-trash-when { grid-column: 2; justify-items: start; grid-auto-flow: column; gap: 10px; }
+  .gx-trash-actions, .gx-trash-row .gx-trash-confirm { grid-column: 2; justify-content: flex-start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gx-trash-row, .gx-trash-confirm { animation: none; }
+}
