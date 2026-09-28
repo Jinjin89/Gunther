@@ -228,11 +228,18 @@
 .pairing-ca-certificate summary { color: var(--gx-ink); }
 .settings-columns > section,
 .mobile-connection-settings,
+.library-folder-settings,
 .profile-card-v2,
 .profile-stats-v2 { border-color: var(--gx-line-2); border-radius: var(--gx-radius-lg); }
 .settings-action { border-color: var(--gx-line-2); background: var(--gx-surface); transition: border-color var(--gx-dur-fast) var(--gx-ease), background-color var(--gx-dur-fast) var(--gx-ease); }
 .settings-action:hover { border-color: var(--gx-line-3); background: var(--gx-surface-2); }
 .setting-row select { border-color: var(--gx-line-2); background: var(--gx-surface); }
+.setting-actions { display: flex; flex: none; align-items: center; gap: 6px; }
+.library-folder-path { color: var(--gx-ink); font-family: var(--gx-font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.library-folder-settings .setting-row small code,
+.library-folder-note code { font-family: var(--gx-font-mono); font-size: 11.5px; }
+.library-folder-note { margin: 0; padding: 12px 17px; color: var(--gx-muted); font-size: 12px; line-height: 1.55; }
+.setting-row.is-problem strong { display: inline-flex; align-items: center; gap: 6px; color: var(--gx-danger); }
 .profile-avatar-v2 { background: var(--gx-ink); color: var(--gx-on-ink); font-family: var(--gx-font-sans); font-size: 20px; font-weight: 600; }
 .profile-card-v2 h2,
 .profile-stats-v2 strong { font-family: var(--gx-font-display); font-weight: 500; }

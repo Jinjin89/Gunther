@@ -64,6 +64,16 @@ Android 模拟器开发默认使用 `http://10.0.2.2:8787/api/`，iOS 模拟器�
 
 如果 `.env` 修改了 `DATABASE_URL`、`ASSETS_DIR` 或 `RECORDINGS_DIR`，先以实际启动配置为准。排障前不要假定看到的 `data/` 就是当前 App 正在使用的目录。
 
+### Library 目录（`LIBRARY_ROOT`）
+
+设置 `LIBRARY_ROOT` 后，原件（`assets/`、`recordings/`）在启动时一次性移入 `<LIBRARY_ROOT>/.gunther/`，并为每个 Library 写出可读目录（`Inbox/`、`Libraries/`、`Trash/`）。数据库仍留在私有数据目录。桌面 App 默认 `~/Gunther`；开发模式默认关闭。布局与保证见 [Library folders](LIBRARY_FOLDERS.md)。
+
+备份时需要同时给出 Library 根目录，否则备份会因缺少原件而拒绝发布：
+
+```bash
+npm run backup:data -- --data-dir <数据目录> --library-root <LIBRARY_ROOT>
+```
+
 ### macOS 打包桌面
 
 默认：

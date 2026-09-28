@@ -59,6 +59,8 @@ npm run build:desktop
 
 **回收站**：Inbox 行、详情页工具栏与 Library 设置都可以“移到回收站”（⌘⌫），提示条可撤销（⌘Z）。回收站中的内容不出现在 Inbox、搜索与 Ask，可随时恢复；30 天后或“永久删除”时才真正删除，原件只在不再被其他来源使用时移除。
 
+**Library 目录**：每个 Library 同时是磁盘上的普通文件夹（默认 `~/Gunther`，由后端配置 `LIBRARY_ROOT` 决定），包含原件、Markdown 正文与 `source.json`；设置页显示位置并可在 Finder 中打开。详见 [Library folders](../../docs/LIBRARY_FOLDERS.md)。
+
 **快捷键**：统一注册表驱动匹配、提示与 ⌘/ 快捷键一览；桌面版中 ⌘N、⌘⇧C、⌘⇧R、⌘K、⌘,、⌘/、⌘⇧L 由原生菜单负责。
 
 界面遵循 [Gunther Design System](../../docs/DESIGN_SYSTEM.md)：白底黑字，颜色只用于 Library、来源类型与状态标识；设计 token 与组件样式位于 `src/design/`。

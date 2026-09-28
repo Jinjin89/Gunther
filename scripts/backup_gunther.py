@@ -568,11 +568,25 @@ def verify_backup(backup_directory: Path) -> dict[str, Any]:
     }
 
 
+def _originals_directories(
+    data_directory: Path, library_root: Path | None
+) -> tuple[Path, Path]:
+    """Where assets/ and recordings/ are: the data directory, or a library root's store."""
+
+    if library_root is None:
+        return data_directory / "assets", data_directory / "recordings"
+    store = library_root.expanduser().resolve() / ".gunther"
+    if not (store / "root.json").is_file() or store.is_symlink():
+        raise BackupError(f"{library_root} is not a Gunther library root")
+    return store / "assets", store / "recordings"
+
+
 def create_backup(
     data_directory: Path,
     output_directory: Path,
     *,
     lock_timeout: float = 2.0,
+    library_root: Path | None = None,
 ) -> Path:
     requested_data_directory = data_directory.expanduser()
     requested_output_directory = output_directory.expanduser()
@@ -591,6 +605,11 @@ def create_backup(
         raise BackupError(f"Expected a regular SQLite database at {database}")
     if output_directory == data_directory or output_directory.is_relative_to(data_directory):
         raise BackupError("Backup output must be outside the active Gunther data directory")
+    assets_directory, recordings_directory = _originals_directories(data_directory, library_root)
+    if library_root is not None and output_directory.is_relative_to(
+        library_root.expanduser().resolve()
+    ):
+        raise BackupError("Backup output must be outside the library root")
     output_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -619,14 +638,14 @@ def create_backup(
         file_records = [database_record]
         file_records.extend(
             _copy_data_tree(
-                data_directory / "assets",
+                assets_directory,
                 temporary_directory / "assets",
                 "assets",
             )
         )
         file_records.extend(
             _copy_data_tree(
-                data_directory / "recordings",
+                recordings_directory,
                 temporary_directory / "recordings",
                 "recordings",
             )
@@ -772,6 +791,12 @@ def _parser() -> argparse.ArgumentParser:
         help="Directory containing gunther.sqlite, assets/, and recordings/",
     )
     backup.add_argument(
+        "--library-root",
+        type=Path,
+        default=Path(os.environ["LIBRARY_ROOT"]) if os.environ.get("LIBRARY_ROOT") else None,
+        help="Library root whose .gunther/ holds the originals (default: LIBRARY_ROOT)",
+    )
+    backup.add_argument(
         "--output-dir",
         type=Path,
         default=PROJECT_ROOT / "backups",
@@ -807,6 +832,7 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.data_dir,
                 arguments.output_dir,
                 lock_timeout=arguments.lock_timeout,
+                library_root=arguments.library_root,
             )
             payload = verify_backup(result)
             payload["created"] = True

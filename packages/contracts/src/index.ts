@@ -196,6 +196,16 @@ export interface SourceDetail extends SourceSummary {
   trashedAt?: string | null;
 }
 
+/** Where this workspace keeps its libraries on disk. */
+export interface StorageStatus {
+  libraryRoot: string | null;
+  foldersEnabled: boolean;
+  /** Why a configured library root is not in use. */
+  problem: string | null;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+}
+
 export type TrashItemKind = "source" | "note" | "library";
 
 /** One thing moved to Trash, with everything that went in alongside it. */

@@ -8,12 +8,19 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import event, select
+from sqlalchemy.orm import ORMExecuteState, Session, sessionmaker
 
 from gunther.api import router
 from gunther.asset_service import AssetService
 from gunther.config import Settings, get_settings
 from gunther.conversation import create_knowledge_responder
-from gunther.database import Base, create_database_engine, create_session_factory
+from gunther.database import (
+    Base,
+    create_database_engine,
+    create_session_factory,
+    session_scope,
+)
 from gunther.device_auth import (
     AuthPrincipal,
     DeviceAuthError,
@@ -25,14 +32,18 @@ from gunther.extraction import create_extractor
 from gunther.knowledge_api import router as knowledge_router
 from gunther.knowledge_index import LocalEmbedder
 from gunther.lecture import create_lecture_summarizer
+from gunther.library_folders import WATCHED_MODELS, LibraryFolders
+from gunther.library_root import LibraryRootConflict, prepare_library_root
 from gunther.migrations import run_migrations
 from gunther.mobile_gateway_runtime import MobileGatewayRuntime
+from gunther.models import WorkspaceIdentity
 from gunther.ocr import OcrProvider, create_ocr_provider
 from gunther.online_search import create_online_search
 from gunther.pairing_exchange_guard import PairingExchangeGuard
 from gunther.processing import ProcessingWorker
 from gunther.request_body_limit import RequestBodyLimitMiddleware
 from gunther.service import KnowledgeService
+from gunther.storage_api import router as storage_router
 from gunther.storage_budget import StorageBudget
 from gunther.trash import TrashService
 from gunther.trash_api import router as trash_router
@@ -42,6 +53,26 @@ from gunther.web_capture import (
     WebFetcher,
     WebResolver,
 )
+
+
+def _refresh_folders_on_change(
+    sessions: sessionmaker[Session], folders: LibraryFolders
+) -> None:
+    """Ask the library folders to catch up whenever a watched row is written."""
+
+    @event.listens_for(sessions, "after_flush")
+    def _flushed(session: Session, _context: object) -> None:
+        if any(
+            isinstance(item, WATCHED_MODELS)
+            for item in (*session.new, *session.dirty, *session.deleted)
+        ):
+            folders.request_sync()
+
+    @event.listens_for(sessions, "do_orm_execute")
+    def _bulk(state: ORMExecuteState) -> None:
+        mapper = state.bind_mapper
+        if (state.is_update or state.is_delete) and mapper and mapper.class_ in WATCHED_MODELS:
+            folders.request_sync()
 
 
 def create_app(
@@ -57,6 +88,39 @@ def create_app(
     engine = create_database_engine(active_settings.database_url)
     run_migrations(engine, Base.metadata)
     sessions = create_session_factory(engine)
+    library_folders: LibraryFolders | None = None
+    storage_problem: str | None = None
+    if active_settings.library_root is not None:
+        try:
+            with session_scope(sessions) as session:
+                workspace_id = session.scalar(select(WorkspaceIdentity.workspace_id))
+            if not workspace_id:
+                raise LibraryRootConflict("This workspace has no identity yet")
+            library_root = prepare_library_root(
+                active_settings.library_root,
+                workspace_id,
+                previous_assets_dir=active_settings.previous_assets_dir,
+                previous_recordings_dir=active_settings.previous_recordings_dir,
+            )
+            library_folders = LibraryFolders(
+                sessions,
+                library_root.path,
+                assets_dir=library_root.assets_dir,
+                recordings_dir=library_root.recordings_dir,
+            )
+            _refresh_folders_on_change(sessions, library_folders)
+        except (LibraryRootConflict, OSError) as error:
+            storage_problem = str(error)
+            logging.getLogger(__name__).error("Library folders are off: %s", error)
+            # Nothing moves and nothing mixes: originals stay where they were.
+            active_settings = active_settings.model_copy(
+                update={
+                    "assets_dir": active_settings.previous_assets_dir
+                    or active_settings.assets_dir,
+                    "recordings_dir": active_settings.previous_recordings_dir
+                    or active_settings.recordings_dir,
+                }
+            )
     device_auth = DeviceAuthService(sessions)
     extractor = create_extractor(
         active_settings.deepseek_api_key,
@@ -127,9 +191,13 @@ def create_app(
         task = (asyncio.create_task(worker.run()) if active_settings.processing_worker_enabled
                 and background else None)
         trash_task = asyncio.create_task(purge_trash()) if background else None
+        if library_folders and background:
+            library_folders.start()
         try:
             yield
         finally:
+            if library_folders:
+                library_folders.stop()
             if trash_task:
                 trash_task.cancel()
             worker.stopping.set()
@@ -145,6 +213,8 @@ def create_app(
     application.state.knowledge_service = knowledge_service
     application.state.processing_worker = worker
     application.state.trash_service = trash_service
+    application.state.library_folders = library_folders
+    application.state.storage_problem = storage_problem
     application.state.online_search = online_search
     application.state.lecture_summarizer = lecture_summarizer
     application.state.device_auth = device_auth
@@ -272,6 +342,7 @@ def create_app(
     application.include_router(router, prefix=active_settings.api_prefix)
     application.include_router(knowledge_router, prefix=active_settings.api_prefix)
     application.include_router(trash_router, prefix=active_settings.api_prefix)
+    application.include_router(storage_router, prefix=active_settings.api_prefix)
     return application
 
 

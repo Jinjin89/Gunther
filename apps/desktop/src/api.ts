@@ -44,6 +44,7 @@ import type {
   TopicInput,
   SourceStructure,
   SourceProcessing,
+  StorageStatus,
   TrashItem,
   TrashItemKind,
 } from "@gunther/contracts";
@@ -471,6 +472,8 @@ export const knowledgeApi = {
       method: "POST",
       body: JSON.stringify({ knowledgeBaseId }),
     }),
+  storage: () => request<StorageStatus>("/storage"),
+  revealLibraryFolder: () => request<{ opened: boolean }>("/storage/reveal", { method: "POST" }),
   trash: () => request<TrashItem[]>("/trash"),
   trashSource: (id: string) => request<TrashItem>(`/sources/${encodeURIComponent(id)}/trash`, { method: "POST" }),
   trashNote: (id: string) => request<TrashItem>(`/notes/${encodeURIComponent(id)}/trash`, { method: "POST" }),

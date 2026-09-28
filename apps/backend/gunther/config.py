@@ -3,7 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from gunther.storage_budget import (
@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     database_url: str = f"sqlite+pysqlite:///{PROJECT_ROOT / 'data' / 'gunther.sqlite'}"
     assets_dir: Path = PROJECT_ROOT / "data" / "assets"
     recordings_dir: Path = PROJECT_ROOT / "data" / "recordings"
+    # Where libraries live on disk: originals under ``.gunther/`` and a readable
+    # folder per library beside them (see library_folders). Unset keeps every
+    # original in the data folder. The database never moves here.
+    library_root: Path | None = None
+    # Where originals were before the library root; they move into it once, at
+    # startup. Defaults to the folders above.
+    previous_assets_dir: Path | None = None
+    previous_recordings_dir: Path | None = None
     # Managed originals share one quota. The free-space floor protects SQLite,
     # the OS, and successful finalization from an otherwise full filesystem.
     storage_quota_bytes: int = DEFAULT_STORAGE_QUOTA_BYTES
@@ -74,6 +82,25 @@ class Settings(BaseSettings):
         if value is not None and not value.is_absolute():
             raise ValueError("Model/runtime paths must be absolute local paths")
         return value
+
+    @model_validator(mode="after")
+    def place_originals_in_library_root(self) -> "Settings":
+        if self.library_root is None:
+            return self
+        # Managed storage refuses symlinked paths, so use the real location.
+        root = self.library_root.expanduser()
+        if not root.is_absolute():
+            raise ValueError("library_root must be an absolute path")
+        self.library_root = root.resolve()
+        for name in ("assets", "recordings"):
+            field = f"{name}_dir"
+            if field in self.model_fields_set:
+                continue  # placed elsewhere on purpose
+            previous = f"previous_{field}"
+            if getattr(self, previous) is None:
+                setattr(self, previous, getattr(self, field))
+            setattr(self, field, self.library_root / ".gunther" / name)
+        return self
 
     @field_validator("api_prefix")
     @classmethod

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import errno
 import ipaddress
+import logging
 import os
 import re
 import secrets
@@ -172,6 +173,36 @@ def _secure_data_tree(data_dir: Path) -> None:
                     0o700 if is_directory else 0o600,
                     follow_symlinks=False,
                 )
+
+
+# Libraries live in the home folder by default: visible, easy to back up, and
+# outside Documents, which iCloud may sync while a recording is still growing.
+DEFAULT_LIBRARY_ROOT = Path.home() / "Gunther"
+
+
+def _desktop_settings(data_dir: Path, auth_token: str) -> Settings:
+    """The sidecar's settings; LIBRARY_ROOT in the data folder's .env overrides the default."""
+
+    base = {
+        "_env_file": data_dir / ".env",
+        "database_url": f"sqlite+pysqlite:///{data_dir / 'gunther.sqlite'}",
+        # Originals kept here by earlier versions move into the library root once.
+        "previous_assets_dir": data_dir / "assets",
+        "previous_recordings_dir": data_dir / "recordings",
+        "auth_token": auth_token,
+        "seed_demo": False,
+    }
+    settings = Settings(**base)
+    configured = settings.library_root
+    # The private data folder refuses symlinks, and library aliases are symlinks.
+    inside_data = configured is not None and configured.is_relative_to(data_dir.resolve())
+    if configured is None or inside_data:
+        if inside_data:
+            logging.getLogger(__name__).warning(
+                "LIBRARY_ROOT cannot be inside Gunther's data folder; using ~/Gunther"
+            )
+        settings = Settings(**base, library_root=DEFAULT_LIBRARY_ROOT)
+    return settings
 
 
 def _acquire_instance_lock(data_dir: Path) -> DesktopInstanceLock:
@@ -560,14 +591,7 @@ def main() -> None:
                 _ensure_private_directory(private_dir)
 
             auth_token = secrets.token_urlsafe(32)
-            settings = Settings(
-                _env_file=data_dir / ".env",
-                database_url=f"sqlite+pysqlite:///{data_dir / 'gunther.sqlite'}",
-                assets_dir=data_dir / "assets",
-                recordings_dir=data_dir / "recordings",
-                auth_token=auth_token,
-                seed_demo=False,
-            )
+            settings = _desktop_settings(data_dir, auth_token)
             gateway_runtime = MobileGatewayRuntime(enabled=not args.disable_mobile_gateway)
             sidecar_app = create_app(settings, mobile_gateway=gateway_runtime)
             config = uvicorn.Config(

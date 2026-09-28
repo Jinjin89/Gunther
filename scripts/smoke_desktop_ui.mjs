@@ -383,6 +383,7 @@ async function run() {
   const chromeBinary = await findChrome();
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "gunther-desktop-ui-smoke."));
   const dataDirectory = path.join(temporaryRoot, "data");
+  const libraryRoot = path.join(dataDirectory, "Gunther");
   const distDirectory = path.join(temporaryRoot, "dist");
   const chromeProfile = path.join(temporaryRoot, "chrome");
   await Promise.all([mkdir(dataDirectory), mkdir(chromeProfile)]);
@@ -408,12 +409,12 @@ async function run() {
 
     const backendEnvironment = {
       ...process.env,
-      ASSETS_DIR: path.join(dataDirectory, "assets"),
       CORS_ORIGINS: JSON.stringify([uiOrigin]),
       DATABASE_URL: `sqlite+pysqlite:///${path.join(dataDirectory, "gunther.sqlite")}`,
       DEEPSEEK_API_KEY: "",
       OPENAI_API_KEY: "",
-      RECORDINGS_DIR: path.join(dataDirectory, "recordings"),
+      // Originals and readable library folders live in a root inside the smoke's data.
+      LIBRARY_ROOT: libraryRoot,
       SEED_DEMO: "false",
       UV_CACHE_DIR: path.join(root, ".uv-cache"),
     };
@@ -600,6 +601,27 @@ async function run() {
     if (!filedNote?.promotedSourceId || filedNote.promotedSourceId !== source.id) {
       throw new SmokeFailure("Filed note history did not retain its promoted source identity");
     }
+    // The library is also a readable folder on disk, listing the filed source.
+    const storage = await jsonFrom(`${backendOrigin}/api/storage`);
+    if (!storage.foldersEnabled || storage.libraryRoot !== libraryRoot) {
+      throw new SmokeFailure(`Library folders were not in use: ${JSON.stringify(storage)}`);
+    }
+    const libraryDirectory = path.join(libraryRoot, "Libraries", libraryTitle);
+    let sourceFolder = null;
+    for (let attempt = 0; attempt < 100 && !sourceFolder; attempt += 1) {
+      const listed = await readFile(path.join(libraryDirectory, "library.json"), "utf8")
+        .then((body) => JSON.parse(body).sources.find((item) => item.id === source.id))
+        .catch(() => null);
+      if (listed) sourceFolder = path.join(libraryDirectory, listed.folder);
+      else await delay(100);
+    }
+    if (!sourceFolder) throw new SmokeFailure("The filed source did not appear in its library folder");
+    const described = JSON.parse(await readFile(path.join(sourceFolder, "source.json"), "utf8"));
+    const text = await readFile(path.join(sourceFolder, "content.md"), "utf8");
+    if (described.id !== source.id || !text.trim()) {
+      throw new SmokeFailure("The source folder did not describe the filed source");
+    }
+
     const queueEmpty = await cdp.evaluate("JSON.parse(localStorage.getItem('gunther:local-captures') || '[]').length === 0");
     if (!queueEmpty) throw new SmokeFailure("Successful capture remained in the local retry queue");
 
@@ -838,7 +860,7 @@ async function run() {
 
     result = {
       status: "passed",
-      checks: 44,
+      checks: 47,
       browser: path.basename(chromeBinary),
       knowledgeBaseId: knowledgeBase.id,
       noteId: filedNote.id,
@@ -852,6 +874,7 @@ async function run() {
         "Inbox item filed through UI",
         "filed source found from search-first Home",
         "note-to-source provenance preserved",
+        "filed source written to its readable library folder",
         "successful local retry copy cleared",
         "source reopened and reviewed from its preserved original",
         "grounded Ask answer persisted with citations",

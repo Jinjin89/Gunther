@@ -713,3 +713,53 @@ def test_nonempty_asset_and_completed_recording_survive_full_restore(
     rejected_binding_verify = _run("verify", str(tampered_binding_backup))
     assert rejected_binding_verify.returncode == 2
     assert "binding differs" in rejected_binding_verify.stderr
+
+
+def test_backup_reads_originals_from_the_library_root(tmp_path: Path) -> None:
+    """Once originals live in a library root, a backup must find them there."""
+
+    data_directory = tmp_path / "data"
+    data_directory.mkdir(mode=0o700)
+    library_root = tmp_path / "Gunther"
+    settings = Settings(
+        database_url=f"sqlite+pysqlite:///{data_directory / 'gunther.sqlite'}",
+        library_root=library_root,
+        previous_assets_dir=data_directory / "assets",
+        previous_recordings_dir=data_directory / "recordings",
+        seed_demo=False,
+        deepseek_api_key=None,
+        openai_api_key=None,
+        stt_provider="openai",
+        processing_worker_enabled=False,
+    )
+    asset_bytes = b"Original kept in the library root.\n"
+    with TestClient(create_app(settings)) as client:
+        client.app.state.library_folders.stop()
+        capture = client.post(
+            "/api/captures/assets",
+            params={"title": "Root original", "fileName": "root.txt", "kind": "paper"},
+            headers={"Content-Type": "text/plain"},
+            content=asset_bytes,
+        )
+        assert capture.status_code == 201
+        relative_path = client.app.state.settings.assets_dir.relative_to(library_root)
+    stored = list((library_root / relative_path).rglob("*"))
+    assert any(path.is_file() and path.read_bytes() == asset_bytes for path in stored)
+
+    without_root = _run(
+        "backup", "--data-dir", str(data_directory), "--output-dir", str(tmp_path / "a")
+    )
+    assert without_root.returncode == 2, "a backup missing its originals is never published"
+
+    with_root = _run(
+        "backup",
+        "--data-dir", str(data_directory),
+        "--library-root", str(library_root),
+        "--output-dir", str(tmp_path / "b"),
+    )
+    assert with_root.returncode == 0, with_root.stderr
+    [backup] = list((tmp_path / "b").iterdir())
+    assert any(
+        path.is_file() and path.read_bytes() == asset_bytes
+        for path in (backup / "assets").rglob("*")
+    )

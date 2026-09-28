@@ -60,6 +60,7 @@ import { BrandMark } from "../design/BrandMark";
 import { LibraryPicker } from "../items/LibraryPicker";
 import { parseDelimitedTable } from "../items/sourceContent";
 import { comboKeys, formatCombo, useEscape, useShortcut, withShortcut } from "../shortcuts/shortcuts";
+import { LibraryFolderSettings } from "./LibraryFolderSettings";
 import { CAPTURE_CONTROL_DOM_EVENT, type CaptureControl, type CaptureKind, type RecordingContext } from "../capture/captureTypes";
 import { getMenuBarMode, isTauriRuntime, setMenuBarMode, type MenuBarMode } from "../capture/captureBridge";
 
@@ -1007,6 +1008,8 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
         <button className="settings-action" onClick={checkHealth} disabled={checking}>{checking ? "Checking services…" : "Check all services"} <ArrowRight size={13} /></button>
       </section>
     </div>
+
+    <LibraryFolderSettings onNotify={onNotify} onCopy={(label, value) => void copyValue(label, value)} />
 
     <section className="mobile-connection-settings">
       <div className="setting-heading"><Smartphone size={16} /><span><strong>Mobile connection</strong><small>Pair a phone without exposing your desktop token</small></span></div>
