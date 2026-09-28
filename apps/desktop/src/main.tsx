@@ -10,10 +10,17 @@ import "./design/primitives.css";
 import "./design/shell.css";
 import "./design/home.css";
 import "./design/pages.css";
+import "./design/prose.css";
+import "./design/item.css";
+import "./design/shortcuts.css";
 import "./design/legacy.css";
+// Capture's new surface loads after the legacy layer so its layout wins.
+import "./design/capture.css";
 import { applyTheme, readThemePreference, resolveTheme } from "./design/theme";
+import { installExternalLinkHandler } from "./externalLinks";
 
 document.documentElement.dataset.runtime = "__TAURI_INTERNALS__" in window ? "native" : "web";
+if ("__TAURI_INTERNALS__" in window) installExternalLinkHandler();
 // Apply the saved appearance before the first paint so dark mode never flashes light.
 applyTheme(resolveTheme(readThemePreference()));
 

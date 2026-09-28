@@ -1,0 +1,40 @@
+/* Keyboard shortcut reference sheet and key combos. */
+.gx-combo { display: inline-flex; align-items: center; gap: 3px; }
+.gx-combo kbd { min-width: 21px; height: 21px; padding: 0 6px; font-size: 11px; }
+.gx-sheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: var(--gx-overlay);
+  animation: gx-fade var(--gx-dur) var(--gx-ease) both;
+}
+.gx-shortcut-sheet {
+  width: min(760px, 100%);
+  max-height: min(680px, calc(100vh - 64px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--gx-line-2);
+  border-radius: 18px;
+  background: var(--gx-surface);
+  box-shadow: var(--gx-shadow-lg);
+  animation: gx-pop var(--gx-dur-slow) var(--gx-ease) both;
+}
+.gx-shortcut-sheet > header { padding: 16px 14px 14px 20px; display: flex; align-items: center; gap: 11px; border-bottom: 1px solid var(--gx-line); }
+.gx-shortcut-sheet > header h2 { margin: 0; flex: 1; font-family: var(--gx-font-display); font-size: 21px; font-weight: 500; letter-spacing: -0.012em; }
+.gx-shortcut-icon { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--gx-line-2); border-radius: 8px; background: var(--gx-surface-2); color: var(--gx-muted); }
+.gx-shortcut-groups { padding: 8px 20px 18px; overflow-y: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 36px; }
+.gx-shortcut-groups section { padding-top: 14px; break-inside: avoid; }
+.gx-shortcut-groups h3 { margin: 0 0 6px; color: var(--gx-faint); font-size: 11px; font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; }
+.gx-shortcut-groups dl { margin: 0; }
+.gx-shortcut-groups dl > div { min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--gx-line); }
+.gx-shortcut-groups dl > div:last-child { border-bottom: 0; }
+.gx-shortcut-groups dt { color: var(--gx-ink-2); font-size: var(--gx-text-sm); }
+.gx-shortcut-groups dd { margin: 0; display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.gx-shortcut-groups dd > span { display: inline-flex; align-items: center; gap: 6px; }
+.gx-shortcut-groups dd em { color: var(--gx-ghost); font-size: 11px; font-style: normal; }
+.gx-shortcut-sheet > footer { padding: 11px 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; border-top: 1px solid var(--gx-line); background: var(--gx-surface-2); color: var(--gx-faint); font-size: var(--gx-text-xs); }
+@media (max-width: 640px) { .gx-shortcut-groups { grid-template-columns: 1fr; } }

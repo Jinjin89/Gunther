@@ -14,7 +14,11 @@ stylesheet, so its tokens win everywhere.
 | `shell.css` | Titlebar, sidebar, page frame and page header |
 | `home.css` | Search-first Home: greeting, composer, `@` menu, capture chips, "jump back in", results |
 | `pages.css` | Libraries and Inbox |
-| `legacy.css` | Brings the library workspace, Ask, Notebook, Capture, Settings and Account onto the system |
+| `legacy.css` | Brings the library workspace, Ask, Notebook, Settings and Account onto the system |
+| `prose.css` | Rendered Markdown (`gx-prose`) and the Markdown editor |
+| `item.css` | Item pages: toolbar, header, decision rail, library picker, claims, and each kind's reader (player, site card, file card, image stage, data grid, suggestion) |
+| `capture.css` | The Capture surface (overlay and its own window) and the recorder inside it; loads after `legacy.css` |
+| `shortcuts.css` | The keyboard shortcut sheet and key combos |
 | `BrandMark.tsx` | The single-stroke "G" whose crossbar ends in a knowledge node |
 | `LibraryGlyph.tsx` | A library's identity: its colour and first letter |
 
@@ -121,6 +125,101 @@ the Capture `+` turns 90°, library glyphs tilt −6°, the theme icon spins in.
 - **Loading**: skeleton rows and cards shimmer until the first data arrives, so
   empty states never flash.
 - **Toast**: ink pill, green check, springs up from the bottom right.
+
+## Item pages
+
+Every capture opens into its own page — from Inbox, Home search, "Recently
+captured" and a library's Sources. The page is a reading column (760 px)
+beside a quiet decision rail (288 px, sticky), under a sticky toolbar with
+**Back**, **↑ / ↓ (K / J)** and "3 of 12".
+
+- **Header**: a kind tile in its identity colour, the kind, a serif title
+  (32 px) and one line of facts.
+- **Decision rail**: one card that says what is waiting and offers the next
+  step — *Choose a home* (library picker + File, ⌘↵), *Review what Gunther
+  found* (Accept all ⌘↵ / Dispute all), *Add to trusted knowledge?* (Accept ⌘↵ /
+  Hold) or *Filed in …*. Deciding moves on to the next item. Below it: the
+  extracted claims (accept or dispute one at a time) and the details, with
+  copyable fingerprints.
+- **One reader per kind**:
+  - *Note* — rendered Markdown in **Read**; **Write** (E, ⌘E, or double-click)
+    styles Markdown as you type, autosaves, and saves on the way out.
+    Checkboxes can be ticked while reading.
+  - *Recording* — player (46 px ink play button, a track with rose moment
+    markers, ±15 s, speed), moment chips, **Overview** (summary, numbered key
+    points, actions, open questions, terms) and **Transcript** (clickable
+    timestamps, the passage being played highlighted, find in transcript).
+    Space plays, ← / → skip.
+  - *Web page* — a site card (amber initial, host, path, "Open page"), *Why you
+    saved it*, then the captured text as plain paragraphs.
+  - *Web research* — the query, the answer, referenced pages as cards.
+  - *Document* — a file card (type label on a folded-corner tile, size, pages,
+    reading state with Try again), then Markdown / CSV / text originals shown
+    as themselves, or indexed blocks rebuilt into pages, paragraphs, run-in
+    headings and tables.
+  - *Photo* — the image on a neutral stage (click for a full-screen viewer),
+    and the recognised text; hovering a line outlines its region on the image.
+  - *Table* — a data grid: sticky header, row numbers, tabular figures,
+    numbers right-aligned, "Copy table".
+  - *Suggestion* — the proposed unit on a card, and the conversation it came
+    from.
+- The **library picker** replaces native selects: identity glyph, source
+  count, type to filter, "New library…"; Inbox appears as its own option where
+  a capture may stay unfiled.
+
+## Markdown
+
+Rendering uses **react-markdown + remark-gfm** (CommonMark and GitHub
+Flavored Markdown: tables, task lists, strikethrough, autolinks, footnotes)
+with single line breaks kept. Output is React elements only: raw HTML shows as
+the text the author wrote, links open only for http(s) and mailto, and remote
+images become links so a note never loads a tracking pixel. Prose is set in
+the display serif (16 px / 1.72), with sans tables, mono code blocks with a
+language label and copy, ink task boxes, and hairline quotes.
+
+Writing uses **CodeMirror 6** with the Markdown language (loaded only when
+you start writing, in its own chunk): headings, emphasis, code and quotes are
+styled as you type; Enter continues lists and tasks; ⌘B, ⌘I, ⌘K (link a
+selection), ⌘⇧7 / 8 / 9 for lists; a quiet formatting toolbar. The text stays
+plain, portable Markdown.
+
+## Capture
+
+Capture opens ready to write. A type bar — Note, Web page, Document, Photo,
+Recording, Table (⌘1–6) — switches kinds without losing what was typed. Pasting
+a link or spreadsheet rows into a note offers to switch; dropping a file
+anywhere attaches it. The footer holds **Save to** (Inbox or a library),
+**Discard**, and **Save ⌘↵**; Esc hides Capture (the recording keeps going).
+See `docs/CAPTURE_MENU_BAR_DESIGN_CN.md` for states, closing and quitting.
+
+## Keyboard
+
+One registry (`src/shortcuts/shortcuts.ts`) drives matching, tooltips and the
+⌘/ sheet. Single-letter shortcuts pause while typing; handled keys never reach
+global shortcuts; Esc closes the top-most layer first (menu → viewer → dialog
+→ page back). In the desktop app the native menu owns ⌘N, ⌘⇧C, ⌘⇧R, ⌘K, ⌘,,
+⌘/ and ⌘⇧L, so each key fires once.
+
+| Keys | Action |
+| --- | --- |
+| ⌘K, / | Search |
+| ⌘, | Settings |
+| ⌘/, ? | Keyboard shortcuts |
+| ⌘1 / ⌘2 / ⌘3 | Home / Libraries / Inbox |
+| ⌘⇧C, ⌘⇧R, ⌘N | Capture, new recording, new note |
+| J / K, ↑ / ↓, ↵ | Move through Inbox and items, open |
+| ⌘↵ | File or accept the open item; save in Capture |
+| E, ⌘E | Write the open note; switch writing and reading |
+| Esc, ⌘[ | Close, or go back |
+
+## Menu bar
+
+The status item is the Gunther mark drawn as a template image (`tray_glyph.rs`,
+36 px). Unsaved or reviewable work adds a badge in the G's opening; preparing
+hollows the node. While recording the mark steps back to grey, the node becomes
+a red light and the time shows beside it; paused shows amber bars. The menu
+lists only what applies, and Settings can hide the item until something is
+being captured.
 
 ## Appearance
 

@@ -43,6 +43,8 @@ export default defineConfig({
           if (/[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return "react";
           if (id.includes("lucide-react")) return "icons";
           if (id.includes("@tauri-apps")) return "tauri";
+          // The Markdown editor loads on first use; keep CodeMirror out of the startup chunk.
+          if (/[\\/](@codemirror|@lezer|crelt|style-mod|w3c-keyname)[\\/]/.test(id)) return "editor";
           return "vendor";
         },
       },

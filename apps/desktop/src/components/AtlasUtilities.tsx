@@ -1,9 +1,17 @@
 import type { CreateKnowledgeBaseInput, RecordingSession } from "@gunther/contracts";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import {
   ArrowRight,
   Bookmark,
+  FileUp,
+  Globe,
+  ImagePlus,
+  LoaderCircle,
+  Mic,
+  NotebookPen,
+  Search,
+  Trash2,
   BookOpen,
   Camera,
   Check,
@@ -48,7 +56,12 @@ import {
   type PairedDevice,
 } from "../devicePairing";
 import { LectureRecorder, loadRecordingDrafts, recordingDraftsForWorkspace, removeRecordingDraft, type LectureRecorderHandle, type RecorderSnapshot, type RecordingDraft } from "./LectureRecorder";
+import { BrandMark } from "../design/BrandMark";
+import { LibraryPicker } from "../items/LibraryPicker";
+import { parseDelimitedTable } from "../items/sourceContent";
+import { comboKeys, formatCombo, useEscape, useShortcut, withShortcut } from "../shortcuts/shortcuts";
 import { CAPTURE_CONTROL_DOM_EVENT, type CaptureControl, type CaptureKind, type RecordingContext } from "../capture/captureTypes";
+import { getMenuBarMode, isTauriRuntime, setMenuBarMode, type MenuBarMode } from "../capture/captureBridge";
 
 export type { CaptureKind, RecordingContext } from "../capture/captureTypes";
 
@@ -103,14 +116,25 @@ const formatRecorderTime = (seconds: number) => {
   return hours ? `${hours.toString().padStart(2, "0")}:${minutes}:${remainder}` : `${minutes}:${remainder}`;
 };
 
-const captureKinds: Array<{ id: CaptureKind; label: string; description: string; icon: typeof FileText; tone: string }> = [
-  { id: "note", label: "Quick note", description: "Write a thought or paste text", icon: FileText, tone: "clay" },
-  { id: "file", label: "Document", description: "Import a paper, file, or dataset", icon: Paperclip, tone: "blue" },
-  { id: "image", label: "Photo or scan", description: "Keep a page, board, or diagram", icon: Camera, tone: "violet" },
-  { id: "link", label: "Web page", description: "Save a link with context", icon: Link2, tone: "sand" },
-  { id: "recording", label: "Recording", description: "Record live or import audio", icon: Mic2, tone: "green" },
-  { id: "table", label: "Table or data", description: "Paste structured rows", icon: Table2, tone: "web" },
+const captureKinds: Array<{ id: CaptureKind; label: string; icon: typeof FileText; tone: string }> = [
+  { id: "note", label: "Note", icon: NotebookPen, tone: "clay" },
+  { id: "link", label: "Web page", icon: Globe, tone: "amber" },
+  { id: "file", label: "Document", icon: FileText, tone: "blue" },
+  { id: "image", label: "Photo", icon: Camera, tone: "violet" },
+  { id: "recording", label: "Recording", icon: Mic, tone: "rose" },
+  { id: "table", label: "Table", icon: Table2, tone: "green" },
 ];
+
+const FILE_ACCEPT = ".pdf,.docx,.epub,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,application/pdf,text/*";
+const fileExtension = (name: string) => (name.match(/\.([a-z0-9]{1,5})$/i)?.[1] ?? "file").toUpperCase();
+const formatFileSize = (bytes: number) => bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+const hostLabel = (url: string) => {
+  try {
+    return new URL(url).host.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+};
 
 export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspaceId, baseId = null, chapterId, initialKind = null, initialRecordingContext = "lecture", surface = "overlay", onRecordingState, onRecorderSnapshot, onHide, onClose, onSearch, onCaptured, onAssetCaptured }: CaptureSheetProps) {
   const [kind, setKind] = useState<CaptureKind | null>(null);
@@ -128,6 +152,10 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
   const [recorderSnapshot, setRecorderSnapshot] = useState<RecorderSnapshot>(emptyRecorderSnapshot);
   const [recordingDraftId, setRecordingDraftId] = useState<string | null>(null);
   const [recordingDrafts, setRecordingDrafts] = useState<RecordingDraft[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const [pasteHint, setPasteHint] = useState<{ kind: "link" | "table"; value: string } | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const shortcutActions = useRef({ submit: () => undefined as void, switchKind: (_: CaptureKind) => undefined as void, hide: () => undefined as void });
   const [interruptedRecordings, setInterruptedRecordings] = useState<RecordingSession[]>([]);
   const [recoveringRecordingId, setRecoveringRecordingId] = useState<string | null>(null);
   const recorderRef = useRef<LectureRecorderHandle>(null);
@@ -145,7 +173,10 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
   useEffect(() => {
     if (!open) return;
     setTargetBaseId(baseId ?? "");
-    setKind(initialKind);
+    // Capture opens ready to write; every other type is one keystroke away.
+    setKind(initialKind ?? "note");
+    setPasteHint(null);
+    setDragging(false);
     setRecordingContext(initialRecordingContext);
     setFileName("");
     setFileError(null);
@@ -224,6 +255,24 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
     window.addEventListener(CAPTURE_CONTROL_DOM_EVENT, control);
     return () => window.removeEventListener(CAPTURE_CONTROL_DOM_EVENT, control);
   }, [hasUnreviewedWork, recorderSnapshot.phase, surface]);
+  // A photo keeps a local thumbnail while it waits to be saved.
+  useEffect(() => {
+    if (!selectedFile || !selectedFile.type.startsWith("image/")) {
+      setPreviewUrl(null);
+      return undefined;
+    }
+    const url = URL.createObjectURL(selectedFile);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [selectedFile]);
+  useShortcut("mod+enter", () => shortcutActions.current.submit(), { enabled: open, allowInInputs: true, allowInModal: true });
+  useShortcut(["mod+1", "mod+2", "mod+3", "mod+4", "mod+5", "mod+6"], (event) => {
+    const index = Number(event.code.replace(/\D/g, "") || event.key) - 1;
+    const next = captureKinds[index];
+    if (next) shortcutActions.current.switchKind(next.id);
+  }, { enabled: open, allowInInputs: true, allowInModal: true });
+  // In its own window, Esc hides Capture to the menu bar; nothing is lost.
+  useEscape(() => shortcutActions.current.hide(), open && surface === "window");
   if (!open) return null;
 
   const restoreRecording = async (draft: RecordingDraft) => {
@@ -356,16 +405,86 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
     setFileError(null);
     setSelectedFile(null);
   };
-  const returnToCaptureOptions = () => {
+  const discardCapture = () => {
     if (!confirmDiscard()) return;
     clearCaptureInput();
-    setKind(null);
+    setPasteHint(null);
+    if (kind === null) setKind("note");
   };
   const switchCaptureKind = (nextKind: CaptureKind) => {
-    if (nextKind === kind || !confirmDiscard()) return;
-    clearCaptureInput();
+    if (nextKind === kind || recordingActive) return;
+    const keepsFile = selectedFile && (nextKind === "file" || (nextKind === "image" && selectedFile.type.startsWith("image/")));
+    const losesFile = Boolean(selectedFile) && !keepsFile;
+    const losesText = nextKind === "recording" && Boolean(content.trim() || linkUrl.trim());
+    if ((losesFile || losesText) && !window.confirm("Switch type and drop what you have entered? This cannot be undone.")) return;
+    if (losesFile) {
+      setSelectedFile(null);
+      setFileName("");
+    }
+    if (nextKind === "recording") {
+      setContent("");
+      setLinkUrl("");
+      setTitle(recordingTitle(recordingContext));
+    } else if (kind === "recording") {
+      setTitle("");
+      setContent("");
+    }
+    setFileError(null);
+    setPasteHint(null);
     setKind(nextKind);
-    if (nextKind === "recording") setTitle(recordingTitle(recordingContext));
+  };
+  const acceptFile = (file: File, targetKind: "file" | "image") => {
+    setFileError(null);
+    if (targetKind === "image" && !file.type.startsWith("image/")) {
+      setFileError("Choose an image from your camera or photo library.");
+      return;
+    }
+    if (file.size > 512 * 1024 * 1024) {
+      setFileError(`Choose ${targetKind === "image" ? "an image" : "a file"} smaller than 512 MB.`);
+      return;
+    }
+    if (!file.size) {
+      setFileError("The selected file is empty.");
+      return;
+    }
+    if (kind !== targetKind) {
+      if (kind === "recording") setContent("");
+      setKind(targetKind);
+    }
+    setSelectedFile(file);
+    setFileName(file.name);
+    if (!title.trim() || title === selectedFile?.name.replace(/\.[^.]+$/, "")) setTitle(file.name.replace(/\.[^.]+$/, ""));
+  };
+  const removeFile = () => {
+    if (selectedFile && title === selectedFile.name.replace(/\.[^.]+$/, "")) setTitle("");
+    setSelectedFile(null);
+    setFileName("");
+  };
+  const onDropFile = (event: DragEvent<HTMLFormElement>) => {
+    if (!event.dataTransfer?.types.includes("Files")) return;
+    event.preventDefault();
+    setDragging(false);
+    if (recordingActive) return;
+    const file = event.dataTransfer.files[0];
+    if (file) acceptFile(file, file.type.startsWith("image/") ? "image" : "file");
+  };
+  const onPasteText = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (kind !== "note" || content.trim()) return;
+    const pasted = event.clipboardData.getData("text/plain").trim();
+    const url = /^\S+$/.test(pasted) ? normalizedWebUrl(pasted) : null;
+    if (url && /^(https?:\/\/|www\.)/i.test(pasted)) setPasteHint({ kind: "link", value: url });
+    else if (parseDelimitedTable(pasted) && pasted.includes("\n")) setPasteHint({ kind: "table", value: pasted });
+  };
+  const applyPasteHint = () => {
+    if (!pasteHint) return;
+    if (pasteHint.kind === "link") {
+      setLinkUrl(pasteHint.value);
+      setContent("");
+      setKind("link");
+    } else {
+      setKind("table");
+    }
+    setPasteHint(null);
   };
   const keepDraftAndClose = () => {
     setRecordingActive(false);
@@ -395,22 +514,158 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
     void getCurrentWindow().startDragging();
   };
   const hideActionLabel = recorderSnapshot.phase === "stopped" ? "Hide review" : "Hide to menu bar";
+  const activeKind = captureKinds.find((item) => item.id === kind) ?? captureKinds[0]!;
+  const detectedTable = kind === "table" && content.trim() ? parseDelimitedTable(content) : null;
+  const linkPreview = kind === "link" ? normalizedWebUrl(linkUrl) : null;
+  const statusLine = kind === "recording"
+    ? recorderIsLive ? `${recorderStatus} · ${formatRecorderTime(recorderSnapshot.seconds)}` : recorderSnapshot.phase === "stopped" ? "Review the recording, then save it" : "Recording keeps going when this window is hidden"
+    : targetBase ? `Saving to ${targetBase.title}` : "Saved to Inbox until you choose a home";
+  const submitLabel = working ? "Saving…" : ({ note: "Save note", link: "Save web page", file: "Save document", image: "Save photo", table: "Save table", recording: "Save recording" } as const)[activeKind.id];
+  const onKindKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+    event.preventDefault();
+    const index = captureKinds.findIndex((item) => item.id === activeKind.id);
+    const next = captureKinds[(index + (event.key === "ArrowRight" ? 1 : captureKinds.length - 1)) % captureKinds.length]!;
+    switchCaptureKind(next.id);
+    window.requestAnimationFrame(() => document.getElementById(`capture-kind-${next.id}`)?.focus());
+  };
 
-  const captureForm = <form ref={captureFormRef} className={`capture-sheet ${surface === "window" ? "is-window-surface" : ""} ${kind === "recording" ? "is-recording-capture" : ""} ${kind === null ? "is-capture-launcher" : ""}`} onMouseDown={(event) => event.stopPropagation()} onSubmit={submit}>
-        <header role="none" data-tauri-drag-region={surface === "window" ? true : undefined} onMouseDown={startWindowDrag}><div data-tauri-drag-region={surface === "window" ? true : undefined}><span className="capture-spark"><Sparkles size={16} /></span><span data-tauri-drag-region={surface === "window" ? true : undefined}><small data-tauri-drag-region={surface === "window" ? true : undefined}>{kind === null ? "One place for every source" : kind === "recording" ? recorderSnapshot.phase === "stopped" ? "Review before saving" : "Persistent recording session" : targetBase ? `Saving to ${targetBase.title}` : "Capture now · organize later"}</small><strong data-tauri-drag-region={surface === "window" ? true : undefined}>{kind === null ? "Capture something" : kind === "recording" ? title || "Record audio" : captureKinds.find((item) => item.id === kind)?.label ?? "New source"}</strong></span></div><div className="capture-header-actions" data-no-drag>{kind !== null && !recordingActive && <button type="button" onClick={returnToCaptureOptions} title="Back to capture options" aria-label="Back to capture options"><ChevronRight className="capture-back-icon" size={16} /></button>}{surface === "window" ? <button type="button" className="capture-hide-to-menu" onClick={keepInBackground} title={hideActionLabel} aria-label={hideActionLabel}><Minimize2 size={15} /><span>{hideActionLabel}</span></button> : <>{kind === "recording" && recordingActive && <button type="button" onClick={keepInBackground} title="Keep recording in the background" aria-label="Minimize recording"><Minimize2 size={16} /></button>}<button type="button" onClick={closeCaptureSurface} disabled={recordingActive} title={recordingActive ? "Save or keep this session as a draft before closing" : undefined} aria-label="Close capture"><X size={17} /></button></>}</div></header>
-        <div className="capture-target-row"><label htmlFor="capture-destination">Destination</label><select id="capture-destination" value={targetBaseId} disabled={recordingActive} onChange={(event) => setTargetBaseId(event.target.value)}><option value="">Inbox · organize later</option>{bases.map((base) => <option value={base.id} key={base.id}>{base.title}</option>)}</select>{chapter && <span>→ {chapter.title}</span>}<small>{targetBase ? "You can change this later" : "No library required"}</small></div>
-        {kind === null && <div className="capture-launcher-grid">{captureKinds.map(({ id, label, description, icon: Icon, tone }) => <button type="button" key={id} onClick={() => { setKind(id); setFileError(null); setFileName(""); setSelectedFile(null); setLinkUrl(""); if (id === "recording") setTitle(recordingTitle(recordingContext)); }}><span className={`capture-action-icon tone-${tone}`}><Icon size={20} /></span><span><strong>{label}</strong><small>{description}</small></span><ArrowRight size={14} /></button>)}{onSearch && <button type="button" onClick={() => { if (surface === "overlay") onClose(true); onSearch(); }}><span className="capture-action-icon tone-web"><Globe2 size={20} /></span><span><strong>Web search</strong><small>Research, compare, then save</small></span><ArrowRight size={14} /></button>}</div>}
-        {kind !== null && <div className="capture-kind-row">{captureKinds.map(({ id, label, icon: Icon }) => <button type="button" key={id} className={kind === id ? "is-active" : ""} disabled={recordingActive} onClick={() => switchCaptureKind(id)}><Icon size={14} />{label}</button>)}</div>}
-        {kind === "recording" && <div className="recording-context-row" aria-label="Recording type">{recordingContexts.map((context) => <button type="button" key={context.id} className={recordingContext === context.id ? "is-active" : ""} disabled={recordingActive} onClick={() => { setRecordingContext(context.id); setTitle(recordingTitle(context.id)); }}><span>{context.label}</span><small>{context.description}</small></button>)}</div>}
-        {kind === "recording" && recorderSnapshot.phase === "idle" && (recoverableRecordingDrafts.length > 0 || interruptedRecordings.length > 0) && <div className="recording-draft-tray"><header><span><strong>Continue a preserved session</strong><small>Recover the audio first; organize it only when you are ready</small></span><em>{recoverableRecordingDrafts.length + interruptedRecordings.length} saved</em></header><div>{recoverableRecordingDrafts.slice(0, 3).map((draft) => <button type="button" key={draft.id} disabled={recoveringRecordingId === draft.recording.id} onClick={() => void restoreRecording(draft)}><span><strong>{draft.title}</strong><small>{formatRecorderTime(draft.seconds)} · {draft.transcript.trim() ? `${draft.transcript.trim().split(/\s+/).length} words` : "audio preserved"}</small></span><em>{recoveringRecordingId === draft.recording.id ? "Recovering…" : new Date(draft.updatedAt).toLocaleDateString()}</em><ChevronRight size={14} /></button>)}{interruptedRecordings.slice(0, Math.max(0, 3 - recoverableRecordingDrafts.length)).map((recording) => <button type="button" key={recording.id} disabled={recoveringRecordingId === recording.id} onClick={() => void restoreInterruptedRecording(recording)}><span><strong>{recording.title}</strong><small>Interrupted session · {recording.sizeBytes >= 1_048_576 ? `${(recording.sizeBytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(recording.sizeBytes / 1024))} KB`} safe</small></span><em>{recoveringRecordingId === recording.id ? "Recovering…" : "Recover"}</em><ChevronRight size={14} /></button>)}</div></div>}
-        {(kind === "file" || kind === "image") && <label className="capture-file-picker"><input type="file" accept={kind === "image" ? "image/*" : ".pdf,.docx,.epub,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,application/pdf,text/*"} capture={kind === "image" ? "environment" : undefined} onChange={(event) => void ingestFile(event)} /><span>{kind === "image" ? <Camera size={14} /> : <Paperclip size={14} />}<strong>{fileName || (kind === "image" ? "Choose or take a photo" : "Choose a local file")}</strong><small>{kind === "image" ? "Original photo stays in the local asset store" : "PDF · DOCX · EPUB · text · data · up to 512 MB"}</small></span><ArrowRight size={13} /></label>}
-        {fileError && <p className="capture-file-error" role="alert"><CircleAlert size={12} />{fileError}</p>}
-        {kind === "link" && <input className="capture-title-input capture-url-input" type="text" inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={linkUrl} onChange={(event) => { setLinkUrl(event.target.value); setFileError(null); }} placeholder="https://example.org/article" maxLength={2_048} aria-label="Web page URL" />}
-        {kind !== null && <input className="capture-title-input" value={title} onChange={(event) => setTitle(event.target.value)} placeholder={kind === "recording" ? `${recordingContext === "lecture" ? "Course" : recordingContext === "meeting" ? "Meeting" : "Voice memo"} title` : kind === "link" ? "Optional title · otherwise use the page title" : kind === "table" ? "Dataset or table title" : kind === "image" ? "What is this image?" : "Source title"} maxLength={160} aria-label="Title" />}
-        {kind !== null && (kind === "recording" ? <LectureRecorder ref={recorderRef} title={title} knowledgeBaseId={targetBaseId} workspaceId={workspaceId} recordingContext={recordingContext} onKnowledgeContent={updateLectureContent} onTitleChange={setTitle} onStatusChange={setRecorderSnapshot} onDraftChange={updateRecordingDraft} onActiveChange={(active) => { setRecordingActive(active); onRecordingState?.(active); }} /> : <textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder={kind === "link" ? "Optional: why are you saving this page, and what should Gunther pay attention to?" : kind === "table" ? "Paste rows from a spreadsheet, including the header…" : kind === "image" ? selectedFile ? "Optional: what does this image contain, and why does it matter?" : "Choose a photo above, then add any context here…" : kind === "file" ? selectedFile ? "Optional: what should Gunther pay attention to in this file?" : "Choose a file above, or paste its text here…" : "Write a thought, observation, or passage…"} rows={kind === "link" ? 5 : 9} maxLength={1_000_000} aria-label="Source content" />)}
-        {kind !== null && <div className="capture-promise"><span><Check size={12} />Original stays local</span><span><Check size={12} />Organize anytime</span><span><Check size={12} />You approve knowledge</span></div>}
-        {kind !== null && <footer><span>{kind === "recording" ? <>Audio, transcript, and summary stay together in <strong>{targetLabel}</strong>.</> : kind === "note" ? <>This stays editable in <strong>{targetLabel}</strong>{targetBase ? " and becomes a source when filed" : "; choose its home later"}.</> : kind === "link" ? <>Gunther will preserve an immutable page snapshot, extracted text, and capture provenance in <strong>{targetLabel}</strong>.</> : selectedFile ? <>The immutable original and extracted text will stay together in <strong>{targetLabel}</strong>.</> : <>This source will be preserved in <strong>{targetLabel}</strong>. AI suggestions stay separate until you review them.</>}</span><div className="capture-footer-actions">{kind === "recording" && recorderSnapshot.phase === "stopped" && <button type="button" className="quiet-button" onClick={keepDraftAndClose}>Keep as draft</button>}{kind === "recording" && recorderIsLive && <button type="button" className="quiet-button" onClick={keepInBackground}><Minimize2 size={14} />Keep in background</button>}<button className="primary-button" disabled={working || !canSubmit}>{working ? "Preserving…" : kind === "recording" ? "Save recording" : kind === "note" ? "Save note" : kind === "link" ? "Capture page" : "Save source"}<ArrowRight size={14} /></button></div></footer>}
-      </form>
+  const captureForm = <form
+    ref={captureFormRef}
+    className={`gx-capture ${surface === "window" ? "is-window" : "is-overlay"} kind-${activeKind.id} ${dragging ? "is-dragging" : ""}`}
+    onMouseDown={(event) => event.stopPropagation()}
+    onSubmit={submit}
+    onDragOver={(event) => {
+      if (!event.dataTransfer?.types.includes("Files") || recordingActive) return;
+      event.preventDefault();
+      setDragging(true);
+    }}
+    onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }}
+    onDrop={onDropFile}
+    aria-label="Capture"
+  >
+    <header className="gx-capture-head" role="none" data-tauri-drag-region={surface === "window" ? true : undefined} onMouseDown={startWindowDrag}>
+      <span className="gx-capture-brand" data-tauri-drag-region={surface === "window" ? true : undefined}>
+        <BrandMark size={17} busy={recorderSnapshot.phase === "recording" || working} />
+        <strong data-tauri-drag-region={surface === "window" ? true : undefined}>Capture</strong>
+      </span>
+      <span className={`gx-capture-status ${recorderIsLive ? "is-live" : ""}`} role="status" data-tauri-drag-region={surface === "window" ? true : undefined}>{recorderIsLive && <i />}{statusLine}</span>
+      <span className="gx-capture-head-actions" data-no-drag>
+        {onSearch && <button type="button" className="gx-icon-button" onClick={() => { if (surface === "overlay") onClose(true); onSearch(); }} aria-label="Search your knowledge" title={withShortcut("Search your knowledge", "search")}><Search size={15} /></button>}
+        {surface === "window"
+          ? <button type="button" className="gx-capture-hide" onClick={keepInBackground} title={`${hideActionLabel}  Esc`} aria-label={hideActionLabel}><Minimize2 size={14} /><span>{hideActionLabel}</span></button>
+          : <>
+            {kind === "recording" && recordingActive && <button type="button" className="gx-icon-button" onClick={keepInBackground} title="Keep recording in the background" aria-label="Minimize recording"><Minimize2 size={15} /></button>}
+            <button type="button" className="gx-icon-button" onClick={closeCaptureSurface} disabled={recordingActive} title={recordingActive ? "Save or keep this session as a draft before closing" : "Close  Esc"} aria-label="Close capture"><X size={16} /></button>
+          </>}
+      </span>
+    </header>
+
+    <div className="gx-capture-kinds" role="tablist" aria-label="Capture type" onKeyDown={onKindKeyDown}>
+      {captureKinds.map(({ id, label, icon: Icon, tone }, index) => (
+        <button
+          type="button"
+          role="tab"
+          id={`capture-kind-${id}`}
+          key={id}
+          aria-selected={activeKind.id === id}
+          aria-controls="capture-panel"
+          tabIndex={activeKind.id === id ? 0 : -1}
+          className={`gx-capture-kind tone-${tone} ${activeKind.id === id ? "is-active" : ""}`}
+          disabled={recordingActive && id !== "recording"}
+          onClick={() => switchCaptureKind(id)}
+          title={`${label}  ${formatCombo(`mod+${index + 1}`)}`}
+        >
+          <Icon size={15} />
+          <span>{label}</span>
+        </button>
+      ))}
+    </div>
+
+    <div className="gx-capture-body" id="capture-panel" role="tabpanel" aria-labelledby={`capture-kind-${activeKind.id}`}>
+      {kind === "recording" && <div className="gx-capture-context" role="radiogroup" aria-label="Recording type">
+        {recordingContexts.map((context) => <button type="button" role="radio" aria-checked={recordingContext === context.id} key={context.id} className={recordingContext === context.id ? "is-active" : ""} disabled={recordingActive} onClick={() => { setRecordingContext(context.id); setTitle(recordingTitle(context.id)); }} title={context.description}>{context.label}</button>)}
+      </div>}
+      {kind === "recording" && recorderSnapshot.phase === "idle" && (recoverableRecordingDrafts.length > 0 || interruptedRecordings.length > 0) && <div className="gx-capture-drafts">
+        <header><strong>Continue a preserved session</strong><em>{recoverableRecordingDrafts.length + interruptedRecordings.length} saved</em></header>
+        {recoverableRecordingDrafts.slice(0, 3).map((draft) => <button type="button" key={draft.id} disabled={recoveringRecordingId === draft.recording.id} onClick={() => void restoreRecording(draft)}><Mic2 size={14} /><span><strong>{draft.title}</strong><small>{formatRecorderTime(draft.seconds)} · {draft.transcript.trim() ? `${draft.transcript.trim().split(/\s+/).length} words` : "audio preserved"}</small></span><em>{recoveringRecordingId === draft.recording.id ? "Recovering…" : new Date(draft.updatedAt).toLocaleDateString()}</em><ChevronRight size={14} /></button>)}
+        {interruptedRecordings.slice(0, Math.max(0, 3 - recoverableRecordingDrafts.length)).map((recording) => <button type="button" key={recording.id} disabled={recoveringRecordingId === recording.id} onClick={() => void restoreInterruptedRecording(recording)}><CircleAlert size={14} /><span><strong>{recording.title}</strong><small>Interrupted · {recording.sizeBytes >= 1_048_576 ? `${(recording.sizeBytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(recording.sizeBytes / 1024))} KB`} safe</small></span><em>{recoveringRecordingId === recording.id ? "Recovering…" : "Recover"}</em><ChevronRight size={14} /></button>)}
+      </div>}
+
+      {(kind === "file" || kind === "image") && (selectedFile ? (
+        <div className={`gx-capture-file ${kind === "image" ? "is-image" : ""}`}>
+          {kind === "image" && previewUrl ? <img src={previewUrl} alt="" /> : <span className="gx-capture-file-mark"><FileText size={20} /><em>{fileExtension(selectedFile.name)}</em></span>}
+          <span><strong title={fileName}>{fileName}</strong><small>{formatFileSize(selectedFile.size)} · {selectedFile.type || "file"} · stays exactly as it is</small></span>
+          <label className="gx-btn gx-btn-quiet gx-btn-sm"><input type="file" className="gx-sr-only" accept={kind === "image" ? "image/*" : FILE_ACCEPT} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) acceptFile(file, kind); }} />Replace</label>
+          <button type="button" className="gx-icon-button" onClick={removeFile} aria-label="Remove file" title="Remove"><X size={14} /></button>
+        </div>
+      ) : (
+        <label className="gx-capture-drop">
+          <input type="file" className="gx-sr-only" accept={kind === "image" ? "image/*" : FILE_ACCEPT} capture={kind === "image" ? "environment" : undefined} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) acceptFile(file, kind); }} aria-label={kind === "image" ? "Choose a photo" : "Choose a file"} />
+          <span className="gx-capture-drop-icon">{kind === "image" ? <ImagePlus size={22} /> : <FileUp size={22} />}</span>
+          <strong>{kind === "image" ? "Drop a photo, or choose one" : "Drop a file, or choose one"}</strong>
+          <small>{kind === "image" ? "Pages, whiteboards, diagrams, screenshots · text is recognised" : "PDF · DOCX · EPUB · Markdown · text · CSV · up to 512 MB"}</small>
+        </label>
+      ))}
+
+      {kind === "link" && <div className="gx-capture-url">
+        <Globe size={16} />
+        <input type="text" inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={linkUrl} onChange={(event) => { setLinkUrl(event.target.value); setFileError(null); }} placeholder="Paste a link — https://…" maxLength={2_048} aria-label="Web page URL" autoFocus />
+        {linkPreview && <span className="gx-capture-url-ok"><Check size={13} />{hostLabel(linkPreview)}</span>}
+      </div>}
+      {kind === "link" && <p className="gx-capture-note">{linkPreview ? "Gunther keeps an unchangeable snapshot of this page, even if it changes or disappears later." : "Any public http or https page. The page itself is fetched and kept on this device."}</p>}
+
+      {fileError && <p className="gx-capture-error" role="alert"><CircleAlert size={13} />{fileError}</p>}
+
+      {kind !== null && kind !== "recording" && <input className="gx-capture-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder={kind === "link" ? "Title (optional — the page title is used otherwise)" : kind === "table" ? "What is this table?" : kind === "image" ? "What is this image? (optional)" : kind === "file" ? "Title (optional)" : "Title (optional)"} maxLength={160} aria-label="Title" />}
+      {kind === "recording" && <input className="gx-capture-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder={`${recordingContext === "lecture" ? "Course" : recordingContext === "meeting" ? "Meeting" : "Voice memo"} title`} maxLength={160} aria-label="Title" />}
+
+      {(kind === "link" || kind === "file" || kind === "image") && <label className="gx-capture-label" htmlFor="capture-content">{kind === "file" && !selectedFile ? "Or paste the text itself" : "Why you’re saving it"}<span>optional</span></label>}
+      {kind === "recording" ? <LectureRecorder ref={recorderRef} title={title} knowledgeBaseId={targetBaseId} workspaceId={workspaceId} recordingContext={recordingContext} onKnowledgeContent={updateLectureContent} onTitleChange={setTitle} onStatusChange={setRecorderSnapshot} onDraftChange={updateRecordingDraft} onActiveChange={(active) => { setRecordingActive(active); onRecordingState?.(active); }} /> : kind !== null && <textarea
+        id="capture-content"
+        className={`gx-capture-text ${kind === "table" ? "is-data" : ""} ${kind === "note" ? "is-note" : ""}`}
+        value={content}
+        onChange={(event) => { setContent(event.target.value); if (pasteHint && !event.target.value.trim()) setPasteHint(null); }}
+        onPaste={onPasteText}
+        placeholder={kind === "link" ? "Why are you saving this page? What should Gunther pay attention to?" : kind === "table" ? "Paste rows from a spreadsheet, including the header row…" : kind === "image" ? "Add context: what does it show, and why does it matter?" : kind === "file" ? selectedFile ? "Add context: what should Gunther pay attention to?" : "…or paste the text itself here" : "Write the thought as it comes. Markdown works — # heading, - list, - [ ] task."}
+        rows={kind === "note" ? 10 : kind === "table" ? 9 : 4}
+        maxLength={1_000_000}
+        aria-label="Source content"
+        autoFocus={kind === "note" || kind === "table"}
+      />}
+      {pasteHint && <div className="gx-capture-hint" role="status">
+        {pasteHint.kind === "link" ? <Globe size={14} /> : <Table2 size={14} />}
+        <span>{pasteHint.kind === "link" ? <>That looks like a link. Save <strong>{hostLabel(pasteHint.value)}</strong> as a web page with a snapshot?</> : "That looks like a table. Save it as rows and columns?"}</span>
+        <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={applyPasteHint}>{pasteHint.kind === "link" ? "Save as web page" : "Save as table"}</button>
+        <button type="button" className="gx-icon-button" onClick={() => setPasteHint(null)} aria-label="Keep as a note" title="Keep as a note"><X size={13} /></button>
+      </div>}
+      {kind === "table" && content.trim() && <p className={`gx-capture-note ${detectedTable ? "is-ok" : ""}`}>{detectedTable ? <><Check size={13} />{detectedTable.rows.length} {detectedTable.rows.length === 1 ? "row" : "rows"} · {detectedTable.header.length} columns detected — {detectedTable.header.slice(0, 4).join(", ")}{detectedTable.header.length > 4 ? "…" : ""}</> : "Keep one row per line and separate columns with tabs or commas."}</p>}
+    </div>
+
+    <footer className="gx-capture-foot">
+      <div className="gx-capture-destination" data-no-drag>
+        <span>Save to</span>
+        <LibraryPicker bases={bases} value={targetBaseId} onChange={setTargetBaseId} noneLabel="Inbox" disabled={recordingActive} label="Save to" placement="above" />
+        {chapter && <em>→ {chapter.title}</em>}
+      </div>
+      <span className="gx-capture-foot-fill" />
+      {hasUnreviewedWork && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={discardCapture} aria-label="Discard this capture" title="Discard this capture"><Trash2 size={13} />Discard</button>}
+      {kind === "recording" && recorderSnapshot.phase === "stopped" && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={keepDraftAndClose}>Keep as draft</button>}
+      {kind === "recording" && recorderIsLive && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={keepInBackground}><Minimize2 size={13} />Keep in background</button>}
+      <button className="gx-btn gx-btn-primary gx-capture-save" disabled={working || !canSubmit} aria-label={submitLabel}>
+        {working ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}
+        <span>{submitLabel}</span>
+        <span className="gx-keys" aria-hidden="true">{comboKeys("mod+enter").map((key) => <kbd key={key}>{key}</kbd>)}</span>
+      </button>
+    </footer>
+    {dragging && <div className="gx-capture-dropping" aria-hidden="true"><FileUp size={26} /><strong>Drop to capture</strong><small>The original stays exactly as it is</small></div>}
+  </form>;
+
+  shortcutActions.current = {
+    submit: () => { if (canSubmit && !working) captureFormRef.current?.requestSubmit(); },
+    switchKind: switchCaptureKind,
+    hide: closeCaptureSurface,
+  };
 
   const recordingDock = kind === "recording" && recordingMinimized && <aside className={`recording-session-dock is-${recorderSnapshot.phase}`} aria-label="Background recording session">
       <button type="button" className="recording-dock-summary" onClick={() => setRecordingMinimized(false)}>
@@ -559,6 +814,16 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
   const [pairingWorking, setPairingWorking] = useState(false);
   const [revokingDeviceId, setRevokingDeviceId] = useState<string | null>(null);
   const [nowMilliseconds, setNowMilliseconds] = useState(() => Date.now());
+  const [menuBarMode, setMenuBarModeState] = useState<MenuBarMode>("always");
+  useEffect(() => {
+    if (isTauriRuntime()) void getMenuBarMode().then(setMenuBarModeState).catch(() => undefined);
+  }, []);
+  const changeMenuBarMode = (mode: MenuBarMode) => {
+    setMenuBarModeState(mode);
+    void setMenuBarMode(mode)
+      .then(() => onNotify(mode === "always" ? "Gunther stays in the menu bar." : "Gunther appears in the menu bar only while something is being captured."))
+      .catch(() => onNotify("The menu bar preference could not be saved."));
+  };
   const connection = useMemo(() => {
     const current = mobileConnectionFromGateway(gatewayStatus);
     return gatewayError ? { ...current, explanation: gatewayError } : current;
@@ -729,6 +994,8 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
         <div className="setting-heading"><Settings2 size={16} /><span><strong>Appearance</strong><small>Default workspace presentation</small></span></div>
         <label className="setting-row"><span><strong>Theme</strong><small>Applied immediately and remembered on this device.</small></span><select value={theme} aria-label="Theme" onChange={(event) => onTheme(event.target.value as ThemePreference)}><option value="light">Light</option><option value="dark">Dark</option><option value="system">Match system</option></select></label>
         <div className="setting-row"><span><strong>Home</strong><small>Gunther opens on search. Type @ to scope a search to a library, or press ⌘K from anywhere.</small></span><span className="setting-state">Search</span></div>
+        {isTauriRuntime() && <label className="setting-row"><span><strong>Menu bar</strong><small>Gunther’s mark stays in the menu bar for quick capture. Recordings always show there, with their timer, while they run.</small></span><select value={menuBarMode} aria-label="Menu bar" onChange={(event) => changeMenuBarMode(event.target.value as MenuBarMode)}><option value="always">Always show</option><option value="whileCapturing">Only while capturing</option></select></label>}
+        <div className="setting-row"><span><strong>Keyboard shortcuts</strong><small>Capture, search and move through Inbox without the mouse. Press {formatCombo("mod+/")} any time.</small></span><button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => window.dispatchEvent(new CustomEvent("gunther:show-shortcuts"))}>Show all</button></div>
       </section>
       <section>
         <div className="setting-heading"><ShieldCheck size={16} /><span><strong>Knowledge services</strong><small>Storage, search, transcript, and synthesis</small></span></div>

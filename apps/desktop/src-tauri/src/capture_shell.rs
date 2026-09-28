@@ -8,23 +8,34 @@ use tauri::{
     AppHandle, Emitter, Manager, Runtime,
 };
 
+use crate::tray_glyph::{self, GlyphVariant};
+
 pub const CAPTURE_WINDOW_LABEL: &str = "capture";
 pub const CAPTURE_REQUEST_EVENT: &str = "gunther://capture-request";
 pub const CAPTURE_CONTROL_EVENT: &str = "gunther://capture-control";
 pub const CAPTURE_SAVED_EVENT: &str = "gunther://capture-saved";
+/// Commands from the native menus that the main window carries out.
+pub const MENU_COMMAND_EVENT: &str = "gunther://menu-command";
+const OPEN_SEARCH_EVENT: &str = "gunther://open-search";
 
 const TRAY_ID: &str = "gunther-status";
 const MENU_STATUS: &str = "capture-status";
-const MENU_OPEN_CAPTURE: &str = "open-capture";
-const MENU_NEW_RECORDING: &str = "new-recording";
+pub const MENU_OPEN_CAPTURE: &str = "open-capture";
+pub const MENU_NEW_RECORDING: &str = "new-recording";
 const MENU_QUICK_NOTE: &str = "quick-note";
 const MENU_PAUSE_RESUME: &str = "pause-resume-recording";
 const MENU_MARK: &str = "mark-recording";
 const MENU_FINISH: &str = "finish-recording";
+const MENU_SHOW_CAPTURE: &str = "show-capture";
 const MENU_OPEN_MAIN: &str = "open-gunther";
+pub const MENU_SEARCH: &str = "search-gunther";
+pub const MENU_NEW_NOTE: &str = "new-note";
+pub const MENU_SETTINGS: &str = "open-settings";
+pub const MENU_SHORTCUTS: &str = "keyboard-shortcuts";
+pub const MENU_TOGGLE_THEME: &str = "toggle-theme";
 const MENU_QUIT: &str = crate::application_menu::QUIT_MENU_ID;
 
-const GLYPH_SIZE: u32 = 20;
+const MENU_BAR_PREFERENCE_FILE: &str = "menu-bar.json";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -137,46 +148,57 @@ impl CaptureStatus {
     }
 }
 
+/// Whether the menu bar item stays visible when nothing is being captured.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MenuBarMode {
+    #[default]
+    Always,
+    WhileCapturing,
+}
+
 #[derive(Default)]
 struct CaptureShellRuntime {
     pending_launch: Option<CaptureLaunchRequest>,
     status: CaptureStatus,
+    menu_bar_mode: MenuBarMode,
 }
 
 #[derive(Default)]
 pub struct CaptureShell(Mutex<CaptureShellRuntime>);
 
-struct TrayControls<R: Runtime> {
-    status: MenuItem<R>,
-    pause_resume: MenuItem<R>,
-    mark: MenuItem<R>,
-    finish: MenuItem<R>,
-    quit: MenuItem<R>,
-}
-
+/// What the menu shows. It changes with the capture, so the menu never offers
+/// an action that cannot happen (no Pause while nothing is recording).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum GlyphVariant {
-    Idle,
-    Draft,
-    Recording,
-    Paused,
-    Busy,
+enum MenuLayout {
+    Ready,
+    Live { paused: bool },
+    Preparing,
     Review,
-    Error,
+    Draft,
+    Attention,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct TrayPresentation {
     glyph: GlyphVariant,
-    icon_is_template: bool,
-    title: Option<String>,
+    /// Text beside the icon. Empty clears it: macOS keeps a previous title
+    /// when it is set to nothing, so an ended recording would leave its timer.
+    title: String,
     tooltip: String,
     status_text: String,
-    pause_text: String,
-    pause_enabled: bool,
-    mark_enabled: bool,
-    finish_enabled: bool,
+    layout: MenuLayout,
     quit_text: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum MenuEntry {
+    Status,
+    Separator,
+    Action {
+        id: &'static str,
+        label: &'static str,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -184,49 +206,82 @@ enum MenuAction {
     OpenCapture,
     NewRecording,
     QuickNote,
+    ShowCapture,
     Pause,
     Resume,
     Mark,
     Finish,
     OpenMain,
+    Search,
+    MainCommand(&'static str),
     Quit,
     Ignore,
 }
 
-fn format_elapsed(seconds: u64) -> String {
+struct TrayState<R: Runtime> {
+    glyph: Option<GlyphVariant>,
+    layout: Option<MenuLayout>,
+    quit_text: String,
+    title: Option<String>,
+    visible: Option<bool>,
+    status_item: Option<MenuItem<R>>,
+}
+
+/// "12:48", or "1:02:03" once past an hour: short enough for the menu bar.
+fn compact_elapsed(seconds: u64) -> String {
     let hours = seconds / 3_600;
     let minutes = (seconds % 3_600) / 60;
     let seconds = seconds % 60;
-    format!("{hours:02}:{minutes:02}:{seconds:02}")
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes:02}:{seconds:02}")
+    }
+}
+
+fn capture_title(status: &CaptureStatus) -> Option<String> {
+    let title = status.title.as_deref()?.trim();
+    if title.is_empty() || matches!(title, "Capture something" | "Untitled capture") {
+        return None;
+    }
+    let mut short: String = title.chars().take(40).collect();
+    if title.chars().count() > 40 {
+        short.push('…');
+    }
+    Some(short)
 }
 
 fn presentation_for(status: &CaptureStatus) -> TrayPresentation {
     let phase = status.normalized_phase();
     let persistence = status.normalized_persistence();
-    let elapsed = format_elapsed(status.elapsed());
+    let elapsed = compact_elapsed(status.elapsed());
+    let named = |label: String| match capture_title(status) {
+        Some(title) => format!("{label} — {title}"),
+        None => label,
+    };
     let recording = phase == "recording";
     let paused = phase == "paused";
     let busy = matches!(phase.as_str(), "requesting" | "importing" | "finalizing")
         || matches!(persistence.as_str(), "saving" | "recovering");
-    let recording_review = matches!(phase.as_str(), "stopped" | "review" | "review-ready");
-    let draft_open = status.has_unreviewed_work.unwrap_or(false) && !recording_review;
+    let review = matches!(phase.as_str(), "stopped" | "review" | "review-ready");
+    let draft = status.has_unreviewed_work.unwrap_or(false) && !review;
     let error = phase == "error";
 
-    let (glyph, icon_is_template, title, status_text, tooltip) = if recording {
+    let (glyph, title, status_text, tooltip, layout) = if recording {
         (
             GlyphVariant::Recording,
-            false,
-            Some(format!(" {elapsed}")),
-            format!("● Recording · {elapsed}"),
+            format!(" {elapsed}"),
+            named(format!("Recording · {elapsed}")),
             format!("Gunther — Recording {elapsed}"),
+            MenuLayout::Live { paused: false },
         )
     } else if paused {
         (
             GlyphVariant::Paused,
-            false,
-            Some(format!(" {elapsed}")),
-            format!("Ⅱ Paused · {elapsed}"),
+            format!(" {elapsed}"),
+            named(format!("Paused · {elapsed}")),
             format!("Gunther — Recording paused at {elapsed}"),
+            MenuLayout::Live { paused: true },
         )
     } else if error {
         let detail = status
@@ -235,67 +290,59 @@ fn presentation_for(status: &CaptureStatus) -> TrayPresentation {
             .filter(|detail| !detail.trim().is_empty())
             .unwrap_or("Capture needs attention");
         (
-            GlyphVariant::Error,
-            false,
-            None,
-            "Gunther · Capture needs attention".into(),
+            GlyphVariant::Attention,
+            String::new(),
+            "Capture needs attention".into(),
             format!("Gunther — {detail}"),
+            MenuLayout::Attention,
         )
     } else if busy {
         let label = match phase.as_str() {
-            "requesting" => "Requesting microphone…",
-            "importing" => "Importing source…",
-            "finalizing" => "Finalizing recording…",
-            _ if persistence == "recovering" => "Recovering capture…",
-            _ => "Saving capture…",
+            "requesting" => "Opening the microphone…",
+            "importing" => "Importing audio…",
+            "finalizing" => "Finishing the recording…",
+            _ if persistence == "recovering" => "Recovering a capture…",
+            _ => "Saving…",
         };
         (
-            GlyphVariant::Busy,
-            true,
-            None,
-            format!("Gunther · {label}"),
+            GlyphVariant::Preparing,
+            String::new(),
+            label.into(),
             format!("Gunther — {label}"),
+            MenuLayout::Preparing,
         )
-    } else if recording_review {
+    } else if review {
         (
             GlyphVariant::Review,
-            true,
-            None,
-            "Gunther · Review ready".into(),
-            "Gunther — Capture ready to review".into(),
+            String::new(),
+            named("Recording ready to review".into()),
+            "Gunther — A recording is ready to review".into(),
+            MenuLayout::Review,
         )
-    } else if draft_open {
+    } else if draft {
         (
             GlyphVariant::Draft,
-            true,
-            None,
-            "Gunther · Capture draft open".into(),
-            "Gunther — Unsaved capture draft open".into(),
+            String::new(),
+            named("Unsaved capture".into()),
+            "Gunther — An unsaved capture is waiting".into(),
+            MenuLayout::Draft,
         )
     } else {
         (
             GlyphVariant::Idle,
-            true,
-            None,
-            "Gunther · Ready".into(),
-            "Gunther — Ready to capture".into(),
+            String::new(),
+            String::new(),
+            "Gunther".into(),
+            MenuLayout::Ready,
         )
     };
 
     TrayPresentation {
         glyph,
-        icon_is_template,
         title,
         tooltip,
         status_text,
-        pause_text: if paused {
-            "Resume Recording".into()
-        } else {
-            "Pause Recording".into()
-        },
-        pause_enabled: recording || paused,
-        mark_enabled: recording || paused,
-        finish_enabled: recording || paused,
+        layout,
         quit_text: if status.blocks_exit() {
             "Quit Gunther…".into()
         } else {
@@ -304,20 +351,117 @@ fn presentation_for(status: &CaptureStatus) -> TrayPresentation {
     }
 }
 
+fn menu_entries(layout: MenuLayout) -> Vec<MenuEntry> {
+    use MenuEntry::{Action, Separator, Status};
+    let open_main = Action {
+        id: MENU_OPEN_MAIN,
+        label: "Open Gunther",
+    };
+    let mut entries = match layout {
+        MenuLayout::Ready => vec![
+            Action {
+                id: MENU_OPEN_CAPTURE,
+                label: "Capture…",
+            },
+            Action {
+                id: MENU_NEW_RECORDING,
+                label: "New Recording",
+            },
+            Separator,
+            Action {
+                id: MENU_SEARCH,
+                label: "Search Gunther…",
+            },
+            open_main,
+        ],
+        MenuLayout::Live { paused } => vec![
+            Status,
+            Separator,
+            Action {
+                id: MENU_PAUSE_RESUME,
+                label: if paused {
+                    "Resume Recording"
+                } else {
+                    "Pause Recording"
+                },
+            },
+            Action {
+                id: MENU_MARK,
+                label: "Mark Moment",
+            },
+            Action {
+                id: MENU_FINISH,
+                label: "Finish Recording…",
+            },
+            Separator,
+            Action {
+                id: MENU_SHOW_CAPTURE,
+                label: "Show Recorder",
+            },
+            open_main,
+        ],
+        MenuLayout::Preparing => vec![
+            Status,
+            Separator,
+            Action {
+                id: MENU_SHOW_CAPTURE,
+                label: "Show Capture",
+            },
+            open_main,
+        ],
+        MenuLayout::Review => vec![
+            Status,
+            Separator,
+            Action {
+                id: MENU_SHOW_CAPTURE,
+                label: "Review Recording…",
+            },
+            open_main,
+        ],
+        MenuLayout::Draft => vec![
+            Status,
+            Separator,
+            Action {
+                id: MENU_SHOW_CAPTURE,
+                label: "Continue Capture…",
+            },
+            open_main,
+        ],
+        MenuLayout::Attention => vec![
+            Status,
+            Separator,
+            Action {
+                id: MENU_SHOW_CAPTURE,
+                label: "Show Capture…",
+            },
+            open_main,
+        ],
+    };
+    entries.push(Separator);
+    entries.push(Action {
+        id: MENU_QUIT,
+        label: "Quit Gunther",
+    });
+    entries
+}
+
 fn menu_action(id: &str, status: &CaptureStatus) -> MenuAction {
+    let phase = status.normalized_phase();
     match id {
         MENU_OPEN_CAPTURE => MenuAction::OpenCapture,
         MENU_NEW_RECORDING => MenuAction::NewRecording,
         MENU_QUICK_NOTE => MenuAction::QuickNote,
-        MENU_PAUSE_RESUME if status.normalized_phase() == "paused" => MenuAction::Resume,
-        MENU_PAUSE_RESUME if status.normalized_phase() == "recording" => MenuAction::Pause,
-        MENU_MARK if matches!(status.normalized_phase().as_str(), "recording" | "paused") => {
-            MenuAction::Mark
-        }
-        MENU_FINISH if matches!(status.normalized_phase().as_str(), "recording" | "paused") => {
-            MenuAction::Finish
-        }
+        MENU_SHOW_CAPTURE => MenuAction::ShowCapture,
+        MENU_PAUSE_RESUME if phase == "paused" => MenuAction::Resume,
+        MENU_PAUSE_RESUME if phase == "recording" => MenuAction::Pause,
+        MENU_MARK if matches!(phase.as_str(), "recording" | "paused") => MenuAction::Mark,
+        MENU_FINISH if matches!(phase.as_str(), "recording" | "paused") => MenuAction::Finish,
         MENU_OPEN_MAIN => MenuAction::OpenMain,
+        MENU_SEARCH => MenuAction::Search,
+        MENU_NEW_NOTE => MenuAction::MainCommand("new-note"),
+        MENU_SETTINGS => MenuAction::MainCommand("settings"),
+        MENU_SHORTCUTS => MenuAction::MainCommand("shortcuts"),
+        MENU_TOGGLE_THEME => MenuAction::MainCommand("theme"),
         MENU_QUIT => MenuAction::Quit,
         _ => MenuAction::Ignore,
     }
@@ -327,142 +471,97 @@ fn can_replace_capture(status: &CaptureStatus) -> bool {
     !status.blocks_exit()
 }
 
-fn set_pixel(rgba: &mut [u8], x: i32, y: i32, color: [u8; 4]) {
-    if x < 0 || y < 0 || x >= GLYPH_SIZE as i32 || y >= GLYPH_SIZE as i32 {
-        return;
-    }
-    let index = ((y as u32 * GLYPH_SIZE + x as u32) * 4) as usize;
-    rgba[index..index + 4].copy_from_slice(&color);
-}
-
-fn horizontal_line(rgba: &mut [u8], x0: i32, x1: i32, y: i32, color: [u8; 4]) {
-    for x in x0..=x1 {
-        set_pixel(rgba, x, y, color);
-    }
-}
-
-fn vertical_line(rgba: &mut [u8], x: i32, y0: i32, y1: i32, color: [u8; 4]) {
-    for y in y0..=y1 {
-        set_pixel(rgba, x, y, color);
-    }
-}
-
-fn draw_capture_frame(rgba: &mut [u8], color: [u8; 4]) {
-    for thickness in 0..2 {
-        let edge = 2 + thickness;
-        let far = GLYPH_SIZE as i32 - 3 - thickness;
-        horizontal_line(rgba, edge, edge + 4, edge, color);
-        vertical_line(rgba, edge, edge, edge + 4, color);
-        horizontal_line(rgba, far - 4, far, edge, color);
-        vertical_line(rgba, far, edge, edge + 4, color);
-        horizontal_line(rgba, edge, edge + 4, far, color);
-        vertical_line(rgba, edge, far - 4, far, color);
-        horizontal_line(rgba, far - 4, far, far, color);
-        vertical_line(rgba, far, far - 4, far, color);
-    }
-}
-
-fn draw_circle(rgba: &mut [u8], radius: f32, filled: bool, color: [u8; 4]) {
-    let center = (GLYPH_SIZE as f32 - 1.0) / 2.0;
-    for y in 0..GLYPH_SIZE as i32 {
-        for x in 0..GLYPH_SIZE as i32 {
-            let dx = x as f32 - center;
-            let dy = y as f32 - center;
-            let distance = (dx * dx + dy * dy).sqrt();
-            let should_draw = if filled {
-                distance <= radius
-            } else {
-                (distance - radius).abs() <= 0.8
-            };
-            if should_draw {
-                set_pixel(rgba, x, y, color);
-            }
-        }
-    }
-}
-
-fn draw_check(rgba: &mut [u8], color: [u8; 4]) {
-    for offset in 0..3 {
-        set_pixel(rgba, 6 + offset, 10 + offset, color);
-        set_pixel(rgba, 9 + offset, 12 - offset, color);
-        set_pixel(rgba, 12 + offset, 9 - offset, color);
-    }
-}
-
-fn draw_exclamation(rgba: &mut [u8], color: [u8; 4]) {
-    for x in 9..=10 {
-        vertical_line(rgba, x, 6, 11, color);
-        set_pixel(rgba, x, 14, color);
-    }
+fn tray_visible(mode: MenuBarMode, layout: MenuLayout) -> bool {
+    mode == MenuBarMode::Always || layout != MenuLayout::Ready
 }
 
 fn glyph_image(variant: GlyphVariant) -> (Image<'static>, bool) {
-    let mut rgba = vec![0_u8; (GLYPH_SIZE * GLYPH_SIZE * 4) as usize];
-    let template = [0, 0, 0, 255];
-    let recording = [255, 69, 58, 255];
-    let paused = [255, 159, 10, 255];
-    let error = [255, 69, 58, 255];
-    let (color, is_template) = match variant {
-        GlyphVariant::Recording => (recording, false),
-        GlyphVariant::Paused => (paused, false),
-        GlyphVariant::Error => (error, false),
-        _ => (template, true),
-    };
-    draw_capture_frame(&mut rgba, color);
+    let glyph = tray_glyph::render(variant);
+    (
+        Image::new_owned(glyph.rgba, tray_glyph::GLYPH_SIZE, tray_glyph::GLYPH_SIZE),
+        glyph.template,
+    )
+}
 
-    match variant {
-        GlyphVariant::Idle => draw_circle(&mut rgba, 3.0, false, color),
-        GlyphVariant::Draft => draw_circle(&mut rgba, 2.7, true, color),
-        GlyphVariant::Recording => draw_circle(&mut rgba, 3.6, true, color),
-        GlyphVariant::Paused => {
-            for x in 7..=8 {
-                vertical_line(&mut rgba, x, 6, 13, color);
-            }
-            for x in 11..=12 {
-                vertical_line(&mut rgba, x, 6, 13, color);
-            }
-        }
-        GlyphVariant::Busy => {
-            draw_circle(&mut rgba, 3.5, false, color);
-            for y in 5..=7 {
-                for x in 8..=11 {
-                    set_pixel(&mut rgba, x, y, [0, 0, 0, 0]);
-                }
-            }
-        }
-        GlyphVariant::Review => draw_check(&mut rgba, color),
-        GlyphVariant::Error => draw_exclamation(&mut rgba, color),
-    }
-
-    (Image::new_owned(rgba, GLYPH_SIZE, GLYPH_SIZE), is_template)
+fn runtime_snapshot<R: Runtime>(app: &AppHandle<R>) -> (CaptureStatus, MenuBarMode) {
+    let shell = app.state::<CaptureShell>();
+    let runtime = shell.0.lock().expect("capture shell lock poisoned");
+    (runtime.status.clone(), runtime.menu_bar_mode)
 }
 
 fn status_snapshot<R: Runtime>(app: &AppHandle<R>) -> CaptureStatus {
-    app.state::<CaptureShell>()
-        .0
-        .lock()
-        .expect("capture shell lock poisoned")
-        .status
-        .clone()
+    runtime_snapshot(app).0
+}
+
+fn build_menu<R: Runtime>(
+    app: &AppHandle<R>,
+    presentation: &TrayPresentation,
+) -> tauri::Result<(Menu<R>, Option<MenuItem<R>>)> {
+    let menu = Menu::new(app)?;
+    let mut status_item = None;
+    for entry in menu_entries(presentation.layout) {
+        match entry {
+            MenuEntry::Status => {
+                let item = MenuItem::with_id(
+                    app,
+                    MENU_STATUS,
+                    &presentation.status_text,
+                    false,
+                    None::<&str>,
+                )?;
+                menu.append(&item)?;
+                status_item = Some(item);
+            }
+            MenuEntry::Separator => menu.append(&PredefinedMenuItem::separator(app)?)?,
+            MenuEntry::Action { id, label } => {
+                let label = if id == MENU_QUIT {
+                    presentation.quit_text.as_str()
+                } else {
+                    label
+                };
+                menu.append(&MenuItem::with_id(app, id, label, true, None::<&str>)?)?;
+            }
+        }
+    }
+    Ok((menu, status_item))
 }
 
 fn apply_tray_presentation<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
-    let presentation = presentation_for(&status_snapshot(app));
-    if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let (icon, is_template) = glyph_image(presentation.glyph);
-        tray.set_icon_with_as_template(Some(icon), is_template)?;
-        tray.set_title(presentation.title.as_deref())?;
-        tray.set_tooltip(Some(&presentation.tooltip))?;
+    let (status, mode) = runtime_snapshot(app);
+    let presentation = presentation_for(&status);
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return Ok(());
+    };
+    let state = app.state::<Mutex<TrayState<R>>>();
+    let mut state = state.lock().expect("tray state lock poisoned");
+
+    if state.glyph != Some(presentation.glyph) {
+        let (icon, template) = glyph_image(presentation.glyph);
+        tray.set_icon_with_as_template(Some(icon), template)?;
+        state.glyph = Some(presentation.glyph);
     }
-    let controls = app.state::<TrayControls<R>>();
-    controls.status.set_text(&presentation.status_text)?;
-    controls.pause_resume.set_text(&presentation.pause_text)?;
-    controls
-        .pause_resume
-        .set_enabled(presentation.pause_enabled)?;
-    controls.mark.set_enabled(presentation.mark_enabled)?;
-    controls.finish.set_enabled(presentation.finish_enabled)?;
-    controls.quit.set_text(&presentation.quit_text)?;
+    if state.title.as_deref() != Some(presentation.title.as_str()) {
+        tray.set_title(Some(presentation.title.as_str()))?;
+        state.title = Some(presentation.title.clone());
+    }
+    tray.set_tooltip(Some(&presentation.tooltip))?;
+
+    if state.layout != Some(presentation.layout) || state.quit_text != presentation.quit_text {
+        // Rebuild only when the set of actions changes; the timer updates in place.
+        let (menu, status_item) = build_menu(app, &presentation)?;
+        tray.set_menu(Some(menu))?;
+        state.layout = Some(presentation.layout);
+        state.quit_text = presentation.quit_text.clone();
+        state.status_item = status_item;
+    } else if let Some(item) = &state.status_item {
+        item.set_text(&presentation.status_text)?;
+    }
+
+    let visible = tray_visible(mode, presentation.layout);
+    if state.visible != Some(visible) {
+        tray.set_visible(visible)?;
+        state.visible = Some(visible);
+    }
     Ok(())
 }
 
@@ -511,12 +610,19 @@ fn request_quit<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
+/// Bring the main window forward and let it carry out a menu command.
+fn run_in_main_window<R: Runtime>(app: &AppHandle<R>, command: &'static str) {
+    let _ = show_window(app, "main");
+    // Only the main window listens; a broadcast reaches its global listener.
+    let _ = app.emit(MENU_COMMAND_EVENT, command);
+}
+
 pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
     match menu_action(id, &status_snapshot(app)) {
         MenuAction::OpenCapture => open_from_tray(
             app,
             CaptureLaunchRequest {
-                source: Some("tray-open-capture".into()),
+                source: Some("menu-open-capture".into()),
                 ..Default::default()
             },
         ),
@@ -525,7 +631,7 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
             CaptureLaunchRequest {
                 kind: Some(CaptureKind::Recording),
                 recording_context: Some(RecordingContext::Lecture),
-                source: Some("tray-new-recording".into()),
+                source: Some("menu-new-recording".into()),
                 ..Default::default()
             },
         ),
@@ -533,10 +639,14 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
             app,
             CaptureLaunchRequest {
                 kind: Some(CaptureKind::Note),
-                source: Some("tray-quick-note".into()),
+                source: Some("menu-quick-note".into()),
                 ..Default::default()
             },
         ),
+        MenuAction::ShowCapture => {
+            let _ = show_window(app, CAPTURE_WINDOW_LABEL);
+            emit_capture_control(app, "show");
+        }
         MenuAction::Pause => emit_capture_control(app, "pause"),
         MenuAction::Resume => emit_capture_control(app, "resume"),
         MenuAction::Mark => emit_capture_control(app, "mark"),
@@ -544,60 +654,54 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
         MenuAction::OpenMain => {
             let _ = show_window(app, "main");
         }
+        MenuAction::Search => {
+            let _ = show_window(app, "main");
+            let _ = app.emit(OPEN_SEARCH_EVENT, ());
+        }
+        MenuAction::MainCommand(command) => run_in_main_window(app, command),
         MenuAction::Quit => request_quit(app),
         MenuAction::Ignore => {}
     }
 }
 
-pub fn setup_tray<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
-    let status = MenuItem::with_id(app, MENU_STATUS, "Gunther · Ready", false, None::<&str>)?;
-    let open_capture =
-        MenuItem::with_id(app, MENU_OPEN_CAPTURE, "Open Capture…", true, None::<&str>)?;
-    let new_recording = MenuItem::with_id(
-        app,
-        MENU_NEW_RECORDING,
-        "New Recording…",
-        true,
-        None::<&str>,
-    )?;
-    let quick_note = MenuItem::with_id(app, MENU_QUICK_NOTE, "Quick Note…", true, None::<&str>)?;
-    let pause_resume = MenuItem::with_id(
-        app,
-        MENU_PAUSE_RESUME,
-        "Pause Recording",
-        false,
-        None::<&str>,
-    )?;
-    let mark = MenuItem::with_id(app, MENU_MARK, "Mark Moment", false, None::<&str>)?;
-    let finish = MenuItem::with_id(app, MENU_FINISH, "Finish Recording", false, None::<&str>)?;
-    let open_main = MenuItem::with_id(app, MENU_OPEN_MAIN, "Open Gunther", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, MENU_QUIT, "Quit Gunther", true, None::<&str>)?;
-    let separator_one = PredefinedMenuItem::separator(app)?;
-    let separator_two = PredefinedMenuItem::separator(app)?;
-    let separator_three = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(
-        app,
-        &[
-            &status,
-            &separator_one,
-            &open_capture,
-            &new_recording,
-            &quick_note,
-            &separator_two,
-            &pause_resume,
-            &mark,
-            &finish,
-            &separator_three,
-            &open_main,
-            &quit,
-        ],
-    )?;
+fn menu_bar_preference_path<R: Runtime>(app: &AppHandle<R>) -> Option<std::path::PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|directory| directory.join(MENU_BAR_PREFERENCE_FILE))
+}
 
-    let (idle_icon, _) = glyph_image(GlyphVariant::Idle);
-    TrayIconBuilder::with_id(TRAY_ID)
-        .icon(idle_icon)
-        .icon_as_template(true)
-        .tooltip("Gunther — Ready to capture")
+fn load_menu_bar_mode<R: Runtime>(app: &AppHandle<R>) -> MenuBarMode {
+    menu_bar_preference_path(app)
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|contents| serde_json::from_str::<MenuBarPreference>(&contents).ok())
+        .map(|preference| preference.mode)
+        .unwrap_or_default()
+}
+
+#[derive(Deserialize, Serialize)]
+struct MenuBarPreference {
+    mode: MenuBarMode,
+}
+
+pub fn setup_tray<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+    let handle = app.handle();
+    // The saved preference is read before the icon appears, so a hidden
+    // menu bar item never flashes at launch.
+    let mode = load_menu_bar_mode(handle);
+    app.state::<CaptureShell>()
+        .0
+        .lock()
+        .expect("capture shell lock poisoned")
+        .menu_bar_mode = mode;
+
+    let presentation = presentation_for(&CaptureStatus::default());
+    let (menu, status_item) = build_menu(handle, &presentation)?;
+    let (icon, template) = glyph_image(presentation.glyph);
+    let tray = TrayIconBuilder::with_id(TRAY_ID)
+        .icon(icon)
+        .icon_as_template(template)
+        .tooltip(&presentation.tooltip)
         .menu(&menu)
         // A normal click opens the action menu, matching macOS status-item
         // conventions and keeping Pause/Mark/Finish discoverable.
@@ -605,15 +709,20 @@ pub fn setup_tray<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
         // App and tray menus share the Builder's single menu-event handler.
         // Registering a second tray handler would dispatch actions twice.
         .build(app)?;
+    let visible = tray_visible(mode, presentation.layout);
+    if !visible {
+        tray.set_visible(false)?;
+    }
 
-    app.manage(TrayControls {
-        status,
-        pause_resume,
-        mark,
-        finish,
-        quit,
-    });
-    apply_tray_presentation(app.handle())
+    app.manage(Mutex::new(TrayState::<R> {
+        glyph: Some(presentation.glyph),
+        layout: Some(presentation.layout),
+        quit_text: presentation.quit_text,
+        title: None,
+        visible: Some(visible),
+        status_item,
+    }));
+    apply_tray_presentation(handle)
 }
 
 pub fn blocks_exit<R: Runtime>(app: &AppHandle<R>) -> bool {
@@ -703,12 +812,38 @@ pub fn update_capture_status(app: AppHandle, status: CaptureStatus) -> Result<()
         .map_err(|error| format!("Gunther could not update the menu bar: {error}"))
 }
 
+#[tauri::command]
+pub fn menu_bar_mode(app: AppHandle) -> MenuBarMode {
+    runtime_snapshot(&app).1
+}
+
+#[tauri::command]
+pub fn set_menu_bar_mode(app: AppHandle, mode: MenuBarMode) -> Result<(), String> {
+    app.state::<CaptureShell>()
+        .0
+        .lock()
+        .map_err(|_| "Gunther's capture state is unavailable".to_string())?
+        .menu_bar_mode = mode;
+    if let Some(path) = menu_bar_preference_path(&app) {
+        if let Some(directory) = path.parent() {
+            let _ = std::fs::create_dir_all(directory);
+        }
+        let contents = serde_json::to_string(&MenuBarPreference { mode })
+            .map_err(|error| format!("The menu bar preference could not be saved: {error}"))?;
+        std::fs::write(&path, contents)
+            .map_err(|error| format!("The menu bar preference could not be saved: {error}"))?;
+    }
+    apply_tray_presentation(&app)
+        .map_err(|error| format!("Gunther could not update the menu bar: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        can_replace_capture, format_elapsed, glyph_image, menu_action, presentation_for,
-        CaptureStatus, GlyphVariant, MenuAction, GLYPH_SIZE, MENU_FINISH, MENU_MARK,
-        MENU_PAUSE_RESUME, MENU_QUIT,
+        can_replace_capture, compact_elapsed, menu_action, menu_entries, presentation_for,
+        tray_visible, CaptureStatus, GlyphVariant, MenuAction, MenuBarMode, MenuEntry, MenuLayout,
+        MENU_FINISH, MENU_MARK, MENU_NEW_NOTE, MENU_PAUSE_RESUME, MENU_QUIT, MENU_SETTINGS,
+        MENU_SHOW_CAPTURE,
     };
 
     fn status(phase: &str, seconds: u64) -> CaptureStatus {
@@ -719,11 +854,22 @@ mod tests {
         }
     }
 
+    fn action_ids(layout: MenuLayout) -> Vec<&'static str> {
+        menu_entries(layout)
+            .into_iter()
+            .filter_map(|entry| match entry {
+                MenuEntry::Action { id, .. } => Some(id),
+                _ => None,
+            })
+            .collect()
+    }
+
     #[test]
     fn elapsed_time_stays_unambiguous_for_long_sessions() {
-        assert_eq!(format_elapsed(0), "00:00:00");
-        assert_eq!(format_elapsed(3_723), "01:02:03");
-        assert_eq!(format_elapsed(14_401), "04:00:01");
+        assert_eq!(compact_elapsed(0), "00:00");
+        assert_eq!(compact_elapsed(768), "12:48");
+        assert_eq!(compact_elapsed(14_401), "4:00:01");
+        assert_eq!(compact_elapsed(3_723), "1:02:03");
     }
 
     #[test]
@@ -755,18 +901,42 @@ mod tests {
     }
 
     #[test]
-    fn recording_and_paused_presentations_are_visible_and_actionable() {
-        let recording = presentation_for(&status("recording", 3_723));
-        assert_eq!(recording.glyph, GlyphVariant::Recording);
-        assert!(!recording.icon_is_template);
-        assert_eq!(recording.title.as_deref(), Some(" 01:02:03"));
-        assert_eq!(recording.pause_text, "Pause Recording");
-        assert!(recording.pause_enabled && recording.mark_enabled && recording.finish_enabled);
-        assert_eq!(recording.quit_text, "Quit Gunther…");
+    fn idle_is_the_calm_mark_with_no_timer_and_no_recording_controls() {
+        let idle = presentation_for(&status("idle", 0));
+        assert_eq!(idle.glyph, GlyphVariant::Idle);
+        assert_eq!(idle.title, "", "an empty title clears a previous timer");
+        assert_eq!(idle.layout, MenuLayout::Ready);
+        assert_eq!(idle.quit_text, "Quit Gunther");
+        let ids = action_ids(MenuLayout::Ready);
+        assert!(!ids.contains(&MENU_PAUSE_RESUME));
+        assert!(!ids.contains(&MENU_MARK));
+        assert!(!ids.contains(&MENU_FINISH));
+        assert_eq!(ids.last(), Some(&MENU_QUIT));
+    }
 
-        let paused = presentation_for(&status("paused", 3_723));
+    #[test]
+    fn recording_and_paused_show_the_timer_and_their_controls() {
+        let recording = presentation_for(&CaptureStatus {
+            title: Some("Lecture 7".into()),
+            ..status("recording", 3_723)
+        });
+        assert_eq!(recording.glyph, GlyphVariant::Recording);
+        assert_eq!(recording.title, " 1:02:03");
+        assert_eq!(recording.status_text, "Recording · 1:02:03 — Lecture 7");
+        assert_eq!(recording.layout, MenuLayout::Live { paused: false });
+        assert_eq!(recording.quit_text, "Quit Gunther…");
+        let ids = action_ids(recording.layout);
+        for id in [MENU_PAUSE_RESUME, MENU_MARK, MENU_FINISH, MENU_SHOW_CAPTURE] {
+            assert!(ids.contains(&id), "{id} while recording");
+        }
+
+        let paused = presentation_for(&status("paused", 768));
         assert_eq!(paused.glyph, GlyphVariant::Paused);
-        assert_eq!(paused.pause_text, "Resume Recording");
+        assert_eq!(paused.title, " 12:48");
+        assert!(menu_entries(paused.layout).contains(&MenuEntry::Action {
+            id: MENU_PAUSE_RESUME,
+            label: "Resume Recording",
+        }));
         assert_eq!(
             menu_action(MENU_PAUSE_RESUME, &status("paused", 1)),
             MenuAction::Resume
@@ -774,12 +944,59 @@ mod tests {
     }
 
     #[test]
-    fn idle_menu_ignores_recording_only_actions() {
+    fn ending_a_recording_clears_the_timer() {
+        let recording = presentation_for(&status("recording", 90));
+        let review = presentation_for(&status("stopped", 90));
+        let saved = presentation_for(&CaptureStatus::default());
+        assert_eq!(recording.title, " 01:30");
+        assert_eq!(review.title, "");
+        assert_eq!(review.glyph, GlyphVariant::Review);
+        assert_eq!(review.layout, MenuLayout::Review);
+        assert_eq!(saved.title, "");
+        assert_eq!(saved.glyph, GlyphVariant::Idle);
+    }
+
+    #[test]
+    fn waiting_and_busy_states_offer_only_what_applies() {
+        let draft = presentation_for(&CaptureStatus {
+            phase: "idle".into(),
+            has_unreviewed_work: Some(true),
+            ..CaptureStatus::default()
+        });
+        assert_eq!(draft.glyph, GlyphVariant::Draft);
+        assert_eq!(draft.status_text, "Unsaved capture");
+        assert_eq!(
+            action_ids(draft.layout),
+            vec![MENU_SHOW_CAPTURE, "open-gunther", MENU_QUIT]
+        );
+
+        let preparing = presentation_for(&status("requesting", 0));
+        assert_eq!(preparing.glyph, GlyphVariant::Preparing);
+        assert_eq!(preparing.status_text, "Opening the microphone…");
+
+        let error = presentation_for(&CaptureStatus {
+            detail: Some("Microphone access was denied".into()),
+            ..status("error", 0)
+        });
+        assert_eq!(error.glyph, GlyphVariant::Attention);
+        assert_eq!(error.tooltip, "Gunther — Microphone access was denied");
+    }
+
+    #[test]
+    fn recording_controls_are_ignored_when_nothing_is_recording() {
         let idle = status("idle", 0);
         assert_eq!(menu_action(MENU_PAUSE_RESUME, &idle), MenuAction::Ignore);
         assert_eq!(menu_action(MENU_MARK, &idle), MenuAction::Ignore);
         assert_eq!(menu_action(MENU_FINISH, &idle), MenuAction::Ignore);
         assert_eq!(menu_action(MENU_QUIT, &idle), MenuAction::Quit);
+        assert_eq!(
+            menu_action(MENU_SETTINGS, &idle),
+            MenuAction::MainCommand("settings")
+        );
+        assert_eq!(
+            menu_action(MENU_NEW_NOTE, &idle),
+            MenuAction::MainCommand("new-note")
+        );
     }
 
     #[test]
@@ -796,38 +1013,16 @@ mod tests {
     }
 
     #[test]
-    fn unsaved_non_recording_capture_is_visible_in_the_menu_bar() {
-        let draft = presentation_for(&CaptureStatus {
-            phase: "idle".into(),
-            has_unreviewed_work: Some(true),
-            ..CaptureStatus::default()
-        });
-        assert_eq!(draft.glyph, GlyphVariant::Draft);
-        assert_eq!(draft.status_text, "Gunther · Capture draft open");
-        assert_eq!(draft.quit_text, "Quit Gunther…");
-    }
-
-    #[test]
-    fn generated_glyphs_are_small_rgba_images_with_state_specific_centers() {
-        let (idle, idle_template) = glyph_image(GlyphVariant::Idle);
-        let (draft, draft_template) = glyph_image(GlyphVariant::Draft);
-        let (recording, recording_template) = glyph_image(GlyphVariant::Recording);
-        let (paused, paused_template) = glyph_image(GlyphVariant::Paused);
-        assert_eq!((idle.width(), idle.height()), (GLYPH_SIZE, GLYPH_SIZE));
-        assert_eq!(idle.rgba().len(), (GLYPH_SIZE * GLYPH_SIZE * 4) as usize);
-        assert!(idle_template);
-        assert!(draft_template);
-        assert!(!recording_template);
-        assert!(!paused_template);
-
-        let center = (((GLYPH_SIZE / 2) * GLYPH_SIZE + GLYPH_SIZE / 2) * 4) as usize;
-        assert_eq!(idle.rgba()[center + 3], 0, "idle center remains hollow");
-        assert_eq!(&draft.rgba()[center..center + 4], &[0, 0, 0, 255]);
-        assert_eq!(&recording.rgba()[center..center + 4], &[255, 69, 58, 255]);
-        assert_eq!(
-            paused.rgba()[center + 3],
-            0,
-            "paused glyph has a center gap"
-        );
+    fn the_menu_bar_item_can_step_aside_until_something_is_captured() {
+        assert!(tray_visible(MenuBarMode::Always, MenuLayout::Ready));
+        assert!(!tray_visible(
+            MenuBarMode::WhileCapturing,
+            MenuLayout::Ready
+        ));
+        assert!(tray_visible(
+            MenuBarMode::WhileCapturing,
+            MenuLayout::Live { paused: false }
+        ));
+        assert!(tray_visible(MenuBarMode::WhileCapturing, MenuLayout::Draft));
     }
 }

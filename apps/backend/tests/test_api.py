@@ -205,6 +205,7 @@ def test_unified_inbox_files_an_unassigned_source_idempotently() -> None:
         ).json()
         source_id = imported["source"]["id"]
 
+        assert client.get(f"/api/sources/{source_id}").json()["knowledgeBases"] == []
         unfiled = client.get("/api/inbox?state=unfiled&itemType=source")
         assert unfiled.status_code == 200
         assert unfiled.json() == [
@@ -260,6 +261,9 @@ def test_unified_inbox_files_an_unassigned_source_idempotently() -> None:
         ] == [source_id]
 
         assert client.get("/api/inbox?state=unfiled&itemType=source").json() == []
+        assert client.get(f"/api/sources/{source_id}").json()["knowledgeBases"] == [
+            {"id": base_id, "title": "Research Inbox"}
+        ]
         review_item = client.get("/api/inbox?state=needs_review&itemType=source").json()
         assert len(review_item) == 1
         assert review_item[0]["sourceId"] == source_id
@@ -274,6 +278,32 @@ def test_unified_inbox_files_an_unassigned_source_idempotently() -> None:
         )
         assert reviewed.status_code == 200
         assert all(item["sourceId"] != source_id for item in client.get("/api/inbox").json())
+
+
+def test_inbox_previews_a_pasted_table_by_its_shape() -> None:
+    with make_client() as client:
+        client.post(
+            "/api/sources",
+            json={
+                "title": "Cluster sizes",
+                "kind": "table",
+                "content": "cluster\tcells\tannotation\n0\t1,142\tT cells\n1\t486\tMonocytes",
+            },
+        )
+        client.post(
+            "/api/sources",
+            json={
+                "title": "Markdown rows",
+                "kind": "table",
+                "content": "| gene | count |\n|---|--:|\n| CD3E | 12 |",
+            },
+        )
+        previews = {
+            item["title"]: item["preview"]
+            for item in client.get("/api/inbox?state=unfiled&itemType=source").json()
+        }
+        assert previews["Cluster sizes"] == "2 rows · Columns: cluster, cells, annotation"
+        assert previews["Markdown rows"] == "1 row · Columns: gene, count"
 
 
 def test_unified_inbox_aggregates_quick_notes_and_knowledge_suggestions() -> None:

@@ -168,15 +168,17 @@ class WebSnapshotOut(ApiModel):
     asset_id: str
 
 
+class InboxKnowledgeBaseRefOut(ApiModel):
+    id: str
+    title: str
+
+
 class SourceDetailOut(SourceSummaryOut):
     content: str
     assertions: list[AssertionOut] = Field(default_factory=list)
     web_snapshot: WebSnapshotOut | None = None
-
-
-class InboxKnowledgeBaseRefOut(ApiModel):
-    id: str
-    title: str
+    # Libraries this source is filed in; empty while it waits in Inbox.
+    knowledge_bases: list[InboxKnowledgeBaseRefOut] = Field(default_factory=list)
 
 
 class InboxItemOut(ApiModel):

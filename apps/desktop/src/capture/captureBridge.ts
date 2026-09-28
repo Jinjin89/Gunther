@@ -11,6 +11,24 @@ export const CAPTURE_REQUEST_EVENT = "gunther://capture-request";
 export const CAPTURE_CONTROL_EVENT = "gunther://capture-control";
 export const CAPTURE_SAVED_EVENT = "gunther://capture-saved";
 export const OPEN_SEARCH_EVENT = "gunther://open-search";
+export const MENU_COMMAND_EVENT = "gunther://menu-command";
+
+/** Commands the native menus hand to the main window. */
+export type MenuCommand = "new-note" | "settings" | "shortcuts" | "theme";
+/** Whether Gunther's menu bar item stays visible when nothing is being captured. */
+export type MenuBarMode = "always" | "whileCapturing";
+
+export function listenForMenuCommand(handler: (command: MenuCommand) => void): Promise<UnlistenFn> {
+  return listen<MenuCommand>(MENU_COMMAND_EVENT, (event) => handler(event.payload));
+}
+
+export async function getMenuBarMode(): Promise<MenuBarMode> {
+  return invoke<MenuBarMode>("menu_bar_mode");
+}
+
+export async function setMenuBarMode(mode: MenuBarMode): Promise<void> {
+  await invoke("set_menu_bar_mode", { mode });
+}
 
 export function isTauriRuntime(): boolean {
   return "__TAURI_INTERNALS__" in window;

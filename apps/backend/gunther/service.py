@@ -670,6 +670,25 @@ class KnowledgeService:
         preview = re.sub(r"\s+", " ", content).strip()
         return preview[: limit - 1] + "…" if len(preview) > limit else preview
 
+    @classmethod
+    def _table_preview(cls, content: str) -> str | None:
+        """Summarise pasted rows by shape; collapsing whitespace would merge their cells."""
+
+        lines = [line.strip() for line in content.splitlines() if line.strip()]
+        if len(lines) < 2:
+            return None
+        for delimiter in ("\t", "|", ";", ","):
+            cells = [cell.strip() for cell in lines[0].strip("|").split(delimiter)]
+            if len(cells) >= 2:
+                break
+        else:
+            return None
+        rows = sum(1 for line in lines[1:] if not re.fullmatch(r"[\s|:\-]+", line))
+        columns = ", ".join(cell for cell in cells if cell)
+        return cls._inbox_preview(
+            f"{rows} {'row' if rows == 1 else 'rows'} · Columns: {columns}"
+        )
+
     def list_inbox(
         self,
         state: str | None = None,
@@ -741,7 +760,10 @@ class KnowledgeService:
                         item_type="source",
                         state="unfiled",
                         title=source.title,
-                        preview=self._inbox_preview(source.content),
+                        preview=(
+                            source.kind == "table" and self._table_preview(source.content)
+                        )
+                        or self._inbox_preview(source.content),
                         source_kind=source.kind,
                         source_id=source.id,
                         assertion_count=provisional_counts.get(source.id, 0),
@@ -758,7 +780,10 @@ class KnowledgeService:
                         item_type="source",
                         state="needs_review",
                         title=source.title,
-                        preview=self._inbox_preview(source.content),
+                        preview=(
+                            source.kind == "table" and self._table_preview(source.content)
+                        )
+                        or self._inbox_preview(source.content),
                         source_kind=source.kind,
                         knowledge_bases=source_knowledge_bases[source.id],
                         source_id=source.id,
@@ -1021,9 +1046,22 @@ class KnowledgeService:
             snapshot = session.scalar(
                 select(WebSnapshot).where(WebSnapshot.source_id == source_id)
             )
+            knowledge_bases = session.execute(
+                select(KnowledgeBaseRecord.id, KnowledgeBaseRecord.title)
+                .join(
+                    KnowledgeBaseSource,
+                    KnowledgeBaseSource.knowledge_base_id == KnowledgeBaseRecord.id,
+                )
+                .where(KnowledgeBaseSource.source_id == source_id)
+                .order_by(KnowledgeBaseSource.created_at.asc())
+            ).all()
             return SourceDetailOut(
                 **summary.model_dump(),
                 content=source.content,
+                knowledge_bases=[
+                    InboxKnowledgeBaseRefOut(id=base_id, title=title)
+                    for base_id, title in knowledge_bases
+                ],
                 assertions=[self._assertion_out(assertion) for assertion in assertions],
                 web_snapshot=(
                     WebSnapshotOut(

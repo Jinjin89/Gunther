@@ -188,6 +188,8 @@ export interface SourceDetail extends SourceSummary {
   content: string;
   assertions: Assertion[];
   webSnapshot: WebSnapshot | null;
+  /** Libraries this source is filed in; empty while it waits in Inbox. */
+  knowledgeBases?: InboxKnowledgeBaseRef[];
 }
 
 export interface Entity {

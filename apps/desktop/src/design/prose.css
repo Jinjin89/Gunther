@@ -1,0 +1,241 @@
+/*
+ * Gunther prose: rendered Markdown for notes, captured pages, transcripts,
+ * suggestions and documents. Display serif for reading, sans for anything you
+ * operate (tables, code labels, checkboxes), ink for structure, no tints.
+ */
+.gx-prose {
+  --gx-prose-size: 16px;
+  --gx-prose-leading: 1.72;
+  min-width: 0;
+  color: var(--gx-ink);
+  font-family: var(--gx-font-display);
+  font-size: var(--gx-prose-size);
+  line-height: var(--gx-prose-leading);
+  letter-spacing: 0.002em;
+  overflow-wrap: break-word;
+  font-kerning: normal;
+}
+.gx-prose > :first-child { margin-top: 0 !important; }
+.gx-prose > :last-child { margin-bottom: 0 !important; }
+.gx-prose p { margin: 0 0 0.9em; }
+.gx-prose :is(h1, h2, h3, h4, h5, h6) {
+  margin: 1.7em 0 0.55em;
+  color: var(--gx-ink);
+  font-family: var(--gx-font-display);
+  font-weight: 560;
+  letter-spacing: -0.012em;
+  line-height: 1.28;
+  text-wrap: balance;
+}
+.gx-prose .gx-md-h1 { font-size: 1.62em; font-weight: 500; letter-spacing: -0.02em; }
+.gx-prose .gx-md-h2 { font-size: 1.32em; font-weight: 540; }
+.gx-prose .gx-md-h3 { font-size: 1.12em; }
+.gx-prose :is(.gx-md-h4, .gx-md-h5, .gx-md-h6) {
+  margin-top: 1.5em;
+  color: var(--gx-muted);
+  font-family: var(--gx-font-sans);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.gx-prose strong { font-weight: 650; }
+.gx-prose em { font-style: italic; }
+.gx-prose del { color: var(--gx-faint); text-decoration-thickness: 1px; }
+.gx-prose a {
+  color: var(--gx-ink);
+  text-decoration: underline;
+  text-decoration-color: var(--gx-line-3);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition: text-decoration-color var(--gx-dur-fast) var(--gx-ease);
+}
+.gx-prose a:hover { text-decoration-color: currentColor; }
+.gx-prose .gx-md-unsafe-link { text-decoration: underline dotted var(--gx-line-3); text-underline-offset: 3px; }
+.gx-prose hr { height: 1px; margin: 2em 0; border: 0; background: var(--gx-line-2); }
+
+/* Lists */
+.gx-prose :is(ul, ol) { margin: 0 0 1em; padding-left: 1.45em; }
+.gx-prose li { margin: 0.28em 0; padding-left: 0.2em; }
+.gx-prose li > :is(ul, ol) { margin: 0.28em 0 0.4em; }
+.gx-prose li > p { margin-bottom: 0.4em; }
+.gx-prose ul > li::marker { color: var(--gx-faint); }
+.gx-prose ol > li::marker { color: var(--gx-faint); font-family: var(--gx-font-sans); font-size: 0.86em; font-variant-numeric: tabular-nums; }
+.gx-prose .gx-md-tasks { padding-left: 0.1em; list-style: none; }
+.gx-prose .gx-md-task-item { display: flex; align-items: flex-start; gap: 10px; padding-left: 0; }
+.gx-prose .gx-md-task-item > div { min-width: 0; flex: 1; }
+.gx-prose .gx-md-task-item.is-done > div { color: var(--gx-faint); text-decoration: line-through; text-decoration-color: var(--gx-line-3); }
+.gx-md-task {
+  width: 17px;
+  height: 17px;
+  margin-top: calc((var(--gx-prose-leading) * 1em - 17px) / 2);
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  border: 1.5px solid var(--gx-line-3);
+  border-radius: 5px;
+  background: var(--gx-surface);
+  color: var(--gx-on-ink) !important;
+  transition: background-color var(--gx-dur-fast) var(--gx-ease), border-color var(--gx-dur-fast) var(--gx-ease), transform var(--gx-dur) var(--gx-ease-spring);
+}
+button.gx-md-task:hover { border-color: var(--gx-ink); }
+button.gx-md-task:active { transform: scale(0.88); }
+.gx-md-task.is-checked { border-color: var(--gx-ink); background: var(--gx-ink); }
+.gx-md-task.is-checked svg { animation: gx-chip-in var(--gx-dur) var(--gx-ease-spring) both; }
+
+/* Quotes, code, images */
+.gx-prose blockquote {
+  margin: 1.1em 0;
+  padding: 0.1em 0 0.1em 1.05em;
+  border-left: 2px solid var(--gx-line-3);
+  color: var(--gx-muted);
+}
+.gx-prose blockquote p { margin-bottom: 0.5em; }
+.gx-md-inline-code {
+  padding: 0.12em 0.36em;
+  border: 1px solid var(--gx-line);
+  border-radius: 5px;
+  background: var(--gx-surface-2);
+  font-family: var(--gx-font-mono);
+  font-size: 0.8em;
+  letter-spacing: 0;
+}
+.gx-md-code {
+  margin: 1.1em 0 1.3em;
+  overflow: hidden;
+  border: 1px solid var(--gx-line-2);
+  border-radius: var(--gx-radius-md);
+  background: var(--gx-surface-2);
+}
+.gx-md-code figcaption {
+  height: 30px;
+  padding: 0 6px 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--gx-line);
+  color: var(--gx-faint);
+  font-family: var(--gx-font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.gx-md-code figcaption button {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--gx-faint) !important;
+  opacity: 0;
+  transition: opacity var(--gx-dur-fast) var(--gx-ease), background-color var(--gx-dur-fast) var(--gx-ease);
+}
+.gx-md-code:hover figcaption button,
+.gx-md-code figcaption button:focus-visible { opacity: 1; }
+.gx-md-code figcaption button:hover { background: var(--gx-hover); color: var(--gx-ink) !important; }
+.gx-md-code pre {
+  margin: 0;
+  padding: 12px 14px 14px;
+  overflow-x: auto;
+  color: var(--gx-ink-2);
+  font-family: var(--gx-font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  tab-size: 2;
+}
+.gx-md-image { max-width: 100%; height: auto; border-radius: var(--gx-radius-md); border: 1px solid var(--gx-line); }
+.gx-md-image-link {
+  padding: 1px 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--gx-line-2);
+  border-radius: 6px;
+  color: var(--gx-muted) !important;
+  font-family: var(--gx-font-sans);
+  font-size: 12px;
+  text-decoration: none !important;
+  vertical-align: 1px;
+}
+.gx-md-image-link:hover { border-color: var(--gx-line-3); color: var(--gx-ink) !important; }
+.gx-md-raw { color: var(--gx-muted); font-family: var(--gx-font-mono); font-size: 0.8em; white-space: pre-wrap; }
+
+/* Tables keep the interface's sans and tabular figures. */
+.gx-md-table {
+  max-width: 100%;
+  margin: 1.1em 0 1.3em;
+  overflow-x: auto;
+  border: 1px solid var(--gx-line-2);
+  border-radius: var(--gx-radius-md);
+}
+.gx-md-table:focus-visible { outline-offset: 2px; }
+.gx-md-table table { min-width: 100%; border-collapse: collapse; font-family: var(--gx-font-sans); font-size: 13px; line-height: 1.45; font-variant-numeric: tabular-nums; }
+.gx-md-table th,
+.gx-md-table td { padding: 8px 12px; border-bottom: 1px solid var(--gx-line); text-align: left; vertical-align: top; }
+.gx-md-table th { background: var(--gx-surface-2); color: var(--gx-muted); font-size: 12px; font-weight: 620; white-space: nowrap; }
+.gx-md-table tr:last-child td { border-bottom: 0; }
+.gx-md-table tbody tr:hover td { background: var(--gx-surface-2); }
+
+/* Compact and sans variants for side panels and cards. */
+.gx-prose.is-compact { --gx-prose-size: 14.5px; --gx-prose-leading: 1.62; }
+.gx-prose.is-sans { font-family: var(--gx-font-sans); letter-spacing: -0.003em; }
+.gx-prose.is-sans :is(h1, h2, h3) { font-family: var(--gx-font-sans); font-weight: 650; letter-spacing: -0.01em; }
+
+/* Markdown editor */
+.gx-md-editor { min-width: 0; display: flex; flex-direction: column; }
+.gx-md-toolbar {
+  margin: 0 0 14px -6px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  position: sticky;
+  top: var(--gx-md-toolbar-top, 0px);
+  z-index: 2;
+  background: var(--gx-canvas);
+  box-shadow: 0 8px 12px -12px color-mix(in srgb, var(--gx-canvas) 90%, transparent);
+}
+.gx-md-toolbar button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--gx-faint) !important;
+  position: relative;
+  transition: background-color var(--gx-dur-fast) var(--gx-ease), color var(--gx-dur-fast) var(--gx-ease);
+}
+.gx-md-toolbar button:hover { background: var(--gx-hover); color: var(--gx-ink) !important; }
+.gx-md-toolbar button:active { background: var(--gx-active); }
+.gx-md-toolbar button.has-divider { margin-left: 9px; }
+.gx-md-toolbar button.has-divider::before {
+  content: "";
+  width: 1px;
+  height: 16px;
+  background: var(--gx-line-2);
+  position: absolute;
+  left: -6px;
+  top: 7px;
+}
+.gx-md-toolbar-end { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+.gx-md-toolbar button:disabled { opacity: 0.4; }
+.gx-md-surface { min-width: 0; }
+/* A writing surface shows its caret, not a focus ring. */
+.atlas-app-shell .gx-md-surface .cm-editor:focus-visible,
+.atlas-app-shell .gx-md-surface .cm-content:focus-visible,
+.atlas-app-shell .gx-md-surface .cm-scroller:focus-visible { outline: 0; }
+.gx-md-surface .cm-editor { font-feature-settings: "kern", "liga", "calt"; }
+.gx-md-placeholder-text {
+  min-height: var(--gx-md-editor-min, 220px);
+  color: var(--gx-ink);
+  font-family: var(--gx-font-sans);
+  font-size: 15px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

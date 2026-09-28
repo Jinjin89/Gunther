@@ -495,8 +495,9 @@ async function run() {
       throw new SmokeFailure("All capture options was not clickable");
     }
     await waitForEvaluation(cdp, "document.querySelector('[role=dialog][aria-label=\"Capture something\"]') !== null", "Capture dialog");
-    if (!await cdp.evaluate(clickExpression("button", "Quick note"))) {
-      throw new SmokeFailure("Quick note was not clickable");
+    // Capture opens ready to write a note; the type bar still selects it explicitly.
+    if (!await cdp.evaluate(clickExpression("[role=tab]", "Note"))) {
+      throw new SmokeFailure("The Note capture type was not selectable");
     }
     if (!await cdp.evaluate(setAriaValueExpression("Title", noteTitle))) {
       throw new SmokeFailure("Quick note title input was not found");
@@ -504,7 +505,7 @@ async function run() {
     if (!await cdp.evaluate(setAriaValueExpression("Source content", `BRCA1 -> regulates -> DNA repair\nPreserved by ${marker}.`))) {
       throw new SmokeFailure("Quick note content input was not found");
     }
-    await waitForEvaluation(cdp, "[...document.querySelectorAll('button')].some((button) => button.textContent.trim() === 'Save note' && !button.disabled)", "enabled Save note");
+    await waitForEvaluation(cdp, "[...document.querySelectorAll('button')].some((button) => button.getAttribute('aria-label') === 'Save note' && !button.disabled)", "enabled Save note");
     if (!await cdp.evaluate(clickExpression("button", "Save note"))) {
       throw new SmokeFailure("Save note was not clickable");
     }
@@ -548,15 +549,36 @@ async function run() {
       throw new SmokeFailure("Inbox navigation was not clickable");
     }
     await waitForEvaluation(cdp, `document.body.innerText.includes(${JSON.stringify(noteTitle)})`, "captured note after returning to Inbox");
+    const noteCard = `[...document.querySelectorAll('article.state-unfiled')].find((article) => article.querySelector('h2')?.textContent === ${JSON.stringify(noteTitle)})`;
+    // Inbox files through the library picker: open it on the note's row, choose the library, then file.
+    const openPickerExpression = `(() => {
+      const trigger = ${noteCard}?.querySelector('.gx-picker-trigger');
+      if (!trigger || trigger.disabled) return false;
+      trigger.click();
+      return true;
+    })()`;
+    if (!await cdp.evaluate(openPickerExpression)) throw new SmokeFailure("The Inbox library picker was not available");
+    await waitForEvaluation(
+      cdp,
+      `[...document.querySelectorAll('[role=option]')].some((option) => option.querySelector('strong')?.textContent === ${JSON.stringify(libraryTitle)})`,
+      "library picker options",
+    );
+    const chooseLibraryExpression = `(() => {
+      const option = [...document.querySelectorAll('[role=option]')].find((candidate) => candidate.querySelector('strong')?.textContent === ${JSON.stringify(libraryTitle)});
+      if (!option) return false;
+      option.click();
+      return true;
+    })()`;
+    if (!await cdp.evaluate(chooseLibraryExpression)) throw new SmokeFailure("The new library could not be chosen");
+    await waitForEvaluation(
+      cdp,
+      `(${noteCard}?.querySelector('.gx-picker-trigger')?.getAttribute('aria-label') || '').includes(${JSON.stringify(libraryTitle)})`,
+      "chosen library on the Inbox row",
+    );
     const fileExpression = `(() => {
-      const card = [...document.querySelectorAll('article.state-unfiled')].find((article) => article.querySelector('h2')?.textContent === ${JSON.stringify(noteTitle)});
-      if (!card) return false;
-      const select = card.querySelector('select');
-      const option = select && [...select.options].find((candidate) => candidate.textContent === ${JSON.stringify(libraryTitle)});
-      const button = [...card.querySelectorAll('button')].find((candidate) => candidate.textContent.replace(/\\s+/g, ' ').trim() === 'File source');
-      if (!select || !option || !button || button.disabled) return false;
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, option.value);
-      select.dispatchEvent(new Event('change', { bubbles: true }));
+      const card = ${noteCard};
+      const button = card && [...card.querySelectorAll('button')].find((candidate) => candidate.textContent.replace(/\\s+/g, ' ').trim() === 'File source');
+      if (!button || button.disabled) return false;
       button.click();
       return true;
     })()`;
@@ -635,24 +657,30 @@ async function run() {
     if (!sourceOpenState?.clicked) {
       throw new SmokeFailure(`The filed source could not be opened: ${JSON.stringify(sourceOpenState)}`);
     }
+    // Sources open into their own page: title, preserved text, claims, and Back.
     await waitForEvaluation(
       cdp,
-      `document.querySelector('[role=dialog][aria-label=${JSON.stringify(noteTitle)}]') !== null && document.body.innerText.includes('BRCA1 -> regulates -> DNA repair')`,
-      "source detail with preserved readable content",
+      `document.querySelector('.gx-item-title')?.textContent.trim() === ${JSON.stringify(noteTitle)} && document.body.innerText.includes('BRCA1 -> regulates -> DNA repair')`,
+      "source page with preserved readable content",
     );
     if (source.assertionCount > 0) {
-      if (!await cdp.evaluate(clickExpression("button", "Verify"))) {
-        throw new SmokeFailure("A provisional source claim could not be verified");
-      }
-      await waitForEvaluation(
-        cdp,
-        "[...document.querySelectorAll('.claim-status')].some((item) => item.textContent.trim() === 'verified')",
-        "verified source claim",
-      );
+      const accepted = await cdp.evaluate(`(() => {
+        const button = document.querySelector('.gx-claim.is-provisional .gx-claim-actions .is-accept');
+        if (!button || button.disabled) return false;
+        button.click();
+        return true;
+      })()`);
+      if (!accepted) throw new SmokeFailure("A provisional source claim could not be accepted");
+      await waitForEvaluation(cdp, "document.querySelector('.gx-claim.is-verified') !== null", "verified source claim");
     }
-    if (!await cdp.evaluate(clickExpression("button", "Close source"))) {
-      throw new SmokeFailure("Source detail could not be closed");
-    }
+    const wentBack = await cdp.evaluate(`(() => {
+      const back = document.querySelector('.gx-item-back');
+      if (!back) return false;
+      back.click();
+      return true;
+    })()`);
+    if (!wentBack) throw new SmokeFailure("The source page could not go back to its library");
+    await waitForEvaluation(cdp, "document.querySelector('.base-mode-switch') !== null", "library workspace after the source page");
 
     const askReadyStartedAt = Date.now();
     if (!await cdp.evaluate(clickExpression("button", "Ask"))) {

@@ -1,27 +1,30 @@
 import type { InboxItem } from "@gunther/contracts";
 import {
   Archive,
-  ArrowRight,
-  BookOpen,
+  AudioLines,
   Camera,
   Check,
   ChevronRight,
   CircleAlert,
   FileText,
+  FolderInput,
+  Globe,
   Inbox,
-  Link2,
   LoaderCircle,
-  Mic,
   NotebookPen,
   Plus,
   RotateCcw,
   Sparkles,
   Table2,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { knowledgeApi } from "../api";
 import type { KnowledgeBase } from "../atlas";
 import { LibraryGlyph } from "../design/LibraryGlyph";
+import { itemKey, refFromInbox, type ItemRef } from "../items/itemRef";
+import { LibraryPicker } from "../items/LibraryPicker";
+import { inboxPreview } from "../items/sourceContent";
+import { comboKeys, useShortcut } from "../shortcuts/shortcuts";
 
 type InboxFilter = "all" | "unfiled" | "needs_review" | "held";
 
@@ -29,40 +32,55 @@ interface InboxPageProps {
   bases: KnowledgeBase[];
   onOpenBase: (id: string) => void;
   onOpenNote: (id: string) => void;
+  /** Open an item in its own page; `queue` is the visible list, for J / K. */
+  onOpenItem?: (item: ItemRef, queue: ItemRef[]) => void;
+  /** The item last opened from here, focused again on return. */
+  focusItemKey?: string | null;
   onCapture: () => void;
+  onCreateBase?: () => void;
   onCountChange?: (count: number) => void;
   onNotify: (message: string) => void;
 }
 
-const itemIcon = (item: InboxItem) => {
-  if (item.itemType === "quick_note") return NotebookPen;
-  if (item.itemType === "knowledge_suggestion") return Sparkles;
-  if (item.sourceKind === "recording" || item.sourceKind === "course") return Mic;
-  if (item.sourceKind === "link") return Link2;
-  if (item.sourceKind === "image") return Camera;
-  if (item.sourceKind === "table") return Table2;
-  return FileText;
-};
+const KIND = {
+  note: { icon: NotebookPen, tone: "clay", label: "Note" },
+  paper: { icon: FileText, tone: "blue", label: "Paper" },
+  file: { icon: FileText, tone: "blue", label: "Document" },
+  link: { icon: Globe, tone: "amber", label: "Web page" },
+  image: { icon: Camera, tone: "violet", label: "Photo or scan" },
+  table: { icon: Table2, tone: "green", label: "Table" },
+  recording: { icon: AudioLines, tone: "rose", label: "Recording" },
+  course: { icon: AudioLines, tone: "rose", label: "Course recording" },
+} as const;
 
-const itemLabel = (item: InboxItem) => {
-  if (item.itemType === "quick_note") return "Quick note";
-  if (item.itemType === "knowledge_suggestion") return "Knowledge suggestion";
-  return ({ note: "Note", paper: "Paper", link: "Web page", file: "Document", image: "Photo or scan", table: "Dataset", recording: "Recording", course: "Course" } as const)[item.sourceKind ?? "file"];
+const itemKind = (item: InboxItem) => {
+  if (item.itemType === "quick_note") return { icon: NotebookPen, tone: "clay", label: "Quick note" };
+  if (item.itemType === "knowledge_suggestion") return { icon: Sparkles, tone: "brand", label: "Suggested knowledge" };
+  return KIND[item.sourceKind ?? "file"];
 };
 
 const stateCopy = (item: InboxItem) => item.state === "unfiled"
-  ? { label: "Choose a home", description: "The original is preserved. Decide which library it belongs to." }
+  ? { label: "Choose a home", description: "The original is preserved until you decide where it belongs." }
   : item.state === "needs_review"
-    ? { label: "Review suggestion", description: item.itemType === "knowledge_suggestion" ? "This came from a grounded conversation and needs your decision." : `${item.assertionCount} candidate claim${item.assertionCount === 1 ? "" : "s"} need your review.` }
+    ? { label: item.itemType === "knowledge_suggestion" ? "Review suggestion" : `${item.assertionCount} ${item.assertionCount === 1 ? "claim" : "claims"} to review`, description: item.itemType === "knowledge_suggestion" ? "From a grounded conversation. Accept it, or hold it for later." : "Nothing becomes trusted knowledge until you accept it." }
     : { label: "Held for later", description: "Preserved without becoming trusted knowledge." };
 
-export function InboxPageV3({ bases, onOpenBase, onOpenNote, onCapture, onCountChange, onNotify }: InboxPageProps) {
+const formatDay = (value: string) => {
+  const date = new Date(value);
+  const today = new Date();
+  if (date.toDateString() === today.toDateString()) return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+};
+
+export function InboxPageV3({ bases, onOpenBase, onOpenNote, onOpenItem, focusItemKey = null, onCapture, onCreateBase, onCountChange, onNotify }: InboxPageProps) {
   const [items, setItems] = useState<InboxItem[]>([]);
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [workingId, setWorkingId] = useState<string | null>(null);
   const [targets, setTargets] = useState<Record<string, string>>({});
+  const list = useRef<HTMLDivElement>(null);
+  const restoredFocus = useRef(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -90,9 +108,46 @@ export function InboxPageV3({ bases, onOpenBase, onOpenNote, onCapture, onCountC
     needs_review: items.filter((item) => item.state === "needs_review").length,
     held: items.filter((item) => item.state === "held").length,
   }), [items]);
-  const visible = items.filter((item) => filter === "all" ? item.state !== "held" : item.state === filter);
+  const visible = useMemo(() => items.filter((item) => filter === "all" ? item.state !== "held" : item.state === filter), [filter, items]);
+  const queue = useMemo(() => visible.map(refFromInbox), [visible]);
 
-  const selectedTarget = (item: InboxItem) => targets[item.id] ?? bases[0]?.id ?? "";
+  const openButtons = () => Array.from(list.current?.querySelectorAll<HTMLButtonElement>(".gx-inbox-open") ?? []);
+  const moveFocus = (step: number) => {
+    const buttons = openButtons();
+    if (!buttons.length) return;
+    const current = buttons.findIndex((button) => button === document.activeElement || button.closest("article")?.contains(document.activeElement));
+    const next = current === -1 ? (step > 0 ? 0 : buttons.length - 1) : Math.min(buttons.length - 1, Math.max(0, current + step));
+    buttons[next]!.focus();
+    buttons[next]!.closest("article")?.scrollIntoView({ block: "nearest" });
+  };
+  useShortcut("j", () => moveFocus(1), { enabled: visible.length > 0 });
+  useShortcut("k", () => moveFocus(-1), { enabled: visible.length > 0 });
+  const onListKeyDown = (event: KeyboardEvent) => {
+    if (event.target instanceof HTMLElement && event.target.closest(".gx-picker")) return;
+    if (event.key === "ArrowDown") { event.preventDefault(); moveFocus(1); }
+    if (event.key === "ArrowUp") { event.preventDefault(); moveFocus(-1); }
+  };
+
+  // Back from an item: put focus on the row it was opened from.
+  useEffect(() => {
+    if (loading || restoredFocus.current || !focusItemKey) return;
+    restoredFocus.current = true;
+    const index = queue.findIndex((ref) => itemKey(ref) === focusItemKey);
+    const buttons = openButtons();
+    const target = buttons[index >= 0 ? index : 0];
+    target?.focus({ preventScroll: true });
+    target?.closest("article")?.scrollIntoView({ block: "nearest" });
+  }, [focusItemKey, loading, queue]);
+
+  const open = (item: InboxItem) => {
+    if (onOpenItem) onOpenItem(refFromInbox(item), queue);
+    else if (item.noteId) onOpenNote(item.noteId);
+  };
+
+  const selectedTarget = (item: InboxItem) => {
+    const chosen = targets[item.id] ?? item.knowledgeBases[0]?.id;
+    return chosen && bases.some((base) => base.id === chosen) ? chosen : bases[0]?.id ?? "";
+  };
   const fileItem = async (item: InboxItem) => {
     const knowledgeBaseId = selectedTarget(item);
     if (!knowledgeBaseId) {
@@ -172,48 +227,56 @@ export function InboxPageV3({ bases, onOpenBase, onOpenNote, onCapture, onCountC
     {error && <div className="gx-banner is-error" role="alert"><CircleAlert size={16} /><span><strong>Inbox is temporarily unavailable</strong><small>{error}</small></span><button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => { setLoading(true); void refresh(); }}>Retry</button></div>}
     {loading && <div className="gx-inbox-list is-loading" aria-label="Opening your Inbox">{[0, 1, 2].map((index) => <div className="gx-inbox-skeleton" key={index} aria-hidden="true"><i /><span><b /><b /><b /></span></div>)}</div>}
 
-    {!loading && !error && visible.length > 0 && <div className="gx-inbox-list">{visible.map((item, index) => {
-      const Icon = itemIcon(item);
-      const copy = stateCopy(item);
-      const isWorking = workingId === item.id;
-      return <article key={`${item.itemType}-${item.id}`} className={`gx-inbox-item state-${item.state} ${isWorking ? "is-working" : ""}`} style={{ "--i": index } as CSSProperties}>
-        <div className="gx-inbox-icon"><Icon size={16} /></div>
-        <div className="gx-inbox-body">
-          <header>
-            <span className="gx-inbox-kind">{itemLabel(item)}</span>
-            <time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time>
-            {item.knowledgeBases.map((base) => {
-              const known = bases.find((candidate) => candidate.id === base.id);
-              return <button type="button" key={base.id} className="gx-library-pill" onClick={() => onOpenBase(base.id)}>{known && <LibraryGlyph base={known} size="xs" />}{base.title}<ChevronRight size={11} /></button>;
-            })}
-          </header>
-          <h2>{item.title}</h2>
-          <p>{item.preview || "No preview yet. The original item remains preserved."}</p>
-          <div className="gx-inbox-state"><i /><strong>{copy.label}</strong><span>{copy.description}</span></div>
-        </div>
-        <footer>
-          {item.state === "unfiled" && <>
-            {item.itemType === "quick_note" && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => item.noteId && onOpenNote(item.noteId)}><NotebookPen size={13} />Edit note</button>}
-            <span className="gx-footer-spacer" />
-            <label className="gx-select-label"><span>File to</span><select value={selectedTarget(item)} disabled={isWorking || bases.length === 0} onChange={(event) => setTargets((current) => ({ ...current, [item.id]: event.target.value }))}>{bases.map((base) => <option value={base.id} key={base.id}>{base.title}</option>)}</select></label>
-            <button type="button" className="gx-btn gx-btn-primary gx-btn-sm" disabled={isWorking || bases.length === 0} onClick={() => void fileItem(item)}>{isWorking ? <LoaderCircle className="spin" size={13} /> : <BookOpen size={13} />}File source</button>
-          </>}
-          {item.state === "needs_review" && item.itemType === "source" && <>
-            {item.knowledgeBases[0] && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => onOpenBase(item.knowledgeBases[0]!.id)}>Review in context <ArrowRight size={12} /></button>}
-            <span className="gx-footer-spacer" />
-            <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={isWorking} onClick={() => void reviewSource(item, "disputed")}>Dispute</button>
-            <button type="button" className="gx-btn gx-btn-primary gx-btn-sm" disabled={isWorking || item.assertionCount === 0} onClick={() => void reviewSource(item, "verified")}><Check size={13} />Accept {item.assertionCount || "claims"}</button>
-          </>}
-          {item.state === "needs_review" && item.itemType === "knowledge_suggestion" && <>
-            {item.knowledgeBases[0] && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => onOpenBase(item.knowledgeBases[0]!.id)}>Review in context <ArrowRight size={12} /></button>}
-            <span className="gx-footer-spacer" />
-            <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={isWorking} onClick={() => void reviewProposal(item, "held")}><Archive size={13} />Hold</button>
-            <button type="button" className="gx-btn gx-btn-primary gx-btn-sm" disabled={isWorking} onClick={() => void reviewProposal(item, "accepted")}><Check size={13} />Accept suggestion</button>
-          </>}
-          {item.state === "held" && <><span className="gx-footer-spacer" /><button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={isWorking} onClick={() => void reviewProposal(item, "pending")}><RotateCcw size={13} />Return to review</button></>}
-        </footer>
-      </article>;
-    })}</div>}
+    {!loading && !error && visible.length > 0 && <>
+      <div className="gx-inbox-list" ref={list} onKeyDown={onListKeyDown}>{visible.map((item, index) => {
+        const kind = itemKind(item);
+        const Icon = kind.icon;
+        const copy = stateCopy(item);
+        const preview = inboxPreview(item);
+        const isWorking = workingId === item.id;
+        return <article key={`${item.itemType}-${item.id}`} className={`gx-inbox-item state-${item.state} ${isWorking ? "is-working" : ""}`} style={{ "--i": index } as CSSProperties}>
+          <span className={`gx-kind-tile tone-${kind.tone}`} aria-hidden="true"><Icon size={15} /></span>
+          <div className="gx-inbox-body">
+            <header>
+              <span className="gx-inbox-kind">{kind.label}</span>
+              <time dateTime={item.updatedAt}>{formatDay(item.updatedAt)}</time>
+              {preview.detail && <span className="gx-inbox-detail">{preview.detail}</span>}
+              {item.knowledgeBases.map((base) => {
+                const known = bases.find((candidate) => candidate.id === base.id);
+                return <button type="button" key={base.id} className="gx-library-pill" onClick={() => onOpenBase(base.id)}>{known && <LibraryGlyph base={known} size="xs" />}{base.title}<ChevronRight size={11} /></button>;
+              })}
+            </header>
+            <h2><button type="button" className="gx-inbox-open" onClick={() => open(item)} aria-describedby={`inbox-state-${item.id}`}>{item.title}</button></h2>
+            {preview.text ? <p>{preview.text}</p> : <p className="is-empty">{item.itemType === "quick_note" ? "An empty note, ready for a thought." : "Open it to read the preserved original."}</p>}
+            <div className="gx-inbox-state" id={`inbox-state-${item.id}`}><i /><strong>{copy.label}</strong><span>{copy.description}</span></div>
+          </div>
+          <span className="gx-inbox-go" aria-hidden="true">Open<ChevronRight size={13} /></span>
+          <footer>
+            {item.state === "unfiled" && <>
+              <span className="gx-footer-spacer" />
+              {bases.length > 0 && <div className="gx-inbox-picker"><LibraryPicker bases={bases} value={selectedTarget(item)} onChange={(id) => setTargets((current) => ({ ...current, [item.id]: id }))} onCreate={onCreateBase} disabled={isWorking} label="File to library" placement={index > 2 && index === visible.length - 1 ? "above" : "below"} /></div>}
+              <button type="button" className="gx-btn gx-btn-primary gx-btn-sm" disabled={isWorking || bases.length === 0} onClick={() => void fileItem(item)}>{isWorking ? <LoaderCircle className="spin" size={13} /> : <FolderInput size={13} />}File source</button>
+            </>}
+            {item.state === "needs_review" && item.itemType === "source" && <>
+              <span className="gx-footer-spacer" />
+              <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={isWorking} onClick={() => void reviewSource(item, "disputed")}>Dispute</button>
+              <button type="button" className="gx-btn gx-btn-primary gx-btn-sm" disabled={isWorking || item.assertionCount === 0} onClick={() => void reviewSource(item, "verified")}><Check size={13} />Accept {item.assertionCount || "claims"}</button>
+            </>}
+            {item.state === "needs_review" && item.itemType === "knowledge_suggestion" && <>
+              <span className="gx-footer-spacer" />
+              <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={isWorking} onClick={() => void reviewProposal(item, "held")}><Archive size={13} />Hold</button>
+              <button type="button" className="gx-btn gx-btn-primary gx-btn-sm" disabled={isWorking} onClick={() => void reviewProposal(item, "accepted")}><Check size={13} />Accept suggestion</button>
+            </>}
+            {item.state === "held" && <><span className="gx-footer-spacer" /><button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={isWorking} onClick={() => void reviewProposal(item, "pending")}><RotateCcw size={13} />Return to review</button></>}
+          </footer>
+        </article>;
+      })}</div>
+      <p className="gx-list-hint" aria-hidden="true">
+        <span><kbd>J</kbd><kbd>K</kbd> move</span>
+        <span><kbd>↵</kbd> open</span>
+        <span>{comboKeys("mod+enter").map((key) => <kbd key={key}>{key}</kbd>)} file or accept, inside an item</span>
+      </p>
+    </>}
 
     {!loading && !error && visible.length === 0 && <div className="gx-empty-state">
       <span className="gx-empty-icon"><Inbox size={20} /></span>

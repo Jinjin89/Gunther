@@ -5,7 +5,7 @@ import type { KnowledgeBase } from "../atlas";
 import { BrandMark } from "../design/BrandMark";
 import { LibraryGlyph } from "../design/LibraryGlyph";
 
-export type AtlasView = "home" | "library" | "base" | "notebook" | "inbox" | "settings" | "account";
+export type AtlasView = "home" | "library" | "base" | "notebook" | "inbox" | "settings" | "account" | "item";
 
 export interface BreadcrumbSegment {
   label: string;

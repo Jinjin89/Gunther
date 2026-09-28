@@ -91,7 +91,8 @@ describe("InboxPageV3", () => {
     const { props } = renderInbox({ onNotify });
 
     await screen.findByText("Unsorted lecture");
-    await user.selectOptions(screen.getByRole("combobox"), "computing");
+    await user.click(screen.getByRole("button", { name: /File to library: Biology/i }));
+    await user.click(screen.getByRole("option", { name: /Computing/ }));
     await user.click(screen.getByRole("button", { name: /File source/i }));
 
     await waitFor(() => expect(api.fileSource).toHaveBeenCalledWith("source-1", "computing"));
@@ -132,6 +133,39 @@ describe("InboxPageV3", () => {
       reason: "Returned to unified Inbox",
     }));
     expect(onNotify).toHaveBeenCalledWith("Suggestion returned for review.");
+  });
+
+  it("opens any row as its own page, with the visible list as the J / K queue", async () => {
+    const user = userEvent.setup();
+    const onOpenItem = vi.fn();
+    renderInbox({ onOpenItem });
+
+    await user.click(await screen.findByRole("button", { name: "Candidate findings" }));
+    expect(onOpenItem).toHaveBeenCalledWith(
+      { type: "source", id: "source-review" },
+      [{ type: "source", id: "source-1" }, { type: "source", id: "source-review" }],
+    );
+  });
+
+  it("moves between rows with J and K and opens the focused row with Enter", async () => {
+    const user = userEvent.setup();
+    const onOpenItem = vi.fn();
+    renderInbox({ onOpenItem });
+
+    await screen.findByText("Unsorted lecture");
+    await user.keyboard("j");
+    expect(screen.getByRole("button", { name: "Unsorted lecture" })).toHaveFocus();
+    await user.keyboard("j");
+    expect(screen.getByRole("button", { name: "Candidate findings" })).toHaveFocus();
+    await user.keyboard("k");
+    expect(screen.getByRole("button", { name: "Unsorted lecture" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(onOpenItem).toHaveBeenCalledWith({ type: "source", id: "source-1" }, expect.any(Array));
+  });
+
+  it("returns focus to the row an item was opened from", async () => {
+    renderInbox({ onOpenItem: vi.fn(), focusItemKey: "source:source-review" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Candidate findings" })).toHaveFocus());
   });
 
   it("surfaces service failure and recovers through an explicit retry", async () => {

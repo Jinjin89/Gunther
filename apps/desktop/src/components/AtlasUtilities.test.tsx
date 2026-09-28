@@ -48,11 +48,11 @@ describe("CaptureSheet web snapshots", () => {
     const user = userEvent.setup();
     const onCaptured = renderSheet("wsp_primary");
 
-    await user.click(screen.getByRole("button", { name: /Web page Save a link with context/i }));
+    await user.click(screen.getByRole("tab", { name: /Web page/i }));
     await user.type(screen.getByRole("textbox", { name: "Web page URL" }), "example.org/article#section");
     await user.type(screen.getByRole("textbox", { name: "Title" }), "Primary article");
     await user.type(screen.getByRole("textbox", { name: "Source content" }), "Preserve the methods section.");
-    await user.click(screen.getByRole("button", { name: /Capture page/i }));
+    await user.click(screen.getByRole("button", { name: /Save web page/i }));
 
     await waitFor(() => expect(onCaptured).toHaveBeenCalledOnce());
     expect(onCaptured).toHaveBeenCalledWith(
@@ -70,9 +70,9 @@ describe("CaptureSheet web snapshots", () => {
     const user = userEvent.setup();
     renderSheet();
 
-    await user.click(screen.getByRole("button", { name: /Web page Save a link with context/i }));
+    await user.click(screen.getByRole("tab", { name: /Web page/i }));
     const url = screen.getByRole("textbox", { name: "Web page URL" });
-    const submit = screen.getByRole("button", { name: /Capture page/i });
+    const submit = screen.getByRole("button", { name: /Save web page/i });
     await user.type(url, "https://user:secret@example.org/private");
     expect(submit).toBeDisabled();
     await user.clear(url);
@@ -85,7 +85,6 @@ describe("CaptureSheet web snapshots", () => {
     const user = userEvent.setup();
     const onCaptured = renderSheet("wsp_primary");
 
-    await user.click(screen.getByRole("button", { name: /Quick note Write a thought/i }));
     await user.type(screen.getByRole("textbox", { name: "Title" }), "Recovered thought");
     await user.type(screen.getByRole("textbox", { name: "Source content" }), "Do not lose this note.");
     await user.click(screen.getByRole("button", { name: /Save note/i }));
@@ -163,7 +162,7 @@ describe("CaptureSheet native window surface", () => {
       true,
     ));
 
-    await user.click(screen.getByRole("button", { name: "Back to capture options" }));
+    await user.click(screen.getByRole("button", { name: "Discard this capture" }));
     await waitFor(() => expect(onRecorderSnapshot).toHaveBeenLastCalledWith(
       expect.objectContaining({ phase: "idle" }),
       "",
@@ -191,7 +190,7 @@ describe("CaptureSheet native window surface", () => {
 
     const url = screen.getByRole("textbox", { name: "Web page URL" });
     await user.type(url, "example.org/keep-me");
-    await user.click(screen.getByRole("button", { name: "Back to capture options" }));
+    await user.click(screen.getByRole("button", { name: "Discard this capture" }));
 
     expect(confirm).toHaveBeenCalledOnce();
     expect(screen.getByRole("textbox", { name: "Web page URL" })).toHaveValue("example.org/keep-me");

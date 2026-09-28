@@ -390,8 +390,8 @@ export const knowledgeApi = {
     }),
   saveRecording: uploadRecording,
   captureAsset: uploadAsset,
-  sourceStructure: (id: string, offset = 0, revisionId?: string | null, blockId?: string | null) =>
-    request<SourceStructure>(`/sources/${encodeURIComponent(id)}/structure?offset=${offset}${revisionId ? `&revision_id=${encodeURIComponent(revisionId)}` : ""}${blockId ? `&block_id=${encodeURIComponent(blockId)}` : ""}`),
+  sourceStructure: (id: string, offset = 0, revisionId?: string | null, blockId?: string | null, limit?: number) =>
+    request<SourceStructure>(`/sources/${encodeURIComponent(id)}/structure?offset=${offset}${revisionId ? `&revision_id=${encodeURIComponent(revisionId)}` : ""}${blockId ? `&block_id=${encodeURIComponent(blockId)}` : ""}${limit ? `&limit=${limit}` : ""}`),
   reprocessSource: (id: string) => request<SourceProcessing>(`/sources/${encodeURIComponent(id)}/reprocess`, { method: "POST" }),
   cancelSourceProcessing: (id: string) => request<SourceProcessing>(`/sources/${encodeURIComponent(id)}/processing/cancel`, { method: "POST" }),
   topics: (baseId: string) => request<KnowledgeTopic[]>(`/knowledge-bases/${encodeURIComponent(baseId)}/topics`),

@@ -53,11 +53,19 @@ npm run build:desktop
 
 `⌘K` 或 `/` 在任意页面回到 Home 搜索。侧栏同时列出你的 Libraries，便于直接切换。
 
+**详情页**：Inbox 中的每一项、Home 搜索结果、最近采集和 Library 的 Sources 都可以点开成独立页面，并按类型呈现——笔记（Markdown 阅读/书写，可勾选任务）、录音（播放器、标记时刻、概览与可点击时间戳的转写）、网页（站点卡片与捕获正文）、文档（按页重建的正文或原始 Markdown/CSV/文本）、照片（大图查看与可定位的识别文字）、表格（数据网格）、知识建议（提议内容与来源会话）。右侧决策栏负责归档、审核与接受（⌘↵），完成后自动进入下一项；J/K 上下切换，Esc 返回。
+
+**Markdown**：渲染使用 react-markdown + remark-gfm（原始 HTML 只显示为文本，远程图片不加载）；书写使用 CodeMirror 6（首次书写时才加载）。
+
+**快捷键**：统一注册表驱动匹配、提示与 ⌘/ 快捷键一览；桌面版中 ⌘N、⌘⇧C、⌘⇧R、⌘K、⌘,、⌘/、⌘⇧L 由原生菜单负责。
+
 界面遵循 [Gunther Design System](../../docs/DESIGN_SYSTEM.md)：白底黑字，颜色只用于 Library、来源类型与状态标识；设计 token 与组件样式位于 `src/design/`。
 
 Notebook / Note 是快速记录编辑界面，不是临时 Library。未归类 Note 在 Inbox 中出现；归类时提升为 Library 的 Source。
 
 ## Capture
+
+Capture 打开即可书写（默认笔记），类型栏 ⌘1–6 切换且保留已输入内容；粘贴链接或表格会提示切换类型，文件可拖放到窗口任意位置；底栏选择 Inbox 或 Library，⌘↵ 保存，Esc 隐藏到菜单栏。菜单栏图标是 Gunther 的“G”标记，只在采集时改变（录音红灯与计时、暂停琥珀双竖线），菜单只列出当前可用的动作；设置中可选择“仅在采集时显示”。详见 [独立 Capture 与菜单栏设计](../../docs/CAPTURE_MENU_BAR_DESIGN_CN.md)。
 
 统一 Capture 支持：
 

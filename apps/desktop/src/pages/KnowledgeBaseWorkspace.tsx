@@ -67,6 +67,8 @@ interface KnowledgeBaseWorkspaceProps {
   onExport: () => void;
   onEdit: () => void;
   onNotify: (message: string) => void;
+  /** Open a source in its own page; `queue` lists this library's sources for J / K. */
+  onOpenSource?: (id: string, queue: string[]) => void;
 }
 
 const modeLabels: Array<{ id: AtlasMode; label: string }> = [
@@ -232,7 +234,7 @@ function OverviewView({ base, onMode, onAdd }: Pick<KnowledgeBaseWorkspaceProps,
   </div>;
 }
 
-function MaterialsView({ base, onAdd }: Pick<KnowledgeBaseWorkspaceProps, "base" | "onAdd">) {
+function MaterialsView({ base, onAdd, onOpenSource }: Pick<KnowledgeBaseWorkspaceProps, "base" | "onAdd" | "onOpenSource">) {
   const [sources, setSources] = useState<SourceSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
@@ -288,8 +290,9 @@ function MaterialsView({ base, onAdd }: Pick<KnowledgeBaseWorkspaceProps, "base"
     const sourceId = window.localStorage.getItem(sourceKey);
     if (!sourceId) return;
     window.localStorage.removeItem(sourceKey);
-    openSource(sourceId);
-  }, [base.id, openSource]);
+    if (onOpenSource) onOpenSource(sourceId, [sourceId]);
+    else openSource(sourceId);
+  }, [base.id, onOpenSource, openSource]);
 
   useEffect(() => {
     if (!selectedSourceId) return;
@@ -367,7 +370,7 @@ function MaterialsView({ base, onAdd }: Pick<KnowledgeBaseWorkspaceProps, "base"
         <header><span><strong>All sources</strong><small>{(() => { const count = materials.length || base.indexedSourceCount || 0; return `${count} ${count === 1 ? "source" : "sources"} · ${recordingCount} ${recordingCount === 1 ? "recording" : "recordings"}`; })()}</small></span><div><button onClick={() => onAdd()}><FilePlus2 size={13} />Add source</button></div></header>
         {materials.length > 0 && <div className="material-list">{materials.map((material) => {
           const Icon = materialIcon(material.kind);
-          return <button type="button" className="material-row" disabled={!material.indexed} key={material.id} onClick={() => openSource(material.id)}><span className={`material-kind-icon kind-${material.kind}`}><Icon size={16} /></span><span><small>{materialLabel(material.kind)} · {material.date}</small><strong>{material.title}</strong><p>{material.detail}</p></span><span className="material-state"><i />{material.indexed ? "Open source" : "Reference"}<ChevronRight size={13} /></span></button>;
+          return <button type="button" className="material-row" disabled={!material.indexed} key={material.id} onClick={() => onOpenSource ? onOpenSource(material.id, materials.filter((item) => item.indexed).map((item) => item.id)) : openSource(material.id)}><span className={`material-kind-icon kind-${material.kind}`}><Icon size={16} /></span><span><small>{materialLabel(material.kind)} · {material.date}</small><strong>{material.title}</strong><p>{material.detail}</p></span><span className="material-state"><i />{material.indexed ? "Open source" : "Reference"}<ChevronRight size={13} /></span></button>;
         })}</div>}
         {!loading && materials.length === 0 && <div className="materials-empty"><span><Layers3 size={22} /></span><h2>This library is ready for its first source.</h2><p>Start with whichever source you already have. You never need to begin with a particular format.</p><div><button className="primary-button" onClick={() => onAdd()}><FilePlus2 size={14} />Choose a source</button></div></div>}
         {loading && materials.length === 0 && <div className="materials-loading">Opening this library’s materials…</div>}

@@ -19,6 +19,7 @@ import { SearchResults } from "../components/search/SearchResults";
 import { useKnowledgeSearch } from "../components/search/useKnowledgeSearch";
 import { BrandMark } from "../design/BrandMark";
 import { LibraryGlyph } from "../design/LibraryGlyph";
+import { refFromSearch, type ItemRef } from "../items/itemRef";
 
 export type HomeCaptureKind = "note" | "link" | "file" | "image" | "recording" | "table";
 
@@ -35,6 +36,10 @@ interface HomePageProps {
   onOpenChapter: (baseId: string, chapterId: string) => void;
   onAskBase: (id: string, question: string) => void;
   onOpenNote: (id: string) => void;
+  /** Open a note or source in its own page; `queue` is what J / K step through. */
+  onOpenItem?: (item: ItemRef, queue: ItemRef[]) => void;
+  /** Coming back from an opened result: restore the search it came from. */
+  resumeSearch?: boolean;
   onOpenLibraries: () => void;
   onCreateBase: () => void;
   onOpenInbox: () => void;
@@ -87,6 +92,9 @@ const formatDay = (value: string) => new Date(value).toLocaleDateString(undefine
 
 const plural = (count: number, singular: string) => `${count} ${singular}${count === 1 ? "" : "s"}`;
 
+/** The search a result was opened from, so Back returns to the same results. */
+let rememberedSearch: { query: string; mentionIds: string[]; web: boolean } | null = null;
+
 function RowSkeletons() {
   return <>{[0, 1, 2].map((index) => <div className="gx-row-skeleton" key={index} aria-hidden="true"><i /><span><b /><b /></span></div>)}</>;
 }
@@ -103,6 +111,8 @@ export function HomePage({
   onOpenChapter,
   onAskBase,
   onOpenNote,
+  onOpenItem,
+  resumeSearch = false,
   onOpenLibraries,
   onCreateBase,
   onOpenInbox,
@@ -132,6 +142,16 @@ export function HomePage({
   useEffect(() => {
     if (focusRequest > 0) composer.current?.focus();
   }, [focusRequest]);
+
+  // Returning from a result restores the search it was opened from.
+  useEffect(() => {
+    if (!resumeSearch || !rememberedSearch) return;
+    const { query: previous, mentionIds: previousMentions, web: previousWeb } = rememberedSearch;
+    setQuery(previous);
+    setMentionIds(previousMentions);
+    void run(previous, previousWeb ? "both" : "knowledge", previousMentions);
+    // Only on arrival.
+  }, []);
 
   // A library that disappears (renamed away or deleted) must not stay as a hidden scope.
   useEffect(() => {
@@ -172,10 +192,18 @@ export function HomePage({
   const clear = () => {
     setQuery("");
     setMentionIds([]);
+    rememberedSearch = null;
     reset();
   };
 
   const openResult = useCallback((result: KnowledgeSearchResult) => {
+    const item = refFromSearch(result);
+    if (item && onOpenItem) {
+      if (submitted) rememberedSearch = { query: submitted.query, mentionIds: submitted.baseIds, web: submitted.scope !== "knowledge" };
+      const queue = search.indexedResults.map(refFromSearch).filter((ref): ref is ItemRef => ref !== null);
+      onOpenItem(item, queue);
+      return;
+    }
     if (result.kind === "note") {
       onOpenNote(result.id);
       return;
@@ -203,7 +231,7 @@ export function HomePage({
       return;
     }
     onOpenBase(baseId);
-  }, [onOpenBase, onOpenInbox, onOpenNote]);
+  }, [onOpenBase, onOpenInbox, onOpenItem, onOpenNote, search.indexedResults, submitted]);
 
   const saveResearch = async () => {
     const webResult = search.webResult;
@@ -341,15 +369,17 @@ export function HomePage({
               <header><h2>Recently captured</h2></header>
               {recentSources.map((source) => {
                 const Icon = sourceIcon(source);
+                const queue = recentSources.map((item): ItemRef => ({ type: "source", id: item.id }));
                 return (
-                  <div className="gx-row is-static" key={source.id}>
+                  <button type="button" className="gx-row" key={source.id} onClick={() => onOpenItem?.({ type: "source", id: source.id }, queue)}>
                     <span className={`gx-kind-icon kind-${source.kind}`}><Icon size={15} /></span>
                     <span className="gx-row-body">
                       <strong>{source.title}</strong>
                       <small>{sourceLabel(source)} · {formatDay(source.createdAt)}</small>
                     </span>
                     {source.assertionCount > 0 && <em>{plural(source.assertionCount, "claim")}</em>}
-                  </div>
+                    <ArrowRight size={14} className="gx-row-arrow" />
+                  </button>
                 );
               })}
               {!sourcesReady && <RowSkeletons />}

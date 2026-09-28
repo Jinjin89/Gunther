@@ -1,120 +1,133 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
-  <title id="title">Gunther Capture menu bar states</title>
-  <desc id="desc">Six Capture glyph states and the recording quick-action menu for macOS.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">Gunther menu bar states</title>
+  <desc id="desc">The Gunther mark in the macOS menu bar: calm template states for ready, unsaved, review and preparing; grey mark with a red light while recording, amber bars while paused, and a red badge when capture needs attention. The recording menu shows only the actions that apply.</desc>
   <defs>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
-      <feDropShadow dx="0" dy="12" stdDeviation="18" flood-color="#1f2b27" flood-opacity=".12"/>
-    </filter>
     <style>
-      .sans{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Helvetica Neue",Arial,sans-serif}
-      .label{font-size:15px;font-weight:650;fill:#24332e}
-      .sub{font-size:12px;font-weight:500;fill:#78827e}
-      .menu{font-size:14px;font-weight:520;fill:#202624}
-      .glyph{fill:none;stroke:#27322e;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
-      .corner{fill:none;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+      .sans{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif}
+      .serif{font-family:ui-serif,"New York",Georgia,serif}
+      .title{font-size:30px;font-weight:500;fill:#1a1a18}
+      .lede{font-size:15px;fill:#5f5e5a}
+      .label{font-size:14px;font-weight:600;fill:#1a1a18}
+      .sub{font-size:12px;fill:#75746f}
+      .menu{font-size:13.5px;fill:#1a1a18}
+      .menu-dim{font-size:13.5px;fill:#8e8e93}
+      .time{font-size:13px;font-weight:500;font-variant-numeric:tabular-nums}
     </style>
+    <!-- The mark in a 32-unit box: an open ring, a crossbar and a node. -->
+    <path id="ring" d="M23.8 8.2A11 11 0 1 0 27 16H18.4" fill="none" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
+    <path id="ring-paused" d="M23.8 8.2A11 11 0 1 0 27 16H21.4" fill="none" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
+    <mask id="badge-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="32" height="32"><rect width="32" height="32" fill="#fff"/><circle cx="27.6" cy="8.4" r="4.8" fill="#000"/></mask>
+    <mask id="light-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="32" height="32"><rect width="32" height="32" fill="#fff"/><circle cx="16" cy="16" r="5.2" fill="#000"/></mask>
+    <g id="g-ready"><use href="#ring"/><circle cx="16" cy="16" r="2.8"/></g>
+    <g id="g-badge"><g mask="url(#badge-cut)"><use href="#ring"/></g><circle cx="16" cy="16" r="2.8"/><circle cx="27.6" cy="8.4" r="3.3"/></g>
+    <g id="g-preparing"><use href="#ring"/><circle cx="16" cy="16" r="2.4" fill="none" stroke-width="1.6"/></g>
+    <g id="g-recording"><g mask="url(#light-cut)" stroke="#8e8e93"><use href="#ring"/></g><circle cx="16" cy="16" r="3.9" fill="#ff453a"/></g>
+    <g id="g-paused"><g stroke="#8e8e93"><use href="#ring-paused"/></g><rect x="13.35" y="12.9" width="1.9" height="6.2" rx="0.6" fill="#ff9f0a"/><rect x="16.95" y="12.9" width="1.9" height="6.2" rx="0.6" fill="#ff9f0a"/></g>
+    <g id="g-attention"><g mask="url(#badge-cut)" stroke="#8e8e93"><use href="#ring"/></g><circle cx="16" cy="16" r="2.8" fill="#8e8e93"/><circle cx="27.6" cy="8.4" r="3.3" fill="#ff453a"/></g>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%"><feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#141412" flood-opacity=".16"/></filter>
   </defs>
-  <rect width="1200" height="720" rx="28" fill="#f3f2ed"/>
-  <text x="64" y="74" class="sans" font-size="29" font-weight="720" fill="#1f2b27">Capture stays with you, not inside a page.</text>
-  <text x="64" y="105" class="sans" font-size="15" font-weight="500" fill="#747d79">A dedicated macOS menu-bar glyph keeps the session visible and controllable while Gunther is hidden.</text>
 
-  <rect x="64" y="142" width="1072" height="54" rx="15" fill="#ffffff" filter="url(#shadow)"/>
-  <circle cx="89" cy="169" r="5" fill="#d7d9d7"/>
-  <circle cx="106" cy="169" r="5" fill="#d7d9d7"/>
-  <circle cx="123" cy="169" r="5" fill="#d7d9d7"/>
-  <text x="148" y="174" class="sans sub">Gunther hidden · Capture continues</text>
-  <g transform="translate(870 157)" stroke="#ff453a">
-    <path class="corner" d="M2 7V2h5M17 2h5v5M22 17v5h-5M7 22H2v-5"/>
-    <circle cx="12" cy="12" r="4" fill="#ff453a" stroke="none"/>
-  </g>
-  <text x="902" y="174" class="sans" font-size="14" font-weight="650" fill="#2c3431">01:24:18</text>
-  <path d="M1075 166l5 6 5-6" fill="none" stroke="#7d8581" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect width="1200" height="760" rx="28" fill="#fafaf8"/>
+  <text x="64" y="80" class="serif title">The menu bar shows Gunther, not a record button.</text>
+  <text x="64" y="110" class="sans lede">Calm states are template images of the mark. Only live capture changes it — by shape first, colour second — and the timer clears the moment it ends.</text>
 
-  <g transform="translate(64 236)">
-    <rect width="150" height="154" rx="18" fill="#ffffff"/>
-    <g transform="translate(55 24) scale(1.7)" stroke="#27322e">
-      <path class="corner" d="M2 7V2h5M17 2h5v5M22 17v5h-5M7 22H2v-5"/>
-      <circle cx="12" cy="12" r="3.3" fill="none" stroke-width="2"/>
+  <!-- State cards -->
+  <g class="sans">
+    <g transform="translate(64 146)">
+      <rect width="138" height="170" rx="16" fill="#fff" stroke="#1a1a18" stroke-opacity=".08"/>
+      <g transform="translate(37 22) scale(2)" stroke="#1a1a18" fill="#1a1a18"><use href="#g-ready"/></g>
+      <text x="18" y="118" class="label">Ready</text><text x="18" y="138" class="sub">the plain mark</text><text x="18" y="156" class="sub">template image</text>
     </g>
-    <text x="18" y="112" class="sans label">Ready</text>
-    <text x="18" y="134" class="sans sub">hollow source</text>
-  </g>
-
-  <g transform="translate(230 236)">
-    <rect width="150" height="154" rx="18" fill="#ffffff"/>
-    <g transform="translate(55 24) scale(1.7)" stroke="#27322e">
-      <path class="corner" d="M2 7V2h5M17 2h5v5M22 17v5h-5M7 22H2v-5"/>
-      <circle cx="12" cy="12" r="3.2" fill="#27322e" stroke="none"/>
+    <g transform="translate(216 146)">
+      <rect width="138" height="170" rx="16" fill="#fff" stroke="#1a1a18" stroke-opacity=".08"/>
+      <g transform="translate(37 22) scale(2)" stroke="#1a1a18" fill="#1a1a18"><use href="#g-badge"/></g>
+      <text x="18" y="118" class="label">Unsaved</text><text x="18" y="138" class="sub">badge in the opening</text><text x="18" y="156" class="sub">template image</text>
     </g>
-    <text x="18" y="112" class="sans label">Draft open</text>
-    <text x="18" y="134" class="sans sub">unsaved input</text>
-  </g>
-
-  <g transform="translate(396 236)">
-    <rect width="150" height="154" rx="18" fill="#fff7f6" stroke="#ffd5d1"/>
-    <g transform="translate(55 24) scale(1.7)" stroke="#ff453a">
-      <path class="corner" d="M2 7V2h5M17 2h5v5M22 17v5h-5M7 22H2v-5"/>
-      <circle cx="12" cy="12" r="4" fill="#ff453a" stroke="none"/>
+    <g transform="translate(368 146)">
+      <rect width="138" height="170" rx="16" fill="#fff" stroke="#1a1a18" stroke-opacity=".08"/>
+      <g transform="translate(37 22) scale(2)" stroke="#1a1a18" fill="#1a1a18"><use href="#g-badge"/></g>
+      <text x="18" y="118" class="label">Review ready</text><text x="18" y="138" class="sub">same badge, menu says</text><text x="18" y="156" class="sub">“Review Recording…”</text>
     </g>
-    <text x="18" y="112" class="sans label" fill="#b52b24">Recording</text>
-    <text x="18" y="134" class="sans sub">red dot + timer</text>
-  </g>
-
-  <g transform="translate(562 236)">
-    <rect width="150" height="154" rx="18" fill="#fffaf1" stroke="#f4d9aa"/>
-    <g transform="translate(55 24) scale(1.7)" stroke="#ff9f0a">
-      <path class="corner" d="M2 7V2h5M17 2h5v5M22 17v5h-5M7 22H2v-5"/>
-      <path d="M9 8v8M15 8v8" fill="none" stroke-width="2.4" stroke-linecap="round"/>
+    <g transform="translate(520 146)">
+      <rect width="138" height="170" rx="16" fill="#fff" stroke="#1a1a18" stroke-opacity=".08"/>
+      <g transform="translate(37 22) scale(2)" stroke="#1a1a18" fill="#1a1a18"><use href="#g-preparing"/></g>
+      <text x="18" y="118" class="label">Preparing</text><text x="18" y="138" class="sub">hollow node while the</text><text x="18" y="156" class="sub">mic opens or it saves</text>
     </g>
-    <text x="18" y="112" class="sans label" fill="#98600a">Paused</text>
-    <text x="18" y="134" class="sans sub">bars + frozen time</text>
-  </g>
-
-  <g transform="translate(728 236)">
-    <rect width="150" height="154" rx="18" fill="#ffffff"/>
-    <g transform="translate(55 24) scale(1.7)" stroke="#27322e">
-      <path class="corner" d="M2 7V2h5M17 2h5v5M22 17v5h-5M7 22H2v-5"/>
-      <path d="M7.5 12.5l3 3 6-7" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <g transform="translate(672 146)">
+      <rect width="138" height="170" rx="16" fill="#fff" stroke="#1a1a18" stroke-opacity=".08"/>
+      <g transform="translate(37 22) scale(2)"><use href="#g-recording"/></g>
+      <text x="18" y="118" class="label">Recording</text><text x="18" y="138" class="sub">red light + timer</text><text x="18" y="156" class="sub">mark steps back to grey</text>
     </g>
-    <text x="18" y="112" class="sans label">Review</text>
-    <text x="18" y="134" class="sans sub">finish, then approve</text>
-  </g>
-
-  <g transform="translate(894 236)">
-    <rect width="150" height="154" rx="18" fill="#fff7f6" stroke="#ffd5d1"/>
-    <g transform="translate(55 24) scale(1.7)" stroke="#ff453a">
-      <path class="corner" d="M2 7V2h5M17 2h5v5M22 17v5h-5M7 22H2v-5"/>
-      <path d="M12 7v7M12 17.5v.2" fill="none" stroke-width="2.4" stroke-linecap="round"/>
+    <g transform="translate(824 146)">
+      <rect width="138" height="170" rx="16" fill="#fff" stroke="#1a1a18" stroke-opacity=".08"/>
+      <g transform="translate(37 22) scale(2)"><use href="#g-paused"/></g>
+      <text x="18" y="118" class="label">Paused</text><text x="18" y="138" class="sub">amber pause bars</text><text x="18" y="156" class="sub">+ timer</text>
     </g>
-    <text x="18" y="112" class="sans label" fill="#b52b24">Attention</text>
-    <text x="18" y="134" class="sans sub">audio remains safe</text>
-  </g>
-
-  <g transform="translate(64 432)">
-    <rect width="510" height="224" rx="22" fill="#ffffff"/>
-    <text x="25" y="38" class="sans" font-size="13" font-weight="700" fill="#7b8580" letter-spacing="1.1">BEHAVIOR</text>
-    <g transform="translate(25 56)" class="sans">
-      <circle cx="12" cy="9" r="9" fill="#e6f1eb"/><path d="M8 9l3 3 6-7" fill="none" stroke="#39705a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-      <text x="36" y="14" class="label">Close Capture = hide, never stop</text>
-      <circle cx="12" cy="57" r="9" fill="#e6f1eb"/><path d="M8 57h8M12 53v8" fill="none" stroke="#39705a" stroke-width="1.8" stroke-linecap="round"/>
-      <text x="36" y="62" class="label">Every entry returns to one session</text>
-      <circle cx="12" cy="105" r="9" fill="#e6f1eb"/><path d="M8 105h8" fill="none" stroke="#39705a" stroke-width="1.8" stroke-linecap="round"/>
-      <text x="36" y="110" class="label">Finish opens Review, not auto-save</text>
-      <circle cx="12" cy="153" r="9" fill="#fff1d9"/><path d="M12 148v6M12 157v.2" fill="none" stroke="#a66b10" stroke-width="1.8" stroke-linecap="round"/>
-      <text x="36" y="158" class="label">Unsaved work blocks accidental Quit</text>
+    <g transform="translate(976 146)">
+      <rect width="160" height="170" rx="16" fill="#fff" stroke="#1a1a18" stroke-opacity=".08"/>
+      <g transform="translate(48 22) scale(2)"><use href="#g-attention"/></g>
+      <text x="18" y="118" class="label">Needs attention</text><text x="18" y="138" class="sub">red badge, e.g. the</text><text x="18" y="156" class="sub">microphone was denied</text>
     </g>
   </g>
 
-  <g transform="translate(604 432)" filter="url(#shadow)">
-    <rect width="440" height="224" rx="18" fill="#ffffff"/>
-    <text x="20" y="30" class="sans" font-size="12" font-weight="650" fill="#8a918e">● Recording · 01:24:18</text>
-    <line x1="0" y1="43" x2="440" y2="43" stroke="#e8e9e7"/>
-    <text x="20" y="70" class="sans menu">Open Capture…</text>
-    <text x="20" y="99" class="sans menu">Pause Recording</text>
-    <text x="20" y="128" class="sans menu">Mark Moment</text>
-    <text x="20" y="157" class="sans menu">Finish Recording</text>
-    <line x1="0" y1="173" x2="440" y2="173" stroke="#e8e9e7"/>
-    <text x="20" y="202" class="sans menu">Open Gunther</text>
-    <text x="326" y="202" class="sans menu" fill="#9b4d46">Quit Gunther…</text>
+  <!-- Menu bar strips -->
+  <g class="sans">
+    <text x="64" y="370" class="sub">Light menu bar</text>
+    <rect x="64" y="380" width="520" height="30" rx="8" fill="#ececec"/>
+    <g transform="translate(84 386) scale(0.5625)" stroke="#1a1a18" fill="#1a1a18"><use href="#g-ready"/></g>
+    <g transform="translate(150 386) scale(0.5625)" stroke="#1a1a18" fill="#1a1a18"><use href="#g-badge"/></g>
+    <g transform="translate(216 386) scale(0.5625)"><use href="#g-recording"/></g><text x="238" y="400" class="time" fill="#1a1a18">12:48</text>
+    <g transform="translate(316 386) scale(0.5625)"><use href="#g-paused"/></g><text x="338" y="400" class="time" fill="#1a1a18">12:48</text>
+    <g transform="translate(416 386) scale(0.5625)" stroke="#1a1a18" fill="#1a1a18"><use href="#g-preparing"/></g>
+
+    <text x="616" y="370" class="sub">Dark menu bar</text>
+    <rect x="616" y="380" width="520" height="30" rx="8" fill="#2a2a2c"/>
+    <g transform="translate(636 386) scale(0.5625)" stroke="#f2f2f7" fill="#f2f2f7"><use href="#g-ready"/></g>
+    <g transform="translate(702 386) scale(0.5625)" stroke="#f2f2f7" fill="#f2f2f7"><use href="#g-badge"/></g>
+    <g transform="translate(768 386) scale(0.5625)"><use href="#g-recording"/></g><text x="790" y="400" class="time" fill="#f2f2f7">12:48</text>
+    <g transform="translate(868 386) scale(0.5625)"><use href="#g-paused"/></g><text x="890" y="400" class="time" fill="#f2f2f7">12:48</text>
+    <g transform="translate(968 386) scale(0.5625)" stroke="#f2f2f7" fill="#f2f2f7"><use href="#g-preparing"/></g>
+  </g>
+
+  <!-- Menus -->
+  <g class="sans">
+    <text x="64" y="466" class="label">Ready</text>
+    <g transform="translate(64 480)" filter="url(#shadow)">
+      <rect width="300" height="214" rx="12" fill="#fff" stroke="#1a1a18" stroke-opacity=".1"/>
+      <text x="20" y="32" class="menu">Capture…</text>
+      <text x="20" y="60" class="menu">New Recording</text>
+      <line x1="12" x2="288" y1="76" y2="76" stroke="#1a1a18" stroke-opacity=".1"/>
+      <text x="20" y="102" class="menu">Search Gunther…</text>
+      <text x="20" y="130" class="menu">Open Gunther</text>
+      <line x1="12" x2="288" y1="146" y2="146" stroke="#1a1a18" stroke-opacity=".1"/>
+      <text x="20" y="172" class="menu">Quit Gunther</text>
+      <text x="20" y="200" class="sub">No recording controls until something records.</text>
+    </g>
+
+    <text x="420" y="466" class="label">Recording</text>
+    <g transform="translate(420 480)" filter="url(#shadow)">
+      <rect width="330" height="258" rx="12" fill="#fff" stroke="#1a1a18" stroke-opacity=".1"/>
+      <circle cx="26" cy="27" r="4.5" fill="#ff453a"/>
+      <text x="38" y="32" class="menu-dim">Recording · 12:48 — Lecture 7</text>
+      <line x1="12" x2="318" y1="48" y2="48" stroke="#1a1a18" stroke-opacity=".1"/>
+      <text x="20" y="74" class="menu">Pause Recording</text>
+      <text x="20" y="102" class="menu">Mark Moment</text>
+      <text x="20" y="130" class="menu">Finish Recording…</text>
+      <line x1="12" x2="318" y1="146" y2="146" stroke="#1a1a18" stroke-opacity=".1"/>
+      <text x="20" y="172" class="menu">Show Recorder</text>
+      <text x="20" y="200" class="menu">Open Gunther</text>
+      <line x1="12" x2="318" y1="216" y2="216" stroke="#1a1a18" stroke-opacity=".1"/>
+      <text x="20" y="242" class="menu">Quit Gunther…</text>
+    </g>
+
+    <g transform="translate(806 466)">
+      <text x="0" y="0" class="label">Rules</text>
+      <text x="0" y="30" class="sub">• Idle is the brand mark, drawn as a template image.</text>
+      <text x="0" y="54" class="sub">• Only live capture leaves the template: red light, amber bars.</text>
+      <text x="0" y="78" class="sub">• The timer is cleared with an empty title when capture ends.</text>
+      <text x="0" y="102" class="sub">• Menus list only actions that apply right now.</text>
+      <text x="0" y="126" class="sub">• “Only while capturing” hides the item when idle.</text>
+      <text x="0" y="150" class="sub">• Drawn at 36 px (18 pt @2x) in tray_glyph.rs, no image files.</text>
+    </g>
   </g>
 </svg>
