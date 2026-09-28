@@ -14,12 +14,13 @@ migration then runs in version order.
 
 from __future__ import annotations
 
+import hashlib
 import secrets
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import Engine, MetaData, inspect, text
+from sqlalchemy import Engine, MetaData, Table, inspect, text
 from sqlalchemy.engine import Connection
 
 from gunther.database import connection_transaction
@@ -238,6 +239,114 @@ def _create_artifact_history(connection: Connection, metadata: MetaData) -> None
             table.create(bind=connection, checkfirst=True)
 
 
+# Output request identity arrived after the first Output tables; a table created
+# before it is repaired in place rather than set aside.
+ARTIFACT_REQUEST_IDENTITY_COLUMNS = frozenset({"client_request_id", "request_fingerprint"})
+
+
+def _stored_column_drift(connection: Connection, table: Table) -> tuple[set[str], set[str]]:
+    """Return the stored table's missing columns and unknown columns that block inserts."""
+
+    inspector = inspect(connection)
+    if not inspector.has_table(table.name):
+        return set(), set()
+    stored = {column["name"]: column for column in inspector.get_columns(table.name)}
+    expected = {column.name for column in table.columns}
+    blocking = {
+        name
+        for name, column in stored.items()
+        if name not in expected and not column["nullable"] and column.get("default") is None
+    }
+    return expected - stored.keys(), blocking
+
+
+def _set_aside_as_legacy(connection: Connection, table_name: str) -> str:
+    """Rename a table out of the way with every row, freeing its index names."""
+
+    inspector = inspect(connection)
+    legacy_name = f"{table_name}_legacy"
+    suffix = 2
+    while inspector.has_table(legacy_name):
+        legacy_name = f"{table_name}_legacy_{suffix}"
+        suffix += 1
+    preparer = connection.dialect.identifier_preparer
+    connection.exec_driver_sql(
+        f"ALTER TABLE {preparer.quote(table_name)} RENAME TO {preparer.quote(legacy_name)}"
+    )
+    # SQLite index names are global and the renamed table keeps its explicit
+    # indexes, whose names the replacement table needs. Dropping an index keeps rows.
+    for index in connection.exec_driver_sql(
+        f"PRAGMA index_list({preparer.quote(legacy_name)})"
+    ).all():
+        if index.origin == "c":
+            connection.exec_driver_sql(f"DROP INDEX {preparer.quote(index.name)}")
+    return legacy_name
+
+
+def _repair_legacy_artifact_tables(connection: Connection, metadata: MetaData) -> None:
+    """Bring Output tables left by a pre-release build to the current shape.
+
+    Migration 10 creates these tables with ``checkfirst``, so a table that an
+    earlier build had already created kept its old columns and every query on it
+    failed. No row is discarded: missing request identity is backfilled, and any
+    other shape is kept under a ``_legacy`` name beside a fresh, empty table.
+    """
+
+    artifacts = metadata.tables.get("artifacts")
+    bindings = metadata.tables.get("artifact_unit_bindings")
+    if artifacts is None or bindings is None:
+        return
+    artifact_missing, artifact_blocking = _stored_column_drift(connection, artifacts)
+    binding_missing, binding_blocking = _stored_column_drift(connection, bindings)
+
+    if artifact_missing and not (
+        artifact_missing - ARTIFACT_REQUEST_IDENTITY_COLUMNS
+        or artifact_blocking
+        or binding_missing
+        or binding_blocking
+    ):
+        added_request_id = add_column_if_missing(
+            connection, "artifacts", "client_request_id", "VARCHAR(128)"
+        )
+        add_column_if_missing(connection, "artifacts", "request_fingerprint", "VARCHAR(64)")
+        # Synthetic identity for Outputs made before requests carried one. No client
+        # sends a "legacy-" id, so an old row can never answer a new request.
+        legacy_ids = connection.execute(
+            text(
+                "SELECT id FROM artifacts "
+                "WHERE client_request_id IS NULL OR request_fingerprint IS NULL"
+            )
+        ).scalars().all()
+        for artifact_id in legacy_ids:
+            connection.execute(
+                text(
+                    "UPDATE artifacts SET "
+                    "client_request_id = COALESCE(client_request_id, :request_id), "
+                    "request_fingerprint = COALESCE(request_fingerprint, :fingerprint) "
+                    "WHERE id = :id"
+                ),
+                {
+                    "id": artifact_id,
+                    "request_id": f"legacy-{artifact_id}",
+                    "fingerprint": hashlib.sha256(
+                        f"gunther.legacy-artifact:{artifact_id}".encode()
+                    ).hexdigest(),
+                },
+            )
+        if added_request_id:
+            connection.exec_driver_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_artifact_workspace_request "
+                "ON artifacts (workspace_id, client_request_id)"
+            )
+    elif artifact_missing or artifact_blocking or binding_missing or binding_blocking:
+        # An unrecognised earlier shape: keep it readable, start the current one.
+        for table in (artifacts, bindings):
+            if inspect(connection).has_table(table.name):
+                _set_aside_as_legacy(connection, table.name)
+    artifacts.create(bind=connection, checkfirst=True)
+    bindings.create(bind=connection, checkfirst=True)
+
+
 def _create_structured_knowledge(connection: Connection, metadata: MetaData) -> None:
     for name in (
         "source_revisions", "source_index_heads", "content_blocks", "block_embeddings",
@@ -271,6 +380,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(9, "web_capture_request_identity", _add_web_capture_request_identity),
     Migration(10, "immutable_artifact_history", _create_artifact_history),
     Migration(11, "structured_knowledge_and_durable_processing", _create_structured_knowledge),
+    Migration(12, "repair_legacy_artifact_tables", _repair_legacy_artifact_tables),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

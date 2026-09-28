@@ -2,7 +2,7 @@ import hashlib
 from pathlib import Path
 
 import pytest
-from sqlalchemy import Column, Integer, MetaData, String, Table, inspect, text
+from sqlalchemy import Column, Integer, MetaData, String, Table, inspect, select, text
 
 from gunther.database import create_database_engine, create_session_factory, session_scope
 from gunther.knowledge_index import KnowledgeIndex
@@ -17,7 +17,7 @@ from gunther.migrations import (
     get_schema_version,
     run_migrations,
 )
-from gunther.models import Base, Source
+from gunther.models import Artifact, Base, Source
 from gunther.source_identity import source_fingerprint
 
 
@@ -55,6 +55,7 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (9, "web_capture_request_identity"),
             (10, "immutable_artifact_history"),
             (11, "structured_knowledge_and_durable_processing"),
+            (12, "repair_legacy_artifact_tables"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
@@ -140,7 +141,7 @@ def test_v10_upgrade_backfills_evidence_without_rewriting_original(tmp_path: Pat
                 == content.split("\n")[1]
             )
             assert session.execute(text("PRAGMA foreign_key_check")).all() == []
-        assert get_schema_version(engine) == 11
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()
 
@@ -741,6 +742,139 @@ def test_v9_database_adds_immutable_artifact_history_without_touching_library(
             assert connection.execute(
                 text("SELECT title, description FROM knowledge_bases WHERE id = 'kept-library'")
             ).one() == ("Kept library", "Existing content")
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
+    finally:
+        engine.dispose()
+
+
+def _prepare_pre_release_outputs(engine) -> str:
+    """Reach v11, then replace the Output tables as a pre-release build left them."""
+
+    run_migrations(engine, Base.metadata, MIGRATIONS[:11])
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE artifact_unit_bindings")
+        connection.exec_driver_sql("DROP TABLE artifacts")
+        connection.execute(
+            text(
+                "INSERT INTO knowledge_bases "
+                "(id, title, eyebrow, subtitle, question, description, color, "
+                "status, created_at, updated_at) VALUES "
+                "('cells', 'Cells', 'Personal knowledge', 'A field worth shaping', "
+                "'Which markers?', 'Existing content', 'green', 'Outline', "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+        return connection.execute(
+            text("SELECT workspace_id FROM workspace_identity")
+        ).scalar_one()
+
+
+def test_v11_outputs_without_request_identity_are_repaired_in_place(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path)
+    try:
+        workspace_id = _prepare_pre_release_outputs(engine)
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "CREATE TABLE artifacts ("
+                "id VARCHAR(40) PRIMARY KEY, "
+                "workspace_id VARCHAR(40) NOT NULL REFERENCES workspace_identity(workspace_id), "
+                "knowledge_base_id VARCHAR(160) NOT NULL REFERENCES knowledge_bases(id), "
+                "lineage_id VARCHAR(40) NOT NULL, version_number INTEGER NOT NULL, "
+                "supersedes_artifact_id VARCHAR(40) REFERENCES artifacts(id), "
+                "format VARCHAR(40) NOT NULL, audience VARCHAR(40) NOT NULL, "
+                "title VARCHAR(160) NOT NULL, content TEXT NOT NULL, "
+                "content_hash VARCHAR(64) NOT NULL, manifest_hash VARCHAR(64) NOT NULL, "
+                "accepted_unit_ids_json TEXT NOT NULL, revision_snapshot_json TEXT NOT NULL, "
+                "provenance_json TEXT NOT NULL, created_at DATETIME NOT NULL, "
+                "UNIQUE (lineage_id, version_number))"
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO artifacts VALUES ('art_old', :workspace, 'cells', 'lin_1', 1, "
+                    "NULL, 'markdown', 'self', 'Marker review', '# Markers', :hash, :hash, "
+                    "'[]', '{}', '{}', CURRENT_TIMESTAMP)"
+                ),
+                {"workspace": workspace_id, "hash": "a" * 64},
+            )
+
+        history = run_migrations(engine, Base.metadata)
+        assert run_migrations(engine, Base.metadata) == history
+
+        inspector = inspect(engine)
+        assert {"client_request_id", "request_fingerprint"} <= {
+            column["name"] for column in inspector.get_columns("artifacts")
+        }
+        assert any(
+            index["unique"] and index["column_names"] == ["workspace_id", "client_request_id"]
+            for index in inspector.get_indexes("artifacts")
+        )
+        assert not inspector.has_table("artifacts_legacy")
+        sessions = create_session_factory(engine)
+        with session_scope(sessions) as session:
+            kept = session.scalars(select(Artifact)).one()
+            assert (kept.id, kept.title, kept.content) == ("art_old", "Marker review", "# Markers")
+            assert kept.client_request_id == "legacy-art_old"
+            assert len(kept.request_fingerprint) == 64
+            assert session.execute(text("PRAGMA foreign_key_check")).all() == []
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
+    finally:
+        engine.dispose()
+
+
+def test_unrecognised_output_tables_are_kept_as_legacy_beside_current_ones(
+    tmp_path: Path,
+) -> None:
+    engine = make_engine(tmp_path)
+    try:
+        workspace_id = _prepare_pre_release_outputs(engine)
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "CREATE TABLE artifacts (id VARCHAR(40) PRIMARY KEY, "
+                "knowledge_base_id VARCHAR(160) NOT NULL, title TEXT NOT NULL, "
+                "body TEXT NOT NULL)"
+            )
+            # Same name the current table's index needs.
+            connection.exec_driver_sql(
+                "CREATE INDEX ix_artifacts_knowledge_base_id ON artifacts (knowledge_base_id)"
+            )
+            connection.exec_driver_sql(
+                "CREATE TABLE artifact_unit_bindings (id VARCHAR(40) PRIMARY KEY, "
+                "artifact_id VARCHAR(40) NOT NULL REFERENCES artifacts(id), "
+                "unit_id VARCHAR(40) NOT NULL)"
+            )
+            connection.exec_driver_sql(
+                "INSERT INTO artifacts VALUES ('art_draft', 'cells', 'Draft', 'Early body')"
+            )
+            connection.exec_driver_sql(
+                "INSERT INTO artifact_unit_bindings VALUES ('bind_1', 'art_draft', 'unit_1')"
+            )
+
+        run_migrations(engine, Base.metadata)
+
+        inspector = inspect(engine)
+        assert {column["name"] for column in inspector.get_columns("artifacts")} == {
+            column.name for column in Artifact.__table__.columns
+        }
+        assert "ix_artifacts_knowledge_base_id" in {
+            index["name"] for index in inspector.get_indexes("artifacts")
+        }
+        assert [
+            foreign_key["referred_table"]
+            for foreign_key in inspector.get_foreign_keys("artifact_unit_bindings_legacy")
+        ] == ["artifacts_legacy"]
+        with engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT id, title, body FROM artifacts_legacy")
+            ).one() == ("art_draft", "Draft", "Early body")
+            assert connection.execute(
+                text("SELECT id, artifact_id FROM artifact_unit_bindings_legacy")
+            ).one() == ("bind_1", "art_draft")
+            assert connection.execute(text("PRAGMA foreign_key_check")).all() == []
+        sessions = create_session_factory(engine)
+        with session_scope(sessions) as session:
+            assert session.scalars(
+                select(Artifact).where(Artifact.workspace_id == workspace_id)
+            ).all() == []
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()
