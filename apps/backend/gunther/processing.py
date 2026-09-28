@@ -11,6 +11,7 @@ from threading import Event
 
 from sqlalchemy import and_, or_, select, update
 
+from gunther import vector_index
 from gunther.asset_service import AssetService, extract_asset_content
 from gunther.content import parse_content
 from gunther.database import session_scope
@@ -210,6 +211,13 @@ class ProcessingWorker:
                 if kind == "parse_asset":
                     self.index.publish(session, source, parsed, parser=parser, warning=warning)
                 else:
+                    vector_index.store(
+                        session,
+                        source_id=source_id,
+                        revision_id=revision_id,
+                        model=model_id,
+                        vectors=vectors,
+                    )
                     for block_id, vector in vectors:
                         existing = session.scalar(
                             select(BlockEmbedding).where(
@@ -224,7 +232,8 @@ class ProcessingWorker:
                                     block_id=block_id,
                                     model=self.index.embedder.model_id,
                                     dimensions=len(vector),
-                                    vector_json=json.dumps(vector),
+                                    # The vector itself lives in vector_index.
+                                    vector_json="",
                                 )
                             )
                 job = session.get(ProcessingJob, job_id)

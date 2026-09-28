@@ -26,7 +26,8 @@ original captured representation; background parsing does not overwrite it.
 
 `source_revisions`, `content_blocks` and `source_index_heads` separate immutable
 representations from the current search view. `knowledge_fts` is a derived index.
-`block_embeddings` pins vectors to block IDs and a model version. Topic evidence links
+`block_embeddings` records which blocks each model version has embedded; the vectors
+are in sqlite-vec. Topic evidence links
 retain the exact revision selected by the user, even after a source is reprocessed.
 
 The existing single-workspace database remains the authorization boundary. All new
@@ -66,33 +67,44 @@ backfilled, and any other old shape is kept as `artifacts_legacy` beside a fresh
 Keyword retrieval works without additional services, accounts or models. CJK bigrams
 are deterministic substring terms, not a linguistic Chinese segmentation model.
 
-Optional multilingual-E5 retrieval uses a locally provisioned SentenceTransformer
-model with `local_files_only=True` and `trust_remote_code=False`. Queries/passages use
-their respective E5 prefixes. Long blocks are encoded in token windows, then pooled.
-Vectors are model-versioned. The initial vector adapter performs bounded exact cosine
-search after scope filtering; keyword and semantic ranks combine by reciprocal rank.
+Semantic search is on by default (schema 14). The model is multilingual-e5-small (MIT),
+an int8-quantized ONNX export pinned by revision and SHA-256, run with ONNX Runtime and
+the Hugging Face `tokenizers` library. Chinese and English share one vector space, so a
+Chinese question finds an English passage. Nothing is downloaded at run time and no text
+leaves the device. Queries and passages get E5's `query: ` / `passage: ` prefixes; long
+blocks are encoded in 510-token windows and averaged, so nothing is truncated.
 
-The semantic threshold (0.75), candidate limits and pooling are initial engineering
-defaults, not calibrated confidence or proven retrieval quality. Raw source citations
-therefore display "Source", not a fabricated confidence percentage.
+Vectors live in SQLite through the sqlite-vec extension, loaded on every connection: one
+`vec0` table per width (`block_vectors_384`) keyed by block, with `source_id`,
+`revision_id` and `model` as metadata columns. A query is limited to the current revisions
+of the libraries being asked before ranking, and the search is exact. Measured with 10,000
+vectors: about 25 ms per scoped query, 16 MB on disk. (sqlite-vec partition keys were 3 GB
+for the same data, so they are not used.) `block_embeddings` rows remain as per-model
+markers; their `vector_json` is empty. Delete forever removes a source's vectors;
+vectors of older revisions stay until then and are never returned.
 
-Development/server setup, after separately provisioning an E5 model:
+Keyword and semantic ranks combine by reciprocal rank. E5 packs cosine similarity into
+roughly 0.7–0.95, so its floor is 0.80: in a bilingual spot check, relevant passages scored
+0.82–0.92 and unrelated text 0.67–0.82, so the ranges touch. This is a starting point, not calibrated
+confidence; raw source citations display "Source", not a percentage.
+
+A checkout fetches the model once, into the git-ignored `apps/backend/models/`:
 
 ```sh
-uv sync --project apps/backend --extra semantic
+npm run models:fetch
 ```
 
-Set `EMBEDDING_MODEL_PATH` to an absolute local directory and
-`EMBEDDING_MODEL_VERSION` to its pinned weight revision. Restart the backend; existing
-source heads receive embedding jobs automatically. A model change needs a new version.
-`GET /api/retrieval/status` reports configuration, embedding coverage, job counts and
-degradation. Missing dependencies/models do not prevent keyword search or file capture.
+The desktop build fetches it too, if missing, and bundles it with ONNX Runtime and
+sqlite-vec (the Linux helper is 167 MB). `SEMANTIC_SEARCH=false` turns it off.
+`EMBEDDING_MODEL_PATH` points at a different ONNX export (`model.onnx` +
+`tokenizer.json`); give it a new `EMBEDDING_MODEL_VERSION`, because vectors are kept per
+version and a new version re-embeds every source in the background. Embedding runs in
+the processing worker, about 35 short passages a second on four CPU threads.
 
-This extra is not automatically bundled in the native desktop helper. Verify native
-packaging and memory/latency on the target hardware before enabling it in a release.
-The exact-search adapter is bounded at 20,000 eligible vectors per query; it degrades
-explicitly to keyword retrieval above that limit. sqlite-vec/ANN is a future adapter,
-pending packaged-runtime and corpus benchmarks, not a claimed part of this release.
+`GET /api/retrieval/status` reports whether semantic search is on and why not, the
+sqlite-vec version, passages and how many have vectors, pending embedding jobs, and the
+last fallback; Settings shows the same as "Search by meaning". When the model or the
+extension is missing, search is keyword-only and capture is unaffected.
 
 ## Optional Docling layout parsing
 
@@ -173,8 +185,8 @@ replaced; built artifacts are under `apps/desktop/src-tauri/target/release/bundl
 This is a production-oriented foundation, not a production certification.
 
 - Benchmark retrieval/citation precision on actual bilingual papers, books and notes.
-- Verify Docling, local embedding weights, signed-app packaging and memory limits on
-  target Macs. Heavy E5 inference is opt-in and currently uses the Python runtime.
+- Verify Docling, signed-app packaging and memory limits on target Macs. The bundled
+  model and sqlite-vec were verified in a Linux PyInstaller helper, not yet on macOS.
 - Run physical microphone, sleep/wake and four-hour recording/transcription soak tests.
 - Transcript time anchors are only as precise as supplied timestamps. This upgrade
   does not invent word alignment, speaker identities, or transcribe raw audio uploads.

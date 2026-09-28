@@ -61,6 +61,7 @@ import { LibraryPicker } from "../items/LibraryPicker";
 import { parseDelimitedTable } from "../items/sourceContent";
 import { comboKeys, formatCombo, useEscape, useShortcut, withShortcut } from "../shortcuts/shortcuts";
 import { LibraryFolderSettings } from "./LibraryFolderSettings";
+import { SemanticSearchSetting } from "./SemanticSearchSetting";
 import { CAPTURE_CONTROL_DOM_EVENT, type CaptureControl, type CaptureKind, type RecordingContext } from "../capture/captureTypes";
 import { getMenuBarMode, isTauriRuntime, setMenuBarMode, type MenuBarMode } from "../capture/captureBridge";
 
@@ -1001,6 +1002,7 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
       <section>
         <div className="setting-heading"><ShieldCheck size={16} /><span><strong>Knowledge services</strong><small>Storage, search, transcript, and synthesis</small></span></div>
         <div className="setting-row"><span><strong>Local workbook</strong><small>Sources, audio, and accepted revisions stay on this device.</small></span><span className="setting-state"><i />{engine === "offline" && !checking ? "Offline" : "Ready"}</span></div>
+        <SemanticSearchSetting />
         <div className="setting-row"><span><strong>Online research</strong><small>{webMode === "openai" ? "Live, sourced web answers are enabled." : "Add OPENAI_API_KEY to the local backend to enable web answers."}</small></span><span className={`setting-state ${webMode === "not_configured" ? "is-muted" : ""}`}><i />{webMode === "openai" ? "Connected" : "Not configured"}</span></div>
         <div className="setting-row"><span><strong>Live transcript</strong><small>{transcriptionMode === "sensevoice_local" ? `${transcriptionProfile.model} · private on-device STT · speaker labels enabled` : transcriptionMode === "openai_realtime" ? `${transcriptionProfile.languages.join(" + ")} · ${transcriptionProfile.delay} delay · ${transcriptionProfile.model}` : "Audio still records locally; connect SenseVoice or OpenAI for live words."}</small></span><span className={`setting-state ${transcriptionMode === "not_configured" ? "is-muted" : ""}`}><i />{transcriptionProvider === "sensevoice" ? "SenseVoice local" : transcriptionProvider === "openai" ? "OpenAI" : "Local audio"}</span></div>
         <details className="stt-setup"><summary>Live transcription provider</summary><p>Gunther automatically prefers your private SenseVoice service, then falls back to OpenAI when configured.</p><code>STT_PROVIDER=auto<br />SENSEVOICE_URL=http://127.0.0.1:8765<br />SENSEVOICE_SEGMENT_SECONDS=3.2<br />OPENAI_API_KEY=optional-fallback</code></details>

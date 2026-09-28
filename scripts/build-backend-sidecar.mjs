@@ -19,6 +19,7 @@ const completedOutput = useMacHelperApp ? helperApp : destination;
 const visionSource = join(backendRoot, "gunther", "vision_ocr.m");
 const visionBuildDir = join(pyinstallerRoot, "vision");
 const visionBinary = join(visionBuildDir, "gunther-vision-ocr");
+const modelDir = join(backendRoot, "models", "multilingual-e5-small");
 
 const newestModifiedTime = (path) => {
   const stat = statSync(path);
@@ -34,6 +35,7 @@ const inputs = [
   join(backendRoot, "gunther"),
   join(backendRoot, "pyproject.toml"),
   join(backendRoot, "uv.lock"),
+  modelDir,
   fileURLToPath(import.meta.url),
 ];
 const latestInput = Math.max(...inputs.filter(existsSync).map(newestModifiedTime));
@@ -43,6 +45,15 @@ if (
 ) {
   process.stdout.write(`Gunther backend helper is current: ${completedOutput}\n`);
   process.exit(0);
+}
+
+// Semantic search ships inside the helper; fetch the pinned model once.
+if (!existsSync(join(modelDir, "model.onnx")) || !existsSync(join(modelDir, "tokenizer.json"))) {
+  const fetched = spawnSync("python3", [join(root, "scripts", "fetch_embedding_model.py")], {
+    cwd: root,
+    stdio: "inherit",
+  });
+  if (fetched.status !== 0) process.exit(fetched.status ?? 1);
 }
 
 mkdirSync(binariesDir, { recursive: true });
@@ -82,6 +93,10 @@ const result = spawnSync("uv", [
   "--specpath", pyinstallerRoot,
   "--collect-submodules", "uvicorn",
   "--collect-all", "cryptography",
+  "--collect-all", "onnxruntime",
+  "--collect-all", "tokenizers",
+  "--collect-all", "sqlite_vec",
+  "--add-data", `${modelDir}:models/multilingual-e5-small`,
   ...(useMacHelperApp ? ["--add-binary", `${visionBinary}:.`] : []),
   join(backendRoot, "gunther", "desktop_server.py"),
 ], {

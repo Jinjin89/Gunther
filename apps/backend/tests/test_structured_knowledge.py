@@ -2,27 +2,32 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from gunther.asset_service import AssetTextExtraction
-from gunther.config import Settings
+from gunther.config import PROJECT_ROOT, Settings
 from gunther.content import ParsedBlock, parse_content
 from gunther.database import session_scope
 from gunther.document_parser import docling_blocks
+from gunther.embedding import default_model_directory
 from gunther.main import create_app
 from gunther.models import (
     Assertion,
+    BlockEmbedding,
+    ContentBlock,
     EvidenceLink,
     Fragment,
     ProcessingJob,
     Source,
+    SourceIndexHead,
     SourceRevision,
     utc_now,
 )
 
 
-def client_for(path: Path) -> TestClient:
+def client_for(path: Path, **overrides) -> TestClient:
     return TestClient(
         create_app(
             Settings(
@@ -34,6 +39,7 @@ def client_for(path: Path) -> TestClient:
                 seed_demo=False,
                 deepseek_api_key=None,
                 stt_provider="openai",
+                **overrides,
             )
         )
     )
@@ -404,8 +410,13 @@ def test_embedding_backfill_after_enabling_model_pins_revision(tmp_path):
         worker = client.app.state.processing_worker
         assert worker.run_once()
         assert worker.run_once()
+        with session_scope(index.sessions) as session:
+            # The pinned old revision and the new one both have vectors ...
+            assert session.scalar(text("SELECT count(*) FROM block_vectors_2")) == 2
         diagnostics = client.get("/api/retrieval/status").json()
-        assert diagnostics["embeddedBlocks"] == 2
+        # ... and coverage counts what search reads: the current revision.
+        assert (diagnostics["embeddedBlocks"], diagnostics["passages"]) == (1, 1)
+        assert diagnostics["embeddingJobs"] == 0
 
 
 class FakeEmbedder:
@@ -439,6 +450,118 @@ def test_optional_semantic_retrieval_is_scoped_and_falls_back_safely(tmp_path):
         diagnostics = client.get("/api/retrieval/status").json()
         assert "secret" not in diagnostics["warning"]
         assert "unavailable" in diagnostics["warning"]
+
+
+class AxisEmbedder:
+    """One axis per word, so similarity is predictable."""
+
+    model_id = "test-axes-v1"
+    words = ("fish", "rocket", "memory")
+
+    def encode(self, texts, *, query=False):
+        return [[1.0 if w in t.lower() else 0.0 for w in self.words] + [0.01] for t in texts]
+
+
+def drain(client: TestClient) -> None:
+    worker = client.app.state.processing_worker
+    while worker.run_once():
+        pass
+
+
+def vector_rows(index, table: str = "block_vectors_4") -> int:
+    with session_scope(index.sessions) as session:
+        return session.scalar(text(f"SELECT count(*) FROM {table}"))
+
+
+def test_semantic_search_reads_current_revisions_and_forgets_deleted_sources(tmp_path):
+    with client_for(tmp_path) as client:
+        index = client.app.state.knowledge_service.index
+        index.embedder = AxisEmbedder()
+        src = source(client, base(client), "Felines eat fish.")
+        drain(client)
+        with session_scope(index.sessions) as session:
+            index.publish(session, session.get(Source, src), parse_content("Rockets burn fuel."))
+        drain(client)
+        assert vector_rows(index) == 2
+
+        with session_scope(index.sessions) as session:
+            # The old revision's vector is still stored but never returned.
+            assert index.retrieve(session, [src], "fish supper") == []
+            [hit] = index.retrieve(session, [src], "rocket launch")
+            assert (hit.block.content, hit.method) == ("Rockets burn fuel.", "semantic")
+
+        client.post(f"/api/sources/{src}/trash")
+        assert vector_rows(index) == 2  # restorable, so kept
+        assert client.delete(f"/api/trash/source/{src}").status_code == 200
+        assert vector_rows(index) == 0
+
+
+def test_json_vectors_from_the_old_model_are_dropped(tmp_path):
+    from gunther.migrations import _drop_json_vectors
+
+    with client_for(tmp_path) as client:
+        index = client.app.state.knowledge_service.index
+        src = source(client, base(client), "Felines eat fish.")
+        with session_scope(index.sessions) as session:
+            block = session.scalar(
+                select(ContentBlock)
+                .join(SourceIndexHead, SourceIndexHead.revision_id == ContentBlock.revision_id)
+                .where(SourceIndexHead.source_id == src)
+            )
+            for row_id, vector_json in (("emb_old", "[1.0, 0.0]"), ("emb_new", "")):
+                session.add(
+                    BlockEmbedding(
+                        id=row_id,
+                        block_id=block.id,
+                        model=row_id,
+                        dimensions=2,
+                        vector_json=vector_json,
+                    )
+                )
+        with index.sessions.kw["bind"].begin() as connection:
+            _drop_json_vectors(connection, None)
+        with session_scope(index.sessions) as session:
+            assert session.scalars(select(BlockEmbedding.id)).all() == ["emb_new"]
+
+
+def test_status_explains_why_semantic_search_is_off(tmp_path):
+    for name in ("off", "on"):
+        (tmp_path / name).mkdir()
+    with client_for(tmp_path / "off") as client:
+        status = client.get("/api/retrieval/status").json()
+        assert status["semanticConfigured"] is False
+        assert "SEMANTIC_SEARCH=false" in status["semanticOffReason"]
+        assert status["vectorExtension"].startswith("sqlite-vec v")
+    missing = tmp_path / "no-model"
+    with client_for(tmp_path / "on", semantic_search=True, embedding_model_path=missing) as client:
+        status = client.get("/api/retrieval/status").json()
+        assert status["semanticConfigured"] is False
+        assert "npm run models:fetch" in status["semanticOffReason"]
+
+
+@pytest.mark.skipif(
+    default_model_directory(PROJECT_ROOT) is None,
+    reason="the embedding model is not fetched (npm run models:fetch)",
+)
+def test_bundled_model_answers_a_chinese_question_from_english_sources(tmp_path):
+    with client_for(tmp_path, semantic_search=True) as client:
+        index = client.app.state.knowledge_service.index
+        assert index.embedder is not None
+        library = base(client)
+        wanted = source(
+            client,
+            library,
+            "Cell type annotation assigns identities to clusters using marker genes "
+            "such as CD3E for T cells.",
+        )
+        other = source(
+            client, library, "Quarterly revenue grew by 12 percent on strong sales in Europe."
+        )
+        drain(client)
+        with session_scope(index.sessions) as session:
+            hits = index.retrieve(session, [wanted, other], "单细胞测序中如何注释细胞类型？")
+            found = [(hit.source.id, hit.method) for hit in hits]
+        assert found == [(wanted, "semantic")]
 
 
 def test_unavailable_worker_backs_off_logs_sparingly_and_stops_promptly(

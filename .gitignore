@@ -28,6 +28,8 @@ backups/
 *.dmg
 /artifacts/.ai-knowledge-research-build/
 apps/backend/.pyinstaller/
+# Fetched by `npm run models:fetch`; bundled into the desktop build.
+apps/backend/models/
 apps/desktop/src-tauri/binaries/gunther-backend-*
 coverage/
 .coverage

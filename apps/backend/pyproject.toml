@@ -7,10 +7,14 @@ dependencies = [
   "cryptography>=45.0.0,<50",
   "fastapi>=0.116.0,<1",
   "httpx>=0.28.1,<1",
+  "numpy>=2.0,<3",
+  "onnxruntime>=1.20,<2",
   "openai>=1.99.0,<3",
   "pypdf>=6.0.0,<7",
   "pydantic-settings>=2.10.0,<3",
   "sqlalchemy>=2.0.43,<3",
+  "sqlite-vec>=0.1.9,<0.2",
+  "tokenizers>=0.21,<1",
   "uvicorn[standard]>=0.35.0,<1",
   "websockets>=17.0.1,<18",
 ]
@@ -21,9 +25,6 @@ dev = [
   "pytest>=8.4.1,<9",
   "ruff>=0.12.10,<1",
 ]
-
-[project.optional-dependencies]
-semantic = ["sentence-transformers>=3.4,<6"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

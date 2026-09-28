@@ -20,6 +20,7 @@
     "test:desktop": "npm run test -w @gunther/desktop",
     "backup:data": "env UV_CACHE_DIR=.uv-cache uv run --project apps/backend python scripts/backup_gunther.py backup",
     "verify:backup": "env UV_CACHE_DIR=.uv-cache uv run --project apps/backend python scripts/backup_gunther.py verify",
+    "models:fetch": "python3 scripts/fetch_embedding_model.py",
     "restore:data": "env UV_CACHE_DIR=.uv-cache uv run --project apps/backend python scripts/backup_gunther.py restore",
     "lint": "env UV_CACHE_DIR=.uv-cache uv run --project apps/backend ruff check apps/backend && npm run typecheck -w @gunther/desktop",
     "check:desktop": "cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml",

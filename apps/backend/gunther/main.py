@@ -11,9 +11,10 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import event, select
 from sqlalchemy.orm import ORMExecuteState, Session, sessionmaker
 
+from gunther import vector_index
 from gunther.api import router
 from gunther.asset_service import AssetService
-from gunther.config import Settings, get_settings
+from gunther.config import PROJECT_ROOT, Settings, get_settings
 from gunther.conversation import create_knowledge_responder
 from gunther.database import (
     Base,
@@ -28,9 +29,9 @@ from gunther.device_auth import (
     parse_bearer_authorization,
 )
 from gunther.document_parser import DoclingParser
+from gunther.embedding import OnnxEmbedder, default_model_directory, model_is_installed
 from gunther.extraction import create_extractor
 from gunther.knowledge_api import router as knowledge_router
-from gunther.knowledge_index import LocalEmbedder
 from gunther.lecture import create_lecture_summarizer
 from gunther.library_folders import WATCHED_MODELS, LibraryFolders
 from gunther.library_root import LibraryRootConflict, prepare_library_root
@@ -53,6 +54,22 @@ from gunther.web_capture import (
     WebFetcher,
     WebResolver,
 )
+
+
+def _semantic_search(
+    settings: Settings, sessions: sessionmaker[Session]
+) -> tuple[OnnxEmbedder | None, str | None]:
+    """The local embedder, or None with the reason Settings shows."""
+
+    if not settings.semantic_search:
+        return None, "Turned off (SEMANTIC_SEARCH=false)."
+    with session_scope(sessions) as session:
+        if vector_index.extension_version(session) is None:
+            return None, "This Python cannot load the sqlite-vec extension."
+    model_dir = settings.embedding_model_path or default_model_directory(PROJECT_ROOT)
+    if model_dir is None or not model_is_installed(model_dir):
+        return None, "The embedding model is not installed. Run npm run models:fetch."
+    return OnnxEmbedder(model_dir, settings.embedding_model_version), None
 
 
 def _refresh_folders_on_change(
@@ -133,10 +150,9 @@ def create_app(
         active_settings.deepseek_base_url,
     )
     knowledge_service = KnowledgeService(sessions, extractor, responder)
-    if active_settings.embedding_model_path:
-        knowledge_service.index.embedder = LocalEmbedder(
-            str(active_settings.embedding_model_path), active_settings.embedding_model_version
-        )
+    embedder, off_reason = _semantic_search(active_settings, sessions)
+    knowledge_service.index.embedder = embedder
+    knowledge_service.index.semantic_off_reason = off_reason
     online_search = create_online_search(
         active_settings.openai_api_key,
         active_settings.openai_web_search_model,

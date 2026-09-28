@@ -1,7 +1,8 @@
 """Transactional structured evidence and scoped hybrid retrieval.
 
-FTS is the always-available baseline. Semantic retrieval is explicitly enabled
-with a local model; an unavailable model never prevents access to originals.
+FTS is the always-available baseline. Semantic retrieval adds a local model
+(see embedding) and vectors in sqlite-vec (see vector_index); when either is
+unavailable, retrieval falls back to keywords and never blocks originals.
 """
 
 from __future__ import annotations
@@ -11,17 +12,16 @@ import json
 import math
 from collections import Counter
 from dataclasses import asdict, dataclass
-from threading import Lock
 from typing import Protocol
 from uuid import uuid4
 
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
+from gunther import vector_index
 from gunther.content import ParsedBlock, parse_content, search_tokens
 from gunther.database import session_scope
 from gunther.models import (
-    BlockEmbedding,
     ContentBlock,
     ProcessingJob,
     Source,
@@ -38,52 +38,6 @@ class Embedder(Protocol):
     model_id: str
 
     def encode(self, texts: list[str], *, query: bool = False) -> list[list[float]]: ...
-
-
-class LocalEmbedder:
-    """Optional, offline-only E5 adapter. No model downloads or remote Python code."""
-
-    def __init__(self, path: str, version: str):
-        self.model_id = f"local-e5:{version}"
-        self.path = path
-        self.model = None
-        self.lock = Lock()
-
-    def encode(self, texts: list[str], *, query: bool = False) -> list[list[float]]:
-        with self.lock:
-            if self.model is None:
-                from sentence_transformers import SentenceTransformer
-
-                self.model = SentenceTransformer(
-                    self.path, local_files_only=True, trust_remote_code=False, device="cpu"
-                )
-            prefix = "query: " if query else "passage: "
-            # Encode all token windows, not only a silently truncated first window.
-            windows: list[str] = []
-            spans: list[tuple[int, int]] = []
-            budget = max(32, min(512, self.model.max_seq_length) - 16)
-            for item in texts:
-                tokens = self.model.tokenizer.encode(item, add_special_tokens=False)
-                start = len(windows)
-                windows.extend(
-                    prefix + self.model.tokenizer.decode(tokens[i : i + budget])
-                    for i in range(0, max(1, len(tokens)), budget)
-                )
-                spans.append((start, len(windows)))
-            encoded = self.model.encode(
-                windows,
-                normalize_embeddings=True,
-                batch_size=16,
-                show_progress_bar=False,
-            ).tolist()
-            result = []
-            for start, end in spans:
-                pooled = [
-                    sum(values) / (end - start) for values in zip(*encoded[start:end], strict=True)
-                ]
-                norm = math.sqrt(sum(value * value for value in pooled)) or 1
-                result.append([value / norm for value in pooled])
-            return result
 
 
 @dataclass
@@ -123,6 +77,8 @@ class KnowledgeIndex:
         self.sessions = sessions
         self.embedder = embedder
         self.semantic_error: str | None = None
+        # Why semantic search is off, when it is; shown in Settings.
+        self.semantic_off_reason: str | None = None
 
     def publish(
         self,
@@ -297,37 +253,32 @@ class KnowledgeIndex:
                 query = self.embedder.encode([question], query=True)[0]
                 if not query or not all(math.isfinite(value) for value in query):
                     raise ValueError("Invalid query embedding")
-                candidates = (
-                    select(BlockEmbedding)
-                    .join(ContentBlock)
-                    .join(SourceRevision, SourceRevision.id == ContentBlock.revision_id)
-                    .where(
-                        SourceRevision.source_id.in_(source_ids),
-                        BlockEmbedding.model == self.embedder.model_id,
-                    )
-                )
                 if block_ids is not None:
-                    candidates = candidates.where(ContentBlock.id.in_(block_ids))
+                    nearest = vector_index.nearest_among(
+                        session,
+                        model=self.embedder.model_id,
+                        query=query,
+                        block_ids=block_ids,
+                        source_ids=source_ids,
+                        k=32,
+                    )
                 else:
-                    candidates = candidates.join(
-                        SourceIndexHead, SourceIndexHead.revision_id == ContentBlock.revision_id
+                    heads = session.scalars(
+                        select(SourceIndexHead.revision_id).where(
+                            SourceIndexHead.source_id.in_(source_ids)
+                        )
+                    ).all()
+                    nearest = vector_index.nearest(
+                        session,
+                        model=self.embedder.model_id,
+                        query=query,
+                        revision_ids=heads,
+                        k=32,
                     )
-                # Bounded exact search: deterministic and scoped BEFORE ranking.
-                # The replaceable adapter may use sqlite-vec after packaging validation.
-                nearest = []
-                for count, embedding in enumerate(session.scalars(candidates.limit(20_001))):
-                    if count >= 20_000:
-                        raise ValueError("Semantic corpus exceeds the exact-search budget")
-                    vector = json.loads(embedding.vector_json)
-                    if len(vector) != len(query) or not all(math.isfinite(v) for v in vector):
-                        raise ValueError("Stored embedding is incompatible with this model")
-                    denominator = math.sqrt(sum(v * v for v in vector) * sum(v * v for v in query))
-                    similarity = sum(a * b for a, b in zip(query, vector, strict=True)) / (
-                        denominator or 1
-                    )
-                    nearest.append((similarity, embedding.block_id))
-                for rank, (similarity, block_id) in enumerate(sorted(nearest, reverse=True)[:32]):
-                    if similarity < 0.75:
+                # Each model scores unrelated text differently; E5 rarely goes below 0.7.
+                floor = getattr(self.embedder, "min_similarity", 0.75)
+                for rank, (block_id, similarity) in enumerate(nearest):
+                    if similarity < floor:
                         continue
                     ranked[block_id] = ranked.get(block_id, 0) + 1 / (60 + rank)
                     methods[block_id] = "hybrid" if block_id in methods else "semantic"

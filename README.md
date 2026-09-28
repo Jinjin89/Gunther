@@ -31,7 +31,7 @@ Capture first → Inbox → Libraries → 有依据地问答与审核 → Output
 
 macOS OCR 默认使用随桌面 Helper 构建的 Apple Vision 本地适配；其他平台可使用已安装的 Tesseract。OCR 不调用云端。桌面文件采集先保存原件，再通过持久化后台任务解析；旧客户端仍可使用同步接口。处理状态、重试、取消与结构化证据在 Sources 中可见。
 
-新增：持久化主题树、跨来源证据归类、按主题问答、FTS5 中英混合检索、不可变来源版本与引用定位。可选本地 E5 与 Docling 接口、运行方式和发布验收边界见 [结构化知识后端说明](docs/KNOWLEDGE_BACKEND_V4.md)。
+新增：持久化主题树、跨来源证据归类、按主题问答、FTS5 中英混合检索、不可变来源版本与引用定位。默认开启的本地语义检索（多语言 E5 + sqlite-vec，中英互查）、可选 Docling 接口、运行方式和发布验收边界见 [结构化知识后端说明](docs/KNOWLEDGE_BACKEND_V4.md)。
 
 录音默认优先连接本机 SenseVoice：
 
@@ -134,6 +134,7 @@ data/           开发数据；不应提交
 cp .env.example .env
 npm install
 uv sync --project apps/backend
+npm run models:fetch   # 语义检索模型，约 135 MB，只需一次
 npm run dev
 ```
 

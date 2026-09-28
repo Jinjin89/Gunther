@@ -75,7 +75,20 @@ try {
   assert.deepEqual(answer.assistantMessage.citations.map((citation) => citation.blockId), [block.id]);
   const citation = await request(`/sources/${source.id}/structure?revision_id=${structure.revisionId}&block_id=${block.id}`);
   assert.equal(citation.blocks[0].content, block.content);
-  console.log("Packaged helper passed: authentication, durable upload, worker, document tree, topics, scoped FTS and pinned citations.");
+  // The bundled model and sqlite-vec: semantic search is on without setup, and a
+  // Chinese question reaches the English passage no keyword shares.
+  let retrieval;
+  for (let attempt = 0; attempt < 300; attempt++) {
+    retrieval = await request("/retrieval/status");
+    if (retrieval.embeddingJobs === 0 && retrieval.embeddedBlocks === retrieval.passages) break;
+    await delay(100);
+  }
+  assert.equal(retrieval.semanticConfigured, true, retrieval.semanticOffReason ?? "semantic search is off");
+  assert.ok(retrieval.passages > 0 && retrieval.embeddedBlocks === retrieval.passages, "Passages were not embedded");
+  const open = await post(`/knowledge-bases/${library.id}/sessions`, {});
+  const semantic = await post(`/sessions/${open.id}/messages`, { content: "如何保证基因组的质量？" });
+  assert.equal(semantic.assistantMessage.citations[0]?.blockId, block.id, "Semantic search missed the passage");
+  console.log("Packaged helper passed: authentication, durable upload, worker, document tree, topics, scoped FTS, pinned citations and bundled semantic search.");
 } finally {
   helper.kill("SIGINT");
   for (let attempt = 0; attempt < 50 && helper.exitCode === null && helper.signalCode === null; attempt++) await delay(100);

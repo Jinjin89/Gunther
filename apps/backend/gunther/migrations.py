@@ -385,6 +385,17 @@ def _add_trash(connection: Connection, _metadata: MetaData) -> None:
             )
 
 
+def _drop_json_vectors(connection: Connection, _metadata: MetaData) -> None:
+    """Vectors now live in sqlite-vec (vector_index); drop the JSON copies.
+
+    They belonged to the optional sentence-transformers model, which is gone.
+    The bundled model embeds every source again in the background.
+    """
+
+    if inspect(connection).has_table("block_embeddings"):
+        connection.exec_driver_sql("DELETE FROM block_embeddings WHERE vector_json != ''")
+
+
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
 MIGRATIONS: tuple[Migration, ...] = (
@@ -401,6 +412,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(11, "structured_knowledge_and_durable_processing", _create_structured_knowledge),
     Migration(12, "repair_legacy_artifact_tables", _repair_legacy_artifact_tables),
     Migration(13, "reversible_trash", _add_trash),
+    Migration(14, "vectors_in_sqlite_vec", _drop_json_vectors),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

@@ -64,8 +64,14 @@ class Settings(BaseSettings):
     # Demo content remains opt-in through SEED_DEMO=true for product tours.
     seed_demo: bool = False
     processing_worker_enabled: bool = True
+    # Search by meaning as well as by keyword, with a local model (Chinese and
+    # English); nothing leaves the device. The model ships with the desktop app;
+    # a checkout fetches it once with `npm run models:fetch`.
+    semantic_search: bool = True
+    # A different ONNX export of E5 (model.onnx + tokenizer.json). Give it a new
+    # version whenever the weights change: vectors are kept per version.
     embedding_model_path: Path | None = None
-    embedding_model_version: str = "multilingual-e5-small-v1"
+    embedding_model_version: str = "me5-small-q8-761b726"
     docling_python: Path | None = None
     docling_artifacts_path: Path | None = None
 

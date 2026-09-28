@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import Field, field_validator
 from sqlalchemy import func, select, update
 
+from gunther import vector_index
 from gunther.database import session_scope
 from gunther.knowledge_index import enqueue
 from gunther.models import (
@@ -202,6 +203,7 @@ def cancel_processing(source_id: str, request: Request):
 @router.get("/retrieval/status")
 def retrieval_status(request: Request):
     index = request.app.state.knowledge_service.index
+    model = index.embedder.model_id if index.embedder else None
     with session_scope(index.sessions) as session:
         jobs = dict(
             session.execute(
@@ -211,19 +213,37 @@ def retrieval_status(request: Request):
             ).all()
         )
         indexed = session.scalar(select(func.count()).select_from(SourceIndexHead))
+        # Passages of current revisions: what search reads, and what gets embedded.
+        current = (
+            select(ContentBlock.id)
+            .join(SourceIndexHead, SourceIndexHead.revision_id == ContentBlock.revision_id)
+            .where(ContentBlock.kind != "heading")
+        )
+        passages = session.scalar(select(func.count()).select_from(current.subquery()))
         embedded = session.scalar(
             select(func.count())
             .select_from(BlockEmbedding)
-            .where(BlockEmbedding.model == (index.embedder.model_id if index.embedder else ""))
+            .where(BlockEmbedding.model == (model or ""), BlockEmbedding.block_id.in_(current))
         )
+        embedding_jobs = session.scalar(
+            select(func.count(ProcessingJob.id)).where(
+                ProcessingJob.kind == "embed",
+                ProcessingJob.model_id == (model or ""),
+                ProcessingJob.state.in_(["queued", "running"]),
+            )
+        )
+        extension = vector_index.extension_version(session)
     return {
         "keyword": "fts5-bm25-cjk-bigrams-v1",
         "semanticConfigured": index.embedder is not None,
-        "model": index.embedder.model_id if index.embedder else None,
+        "semanticOffReason": index.semantic_off_reason,
+        "model": model,
         "warning": index.semantic_error,
-        "vectorSearch": "scoped-exact" if index.embedder else "disabled",
+        "vectorSearch": "sqlite-vec-exact" if index.embedder else "disabled",
+        "vectorExtension": f"sqlite-vec {extension}" if extension else None,
         "indexedSources": indexed,
+        "passages": passages,
         "embeddedBlocks": embedded,
+        "embeddingJobs": embedding_jobs,
         "jobs": jobs,
-        "semanticCandidateLimit": 20_000,
     }

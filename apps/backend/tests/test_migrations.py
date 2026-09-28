@@ -57,6 +57,7 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (11, "structured_knowledge_and_durable_processing"),
             (12, "repair_legacy_artifact_tables"),
             (13, "reversible_trash"),
+            (14, "vectors_in_sqlite_vec"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:

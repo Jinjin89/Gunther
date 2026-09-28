@@ -196,6 +196,22 @@ export interface SourceDetail extends SourceSummary {
   trashedAt?: string | null;
 }
 
+/** Keyword and semantic search on this device. */
+export interface RetrievalStatus {
+  /** Semantic search is running with the local model. */
+  semanticConfigured: boolean;
+  /** Why semantic search is off, when it is. */
+  semanticOffReason: string | null;
+  model: string | null;
+  /** The last semantic lookup fell back to keywords, and why. */
+  warning: string | null;
+  /** Passages of current revisions, and how many of them have vectors. */
+  passages: number;
+  embeddedBlocks: number;
+  /** Sources still waiting to be embedded. */
+  embeddingJobs: number;
+}
+
 /** Where this workspace keeps its libraries on disk. */
 export interface StorageStatus {
   libraryRoot: string | null;

@@ -6,6 +6,8 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from gunther import vector_index
+
 
 class Base(DeclarativeBase):
     pass
@@ -24,6 +26,7 @@ def create_database_engine(database_url: str) -> Engine:
 
         @event.listens_for(engine, "connect")
         def enable_foreign_keys(dbapi_connection: object, _connection_record: object) -> None:
+            vector_index.load_extension(dbapi_connection)
             cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.execute("PRAGMA busy_timeout=5000")
