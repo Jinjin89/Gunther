@@ -20,10 +20,10 @@ describe("AtlasLibraryPage", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "Knowledge with a lasting home." })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Libraries" })).toBeVisible();
     expect(screen.getByText("2 libraries")).toBeVisible();
-    expect(screen.getByText("8 indexed · 2 references")).toBeVisible();
-    expect(screen.getByText("1 reference")).toBeVisible();
+    expect(screen.getByText("8 indexed · 2 references · 3 chapters")).toBeVisible();
+    expect(screen.getByText("1 reference · 3 chapters")).toBeVisible();
   });
 
   it("routes capture, creation, and opening through explicit callbacks", async () => {
@@ -41,7 +41,7 @@ describe("AtlasLibraryPage", () => {
     );
 
     await user.click(screen.getByRole("button", { name: /^Capture$/i }));
-    await user.click(screen.getByRole("button", { name: /^New knowledge base$/i }));
+    await user.click(screen.getByRole("button", { name: /^New library$/i }));
     await user.click(screen.getByRole("button", { name: /Bioinformatics/i }));
 
     expect(onAdd).toHaveBeenCalledOnce();
@@ -55,7 +55,33 @@ describe("AtlasLibraryPage", () => {
     render(<AtlasLibraryPage bases={[]} onOpen={vi.fn()} onAdd={vi.fn()} onCreateBase={onCreateBase} />);
 
     expect(screen.getByText("0 libraries")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: /Start a knowledge base/i }));
+    await user.click(screen.getByRole("button", { name: /Start a new library/i }));
     expect(onCreateBase).toHaveBeenCalledOnce();
+  });
+
+  it("filters a longer list of libraries by name or description", async () => {
+    const user = userEvent.setup();
+    render(
+      <AtlasLibraryPage
+        bases={[
+          makeBase({ id: "bio", title: "Bioinformatics" }),
+          makeBase({ id: "ml", title: "Machine Learning", description: "Models and evaluation." }),
+          makeBase({ id: "pm", title: "Project Management", description: "Planning and delivery." }),
+          makeBase({ id: "ux", title: "Design", description: "Interfaces and research." }),
+        ]}
+        onOpen={vi.fn()}
+        onAdd={vi.fn()}
+        onCreateBase={vi.fn()}
+      />,
+    );
+
+    await user.type(screen.getByRole("textbox", { name: "Filter libraries" }), "planning");
+    expect(screen.getByRole("button", { name: /Project Management/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Bioinformatics/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Start a new library/ })).not.toBeInTheDocument();
+
+    await user.clear(screen.getByRole("textbox", { name: "Filter libraries" }));
+    await user.type(screen.getByRole("textbox", { name: "Filter libraries" }), "zzz");
+    expect(screen.getByText("No library matches “zzz”.")).toBeVisible();
   });
 });

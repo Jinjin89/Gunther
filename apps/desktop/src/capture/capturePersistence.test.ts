@@ -51,7 +51,7 @@ describe("shared Capture persistence", () => {
     expect(mocks.removeStoredCapture).toHaveBeenCalledWith("capture-1");
     expect(result).toEqual({
       savedToService: true,
-      message: "Editable note is safe in Inbox; its requested knowledge base was unavailable.",
+      message: "Editable note is safe in Inbox; its requested library was unavailable.",
     });
   });
 

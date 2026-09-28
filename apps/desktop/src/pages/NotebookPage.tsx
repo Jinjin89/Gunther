@@ -215,7 +215,7 @@ export function NotebookPage({ bases, focusNoteId, onFocused, onFiled, onNotify 
 
   return <div className="notebook-page page-enter">
     <header className="notebook-header">
-      <span><span className="atlas-eyebrow">Notebook</span><h1>Catch it before it has a home.</h1><p>Small thoughts stay lightweight and searchable. Organize one only when its place becomes clear.</p></span>
+      <span><h1>Notebook</h1><p>Catch a thought before it has a home. Notes stay lightweight and searchable until their place becomes clear.</p></span>
       <button className="primary-button" onClick={() => void createNote()} disabled={creating}>{creating ? <LoaderCircle className="spin" size={14} /> : <Plus size={14} />}New note <kbd>⌘N</kbd></button>
     </header>
 
@@ -252,9 +252,9 @@ export function NotebookPage({ bases, focusNoteId, onFocused, onFiled, onNotify 
       </article>
 
       <aside className="notebook-filing">
-        {selected ? selected.status === "filed" ? <div className="filed-note-card"><span><Check size={18} /></span><small>Filed knowledge</small><h2>{bases.find((base) => base.id === selected.knowledgeBaseId)?.title ?? "Knowledge Base"}</h2><p>This note is now a preserved source snapshot. Its extracted claims enter the normal review workflow.</p><div><FileInput size={13} /><span><strong>Source created</strong><small>{selected.promotedSourceId}</small></span></div></div> : selected.status === "archived" ? <div className="filing-empty"><Archive size={20} /><h2>Archived, not deleted</h2><p>Restore this note whenever it becomes useful again.</p></div> : <>
-          <div className="filing-intro"><span><FileInput size={18} /></span><small>Optional next step</small><h2>Give this thought a home</h2><p>Keep writing freely. When the idea is mature enough, file a snapshot into one Knowledge Base.</p></div>
-          <label className="filing-target"><span>Knowledge Base</span><select value={targetBaseId} onChange={(event) => setTargetBaseId(event.target.value)}>{bases.map((base) => <option key={base.id} value={base.id}>{base.title}</option>)}</select></label>
+        {selected ? selected.status === "filed" ? <div className="filed-note-card"><span><Check size={18} /></span><small>Filed knowledge</small><h2>{bases.find((base) => base.id === selected.knowledgeBaseId)?.title ?? "Library"}</h2><p>This note is now a preserved source snapshot. Its extracted claims enter the normal review workflow.</p><div><FileInput size={13} /><span><strong>Source created</strong><small>{selected.promotedSourceId}</small></span></div></div> : selected.status === "archived" ? <div className="filing-empty"><Archive size={20} /><h2>Archived, not deleted</h2><p>Restore this note whenever it becomes useful again.</p></div> : <>
+          <div className="filing-intro"><span><FileInput size={18} /></span><small>Optional next step</small><h2>Give this thought a home</h2><p>Keep writing freely. When the idea is mature enough, file a snapshot into a library.</p></div>
+          <label className="filing-target"><span>Library</span><select value={targetBaseId} onChange={(event) => setTargetBaseId(event.target.value)}>{bases.map((base) => <option key={base.id} value={base.id}>{base.title}</option>)}</select></label>
           <div className="filing-promise"><span><Check size={11} />Original note preserved</span><span><Check size={11} />Claims remain reviewable</span><span><Check size={11} />Nothing silently accepted</span></div>
           <button className="file-note-button" disabled={!content.trim() || !targetBaseId || filing || saveState !== "saved"} onClick={() => void fileNote()}>{filing ? <LoaderCircle className="spin" size={13} /> : <FileInput size={13} />}File into knowledge <ArrowRight size={12} /></button>
           <p className="filing-hint">Filing creates a read-only source snapshot. Continue the thought later in a fresh note.</p>

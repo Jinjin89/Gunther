@@ -1,4 +1,4 @@
-import type { CreateKnowledgeBaseInput, KnowledgeSearchResult, RecordingSession, SearchScope, WebSearchResult } from "@gunther/contracts";
+import type { CreateKnowledgeBaseInput, RecordingSession } from "@gunther/contracts";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type MouseEvent as ReactMouseEvent } from "react";
 import {
@@ -15,26 +15,23 @@ import {
   Laptop,
   Link2,
   Maximize2,
-  MessageSquareText,
   Mic2,
   Minimize2,
   Paperclip,
   Pause,
   Play,
-  Search,
   Settings2,
   ShieldCheck,
   Smartphone,
   Sparkles,
-  StickyNote,
   Square,
   Table2,
   RefreshCw,
-  WifiOff,
   X,
 } from "lucide-react";
-import { knowledgeBases, type AtlasMode, type KnowledgeBase, type KnowledgeChapter } from "../atlas";
+import { knowledgeBases, type KnowledgeBase, type KnowledgeChapter } from "../atlas";
 import { knowledgeApi } from "../api";
+import type { ThemePreference } from "../design/theme";
 import { appendStoredCapture } from "../localCaptureQueue";
 import {
   DEFAULT_DEVICE_SCOPES,
@@ -399,9 +396,9 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
   };
   const hideActionLabel = recorderSnapshot.phase === "stopped" ? "Hide review" : "Hide to menu bar";
 
-  const captureForm = <form ref={captureFormRef} className={`capture-sheet ${surface === "window" ? "is-window-surface" : ""} ${kind === "recording" ? "is-recording-capture" : ""} ${kind === null ? "is-capture-launcher" : ""}`} onMouseDown={(event) => event.stopPropagation()} onSubmit={submit} role={surface === "overlay" ? "dialog" : undefined} aria-modal={surface === "overlay" ? true : undefined} aria-label={kind === "recording" ? "Recording workspace" : "Capture something"}>
-        <header data-tauri-drag-region={surface === "window" ? true : undefined} onMouseDown={startWindowDrag}><div data-tauri-drag-region={surface === "window" ? true : undefined}><span className="capture-spark"><Sparkles size={16} /></span><span data-tauri-drag-region={surface === "window" ? true : undefined}><small data-tauri-drag-region={surface === "window" ? true : undefined}>{kind === null ? "One place for every source" : kind === "recording" ? recorderSnapshot.phase === "stopped" ? "Review before saving" : "Persistent recording session" : targetBase ? `Saving to ${targetBase.title}` : "Capture now · organize later"}</small><strong data-tauri-drag-region={surface === "window" ? true : undefined}>{kind === null ? "Capture something" : kind === "recording" ? title || "Record audio" : captureKinds.find((item) => item.id === kind)?.label ?? "New source"}</strong></span></div><div className="capture-header-actions" data-no-drag>{kind !== null && !recordingActive && <button type="button" onClick={returnToCaptureOptions} title="Back to capture options" aria-label="Back to capture options"><ChevronRight className="capture-back-icon" size={16} /></button>}{surface === "window" ? <button type="button" className="capture-hide-to-menu" onClick={keepInBackground} title={hideActionLabel} aria-label={hideActionLabel}><Minimize2 size={15} /><span>{hideActionLabel}</span></button> : <>{kind === "recording" && recordingActive && <button type="button" onClick={keepInBackground} title="Keep recording in the background" aria-label="Minimize recording"><Minimize2 size={16} /></button>}<button type="button" onClick={closeCaptureSurface} disabled={recordingActive} title={recordingActive ? "Save or keep this session as a draft before closing" : undefined} aria-label="Close capture"><X size={17} /></button></>}</div></header>
-        <div className="capture-target-row"><label>Destination</label><select value={targetBaseId} disabled={recordingActive} onChange={(event) => setTargetBaseId(event.target.value)}><option value="">Inbox · organize later</option>{bases.map((base) => <option value={base.id} key={base.id}>{base.title}</option>)}</select>{chapter && <span>→ {chapter.title}</span>}<small>{targetBase ? "You can change this later" : "No knowledge base required"}</small></div>
+  const captureForm = <form ref={captureFormRef} className={`capture-sheet ${surface === "window" ? "is-window-surface" : ""} ${kind === "recording" ? "is-recording-capture" : ""} ${kind === null ? "is-capture-launcher" : ""}`} onMouseDown={(event) => event.stopPropagation()} onSubmit={submit}>
+        <header role="none" data-tauri-drag-region={surface === "window" ? true : undefined} onMouseDown={startWindowDrag}><div data-tauri-drag-region={surface === "window" ? true : undefined}><span className="capture-spark"><Sparkles size={16} /></span><span data-tauri-drag-region={surface === "window" ? true : undefined}><small data-tauri-drag-region={surface === "window" ? true : undefined}>{kind === null ? "One place for every source" : kind === "recording" ? recorderSnapshot.phase === "stopped" ? "Review before saving" : "Persistent recording session" : targetBase ? `Saving to ${targetBase.title}` : "Capture now · organize later"}</small><strong data-tauri-drag-region={surface === "window" ? true : undefined}>{kind === null ? "Capture something" : kind === "recording" ? title || "Record audio" : captureKinds.find((item) => item.id === kind)?.label ?? "New source"}</strong></span></div><div className="capture-header-actions" data-no-drag>{kind !== null && !recordingActive && <button type="button" onClick={returnToCaptureOptions} title="Back to capture options" aria-label="Back to capture options"><ChevronRight className="capture-back-icon" size={16} /></button>}{surface === "window" ? <button type="button" className="capture-hide-to-menu" onClick={keepInBackground} title={hideActionLabel} aria-label={hideActionLabel}><Minimize2 size={15} /><span>{hideActionLabel}</span></button> : <>{kind === "recording" && recordingActive && <button type="button" onClick={keepInBackground} title="Keep recording in the background" aria-label="Minimize recording"><Minimize2 size={16} /></button>}<button type="button" onClick={closeCaptureSurface} disabled={recordingActive} title={recordingActive ? "Save or keep this session as a draft before closing" : undefined} aria-label="Close capture"><X size={17} /></button></>}</div></header>
+        <div className="capture-target-row"><label htmlFor="capture-destination">Destination</label><select id="capture-destination" value={targetBaseId} disabled={recordingActive} onChange={(event) => setTargetBaseId(event.target.value)}><option value="">Inbox · organize later</option>{bases.map((base) => <option value={base.id} key={base.id}>{base.title}</option>)}</select>{chapter && <span>→ {chapter.title}</span>}<small>{targetBase ? "You can change this later" : "No library required"}</small></div>
         {kind === null && <div className="capture-launcher-grid">{captureKinds.map(({ id, label, description, icon: Icon, tone }) => <button type="button" key={id} onClick={() => { setKind(id); setFileError(null); setFileName(""); setSelectedFile(null); setLinkUrl(""); if (id === "recording") setTitle(recordingTitle(recordingContext)); }}><span className={`capture-action-icon tone-${tone}`}><Icon size={20} /></span><span><strong>{label}</strong><small>{description}</small></span><ArrowRight size={14} /></button>)}{onSearch && <button type="button" onClick={() => { if (surface === "overlay") onClose(true); onSearch(); }}><span className="capture-action-icon tone-web"><Globe2 size={20} /></span><span><strong>Web search</strong><small>Research, compare, then save</small></span><ArrowRight size={14} /></button>}</div>}
         {kind !== null && <div className="capture-kind-row">{captureKinds.map(({ id, label, icon: Icon }) => <button type="button" key={id} className={kind === id ? "is-active" : ""} disabled={recordingActive} onClick={() => switchCaptureKind(id)}><Icon size={14} />{label}</button>)}</div>}
         {kind === "recording" && <div className="recording-context-row" aria-label="Recording type">{recordingContexts.map((context) => <button type="button" key={context.id} className={recordingContext === context.id ? "is-active" : ""} disabled={recordingActive} onClick={() => { setRecordingContext(context.id); setTitle(recordingTitle(context.id)); }}><span>{context.label}</span><small>{context.description}</small></button>)}</div>}
@@ -437,9 +434,9 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
   }
 
   return <>
-    <div className={`atlas-overlay ${recordingMinimized ? "is-capture-minimized" : ""}`} onMouseDown={recordingActive ? undefined : closeCaptureSurface} role="presentation">
+    <section className={`atlas-overlay ${recordingMinimized ? "is-capture-minimized" : ""}`} onMouseDown={recordingActive ? undefined : closeCaptureSurface} role="dialog" aria-modal="true" aria-label={kind === "recording" ? "Recording workspace" : "Capture something"}>
       {captureForm}
-    </div>
+    </section>
     {recordingDock}
   </>;
 }
@@ -481,21 +478,21 @@ export function CreateKnowledgeBaseSheet({ open, base, onClose, onSave }: { open
       setQuestion("");
       setDescription("");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not create the knowledge base");
+      setError(reason instanceof Error ? reason.message : "Could not create the library");
     } finally {
       setWorking(false);
     }
   };
 
-  return <div className="atlas-overlay" onMouseDown={onClose} role="presentation"><form className="create-base-sheet" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => void submit(event)} role="dialog" aria-modal="true" aria-label={base ? "Edit knowledge base" : "Create knowledge base"}>
-    <header><span><small>{base ? "Field settings" : "New field"}</small><strong>{base ? "Edit knowledge base" : "Start a knowledge base"}</strong></span><button type="button" onClick={onClose} aria-label="Close knowledge base details dialog"><X size={17} /></button></header>
-    <div className="create-base-intro"><span><BookOpen size={18} /></span><div><h2>{base ? "Keep the field boundary explicit." : "Create a lasting home for this subject."}</h2><p>{base ? "Changes update the durable base identity without rewriting its sessions, sources, or accepted revisions." : "A knowledge base is a durable subject boundary—for example, Bioinformatics. You can capture first, then file documents, notes, photos, links, recordings, data, and useful findings here when they belong together."}</p></div></div>
-    {!base && <div className="create-base-path" aria-label="Knowledge base setup path"><span><i>1</i><strong>Name the subject</strong><small>Create its boundary</small></span><em /><span><i>2</i><strong>Bring sources</strong><small>Any captured material</small></span><em /><span><i>3</i><strong>Build knowledge</strong><small>Review and connect</small></span></div>}
-    <div className="create-base-fields"><label><span>Name</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Decision Science" maxLength={160} /></label><label><span>Field label</span><input value={eyebrow} onChange={(event) => setEyebrow(event.target.value)} placeholder="e.g. Applied reasoning" maxLength={80} /></label><label className="is-wide"><span>Guiding question</span><textarea value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="What do you want this knowledge base to help you understand?" rows={2} maxLength={1000} /></label><label className="is-wide"><span>Description</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Describe its scope, boundaries, and intended use." rows={3} maxLength={2000} /></label></div>
+  return <section className="atlas-overlay" onMouseDown={onClose} role="dialog" aria-modal="true" aria-label={base ? "Edit library" : "Create library"}><form className="create-base-sheet" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => void submit(event)}>
+    <header role="none"><span><small>{base ? "Library settings" : "New library"}</small><strong>{base ? "Edit library" : "Start a library"}</strong></span><button type="button" onClick={onClose} aria-label="Close library details"><X size={17} /></button></header>
+    <div className="create-base-intro"><span><BookOpen size={18} /></span><div><h2>{base ? "Keep the field boundary explicit." : "Create a lasting home for this subject."}</h2><p>{base ? "Changes update the library’s identity without rewriting its sessions, sources, or accepted revisions." : "A library is a durable home for one subject — for example, Bioinformatics. Capture first, then file documents, notes, photos, links, recordings and data here once they belong together."}</p></div></div>
+    {!base && <div className="create-base-path" aria-label="Library setup path"><span><i>1</i><strong>Name the subject</strong><small>Create its boundary</small></span><em /><span><i>2</i><strong>Bring sources</strong><small>Any captured material</small></span><em /><span><i>3</i><strong>Build knowledge</strong><small>Review and connect</small></span></div>}
+    <div className="create-base-fields"><label><span>Name</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Decision Science" maxLength={160} /></label><label><span>Field label</span><input value={eyebrow} onChange={(event) => setEyebrow(event.target.value)} placeholder="e.g. Applied reasoning" maxLength={80} /></label><label className="is-wide"><span>Guiding question</span><textarea value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="What do you want this library to help you understand?" rows={2} maxLength={1000} /></label><label className="is-wide"><span>Description</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Describe its scope, boundaries, and intended use." rows={3} maxLength={2000} /></label></div>
     <fieldset className="create-base-color"><legend>Accent</legend>{(["green", "blue", "clay"] as const).map((item) => <button type="button" key={item} className={`color-${item} ${color === item ? "is-active" : ""}`} onClick={() => setColor(item)} aria-label={`Use ${item} accent`}><i />{item}{color === item && <Check size={12} />}</button>)}</fieldset>
     {error && <p className="create-base-error" role="alert"><CircleAlert size={13} />{error}</p>}
-    <footer><span>{base ? "Session history and accepted knowledge stay unchanged." : "Inbox sources can be filed here at any time."}</span><div><button type="button" className="quiet-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={working || !title.trim() || question.trim().length < 3 || description.trim().length < 3}>{working ? "Saving…" : base ? "Save details" : "Create knowledge base"}<ArrowRight size={14} /></button></div></footer>
-  </form></div>;
+    <footer><span>{base ? "Session history and accepted knowledge stay unchanged." : "Inbox sources can be filed here at any time."}</span><div><button type="button" className="quiet-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={working || !title.trim() || question.trim().length < 3 || description.trim().length < 3}>{working ? "Saving…" : base ? "Save details" : "Create library"}<ArrowRight size={14} /></button></div></footer>
+  </form></section>;
 }
 
 interface EvidenceDrawerProps {
@@ -526,136 +523,6 @@ export function EvidenceDrawer({ base, chapter, onClose }: EvidenceDrawerProps) 
   );
 }
 
-export function SearchPage({ bases = knowledgeBases, onOpenBase, onOpenChapter, onOpenNote, onCapture, onNotify, resolveWorkspaceId }: { bases?: KnowledgeBase[]; onOpenBase: (id: string, mode?: AtlasMode) => void; onOpenChapter: (baseId: string, chapterId: string) => void; onOpenNote: (id: string) => void; onCapture: () => void; onNotify: (message: string) => void; resolveWorkspaceId: () => Promise<string> }) {
-  const [query, setQuery] = useState("");
-  const [submittedQuery, setSubmittedQuery] = useState("");
-  const [scope, setScope] = useState<SearchScope>("both");
-  const [indexedResults, setIndexedResults] = useState<KnowledgeSearchResult[]>([]);
-  const [webResult, setWebResult] = useState<WebSearchResult | null>(null);
-  const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const [savingResearch, setSavingResearch] = useState(false);
-  const [savedResearchQuery, setSavedResearchQuery] = useState<string | null>(null);
-  const searchRequest = useRef(0);
-  const curatedResults = useMemo(() => {
-    const needle = submittedQuery.trim().toLowerCase();
-    if (!needle || scope === "web") return [];
-    return bases.flatMap((base) => [
-      ...(base.title.toLowerCase().includes(needle) || base.description.toLowerCase().includes(needle) ? [{ type: "base" as const, base, chapter: null }] : []),
-      ...base.chapters.filter((chapter) => `${chapter.title} ${chapter.question} ${chapter.summary} ${chapter.topics.map((topic) => `${topic.title} ${topic.markers?.join(" ")}`).join(" ")}`.toLowerCase().includes(needle)).map((chapter) => ({ type: "chapter" as const, base, chapter })),
-    ]).slice(0, 10);
-  }, [bases, scope, submittedQuery]);
-
-  const performSearch = async (needle: string, selectedScope: SearchScope = scope) => {
-    if (!needle) return;
-    const requestId = searchRequest.current + 1;
-    searchRequest.current = requestId;
-    setSubmittedQuery(needle);
-    setSearching(true);
-    setSearchError(null);
-    setIndexedResults([]);
-    setWebResult(null);
-    const requests: Promise<void>[] = [];
-    if (selectedScope !== "web") requests.push(knowledgeApi.search(needle).then((results) => {
-      if (searchRequest.current === requestId) setIndexedResults(results);
-    }).catch((reason) => {
-      if (searchRequest.current === requestId) setSearchError(reason instanceof Error ? reason.message : "Your local index could not be reached.");
-    }));
-    if (selectedScope !== "knowledge") requests.push(knowledgeApi.webSearch(needle).then((result) => {
-      if (searchRequest.current === requestId) setWebResult(result);
-    }).catch((reason) => {
-      if (searchRequest.current === requestId) setWebResult({ query: needle, answer: "", sources: [], mode: "failed", message: reason instanceof Error ? reason.message : "Online search could not be reached." });
-    }));
-    await Promise.all(requests);
-    if (searchRequest.current === requestId) setSearching(false);
-  };
-
-  const search = (event: FormEvent) => {
-    event.preventDefault();
-    const needle = query.trim();
-    if (needle) void performSearch(needle);
-  };
-
-  const choosePrompt = (prompt: string) => {
-    setQuery(prompt);
-    void performSearch(prompt);
-  };
-  const saveResearch = async () => {
-    if (!webResult || webResult.mode !== "openai" || !webResult.answer.trim()) return;
-    setSavingResearch(true);
-    const references = webResult.sources.map((source, index) => [
-      `${index + 1}. ${source.title}`,
-      source.url,
-      source.snippet?.trim() || null,
-    ].filter(Boolean).join("\n")).join("\n\n");
-    const content = [
-      `Search query: ${webResult.query}`,
-      "",
-      "Answer captured from web research:",
-      webResult.answer,
-      references ? "\nReferenced pages:\n" + references : "",
-    ].join("\n").trim();
-    try {
-      const expectedWorkspaceId = await resolveWorkspaceId();
-      await knowledgeApi.importSource({
-        title: `Web research · ${webResult.query}`.slice(0, 160),
-        kind: "link",
-        content,
-      }, expectedWorkspaceId);
-      setSavedResearchQuery(webResult.query);
-      window.dispatchEvent(new CustomEvent("gunther:inbox-updated"));
-      window.dispatchEvent(new CustomEvent("gunther:sources-updated"));
-      onNotify("Web research preserved in Inbox with its referenced URLs.");
-    } catch (reason) {
-      onNotify(reason instanceof Error ? `Research not saved: ${reason.message}` : "This research could not be saved.");
-    } finally {
-      setSavingResearch(false);
-    }
-  };
-  const totalLocal = curatedResults.length + indexedResults.length;
-  const hasResults = Boolean(submittedQuery);
-  return <div className={`search-page page-enter ${hasResults ? "has-results" : "is-home"}`}>
-    <section className="search-home">
-      <div className="search-wordmark"><span>G</span><strong>Gunther</strong><small>Search what you know. Discover what you don’t.</small></div>
-      <form className="search-command" onSubmit={search}>
-        <Search size={21} />
-        <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your knowledge or ask the web…" aria-label="Search your knowledge or the web" />
-        {query && <button type="button" className="clear-search" onClick={() => { setQuery(""); setSubmittedQuery(""); setIndexedResults([]); setWebResult(null); }} aria-label="Clear search"><X size={15} /></button>}
-        <button className="submit-search" disabled={!query.trim()} aria-label="Run search">{searching ? <span className="search-spinner" /> : <ArrowRight size={17} />}</button>
-      </form>
-      <div className="search-scope" aria-label="Search scope">
-        {([
-          ["knowledge", BookOpen, "My knowledge"],
-          ["both", Sparkles, "Knowledge + web"],
-          ["web", Globe2, "Web"],
-        ] as const).map(([value, Icon, label]) => <button key={value} className={scope === value ? "is-active" : ""} onClick={() => { setScope(value); if (submittedQuery) void performSearch(query.trim() || submittedQuery, value); }}><Icon size={13} />{label}{scope === value && <i />}</button>)}
-      </div>
-      {!hasResults && <div className="search-starters">
-        <div><small>Ask across your world</small>{["What have I learned about uncertainty?", "Compare my notes with the latest research", "Where are the gaps in my knowledge?"].map((item) => <button key={item} onClick={() => choosePrompt(item)}>{item}<ArrowRight size={12} /></button>)}</div>
-        <section className="search-home-actions">
-          <button className="quick-note-entry" onClick={onCapture}><span><Paperclip size={17} /></span><span><small>Any source</small><strong>Capture now, organize later</strong><em>Note, document, photo, web page, recording, or data</em></span><ChevronRight size={15} /></button>
-        </section>
-      </div>}
-    </section>
-
-    {hasResults && <section className="search-results-stage">
-      <header><span><small>Results for</small><h1>“{submittedQuery}”</h1></span><em>{searching ? "Searching two worlds…" : scope === "both" ? `${totalLocal} personal matches · web ${webResult?.mode === "openai" ? "ready" : "checked"}` : scope === "knowledge" ? `${totalLocal} personal matches` : "Online answer"}</em></header>
-      {searchError && <p className="search-status-card is-error"><CircleAlert size={14} />{searchError}</p>}
-      {scope !== "knowledge" && webResult && <article className={`web-answer is-${webResult.mode}`}>
-        <header><span><Globe2 size={15} /><strong>From the web</strong></span><div><small>{webResult.mode === "openai" ? "Live sources" : "Unavailable"}</small>{webResult.mode === "openai" && webResult.answer && <button type="button" className="save-web-research" disabled={savingResearch || savedResearchQuery === webResult.query} onClick={() => void saveResearch()}>{savedResearchQuery === webResult.query ? <Check size={13} /> : <Bookmark size={13} />}{savedResearchQuery === webResult.query ? "Saved to Inbox" : savingResearch ? "Saving…" : "Save research"}</button>}</div></header>
-        {webResult.answer ? <p>{webResult.answer}</p> : <div className="web-unavailable"><WifiOff size={18} /><span><strong>{webResult.mode === "not_configured" ? "Online search needs one-time setup" : "The web could not be reached"}</strong><small>{webResult.message ?? "Your personal results remain available below."}</small></span></div>}
-        {webResult.sources.length > 0 && <div className="web-sources">{webResult.sources.map((source, index) => <a href={source.url} target="_blank" rel="noreferrer" key={source.url}><i>{index + 1}</i><span><strong>{source.title}</strong><small>{source.url.replace(/^https?:\/\/(www\.)?/, "").split("/")[0]}</small></span><ArrowRight size={12} /></a>)}</div>}
-      </article>}
-      {scope !== "web" && <div className="personal-results">
-        <div className="personal-results-heading"><span><BookOpen size={15} /><strong>Your knowledge</strong></span><small>Notes · accepted knowledge · sources · sessions · chapters</small></div>
-        {indexedResults.map((result) => { const base = bases.find((item) => item.id === result.knowledgeBaseId); const Icon = result.kind === "note" ? StickyNote : result.kind === "session" ? MessageSquareText : result.kind === "source" ? FileText : BookOpen; return <button key={`indexed-${result.kind}-${result.id}`} onClick={() => { if (result.kind === "note") { onOpenNote(result.id); return; } if (!result.knowledgeBaseId) return; if (result.kind === "session") { window.localStorage.setItem(`gunther:active-session:${result.knowledgeBaseId}`, result.id); onOpenBase(result.knowledgeBaseId, "ask"); return; } if (result.kind === "source") { window.localStorage.setItem(`gunther:open-source:${result.knowledgeBaseId}`, result.id); onOpenBase(result.knowledgeBaseId, "sources"); return; } if (result.kind === "knowledge_unit" && result.sourceSessionId) { window.localStorage.setItem(`gunther:active-session:${result.knowledgeBaseId}`, result.sourceSessionId); if (result.sourceMessageId) window.localStorage.setItem(`gunther:selected-message:${result.knowledgeBaseId}`, result.sourceMessageId); onOpenBase(result.knowledgeBaseId, "ask"); return; } onOpenBase(result.knowledgeBaseId); }}><span className={`result-icon color-${base?.color ?? "green"}`}><Icon size={16} /></span><span><small>{result.kind === "note" ? "Notebook" : base?.title ?? result.knowledgeBaseId} · {result.kind.replace("_", " ")} · {result.meta}</small><strong>{result.title}</strong><p>{result.snippet}</p></span><ChevronRight size={15} /></button>; })}
-        {curatedResults.map((result) => <button key={`${result.type}-${result.base.id}-${result.chapter?.id ?? ""}`} onClick={() => result.chapter ? onOpenChapter(result.base.id, result.chapter.id) : onOpenBase(result.base.id)}><span className={`result-icon color-${result.base.color}`}>{result.type === "base" ? <BookOpen size={16} /> : <FileText size={16} />}</span><span><small>{result.base.title} · {result.type}</small><strong>{result.chapter?.title ?? result.base.title}</strong><p>{result.chapter?.summary ?? result.base.description}</p></span><ChevronRight size={15} /></button>)}
-        {!searching && totalLocal === 0 && <p className="no-results">Nothing in your knowledge matches yet. Use the web result as a lead, then save only what you choose to trust.</p>}
-      </div>}
-    </section>}
-  </div>;
-}
-
 async function writeClipboard(value: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(value);
@@ -674,7 +541,7 @@ async function writeClipboard(value: string): Promise<void> {
   if (!copied) throw new Error("Clipboard is unavailable");
 }
 
-export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: "light" | "dark"; onTheme: (theme: "light" | "dark") => void; onNotify: (message: string) => void }) {
+export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePreference; onTheme: (theme: ThemePreference) => void; onNotify: (message: string) => void }) {
   const [engine, setEngine] = useState<"local" | "deepseek" | "offline">("offline");
   const [webMode, setWebMode] = useState<"openai" | "not_configured">("not_configured");
   const [transcriptionMode, setTranscriptionMode] = useState<"sensevoice_local" | "openai_realtime" | "not_configured">("not_configured");
@@ -856,12 +723,12 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: "light" | 
   };
 
   return <div className="utility-page settings-v2 page-enter">
-    <header><span className="atlas-eyebrow">Settings</span><h1>A quiet workspace, under your control.</h1><p>Local storage is the default. Online services are visible and optional; AI proposes changes but never silently rewrites accepted knowledge.</p></header>
+    <header className="gx-page-header"><div><h1>Settings</h1><p>Local storage is the default. Online services stay visible and optional, and AI never silently rewrites accepted knowledge.</p></div></header>
     <div className="settings-columns">
       <section>
         <div className="setting-heading"><Settings2 size={16} /><span><strong>Appearance</strong><small>Default workspace presentation</small></span></div>
-        <label className="setting-row"><span><strong>Theme</strong><small>Applied immediately and remembered on this device.</small></span><select value={theme} onChange={(event) => onTheme(event.target.value as "light" | "dark")}><option value="light">White</option><option value="dark">Dark</option></select></label>
-        <div className="setting-row"><span><strong>Home</strong><small>Gunther opens on your capture, Inbox, and recent knowledge overview.</small></span><span className="setting-state">Overview</span></div>
+        <label className="setting-row"><span><strong>Theme</strong><small>Applied immediately and remembered on this device.</small></span><select value={theme} aria-label="Theme" onChange={(event) => onTheme(event.target.value as ThemePreference)}><option value="light">Light</option><option value="dark">Dark</option><option value="system">Match system</option></select></label>
+        <div className="setting-row"><span><strong>Home</strong><small>Gunther opens on search. Type @ to scope a search to a library, or press ⌘K from anywhere.</small></span><span className="setting-state">Search</span></div>
       </section>
       <section>
         <div className="setting-heading"><ShieldCheck size={16} /><span><strong>Knowledge services</strong><small>Storage, search, transcript, and synthesis</small></span></div>
@@ -913,7 +780,7 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: "light" | 
         <span><strong>Paired devices</strong><small>{devicesLoading ? "Loading access…" : `${activeDeviceCount} active · ${devices.length - activeDeviceCount} revoked`}</small></span>
         <button className="quiet-button" type="button" disabled={devicesLoading || gatewayLoading} onClick={() => void Promise.all([loadDevices(true), loadGateway(true)])}><RefreshCw size={13} />Refresh</button>
       </div>
-      {devicesLoading ? <div className="paired-devices-empty"><span className="search-spinner" /><p>Checking device access…</p></div> : devices.length === 0 ? <div className="paired-devices-empty"><Smartphone size={20} /><strong>No paired devices</strong><p>Generate a one-time code when your secure mobile gateway is ready.</p></div> : <div className="paired-device-list">
+      {devicesLoading ? <div className="paired-devices-empty"><span className="gx-spinner" aria-hidden="true" /><p>Checking device access…</p></div> : devices.length === 0 ? <div className="paired-devices-empty"><Smartphone size={20} /><strong>No paired devices</strong><p>Generate a one-time code when your secure mobile gateway is ready.</p></div> : <div className="paired-device-list">
         {devices.map((device) => <article key={device.id} className={device.revokedAt ? "is-revoked" : ""}>
           <span className="paired-device-icon"><Smartphone size={16} /></span>
           <div>
@@ -943,5 +810,5 @@ export function AccountPageV2({ bases = knowledgeBases }: { bases?: KnowledgeBas
     window.localStorage.setItem("gunther:profile", JSON.stringify(next));
     setEditing(false);
   };
-  return <div className="utility-page account-v2 page-enter"><header><span className="atlas-eyebrow">Your profile</span><h1>Knowledge belongs to a learner.</h1><p>Your identity is stored locally and travels with complete workbook exports.</p></header><section className={`profile-card-v2 ${editing ? "is-editing" : ""}`}><span className="profile-avatar-v2">{profile.initials}</span>{editing ? <form className="profile-edit-form" onSubmit={saveProfile}><label><span>Initials</span><input autoFocus value={draftProfile.initials} maxLength={3} onChange={(event) => setDraftProfile((current) => ({ ...current, initials: event.target.value }))} /></label><label><span>Name</span><input value={draftProfile.name} maxLength={80} onChange={(event) => setDraftProfile((current) => ({ ...current, name: event.target.value }))} /></label><label><span>Role</span><input value={draftProfile.role} maxLength={80} onChange={(event) => setDraftProfile((current) => ({ ...current, role: event.target.value }))} /></label><label className="is-wide"><span>Bio</span><textarea value={draftProfile.bio} rows={2} maxLength={240} onChange={(event) => setDraftProfile((current) => ({ ...current, bio: event.target.value }))} /></label><div><button type="button" className="quiet-button" onClick={() => { setDraftProfile(profile); setEditing(false); }}>Cancel</button><button className="primary-button"><Check size={13} />Save locally</button></div></form> : <><div><small>{profile.role}</small><h2>{profile.name}</h2><p>{profile.bio}</p></div><button className="quiet-button" onClick={() => setEditing(true)}>Edit profile</button></>}</section><section className="profile-stats-v2"><div><strong>{bases.length}</strong><span>knowledge bases</span></div><div><strong>{bases.reduce((sum, base) => sum + base.chapterCount, 0)}</strong><span>chapters</span></div><div><strong>{bases.reduce((sum, base) => sum + (base.indexedSourceCount ?? 0), 0)}</strong><span>indexed sources</span></div></section></div>;
+  return <div className="utility-page account-v2 page-enter"><header className="gx-page-header"><div><h1>Account</h1><p>Your profile is stored on this device and travels with complete workbook exports.</p></div></header><section className={`profile-card-v2 ${editing ? "is-editing" : ""}`}><span className="profile-avatar-v2">{profile.initials}</span>{editing ? <form className="profile-edit-form" onSubmit={saveProfile}><label><span>Initials</span><input autoFocus value={draftProfile.initials} maxLength={3} onChange={(event) => setDraftProfile((current) => ({ ...current, initials: event.target.value }))} /></label><label><span>Name</span><input value={draftProfile.name} maxLength={80} onChange={(event) => setDraftProfile((current) => ({ ...current, name: event.target.value }))} /></label><label><span>Role</span><input value={draftProfile.role} maxLength={80} onChange={(event) => setDraftProfile((current) => ({ ...current, role: event.target.value }))} /></label><label className="is-wide"><span>Bio</span><textarea value={draftProfile.bio} rows={2} maxLength={240} onChange={(event) => setDraftProfile((current) => ({ ...current, bio: event.target.value }))} /></label><div><button type="button" className="quiet-button" onClick={() => { setDraftProfile(profile); setEditing(false); }}>Cancel</button><button className="primary-button"><Check size={13} />Save locally</button></div></form> : <><div><small>{profile.role}</small><h2>{profile.name}</h2><p>{profile.bio}</p></div><button className="quiet-button" onClick={() => setEditing(true)}>Edit profile</button></>}</section><section className="profile-stats-v2"><div><strong>{bases.length}</strong><span>libraries</span></div><div><strong>{bases.reduce((sum, base) => sum + base.chapterCount, 0)}</strong><span>chapters</span></div><div><strong>{bases.reduce((sum, base) => sum + (base.indexedSourceCount ?? 0), 0)}</strong><span>indexed sources</span></div></section></div>;
 }

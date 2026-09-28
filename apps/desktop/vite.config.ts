@@ -35,5 +35,17 @@ export default defineConfig({
     target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari13",
     minify: process.env.TAURI_ENV_DEBUG ? false : "esbuild",
     sourcemap: Boolean(process.env.TAURI_ENV_DEBUG),
+    rollupOptions: {
+      output: {
+        // Vendor code changes rarely; keeping it apart keeps the app chunk small and cacheable.
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (/[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return "react";
+          if (id.includes("lucide-react")) return "icons";
+          if (id.includes("@tauri-apps")) return "tauri";
+          return "vendor";
+        },
+      },
+    },
   },
 });

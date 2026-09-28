@@ -81,7 +81,7 @@ export async function persistTextCapture(input: TextCaptureInput): Promise<Captu
     ? kind === "note" && (!baseId || !filedToRequestedBase)
       ? filedToRequestedBase
         ? "Editable note preserved in Inbox. File it when its subject becomes clear."
-        : "Editable note is safe in Inbox; its requested knowledge base was unavailable."
+        : "Editable note is safe in Inbox; its requested library was unavailable."
       : kind === "link"
         ? baseId
           ? "Immutable page snapshot preserved with its source provenance."

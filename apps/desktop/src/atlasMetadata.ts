@@ -23,7 +23,7 @@ export const metadataToBase = (metadata: KnowledgeBaseMetadata): KnowledgeBase =
     status: "outline",
     progress: 0,
     sourceIds: [],
-    takeaways: ["This knowledge base is ready for its first source, question, and reviewed insight."],
+    takeaways: ["This library is ready for its first source, question, and reviewed insight."],
     decision: { label: "Next step", answer: "Add a trusted source or begin a grounded session" },
     topics: [],
   };

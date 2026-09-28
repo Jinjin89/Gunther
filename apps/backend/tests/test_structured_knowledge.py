@@ -439,3 +439,53 @@ def test_optional_semantic_retrieval_is_scoped_and_falls_back_safely(tmp_path):
         diagnostics = client.get("/api/retrieval/status").json()
         assert "secret" not in diagnostics["warning"]
         assert "unavailable" in diagnostics["warning"]
+
+
+def test_unavailable_worker_backs_off_logs_sparingly_and_stops_promptly(
+    tmp_path, monkeypatch, caplog
+):
+    import asyncio
+    import logging
+
+    from gunther import processing
+
+    with client_for(tmp_path) as client:
+        worker = client.app.state.processing_worker
+        attempts = {"count": 0}
+
+        def unavailable(_limit: int) -> None:
+            attempts["count"] += 1
+            if attempts["count"] >= 40:
+                worker.stopping.set()
+            raise RuntimeError("database is locked")
+
+        pauses: list[float] = []
+
+        async def record_pause(seconds: float) -> None:
+            pauses.append(seconds)
+
+        monkeypatch.setattr(worker.index, "backfill", unavailable)
+        monkeypatch.setattr(worker, "_pause", record_pause)
+        with caplog.at_level(logging.WARNING, logger="gunther.processing"):
+            asyncio.run(asyncio.wait_for(worker.run(), timeout=5))
+
+    assert attempts["count"] == 40
+    assert pauses[:4] == [2.0, 4.0, 8.0, 16.0]
+    assert max(pauses) == processing.MAX_RETRY_SECONDS
+    warnings = [record for record in caplog.records if "unavailable" in record.getMessage()]
+    assert len(warnings) == 2  # the first failure and the 30th, not forty lines
+    assert processing.retry_delay_seconds(1) == 2.0
+    assert processing.retry_delay_seconds(100) == processing.MAX_RETRY_SECONDS
+
+
+def test_worker_pause_wakes_when_stopping(tmp_path):
+    import asyncio
+    import time
+
+    with client_for(tmp_path) as client:
+        worker = client.app.state.processing_worker
+        worker.stopping.set()
+        started = time.monotonic()
+        asyncio.run(worker._pause(30))
+        assert time.monotonic() - started < 1
+

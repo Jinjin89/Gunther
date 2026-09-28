@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { knowledgeApi } from "../api";
-import { CaptureSheet, SearchPage } from "./AtlasUtilities";
+import { CaptureSheet } from "./AtlasUtilities";
 
 vi.mock("../api", () => ({
   knowledgeApi: {
@@ -196,107 +196,5 @@ describe("CaptureSheet native window surface", () => {
     expect(confirm).toHaveBeenCalledOnce();
     expect(screen.getByRole("textbox", { name: "Web page URL" })).toHaveValue("example.org/keep-me");
     confirm.mockRestore();
-  });
-});
-
-describe("SearchPage result routing", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    window.localStorage.clear();
-  });
-
-  it("opens a source in Sources immediately instead of leaving a stale Ask drawer key", async () => {
-    vi.mocked(knowledgeApi.search).mockResolvedValueOnce([{
-      id: "src_1",
-      knowledgeBaseId: "base_1",
-      kind: "source",
-      title: "Preserved paper",
-      snippet: "A matching source",
-      meta: "paper",
-      updatedAt: new Date().toISOString(),
-      sourceSessionId: null,
-      sourceMessageId: null,
-    }]);
-    vi.mocked(knowledgeApi.webSearch).mockResolvedValueOnce({
-      query: "paper",
-      answer: "",
-      sources: [],
-      mode: "not_configured",
-      message: "Online search is not configured.",
-    });
-    const onOpenBase = vi.fn();
-    const user = userEvent.setup();
-    render(<SearchPage
-      bases={[]}
-      onOpenBase={onOpenBase}
-      onOpenChapter={vi.fn()}
-      onOpenNote={vi.fn()}
-      onCapture={vi.fn()}
-      onNotify={vi.fn()}
-      resolveWorkspaceId={vi.fn().mockResolvedValue("wsp_primary")}
-    />);
-
-    await user.type(screen.getByRole("textbox", { name: "Search your knowledge or the web" }), "paper");
-    await user.click(screen.getByRole("button", { name: "Run search" }));
-    await user.click(await screen.findByRole("button", { name: /Preserved paper/i }));
-
-    expect(window.localStorage.getItem("gunther:open-source:base_1")).toBe("src_1");
-    expect(onOpenBase).toHaveBeenCalledWith("base_1", "sources");
-  });
-
-  it("does not let an older slow query overwrite newer results", async () => {
-    let resolveOlder: ((value: Awaited<ReturnType<typeof knowledgeApi.search>>) => void) | undefined;
-    vi.mocked(knowledgeApi.search)
-      .mockImplementationOnce(() => new Promise((resolve) => { resolveOlder = resolve; }))
-      .mockResolvedValueOnce([{
-        id: "src_new",
-        knowledgeBaseId: "base_1",
-        kind: "source",
-        title: "Newer result",
-        snippet: "The latest query",
-        meta: "paper",
-        updatedAt: new Date().toISOString(),
-        sourceSessionId: null,
-        sourceMessageId: null,
-      }]);
-    vi.mocked(knowledgeApi.webSearch).mockResolvedValue({
-      query: "",
-      answer: "",
-      sources: [],
-      mode: "not_configured",
-      message: "Online search is not configured.",
-    });
-    const user = userEvent.setup();
-    render(<SearchPage
-      bases={[]}
-      onOpenBase={vi.fn()}
-      onOpenChapter={vi.fn()}
-      onOpenNote={vi.fn()}
-      onCapture={vi.fn()}
-      onNotify={vi.fn()}
-      resolveWorkspaceId={vi.fn().mockResolvedValue("wsp_primary")}
-    />);
-    const input = screen.getByRole("textbox", { name: "Search your knowledge or the web" });
-
-    await user.type(input, "older");
-    await user.click(screen.getByRole("button", { name: "Run search" }));
-    await user.clear(input);
-    await user.type(input, "newer");
-    await user.click(screen.getByRole("button", { name: "Run search" }));
-    expect(await screen.findByRole("button", { name: /Newer result/i })).toBeInTheDocument();
-
-    resolveOlder?.([{
-      id: "src_old",
-      knowledgeBaseId: "base_1",
-      kind: "source",
-      title: "Older stale result",
-      snippet: "Must not replace the latest query",
-      meta: "paper",
-      updatedAt: new Date().toISOString(),
-      sourceSessionId: null,
-      sourceMessageId: null,
-    }]);
-    await waitFor(() => expect(screen.queryByText("Older stale result")).not.toBeInTheDocument());
-    expect(screen.getByText("Newer result")).toBeInTheDocument();
   });
 });

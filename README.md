@@ -94,6 +94,10 @@ Artifact 当前没有删除、覆盖或归档接口，也未加入全局 Search�
 
 这说明“离线后可以重试”，不等于承诺任意设备、任意磁盘故障下零丢失。
 
+### 桌面界面
+
+桌面端以搜索为首页：打开即可检索全部本地知识，输入 `@` 选择 Library 限定范围，并可把问题直接交给该 Library 的有据问答（Ask）。界面采用白底黑字的统一设计系统，颜色只保留给 Library 标识、来源类型与状态；细节见 [设计系统](docs/DESIGN_SYSTEM.md)。
+
 ## 技术结构
 
 ```text
@@ -198,3 +202,4 @@ macOS 最终包的 `LSMinimumSystemVersion=11.0`，并包含麦克风用途说�
 - [运行与恢复](./docs/OPERATIONS_AND_RECOVERY_CN.md)
 - [独立 Capture 与菜单栏设计](./docs/CAPTURE_MENU_BAR_DESIGN_CN.md)
 - [验收报告](./docs/ACCEPTANCE_REPORT_V3_CN.md)
+- [设计系统](./docs/DESIGN_SYSTEM.md)

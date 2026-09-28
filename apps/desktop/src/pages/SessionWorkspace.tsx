@@ -39,11 +39,14 @@ import {
   Sparkles,
   Square,
   SquarePen,
+  UserRound,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KnowledgeBase, KnowledgeSource } from "../atlas";
 import { knowledgeApi } from "../api";
+import { BrandMark } from "../design/BrandMark";
+import { LibraryGlyph } from "../design/LibraryGlyph";
 import { WebSnapshotCard } from "../components/WebSnapshotCard";
 import { SourceEvidence } from "../components/SourceEvidence";
 import "../knowledge.css";
@@ -190,7 +193,7 @@ function SessionsSidebar({
     <aside className="sessions-sidebar" aria-label="Session history">
       <div className="sessions-heading">
         <span className={`base-dot color-${base.color}`} />
-        <span><small>Knowledge base</small><strong>{base.title}</strong></span>
+        <span><small>Library</small><strong>{base.title}</strong></span>
       </div>
       <button className="new-session-button" onClick={onNew}><SquarePen size={15} /><span>New session</span><kbd>⌘N</kbd></button>
       <label className="session-search"><Search size={13} /><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search sessions" aria-label="Search sessions" />{query && <button onClick={() => onQuery("")} aria-label="Clear search"><X size={11} /></button>}</label>
@@ -215,7 +218,7 @@ function WelcomePanel({ base, onPrompt }: { base: KnowledgeBase; onPrompt: (valu
   ];
   return (
     <div className="chat-welcome">
-      <div className={`welcome-orbit color-${base.color}`}><span>{base.title.split(" ").slice(0, 2).map((word) => word[0]).join("")}</span><i /><i /></div>
+      <div className="welcome-glyph"><LibraryGlyph base={base} size="lg" /></div>
       <span className="welcome-eyebrow"><Sparkles size={12} />New grounded session</span>
       <h1>Ask the knowledge,<br />not just the model.</h1>
       <p>{base.question}</p>
@@ -229,7 +232,7 @@ function ConversationMessage({ message, selected, promoting, promoted, branching
   const isAssistant = message.role === "assistant";
   return (
     <article className={`conversation-message role-${message.role} ${selected ? "is-selected" : ""}`} onClick={isAssistant ? onSelect : undefined}>
-      <div className="message-author">{isAssistant ? <span className="assistant-mark">G</span> : <span className="user-mark">You</span>}<span>{isAssistant ? "Gunther" : "You"}</span><time>{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(message.createdAt))}</time></div>
+      <div className="message-author">{isAssistant ? <span className="assistant-mark"><BrandMark size={14} /></span> : <span className="user-mark"><UserRound size={13} /></span>}<span>{isAssistant ? "Gunther" : "You"}</span><time>{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(message.createdAt))}</time></div>
       <div className="message-body"><MessageContent content={message.content} {...(isAssistant ? { onCitation: onSelect } : {})} /></div>
       {isAssistant && <footer className="message-footer">
         <div className="message-actions">{message.citations.length > 0 ? <button className="citation-count" onClick={(event) => { event.stopPropagation(); onSelect(); }}><Quote size={12} />{message.citations.length} grounded {message.citations.length === 1 ? "citation" : "citations"}</button> : <span className="no-citation-state"><CircleAlert size={12} />No direct support found</span>}<button className="copy-answer" onClick={(event) => { event.stopPropagation(); onCopy(); }}><Copy size={12} />Copy</button><button className="branch-answer" disabled={branching} onClick={(event) => { event.stopPropagation(); onBranch(); }}><GitBranch size={12} />{branching ? "Branching…" : "Branch"}</button><button className={`promote-answer ${promoted ? "is-promoted" : ""}`} disabled={promoting || promoted || message.citations.length === 0} title={message.citations.length === 0 ? "Add or retrieve supporting evidence before proposing this answer as knowledge." : undefined} onClick={(event) => { event.stopPropagation(); onPromote(); }}><Sparkles size={12} />{promoting ? "Creating proposal…" : promoted ? "Proposal created" : message.citations.length === 0 ? "Needs evidence" : "Propose as knowledge"}</button></div>
@@ -361,7 +364,7 @@ function ContextInspector({
           <section className="answer-scope"><span className="section-label">Answer scope</span><div className="scope-metrics"><span><strong>{context.assertionsConsidered}</strong><small>claims scanned</small></span><span><strong>{context.sourcesConsidered}</strong><small>sources searched</small></span><span><strong>{context.verifiedAssertions}</strong><small>trusted scanned</small></span></div><p><Info size={12} />This is the retrieval snapshot for the selected answer—not the current library state.</p></section>
           <section className="citation-section"><header><span className="section-label">Grounding trail</span><small>{selectedMessage.citations.length} citations</small></header>{selectedMessage.citations.length ? selectedMessage.citations.map((citation, index) => <CitationCard key={citation.id} citation={citation} index={index} onOpen={() => onOpenSource(citation.sourceId, citation)} />) : <div className="empty-citations"><CircleAlert size={20} /><strong>Evidence gap</strong><span>No matching claim was found in this session’s source scope.</span></div>}</section>
         </> : <>
-          <section className="context-overview"><div className={`context-monogram color-${base.color}`}>{base.title.split(" ").slice(0, 2).map((word) => word[0]).join("")}</div><span className="section-label">Current knowledge base</span><h2>{base.title}</h2><p>{base.description}</p></section>
+          <section className="context-overview"><div className="context-glyph"><LibraryGlyph base={base} size="lg" /></div><span className="section-label">Current library</span><h2>{base.title}</h2><p>{base.description}</p></section>
           <section className="knowledge-health"><header><span className="section-label">Knowledge health</span><strong>{base.progress}%</strong></header><div><i style={{ width: `${base.progress}%` }} /></div><ul><li><Check size={12} />{base.chapters.filter((chapter) => chapter.status === "grounded").length} grounded chapters</li><li><Clock3 size={12} />{base.chapters.filter((chapter) => chapter.status !== "grounded").length} chapters still growing</li><li><FileText size={12} />{indexedCount} indexed {indexedCount === 1 ? "source" : "sources"} · {referenceCount} curated {referenceCount === 1 ? "reference" : "references"}</li></ul></section>
           {knowledgeUnits.length > 0 && <section className="accepted-units"><header><span className="section-label">Knowledge units</span><small>{knowledgeUnits.length} {knowledgeUnits.length === 1 ? "unit" : "units"}</small></header>{knowledgeUnits.slice(0, 3).map((unit) => <button className="unit-origin" key={unit.id} onClick={() => onOpenUnit(unit)} aria-label={`Open source session for ${unit.title}`}><span><ShieldCheck size={12} /><strong>{unit.title}</strong><small>{unit.evidenceCount} {unit.evidenceCount === 1 ? "citation" : "citations"} · {unit.revisionCount} {unit.revisionCount === 1 ? "revision" : "revisions"} · {unit.status}</small></span><p>{unit.content.replace(/\*\*/g, "").replace(/\s+/g, " ")}</p><ArrowRight size={11} /></button>)}</section>}
           <div className="inspector-tip"><Sparkles size={14} /><span><strong>Inspect any answer</strong><small>Select a response to see exactly what Gunther searched and cited.</small></span></div>
@@ -479,6 +482,13 @@ export function SessionWorkspace({ base, selectedChapterId, onChapter, onAdd, on
         if (!cancelled) {
           setLoading(false);
           if (bootstrapRequest.current?.baseId === base.id) bootstrapRequest.current = null;
+          // A question asked from Home arrives as a ready-to-send draft, never auto-sent.
+          const askDraftKey = `gunther:ask-draft:${base.id}`;
+          const handedOff = window.localStorage.getItem(askDraftKey);
+          if (handedOff) {
+            window.localStorage.removeItem(askDraftKey);
+            setDraft(handedOff);
+          }
         }
       }
     };
@@ -615,7 +625,7 @@ export function SessionWorkspace({ base, selectedChapterId, onChapter, onAdd, on
     const chosenSources = current.selectedSourceIds.length ? base.sources.filter((source) => current.selectedSourceIds.includes(source.id)) : base.sources.slice(0, 3);
     const citations: ConversationCitation[] = chosenSources.slice(0, 3).map((source, index) => ({ id: `local-cit-${Date.now()}-${index}`, sourceId: source.id, sourceTitle: source.title, assertionId: `local-${chapter?.id ?? index}`, quote: source.scope, locator: "Source overview", status: "provisional", confidence: 0.72 }));
     const supported = chapter?.takeaways.slice(0, 3) ?? [];
-    const content = supported.length ? `Here is the strongest answer available inside this knowledge base:\n\n${supported.map((item, index) => `${index + 1}. **${item}** [${Math.min(index + 1, Math.max(citations.length, 1))}]`).join("\n")}\n\n**Boundary.** This offline preview uses the curated chapter and source summaries. Reconnect the knowledge service for claim-level retrieval and persisted history.` : `I couldn’t find grounded material for “${question}” in this chapter yet. Add a source or widen the session scope.`;
+    const content = supported.length ? `Here is the strongest answer available inside this library:\n\n${supported.map((item, index) => `${index + 1}. **${item}** [${Math.min(index + 1, Math.max(citations.length, 1))}]`).join("\n")}\n\n**Boundary.** This offline preview uses the curated chapter and source summaries. Reconnect the knowledge service for claim-level retrieval and persisted history.` : `I couldn’t find grounded material for “${question}” in this chapter yet. Add a source or widen the session scope.`;
     return {
       user: { id: `local-user-${Date.now()}`, sessionId: current.id, role: "user", content: question, citations: [], context: emptyContext, createdAt: now },
       assistant: { id: `local-assistant-${Date.now()}`, sessionId: current.id, role: "assistant", content, citations, context: { sourcesConsidered: chosenSources.length, assertionsConsidered: supported.length, verifiedAssertions: chapter?.status === "grounded" ? supported.length : 0, retrievalMode: current.selectedSourceIds.length ? "selected" : "all", responderMode: "local" }, createdAt: now },
@@ -805,7 +815,7 @@ export function SessionWorkspace({ base, selectedChapterId, onChapter, onAdd, on
         : "";
       return `## ${message.role === "user" ? "You" : "Gunther"}\n\n${message.content}${citations}`;
     }).join("\n\n---\n\n");
-    const markdown = `# ${activeSession.title}\n\n- Knowledge base: ${base.title}\n- Chapter focus: ${chapter?.title ?? "None"}\n- Source scope: ${scope}\n- Exported: ${new Date().toISOString()}\n\n${transcript || "_This session has no messages yet._"}\n`;
+    const markdown = `# ${activeSession.title}\n\n- Library: ${base.title}\n- Chapter focus: ${chapter?.title ?? "None"}\n- Source scope: ${scope}\n- Exported: ${new Date().toISOString()}\n\n${transcript || "_This session has no messages yet._"}\n`;
     const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -838,7 +848,7 @@ export function SessionWorkspace({ base, selectedChapterId, onChapter, onAdd, on
 
   return (
     <div className={`session-workspace page-enter history-is-drawer ${inspectorCollapsed ? "inspector-is-collapsed" : ""}`}>
-      <main className="conversation-pane">
+      <section className="conversation-pane" aria-label="Conversation">
         <header className="conversation-header">
           <button className="mobile-session-toggle" onClick={() => setMobileSessionsOpen(true)} aria-label="Open session history"><MessageSquareText size={15} /></button>
           <div className="conversation-title">
@@ -856,13 +866,13 @@ export function SessionWorkspace({ base, selectedChapterId, onChapter, onAdd, on
         </header>
         <div className="conversation-scroll">
           {error && <div className="conversation-error" role="alert"><CircleAlert size={14} /><span>{error}</span><button onClick={() => setError(null)}><X size={12} /></button></div>}
-          {!loading && activeSession?.messages.length === 0 && <WelcomePanel base={base} onPrompt={setDraft} />}
+          {!loading && activeSession?.messages.length === 0 ? <WelcomePanel base={base} onPrompt={setDraft} /> : <h1 className="gx-sr-only">Ask {base.title}</h1>}
           {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} selected={selectedMessageId === message.id} promoting={promotingMessageId === message.id} promoted={proposalMessageIds.has(message.id)} branching={branchingMessageId === message.id} onSelect={() => { setSelectedMessageId(message.id); setInspectorTab("context"); setInspectorCollapsed(false); }} onCopy={() => void copyMessage(message)} onPromote={() => void promoteMessage(message)} onBranch={() => void branchFromMessage(message)} />)}
-          {sending && <div className="thinking-row"><span className="assistant-mark">G</span><span><i /><i /><i /></span><small>Tracing claims and source fragments…</small></div>}
+          {sending && <div className="thinking-row"><span className="assistant-mark"><BrandMark size={14} busy /></span><span><i /><i /><i /></span><small>Tracing claims and source fragments…</small></div>}
           <div ref={messagesEnd} />
         </div>
         <Composer value={draft} sending={sending} sourceCount={activeSession?.selectedSourceIds.length ?? 0} chapterTitle={focusedChapter?.title} readOnly={Boolean(activeSession?.archived)} ready={!loading && activeSession !== null} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={() => { setInspectorTab("sources"); setInspectorCollapsed(false); }} />
-      </main>
+      </section>
       <ContextInspector base={base} sources={scopeSources} session={activeSession} knowledgeUnits={knowledgeUnits} selectedMessage={selectedMessage} tab={inspectorTab} sourceQuery={sourceQuery} collapsed={inspectorCollapsed} readOnly={Boolean(activeSession?.archived)} onTab={setInspectorTab} onSourceQuery={setSourceQuery} onToggleSource={(id) => void toggleSource(id)} onUseAll={() => { if (activeSession) void patchSession(activeSession.id, { selectedSourceIds: [] }); }} onAdd={onAdd} onOpenSource={(id, citation) => void openSourceDetail(id, citation)} onOpenUnit={(unit) => void openKnowledgeUnitOrigin(unit)} onCollapse={() => setInspectorCollapsed((value) => !value)} />
       <SourceDetailDrawer open={sourceDetailId !== null} loading={sourceDetailLoading} source={sourceDetail} citation={sourceCitation} onClose={closeSourceDetail} />
       {mobileSessionsOpen && <div className="mobile-session-drawer" role="dialog" aria-modal="true" aria-label="Session history"><button className="mobile-session-scrim" onClick={() => setMobileSessionsOpen(false)} aria-label="Close session history" /><div className="mobile-session-sheet"><button className="mobile-session-close" autoFocus onClick={() => setMobileSessionsOpen(false)} aria-label="Close session history"><X size={15} /></button><SessionsSidebar base={base} indexedCount={scopeSources.filter((source) => source.indexed).length} referenceCount={scopeSources.filter((source) => !source.indexed).length} sessions={sessions} archivedSessions={archivedSessions} showArchived={showArchived} activeId={activeId} loading={loading} query={sessionQuery} onQuery={setSessionQuery} onNew={() => { setMobileSessionsOpen(false); void createSession(); }} onOpen={(id) => { setMobileSessionsOpen(false); void loadSession(id); }} onPin={(session) => void patchSession(session.id, { pinned: !session.pinned })} onArchive={(session) => void archiveSession(session)} onToggleArchived={() => void toggleArchived()} onRestore={(session) => void restoreSession(session)} /></div></div>}

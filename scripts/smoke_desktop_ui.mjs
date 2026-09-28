@@ -449,6 +449,8 @@ async function run() {
 
     chrome = spawn(chromeBinary, [
       "--headless=new",
+      // Containers commonly run the smoke as root, where Chrome requires this flag.
+      ...(process.getuid?.() === 0 ? ["--no-sandbox"] : []),
       "--disable-background-networking",
       "--disable-component-update",
       "--disable-default-apps",
@@ -482,8 +484,8 @@ async function run() {
     await cdp.send("Page.navigate", { url: uiOrigin });
     await waitForEvaluation(
       cdp,
-      "document.readyState === 'complete' && document.body.innerText.includes('Capture something')",
-      "Gunther Home",
+      "document.readyState === 'complete' && document.querySelector('[aria-label=\"Search your knowledge or the web\"]') !== null",
+      "Gunther search-first Home",
     );
 
     const marker = `ui-smoke-${crypto.randomUUID().slice(0, 8)}`;
@@ -514,14 +516,14 @@ async function run() {
     }
     await waitForEvaluation(cdp, `document.body.innerText.includes(${JSON.stringify(noteTitle)}) && document.body.innerText.includes('Choose a home')`, "captured note in Inbox");
 
-    if (!await cdp.evaluate(clickExpression("button", "Library"))) {
+    if (!await cdp.evaluate(clickExpression("button", "Libraries"))) {
       throw new SmokeFailure("Library navigation was not clickable");
     }
-    await waitForEvaluation(cdp, "document.body.innerText.includes('Knowledge with a lasting home.')", "Libraries view");
-    if (!await cdp.evaluate(clickExpression("button", "New knowledge base"))) {
-      throw new SmokeFailure("New knowledge base was not clickable");
+    await waitForEvaluation(cdp, "document.querySelector('.gx-libraries h1')?.textContent.trim() === 'Libraries'", "Libraries view");
+    if (!await cdp.evaluate(clickExpression("button", "New library"))) {
+      throw new SmokeFailure("New library was not clickable");
     }
-    await waitForEvaluation(cdp, "document.querySelector('[role=dialog][aria-label=\"Create knowledge base\"]') !== null", "knowledge base dialog");
+    await waitForEvaluation(cdp, "document.querySelector('[role=dialog][aria-label=\"Create library\"]') !== null", "library dialog");
     for (const [label, value] of [
       ["Name", libraryTitle],
       ["Guiding question", "How do computational methods explain biological systems?"],
@@ -531,9 +533,9 @@ async function run() {
         throw new SmokeFailure(`${label} field was not found`);
       }
     }
-    await waitForEvaluation(cdp, "[...document.querySelectorAll('button')].some((button) => button.textContent.trim() === 'Create knowledge base' && !button.disabled)", "enabled Create knowledge base");
-    if (!await cdp.evaluate(clickExpression("button", "Create knowledge base"))) {
-      throw new SmokeFailure("Create knowledge base was not clickable");
+    await waitForEvaluation(cdp, "[...document.querySelectorAll('button')].some((button) => button.textContent.trim() === 'Create library' && !button.disabled)", "enabled Create library");
+    if (!await cdp.evaluate(clickExpression("button", "Create library"))) {
+      throw new SmokeFailure("Create library was not clickable");
     }
     await waitForEvaluation(cdp, `document.body.innerText.includes(${JSON.stringify(libraryTitle)})`, "created knowledge base workspace");
     await waitForEvaluation(
@@ -579,10 +581,28 @@ async function run() {
     const queueEmpty = await cdp.evaluate("JSON.parse(localStorage.getItem('gunther:local-captures') || '[]').length === 0");
     if (!queueEmpty) throw new SmokeFailure("Successful capture remained in the local retry queue");
 
-    if (!await cdp.evaluate(clickExpression("button", "Library"))) {
+    // Home is the search surface: the filed source must be findable and routed to its library.
+    if (!await cdp.evaluate(clickExpression("button", "Home"))) {
+      throw new SmokeFailure("Home navigation was not clickable after filing");
+    }
+    await waitForEvaluation(cdp, "document.querySelector('[aria-label=\"Search your knowledge or the web\"]') !== null", "search-first Home after filing");
+    if (!await cdp.evaluate(setAriaValueExpression("Search your knowledge or the web", marker))) {
+      throw new SmokeFailure("Home search composer was not editable");
+    }
+    await waitForEvaluation(cdp, "document.querySelector('button[aria-label=\"Run search\"]')?.disabled === false", "enabled Home search");
+    if (!await cdp.evaluate(clickExpression("button", "Run search"))) {
+      throw new SmokeFailure("Home search could not be run");
+    }
+    await waitForEvaluation(
+      cdp,
+      `[...document.querySelectorAll('button.gx-result')].some((button) => button.querySelector('strong')?.textContent.trim() === ${JSON.stringify(noteTitle)} && button.textContent.includes(${JSON.stringify(libraryTitle)}))`,
+      "filed source found from Home search with its library",
+    );
+
+    if (!await cdp.evaluate(clickExpression("button", "Libraries"))) {
       throw new SmokeFailure("Library navigation was not clickable after filing");
     }
-    await waitForEvaluation(cdp, "document.body.innerText.includes('Knowledge with a lasting home.')", "Libraries view after filing");
+    await waitForEvaluation(cdp, "document.querySelector('.gx-libraries h1')?.textContent.trim() === 'Libraries'", "Libraries view after filing");
     if (!await cdp.evaluate(clickExpression("button", libraryTitle))) {
       throw new SmokeFailure("The created knowledge base was not clickable");
     }
@@ -713,10 +733,10 @@ async function run() {
     const trustedUnit = units.find((item) => item.status === "trusted" && item.evidenceCount > 0);
     if (!trustedUnit) throw new SmokeFailure("Accepted proposal did not create a trusted, evidenced knowledge unit");
 
-    if (!await cdp.evaluate(clickExpression("button", "Library"))) {
+    if (!await cdp.evaluate(clickExpression("button", "Libraries"))) {
       throw new SmokeFailure("Library navigation was not clickable before output generation");
     }
-    await waitForEvaluation(cdp, "document.body.innerText.includes('Knowledge with a lasting home.')", "Libraries view before output generation");
+    await waitForEvaluation(cdp, "document.querySelector('.gx-libraries h1')?.textContent.trim() === 'Libraries'", "Libraries view before output generation");
     if (!await cdp.evaluate(clickExpression("button", libraryTitle))) {
       throw new SmokeFailure("The created knowledge base could not be reopened");
     }
@@ -737,7 +757,7 @@ async function run() {
 
     result = {
       status: "passed",
-      checks: 32,
+      checks: 35,
       browser: path.basename(chromeBinary),
       knowledgeBaseId: knowledgeBase.id,
       noteId: filedNote.id,
@@ -747,8 +767,9 @@ async function run() {
         "production bundle rendered in real Chrome",
         "capture before organize",
         "Quick note persisted to Inbox",
-        "knowledge base created through UI",
+        "library created through UI",
         "Inbox item filed through UI",
+        "filed source found from search-first Home",
         "note-to-source provenance preserved",
         "successful local retry copy cleared",
         "source reopened and reviewed from its preserved original",

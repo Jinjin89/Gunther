@@ -478,8 +478,17 @@ def search(
     request: Request,
     query: Annotated[str, Query(alias="q", min_length=1, max_length=500)],
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    knowledge_base_ids: Annotated[list[str] | None, Query(alias="knowledgeBaseId")] = None,
 ) -> list[KnowledgeSearchResultOut]:
-    return _service(request).search_knowledge(query, limit=limit)
+    scope = list(dict.fromkeys(item.strip() for item in knowledge_base_ids or [] if item.strip()))
+    if len(scope) > 20 or any(len(item) > 160 for item in scope):
+        raise HTTPException(
+            status_code=422,
+            detail="Search at most 20 knowledge bases, each identified by at most 160 characters",
+        )
+    return _service(request).search_knowledge(
+        query, limit=limit, knowledge_base_ids=scope or None
+    )
 
 
 @router.get("/search/web", response_model=WebSearchOut)

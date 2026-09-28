@@ -28,6 +28,16 @@ from gunther.models import (
 
 logger = logging.getLogger(__name__)
 
+IDLE_POLL_SECONDS = 1.0
+POLL_STEP_SECONDS = 0.5
+MAX_RETRY_SECONDS = 60.0
+FAILURE_LOG_EVERY = 30
+
+
+def retry_delay_seconds(failures: int) -> float:
+    """Exponential backoff for an unavailable worker: 2, 4, 8 … capped at a minute."""
+    return min(MAX_RETRY_SECONDS, 2.0 * 2 ** max(0, min(failures - 1, 6)))
+
 
 class ProcessingWorker:
     def __init__(
@@ -239,13 +249,25 @@ class ProcessingWorker:
             self.process(*claimed)
         return bool(claimed)
 
+    async def _pause(self, seconds: float) -> None:
+        """Sleep, but wake promptly when the worker is asked to stop."""
+        remaining = seconds
+        while remaining > 0 and not self.stopping.is_set():
+            step = min(POLL_STEP_SECONDS, remaining)
+            await asyncio.sleep(step)
+            remaining -= step
+
     async def run(self) -> None:
+        failures = 0
         while not self.stopping.is_set():
             try:
                 await asyncio.to_thread(self.index.backfill, 10)
                 claimed = await asyncio.to_thread(self.claim)
+                if failures:
+                    logger.warning("Knowledge worker recovered after %d failed attempts", failures)
+                    failures = 0
                 if not claimed:
-                    await asyncio.sleep(1)
+                    await self._pause(IDLE_POLL_SECONDS)
                     continue
                 task = asyncio.create_task(asyncio.to_thread(self.process, *claimed))
                 while not task.done():
@@ -256,5 +278,13 @@ class ProcessingWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as error:
-                logger.warning("Knowledge worker unavailable (%s)", type(error).__name__)
-                await asyncio.sleep(2)
+                # A locked or unavailable database must not become a hot loop or
+                # flood backend.log: back off exponentially and log sparingly.
+                failures += 1
+                if failures == 1 or failures % FAILURE_LOG_EVERY == 0:
+                    logger.warning(
+                        "Knowledge worker unavailable (%s); attempt %d, retrying",
+                        type(error).__name__,
+                        failures,
+                    )
+                await self._pause(retry_delay_seconds(failures))

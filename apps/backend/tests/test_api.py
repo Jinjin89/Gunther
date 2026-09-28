@@ -426,6 +426,72 @@ def test_notebook_notes_can_be_filtered_archived_and_searched() -> None:
         assert all(item["id"] != archived["id"] for item in search)
 
 
+def test_search_finds_unfiled_captures_and_reports_their_library_once_filed() -> None:
+    with make_client() as client:
+        base_id = create_base(client, "Sleep Research")
+        imported = client.post(
+            "/api/sources",
+            json={
+                "title": "Unsorted sleep paper",
+                "kind": "paper",
+                "content": "Slow-wave sleep supports memory consolidation.",
+            },
+        ).json()
+        source_id = imported["source"]["id"]
+
+        unfiled = client.get("/api/search?q=consolidation").json()
+        source_result = next(item for item in unfiled if item["id"] == source_id)
+        assert source_result["kind"] == "source"
+        assert source_result["knowledgeBaseId"] is None
+
+        filed = client.post(
+            f"/api/sources/{source_id}/file",
+            json={"knowledgeBaseId": base_id},
+        )
+        assert filed.status_code == 200
+
+        results = [
+            item
+            for item in client.get("/api/search?q=consolidation").json()
+            if item["id"] == source_id
+        ]
+        assert [item["knowledgeBaseId"] for item in results] == [base_id]
+
+
+def test_search_can_be_scoped_to_selected_knowledge_bases() -> None:
+    with make_client() as client:
+        biology = create_base(client, "Biology")
+        computing = create_base(client, "Computing")
+        for title, base_id in (
+            ("Marker genes for T cells", biology),
+            ("Marker passes in compilers", computing),
+            ("Unfiled marker idea", None),
+        ):
+            payload = {"title": title, "kind": "paper", "content": f"{title} — marker notes."}
+            if base_id:
+                payload["knowledgeBaseId"] = base_id
+            assert client.post("/api/sources", json=payload).status_code == 201
+
+        everything = client.get("/api/search?q=marker").json()
+        assert {item["title"] for item in everything} >= {
+            "Marker genes for T cells",
+            "Marker passes in compilers",
+            "Unfiled marker idea",
+        }
+
+        scoped = client.get(f"/api/search?q=marker&knowledgeBaseId={biology}").json()
+        assert [item["title"] for item in scoped] == ["Marker genes for T cells"]
+        assert all(item["knowledgeBaseId"] == biology for item in scoped)
+
+        both = client.get(
+            f"/api/search?q=marker&knowledgeBaseId={biology}&knowledgeBaseId={computing}"
+        ).json()
+        assert {item["knowledgeBaseId"] for item in both} == {biology, computing}
+
+        too_many = "&".join(f"knowledgeBaseId=base-{index}" for index in range(21))
+        assert client.get(f"/api/search?q=marker&{too_many}").status_code == 422
+
+
 def test_natural_language_search_ignores_query_framing_words() -> None:
     with make_client() as client:
         note = client.post(

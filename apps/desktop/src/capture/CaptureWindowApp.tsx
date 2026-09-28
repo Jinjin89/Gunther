@@ -16,6 +16,7 @@ import {
   showMainWindow,
 } from "./captureBridge";
 import { persistAssetCapture, persistTextCapture } from "./capturePersistence";
+import { applyTheme, readThemePreference, resolveTheme, watchSystemTheme } from "../design/theme";
 import {
   CAPTURE_CONTROL_DOM_EVENT,
   type CaptureControl,
@@ -99,14 +100,14 @@ export default function CaptureWindowApp() {
   }, [refreshWorkspace]);
 
   useEffect(() => {
-    const syncTheme = () => {
-      document.documentElement.dataset.theme = window.localStorage.getItem("gunther:v3-theme") === "dark"
-        ? "dark"
-        : "light";
-    };
+    const syncTheme = () => applyTheme(resolveTheme(readThemePreference()));
     syncTheme();
     window.addEventListener("storage", syncTheme);
-    return () => window.removeEventListener("storage", syncTheme);
+    const stopWatchingSystem = watchSystemTheme(syncTheme);
+    return () => {
+      window.removeEventListener("storage", syncTheme);
+      stopWatchingSystem();
+    };
   }, []);
 
   useEffect(() => {

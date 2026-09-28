@@ -49,6 +49,7 @@ import { knowledgeApi, recordingAssetUrl, sourceAssetUrl } from "../api";
 import { WebSnapshotCard } from "../components/WebSnapshotCard";
 import { SourceEvidence } from "../components/SourceEvidence";
 import { TopicManager } from "../components/TopicManager";
+import { LibraryGlyph } from "../design/LibraryGlyph";
 import "../knowledge.css";
 import { SessionWorkspace } from "./SessionWorkspace";
 
@@ -99,15 +100,15 @@ function BaseHeader({ base, mode, onMode, onBack, onExport, onEdit }: Pick<Knowl
   return (
     <header className="base-workspace-header">
       <button className="base-back" onClick={onBack} aria-label="Back to library"><ArrowLeft size={15} /></button>
-      <div className={`base-monogram color-${base.color}`}>{base.title.split(" ").slice(0, 2).map((part) => part[0]).join("")}</div>
+      <LibraryGlyph base={base} size="lg" />
       <div className="base-title-group">
         <span>{base.eyebrow}</span>
         <strong>{base.title}</strong>
       </div>
-      <nav className="base-mode-switch" aria-label="Knowledge base views">
+      <nav className="base-mode-switch" aria-label="Library views">
         {modeLabels.map((item) => <button key={item.id} className={mode === item.id ? "is-active" : ""} aria-current={mode === item.id ? "page" : undefined} onClick={() => onMode(item.id)}>{item.label}</button>)}
       </nav>
-      <button className="base-edit" onClick={onEdit} aria-label="Edit knowledge base details" title="Edit knowledge base details"><Settings2 size={14} /></button>
+      <button className="base-edit" onClick={onEdit} aria-label="Edit library details" title="Edit library details"><Settings2 size={14} /></button>
       <button className="base-export" onClick={onExport}><Download size={14} />Export</button>
     </header>
   );
@@ -215,11 +216,11 @@ function OverviewView({ base, onMode, onAdd }: Pick<KnowledgeBaseWorkspaceProps,
   const sourceCount = base.indexedSourceCount ?? base.sourceCount;
   return <div className="base-overview page-enter">
     <header className="base-overview-hero">
-      <div><span className="atlas-eyebrow">Knowledge base overview</span><h1>{base.title}</h1><p>{base.description}</p></div>
+      <div><span className="atlas-eyebrow">Library overview</span><h1>{base.title}</h1><p>{base.description}</p></div>
       <button className="primary-button" onClick={() => onAdd()}>Add a source</button>
     </header>
     <blockquote><small>Guiding question</small><p>{base.question}</p></blockquote>
-    <section className="base-overview-actions" aria-label="Knowledge base activities">
+    <section className="base-overview-actions" aria-label="Library activities">
       <button onClick={() => onMode("sources")}><span className="material-action-icon"><FileText size={18} /></span><span><strong>Sources</strong><small>{sourceCount} preserved · add, read, and organize originals</small></span><ArrowRight size={14} /></button>
       <button onClick={() => onMode("ask")}><span className="material-action-icon is-audio"><MessageSquareText size={18} /></span><span><strong>Ask</strong><small>Explore this library with answers grounded in its sources</small></span><ArrowRight size={14} /></button>
       <button onClick={() => onMode("outputs")}><span className="material-action-icon is-meeting"><Sparkles size={18} /></span><span><strong>Outputs</strong><small>Turn accepted knowledge into notes, guides, and briefs</small></span><ArrowRight size={14} /></button>
@@ -363,13 +364,13 @@ function MaterialsView({ base, onAdd }: Pick<KnowledgeBaseWorkspaceProps, "base"
       </section>
 
       <section className="material-collection">
-        <header><span><strong>All sources</strong><small>{materials.length || base.indexedSourceCount || 0} items · {recordingCount} recordings</small></span><div><button onClick={() => onAdd()}><FilePlus2 size={13} />Add source</button></div></header>
+        <header><span><strong>All sources</strong><small>{(() => { const count = materials.length || base.indexedSourceCount || 0; return `${count} ${count === 1 ? "source" : "sources"} · ${recordingCount} ${recordingCount === 1 ? "recording" : "recordings"}`; })()}</small></span><div><button onClick={() => onAdd()}><FilePlus2 size={13} />Add source</button></div></header>
         {materials.length > 0 && <div className="material-list">{materials.map((material) => {
           const Icon = materialIcon(material.kind);
           return <button type="button" className="material-row" disabled={!material.indexed} key={material.id} onClick={() => openSource(material.id)}><span className={`material-kind-icon kind-${material.kind}`}><Icon size={16} /></span><span><small>{materialLabel(material.kind)} · {material.date}</small><strong>{material.title}</strong><p>{material.detail}</p></span><span className="material-state"><i />{material.indexed ? "Open source" : "Reference"}<ChevronRight size={13} /></span></button>;
         })}</div>}
-        {!loading && materials.length === 0 && <div className="materials-empty"><span><Layers3 size={22} /></span><h2>This knowledge base is ready for its first source.</h2><p>Start with whichever source you already have. You never need to begin with a particular format.</p><div><button className="primary-button" onClick={() => onAdd()}><FilePlus2 size={14} />Choose a source</button></div></div>}
-        {loading && materials.length === 0 && <div className="materials-loading">Opening this knowledge base’s materials…</div>}
+        {!loading && materials.length === 0 && <div className="materials-empty"><span><Layers3 size={22} /></span><h2>This library is ready for its first source.</h2><p>Start with whichever source you already have. You never need to begin with a particular format.</p><div><button className="primary-button" onClick={() => onAdd()}><FilePlus2 size={14} />Choose a source</button></div></div>}
+        {loading && materials.length === 0 && <div className="materials-loading">Opening this library’s materials…</div>}
         {unavailable && materials.length > 0 && <p className="materials-offline">Showing curated references. Indexed local materials will appear when the knowledge service reconnects.</p>}
       </section>
       {selectedSourceId && createPortal(<div className="source-detail-overlay" role="presentation" onMouseDown={closeSource}>

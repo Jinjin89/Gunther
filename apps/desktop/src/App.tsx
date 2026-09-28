@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getKnowledgeBase, type AtlasMode, type KnowledgeBase, type KnowledgeChapter } from "./atlas";
 import { metadataToBase } from "./atlasMetadata";
 import { AtlasPage, AtlasRail, AtlasTitlebar, type AtlasView } from "./components/AtlasChrome";
-import { AccountPageV2, CaptureSheet, CreateKnowledgeBaseSheet, EvidenceDrawer, SearchPage, SettingsPageV2, type CaptureKind } from "./components/AtlasUtilities";
+import { AccountPageV2, CaptureSheet, CreateKnowledgeBaseSheet, EvidenceDrawer, SettingsPageV2, type CaptureKind } from "./components/AtlasUtilities";
 import { AtlasLibraryPage } from "./pages/AtlasLibraryPage";
 import { HomePage, type HomeCaptureKind } from "./pages/HomePage";
 import { InboxPageV3 } from "./pages/InboxPage";
@@ -14,12 +14,26 @@ import { knowledgeApi } from "./api";
 import { loadStoredCaptures, removeStoredCapture } from "./localCaptureQueue";
 import { isTauriRuntime, listenForCaptureSaved, listenForOpenSearch, openCaptureWindow } from "./capture/captureBridge";
 import { persistAssetCapture, persistTextCapture } from "./capture/capturePersistence";
+import { applyTheme, readThemePreference, resolveTheme, THEME_STORAGE_KEY, watchSystemTheme, type ThemePreference } from "./design/theme";
 import "./atlas.css";
 
 type RecordingContext = "lecture" | "meeting" | "memo";
 
 const WORKSPACE_ID_STORAGE_KEY = "gunther:workspace-id";
+const PROFILE_STORAGE_KEY = "gunther:profile";
+const DEFAULT_PROFILE_NAME = "Knowledge explorer";
 const DEFAULT_KNOWLEDGE_BASE_MODE: AtlasMode = "ask";
+
+/** The local profile name, or an empty string while it is still the placeholder. */
+const readProfileName = () => {
+  try {
+    const profile = JSON.parse(window.localStorage.getItem(PROFILE_STORAGE_KEY) ?? "null") as { name?: unknown } | null;
+    const name = typeof profile?.name === "string" ? profile.name.trim() : "";
+    return name === DEFAULT_PROFILE_NAME ? "" : name;
+  } catch {
+    return "";
+  }
+};
 
 let storedCaptureRecovery: Promise<number> | null = null;
 
@@ -75,6 +89,7 @@ const recoverStoredCaptures = (workspaceId: string | null) => {
 
 export default function App() {
   const [bases, setBases] = useState<KnowledgeBase[]>([]);
+  const [basesReady, setBasesReady] = useState(false);
   const [view, setView] = useState<AtlasView>("home");
   const [activeBaseId, setActiveBaseId] = useState("single-cell-annotation");
   const [selectedChapterId, setSelectedChapterId] = useState("context");
@@ -87,10 +102,16 @@ export default function App() {
   const [createBaseOpen, setCreateBaseOpen] = useState(false);
   const [editingBaseId, setEditingBaseId] = useState<string | null>(null);
   const [evidenceChapter, setEvidenceChapter] = useState<KnowledgeChapter | null>(null);
-  const [theme, setTheme] = useState<"light" | "dark">(() => window.localStorage.getItem("gunther:v3-theme") === "dark" ? "dark" : "light");
+  const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference);
+  const [, setSystemThemeVersion] = useState(0);
+  const theme = resolveTheme(themePreference);
   const [toast, setToast] = useState<string | null>(null);
   const [focusNoteId, setFocusNoteId] = useState<string | null>(null);
   const [inboxCount, setInboxCount] = useState(0);
+  const [searchFocusRequest, setSearchFocusRequest] = useState(0);
+  const [serviceOnline, setServiceOnline] = useState(true);
+  const checkServiceRef = useRef<() => void>(() => undefined);
+  const [profileName, setProfileName] = useState(readProfileName);
   // A persisted id is useful diagnostics, but it is never trusted as the
   // active destination until this launch has verified it with the backend.
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
@@ -157,12 +178,17 @@ export default function App() {
     setCaptureOpen(false);
   }, [captureRecordingActive, notify]);
 
+  const openSearch = useCallback(() => {
+    setView("home");
+    setSearchFocusRequest((current) => current + 1);
+  }, []);
+
   const openQuickNote = useCallback(async () => {
     setView("notebook");
     try {
       const created = await knowledgeApi.createNote();
       setFocusNoteId(created.id);
-      notify("New note ready. No Knowledge Base required.");
+      notify("New note ready. No library required.");
     } catch (reason) {
       notify(reason instanceof Error ? `Note not created: ${reason.message}` : "A new note could not be created.");
     }
@@ -175,6 +201,12 @@ export default function App() {
     setMode(initialMode);
     setView("base");
   }, [bases]);
+
+  // A question asked from Home lands in the library's Ask composer, ready to send.
+  const askBase = useCallback((id: string, question: string) => {
+    window.localStorage.setItem(`gunther:ask-draft:${id}`, question);
+    openBase(id, undefined, "ask");
+  }, [openBase]);
 
   const exportBase = useCallback(async () => {
     notify("Preparing a complete local workbook…");
@@ -222,7 +254,9 @@ export default function App() {
     }
   }, [activeBase, notify, refreshWorkspaceId]);
 
-  useEffect(() => { void refreshKnowledgeBases().catch(() => undefined); }, [refreshKnowledgeBases]);
+  useEffect(() => {
+    void refreshKnowledgeBases().catch(() => undefined).finally(() => setBasesReady(true));
+  }, [refreshKnowledgeBases]);
   useEffect(() => {
     const refreshSourceCounts = () => void refreshKnowledgeBases().catch(() => undefined);
     window.addEventListener("gunther:sources-updated", refreshSourceCounts);
@@ -236,12 +270,19 @@ export default function App() {
   }, []);
   useEffect(() => {
     let active = true;
-    const recover = () => void refreshWorkspaceId().then((currentWorkspaceId) => recoverStoredCaptures(currentWorkspaceId)).then((recovered) => {
+    const recover = () => void refreshWorkspaceId().then((currentWorkspaceId) => {
+      if (active) setServiceOnline(true);
+      return recoverStoredCaptures(currentWorkspaceId);
+    }).then((recovered) => {
       if (!active || !recovered) return;
       window.dispatchEvent(new CustomEvent("gunther:inbox-updated"));
       window.dispatchEvent(new CustomEvent("gunther:sources-updated"));
       notify(`${recovered} locally preserved capture${recovered === 1 ? "" : "s"} recovered.`);
+    }).catch(() => {
+      // The local service is unreachable; captures stay queued on this device.
+      if (active) setServiceOnline(false);
     });
+    checkServiceRef.current = recover;
     const recoverWhenVisible = () => {
       if (document.visibilityState === "visible") recover();
     };
@@ -256,10 +297,17 @@ export default function App() {
       document.removeEventListener("visibilitychange", recoverWhenVisible);
     };
   }, [notify, refreshWorkspaceId]);
+  // While the service is away, check back often so the app recovers quickly.
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem("gunther:v3-theme", theme);
-  }, [theme]);
+    if (serviceOnline) return undefined;
+    const interval = window.setInterval(() => checkServiceRef.current(), 5_000);
+    return () => window.clearInterval(interval);
+  }, [serviceOnline]);
+  useEffect(() => {
+    applyTheme(theme);
+    window.localStorage.setItem(THEME_STORAGE_KEY, themePreference);
+  }, [theme, themePreference]);
+  useEffect(() => themePreference === "system" ? watchSystemTheme(() => setSystemThemeVersion((current) => current + 1)) : undefined, [themePreference]);
   useEffect(() => {
     const onProposal = () => window.dispatchEvent(new CustomEvent("gunther:inbox-updated"));
     window.addEventListener("gunther:proposal-created", onProposal);
@@ -276,7 +324,7 @@ export default function App() {
         window.dispatchEvent(new CustomEvent("gunther:inbox-updated"));
         notify(message);
       }),
-      listenForOpenSearch(() => setView("search")),
+      listenForOpenSearch(openSearch),
     ]).then((dispose) => {
       if (disposed) dispose.forEach((unlisten) => unlisten());
       else unlisteners.push(...dispose);
@@ -285,8 +333,9 @@ export default function App() {
       disposed = true;
       unlisteners.forEach((unlisten) => unlisten());
     };
-  }, [notify, refreshKnowledgeBases]);
+  }, [notify, openSearch, refreshKnowledgeBases]);
   useEffect(() => () => { if (toastTimer.current) window.clearTimeout(toastTimer.current); }, []);
+  useEffect(() => { setProfileName(readProfileName()); }, [view]);
   useEffect(() => {
     document.querySelector<HTMLElement>(".atlas-workspace")?.scrollTo({ top: 0 });
   }, [view, activeBaseId, selectedChapterId, mode]);
@@ -298,11 +347,16 @@ export default function App() {
         else if (createBaseOpen) setCreateBaseOpen(false);
         else if (editingBaseId) setEditingBaseId(null);
         else if (evidenceChapter) setEvidenceChapter(null);
-        else if (view === "search") setView("library");
+        return;
+      }
+      const typing = event.target instanceof Element && Boolean(event.target.closest("input, textarea, select, [contenteditable='true']"));
+      if (event.key === "/" && !typing && !event.metaKey && !event.ctrlKey && !event.altKey && !captureOpen && !createBaseOpen && !editingBaseId) {
+        event.preventDefault();
+        openSearch();
         return;
       }
       if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.key.toLowerCase() === "k") { event.preventDefault(); setView("search"); }
+      if (event.key.toLowerCase() === "k") { event.preventDefault(); openSearch(); }
       if (event.key.toLowerCase() === "n") {
         event.preventDefault();
         if (view === "base" && mode === "ask") window.dispatchEvent(new CustomEvent("gunther:new-session"));
@@ -311,18 +365,20 @@ export default function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [captureOpen, closeCapture, createBaseOpen, editingBaseId, evidenceChapter, mode, openQuickNote, view]);
+  }, [captureOpen, closeCapture, createBaseOpen, editingBaseId, evidenceChapter, mode, openQuickNote, openSearch, view]);
 
-  const path = view === "base" ? activeBase.title : ({ home: "Home", library: "Libraries", notebook: "Note", inbox: "Inbox", search: "Search", settings: "Settings", account: "Account" } as const)[view];
+  const path = view === "base"
+    ? [{ label: "Libraries", onClick: () => setView("library") }, { label: activeBase.title }]
+    : [{ label: ({ home: "Home", library: "Libraries", notebook: "Notebook", inbox: "Inbox", settings: "Settings", account: "Account" } as const)[view] }];
 
   return (
-    <div className={`app-shell atlas-app-shell ${view === "search" ? "is-search-view" : ""}`}>
-      <AtlasTitlebar path={path} theme={theme} onSearch={() => setView("search")} onCapture={() => openCapture()} onTheme={() => setTheme((current) => current === "light" ? "dark" : "light")} />
+    <div className="app-shell atlas-app-shell">
+      <AtlasTitlebar path={path} theme={theme} serviceOnline={serviceOnline} showSearch={view !== "home"} onHome={() => setView("home")} onSearch={openSearch} onCapture={() => openCapture()} onTheme={() => setThemePreference(theme === "light" ? "dark" : "light")} />
       <div className="atlas-app-body">
-        <AtlasRail active={view} inboxCount={pendingCount} onNavigate={setView} />
-        <section className="atlas-workspace">
-          {view === "home" && <AtlasPage><HomePage bases={bases} inboxCount={pendingCount} onCapture={(kind?: HomeCaptureKind) => openCapture(kind ?? null)} onSearch={() => setView("search")} onOpenBase={openBase} onOpenLibraries={() => setView("library")} onCreateBase={() => setCreateBaseOpen(true)} onOpenInbox={() => setView("inbox")} /></AtlasPage>}
-          {view === "library" && <AtlasPage><AtlasLibraryPage bases={bases} onOpen={openBase} onAdd={() => openCapture()} onCreateBase={() => setCreateBaseOpen(true)} /></AtlasPage>}
+        <AtlasRail active={view} inboxCount={pendingCount} bases={bases} basesReady={basesReady} activeBaseId={activeBaseId} profileName={profileName} onNavigate={setView} onOpenBase={(id) => openBase(id)} onCreateBase={() => setCreateBaseOpen(true)} />
+        <main className="atlas-workspace" id="main-content">
+          {view === "home" && <AtlasPage className="gx-page-home"><HomePage bases={bases} basesReady={basesReady} inboxCount={pendingCount} profileName={profileName} focusRequest={searchFocusRequest} onCapture={(kind?: HomeCaptureKind) => openCapture(kind ?? null)} onOpenBase={(id, initialMode) => openBase(id, undefined, initialMode)} onOpenChapter={openBase} onAskBase={askBase} onOpenNote={(id) => { setFocusNoteId(id); setView("notebook"); }} onOpenLibraries={() => setView("library")} onCreateBase={() => setCreateBaseOpen(true)} onOpenInbox={() => setView("inbox")} onNotify={notify} resolveWorkspaceId={refreshWorkspaceId} /></AtlasPage>}
+          {view === "library" && <AtlasPage><AtlasLibraryPage bases={bases} loading={!basesReady} onOpen={openBase} onAdd={() => openCapture()} onCreateBase={() => setCreateBaseOpen(true)} /></AtlasPage>}
           {view === "base" && <KnowledgeBaseWorkspace base={activeBase} workspaceId={workspaceId} mode={mode} selectedChapterId={selectedChapterId} onMode={setMode} onChapter={setSelectedChapterId} onBack={() => setView("library")} onEvidence={setEvidenceChapter} onAdd={(kind) => openCapture(kind ?? null, "lecture", activeBase.id)} onRecord={(context) => openCapture("recording", context, activeBase.id)} onExport={exportBase} onEdit={() => setEditingBaseId(activeBase.id)} onNotify={notify} />}
           {view === "notebook" && <NotebookPage bases={bases} focusNoteId={focusNoteId} onFocused={() => setFocusNoteId(null)} onNotify={notify} onFiled={(note: NotebookNote, baseId) => {
             const base = bases.find((item) => item.id === baseId) ?? getKnowledgeBase(baseId);
@@ -332,13 +388,12 @@ export default function App() {
             notify(`Filed “${note.title}” into ${base.title}.`);
           }} />}
           {view === "inbox" && <AtlasPage><InboxPageV3 bases={bases} onOpenBase={openBase} onOpenNote={(id) => { setFocusNoteId(id); setView("notebook"); }} onCapture={() => openCapture()} onCountChange={setInboxCount} onNotify={notify} /></AtlasPage>}
-          {view === "search" && <AtlasPage className="search-home-surface"><SearchPage bases={bases} onOpenBase={(id, initialMode) => openBase(id, undefined, initialMode)} onOpenChapter={openBase} onOpenNote={(id) => { setFocusNoteId(id); setView("notebook"); }} onCapture={() => openCapture()} onNotify={notify} resolveWorkspaceId={refreshWorkspaceId} /></AtlasPage>}
-          {view === "settings" && <AtlasPage><SettingsPageV2 theme={theme} onTheme={setTheme} onNotify={notify} /></AtlasPage>}
+          {view === "settings" && <AtlasPage><SettingsPageV2 theme={themePreference} onTheme={setThemePreference} onNotify={notify} /></AtlasPage>}
           {view === "account" && <AtlasPage><AccountPageV2 bases={bases} /></AtlasPage>}
-        </section>
+        </main>
       </div>
 
-      <CaptureSheet open={captureOpen} bases={bases} workspaceId={captureWorkspaceId} resolveWorkspaceId={refreshWorkspaceId} baseId={captureTargetBaseId} initialKind={captureKind} initialRecordingContext={recordingContext} onRecordingState={setCaptureRecordingActive} onClose={closeCapture} onSearch={() => setView("search")} onCaptured={async (title, baseId, content, kind, captureId, url, boundWorkspaceId) => {
+      <CaptureSheet open={captureOpen} bases={bases} workspaceId={captureWorkspaceId} resolveWorkspaceId={refreshWorkspaceId} baseId={captureTargetBaseId} initialKind={captureKind} initialRecordingContext={recordingContext} onRecordingState={setCaptureRecordingActive} onClose={closeCapture} onSearch={openSearch} onCaptured={async (title, baseId, content, kind, captureId, url, boundWorkspaceId) => {
         const result = await persistTextCapture({ title, baseId, content, kind, captureId, url, workspaceId: boundWorkspaceId });
         await refreshKnowledgeBases().catch(() => undefined);
         window.dispatchEvent(new CustomEvent("gunther:sources-updated"));

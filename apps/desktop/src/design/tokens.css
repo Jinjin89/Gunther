@@ -1,0 +1,226 @@
+/*
+ * Gunther design tokens.
+ *
+ * White paper, black ink, one brand green. Colour is reserved for identity
+ * (libraries, source kinds, status) — never for large surfaces. Every legacy
+ * variable used by older views is mapped onto these tokens at the bottom of
+ * this file, so the whole app follows one palette.
+ */
+:root {
+  /* Surfaces */
+  --gx-canvas: #ffffff;
+  --gx-sidebar: #f9f9f7;
+  --gx-surface: #ffffff;
+  --gx-surface-2: #fafaf8;
+  --gx-hover: #f3f3f1;
+  --gx-active: #ececea;
+  --gx-overlay: rgba(20, 20, 18, 0.24);
+
+  /* Ink */
+  --gx-ink: #1a1a18;
+  --gx-ink-2: #3a3935;
+  --gx-muted: #5f5e5a;
+  --gx-faint: #6b6a65;
+  --gx-ghost: #a6a59f;
+  --gx-on-ink: #ffffff;
+
+  /* Hairlines */
+  --gx-line: rgba(26, 26, 24, 0.08);
+  --gx-line-2: rgba(26, 26, 24, 0.13);
+  --gx-line-3: rgba(26, 26, 24, 0.24);
+
+  /* Brand and identity */
+  --gx-brand: #16745c;
+  --gx-brand-strong: #0f5c49;
+  --gx-brand-wash: rgba(22, 116, 92, 0.09);
+  --gx-id-green: #16745c;
+  --gx-id-blue: #33698a;
+  --gx-id-clay: #a95a34;
+  --gx-id-violet: #6b54a6;
+  --gx-id-amber: #a86d12;
+  --gx-id-rose: #b8474a;
+  --gx-danger: #b3423a;
+  --gx-danger-wash: rgba(179, 66, 58, 0.07);
+  --gx-warning: #a86d12;
+  --gx-warning-wash: rgba(168, 109, 18, 0.08);
+  --gx-selection: rgba(22, 116, 92, 0.16);
+
+  /* Type */
+  --gx-font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  --gx-font-display: ui-serif, "New York", "Iowan Old Style", Charter, "Bitstream Charter", "Source Serif Pro", Georgia, serif;
+  --gx-font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --gx-text-2xs: 11px;
+  --gx-text-xs: 12px;
+  --gx-text-sm: 13px;
+  --gx-text-md: 14px;
+  --gx-text-lg: 16px;
+  --gx-text-xl: 20px;
+  --gx-text-2xl: 28px;
+  --gx-text-3xl: 36px;
+
+  /* Shape */
+  --gx-radius-xs: 6px;
+  --gx-radius-sm: 8px;
+  --gx-radius-md: 10px;
+  --gx-radius-lg: 14px;
+  --gx-radius-xl: 20px;
+  --gx-radius-pill: 999px;
+
+  /* Elevation — soft, neutral, never tinted */
+  --gx-shadow-xs: 0 1px 2px rgba(20, 20, 18, 0.05);
+  --gx-shadow-sm: 0 1px 2px rgba(20, 20, 18, 0.04), 0 4px 14px -6px rgba(20, 20, 18, 0.08);
+  --gx-shadow-md: 0 1px 3px rgba(20, 20, 18, 0.04), 0 12px 32px -14px rgba(20, 20, 18, 0.16);
+  --gx-shadow-lg: 0 2px 8px rgba(20, 20, 18, 0.05), 0 28px 64px -24px rgba(20, 20, 18, 0.24);
+  --gx-ring: 0 0 0 3px rgba(22, 116, 92, 0.18);
+
+  /* Motion */
+  --gx-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --gx-ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --gx-dur-fast: 120ms;
+  --gx-dur: 180ms;
+  --gx-dur-slow: 280ms;
+
+  /* Layout */
+  --gx-titlebar-h: 44px;
+  --gx-sidebar-w: 236px;
+  --gx-content-w: 760px;
+}
+
+:root[data-theme="dark"] {
+  --gx-canvas: #1f1f1d;
+  --gx-sidebar: #1a1a18;
+  --gx-surface: #262624;
+  --gx-surface-2: #2a2a27;
+  --gx-hover: #2f2f2c;
+  --gx-active: #373734;
+  --gx-overlay: rgba(0, 0, 0, 0.5);
+
+  --gx-ink: #f3f2ee;
+  --gx-ink-2: #dedcd5;
+  --gx-muted: #b9b7af;
+  --gx-faint: #a3a19a;
+  --gx-ghost: #6e6d67;
+  --gx-on-ink: #1a1a18;
+
+  --gx-line: rgba(255, 255, 255, 0.08);
+  --gx-line-2: rgba(255, 255, 255, 0.13);
+  --gx-line-3: rgba(255, 255, 255, 0.24);
+
+  --gx-brand: #5fbf9f;
+  --gx-brand-strong: #82d4b8;
+  --gx-brand-wash: rgba(95, 191, 159, 0.13);
+  --gx-id-green: #5fbf9f;
+  --gx-id-blue: #7fb0cf;
+  --gx-id-clay: #de9670;
+  --gx-id-violet: #a894d8;
+  --gx-id-amber: #d8a651;
+  --gx-id-rose: #e08587;
+  --gx-danger: #e5847b;
+  --gx-danger-wash: rgba(229, 132, 123, 0.1);
+  --gx-warning: #d8a651;
+  --gx-warning-wash: rgba(216, 166, 81, 0.1);
+  --gx-selection: rgba(95, 191, 159, 0.26);
+
+  --gx-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --gx-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 14px -6px rgba(0, 0, 0, 0.45);
+  --gx-shadow-md: 0 1px 3px rgba(0, 0, 0, 0.3), 0 14px 34px -14px rgba(0, 0, 0, 0.6);
+  --gx-shadow-lg: 0 2px 8px rgba(0, 0, 0, 0.35), 0 28px 64px -24px rgba(0, 0, 0, 0.75);
+  --gx-ring: 0 0 0 3px rgba(95, 191, 159, 0.24);
+}
+
+/* Legacy variables → design tokens. The selector list matches the specificity
+   of the older light and dark definitions, and this file loads after them. */
+:root,
+:root[data-theme] {
+  color: var(--gx-ink);
+  background: var(--gx-canvas);
+
+  --atlas-ink: var(--gx-ink);
+  --atlas-muted: var(--gx-muted);
+  --atlas-faint: var(--gx-faint);
+  --atlas-canvas: var(--gx-canvas);
+  --atlas-paper: var(--gx-surface);
+  --atlas-paper-soft: var(--gx-surface-2);
+  --atlas-line: var(--gx-line);
+  --atlas-line-strong: var(--gx-line-2);
+  --atlas-green: var(--gx-brand);
+  --atlas-green-dark: var(--gx-brand-strong);
+  --atlas-green-soft: var(--gx-hover);
+  --atlas-blue: var(--gx-id-blue);
+  --atlas-blue-soft: var(--gx-hover);
+  --atlas-clay: var(--gx-id-clay);
+  --atlas-clay-soft: var(--gx-hover);
+  --atlas-danger: var(--gx-danger);
+  --atlas-sans: var(--gx-font-sans);
+  --atlas-serif: var(--gx-font-display);
+  --atlas-shadow: var(--gx-shadow-md);
+
+  --bg: var(--gx-canvas);
+  --rail: var(--gx-sidebar);
+  --panel: var(--gx-surface);
+  --panel-deep: var(--gx-surface-2);
+  --surface: var(--gx-hover);
+  --surface-hover: var(--gx-active);
+  --stroke-soft: var(--gx-line);
+  --stroke: var(--gx-line-2);
+  --stroke-strong: var(--gx-line-3);
+  --text: var(--gx-ink);
+  --muted: var(--gx-muted);
+  --dim: var(--gx-faint);
+  --accent: var(--gx-brand);
+  --accent-bright: var(--gx-brand-strong);
+  --accent-soft: var(--gx-hover);
+  --accent-dim: transparent;
+  --blue: var(--gx-id-blue);
+  --blue-soft: var(--gx-hover);
+  --gold: var(--gx-id-amber);
+  --gold-soft: var(--gx-warning-wash);
+  --violet: var(--gx-id-violet);
+  --violet-soft: var(--gx-hover);
+  --danger: var(--gx-danger);
+  --danger-soft: var(--gx-danger-wash);
+  --shadow-panel: var(--gx-shadow-sm);
+  --shadow-lift: var(--gx-shadow-lg);
+  --font-serif: var(--gx-font-display);
+  --border: var(--gx-line-2);
+  --text-muted: var(--gx-muted);
+}
+
+/* Base */
+body { background: var(--gx-canvas); color: var(--gx-ink); font-family: var(--gx-font-sans); }
+::selection { background: var(--gx-selection); }
+.atlas-app-shell,
+.capture-window-surface {
+  color: var(--gx-ink);
+  background: var(--gx-canvas);
+  font-family: var(--gx-font-sans);
+  font-feature-settings: "kern", "liga", "calt";
+}
+/* One stroke weight for every Lucide glyph: lighter, calmer, consistent. */
+.atlas-app-shell svg.lucide,
+.capture-window-surface svg.lucide { stroke-width: 1.75; }
+.atlas-app-shell :focus-visible,
+.capture-window-surface :focus-visible { outline: 2px solid color-mix(in srgb, var(--gx-brand) 70%, transparent); outline-offset: 2px; }
+*::-webkit-scrollbar-thumb { background: rgba(120, 120, 114, 0.26); background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(120, 120, 114, 0.42); background-clip: padding-box; }
+
+/* Shared motion vocabulary */
+@keyframes gx-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes gx-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes gx-pop { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes gx-chip-in { from { opacity: 0; transform: scale(0.86); } to { opacity: 1; transform: none; } }
+@keyframes gx-spin { to { transform: rotate(360deg); } }
+@keyframes gx-shimmer { from { background-position: 180% 0; } to { background-position: -80% 0; } }
+@keyframes gx-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes gx-dot-in { from { opacity: 0; transform: scale(0); } to { opacity: 1; transform: scale(1); } }
+@keyframes gx-breathe { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(0.6); opacity: 0.55; } }
+@keyframes gx-trace { 0% { stroke-dashoffset: 0; } 50% { stroke-dashoffset: 0.72; } 100% { stroke-dashoffset: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}

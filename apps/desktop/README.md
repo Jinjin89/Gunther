@@ -44,13 +44,16 @@ npm run build:desktop
 
 ## 产品结构
 
-一级导航：
+一级导航（侧栏）：
 
-- **Home**：继续最近工作、Inbox 与最近 Libraries；
-- **Libraries**：长期主题空间；
+- **Home**：以搜索为首页。输入框直接检索全部本地知识（Notes、已接受知识、Sources 与会话，包括尚在 Inbox 中未归类的采集）；输入 `@` 可选择一个或多个 Library 限定范围，选中单个 Library 时可一键把问题交给该 Library 的 Ask。`Web` 开关按需加入在线研究。下方是一键 Capture 与最近的 Libraries / 采集；
+- **Libraries**：长期主题空间，每个 Library 有自己的颜色与首字母标识；
 - **Inbox**：未归类 Source/Note、失败项和待审核建议；
-- **Search**：本地知识搜索与可选 Web research；
 - **Capture**：标题栏全局动作，不是另一套导航。
+
+`⌘K` 或 `/` 在任意页面回到 Home 搜索。侧栏同时列出你的 Libraries，便于直接切换。
+
+界面遵循 [Gunther Design System](../../docs/DESIGN_SYSTEM.md)：白底黑字，颜色只用于 Library、来源类型与状态标识；设计 token 与组件样式位于 `src/design/`。
 
 Notebook / Note 是快速记录编辑界面，不是临时 Library。未归类 Note 在 Inbox 中出现；归类时提升为 Library 的 Source。
 
@@ -151,8 +154,10 @@ macOS 默认数据目录：
 ```text
 src/
   App.tsx                     主导航、Capture 与 workspace 协调
-  components/                Capture、Recording、Search、Settings
-  pages/                     Home、Libraries、Inbox、Note、Library workspace
+  design/                    设计 token、基础组件、外壳与页面样式（最后加载）
+  components/                Capture、Recording、Settings
+  components/search/         搜索输入（@ Library）、结果与检索 hook
+  pages/                     Home（搜索）、Libraries、Inbox、Note、Library workspace
   services/recordingSpool.ts IndexedDB durable chunks
   api.ts                     typed backend client
 src-tauri/

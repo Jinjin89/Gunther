@@ -1,43 +1,56 @@
-import type { SourceSummary } from "@gunther/contracts";
+import type { KnowledgeSearchResult, SourceSummary } from "@gunther/contracts";
 import {
   ArrowRight,
-  BookOpen,
   Camera,
+  Check,
   FileText,
-  Globe2,
-  Inbox,
   Link2,
-  Mic2,
+  Mic,
+  MoreHorizontal,
   NotebookPen,
   Plus,
-  Search,
-  Sparkles,
   Table2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
-import type { KnowledgeBase } from "../atlas";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import type { AtlasMode, KnowledgeBase } from "../atlas";
 import { knowledgeApi } from "../api";
+import { SearchComposer, type SearchComposerHandle } from "../components/search/SearchComposer";
+import { SearchResults } from "../components/search/SearchResults";
+import { useKnowledgeSearch } from "../components/search/useKnowledgeSearch";
+import { BrandMark } from "../design/BrandMark";
+import { LibraryGlyph } from "../design/LibraryGlyph";
 
 export type HomeCaptureKind = "note" | "link" | "file" | "image" | "recording" | "table";
 
 interface HomePageProps {
   bases: KnowledgeBase[];
+  /** False until the first library list has loaded, so empty states never flash. */
+  basesReady?: boolean;
   inboxCount: number;
+  profileName?: string;
+  /** Increment to move keyboard focus into the search composer. */
+  focusRequest?: number;
   onCapture: (kind?: HomeCaptureKind) => void;
-  onSearch: () => void;
-  onOpenBase: (id: string) => void;
+  onOpenBase: (id: string, mode?: AtlasMode) => void;
+  onOpenChapter: (baseId: string, chapterId: string) => void;
+  onAskBase: (id: string, question: string) => void;
+  onOpenNote: (id: string) => void;
   onOpenLibraries: () => void;
   onCreateBase: () => void;
   onOpenInbox: () => void;
+  onNotify: (message: string) => void;
+  resolveWorkspaceId: () => Promise<string>;
 }
 
+const WEB_PREFERENCE_KEY = "gunther:search-web";
+
 const captureActions = [
-  { id: "note", label: "Quick note", detail: "Write a thought before it disappears", icon: NotebookPen, tone: "clay" },
-  { id: "file", label: "Document", detail: "PDF, paper, slides, or text", icon: FileText, tone: "blue" },
-  { id: "image", label: "Photo or scan", detail: "Capture a page, board, or diagram", icon: Camera, tone: "violet" },
-  { id: "link", label: "Web page", detail: "Save a link with your own context", icon: Link2, tone: "sand" },
-  { id: "recording", label: "Recording", detail: "Live transcript or imported audio", icon: Mic2, tone: "green" },
-  { id: "table", label: "Table or data", detail: "Paste structured rows with their header", icon: Table2, tone: "web" },
+  { id: "note", label: "Note", title: "Quick note — write a thought before it disappears", icon: NotebookPen, tone: "clay" },
+  { id: "file", label: "Document", title: "Document — PDF, paper, slides, or text", icon: FileText, tone: "blue" },
+  { id: "image", label: "Photo", title: "Photo or scan — a page, board, or diagram", icon: Camera, tone: "violet" },
+  { id: "link", label: "Web page", title: "Web page — save a link with your own context", icon: Link2, tone: "amber" },
+  { id: "recording", label: "Recording", title: "Recording — live transcript or imported audio", icon: Mic, tone: "rose" },
+  { id: "table", label: "Table", title: "Table or data — paste rows with their header", icon: Table2, tone: "green" },
 ] as const;
 
 const sourceLabel = (source: SourceSummary) => ({
@@ -51,83 +64,302 @@ const sourceLabel = (source: SourceSummary) => ({
   course: "Course",
 }[source.kind]);
 
-export function HomePage({ bases, inboxCount, onCapture, onSearch, onOpenBase, onOpenLibraries, onCreateBase, onOpenInbox }: HomePageProps) {
+const sourceIcon = (source: SourceSummary) => ({
+  note: NotebookPen,
+  paper: FileText,
+  link: Link2,
+  file: FileText,
+  image: Camera,
+  table: Table2,
+  recording: Mic,
+  course: Mic,
+}[source.kind]);
+
+const greetingFor = (date: Date) => {
+  const hour = date.getHours();
+  if (hour < 5) return "Still up";
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+};
+
+const formatDay = (value: string) => new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+const plural = (count: number, singular: string) => `${count} ${singular}${count === 1 ? "" : "s"}`;
+
+function RowSkeletons() {
+  return <>{[0, 1, 2].map((index) => <div className="gx-row-skeleton" key={index} aria-hidden="true"><i /><span><b /><b /></span></div>)}</>;
+}
+
+/** Search-first home: find anything, point at a library with @, or capture something new. */
+export function HomePage({
+  bases,
+  basesReady = true,
+  inboxCount,
+  profileName = "",
+  focusRequest = 0,
+  onCapture,
+  onOpenBase,
+  onOpenChapter,
+  onAskBase,
+  onOpenNote,
+  onOpenLibraries,
+  onCreateBase,
+  onOpenInbox,
+  onNotify,
+  resolveWorkspaceId,
+}: HomePageProps) {
   const [recentSources, setRecentSources] = useState<SourceSummary[]>([]);
+  const [sourcesReady, setSourcesReady] = useState(false);
+  const [query, setQuery] = useState("");
+  const [mentionIds, setMentionIds] = useState<string[]>([]);
+  const [web, setWeb] = useState(() => window.localStorage.getItem(WEB_PREFERENCE_KEY) === "on");
+  const [savingResearch, setSavingResearch] = useState(false);
+  const [savedResearchQuery, setSavedResearchQuery] = useState<string | null>(null);
+  const composer = useRef<SearchComposerHandle>(null);
+  const search = useKnowledgeSearch(bases);
+  const { submitted, run, reset } = search;
 
   useEffect(() => {
-    void knowledgeApi.sources().then((items) => setRecentSources(items.slice(0, 4))).catch(() => undefined);
+    let active = true;
+    void knowledgeApi.sources()
+      .then((items) => { if (active) setRecentSources(items.slice(0, 4)); })
+      .catch(() => undefined)
+      .finally(() => { if (active) setSourcesReady(true); });
+    return () => { active = false; };
   }, []);
 
+  useEffect(() => {
+    if (focusRequest > 0) composer.current?.focus();
+  }, [focusRequest]);
+
+  // A library that disappears (renamed away or deleted) must not stay as a hidden scope.
+  useEffect(() => {
+    setMentionIds((current) => {
+      const next = current.filter((id) => bases.some((base) => base.id === id));
+      return next.length === current.length ? current : next;
+    });
+  }, [bases]);
+
+  const scope = web ? "both" : "knowledge";
+
+  const submit = () => {
+    const needle = query.trim();
+    if (!needle && mentionIds.length === 1) {
+      onOpenBase(mentionIds[0]!);
+      return;
+    }
+    if (needle) void run(needle, scope, mentionIds);
+  };
+
+  const changeWeb = (next: boolean) => {
+    setWeb(next);
+    window.localStorage.setItem(WEB_PREFERENCE_KEY, next ? "on" : "off");
+    if (submitted) void run(submitted.query, next ? "both" : "knowledge", submitted.baseIds);
+  };
+
+  const changeMentions = (ids: string[]) => {
+    setMentionIds(ids);
+    if (submitted) void run(submitted.query, submitted.scope, ids);
+  };
+
+  const focusFirstResult = () => {
+    const first = document.querySelector<HTMLElement>(".gx-results [data-result-item]");
+    first?.focus();
+    return Boolean(first);
+  };
+
+  const clear = () => {
+    setQuery("");
+    setMentionIds([]);
+    reset();
+  };
+
+  const openResult = useCallback((result: KnowledgeSearchResult) => {
+    if (result.kind === "note") {
+      onOpenNote(result.id);
+      return;
+    }
+    const baseId = result.knowledgeBaseId;
+    if (!baseId) {
+      // Unfiled captures live in Inbox until they are given a home.
+      onOpenInbox();
+      return;
+    }
+    if (result.kind === "session") {
+      window.localStorage.setItem(`gunther:active-session:${baseId}`, result.id);
+      onOpenBase(baseId, "ask");
+      return;
+    }
+    if (result.kind === "source") {
+      window.localStorage.setItem(`gunther:open-source:${baseId}`, result.id);
+      onOpenBase(baseId, "sources");
+      return;
+    }
+    if (result.kind === "knowledge_unit" && result.sourceSessionId) {
+      window.localStorage.setItem(`gunther:active-session:${baseId}`, result.sourceSessionId);
+      if (result.sourceMessageId) window.localStorage.setItem(`gunther:selected-message:${baseId}`, result.sourceMessageId);
+      onOpenBase(baseId, "ask");
+      return;
+    }
+    onOpenBase(baseId);
+  }, [onOpenBase, onOpenInbox, onOpenNote]);
+
+  const saveResearch = async () => {
+    const webResult = search.webResult;
+    if (!webResult || webResult.mode !== "openai" || !webResult.answer.trim()) return;
+    setSavingResearch(true);
+    const references = webResult.sources.map((source, index) => [
+      `${index + 1}. ${source.title}`,
+      source.url,
+      source.snippet?.trim() || null,
+    ].filter(Boolean).join("\n")).join("\n\n");
+    const content = [
+      `Search query: ${webResult.query}`,
+      "",
+      "Answer captured from web research:",
+      webResult.answer,
+      references ? "\nReferenced pages:\n" + references : "",
+    ].join("\n").trim();
+    try {
+      const expectedWorkspaceId = await resolveWorkspaceId();
+      await knowledgeApi.importSource({
+        title: `Web research · ${webResult.query}`.slice(0, 160),
+        kind: "link",
+        content,
+      }, expectedWorkspaceId);
+      setSavedResearchQuery(webResult.query);
+      window.dispatchEvent(new CustomEvent("gunther:inbox-updated"));
+      window.dispatchEvent(new CustomEvent("gunther:sources-updated"));
+      onNotify("Web research preserved in Inbox with its referenced URLs.");
+    } catch (reason) {
+      onNotify(reason instanceof Error ? `Research not saved: ${reason.message}` : "This research could not be saved.");
+    } finally {
+      setSavingResearch(false);
+    }
+  };
+
+  const hasResults = Boolean(submitted);
+  const firstName = profileName.trim().split(/\s+/)[0] ?? "";
+  const greeting = `${greetingFor(new Date())}${firstName ? `, ${firstName}` : ""}`;
   const recentBases = bases.slice(0, 3);
 
   return (
-    <div className="home-page page-enter">
-      <header className="home-welcome">
-        <div>
-          <span className="atlas-eyebrow">Your knowledge workspace</span>
-          <h1>Capture first. Shape it when you’re ready.</h1>
-          <p>Bring in anything worth keeping. Gunther preserves the source, helps you understand it, and lets you decide where it belongs.</p>
-        </div>
-        <button className="home-search" onClick={onSearch}>
-          <Search size={17} />
-          <span>Search your knowledge and the web</span>
-          <kbd>⌘K</kbd>
-        </button>
-      </header>
-
-      <section className="home-capture-card" aria-labelledby="capture-heading">
-        <header>
-          <div>
-            <span className="home-section-icon"><Plus size={16} /></span>
-            <span><strong id="capture-heading">Capture something</strong><small>No knowledge base required. Organize it now or later.</small></span>
-          </div>
-          <button className="text-button" onClick={() => onCapture()}>All capture options <ArrowRight size={13} /></button>
-        </header>
-        <div className="home-capture-grid">
-          {captureActions.map(({ id, label, detail, icon: Icon, tone }) => (
-            <button key={id} onClick={() => onCapture(id)}>
-              <span className={`capture-action-icon tone-${tone}`}><Icon size={19} /></span>
-              <span><strong>{label}</strong><small>{detail}</small></span>
-              <ArrowRight size={13} />
-            </button>
-          ))}
-          <button onClick={onSearch}>
-            <span className="capture-action-icon tone-web"><Globe2 size={19} /></span>
-            <span><strong>Web search</strong><small>Research first, then save what matters</small></span>
-            <ArrowRight size={13} />
-          </button>
-        </div>
-      </section>
-
-      <div className="home-dashboard">
-        <section className="home-panel home-libraries-panel">
-          <header><span><BookOpen size={15} /><strong>Continue a knowledge base</strong></span><button onClick={onOpenLibraries}>View all <ArrowRight size={12} /></button></header>
-          <div className="home-library-list">
-            {recentBases.map((base) => (
-              <button key={base.id} onClick={() => onOpenBase(base.id)}>
-                <span className={`home-base-monogram color-${base.color}`}>{base.title.split(/\s+/).slice(0, 2).map((word) => word[0]).join("")}</span>
-                <span><strong>{base.title}</strong><small>{base.indexedSourceCount ?? base.sourceCount} sources · {base.chapterCount} chapters</small></span>
-                <ArrowRight size={13} />
+    <div className={`gx-home ${hasResults ? "has-results" : "is-idle"}`}>
+      <section className="gx-home-hero">
+        <h1 className="gx-greeting" aria-hidden={hasResults}>
+          <BrandMark size={30} animated busy={search.searching} className="gx-greeting-mark" />
+          <span>{greeting}</span>
+        </h1>
+        <SearchComposer
+          ref={composer}
+          bases={bases}
+          value={query}
+          mentionIds={mentionIds}
+          web={web}
+          searching={search.searching}
+          placeholder="Search your knowledge, or type @ to pick a library"
+          onValueChange={setQuery}
+          onMentionsChange={changeMentions}
+          onWebChange={changeWeb}
+          onSubmit={submit}
+          onClear={clear}
+          onArrowDown={submitted ? focusFirstResult : undefined}
+        />
+        {!hasResults && (
+          <div className="gx-capture-row" role="group" aria-label="Capture">
+            {captureActions.map(({ id, label, title, icon: Icon, tone }, index) => (
+              <button type="button" key={id} className={`gx-chip tone-${tone}`} style={{ "--i": index } as CSSProperties} onClick={() => onCapture(id)} title={title} aria-label={title.split(" — ")[0]}>
+                <Icon size={15} />
+                <span>{label}</span>
               </button>
             ))}
-            {recentBases.length === 0 && <div className="home-empty-library"><span><strong>Create a home when the subject becomes clear.</strong><small>You can also keep capturing to Inbox first.</small></span><button type="button" className="quiet-button" onClick={onCreateBase}><Plus size={13} />New knowledge base</button></div>}
+            <button type="button" className="gx-chip gx-chip-icon" style={{ "--i": captureActions.length } as CSSProperties} onClick={() => onCapture()} aria-label="All capture options" title="All capture options">
+              <MoreHorizontal size={15} />
+            </button>
+          </div>
+        )}
+      </section>
+
+      {hasResults && submitted ? (
+        <SearchResults
+          bases={bases}
+          submitted={submitted}
+          indexedResults={search.indexedResults}
+          curatedResults={search.curatedResults}
+          webResult={search.webResult}
+          searching={search.searching}
+          error={search.error}
+          savingResearch={savingResearch}
+          researchSaved={Boolean(search.webResult) && savedResearchQuery === search.webResult?.query}
+          onOpenResult={openResult}
+          onOpenBase={(id) => onOpenBase(id)}
+          onOpenChapter={onOpenChapter}
+          onAsk={onAskBase}
+          onSaveResearch={() => void saveResearch()}
+          onExit={() => composer.current?.focus()}
+        />
+      ) : (
+        <section className="gx-home-recent" aria-label="Jump back in">
+          <button type="button" className={`gx-inbox-line ${inboxCount ? "has-items" : ""}`} onClick={onOpenInbox}>
+            {inboxCount
+              ? <span className="gx-inbox-count">{inboxCount}</span>
+              : <span className="gx-inbox-check"><Check size={13} /></span>}
+            <span className="gx-inbox-copy">
+              <strong>{inboxCount ? `${plural(inboxCount, "item")} waiting in Inbox` : "Inbox is clear"}</strong>
+              <span>{inboxCount ? "Nothing becomes trusted knowledge without your decision." : "New captures wait there until you choose a home."}</span>
+            </span>
+            <ArrowRight size={14} className="gx-nudge" />
+          </button>
+
+          <div className="gx-home-columns">
+            <div className="gx-home-column">
+              <header>
+                <h2>Libraries</h2>
+                <button type="button" className="gx-link" onClick={onOpenLibraries}>View all</button>
+              </header>
+              {recentBases.map((base) => (
+                <button type="button" className="gx-row" key={base.id} onClick={() => onOpenBase(base.id)}>
+                  <LibraryGlyph base={base} size="md" />
+                  <span className="gx-row-body">
+                    <strong>{base.title}</strong>
+                    <small>{plural(base.indexedSourceCount ?? base.sourceCount, "source")} · {plural(base.chapterCount, "chapter")}</small>
+                  </span>
+                  <ArrowRight size={14} className="gx-row-arrow" />
+                </button>
+              ))}
+              {!basesReady && <RowSkeletons />}
+              {basesReady && recentBases.length === 0 && (
+                <div className="gx-empty-inline">
+                  <span><strong>No libraries yet.</strong> Give a subject a home once it becomes clear — captures can wait in Inbox.</span>
+                  <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={onCreateBase}><Plus size={13} />New library</button>
+                </div>
+              )}
+            </div>
+
+            <div className="gx-home-column">
+              <header><h2>Recently captured</h2></header>
+              {recentSources.map((source) => {
+                const Icon = sourceIcon(source);
+                return (
+                  <div className="gx-row is-static" key={source.id}>
+                    <span className={`gx-kind-icon kind-${source.kind}`}><Icon size={15} /></span>
+                    <span className="gx-row-body">
+                      <strong>{source.title}</strong>
+                      <small>{sourceLabel(source)} · {formatDay(source.createdAt)}</small>
+                    </span>
+                    {source.assertionCount > 0 && <em>{plural(source.assertionCount, "claim")}</em>}
+                  </div>
+                );
+              })}
+              {!sourcesReady && <RowSkeletons />}
+              {sourcesReady && recentSources.length === 0 && (
+                <div className="gx-empty-inline"><span>Notes, files, pages and recordings you capture show up here first.</span></div>
+              )}
+            </div>
           </div>
         </section>
-
-        <section className="home-panel home-inbox-panel">
-          <header><span><Inbox size={15} /><strong>Needs your attention</strong></span><button onClick={onOpenInbox}>Open inbox <ArrowRight size={12} /></button></header>
-          <button className="home-inbox-summary" onClick={onOpenInbox}>
-            <span className={inboxCount ? "has-items" : ""}>{inboxCount}</span>
-            <span><strong>{inboxCount ? "Items waiting to be organized or reviewed" : "Everything is caught up"}</strong><small>{inboxCount ? "Nothing moves into trusted knowledge without you." : "New captures can stay here until you choose a home."}</small></span>
-          </button>
-          <div className="home-trust-note"><Sparkles size={14} /><span>AI can suggest structure. You approve what becomes knowledge.</span></div>
-        </section>
-      </div>
-
-      {recentSources.length > 0 && <section className="home-recent-sources">
-        <header><strong>Recently captured</strong><small>Original sources stay preserved</small></header>
-        <div>{recentSources.map((source) => <article key={source.id}><span className={`recent-source-kind kind-${source.kind}`}>{source.kind === "recording" || source.kind === "course" ? <Mic2 size={14} /> : <FileText size={14} />}</span><span><small>{sourceLabel(source)} · {new Date(source.createdAt).toLocaleDateString()}</small><strong>{source.title}</strong></span><em>{source.assertionCount} suggested claims</em></article>)}</div>
-      </section>}
+      )}
     </div>
   );
 }

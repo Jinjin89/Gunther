@@ -4,6 +4,18 @@ import App from "./App";
 import CaptureWindowApp from "./capture/CaptureWindowApp";
 import { ensureBackendReady } from "./api";
 import "./styles.css";
+// The design system loads last so its tokens and components win over older layers.
+import "./design/tokens.css";
+import "./design/primitives.css";
+import "./design/shell.css";
+import "./design/home.css";
+import "./design/pages.css";
+import "./design/legacy.css";
+import { applyTheme, readThemePreference, resolveTheme } from "./design/theme";
+
+document.documentElement.dataset.runtime = "__TAURI_INTERNALS__" in window ? "native" : "web";
+// Apply the saved appearance before the first paint so dark mode never flashes light.
+applyTheme(resolveTheme(readThemePreference()));
 
 const root = createRoot(document.getElementById("root")!);
 const surface = new URLSearchParams(window.location.search).get("surface");

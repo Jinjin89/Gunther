@@ -329,16 +329,31 @@ async function checkpointRecordingSession(
     : new Error("Recording checkpoint could not be saved.");
 }
 
+/** The local knowledge service could not be reached at all (as opposed to answering with an error). */
+export class ServiceUnavailableError extends Error {
+  constructor() {
+    super("Gunther’s local service isn’t responding. Your work is safe — try again in a moment.");
+    this.name = "ServiceUnavailableError";
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit, expectedWorkspaceId?: string): Promise<T> {
   await waitForDesktopBackend();
-  const response = await backendFetch(`${apiBase}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-      ...(expectedWorkspaceId ? { "X-Gunther-Workspace-Id": expectedWorkspaceId } : {}),
-    },
-  });
+  let response: Response;
+  try {
+    response = await backendFetch(`${apiBase}${path}`, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...init?.headers,
+        ...(expectedWorkspaceId ? { "X-Gunther-Workspace-Id": expectedWorkspaceId } : {}),
+      },
+    });
+  } catch (reason) {
+    // fetch rejects with a TypeError when the service is unreachable; aborts keep their own error.
+    if (reason instanceof TypeError) throw new ServiceUnavailableError();
+    throw reason;
+  }
 
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { detail?: string } | null;
@@ -361,8 +376,11 @@ export const knowledgeApi = {
     request<PairedDevice>(`/devices/${encodeURIComponent(id)}/revoke`, {
       method: "POST",
     }),
-  search: (query: string, limit = 20) =>
-    request<KnowledgeSearchResult[]>(`/search?q=${encodeURIComponent(query)}&limit=${limit}`),
+  /** Search local knowledge, optionally only inside the given libraries. */
+  search: (query: string, limit = 20, knowledgeBaseIds: readonly string[] = []) =>
+    request<KnowledgeSearchResult[]>(
+      `/search?q=${encodeURIComponent(query)}&limit=${limit}${knowledgeBaseIds.map((id) => `&knowledgeBaseId=${encodeURIComponent(id)}`).join("")}`,
+    ),
   webSearch: (query: string) =>
     request<WebSearchResult>(`/search/web?q=${encodeURIComponent(query)}`),
   summarizeLecture: (payload: CreateLectureSummaryInput) =>

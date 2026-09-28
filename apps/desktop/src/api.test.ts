@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { knowledgeApi, recordingAssetUrl, recordingSocketUrl, sourceAssetUrl } from "./api";
+import { knowledgeApi, recordingAssetUrl, recordingSocketUrl, ServiceUnavailableError, sourceAssetUrl } from "./api";
 
 const response = (data: unknown, status = 200): Response => ({
   ok: status >= 200 && status < 300,
@@ -30,6 +30,25 @@ describe("desktop knowledge API contract", () => {
     expect(url).not.toContain("token=");
     expect(init.method).toBeUndefined();
     expect(new Headers(init.headers).get("Content-Type")).toBe("application/json");
+  });
+
+  it("explains an unreachable service but keeps cancellations distinguishable", async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await expect(knowledgeApi.inbox()).rejects.toBeInstanceOf(ServiceUnavailableError);
+
+    const abort = new DOMException("The operation was aborted.", "AbortError");
+    fetchMock.mockRejectedValueOnce(abort);
+    await expect(knowledgeApi.inbox()).rejects.toBe(abort);
+  });
+
+  it("scopes knowledge search to encoded library identifiers", async () => {
+    fetchMock.mockResolvedValue(response([]));
+
+    await knowledgeApi.search("marker & genes");
+    await knowledgeApi.search("marker", 40, ["biology", "lab/notes"]);
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/search?q=marker%20%26%20genes&limit=20");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/search?q=marker&limit=40&knowledgeBaseId=biology&knowledgeBaseId=lab%2Fnotes");
   });
 
   it("encodes resource identifiers instead of allowing path injection", async () => {

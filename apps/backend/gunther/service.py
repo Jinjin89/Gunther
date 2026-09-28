@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from threading import Lock
 from uuid import uuid4
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
@@ -2393,11 +2393,22 @@ class KnowledgeService:
             snippet = f"{snippet}…"
         return snippet
 
-    def search_knowledge(self, query: str, limit: int = 20) -> list[KnowledgeSearchResultOut]:
+    def search_knowledge(
+        self,
+        query: str,
+        limit: int = 20,
+        knowledge_base_ids: list[str] | None = None,
+    ) -> list[KnowledgeSearchResultOut]:
+        """Search accepted knowledge, sources, notes and sessions.
+
+        ``knowledge_base_ids`` narrows every result type to those knowledge bases;
+        unfiled material (Inbox sources, unfiled notes) is then excluded.
+        """
         needle = query.strip()
         tokens = self._search_tokens(needle)
         if not tokens:
             return []
+        scoped = knowledge_base_ids is not None
         patterns = [
             f"%{token.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')}%"
             for token in tokens
@@ -2420,6 +2431,11 @@ class KnowledgeService:
                     .join(KnowledgeUnitRevision)
                     .where(match_all(KnowledgeUnit.title, KnowledgeUnitRevision.content))
                     .where(KnowledgeUnit.status != "deprecated")
+                    .where(
+                        KnowledgeUnit.knowledge_base_id.in_(knowledge_base_ids)
+                        if scoped
+                        else true()
+                    )
                     .order_by(KnowledgeUnit.updated_at.desc())
                     .limit(limit)
                 )
@@ -2442,10 +2458,24 @@ class KnowledgeService:
                     )
                 )
 
+            # Unfiled captures still wait in Inbox, but they are the user's material and
+            # must be findable; they come back without a library (knowledge_base_id=None).
+            source_query = select(Source, KnowledgeBaseSource.knowledge_base_id)
+            source_query = (
+                source_query.join(
+                    KnowledgeBaseSource,
+                    and_(
+                        KnowledgeBaseSource.source_id == Source.id,
+                        KnowledgeBaseSource.knowledge_base_id.in_(knowledge_base_ids),
+                    ),
+                )
+                if scoped
+                else source_query.outerjoin(
+                    KnowledgeBaseSource, KnowledgeBaseSource.source_id == Source.id
+                )
+            )
             source_rows = session.execute(
-                select(Source, KnowledgeBaseSource.knowledge_base_id)
-                .join(KnowledgeBaseSource, KnowledgeBaseSource.source_id == Source.id)
-                .where(match_all(Source.title, Source.content))
+                source_query.where(match_all(Source.title, Source.content))
                 .order_by(Source.created_at.desc())
                 .limit(limit)
             ).all()
@@ -2471,6 +2501,7 @@ class KnowledgeService:
                 .where(
                     match_all(NotebookNote.title, NotebookNote.content),
                     NotebookNote.status != "archived",
+                    NotebookNote.knowledge_base_id.in_(knowledge_base_ids) if scoped else true(),
                 )
                 .order_by(NotebookNote.updated_at.desc())
                 .limit(limit)
@@ -2493,6 +2524,9 @@ class KnowledgeService:
                 .where(
                     match_all(KnowledgeSession.title, KnowledgeSession.summary),
                     KnowledgeSession.archived.is_(False),
+                    KnowledgeSession.knowledge_base_id.in_(knowledge_base_ids)
+                    if scoped
+                    else true(),
                 )
                 .order_by(KnowledgeSession.updated_at.desc())
                 .limit(limit)
