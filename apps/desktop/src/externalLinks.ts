@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeFile } from "@tauri-apps/plugin-fs";
 
 const LOCAL_SERVICE = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
@@ -20,6 +22,28 @@ export function externalLinkFor(target: EventTarget | null, pageOrigin: string):
   return url.href;
 }
 
+const fileNameOf = (anchor: HTMLAnchorElement, response: Response) => {
+  const named = anchor.getAttribute("download")?.trim();
+  if (named) return named;
+  const header = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(response.headers.get("content-disposition") ?? "")?.[1];
+  if (header) {
+    try { return decodeURIComponent(header); } catch { return header; }
+  }
+  return decodeURIComponent(new URL(anchor.href).pathname.split("/").pop() || "download");
+};
+
+/**
+ * The desktop web view cannot download: following a `download` link would
+ * replace the whole app with the file. Ask where to save it, then write it.
+ */
+export async function saveDownload(anchor: HTMLAnchorElement): Promise<void> {
+  const response = await fetch(anchor.href);
+  if (!response.ok) throw new Error(`The file could not be fetched (${response.status}).`);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const path = await save({ defaultPath: fileNameOf(anchor, response) });
+  if (path) await writeFile(path, bytes);
+}
+
 /**
  * WebKit ignores `target="_blank"` inside the desktop app, so external links
  * would silently do nothing. Route them to the user's browser or mail app.
@@ -27,6 +51,12 @@ export function externalLinkFor(target: EventTarget | null, pageOrigin: string):
 export function installExternalLinkHandler(): void {
   document.addEventListener("click", (event) => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const download = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[download][href]") : null;
+    if (download) {
+      event.preventDefault();
+      void saveDownload(download).catch((error) => window.alert(error instanceof Error ? error.message : "The file could not be saved."));
+      return;
+    }
     const url = externalLinkFor(event.target, window.location.origin);
     if (!url) return;
     event.preventDefault();

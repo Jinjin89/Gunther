@@ -1,7 +1,8 @@
-import { ArrowUp, AtSign, CornerDownLeft, Globe2, X } from "lucide-react";
+import { ArrowUp, AtSign, CornerDownLeft, Globe2, Mic, X } from "lucide-react";
 import { forwardRef, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import type { KnowledgeBase } from "../../atlas";
 import { LibraryGlyph } from "../../design/LibraryGlyph";
+import { useDictation } from "../../services/useDictation";
 
 export interface SearchComposerHandle {
   focus: () => void;
@@ -108,6 +109,18 @@ export const SearchComposer = forwardRef<SearchComposerHandle, SearchComposerPro
   const pendingCaret = useRef<number | null>(null);
   const listId = useId();
   const hintId = useId();
+
+  const latest = useRef(value);
+  latest.current = value;
+  const dictation = useDictation((text) => {
+    const before = latest.current;
+    const spacer = before && !/\s$/.test(before) && !/^[\u3000-\u9fff\uff00-\uffef]/.test(text) ? " " : "";
+    latest.current = `${before}${spacer}${text}`;
+    onValueChange(latest.current);
+    pendingCaret.current = latest.current.length;
+  });
+  const listening = dictation.state === "listening" || dictation.state === "starting";
+  const dictating = dictation.state !== "idle";
 
   useImperativeHandle(ref, () => ({ focus: () => textarea.current?.focus() }), []);
 
@@ -265,7 +278,10 @@ export const SearchComposer = forwardRef<SearchComposerHandle, SearchComposerPro
           <span>Web</span>
         </button>
         {picker}
-        <span className="gx-composer-hint" id={hintId}>{hint}</span>
+        <span className="gx-composer-hint" id={hintId} role={dictation.error ? "alert" : undefined}>{dictation.error ?? (dictating ? (dictation.state === "finishing" ? "Finishing…" : "Listening… click the mic to stop") : hint)}</span>
+        <button type="button" className={`gx-tool gx-tool-icon gx-mic ${dictating ? "is-on" : ""}`} onClick={() => (listening ? dictation.stop() : dictation.state === "idle" ? void dictation.start() : undefined)} aria-pressed={listening} aria-label={listening ? "Stop voice input" : "Voice input"} title={listening ? "Stop voice input" : "Speak instead of typing"}>
+          <Mic size={15} />
+        </button>
         {(value || mentionIds.length > 0) && (
           <button type="button" className="gx-tool gx-tool-icon" onClick={() => { onClear(); textarea.current?.focus(); }} aria-label="Clear search" title="Clear">
             <X size={15} />

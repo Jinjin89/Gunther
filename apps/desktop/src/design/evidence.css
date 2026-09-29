@@ -50,10 +50,13 @@
 .gx-pdf-bar button:disabled { opacity: 0.35; cursor: default; }
 .gx-pdf-bar button:focus-visible { outline: 0; box-shadow: var(--gx-ring); }
 .gx-pdf-stage { min-height: 0; padding: 0 12px 16px; flex: 1; overflow: auto; overscroll-behavior: contain; background: var(--gx-canvas); }
-.gx-pdf-stage .react-pdf__Page { margin: 12px auto 0; background: #fff; box-shadow: 0 0 0 1px var(--gx-line), 0 6px 20px -10px rgba(20, 20, 18, 0.3); }
+.gx-pdf-sheet { margin: 12px auto 0; }
+.gx-pdf-stage .react-pdf__Page { margin: 0 auto; background: #fff; box-shadow: 0 0 0 1px var(--gx-line), 0 6px 20px -10px rgba(20, 20, 18, 0.3); }
 .gx-pdf-stage .react-pdf__Page__textContent mark { padding: 0; border-radius: 2px; background: rgba(255, 214, 10, 0.45); color: transparent; }
 .gx-pdf-loading { height: 240px; margin: 12px; border-radius: var(--gx-radius-sm); background: var(--gx-hover); animation: gx-pulse 1.4s ease-in-out infinite; }
-.gx-pdf-error { margin: 24px 16px; color: var(--gx-danger); font-size: var(--gx-text-sm); }
+.gx-pdf-error { margin: 24px 16px; display: grid; gap: 8px; justify-items: start; color: var(--gx-danger); font-size: var(--gx-text-sm); }
+.gx-pdf-error p { margin: 0; }
+.gx-pdf-error small { color: var(--gx-muted); word-break: break-word; }
 @keyframes gx-pulse { 50% { opacity: 0.55; } }
 
 @media (max-width: 600px) { .gx-evidence { width: 100vw; } }
