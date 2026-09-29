@@ -250,6 +250,48 @@ def test_real_helper_isolated_launch_does_not_disturb_first_instance(tmp_path: P
         first.wait(timeout=10)
 
 
+def test_helper_stops_when_the_desktop_shell_goes_away(tmp_path: Path) -> None:
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    nonce = "3" * 64
+    helper = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "gunther.desktop_server",
+            "--data-dir",
+            str(tmp_path),
+            "--port",
+            str(port),
+            "--disable-mobile-gateway",
+            "--exit-when-stdin-closes",
+            "--launch-nonce",
+            nonce,
+        ],
+        cwd=Path(desktop_server.__file__).resolve().parents[1],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    token_path = _ready_token_path(tmp_path, nonce)
+    try:
+        deadline = time.monotonic() + 10
+        while not token_path.exists() and time.monotonic() < deadline:
+            assert helper.poll() is None
+            time.sleep(0.05)
+        assert token_path.exists()
+        assert helper.stdin is not None
+        helper.stdin.close()
+        assert helper.wait(timeout=10) == 0
+        assert not token_path.exists()
+    finally:
+        if helper.poll() is None:
+            helper.kill()
+            helper.wait(timeout=5)
+
+
 @pytest.mark.skipif(
     not os.environ.get("GUNTHER_FROZEN_HELPER"),
     reason="set GUNTHER_FROZEN_HELPER to validate a release helper",

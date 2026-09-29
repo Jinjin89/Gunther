@@ -20,7 +20,14 @@ struct BackendRuntime {
 }
 
 struct BackendProcess(Mutex<BackendRuntime>);
+// Releases use their own uncommon port, so a development backend on 8787 never
+// blocks the installed app. It stays below 32768, the range systems hand out
+// for outgoing connections.
+const RELEASE_BACKEND_PORT: &str = "28787";
+#[cfg(debug_assertions)]
 const BACKEND_BASE_URL: &str = "http://127.0.0.1:8787";
+#[cfg(not(debug_assertions))]
+const BACKEND_BASE_URL: &str = "http://127.0.0.1:28787";
 const TOKEN_FILE_NAME: &str = "backend-auth-token";
 const READY_TOKEN_DIR_NAME: &str = "backend-ready";
 
@@ -205,10 +212,13 @@ fn start_backend(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .arg("--data-dir")
         .arg(&data_dir)
         .arg("--port")
-        .arg("8787")
+        .arg(RELEASE_BACKEND_PORT)
         .arg("--launch-nonce")
         .arg(&launch_nonce)
-        .stdin(Stdio::null())
+        // The helper exits when this pipe closes, so a crashed or force-quit
+        // Gunther never leaves it running and holding the port.
+        .arg("--exit-when-stdin-closes")
+        .stdin(Stdio::piped())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr))
         .spawn()?;

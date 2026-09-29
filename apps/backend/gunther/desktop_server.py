@@ -555,13 +555,27 @@ def _start_mobile_gateway(
     return handle
 
 
+def _stop_when_stdin_closes(server: uvicorn.Server) -> None:
+    """The desktop shell holds our stdin open; end of file means it exited, even by crashing."""
+
+    def watch() -> None:
+        with suppress(OSError):
+            while os.read(0, 4096):
+                pass
+        server.should_exit = True
+
+    threading.Thread(target=watch, name="gunther-parent-watch", daemon=True).start()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Gunther desktop knowledge service")
     parser.add_argument("--data-dir", type=Path, required=True)
-    parser.add_argument("--port", type=int, default=8787)
+    # Not 8787, so a development backend never blocks the installed app.
+    parser.add_argument("--port", type=int, default=28787)
     parser.add_argument("--launch-nonce", required=True)
     parser.add_argument("--mobile-gateway-port", type=int, default=MOBILE_GATEWAY_PORT)
     parser.add_argument("--disable-mobile-gateway", action="store_true")
+    parser.add_argument("--exit-when-stdin-closes", action="store_true")
     args = parser.parse_args()
 
     # SQLite, uploaded originals, recordings, OCR output, PKI, and token files
@@ -617,6 +631,8 @@ def main() -> None:
                     args.mobile_gateway_port,
                 )
             server = uvicorn.Server(config)
+            if args.exit_when_stdin_closes:
+                _stop_when_stdin_closes(server)
             with suppress(KeyboardInterrupt):
                 server.run(sockets=[listener])
     finally:

@@ -137,9 +137,9 @@ release build 冻结 Python backend，Tauri 启动时：
 5. 以 `backend-ready/backend-auth-token.<launchNonce>` 原子发布 nonce+token；
 6. Tauri 只接受匹配本次 nonce 的 ready 文件；
 7. HTTP / WebSocket 使用 token 并校验 Origin；
-8. App 退出时终止 Helper 并删除 ready token。
+8. App 退出时终止 Helper 并删除 ready token；App 崩溃或被强制退出时，Helper 发现 stdin 管道关闭后自行退出，不会遗留进程占用端口。
 
-8787 已被占用时不会把数据发给占位进程。不要关闭认证或把 sidecar 改成 LAN 服务。
+安装版 Helper 固定监听 `127.0.0.1:28787`（开发后端仍是 8787，两者互不占用）。端口已被占用时不会把数据发给占位进程。不要关闭认证或把 sidecar 改成 LAN 服务。
 
 macOS 默认数据目录：
 

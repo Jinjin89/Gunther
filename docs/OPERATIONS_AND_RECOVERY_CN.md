@@ -362,7 +362,8 @@ Gunther 健康响应应明确显示 `sensevoice_local`、在线回退或 `not_co
 
 ### Desktop sidecar
 
-- 8787 被占用时，Helper 会在发布本次 token 前失败；
+- 安装版 Helper 固定使用 `127.0.0.1:28787`（开发后端为 8787）；端口被占用时，Helper 会在发布本次 token 前失败；
+- 查占用：macOS/Linux `lsof -nP -iTCP:28787 -sTCP:LISTEN`，Windows `netstat -ano | findstr 28787`；
 - 不要向占位进程发送数据，也不要关闭认证绕过；
 - 检查 `backend.log`、实例锁和本次 ready token；
 - token 是一次启动凭据，不能从旧备份复用。

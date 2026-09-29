@@ -126,7 +126,7 @@ export function classifyMobileConnectionAddress(
       displayValue: "Unavailable · desktop service is local-only",
       connectionAddress: null,
       explanation:
-        "The desktop service is bound to 127.0.0.1:8787. On a phone, 127.0.0.1 means the phone itself, so Gunther will not present it as a pairing address.",
+        "The desktop service is bound to 127.0.0.1. On a phone, 127.0.0.1 means the phone itself, so Gunther will not present it as a pairing address.",
       caFingerprint: null,
       caCertificatePem: null,
       protocolVersion: null,

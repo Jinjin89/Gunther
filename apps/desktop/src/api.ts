@@ -84,6 +84,8 @@ interface BackendConnection {
 }
 
 const tauriRuntime = "__TAURI_INTERNALS__" in window;
+// Development backend, then the installed app's own port (see src-tauri/src/lib.rs).
+const DESKTOP_BACKEND_URLS = ["http://127.0.0.1:8787", "http://127.0.0.1:28787"];
 let configuredBase = tauriRuntime ? undefined : (import.meta.env.VITE_API_URL as string | undefined);
 let apiBase = configuredBase ? `${configuredBase.replace(/\/$/, "")}/api` : "/api";
 let authToken = "";
@@ -103,7 +105,7 @@ export async function initializeBackendConnection(): Promise<void> {
         "Gunther's authenticated local knowledge service did not start. No local data was sent.",
       );
     }
-    if (connection.baseUrl !== "http://127.0.0.1:8787") {
+    if (!DESKTOP_BACKEND_URLS.includes(connection.baseUrl)) {
       throw new Error("Gunther refused an unsafe local knowledge service address.");
     }
     configuredBase = connection.baseUrl;
@@ -148,7 +150,7 @@ async function waitForDesktopBackend(): Promise<void> {
       await wait(250);
     }
     throw new Error(
-      "Gunther's authenticated local knowledge service did not start. Another app may be using port 8787. No local data was sent.",
+      "Gunther's authenticated local knowledge service did not start. Another app may be using its local port. No local data was sent.",
     );
   })();
   return desktopBackendReady;
