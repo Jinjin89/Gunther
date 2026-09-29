@@ -1,5 +1,4 @@
 export type AtlasMode = "overview" | "sources" | "ask" | "outputs";
-export type AtlasZoom = "field" | "chapter" | "topic";
 
 export interface KnowledgeSource {
   id: string;
@@ -11,7 +10,7 @@ export interface KnowledgeSource {
   usedIn: string[];
 }
 
-export interface KnowledgeTopic {
+interface KnowledgeTopic {
   id: string;
   title: string;
   summary: string;
@@ -36,7 +35,7 @@ export interface KnowledgeChapter {
   topics: KnowledgeTopic[];
 }
 
-export interface AtlasPopulation {
+interface AtlasPopulation {
   id: string;
   label: string;
   family: string;
@@ -67,19 +66,6 @@ export interface KnowledgeBase {
   populations?: AtlasPopulation[];
 }
 
-export interface InboxChange {
-  id: string;
-  baseId: string;
-  label: string;
-  title: string;
-  summary: string;
-  impact: string[];
-  source: string;
-  status: "pending" | "accepted" | "held";
-  retryCaptureId?: string;
-  sourceId?: string;
-  claimCount?: number;
-}
 
 const singleCellSources: KnowledgeSource[] = [
   {
@@ -388,7 +374,5 @@ export const knowledgeBases: KnowledgeBase[] = [
     sources: [],
   },
 ];
-
-export const initialInboxChanges: InboxChange[] = [];
 
 export const getKnowledgeBase = (id: string) => knowledgeBases.find((base) => base.id === id) ?? knowledgeBases[0]!;

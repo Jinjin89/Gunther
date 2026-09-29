@@ -168,7 +168,10 @@ export default function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), action ? 6000 : 2800);
   }, []);
 
-  const openCapture = useCallback((kind: CaptureKind | null = null, context: RecordingContext = "lecture", targetBaseId: string | null = null) => {
+  const openCapture = useCallback((rawKind: CaptureKind | null = null, context: RecordingContext = "lecture", targetBaseId: string | null = null) => {
+    // A click handler passed straight in hands over its event; only a real kind gets through
+    // (an event cannot be serialised for the capture window).
+    const kind = typeof rawKind === "string" ? rawKind : null;
     if (isTauriRuntime()) {
       void openCaptureWindow({
         kind,
@@ -377,7 +380,7 @@ export default function App() {
     return () => window.removeEventListener("gunther:sources-updated", refreshSourceCounts);
   }, [refreshKnowledgeBases]);
   useEffect(() => {
-    // "Set up a model" in Ask's model menu opens Settings.
+    // Anything can ask for Settings to open.
     const openSettings = () => navigate("settings");
     window.addEventListener(OPEN_SETTINGS_EVENT, openSettings);
     return () => window.removeEventListener(OPEN_SETTINGS_EVENT, openSettings);

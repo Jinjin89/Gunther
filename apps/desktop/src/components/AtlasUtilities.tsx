@@ -1,6 +1,6 @@
 import type { CreateKnowledgeBaseInput, RecordingSession } from "@gunther/contracts";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import {
   ArrowRight,
   Bookmark,
@@ -19,19 +19,15 @@ import {
   CircleAlert,
   Copy,
   FileText,
-  Globe2,
   Laptop,
-  Link2,
   Maximize2,
   Mic2,
   Minimize2,
-  Paperclip,
   Pause,
   Play,
   Settings2,
   ShieldCheck,
   Smartphone,
-  Sparkles,
   Square,
   Table2,
   RefreshCw,
@@ -63,13 +59,14 @@ import { comboKeys, formatCombo, useEscape, useShortcut, withShortcut } from "..
 import { LibraryFolderSettings } from "./LibraryFolderSettings";
 import { SemanticSearchSetting } from "./SemanticSearchSetting";
 import { ServiceSettings } from "./ServiceSettings";
+import { TypographySettings } from "./TypographySettings";
 import { ModelSettings } from "../models/ModelSettings";
 import { CAPTURE_CONTROL_DOM_EVENT, CAPTURE_SWITCH_DOM_EVENT, recorderOwnsCapture, type CaptureControl, type CaptureKind, type CaptureLaunchRequest, type RecordingContext } from "../capture/captureTypes";
 import { getMenuBarMode, isTauriRuntime, setMenuBarMode, type MenuBarMode } from "../capture/captureBridge";
 
 export type { CaptureKind, RecordingContext } from "../capture/captureTypes";
 
-export type CaptureSheetSurface = "overlay" | "window";
+type CaptureSheetSurface = "overlay" | "window";
 
 interface CaptureSheetProps {
   open: boolean;
@@ -339,40 +336,6 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
     workspaceId,
     updatedAt: recording.checkpointedAt ?? recording.updatedAt,
   });
-
-  const ingestFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    setFileError(null);
-    if (kind === "image") {
-      if (!file.type.startsWith("image/")) {
-        setFileError("Choose an image from your camera or photo library.");
-        return;
-      }
-      if (file.size > 512 * 1024 * 1024) {
-        setFileError("Choose an image smaller than 512 MB.");
-        return;
-      }
-      setSelectedFile(file);
-      setFileName(file.name);
-      setTitle(file.name.replace(/\.[^.]+$/, ""));
-      setContent("");
-      return;
-    }
-    if (file.size > 512 * 1024 * 1024) {
-      setFileError("Choose a file smaller than 512 MB.");
-      return;
-    }
-    if (!file.size) {
-      setFileError("The selected file is empty.");
-      return;
-    }
-    setSelectedFile(file);
-    setFileName(file.name);
-    setTitle(file.name.replace(/\.[^.]+$/, ""));
-    setContent("");
-  };
 
   /** Start the next recording afresh; whatever the other tabs hold stays. */
   const resetRecordingSession = () => {
@@ -1066,6 +1029,7 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
       <section>
         <div className="setting-heading"><Settings2 size={16} /><span><strong>Appearance</strong><small>Default workspace presentation</small></span></div>
         <label className="setting-row"><span><strong>Theme</strong><small>Applied immediately and remembered on this device.</small></span><select value={theme} aria-label="Theme" onChange={(event) => onTheme(event.target.value as ThemePreference)}><option value="light">Light</option><option value="dark">Dark</option><option value="system">Match system</option></select></label>
+        <TypographySettings />
         <div className="setting-row"><span><strong>Home</strong><small>Gunther opens on search. Type @ to scope a search to a library, or press ⌘K from anywhere.</small></span><span className="setting-state">Search</span></div>
         {isTauriRuntime() && <label className="setting-row"><span><strong>Menu bar</strong><small>Gunther’s mark stays in the menu bar for quick capture. Recordings always show there, with their timer, while they run.</small></span><select value={menuBarMode} aria-label="Menu bar" onChange={(event) => changeMenuBarMode(event.target.value as MenuBarMode)}><option value="always">Always show</option><option value="whileCapturing">Only while capturing</option></select></label>}
         <div className="setting-row"><span><strong>Keyboard shortcuts</strong><small>Capture, search and move through Inbox without the mouse. Press {formatCombo("mod+/")} any time.</small></span><button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => window.dispatchEvent(new CustomEvent("gunther:show-shortcuts"))}>Show all</button></div>

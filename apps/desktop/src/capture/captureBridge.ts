@@ -11,7 +11,7 @@ export const CAPTURE_REQUEST_EVENT = "gunther://capture-request";
 export const CAPTURE_CONTROL_EVENT = "gunther://capture-control";
 export const CAPTURE_SAVED_EVENT = "gunther://capture-saved";
 export const OPEN_SEARCH_EVENT = "gunther://open-search";
-export const MENU_COMMAND_EVENT = "gunther://menu-command";
+const MENU_COMMAND_EVENT = "gunther://menu-command";
 
 /** Commands the native menus hand to the main window. */
 export type MenuCommand = "new-note" | "settings" | "shortcuts" | "theme";

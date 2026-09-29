@@ -88,7 +88,7 @@
   background: transparent;
   color: var(--gx-ink);
   font-family: var(--gx-font-sans);
-  font-size: 16px;
+  font-size: calc(16px * var(--gx-fs, 1));
   line-height: 1.45;
 }
 .gx-composer-field textarea::placeholder { color: var(--gx-ghost); }
@@ -201,7 +201,7 @@
 .gx-mention-option.is-active { background: var(--gx-hover); color: var(--gx-ink); }
 .gx-mention-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gx-mention-title b { color: var(--gx-ink); font-weight: 650; }
-.gx-mention-option small { flex: none; color: var(--gx-faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.gx-mention-option small { flex: none; color: var(--gx-faint); font-size: calc(11.5px * var(--gx-fs, 1)); font-variant-numeric: tabular-nums; }
 .gx-mention-empty { padding: 10px; color: var(--gx-faint); font-size: var(--gx-text-sm); }
 
 /* Capture chips */
@@ -245,7 +245,7 @@
   place-items: center;
   flex: none;
   border-radius: var(--gx-radius-pill);
-  font-size: 12px;
+  font-size: calc(12px * var(--gx-fs, 1));
   font-weight: 650;
   font-variant-numeric: tabular-nums;
 }
@@ -314,7 +314,7 @@ button.gx-row:hover .gx-glyph { transform: rotate(-5deg) scale(1.05); }
   overflow: hidden;
   color: var(--gx-ink);
   font-family: var(--gx-font-display);
-  font-size: 24px;
+  font-size: calc(24px * var(--gx-fs, 1));
   font-weight: 450;
   letter-spacing: -0.015em;
   text-overflow: ellipsis;
@@ -373,7 +373,7 @@ button.gx-row:hover .gx-glyph { transform: rotate(-5deg) scale(1.05); }
 }
 .gx-web-answer > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .gx-web-answer > header > span { display: inline-flex; align-items: center; gap: 7px; color: var(--gx-id-blue); font-size: var(--gx-text-xs); font-weight: 600; }
-.gx-web-answer > p { margin: 12px 0 0; color: var(--gx-ink-2); font-size: 15px; line-height: 1.7; white-space: pre-wrap; }
+.gx-web-answer > p { margin: 12px 0 0; color: var(--gx-ink-2); font-size: calc(15px * var(--gx-fs, 1)); line-height: 1.7; white-space: pre-wrap; }
 .gx-web-sources { margin-top: 14px; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px; }
 .gx-web-sources a {
   min-width: 0;
@@ -389,10 +389,10 @@ button.gx-row:hover .gx-glyph { transform: rotate(-5deg) scale(1.05); }
   transition: border-color var(--gx-dur-fast) var(--gx-ease), background-color var(--gx-dur-fast) var(--gx-ease);
 }
 .gx-web-sources a:hover { border-color: var(--gx-line-2); background: var(--gx-surface-2); }
-.gx-web-sources i { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: var(--gx-hover); color: var(--gx-muted); font-size: 10.5px; font-style: normal; font-weight: 650; }
+.gx-web-sources i { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: var(--gx-hover); color: var(--gx-muted); font-size: calc(10.5px * var(--gx-fs, 1)); font-style: normal; font-weight: 650; }
 .gx-web-sources span { min-width: 0; display: grid; }
 .gx-web-sources strong { overflow: hidden; font-size: var(--gx-text-xs); font-weight: 560; text-overflow: ellipsis; white-space: nowrap; }
-.gx-web-sources small { overflow: hidden; color: var(--gx-faint); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.gx-web-sources small { overflow: hidden; color: var(--gx-faint); font-size: calc(11px * var(--gx-fs, 1)); text-overflow: ellipsis; white-space: nowrap; }
 .gx-web-sources svg { color: var(--gx-faint); }
 
 .gx-result-list { margin-top: 8px; display: grid; }

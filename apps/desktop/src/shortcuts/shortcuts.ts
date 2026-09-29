@@ -83,7 +83,7 @@ export function formatCombo(combo: string): string {
   return comboKeys(combo).join(isMac() ? "" : "+");
 }
 
-export function shortcutLabel(id: ShortcutId): string {
+function shortcutLabel(id: ShortcutId): string {
   const spec = SHORTCUTS.find((item) => item.id === id);
   return spec ? formatCombo(spec.keys[0]!) : "";
 }
@@ -96,18 +96,18 @@ export function withShortcut(label: string, id: ShortcutId): string {
 
 const EDITABLE = "input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=range]), textarea, select, [contenteditable='true'], [contenteditable='']";
 
-export function isTypingTarget(target: EventTarget | null): boolean {
+function isTypingTarget(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest(EDITABLE));
 }
 
 /** True when a modal surface is open and the event did not start inside it. */
-export function isOutsideOpenModal(target: EventTarget | null): boolean {
+function isOutsideOpenModal(target: EventTarget | null): boolean {
   const modals = Array.from(document.querySelectorAll<HTMLElement>("[aria-modal='true']"));
   if (!modals.length) return false;
   return !(target instanceof Node && modals.some((modal) => modal.contains(target)));
 }
 
-export function matchesCombo(event: KeyboardEvent, combo: string): boolean {
+function matchesCombo(event: KeyboardEvent, combo: string): boolean {
   const parts = combo.toLowerCase().split("+");
   const key = parts[parts.length - 1]!;
   const mac = isMac();

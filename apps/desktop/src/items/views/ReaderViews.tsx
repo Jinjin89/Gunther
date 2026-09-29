@@ -38,7 +38,7 @@ export function PlainText({ text, emptyLabel = "No readable text was captured." 
   );
 }
 
-export function SiteCard({ url, capturedAt, status }: { url: string | null; capturedAt?: string | null; status?: string | null }) {
+function SiteCard({ url, capturedAt, status }: { url: string | null; capturedAt?: string | null; status?: string | null }) {
   const href = safeHref(url);
   const host = hostOf(url) ?? "Web page";
   const path = pathOf(url);

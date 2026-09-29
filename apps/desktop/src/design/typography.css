@@ -1,0 +1,16 @@
+/*
+ * Typefaces people can choose in Settings → Appearance. The size scale lives in
+ * typography.ts (--gx-fs on the root).
+ */
+:root[data-font="serif"] {
+  --gx-font-sans: ui-serif, "New York", "Iowan Old Style", Charter, "Bitstream Charter", "Source Serif Pro", Georgia, serif;
+  --atlas-sans: var(--gx-font-sans);
+}
+:root[data-font="rounded"] {
+  --gx-font-sans: ui-rounded, "SF Pro Rounded", "Hiragino Maru Gothic ProN", "Segoe UI Variable Text", "Segoe UI", "Noto Sans", sans-serif;
+  --atlas-sans: var(--gx-font-sans);
+}
+/* Native controls do not inherit the face on their own. */
+:root[data-font] button, :root[data-font] input, :root[data-font] select, :root[data-font] textarea { font-family: inherit; }
+
+.type-preview { margin: 8px 0 4px; padding: 14px 16px; border-radius: var(--gx-radius-sm); background: var(--gx-surface-2); color: var(--gx-ink); font-size: var(--gx-text-md); line-height: 1.6; }

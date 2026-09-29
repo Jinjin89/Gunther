@@ -108,18 +108,18 @@ export function SearchResults({
       {error && <p className="gx-inline-alert" role="alert"><CircleAlert size={14} />{error}</p>}
 
       {includesWeb && webResult && (
-        webResult.answer ? (
+        (webResult.answer || webResult.sources.length > 0) ? (
           <article className="gx-web-answer">
             <header>
               <span><Globe2 size={14} />From the web</span>
-              {webResult.mode === "openai" && (
+              {webResult.mode === "tavily" && (
                 <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={savingResearch || researchSaved} onClick={onSaveResearch}>
                   {researchSaved ? <Check size={13} /> : <Bookmark size={13} />}
                   {researchSaved ? "Saved to Inbox" : savingResearch ? "Saving…" : "Save research"}
                 </button>
               )}
             </header>
-            <p>{webResult.answer}</p>
+            {webResult.answer && <p>{webResult.answer}</p>}
             {webResult.sources.length > 0 && (
               <div className="gx-web-sources">
                 {webResult.sources.map((source, index) => (

@@ -370,7 +370,7 @@ export interface ModelProvider {
   keySet: boolean;
   keyHint: string | null;
   /** saved here, the OpenAI services key, the environment (.env), or none. */
-  keySource: "saved" | "openai" | "environment" | "none";
+  keySource: "saved" | "environment" | "none";
   keyOptional: boolean;
   note: string;
   models: ProviderModel[];
@@ -639,6 +639,9 @@ export interface KnowledgeBaseMetadata {
 
 export interface ConversationCitation {
   id: string;
+  /** "web": a page found online. It has a url and no source (sourceId is empty). */
+  kind?: "library" | "web";
+  url?: string | null;
   sourceId: string;
   sourceTitle: string;
   assertionId: string | null;
@@ -669,6 +672,19 @@ export interface ConversationContext {
   reasoning?: string | null;
   /** Why the chosen model's answer is not shown; the quotes stand in. */
   modelError?: string | null;
+  /** What the agent made of the question. */
+  intent?: "chat" | "followup" | "library" | "web" | "both" | "clarify" | null;
+  /** What it did to answer: the searches it ran, in order. */
+  steps?: AgentStep[];
+  webSearched?: boolean;
+}
+
+export interface AgentStep {
+  tool: "search_library" | "search_web";
+  label: string;
+  query: string;
+  found: number;
+  error: string | null;
 }
 
 export interface SessionMessage {
@@ -728,6 +744,10 @@ export const createSessionMessageSchema = z.object({
   /** The model and effort for this answer; the Ask job's defaults when left out. */
   model: z.string().max(300).optional(),
   effort: z.enum(EFFORTS).optional(),
+  /** Let the agent search the web for this question. */
+  web: z.boolean().optional(),
+  /** Home only: read just these libraries; none means all of them. */
+  knowledgeBaseIds: z.array(z.string()).max(20).optional(),
 });
 export type CreateSessionMessageInput = z.infer<typeof createSessionMessageSchema>;
 
@@ -860,7 +880,7 @@ export interface WebSearchResult {
   query: string;
   answer: string;
   sources: WebSearchSource[];
-  mode: "openai" | "not_configured" | "failed";
+  mode: "tavily" | "not_configured" | "failed";
   message: string | null;
 }
 

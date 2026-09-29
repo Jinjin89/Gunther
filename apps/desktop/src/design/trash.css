@@ -98,7 +98,7 @@
   cursor: pointer;
 }
 .atlas-toast .gx-toast-action:hover { background: color-mix(in srgb, var(--gx-on-ink) 12%, transparent); }
-.atlas-toast .gx-toast-action kbd { margin-left: 6px; opacity: 0.6; font-family: inherit; font-size: 11px; }
+.atlas-toast .gx-toast-action kbd { margin-left: 6px; opacity: 0.6; font-family: inherit; font-size: calc(11px * var(--gx-fs, 1)); }
 
 @media (max-width: 720px) {
   .gx-trash-row { grid-template-columns: 32px minmax(0, 1fr); row-gap: 10px; }

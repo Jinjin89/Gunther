@@ -4,7 +4,7 @@ import { comboKeys, SHORTCUTS, useEscape, type ShortcutGroup } from "./shortcuts
 
 const GROUPS: ShortcutGroup[] = ["General", "Go to", "Capture", "Inbox and items", "Writing", "Recordings"];
 
-export function Combo({ combo }: { combo: string }) {
+function Combo({ combo }: { combo: string }) {
   return <span className="gx-combo">{comboKeys(combo).map((key, index) => <kbd key={`${key}-${index}`}>{key}</kbd>)}</span>;
 }
 

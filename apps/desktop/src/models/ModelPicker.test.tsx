@@ -2,7 +2,7 @@ import type { ModelMenu } from "@gunther/contracts";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { OPEN_SETTINGS_EVENT, resolveEffort, usableChoice } from "./askModel";
+import { resolveEffort, usableChoice } from "./askModel";
 import { ModelPicker } from "./ModelPicker";
 
 const levels = (...ids: [string, string][]) => ids.map(([id, label]) => ({ id, label })) as ModelMenu["efforts"];
@@ -74,12 +74,17 @@ describe("ModelPicker", () => {
     expect(chip).toHaveFocus();
   });
 
-  it("offers to set up a model when none is ready", async () => {
-    const opened = vi.fn();
-    window.addEventListener(OPEN_SETTINGS_EVENT, opened);
+  it("only chooses a model: no way into model settings from a conversation", async () => {
+    render(<ModelPicker menu={menu} choice={{ model: "deepseek/deepseek-flash", effort: "high" }} onChange={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Model: DeepSeek · Flash" }));
+    expect(screen.queryByText(/manage models/i)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("menuitemradio").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("menuitem")).not.toBeInTheDocument();
+  });
+
+  it("just says so when no model is ready", () => {
     render(<ModelPicker menu={{ ...menu, models: [], default: null }} choice={{ model: null, effort: "high" }} onChange={vi.fn()} />);
-    await userEvent.click(screen.getByRole("button", { name: "Set up a model" }));
-    expect(opened).toHaveBeenCalledOnce();
-    window.removeEventListener(OPEN_SETTINGS_EVENT, opened);
+    expect(screen.getByText("No model")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /set up/i })).not.toBeInTheDocument();
   });
 });

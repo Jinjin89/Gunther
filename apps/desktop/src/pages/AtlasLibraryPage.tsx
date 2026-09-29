@@ -14,7 +14,7 @@ interface AtlasLibraryPageProps {
 const FILTER_THRESHOLD = 4;
 
 /** Indexed counts come from the local service; bundled guides only have references. */
-export const sourceSummary = (base: KnowledgeBase) => base.indexedSourceCount === undefined
+const sourceSummary = (base: KnowledgeBase) => base.indexedSourceCount === undefined
   ? `${base.sourceCount} ${base.sourceCount === 1 ? "reference" : "references"}`
   : `${base.indexedSourceCount} indexed · ${base.sourceCount} ${base.sourceCount === 1 ? "reference" : "references"}`;
 

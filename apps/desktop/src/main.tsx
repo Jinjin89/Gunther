@@ -17,15 +17,19 @@ import "./design/trash.css";
 import "./design/legacy.css";
 import "./design/services.css";
 import "./design/models.css";
+import "./design/agent.css";
+import "./design/typography.css";
 // Capture's new surface loads after the legacy layer so its layout wins.
 import "./design/capture.css";
 import { applyTheme, readThemePreference, resolveTheme } from "./design/theme";
+import { applyTypography } from "./design/typography";
 import { installExternalLinkHandler } from "./externalLinks";
 
 document.documentElement.dataset.runtime = "__TAURI_INTERNALS__" in window ? "native" : "web";
 if ("__TAURI_INTERNALS__" in window) installExternalLinkHandler();
 // Apply the saved appearance before the first paint so dark mode never flashes light.
 applyTheme(resolveTheme(readThemePreference()));
+applyTypography();
 
 const root = createRoot(document.getElementById("root")!);
 const surface = new URLSearchParams(window.location.search).get("surface");

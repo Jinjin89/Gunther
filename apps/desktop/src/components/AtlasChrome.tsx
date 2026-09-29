@@ -7,7 +7,7 @@ import { LibraryGlyph } from "../design/LibraryGlyph";
 
 export type AtlasView = "home" | "library" | "base" | "notebook" | "inbox" | "settings" | "account" | "item" | "trash";
 
-export interface BreadcrumbSegment {
+interface BreadcrumbSegment {
   label: string;
   onClick?: () => void;
 }
