@@ -27,6 +27,7 @@ jobs:
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
+          cache-local-path: ${{ github.workspace }}/.uv-cache
           python-version: "3.12"
       - name: Install JavaScript dependencies exactly
         run: npm ci
@@ -88,6 +89,7 @@ jobs:
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
+          cache-local-path: ${{ github.workspace }}/.uv-cache
           python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
