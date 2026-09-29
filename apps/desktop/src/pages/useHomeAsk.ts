@@ -2,6 +2,7 @@ import type { Effort, KnowledgeSession, KnowledgeSessionSummary, SessionMessage 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { knowledgeApi } from "../api";
 import { useLiveAnswer } from "./liveAnswer";
+import { interruptedQuestion } from "./interrupted";
 
 /** Home's conversations belong to no library; the service files them under this id. */
 const HOME_SCOPE = "@home";
@@ -71,8 +72,19 @@ export function useHomeAsk() {
     start();
     const abort = new AbortController();
     controller.current = abort;
+    let current = session;
+    /** The saved conversation, where the service kept a question it did not answer. */
+    const reload = async () => {
+      if (!current || controller.current) return null;
+      try {
+        const fresh = await knowledgeApi.session(current.id);
+        setSession(fresh);
+        return fresh;
+      } catch {
+        return null;
+      }
+    };
     try {
-      let current = session;
       if (!current) {
         current = await knowledgeApi.createSession(HOME_SCOPE, { selectedSourceIds: [] });
         remember(current.id);
@@ -86,7 +98,18 @@ export function useHomeAsk() {
       setSession({ ...current, ...turn.session, messages: [...current.messages, turn.userMessage, turn.assistantMessage] });
       reloadRecent();
     } catch (reason) {
-      if (!abort.signal.aborted) setError(reason instanceof Error ? reason.message : "The answer could not be written.");
+      if (controller.current === abort) controller.current = null;
+      if (abort.signal.aborted) {
+        // Stopped: the question stays in the conversation, marked, until the saved copy arrives.
+        const stopped = current;
+        if (stopped) {
+          setSession({ ...stopped, messages: [...stopped.messages, interruptedQuestion(stopped.id, content, "stopped")] });
+          window.setTimeout(() => void reload(), 900);
+        }
+      } else {
+        setError(reason instanceof Error ? reason.message : "The answer could not be written.");
+        void reload();
+      }
     } finally {
       if (controller.current === abort) controller.current = null;
       stop();

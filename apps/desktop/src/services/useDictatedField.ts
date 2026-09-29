@@ -43,5 +43,5 @@ export function useDictatedField(value: string, onChange: (next: string) => void
   };
   useShortcut("mod+shift+m", () => { if (target === id) toggle(); }, { enabled, allowInInputs: true });
 
-  return { ...dictation, listening, dictating: dictation.state !== "idle", toggle, claim: () => { target = id; } };
+  return { ...dictation, listening, dictating: dictation.state !== "idle", toggle, discard: dictation.cancel, claim: () => { target = id; } };
 }

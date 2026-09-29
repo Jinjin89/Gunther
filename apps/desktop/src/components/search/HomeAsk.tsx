@@ -6,6 +6,8 @@ import { AgentSteps, AnswerBody, LiveAnswer } from "../../pages/AnswerBody";
 import { EvidencePanel } from "../evidence/EvidencePanel";
 import type { LiveAnswerState } from "../../pages/liveAnswer";
 import type { ItemRef } from "../../items/itemRef";
+import { useAutosize } from "../../services/useAutosize";
+import { InterruptedNote, isInterrupted } from "../../pages/interrupted";
 import { useDictatedField } from "../../services/useDictatedField";
 import { withShortcut } from "../../shortcuts/shortcuts";
 
@@ -56,6 +58,8 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
   const [evidence, setEvidence] = useState<{ citation: ConversationCitation; index: number } | null>(null);
   const busy = pending !== null;
   const dictation = useDictatedField(followUp, setFollowUp, { enabled: active });
+  const field = useRef<HTMLTextAreaElement>(null);
+  useAutosize(field, followUp, 200);
   const tail = useRef<HTMLDivElement>(null);
   // A new question brings the latest exchange into view once; after that the page is the reader's.
   useEffect(() => { if (pending !== null) tail.current?.scrollIntoView({ block: "nearest" }); }, [pending]);
@@ -79,6 +83,7 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
     event.preventDefault();
     const text = followUp.trim();
     if (!text || busy) return;
+    dictation.discard();
     setFollowUp("");
     onAsk(text);
   };
@@ -100,7 +105,10 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
     </header>
     <div className="gx-home-thread">
       {messages.map((message) => message.role === "user"
-        ? <article key={message.id} className="gx-home-question"><p>{message.content}</p></article>
+        ? <article key={message.id} className={`gx-home-question ${isInterrupted(message) ? "is-interrupted" : ""}`}>
+            <p>{message.content}</p>
+            {message.context.interrupted && <InterruptedNote reason={message.context.interrupted} disabled={busy} onRetry={() => onAsk(message.content)} onEdit={() => { setFollowUp(message.content); field.current?.focus(); }} />}
+          </article>
         : <article key={message.id} className="gx-home-answer">
             <AgentSteps steps={message.context.steps ?? []} />
             <AnswerBody content={message.content} citationCount={message.citations.length} onCitation={(index) => { const citation = message.citations[index]; if (citation) setEvidence({ citation, index }); }} />
@@ -116,7 +124,7 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
       <div ref={tail} />
     </div>
     <form className="gx-home-followup" onSubmit={send}>
-      <input value={followUp} onChange={(event) => setFollowUp(event.target.value)} placeholder={messages.length ? "Ask a follow-up…" : "Ask a question…"} aria-label="Ask a follow-up" disabled={busy} onFocus={dictation.claim} />
+      <textarea ref={field} rows={1} value={followUp} onChange={(event) => setFollowUp(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={messages.length ? "Ask a follow-up…" : "Ask a question…"} aria-label="Ask a follow-up" disabled={busy} onFocus={dictation.claim} />
       <button type="button" className={`gx-tool gx-tool-icon gx-mic ${dictation.dictating ? "is-on" : ""}`} onClick={dictation.toggle} disabled={busy} aria-pressed={dictation.listening} aria-label={dictation.listening ? "Stop voice input" : "Voice input"} title={dictation.error ?? withShortcut(dictation.listening ? "Stop voice input" : "Speak instead of typing", "dictate")}><Mic size={15} /></button>
       {busy
         ? <button type="button" className="gx-send is-stop" onClick={onCancel} aria-label="Stop"><Square size={12} fill="currentColor" /></button>

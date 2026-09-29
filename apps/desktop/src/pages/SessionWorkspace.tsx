@@ -46,6 +46,8 @@ import {
   UserRound,
   X,
 } from "lucide-react";
+import { useAutosize } from "../services/useAutosize";
+import { InterruptedNote, endsWithInterrupted, interruptedQuestion, isInterrupted } from "./interrupted";
 import { useDictatedField } from "../services/useDictatedField";
 import { withShortcut } from "../shortcuts/shortcuts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -251,15 +253,16 @@ function AnswerModel({ context }: { context: ConversationContext }) {
   </span>;
 }
 
-function ConversationMessage({ message, onCite, selected, promoting, promoted, branching, onSelect, onCopy, onPromote, onBranch }: { message: SessionMessage; onCite: (citation: ConversationCitation, index: number) => void; selected: boolean; promoting: boolean; promoted: boolean; branching: boolean; onSelect: () => void; onCopy: () => void; onPromote: () => void; onBranch: () => void }) {
+function ConversationMessage({ message, retryDisabled, onRetry, onEdit, onCite, selected, promoting, promoted, branching, onSelect, onCopy, onPromote, onBranch }: { message: SessionMessage; retryDisabled: boolean; onRetry: () => void; onEdit: () => void; onCite: (citation: ConversationCitation, index: number) => void; selected: boolean; promoting: boolean; promoted: boolean; branching: boolean; onSelect: () => void; onCopy: () => void; onPromote: () => void; onBranch: () => void }) {
   const isAssistant = message.role === "assistant";
   // Small talk and follow-ups on the conversation itself need no sources.
   const conversational = message.context.intent === "chat" || message.context.intent === "followup" || message.context.intent === "clarify";
   return (
-    <article className={`conversation-message role-${message.role} ${selected ? "is-selected" : ""}`} onClick={isAssistant ? onSelect : undefined}>
+    <article className={`conversation-message role-${message.role} ${selected ? "is-selected" : ""} ${isInterrupted(message) ? "is-interrupted" : ""}`} onClick={isAssistant ? onSelect : undefined}>
       <div className="message-author">{isAssistant ? <span className="assistant-mark"><BrandMark size={14} /></span> : <span className="user-mark"><UserRound size={13} /></span>}<span>{isAssistant ? "Gunther" : "You"}</span><time>{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(message.createdAt))}</time></div>
       {isAssistant && <AgentSteps steps={message.context.steps ?? []} />}
       <div className="message-body">{isAssistant ? <AnswerBody content={message.content} citationCount={message.citations.length} onCitation={(index) => { onSelect(); const citation = message.citations[index]; if (citation) onCite(citation, index); }} /> : <MessageContent content={message.content} />}</div>
+      {message.context.interrupted && <InterruptedNote reason={message.context.interrupted} disabled={retryDisabled} onRetry={onRetry} onEdit={onEdit} />}
       {isAssistant && message.context.modelError && <p className="message-model-error" role="note"><CircleAlert size={13} /><span>{message.context.modelError}{message.citations.length > 0 && " The quotes stand in for its answer."}</span></p>}
       {isAssistant && message.context.reasoning && <details className="message-thinking" onClick={(event) => event.stopPropagation()}><summary><ChevronRight size={12} />Thinking</summary><pre>{message.context.reasoning}</pre></details>}
       {isAssistant && <footer className="message-footer">
@@ -301,13 +304,16 @@ export function Composer({
 }) {
   const composerDisabled = !ready || readOnly;
   const dictation = useDictatedField(value, onChange, { enabled: !composerDisabled });
+  const field = useRef<HTMLTextAreaElement>(null);
+  useAutosize(field, value, 220);
+  const submit = () => { dictation.discard(); onSend(); };
   return (
     <div className="composer-wrap">
       <div className="composer">
-        <textarea value={value} rows={1} disabled={composerDisabled} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} placeholder={!ready ? "Opening a durable session…" : readOnly ? "Restore this session to continue the conversation." : "Ask, compare, challenge, or trace a claim…"} aria-label="Message Gunther" onFocus={dictation.claim} />
+        <textarea ref={field} value={value} rows={1} disabled={composerDisabled} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } }} placeholder={!ready ? "Opening a durable session…" : readOnly ? "Restore this session to continue the conversation." : "Ask, compare, challenge, or trace a claim…"} aria-label="Message Gunther" onFocus={dictation.claim} />
         <div className="composer-toolbar">
           <div><button title="Attach sources" aria-label="Attach sources" onClick={onSources}><Paperclip size={15} /></button><button className="scope-chip" onClick={onSources}><FolderOpen size={13} /><span>{sourceCount ? `${sourceCount} selected` : "All sources"}</span><ChevronDown size={11} /></button>{chapterTitle && <span className="chapter-chip"><BookOpen size={12} />{chapterTitle}</span>}{picker}{web && <button type="button" className={`web-toggle ${web.enabled ? "is-on" : ""}`} disabled={!web.available} aria-pressed={web.enabled} onClick={() => web.onChange(!web.enabled)} title={web.available ? (web.enabled ? "Ask may search the web. Click to keep it to your library." : "Ask is limited to your library. Click to let it search the web.") : "Web search is not set up. Add a Tavily key in Settings."}><Globe2 size={13} /><span>Web</span></button>}</div>
-          <div className="composer-actions"><button type="button" className={`mic-button ${dictation.dictating ? "is-on" : ""}`} disabled={composerDisabled || sending} onClick={dictation.toggle} aria-pressed={dictation.listening} aria-label={dictation.listening ? "Stop voice input" : "Voice input"} title={dictation.error ?? withShortcut(dictation.listening ? "Stop voice input" : "Speak instead of typing", "dictate")}><Mic size={15} /></button><button className={`send-button ${sending ? "is-stop" : ""}`} disabled={composerDisabled || (!sending && !value.trim())} onClick={sending ? onStop : onSend} aria-label={sending ? "Stop waiting for response" : "Send message"}>{sending ? <Square size={12} fill="currentColor" /> : <ArrowUp size={16} />}</button></div>
+          <div className="composer-actions"><button type="button" className={`mic-button ${dictation.dictating ? "is-on" : ""}`} disabled={composerDisabled || sending} onClick={dictation.toggle} aria-pressed={dictation.listening} aria-label={dictation.listening ? "Stop voice input" : "Voice input"} title={dictation.error ?? withShortcut(dictation.listening ? "Stop voice input" : "Speak instead of typing", "dictate")}><Mic size={15} /></button><button className={`send-button ${sending ? "is-stop" : ""}`} disabled={composerDisabled || (!sending && !value.trim())} onClick={sending ? onStop : submit} aria-label={sending ? "Stop waiting for response" : "Send message"}>{sending ? <Square size={12} fill="currentColor" /> : <ArrowUp size={16} />}</button></div>
         </div>
       </div>
       <p className="composer-note" role={dictation.error ? "alert" : undefined}>{dictation.error ? dictation.error : dictation.dictating ? (dictation.state === "finishing" ? "Finishing…" : "Listening… press the mic or ⌘⇧M to stop") : !ready ? "Preparing a durable conversation before accepting questions…" : readOnly ? "Archived sessions are read-only. Restore this session from its options to continue." : "Gunther can be wrong. Verify important conclusions in the cited source."}</p>
@@ -698,10 +704,22 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
     };
   };
 
-  const send = async () => {
-    const question = draft.trim();
+  /** Bring the saved conversation in, unless another question is already under way. */
+  const reloadSession = async (id: string) => {
+    if (responseController.current) return null;
+    try {
+      const fresh = await knowledgeApi.session(id);
+      setActiveSession((current) => current && current.id === fresh.id ? { ...current, messages: fresh.messages, messageCount: fresh.messageCount } : current);
+      return fresh;
+    } catch {
+      return null;
+    }
+  };
+
+  const send = async (again?: string) => {
+    const question = (again ?? draft).trim();
     if (!question || !activeSession || sending) return;
-    setDraft("");
+    if (again === undefined) setDraft("");
     setSending(true);
     setError(null);
     pendingQuestion.current = question;
@@ -733,7 +751,10 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
       pendingQuestion.current = "";
     } catch (reason) {
       if (!controller.signal.aborted) {
-        setDraft(question);
+        // The service keeps a question it could not answer in the history; only one it refused goes back to the composer.
+        if (responseController.current === controller) responseController.current = null;
+        const fresh = await reloadSession(activeSession.id);
+        if (!fresh || !endsWithInterrupted(fresh.messages, question)) setDraft(question);
         setError(reason instanceof Error ? reason.message : "The answer could not be generated");
       }
     } finally {
@@ -750,10 +771,16 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
       window.clearTimeout(localResponseTimer.current);
       localResponseTimer.current = null;
     }
-    if (pendingQuestion.current) setDraft(pendingQuestion.current);
+    const question = pendingQuestion.current;
     pendingQuestion.current = "";
     setSending(false);
-    onNotify("Stopped waiting. Your question is back in the composer.");
+    if (question && activeSession) {
+      // The question stays in the conversation, marked; the service's copy replaces this one.
+      const id = activeSession.id;
+      setActiveSession((current) => current && current.id === id ? { ...current, messages: [...current.messages, interruptedQuestion(id, question, "stopped")] } : current);
+      window.setTimeout(() => void reloadSession(id), 900);
+    }
+    onNotify("Stopped. Your question stays in the conversation.");
   };
 
   const toggleSource = async (id: string) => {
@@ -939,7 +966,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
         <div className="conversation-scroll" ref={scrollPane} onScroll={(event) => { const pane = event.currentTarget; followTail.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 80; }}>
           {error && <div className="conversation-error" role="alert"><CircleAlert size={14} /><span>{error}</span><button onClick={() => setError(null)}><X size={12} /></button></div>}
           {!loading && activeSession?.messages.length === 0 ? <WelcomePanel base={base} onPrompt={setDraft} /> : <h1 className="gx-sr-only">Ask {base.title}</h1>}
-          {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} onCite={(citation, index) => setEvidence({ citation, index })} selected={selectedMessageId === message.id} promoting={promotingMessageId === message.id} promoted={proposalMessageIds.has(message.id)} branching={branchingMessageId === message.id} onSelect={() => { setSelectedMessageId(message.id); setInspectorTab("context"); setInspectorCollapsed(false); }} onCopy={() => void copyMessage(message)} onPromote={() => void promoteMessage(message)} onBranch={() => void branchFromMessage(message)} />)}
+          {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} retryDisabled={sending || Boolean(activeSession?.archived)} onRetry={() => void send(message.content)} onEdit={() => setDraft(message.content)} onCite={(citation, index) => setEvidence({ citation, index })} selected={selectedMessageId === message.id} promoting={promotingMessageId === message.id} promoted={proposalMessageIds.has(message.id)} branching={branchingMessageId === message.id} onSelect={() => { setSelectedMessageId(message.id); setInspectorTab("context"); setInspectorCollapsed(false); }} onCopy={() => void copyMessage(message)} onPromote={() => void promoteMessage(message)} onBranch={() => void branchFromMessage(message)} />)}
           {sending && (liveAnswer.live ? <LiveAnswer state={liveAnswer.live} /> : <div className="thinking-row"><span className="assistant-mark"><BrandMark size={14} busy /></span><span><i /><i /><i /></span><small>Working out what to look up…</small></div>)}
         </div>
         <Composer picker={<ModelPicker menu={modelMenu} choice={askChoice} onChange={chooseModel} disabled={sending || Boolean(activeSession?.archived)} />} web={{ available: webSearch.available, enabled: webSearch.enabled, onChange: webSearch.setEnabled }} value={draft} sending={sending} sourceCount={activeSession?.selectedSourceIds.length ?? 0} chapterTitle={focusedChapter?.title} readOnly={Boolean(activeSession?.archived)} ready={!loading && activeSession !== null} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={() => { setInspectorTab("sources"); setInspectorCollapsed(false); }} />

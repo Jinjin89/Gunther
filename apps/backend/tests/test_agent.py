@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import openai
@@ -13,6 +14,7 @@ from gunther.agent import AskAgent, Evidence, ToolFailure, Tools, tidy_citations
 from gunther.config import Settings
 from gunther.llm import Turn
 from gunther.main import create_app
+from gunther.service import conversation_history
 
 SIDECAR_TOKEN = "sidecar-token-with-at-least-256-bits-000000000000000000000000"
 SIDECAR = {"X-Gunther-Token": SIDECAR_TOKEN}
@@ -368,6 +370,26 @@ def test_a_streamed_question_that_cannot_be_answered_says_why(tmp_path: Path) ->
     ):
         events = read_events(response)
     assert events == [("error", {"status": 404, "detail": "Session ses_missing was not found"})]
+
+
+def test_a_stopped_question_stays_in_the_history_but_not_in_what_the_model_reads(
+    tmp_path: Path,
+) -> None:
+    fake = FakeProvider("unused")
+    with app_for(tmp_path, fake) as client:
+        session_id = ready_session(client)
+        service = client.app.state.knowledge_service
+        service.record_interrupted_question(session_id, "  Why did I stop?  ", "stopped")
+        saved = client.get(f"/api/sessions/{session_id}", headers=SIDECAR).json()
+        stored = SimpleNamespace(
+            role="user", content="q", context_json='{"interrupted": "stopped"}'
+        )
+        history = conversation_history([stored])
+    [message] = saved["messages"]
+    assert message["role"] == "user" and message["content"] == "Why did I stop?"
+    assert message["context"]["interrupted"] == "stopped"
+    assert saved["messageCount"] == 1
+    assert history == []
 
 
 def test_home_questions_read_every_library_or_the_ones_pointed_at(tmp_path: Path) -> None:

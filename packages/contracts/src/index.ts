@@ -677,6 +677,8 @@ export interface ConversationContext {
   /** What it did to answer: the searches it ran, in order. */
   steps?: AgentStep[];
   webSearched?: boolean;
+  /** On a question that got no answer: stopped by the reader, or failed. */
+  interrupted?: "stopped" | "failed" | null;
 }
 
 export interface AgentStep {

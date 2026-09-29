@@ -137,3 +137,19 @@
 .mic-button.is-on { background: var(--gx-hover); color: var(--gx-ink); }
 .mic-button.is-on svg { animation: gx-mic-pulse 1.2s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .mic-button.is-on svg { animation: none; } }
+
+/* A question with no answer: still in the history, plainly marked. */
+.gx-interrupted { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 6px 0 2px; font-size: var(--gx-text-sm, 13px); color: var(--gx-ink-3, #6b6b66); }
+.gx-interrupted-label { display: inline-flex; align-items: center; gap: 6px; }
+.gx-interrupted-actions { display: inline-flex; gap: 4px; }
+.gx-interrupted-actions button { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 6px; color: var(--gx-ink-2, inherit); }
+.gx-interrupted-actions button:hover:not(:disabled) { background: var(--gx-hover); color: var(--gx-ink); }
+.gx-interrupted-actions button:focus-visible { outline: 0; box-shadow: var(--gx-ring); }
+.gx-interrupted-actions button:disabled { opacity: .4; }
+.is-interrupted .message-body, .gx-home-question.is-interrupted p { opacity: .72; }
+
+/* The follow-up field grows with what is typed, up to a limit. */
+.gx-home-followup { align-items: flex-end; }
+.gx-home-followup textarea { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-sm); background: var(--gx-surface); color: var(--gx-ink); font: inherit; line-height: 1.5; resize: none; max-height: 200px; overflow-y: auto; }
+.gx-home-followup textarea:focus-visible { outline: 0; border-color: color-mix(in srgb, var(--gx-ink) 32%, transparent); box-shadow: none; }
+.composer textarea { max-height: 220px; overflow-y: auto; resize: none; }

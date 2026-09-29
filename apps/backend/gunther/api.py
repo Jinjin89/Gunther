@@ -6,7 +6,7 @@ import re
 import secrets
 import threading
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, WebSocket, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -1080,7 +1080,7 @@ def file_home_session(
 
 
 class _Cancelled(Exception):
-    """The reader went away; the answer is dropped and the question is not saved."""
+    """The reader went away; the answer is dropped and the question is kept, marked stopped."""
 
 
 @router.post("/sessions/{session_id}/messages/stream")
@@ -1093,30 +1093,50 @@ async def stream_session_message(
 
     ``intent``, ``step`` and ``text`` events report the agent at work; ``done``
     carries the saved turn, and ``error`` says why there is none. Closing the
-    connection stops the work and saves nothing.
+    connection stops the work and keeps the question in the
+    history, marked as stopped.
     """
 
     service = _service(request)
     updates: queue.Queue[tuple[str, dict]] = queue.Queue()
     stopped = threading.Event()
+    finished = threading.Event()
+    settle_lock = threading.Lock()
+    settled = False
+
+    def keep_question(reason: Literal["stopped", "failed"]) -> None:
+        """Save the unanswered question once, whichever side notices first."""
+        nonlocal settled
+        with settle_lock:
+            if settled:
+                return
+            settled = True
+        service.record_interrupted_question(session_id, payload.content, reason)
 
     def hear(event: dict) -> None:
         if stopped.is_set():
             raise _Cancelled
-        updates.put((event["type"], event))
+        if event["type"] != "saving":
+            updates.put((event["type"], event))
 
     def work() -> None:
         try:
             turn = service.create_session_turn(session_id, payload, hear)
+            finished.set()
             updates.put(("done", turn.model_dump(mode="json", by_alias=True)))
         except _Cancelled:
+            keep_question("stopped")
             updates.put(("cancelled", {}))
         except LookupError as error:
+            finished.set()
             updates.put(("error", {"status": 404, "detail": str(error)}))
         except ValueError as error:
+            finished.set()
             updates.put(("error", {"status": 400, "detail": str(error)}))
         except Exception:
             logger.exception("Answering a question failed")
+            finished.set()
+            keep_question("failed")
             updates.put(("error", {"status": 500, "detail": "The answer could not be written."}))
 
     threading.Thread(target=work, daemon=True).start()
@@ -1132,6 +1152,8 @@ async def stream_session_message(
                     return
         finally:
             stopped.set()
+            if not finished.is_set():
+                keep_question("stopped")
 
     return StreamingResponse(
         events(),

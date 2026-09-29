@@ -191,12 +191,12 @@ export const SearchComposer = forwardRef<SearchComposerHandle, SearchComposerPro
     }
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
-      if (onAsk && value.trim()) onAsk();
+      if (onAsk && value.trim()) { dictation.discard(); onAsk(); }
       return;
     }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      if (canSubmit) onSubmit();
+      if (canSubmit) { dictation.discard(); onSubmit(); }
       return;
     }
     if (event.key === "Escape" && (value || mentionIds.length)) {
@@ -217,7 +217,7 @@ export const SearchComposer = forwardRef<SearchComposerHandle, SearchComposerPro
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (canSubmit) onSubmit();
+    if (canSubmit) { dictation.discard(); onSubmit(); }
   };
 
   const hint = opensLibrary

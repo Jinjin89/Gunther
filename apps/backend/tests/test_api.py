@@ -784,6 +784,7 @@ def test_session_keeps_messages_context_and_citations() -> None:
             "intent": None,
             "steps": [],
             "webSearched": False,
+            "interrupted": None,
         }
 
         loaded = client.get(f"/api/sessions/{session_id}").json()
@@ -1280,6 +1281,7 @@ def test_session_grounds_an_answer_in_raw_source_text_without_extracted_claims()
             "intent": None,
             "steps": [],
             "webSearched": False,
+            "interrupted": None,
         }
         assert "Clustering lecture" in turn["assistantMessage"]["content"]
 

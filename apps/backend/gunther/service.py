@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from threading import Lock
+from typing import Literal
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -181,6 +182,11 @@ def conversation_history(messages: list[SessionMessage]) -> list[Turn]:
     turns: list[Turn] = []
     for message in messages:
         if message.role == "user":
+            # A question that was stopped or failed has no answer; the model never saw it.
+            if '"interrupted"' in (message.context_json or "") and json.loads(
+                message.context_json
+            ).get("interrupted"):
+                continue
             turns.append(Turn("user", message.content))
         elif message.role == "assistant":
             context = json.loads(message.context_json or "{}")
@@ -2042,6 +2048,8 @@ class KnowledgeService:
                 steps=[step.out() for step in response.steps],
                 web_searched=any(step.tool == "search_web" for step in response.steps),
             )
+            if events:
+                events({"type": "saving"})  # a reader who left by now gets nothing saved
             now = utc_now()
             user_message = SessionMessage(
                 id=_id("msg"),
@@ -2073,6 +2081,36 @@ class KnowledgeService:
                 user_message=self._message_out(user_message),
                 assistant_message=self._message_out(assistant_message),
             )
+
+    def record_interrupted_question(
+        self, session_id: str, content: str, reason: Literal["stopped", "failed"]
+    ) -> None:
+        """Keep a question that got no answer in the history, marked as such."""
+
+        text = content.strip()
+        if not text:
+            return
+        with session_scope(self.sessions) as session:
+            knowledge_session = session.scalar(
+                self._session_query().where(KnowledgeSession.id == session_id)
+            )
+            if knowledge_session is None or knowledge_session.archived:
+                return
+            now = utc_now()
+            knowledge_session.messages.append(
+                SessionMessage(
+                    id=_id("msg"),
+                    session_id=knowledge_session.id,
+                    role="user",
+                    content=text,
+                    context_json=ConversationContextOut(interrupted=reason).model_dump_json(),
+                    created_at=now,
+                )
+            )
+            if knowledge_session.title == "New session":
+                title = re.sub(r"\s+", " ", text)
+                knowledge_session.title = title[:62] + ("…" if len(title) > 62 else "")
+            knowledge_session.updated_at = now
 
     def _proposal_out(
         self,

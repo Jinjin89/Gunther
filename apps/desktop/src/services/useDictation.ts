@@ -41,6 +41,12 @@ export function useDictation(onText: (text: string) => void) {
     setState("idle");
   }, []);
 
+  /** Hang up at once, without waiting for a last phrase, so nothing more is typed. */
+  const cancel = useCallback(() => {
+    cancelled.current = true;
+    release();
+  }, [release]);
+
   const stop = useCallback(() => {
     const live = parts.current;
     if (!live) { setState("idle"); return; }
@@ -105,5 +111,5 @@ export function useDictation(onText: (text: string) => void) {
 
   useEffect(() => () => { cancelled.current = true; release(); }, [release]);
 
-  return { state, error, start, stop, clearError: () => setError(null) };
+  return { state, error, start, stop, cancel: release, clearError: () => setError(null) };
 }

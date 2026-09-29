@@ -560,6 +560,8 @@ class ConversationContextOut(ApiModel):
     intent: Literal["chat", "followup", "library", "web", "both", "clarify"] | None = None
     steps: list[dict[str, object]] = Field(default_factory=list)
     web_searched: bool = False
+    # On a question that got no answer: "stopped" by the reader, or "failed".
+    interrupted: Literal["stopped", "failed"] | None = None
 
 
 class SessionMessageOut(ApiModel):
