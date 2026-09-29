@@ -155,7 +155,8 @@ fn log_backend_event(data_dir: &Path, message: &str) {
     }
 }
 
-fn backend_executable() -> Result<PathBuf, Box<dyn std::error::Error>> {
+#[cfg(target_os = "macos")]
+fn backend_executable(_app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let executable = std::env::current_exe()?;
     let contents_dir = executable
         .parent()
@@ -168,6 +169,15 @@ fn backend_executable() -> Result<PathBuf, Box<dyn std::error::Error>> {
         .join("Contents")
         .join("MacOS")
         .join("GuntherBackend"))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn backend_executable(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    Ok(app
+        .path()
+        .resource_dir()?
+        .join("backend")
+        .join(format!("gunther-backend{}", std::env::consts::EXE_SUFFIX)))
 }
 
 fn start_backend(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -184,7 +194,14 @@ fn start_backend(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let log_path = data_dir.join("backend.log");
     let stdout = secure_open(&log_path, true)?;
     let stderr = stdout.try_clone()?;
-    let child = Command::new(backend_executable()?)
+    let mut command = Command::new(backend_executable(app)?);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let child = command
         .arg("--data-dir")
         .arg(&data_dir)
         .arg("--port")
@@ -227,7 +244,8 @@ fn create_capture_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-#[tauri::command]
+// `async` runs this off the main thread, so the wait below never freezes the window.
+#[tauri::command(async)]
 fn backend_connection(app: tauri::AppHandle) -> Result<BackendConnection, String> {
     if cfg!(debug_assertions) {
         return Ok(BackendConnection {
@@ -249,7 +267,8 @@ fn backend_connection(app: tauri::AppHandle) -> Result<BackendConnection, String
         .clone()
         .ok_or_else(|| "Gunther's local knowledge service did not launch".to_string())?;
     let token_path = ready_token_path(&data_dir, &launch_nonce);
-    for _ in 0..100 {
+    // First launch can be slow while antivirus scans the freshly installed helper.
+    for _ in 0..300 {
         if let Ok(contents) = secure_read(&token_path) {
             if let Some(token) = parse_ready_token(&contents, &launch_nonce) {
                 return Ok(BackendConnection {

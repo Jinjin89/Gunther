@@ -181,6 +181,36 @@ npm run mobile:analyze
 npm run mobile:test
 ```
 
+### 打包桌面安装包
+
+`npm run build:desktop` 在当前系统上把前端、Rust 外壳和冻结的 Python Helper 打成一个安装包。PyInstaller 不能跨平台构建，所以每个平台都要在对应系统上打包。
+
+| 平台 | 产物（`apps/desktop/src-tauri/target/release/bundle/`） | 安装后 Helper 位置 |
+| --- | --- | --- |
+| macOS | `dmg/Gunther_<版本>_<arch>.dmg`、`macos/Gunther.app` | `Gunther.app/Contents/Helpers/GuntherBackend.app` |
+| Windows | `nsis/Gunther_<版本>_x64-setup.exe`、`msi/*.msi` | 安装目录下的 `backend\` |
+| Linux | `appimage/*.AppImage`、`deb/*.deb` | `/usr/lib/Gunther/backend/`（AppImage 内同样路径） |
+
+macOS 正式发布（Developer ID 签名 + 公证）：
+
+```bash
+export APPLE_SIGNING_IDENTITY="Developer ID Application: <名字> (<TEAMID>)"
+export APPLE_ID="<Apple ID>" APPLE_PASSWORD="<App 专用密码>" APPLE_TEAM_ID="<TEAMID>"
+npm run build:desktop
+```
+
+不设置这些变量时仍是 ad-hoc 签名，只适合本机使用；设置后 Helper 会强制重建，并由 PyInstaller 用同一身份（hardened runtime + `HelperEntitlements.plist`）签名，外层 App 由 Tauri 签名并公证。DMG 只包含构建机的架构（在 Apple Silicon 上构建即 arm64）。
+
+通过 GitHub 发布：先把 `apps/desktop/src-tauri/tauri.conf.json` 的 `version` 改成新版本，然后推送同名 tag，例如 `git tag v0.1.0 && git push origin v0.1.0`。[`release.yml`](./.github/workflows/release.yml) 会在 macOS（Apple Silicon）、Windows 和 Linux runner 上分别构建，并把 DMG、`setup.exe`/MSI、AppImage/deb 上传到同一个 draft Release，检查后在 GitHub 上手动 Publish。tag 与版本号不一致时会直接失败。macOS 签名与公证使用以下仓库 Secrets（缺少时仍构建 ad-hoc 签名的 DMG）：
+
+| Secret | 内容 |
+| --- | --- |
+| `APPLE_CERTIFICATE` | 导出的 Developer ID Application 证书 `.p12`，base64 编码（`base64 -i cert.p12 \| pbcopy`） |
+| `APPLE_CERTIFICATE_PASSWORD` | 导出 `.p12` 时设置的密码 |
+| `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` | 公证用的 Apple ID、App 专用密码和 Team ID |
+
+Windows / Linux 构建机需要 Node 20.19+、Rust、uv；Linux 另需 Tauri 系统依赖（如 `libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev`）。在这两个平台上 Helper 目录是 Tauri 资源，所以单独运行 `npm run check:desktop` 前需先执行一次 `npm run prepare:sidecar -w @gunther/desktop`。
+
 本轮最终回归：Backend 177 passed/1 skipped；Desktop 74 passed；Rust 10 passed；Flutter 108 passed、`flutter analyze` 0 issues；真实 Chrome production bundle → 随机 loopback backend E2E 32/32；冻结 Helper 随机 loopback 启动 1 passed。
 
 当前仓库提供与最终源码一致并已校验的 macOS 与 Android 工程候选：
