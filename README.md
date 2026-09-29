@@ -201,7 +201,7 @@ npm run build:desktop
 
 不设置这些变量时仍是 ad-hoc 签名，只适合本机使用；设置后 Helper 会强制重建，并由 PyInstaller 用同一身份（hardened runtime + `HelperEntitlements.plist`）签名，外层 App 由 Tauri 签名并公证。DMG 只包含构建机的架构（在 Apple Silicon 上构建即 arm64）。
 
-通过 GitHub 发布：先把 `apps/desktop/src-tauri/tauri.conf.json` 的 `version` 改成新版本，然后推送同名 tag，例如 `git tag v0.1.0 && git push origin v0.1.0`。[`release.yml`](./.github/workflows/release.yml) 会在 macOS（Apple Silicon）、Windows 和 Linux runner 上分别构建，并把 DMG、`setup.exe`/MSI、AppImage/deb 上传到同一个 draft Release，检查后在 GitHub 上手动 Publish。tag 与版本号不一致时会直接失败。macOS 签名与公证使用以下仓库 Secrets（缺少时仍构建 ad-hoc 签名的 DMG）：
+通过 GitHub 发布：先把 `apps/desktop/src-tauri/tauri.conf.json` 的 `version` 改成新版本，然后推送同名 tag，例如 `git tag v0.1.0 && git push origin v0.1.0`。[`release.yml`](./.github/workflows/release.yml) 会在 macOS（Apple Silicon）、Windows 和 Linux runner 上分别构建，并把 DMG、`setup.exe`/MSI、AppImage/deb 上传到同一个 draft Release；三个平台全部成功后自动发布，任一平台失败则保持 draft。tag 与版本号不一致时会直接失败。macOS 签名与公证使用以下仓库 Secrets（缺少时仍构建 ad-hoc 签名的 DMG）：
 
 | Secret | 内容 |
 | --- | --- |

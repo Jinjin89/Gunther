@@ -1,6 +1,6 @@
 name: Release
 
-# Push a tag matching the app version (e.g. v0.1.0); installers land on a draft release.
+# Push a tag matching the app version (e.g. v0.1.0); the release publishes once every installer is attached.
 on:
   push:
     tags: ["v*"]
@@ -134,3 +134,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         working-directory: apps/desktop/src-tauri/target/release/bundle
         run: gh release upload "$GITHUB_REF_NAME" ${{ matrix.assets }} --clobber
+
+  # Runs only when every platform built, so a partial release is never public.
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false
