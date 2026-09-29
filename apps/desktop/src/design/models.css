@@ -74,7 +74,6 @@
 .gx-model-option[aria-checked="true"] { font-weight: 600; }
 .gx-model-option .gx-model-check { color: var(--gx-ink); }
 .gx-model-option.is-mapped > span { color: var(--gx-muted); }
-.gx-model-option.is-footer { margin-top: 4px; border-top: 1px solid var(--gx-line); border-radius: 0 0 7px 7px; color: var(--gx-muted) !important; font-size: var(--gx-text-xs); }
 
 /* Who answered */
 .message-model { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--gx-faint); font-size: var(--gx-text-2xs); }
@@ -152,7 +151,7 @@
   place-items: center;
   color: var(--gx-ink-2);
   font-family: var(--gx-font-display);
-  font-size: 14px;
+  font-size: calc(14px * var(--gx-fs, 1));
   font-weight: 600;
   line-height: 1;
 }
@@ -168,14 +167,14 @@
   background: var(--gx-surface-2);
 }
 .service-control .provider-model input.provider-model-label { height: 28px; max-width: none; font-size: var(--gx-text-xs); font-weight: 600; }
-.provider-model code { overflow: hidden; color: var(--gx-faint); font-family: var(--gx-font-mono); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.provider-model code { overflow: hidden; color: var(--gx-faint); font-family: var(--gx-font-mono); font-size: calc(11.5px * var(--gx-fs, 1)); text-overflow: ellipsis; white-space: nowrap; }
 .provider-model select { width: 100%; }
 .provider-model-vision { display: inline-flex; align-items: center; gap: 5px; color: var(--gx-muted); font-size: var(--gx-text-2xs); white-space: nowrap; cursor: pointer; }
 .provider-models-empty { margin: 0; color: var(--gx-faint); font-size: var(--gx-text-xs); }
 .provider-model-add { max-width: 640px; display: flex; align-items: center; gap: 6px; }
 .service-control .provider-model-add input { flex: 1; max-width: none; }
 .provider-offered { max-width: 640px; display: flex; flex-wrap: wrap; gap: 5px; }
-.provider-offered .gx-chip { height: 26px; padding: 0 9px; font-family: var(--gx-font-mono); font-size: 11.5px; }
+.provider-offered .gx-chip { height: 26px; padding: 0 9px; font-family: var(--gx-font-mono); font-size: calc(11.5px * var(--gx-fs, 1)); }
 .provider-offered small { color: var(--gx-faint); font-size: var(--gx-text-2xs); align-self: center; }
 .provider-presets { padding: 12px 17px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .provider-remove { color: var(--gx-danger) !important; }

@@ -3,10 +3,10 @@ import { EFFORTS } from "@gunther/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { knowledgeApi } from "../api";
 
-/** Opens Settings from anywhere (the model menu's "Set up a model"). */
+/** Opens Settings from anywhere. */
 export const OPEN_SETTINGS_EVENT = "gunther:open-settings";
 /** The model and effort this device last chose for Ask; new conversations start from it. */
-export const ASK_CHOICE_STORAGE_KEY = "gunther.askModel";
+const ASK_CHOICE_STORAGE_KEY = "gunther.askModel";
 const ASK_CHOICE_EVENT = "gunther:ask-model";
 /** Providers or jobs changed in Settings: model menus and statuses reload. */
 export const MODELS_CHANGED_EVENT = "gunther:models-changed";
@@ -35,7 +35,7 @@ export function resolveEffort(effort: Effort, levels: EffortLevel[]): EffortLeve
   })[0] ?? null;
 }
 
-export function readDeviceChoice(): AskChoice | null {
+function readDeviceChoice(): AskChoice | null {
   try {
     const stored = JSON.parse(window.localStorage.getItem(ASK_CHOICE_STORAGE_KEY) ?? "null") as Partial<AskChoice> | null;
     if (!stored || !EFFORTS.includes(stored.effort as Effort)) return null;
@@ -45,7 +45,7 @@ export function readDeviceChoice(): AskChoice | null {
   }
 }
 
-export function writeDeviceChoice(choice: AskChoice) {
+function writeDeviceChoice(choice: AskChoice) {
   try {
     window.localStorage.setItem(ASK_CHOICE_STORAGE_KEY, JSON.stringify(choice));
   } catch {
@@ -106,4 +106,42 @@ export function useDeviceChoice(): [AskChoice | null, (choice: AskChoice) => voi
     };
   }, []);
   return [choice, writeDeviceChoice];
+}
+
+/** Home's search and Ask share one Web switch, remembered on this device. */
+export const WEB_PREFERENCE_KEY = "gunther:search-web";
+const WEB_PREFERENCE_EVENT = "gunther:search-web-changed";
+
+/**
+ * Whether web search is set up (a Tavily key in Settings), and whether this
+ * device has it switched on for questions. Off unless it is both.
+ */
+export function useWebSearch() {
+  const [available, setAvailable] = useState(false);
+  const [preferred, setPreferred] = useState(() => window.localStorage.getItem(WEB_PREFERENCE_KEY) === "on");
+  const load = useCallback(() => {
+    void Promise.resolve().then(() => knowledgeApi.health()).then((health) => setAvailable(health.webSearchMode === "tavily")).catch(() => setAvailable(false));
+  }, []);
+  useEffect(() => {
+    load();
+    const sync = () => setPreferred(window.localStorage.getItem(WEB_PREFERENCE_KEY) === "on");
+    window.addEventListener(MODELS_CHANGED_EVENT, load);
+    window.addEventListener(WEB_PREFERENCE_EVENT, sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener(MODELS_CHANGED_EVENT, load);
+      window.removeEventListener(WEB_PREFERENCE_EVENT, sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, [load]);
+  const setEnabled = useCallback((next: boolean) => {
+    try {
+      window.localStorage.setItem(WEB_PREFERENCE_KEY, next ? "on" : "off");
+    } catch {
+      // The choice still holds for this session of the app.
+    }
+    setPreferred(next);
+    window.dispatchEvent(new CustomEvent(WEB_PREFERENCE_EVENT));
+  }, []);
+  return { available, enabled: available && preferred, preferred, setEnabled };
 }

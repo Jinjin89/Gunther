@@ -81,7 +81,7 @@
   font-size: var(--gx-text-xs);
   font-weight: 550;
 }
-.service-source { padding: 1px 6px; border-radius: var(--gx-radius-pill); background: var(--gx-hover); color: var(--gx-faint); font-family: var(--gx-font-mono); font-size: 10.5px; font-weight: 500; cursor: help; }
+.service-source { padding: 1px 6px; border-radius: var(--gx-radius-pill); background: var(--gx-hover); color: var(--gx-faint); font-family: var(--gx-font-mono); font-size: calc(10.5px * var(--gx-fs, 1)); font-weight: 500; cursor: help; }
 .service-control { min-width: 0; display: grid; gap: 5px; }
 .service-control > small { min-height: 0; color: var(--gx-faint); font-size: var(--gx-text-2xs); line-height: 1.45; }
 .service-control > small:empty { display: none; }
@@ -106,7 +106,7 @@
 .service-control input[type="number"] { max-width: 120px; font-variant-numeric: tabular-nums; }
 .service-control input.is-mono,
 .service-control input[type="password"],
-.service-secret-input input { font-family: var(--gx-font-mono); font-size: 12.5px; }
+.service-secret-input input { font-family: var(--gx-font-mono); font-size: calc(12.5px * var(--gx-fs, 1)); }
 .service-control input::placeholder { color: var(--gx-ghost); }
 .service-control input:hover { border-color: var(--gx-line-3); }
 .service-control input:focus { border-color: var(--gx-line-3); outline: none; box-shadow: var(--gx-ring); }
@@ -154,7 +154,7 @@
   border-radius: var(--gx-radius-sm);
   color: var(--gx-ink-2);
   font-family: var(--gx-font-mono);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--gx-fs, 1));
   letter-spacing: 0.02em;
 }
 .service-secret-mask svg { color: var(--gx-faint); }

@@ -1,4 +1,6 @@
 import type {
+  AgentStep,
+  ConversationContext,
   Artifact,
   ArtifactSummary,
   Assertion,
@@ -63,6 +65,7 @@ import type {
   TrashItem,
   TrashItemKind,
 } from "@gunther/contracts";
+import { readServerEvents } from "./sse";
 import { createArtifactSchema, webCaptureSchema } from "@gunther/contracts";
 import { invoke } from "@tauri-apps/api/core";
 import type {
@@ -73,15 +76,19 @@ import type {
   WorkspaceBootstrap,
 } from "./devicePairing";
 
+/** What the agent reports while answering (see the service's message stream). */
+export type AnswerEvent =
+  | { type: "intent"; intent: NonNullable<ConversationContext["intent"]> }
+  | { type: "step"; state: "running" | "done"; tool: AgentStep["tool"]; label: string; query?: string; found?: number; error?: string | null }
+  | { type: "text"; text: string };
+
 interface Health {
   status: "ok";
   extractionMode: "local" | "model";
-  webSearchMode: "openai" | "not_configured";
-  transcriptionMode: "sensevoice_local" | "openai_realtime" | "not_configured";
-  transcriptionProvider: "sensevoice" | "openai" | "none";
+  webSearchMode: "tavily" | "not_configured";
+  transcriptionMode: "sensevoice_local" | "compatible" | "not_configured";
+  transcriptionProvider: "sensevoice" | "compatible" | "none";
   transcriptionModel: string;
-  transcriptionDelay: "low" | "medium" | "high";
-  transcriptionLanguages: string[];
   /** The model that writes recording summaries ("DeepSeek · Flash"), or "off". */
   summaryMode: string;
   /** The model that writes each capture's summary, or "off". */
@@ -107,7 +114,7 @@ let desktopBackendReady: Promise<void> | null = null;
 
 const wait = (milliseconds: number) => new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
 
-export async function initializeBackendConnection(): Promise<void> {
+async function initializeBackendConnection(): Promise<void> {
   connectionInitialization ??= (async () => {
     if (!tauriRuntime) return;
     let connection: BackendConnection;
@@ -170,11 +177,6 @@ async function waitForDesktopBackend(): Promise<void> {
 }
 
 export const ensureBackendReady = (): Promise<void> => waitForDesktopBackend();
-
-export function currentBackendBaseUrl(): string {
-  return configuredBase
-    ?? (tauriRuntime ? "http://127.0.0.1:8787" : window.location.origin);
-}
 
 async function backendFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   await waitForDesktopBackend();
@@ -583,6 +585,38 @@ export const knowledgeApi = {
       method: "POST",
       body: JSON.stringify(payload),
       ...(signal ? { signal } : {}),
+    }),
+  /** Send a message and hear the agent at work; resolves with the saved turn. */
+  sendMessageStream: async (id: string, payload: CreateSessionMessageInput, onEvent: (event: AnswerEvent) => void, signal?: AbortSignal): Promise<ConversationTurn> => {
+    await waitForDesktopBackend();
+    let response: Response;
+    try {
+      response = await backendFetch(`${apiBase}/sessions/${encodeURIComponent(id)}/messages/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        ...(signal ? { signal } : {}),
+      });
+    } catch (reason) {
+      if (reason instanceof TypeError) throw new ServiceUnavailableError();
+      throw reason;
+    }
+    if (!response.ok || !response.body) {
+      const body = (await response.json().catch(() => null)) as { detail?: string } | null;
+      throw new Error(body?.detail ?? `Request failed with status ${response.status}`);
+    }
+    for await (const message of readServerEvents(response.body)) {
+      const data = JSON.parse(message.data) as Record<string, unknown>;
+      if (message.event === "done") return data as unknown as ConversationTurn;
+      if (message.event === "error") throw new Error(typeof data.detail === "string" ? data.detail : "The answer could not be written.");
+      onEvent(data as unknown as AnswerEvent);
+    }
+    throw new Error("The connection closed before the answer was finished.");
+  },
+  fileSession: (id: string, knowledgeBaseId: string) =>
+    request<KnowledgeSessionSummary>(`/sessions/${encodeURIComponent(id)}/file`, {
+      method: "POST",
+      body: JSON.stringify({ knowledgeBaseId }),
     }),
   createProposal: (sessionId: string, messageId: string, payload: CreateKnowledgeProposalInput = {}) =>
     request<KnowledgeProposal>(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/proposal`, {

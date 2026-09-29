@@ -2,13 +2,13 @@ import type { ServiceField, ServiceSettings as Service, ServiceSettingValue, Ser
 import { AudioLines, Check, ChevronRight, CircleAlert, Eye, EyeOff, FileText, Globe, KeyRound, Plug, TriangleAlert } from "lucide-react";
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { knowledgeApi } from "../api";
-import { MODELS_CHANGED_EVENT } from "../models/askModel";
+import { announceModelsChanged, MODELS_CHANGED_EVENT } from "../models/askModel";
 
 type Draft = Record<string, ServiceSettingValue>;
 type Values = Record<string, ServiceSettingValue>;
 
 const SERVICE_ICONS: Record<string, ReactNode> = {
-  openai: <Globe size={15} />,
+  web_search: <Globe size={15} />,
   transcription: <AudioLines size={15} />,
   summaries: <FileText size={15} />,
 };
@@ -307,9 +307,10 @@ export function ServiceSettings({ onNotify }: { onNotify: (message: string) => v
   }, []);
 
   const replace = (next: Service) => setServices((current) => current?.map((service) => service.id === next.id ? next : service) ?? null);
-  // Services lean on each other (transcription on OpenAI's key); refresh them all after a save.
+  // Refresh every service after a save, and tell Ask (its Web switch follows the key).
   const saved = (next: Service) => {
     replace(next);
+    announceModelsChanged();
     void knowledgeApi.serviceSettings().then((list) => setServices(list.services)).catch(() => undefined);
   };
 

@@ -15,18 +15,14 @@ import {
   AudioLines,
   ArrowLeft,
   ArrowRight,
-  BookOpen,
   Camera,
   Check,
-  ChevronLeft,
   ChevronRight,
   CircleHelp,
   Copy,
   Download,
-  ExternalLink,
   FilePlus2,
   FileText,
-  GitBranch,
   History,
   Layers3,
   Link2,
@@ -34,17 +30,13 @@ import {
   MessageSquareText,
   Mic2,
   NotebookText,
-  Play,
   Plus,
-  Quote,
   Settings2,
   ShieldCheck,
   Sparkles,
-  Target,
-  UsersRound,
   X,
 } from "lucide-react";
-import type { AtlasMode, AtlasPopulation, AtlasZoom, KnowledgeBase, KnowledgeChapter } from "../atlas";
+import type { AtlasMode, KnowledgeBase, KnowledgeChapter } from "../atlas";
 import { knowledgeApi, recordingAssetUrl, sourceAssetUrl } from "../api";
 import { WebSnapshotCard } from "../components/WebSnapshotCard";
 import { SourceEvidence } from "../components/SourceEvidence";
@@ -73,9 +65,9 @@ interface KnowledgeBaseWorkspaceProps {
 }
 
 const modeLabels: Array<{ id: AtlasMode; label: string }> = [
+  { id: "ask", label: "Ask" },
   { id: "overview", label: "Overview" },
   { id: "sources", label: "Sources" },
-  { id: "ask", label: "Ask" },
   { id: "outputs", label: "Outputs" },
 ];
 
@@ -114,103 +106,6 @@ function BaseHeader({ base, mode, onMode, onBack, onExport, onEdit }: Pick<Knowl
       <button className="base-edit" onClick={onEdit} aria-label="Edit library details" title="Edit library details"><Settings2 size={14} /></button>
       <button className="base-export" onClick={onExport}><Download size={14} />Export</button>
     </header>
-  );
-}
-
-function ChapterRail({ base, selectedId, onSelect }: { base: KnowledgeBase; selectedId: string; onSelect: (id: string) => void }) {
-  return (
-    <aside className="chapter-rail">
-      <div className="chapter-rail-heading">
-        <span>The field</span>
-        <small>{base.chapters.length} chapters</small>
-      </div>
-      <div className="chapter-spine">
-        {base.chapters.map((chapter) => (
-          <button key={chapter.id} className={selectedId === chapter.id ? "is-active" : ""} onClick={() => onSelect(chapter.id)}>
-            <i><span /></i>
-            <span className="chapter-number">{chapter.number}</span>
-            <span className="chapter-rail-copy"><strong>{chapter.title}</strong><small>{chapter.question}</small></span>
-            <span className={`chapter-status status-${chapter.status}`} />
-          </button>
-        ))}
-      </div>
-    </aside>
-  );
-}
-
-function LearnView({ base, selectedChapterId, onChapter, onEvidence, onAdd }: Pick<KnowledgeBaseWorkspaceProps, "base" | "selectedChapterId" | "onChapter" | "onEvidence" | "onAdd">) {
-  const chapterIndex = Math.max(0, base.chapters.findIndex((item) => item.id === selectedChapterId));
-  const chapter = base.chapters[chapterIndex] ?? base.chapters[0]!;
-  const sourceCount = chapter.sourceIds.length;
-  const previous = base.chapters[chapterIndex - 1];
-  const next = base.chapters[chapterIndex + 1];
-
-  return (
-    <div className="learn-layout page-enter">
-      <ChapterRail base={base} selectedId={chapter.id} onSelect={onChapter} />
-      <article className="chapter-reader" key={chapter.id}>
-        <header className="chapter-reader-header">
-          <span className="chapter-overline">Chapter {chapter.number} · {chapter.status}</span>
-          <h1>{chapter.title}</h1>
-          <p className="chapter-question">{chapter.question}</p>
-          <p className="chapter-summary">{chapter.summary}</p>
-        </header>
-
-        <div className="chapter-decision">
-          <Target size={17} />
-          <span><small>{chapter.decision.label}</small><strong>{chapter.decision.answer}</strong></span>
-        </div>
-
-        <section className="chapter-section">
-          <div className="chapter-section-title"><span>What this chapter establishes</span><small>{chapter.progress}% shaped</small></div>
-          <div className="takeaway-list">
-            {chapter.takeaways.map((takeaway) => <div key={takeaway}><Check size={14} /><p>{takeaway}</p></div>)}
-          </div>
-        </section>
-
-        {chapter.topics.length > 0 && (
-          <section className="chapter-section">
-            <div className="chapter-section-title"><span>Inside this chapter</span><small>Open only when needed</small></div>
-            <div className="topic-list">
-              {chapter.topics.map((topic) => (
-                <details key={topic.id} className="topic-row">
-                  <summary>
-                    <span><strong>{topic.title}</strong><small>{topic.summary}</small></span>
-                    <i><PlusMinus /></i>
-                  </summary>
-                  {(topic.markers || topic.caution) && (
-                    <div className="topic-detail">
-                      {topic.markers && <div><span>Supporting signals</span><p>{topic.markers.map((marker) => <code key={marker}>{marker}</code>)}</p></div>}
-                      {topic.caution && <div className="topic-caution"><CircleHelp size={14} /><p>{topic.caution}</p></div>}
-                    </div>
-                  )}
-                </details>
-              ))}
-            </div>
-          </section>
-        )}
-
-        <button className="evidence-callout" onClick={() => onEvidence(chapter)}>
-          <span className="evidence-icon"><Quote size={16} /></span>
-          <span><small>Grounding</small><strong>{sourceCount > 0 ? `${sourceCount} sources support this chapter` : "This outline is waiting for sources"}</strong></span>
-          <ArrowRight size={15} />
-        </button>
-
-        <footer className="reader-pagination">
-          <button disabled={!previous} onClick={() => previous && onChapter(previous.id)}><ChevronLeft size={15} /><span><small>Previous</small><strong>{previous?.title ?? "Beginning"}</strong></span></button>
-          <button disabled={!next} onClick={() => next && onChapter(next.id)}><span><small>Next</small><strong>{next?.title ?? "Field complete"}</strong></span><ChevronRight size={15} /></button>
-        </footer>
-      </article>
-      <aside className="chapter-context">
-        <span className="context-label">Why it matters</span>
-        <p>{chapter.question}</p>
-        <div className="chapter-progress-ring" style={{ "--progress": `${chapter.progress * 3.6}deg` } as React.CSSProperties}>
-          <span><strong>{chapter.progress}%</strong><small>shaped</small></span>
-        </div>
-        <div className="context-note"><Sparkles size={14} /><p>The configured interpretation engine can suggest connections, but only your accepted changes become trusted knowledge.</p></div>
-        <button onClick={() => onAdd()}>Add to this chapter <ArrowRight size={13} /></button>
-      </aside>
-    </div>
   );
 }
 
@@ -395,97 +290,6 @@ function MaterialsView({ base, onAdd, onOpenSource }: Pick<KnowledgeBaseWorkspac
           </div>}
         </aside>
       </div>, document.body)}
-    </div>
-  );
-}
-
-function PlusMinus() {
-  return <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8M6 2v8" /></svg>;
-}
-
-function FieldMap({ base, selectedId, onChapter }: { base: KnowledgeBase; selectedId: string; onChapter: (id: string) => void }) {
-  return (
-    <div className="field-map">
-      <div className="field-map-line" />
-      {base.chapters.map((chapter, index) => (
-        <button key={chapter.id} className={`field-map-node ${selectedId === chapter.id ? "is-active" : ""}`} onClick={() => onChapter(chapter.id)} style={{ "--node-index": index } as React.CSSProperties}>
-          <span className="field-node-orbit"><i /></span>
-          <small>{chapter.number}</small>
-          <strong>{chapter.title}</strong>
-          <em>{chapter.progress}%</em>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function ChapterMap({ base, chapter, onEvidence }: { base: KnowledgeBase; chapter: KnowledgeChapter; onEvidence: () => void }) {
-  return (
-    <div className="chapter-map">
-      <div className="chapter-map-center">
-        <span>{chapter.number}</span>
-        <strong>{chapter.title}</strong>
-        <small>{chapter.question}</small>
-      </div>
-      {chapter.topics.map((topic, index) => {
-        const count = Math.max(chapter.topics.length, 1);
-        const angle = ((index / count) * Math.PI * 2) - Math.PI / 2;
-        const x = 50 + Math.cos(angle) * 35;
-        const y = 50 + Math.sin(angle) * 34;
-        return <div key={topic.id} className="chapter-topic-node" style={{ left: `${x}%`, top: `${y}%` }}><i /><strong>{topic.title}</strong><small>{topic.markers?.slice(0, 3).join(" · ") || "Working topic"}</small></div>;
-      })}
-      {chapter.topics.length === 0 && <div className="empty-map-note">Add sources to grow topics inside this chapter.</div>}
-      <button className="map-evidence-button" onClick={onEvidence}><BookOpen size={14} />{chapter.sourceIds.length} sources</button>
-      <svg className="chapter-map-rings" viewBox="0 0 800 500" preserveAspectRatio="none" aria-hidden="true"><ellipse cx="400" cy="250" rx="274" ry="173" /><ellipse cx="400" cy="250" rx="165" ry="105" /></svg>
-    </div>
-  );
-}
-
-function PopulationMap({ populations }: { populations: AtlasPopulation[] }) {
-  const [selectedId, setSelectedId] = useState(populations[0]?.id ?? "");
-  const selected = populations.find((population) => population.id === selectedId) ?? populations[0];
-  return (
-    <div className="population-workspace">
-      <div className="population-map">
-        <div className="population-cloud cloud-one" /><div className="population-cloud cloud-two" /><div className="population-cloud cloud-three" />
-        {populations.map((population) => (
-          <button key={population.id} className={`population-node family-${population.family.toLowerCase().replaceAll(" ", "-")} ${selectedId === population.id ? "is-active" : ""}`} style={{ left: `${population.x}%`, top: `${population.y}%` }} onClick={() => setSelectedId(population.id)}>
-            <i />{population.label}<small>{Math.round(population.confidence * 100)}%</small>
-          </button>
-        ))}
-        <span className="map-axis map-axis-x">transcriptional neighborhood →</span>
-        <span className="map-axis map-axis-y">relative structure →</span>
-      </div>
-      {selected && <aside className="population-detail">
-        <span className="atlas-eyebrow">Demo population</span>
-        <h3>{selected.label}</h3>
-        <p>{selected.note}</p>
-        <div className="confidence-bar"><span><small>Annotation confidence</small><strong>{Math.round(selected.confidence * 100)}%</strong></span><i><b style={{ width: `${selected.confidence * 100}%` }} /></i></div>
-        <div className="marker-program"><small>Supporting program</small><p>{selected.markers.map((marker) => <code key={marker}>{marker}</code>)}</p></div>
-        <div className="demo-warning"><ShieldCheck size={14} /><span>Illustrative PBMC 3k labels. Validate against your own data and experimental context.</span></div>
-      </aside>}
-    </div>
-  );
-}
-
-function AtlasView({ base, selectedChapterId, onChapter, onEvidence }: Pick<KnowledgeBaseWorkspaceProps, "base" | "selectedChapterId" | "onChapter" | "onEvidence">) {
-  const [zoom, setZoom] = useState<AtlasZoom>("field");
-  const chapter = base.chapters.find((item) => item.id === selectedChapterId) ?? base.chapters[0]!;
-  const hasPopulations = (base.populations?.length ?? 0) > 0;
-  return (
-    <div className="atlas-map-view page-enter">
-      <header className="map-view-header">
-        <div><span className="atlas-eyebrow">Semantic atlas</span><h1>{zoom === "field" ? "The whole field, at a glance." : zoom === "chapter" ? chapter.title : "Cell identity landscape"}</h1><p>{zoom === "field" ? base.question : zoom === "chapter" ? chapter.question : "A demonstration view of broad PBMC populations and annotation confidence."}</p></div>
-        <div className="zoom-switch" aria-label="Atlas detail level">
-          {(["field", "chapter", "topic"] as AtlasZoom[]).map((level) => <button key={level} disabled={level === "topic" && !hasPopulations} className={zoom === level ? "is-active" : ""} onClick={() => setZoom(level)}>{level}</button>)}
-        </div>
-      </header>
-      <div className="atlas-canvas">
-        {zoom === "field" && <FieldMap base={base} selectedId={chapter.id} onChapter={(id) => { onChapter(id); setZoom("chapter"); }} />}
-        {zoom === "chapter" && <ChapterMap base={base} chapter={chapter} onEvidence={() => onEvidence(chapter)} />}
-        {zoom === "topic" && base.populations && <PopulationMap populations={base.populations} />}
-      </div>
-      <footer className="atlas-legend"><span><i className="legend-grounded" />Grounded</span><span><i className="legend-growing" />Growing</span><span><GitBranch size={13} />Click a node to move from field → chapter → evidence</span></footer>
     </div>
   );
 }
@@ -761,7 +565,7 @@ export function KnowledgeBaseWorkspace(props: KnowledgeBaseWorkspaceProps) {
         {props.mode === "overview" && <OverviewView {...props} />}
         {props.mode === "overview" && <>{topicError && <p role="alert">{topicError}</p>}<TopicManager key={props.base.id} baseId={props.base.id} topics={topics} onChange={() => setTopicReload((value) => value + 1)} onAsk={(id) => void askTopic(id)} {...(props.onOpenSource ? { onOpenSource: (id: string) => props.onOpenSource?.(id, [id]) } : {})} /></>}
         {props.mode === "sources" && <MaterialsView {...props} />}
-        {props.mode === "ask" && <SessionWorkspace base={topicBase} selectedChapterId={props.selectedChapterId} onChapter={props.onChapter} onAdd={props.onAdd} onEvidence={props.onEvidence} onNotify={props.onNotify} />}
+        {props.mode === "ask" && <SessionWorkspace base={topicBase} selectedChapterId={props.selectedChapterId} onAdd={props.onAdd} onNotify={props.onNotify} />}
         {props.mode === "outputs" && <StudioView {...props} />}
       </div>
     </div>

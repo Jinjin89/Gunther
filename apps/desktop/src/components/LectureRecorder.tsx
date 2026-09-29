@@ -34,7 +34,7 @@ import {
 
 export type RecorderPhase = "idle" | "requesting" | "importing" | "recording" | "paused" | "stopped" | "error";
 
-export type ImportedAudioPhase = "staging" | "ready" | "uploading" | "complete";
+type ImportedAudioPhase = "staging" | "ready" | "uploading" | "complete";
 
 export interface ImportedAudioDraft {
   fileName: string;
@@ -82,7 +82,7 @@ export interface LectureRecorderHandle {
 }
 
 const RECORDING_DRAFTS_KEY = "gunther:recording-drafts";
-export const IMPORT_CHUNK_SIZE_BYTES = 8 * 1024 * 1024;
+const IMPORT_CHUNK_SIZE_BYTES = 8 * 1024 * 1024;
 const IMPORT_MAX_SIZE_BYTES = 2 * 1024 * 1024 * 1024;
 export const MICROPHONE_PERMISSION_TIMEOUT_MS = 15_000;
 
@@ -1513,7 +1513,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   useEffect(() => {
     void knowledgeApi.health().then((health) => {
       setProvider(health.transcriptionMode === "not_configured" ? "local-only" : "available");
-      setTranscriptionLabel(health.transcriptionProvider === "sensevoice" ? "SenseVoice · local" : health.transcriptionProvider === "openai" ? "OpenAI live" : "Local audio");
+      setTranscriptionLabel(health.transcriptionProvider === "sensevoice" ? "SenseVoice · local" : health.transcriptionProvider === "compatible" ? `${health.transcriptionModel} · server` : "Local audio");
     }).catch(() => setProvider("local-only"));
   }, []);
   useEffect(() => () => {

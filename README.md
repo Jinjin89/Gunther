@@ -41,7 +41,7 @@ SENSEVOICE_URL=http://127.0.0.1:8765
 SENSEVOICE_SEGMENT_SECONDS=3.2
 ```
 
-SenseVoice 是独立的本机服务，**不随 Gunther 安装包分发**。本轮已确认本机 `127.0.0.1:8765` 服务健康；它不可用时，Gunther 会明确降级。录音原始字节的保存不以转写成功为前提；配置 `OPENAI_API_KEY` 后，`auto` 才可使用在线转写回退。
+SenseVoice 是独立的本机服务，**不随 Gunther 安装包分发**。本轮已确认本机 `127.0.0.1:8765` 服务健康；它不可用时，Gunther 会明确降级。录音原始字节的保存不以转写成功为前提；在 Settings → Services 配置 OpenAI 兼容转写服务（地址、密钥、模型）后，`auto` 才可使用在线转写回退。
 
 ### macOS 独立 Capture 与菜单栏
 

@@ -24,8 +24,8 @@ def settings_for(tmp_path: Path, **overrides: object) -> Settings:
         "recordings_dir": tmp_path / "recordings",
         "seed_demo": False,
         "deepseek_api_key": None,
-        "openai_api_key": None,
-        "stt_provider": "openai",
+        "tavily_api_key": None,
+        "stt_provider": "auto",
         "auth_token": SIDECAR_TOKEN,
         "service_settings_file": tmp_path / "service-settings.json",
         **overrides,
@@ -55,6 +55,8 @@ def fake_api(monkeypatch: pytest.MonkeyPatch):
         seen.append(request)
         if answer["status"] != 200:
             return httpx.Response(answer["status"], json={"error": "no"})
+        if request.url.path == "/usage":
+            return httpx.Response(200, json={"key": {"usage": 3, "limit": 1000}})
         return httpx.Response(200, json={"data": [{"id": model} for model in answer["models"]]})
 
     monkeypatch.setattr(
@@ -66,17 +68,12 @@ def fake_api(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_services_are_described_without_their_secrets(tmp_path: Path) -> None:
-    with TestClient(create_app(settings_for(tmp_path, openai_api_key=KEY))) as client:
+    with TestClient(create_app(settings_for(tmp_path, tavily_api_key=KEY))) as client:
         listed = services(client)
-        response = client.get("/api/settings/services", headers=SIDECAR)
-
-    # Language models have their own section (see test_models).
-    assert list(listed) == ["openai", "transcription", "summaries"]
-    assert KEY not in response.text
-    key = field(listed["openai"], "openai_api_key")
+    key = field(listed["web_search"], "tavily_api_key")
     assert key["value"] is None and key["isSet"] is True and key["hint"] == "1234"
     assert key["source"] == "environment"
-    assert listed["openai"]["status"]["state"] == "configured"
+    assert listed["web_search"]["status"]["state"] == "configured"
     assert listed["summaries"]["status"] == {
         "state": "not_configured",
         "summary": "Needs a model: set one up under Models.",
@@ -87,6 +84,7 @@ def test_services_are_described_without_their_secrets(tmp_path: Path) -> None:
         "key": "stt_provider",
         "values": ["auto", "sensevoice"],
     }
+    assert "openai" not in listed
 
 
 def test_saving_applies_at_once_and_survives_a_restart(tmp_path: Path) -> None:
@@ -95,47 +93,47 @@ def test_saving_applies_at_once_and_survives_a_restart(tmp_path: Path) -> None:
         health = client.get("/api/health", headers=SIDECAR).json()
         assert health["webSearchMode"] == "not_configured"
         saved = client.put(
-            "/api/settings/services/openai",
+            "/api/settings/services/web_search",
             headers=SIDECAR,
-            json={"values": {"openai_api_key": f"  {KEY} ", "openai_web_search_model": "gpt-9"}},
+            json={"values": {"tavily_api_key": f"  {KEY} ", "web_search_depth": "advanced"}},
         )
         assert saved.status_code == 200
         assert saved.json()["status"] == {
             "state": "configured",
-            "summary": "Web search · gpt-9",
+            "summary": "Tavily · advanced search",
             "checkedAt": None,
             "check": None,
         }
         assert KEY not in saved.text
-        assert client.get("/api/health", headers=SIDECAR).json()["webSearchMode"] == "openai"
-        assert client.app.state.settings.openai_api_key == KEY
+        assert client.get("/api/health", headers=SIDECAR).json()["webSearchMode"] == "tavily"
+        assert client.app.state.settings.tavily_api_key == KEY
 
     stored = tmp_path / "service-settings.json"
-    assert json.loads(stored.read_text())["values"]["openai_web_search_model"] == "gpt-9"
+    assert json.loads(stored.read_text())["values"]["web_search_depth"] == "advanced"
     if os.name != "nt":
         assert stored.stat().st_mode & 0o777 == 0o600
 
     with TestClient(create_app(settings)) as client:
-        openai_service = services(client)["openai"]
-        assert field(openai_service, "openai_web_search_model")["value"] == "gpt-9"
-        assert field(openai_service, "openai_web_search_model")["source"] == "saved"
-        assert client.get("/api/health", headers=SIDECAR).json()["webSearchMode"] == "openai"
+        web = services(client)["web_search"]
+        assert field(web, "web_search_depth")["value"] == "advanced"
+        assert field(web, "web_search_depth")["source"] == "saved"
+        assert client.get("/api/health", headers=SIDECAR).json()["webSearchMode"] == "tavily"
 
         # null goes back to the default; an empty key removes one set elsewhere.
         client.put(
-            "/api/settings/services/openai",
+            "/api/settings/services/web_search",
             headers=SIDECAR,
-            json={"values": {"openai_web_search_model": None, "openai_api_key": ""}},
+            json={"values": {"web_search_depth": None, "tavily_api_key": ""}},
         )
-        openai_service = services(client)["openai"]
-        assert field(openai_service, "openai_web_search_model")["value"] == "gpt-5.6"
-        assert field(openai_service, "openai_api_key")["isSet"] is False
+        web = services(client)["web_search"]
+        assert field(web, "web_search_depth")["value"] == "basic"
+        assert field(web, "tavily_api_key")["isSet"] is False
         health = client.get("/api/health", headers=SIDECAR).json()
         assert health["webSearchMode"] == "not_configured"
 
 
 def test_saved_values_win_over_the_environment(tmp_path: Path) -> None:
-    settings = settings_for(tmp_path, openai_api_key=KEY, stt_provider="auto")
+    settings = settings_for(tmp_path, stt_provider="auto")
     with TestClient(create_app(settings)) as client:
         client.put(
             "/api/settings/services/transcription",
@@ -152,15 +150,16 @@ def test_saved_values_win_over_the_environment(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("service", "values", "message"),
     [
-        ("openai", {"openai_web_search_model": "two words"}, "Web search model: Use the"),
-        ("openai", {"openai_api_key": "sk two"}, "API key: Paste the key on its own"),
+        ("transcription", {"stt_model": "two words"}, "Server model: Use the"),
+        ("web_search", {"tavily_api_key": "tvly two"}, "Tavily API key: Paste the key on its own"),
+        ("web_search", {"web_search_max_results": 40}, "Use a number from 1 to 10"),
         ("transcription", {"sensevoice_url": "127.0.0.1:8765"}, "Use a full address"),
         ("transcription", {"stt_provider": "somebody"}, "Engine: Choose one of the options"),
         ("transcription", {"sensevoice_segment_seconds": 40}, "Use a number from 1 to 10"),
-        ("transcription", {"openai_transcription_languages": "english!"}, "Languages: Use codes"),
+        ("transcription", {"stt_language": "english!"}, "Language: Use a code"),
         ("summaries", {"ai_summary_images": "yes"}, "Turn it on or off"),
-        ("openai", {"stt_provider": "openai"}, "Unknown setting"),
-        ("openai", {"auth_token": "x"}, "Unknown setting"),
+        ("web_search", {"stt_provider": "auto"}, "Unknown setting"),
+        ("web_search", {"auth_token": "x"}, "Unknown setting"),
     ],
 )
 def test_values_that_cannot_work_are_refused(
@@ -179,59 +178,56 @@ def test_a_connection_test_uses_the_values_on_screen(tmp_path: Path, fake_api) -
     seen, answer = fake_api
     with TestClient(create_app(settings_for(tmp_path))) as client:
         tested = client.post(
-            "/api/settings/services/openai/test",
+            "/api/settings/services/web_search/test",
             headers=SIDECAR,
-            json={"values": {"openai_api_key": KEY}},
+            json={"values": {"tavily_api_key": KEY}},
         ).json()
         assert tested["ok"] is True
-        assert tested["message"] == "Connected. gpt-5.6 is available."
-        assert str(seen[-1].url) == "https://api.openai.com/v1/models"
+        assert tested["message"] == "Connected, and the key works. 3 searches used so far."
+        assert str(seen[-1].url) == "https://api.tavily.com/usage"
         assert seen[-1].headers["authorization"] == f"Bearer {KEY}"
         # Testing saves nothing, and an unsaved draft's result does not mark the saved one.
-        assert client.app.state.settings.openai_api_key is None
+        assert client.app.state.settings.tavily_api_key is None
         assert tested["service"]["status"]["state"] == "not_configured"
 
         client.put(
-            "/api/settings/services/openai",
+            "/api/settings/services/web_search",
             headers=SIDECAR,
-            json={"values": {"openai_api_key": KEY, "openai_web_search_model": "gpt-9"}},
+            json={"values": {"tavily_api_key": KEY}},
         )
-        tested = client.post(
-            "/api/settings/services/openai/test", headers=SIDECAR, json={"values": {}}
-        ).json()
-        assert tested["ok"] is True
-        assert tested["warning"] == "gpt-9 is not in this account's model list."
-
         answer["status"] = 401
         tested = client.post(
-            "/api/settings/services/openai/test", headers=SIDECAR, json={"values": {}}
+            "/api/settings/services/web_search/test", headers=SIDECAR, json={"values": {}}
         ).json()
         assert tested["ok"] is False
-        assert tested["message"] == "OpenAI did not accept this API key."
+        assert tested["message"] == "Tavily did not accept the API key."
         assert tested["service"]["status"]["state"] == "error"
         assert tested["service"]["status"]["summary"] == tested["message"]
 
         # A new key retires the failed check.
         answer["status"] = 200
         client.put(
-            "/api/settings/services/openai",
+            "/api/settings/services/web_search",
             headers=SIDECAR,
-            json={"values": {"openai_api_key": "sk-another-000000005678"}},
+            json={"values": {"tavily_api_key": "tvly-another-000000005678"}},
         )
-        assert services(client)["openai"]["status"]["state"] == "configured"
+        assert services(client)["web_search"]["status"]["state"] == "configured"
 
 
-def test_transcription_test_explains_what_is_missing(tmp_path: Path, monkeypatch) -> None:
+def test_transcription_test_explains_what_is_missing(
+    tmp_path: Path, monkeypatch, fake_api
+) -> None:
     async def not_running(url: str, timeout: float = 1.2) -> None:
         return None
 
     monkeypatch.setattr(service_settings, "sensevoice_health", not_running)
+    seen, _answer = fake_api
     with TestClient(create_app(settings_for(tmp_path, stt_provider="auto"))) as client:
         tested = client.post(
             "/api/settings/services/transcription/test", headers=SIDECAR, json={"values": {}}
         ).json()
         assert tested["ok"] is False
-        assert "OpenAI has no API key" in tested["message"]
+        assert "no transcription server is set up" in tested["message"]
         tested = client.post(
             "/api/settings/services/transcription/test",
             headers=SIDECAR,
@@ -240,19 +236,34 @@ def test_transcription_test_explains_what_is_missing(tmp_path: Path, monkeypatch
         assert tested["message"] == (
             "SenseVoice is not answering at http://127.0.0.1:8765. Is it running?"
         )
-        openai_only = client.put(
+        # Any OpenAI-style server works, with or without a key.
+        tested = client.post(
+            "/api/settings/services/transcription/test",
+            headers=SIDECAR,
+            json={
+                "values": {
+                    "stt_provider": "compatible",
+                    "stt_base_url": "https://asr.example/v1/",
+                    "stt_model": "whisper-1",
+                }
+            },
+        ).json()
+        assert tested["ok"] is True
+        assert str(seen[-1].url) == "https://asr.example/v1/models"
+        assert "authorization" not in seen[-1].headers
+        no_address = client.put(
             "/api/settings/services/transcription",
             headers=SIDECAR,
-            json={"values": {"stt_provider": "openai"}},
+            json={"values": {"stt_provider": "compatible"}},
         ).json()
-        assert openai_only["status"]["state"] == "error"
+        assert no_address["status"]["state"] == "error"
         assert client.post(
             "/api/settings/services/summaries/test", headers=SIDECAR, json={"values": {}}
         ).status_code == 409
 
 
 def test_a_paired_phone_cannot_read_or_change_service_settings(tmp_path: Path) -> None:
-    settings = settings_for(tmp_path, openai_api_key=KEY)
+    settings = settings_for(tmp_path)
     store = ServiceSettingsStore(settings.service_settings_file)
     sidecar_app = create_app(settings, service_settings=store)
     gateway_app = create_app(
@@ -278,7 +289,7 @@ def test_a_paired_phone_cannot_read_or_change_service_settings(tmp_path: Path) -
         assert gateway.get("/api/settings/services", headers=phone).status_code == 403
         assert (
             gateway.put(
-                "/api/settings/services/openai", headers=phone, json={"values": {}}
+                "/api/settings/services/web_search", headers=phone, json={"values": {}}
             ).status_code
             == 403
         )
@@ -287,9 +298,9 @@ def test_a_paired_phone_cannot_read_or_change_service_settings(tmp_path: Path) -
         sidecar.put(
             "/api/settings/services/transcription",
             headers=SIDECAR,
-            json={"values": {"stt_provider": "openai"}},
+            json={"values": {"stt_provider": "sensevoice"}},
         )
-        assert gateway.app.state.settings.stt_provider == "openai"
+        assert gateway.app.state.settings.stt_provider == "sensevoice"
 
 
 def test_an_unreadable_or_outdated_file_falls_back_to_defaults(tmp_path: Path) -> None:
@@ -297,10 +308,10 @@ def test_an_unreadable_or_outdated_file_falls_back_to_defaults(tmp_path: Path) -
     path.write_text("{not json")
     assert ServiceSettingsStore(path).values() == {}
     path.write_text(
-        json.dumps({"version": 1, "values": {"stt_provider": "openai", "sensevoice_url": "ftp://x",
-                                             "retired_setting": 1}})
+        json.dumps({"version": 1, "values": {"stt_provider": "sensevoice", "sensevoice_url": "ftp://x",
+                                             "openai_api_key": "sk-old", "retired_setting": 1}})
     )
-    assert ServiceSettingsStore(path).values() == {"stt_provider": "openai"}
+    assert ServiceSettingsStore(path).values() == {"stt_provider": "sensevoice"}
 
 
 def test_deepseek_names_from_earlier_versions_still_configure_the_language_model(

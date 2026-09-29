@@ -42,4 +42,18 @@ describe("Session composer durability boundary", () => {
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(onSend).toHaveBeenCalledOnce();
   });
+
+  it("has a Web switch that reflects whether web search is set up", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <Composer value="" sending={false} sourceCount={0} chapterTitle={undefined} onChange={vi.fn()} onSend={vi.fn()} onStop={vi.fn()} onSources={vi.fn()} readOnly={false} ready web={{ available: false, enabled: false, onChange }} />,
+    );
+    expect(screen.getByRole("button", { name: "Web" })).toBeDisabled();
+    rerender(
+      <Composer value="" sending={false} sourceCount={0} chapterTitle={undefined} onChange={vi.fn()} onSend={vi.fn()} onStop={vi.fn()} onSources={vi.fn()} readOnly={false} ready web={{ available: true, enabled: false, onChange }} />,
+    );
+    await user.click(screen.getByRole("button", { name: "Web" }));
+    expect(onChange).toHaveBeenCalledWith(true);
+  });
 });

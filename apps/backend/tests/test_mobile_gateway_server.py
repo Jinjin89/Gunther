@@ -24,8 +24,7 @@ def settings_for(tmp_path: Path) -> Settings:
         recordings_dir=tmp_path / "recordings",
         seed_demo=False,
         deepseek_api_key=None,
-        openai_api_key=None,
-        stt_provider="openai",
+        stt_provider="compatible",
         auth_token=SIDECAR_TOKEN,
         cors_origins=["http://tauri.localhost"],
     )

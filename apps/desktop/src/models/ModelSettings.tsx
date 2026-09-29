@@ -72,7 +72,7 @@ function KeyField({ provider, value, onChange, inputId }: { provider: ModelProvi
       id={inputId}
       type={visible ? "text" : "password"}
       value={value ?? ""}
-      placeholder={provider.keySource === "openai" ? "Using the key under OpenAI" : provider.keyOptional ? "Only if your server asks for one" : "Paste your key"}
+      placeholder={provider.keyOptional ? "Only if your server asks for one" : "Paste your key"}
       autoComplete="off"
       spellCheck={false}
       autoFocus={replacing}

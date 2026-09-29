@@ -18,6 +18,8 @@ interface SearchComposerProps {
   onMentionsChange: (ids: string[]) => void;
   onWebChange: (web: boolean) => void;
   onSubmit: () => void;
+  /** ⌘/Ctrl+↵: ask Gunther the question instead of searching for it. */
+  onAsk?: (() => void) | undefined;
   onClear: () => void;
   /** Called on ↓ at the end of the text; return true when focus moved elsewhere. */
   onArrowDown?: (() => boolean) | undefined;
@@ -94,6 +96,7 @@ export const SearchComposer = forwardRef<SearchComposerHandle, SearchComposerPro
   onMentionsChange,
   onWebChange,
   onSubmit,
+  onAsk,
   onClear,
   onArrowDown,
   picker,
@@ -181,6 +184,11 @@ export const SearchComposer = forwardRef<SearchComposerHandle, SearchComposerPro
         return;
       }
     }
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      if (onAsk && value.trim()) onAsk();
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       if (canSubmit) onSubmit();
@@ -212,7 +220,7 @@ export const SearchComposer = forwardRef<SearchComposerHandle, SearchComposerPro
     : mentioned.length
       ? `Searching ${mentioned.length === 1 ? mentioned[0]!.title : `${mentioned.length} libraries`}`
       : value.trim()
-        ? "↵ to search · ⇧↵ for a new line"
+        ? onAsk ? "↵ to search · ⌘↵ to ask · ⇧↵ for a new line" : "↵ to search · ⇧↵ for a new line"
         : "";
 
   return (

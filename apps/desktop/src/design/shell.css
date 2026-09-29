@@ -53,7 +53,7 @@
   background: transparent;
   color: var(--gx-ink) !important;
   font-family: var(--gx-font-display);
-  font-size: 16px;
+  font-size: calc(16px * var(--gx-fs, 1));
   font-weight: 600;
   letter-spacing: -0.01em;
   transition: background-color var(--gx-dur-fast) var(--gx-ease);
@@ -169,7 +169,7 @@
   border-radius: var(--gx-radius-pill);
   background: var(--gx-id-clay);
   color: #fff;
-  font-size: 11px;
+  font-size: calc(11px * var(--gx-fs, 1));
   font-style: normal;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
@@ -250,7 +250,7 @@
   border-radius: 50%;
   background: var(--gx-ink);
   color: var(--gx-on-ink);
-  font-size: 10px;
+  font-size: calc(10px * var(--gx-fs, 1));
   font-weight: 650;
   letter-spacing: 0.02em;
 }
@@ -271,7 +271,7 @@
   margin: 0;
   color: var(--gx-ink);
   font-family: var(--gx-font-display);
-  font-size: 30px;
+  font-size: calc(30px * var(--gx-fs, 1));
   font-weight: 450;
   letter-spacing: -0.02em;
   line-height: 1.15;
@@ -293,7 +293,7 @@
   .gx-nav { justify-items: center; }
   .gx-nav-item { width: 40px; height: 36px; padding: 0; justify-content: center; }
   .gx-nav-label, .gx-sidebar-section { display: none; }
-  .gx-nav-count { min-width: 16px; height: 16px; padding: 0 4px; position: absolute; right: -2px; top: -2px; font-size: 10px; }
+  .gx-nav-count { min-width: 16px; height: 16px; padding: 0 4px; position: absolute; right: -2px; top: -2px; font-size: calc(10px * var(--gx-fs, 1)); }
   .gx-account { height: 40px; }
   .gx-avatar { margin: 0; }
   .gx-save-state { display: none; }

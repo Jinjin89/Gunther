@@ -413,7 +413,6 @@ async function run() {
       DATABASE_URL: `sqlite+pysqlite:///${path.join(dataDirectory, "gunther.sqlite")}`,
       DEEPSEEK_API_KEY: "",
       LLM_API_KEY: "",
-      OPENAI_API_KEY: "",
       // Keys saved in the developer's Settings stay out of the smoke.
       SERVICE_SETTINGS_FILE: path.join(dataDirectory, "service-settings.json"),
       // Originals and readable library folders live in a root inside the smoke's data.

@@ -92,7 +92,7 @@ function tableFromPayload(payload: Record<string, unknown> | undefined): Delimit
  * sentence-sized pieces rejoin into paragraphs, and table lines become grids.
  * The user's own context is shown separately, so it is skipped here.
  */
-export function readerBlocks(blocks: ContentBlock[]): ReaderBlock[] {
+function readerBlocks(blocks: ContentBlock[]): ReaderBlock[] {
   const result: ReaderBlock[] = [];
   let page: number | undefined;
   let paragraph: { text: string; end: number | undefined; ref: unknown; headings: string } | null = null;
@@ -237,7 +237,7 @@ const PROCESSING_COPY: Record<string, string> = {
   cancelled: "Reading was cancelled",
 };
 
-export function FileCard({ source, file, pages, state, onReprocess }: { source: SourceDetail; file: FileContent; pages: number | null; state: string | undefined; onReprocess?: () => Promise<void> }) {
+function FileCard({ source, file, pages, state, onReprocess }: { source: SourceDetail; file: FileContent; pages: number | null; state: string | undefined; onReprocess?: () => Promise<void> }) {
   const asset = source.asset;
   const name = asset?.originalName ?? file.fileName ?? source.title;
   const type = mediaTypeLabel(asset?.mediaType ?? file.mediaType, name);

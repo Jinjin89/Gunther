@@ -38,7 +38,7 @@ def client_for(path: Path, **overrides) -> TestClient:
                 ocr_provider="disabled",
                 seed_demo=False,
                 deepseek_api_key=None,
-                stt_provider="openai",
+                stt_provider="compatible",
                 **overrides,
             )
         )

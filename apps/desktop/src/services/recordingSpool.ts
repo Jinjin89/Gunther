@@ -345,15 +345,3 @@ export async function deleteAcknowledgedRecordingSpool(
   await transactionFinished(transaction);
 }
 
-export async function deleteRecordingSpoolSession(
-  sessionId: string,
-  expectedWorkspaceId: string,
-): Promise<void> {
-  const chunks = await listRecordingSpool(sessionId, expectedWorkspaceId);
-  if (!chunks.length) return;
-  const database = await openDatabase();
-  const transaction = database.transaction(CHUNK_STORE, "readwrite");
-  const store = transaction.objectStore(CHUNK_STORE);
-  for (const chunk of chunks) store.delete(chunk.key);
-  await transactionFinished(transaction);
-}

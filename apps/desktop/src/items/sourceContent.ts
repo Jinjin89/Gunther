@@ -62,7 +62,7 @@ export interface ResearchContent {
 const RECORDING_META = /^Duration:\s*([\d:]+)\s*·\s*Captured:\s*(.+?)(?:\s*·\s*Local recording:\s*(rec_[a-f0-9]{24}))?\s*$/m;
 
 /** "01:02:03" or "12:34" → seconds. */
-export function clockToSeconds(value: string): number | null {
+function clockToSeconds(value: string): number | null {
   const parts = value.trim().split(":").map((part) => Number.parseInt(part, 10));
   if (!parts.length || parts.some((part) => !Number.isFinite(part))) return null;
   return parts.reduce((total, part) => total * 60 + part, 0);
@@ -190,11 +190,11 @@ const listItems = (body: string | undefined) => (body ?? "")
   .map((line) => line.match(/^\s*(?:[-*+]|\d+[.)])\s+(.+)$/)?.[1]?.trim())
   .filter((item): item is string => Boolean(item));
 
-export function isRecordingContent(content: string): boolean {
+function isRecordingContent(content: string): boolean {
   return RECORDING_META.test(content.slice(0, 2_000));
 }
 
-export function parseTranscript(text: string): TranscriptSegment[] {
+function parseTranscript(text: string): TranscriptSegment[] {
   const segments: TranscriptSegment[] = [];
   let paragraph: string[] = [];
   const flush = () => {
@@ -256,7 +256,7 @@ export function parseRecordingContent(content: string): RecordingContent {
   };
 }
 
-export function isWebSnapshotContent(content: string): boolean {
+function isWebSnapshotContent(content: string): boolean {
   return content.startsWith("# Web snapshot\n");
 }
 
@@ -275,7 +275,7 @@ export function parseWebContent(content: string): WebContent {
   };
 }
 
-export function isFileContent(content: string): boolean {
+function isFileContent(content: string): boolean {
   return content.startsWith("# Original file\n");
 }
 
@@ -298,7 +298,7 @@ export function parseFileContent(content: string): FileContent {
   };
 }
 
-export function isResearchContent(content: string): boolean {
+function isResearchContent(content: string): boolean {
   return /^Search query:/.test(content) && content.includes("Answer captured from web research:");
 }
 

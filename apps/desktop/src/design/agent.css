@@ -1,0 +1,109 @@
+/*
+ * Ask's agent: the steps it took, the Web switch, web citations, and answers
+ * written in Markdown. Neutral; colour only for errors and the citation marks.
+ */
+.message-steps {
+  margin: 8px 0 0 30px;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 3px;
+  color: var(--gx-muted);
+  font-size: var(--gx-text-xs);
+}
+.message-steps li { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.message-steps svg { flex: none; color: var(--gx-faint); }
+.message-steps span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message-steps small { flex: none; color: var(--gx-faint); font-size: var(--gx-text-2xs); }
+.message-steps li.is-error, .message-steps li.is-error svg, .message-steps li.is-error small { color: var(--gx-danger); }
+
+.web-toggle {
+  height: 28px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--gx-muted) !important;
+  font-size: var(--gx-text-xs);
+  font-weight: 550;
+  cursor: pointer;
+  transition: background-color var(--gx-dur-fast) var(--gx-ease), color var(--gx-dur-fast) var(--gx-ease);
+}
+.web-toggle svg { color: var(--gx-faint); }
+.web-toggle:hover:not(:disabled) { background: var(--gx-hover); color: var(--gx-ink) !important; }
+.web-toggle.is-on { background: var(--gx-active); color: var(--gx-ink) !important; }
+.web-toggle.is-on svg { color: var(--gx-brand); }
+.web-toggle:disabled { cursor: default; opacity: 0.55; }
+.web-toggle:focus-visible { outline: none; box-shadow: var(--gx-ring); }
+
+.citation-card.is-web { text-decoration: none; }
+.citation-card.is-web > header strong { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Answers */
+.answer-markdown > :first-child { margin-top: 0; }
+.answer-markdown > :last-child { margin-bottom: 0; }
+.answer-markdown p { margin: 0; }
+.answer-markdown p + p, .answer-markdown p + ul, .answer-markdown p + ol, .answer-markdown ul + p, .answer-markdown ol + p { margin-top: 0.75em; }
+.answer-markdown ul, .answer-markdown ol { margin: 0.5em 0 0; padding-left: 1.4em; }
+.answer-markdown li + li { margin-top: 0.3em; }
+.answer-markdown h1, .answer-markdown h2, .answer-markdown h3 { margin: 1em 0 0.35em; font-size: 1em; font-weight: 650; }
+.answer-markdown a { color: var(--gx-brand); text-decoration: underline; text-underline-offset: 2px; }
+.answer-markdown blockquote { margin: 0.7em 0; padding-left: 0.9em; border-left: 2px solid var(--gx-line-3); color: var(--gx-muted); }
+.answer-markdown code { padding: 1px 5px; border-radius: 5px; background: var(--gx-hover); font-family: var(--gx-font-mono); font-size: 0.9em; }
+.answer-markdown pre { margin: 0.7em 0; padding: 10px 12px; overflow-x: auto; border-radius: var(--gx-radius-sm); background: var(--gx-hover); }
+.answer-markdown pre code { padding: 0; background: transparent; }
+.answer-markdown table { margin: 0.7em 0; border-collapse: collapse; font-size: 0.93em; }
+.answer-markdown th, .answer-markdown td { padding: 5px 10px; border: 1px solid var(--gx-line-2); text-align: left; }
+.answer-markdown th { background: var(--gx-surface-2); font-weight: 600; }
+
+/* A crowded composer toolbar wraps instead of squeezing its chips. */
+.composer-toolbar > div { flex-wrap: wrap; row-gap: 4px; }
+.scope-chip, .chapter-chip { white-space: nowrap; }
+
+.live-wait { margin: 10px 0 0 30px; display: flex; align-items: center; gap: 9px; color: var(--gx-faint); font-size: var(--gx-text-xs); }
+.live-wait > span { display: flex; gap: 3px; }
+.live-wait i { width: 4px; height: 4px; border-radius: 50%; background: var(--gx-brand); animation: thinking-dot 1s infinite alternate; }
+.live-wait i:nth-child(2) { animation-delay: 0.18s; }
+.live-wait i:nth-child(3) { animation-delay: 0.36s; }
+
+/* Home: Ask Gunther beside a search, and the conversation */
+.gx-home-ask { width: min(100%, var(--gx-home-w, 760px)); margin: 14px auto 18px; }
+.gx-home-ask-offer {
+  width: 100%; padding: 12px 14px; display: flex; align-items: center; gap: 12px; text-align: left;
+  border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-lg); background: var(--gx-surface); color: var(--gx-ink); cursor: pointer;
+  transition: border-color var(--gx-dur) var(--gx-ease), box-shadow var(--gx-dur) var(--gx-ease);
+}
+.gx-home-ask-offer:hover { border-color: color-mix(in srgb, var(--gx-brand) 45%, transparent); box-shadow: var(--gx-shadow-sm); }
+.gx-home-ask-offer kbd { flex: none; padding: 2px 6px; border: 1px solid var(--gx-line-2); border-radius: 5px; color: var(--gx-faint); font-size: var(--gx-text-2xs); }
+.gx-home-ask.is-quiet .gx-home-ask-offer { padding: 7px 12px; border-style: dashed; background: transparent; }
+.gx-home-ask.is-quiet .gx-ask-icon { width: 24px; height: 24px; border-radius: 7px; }
+.gx-home-ask.is-quiet .gx-ask-copy small { display: none; }
+.gx-home-ask.is-quiet .gx-ask-copy strong { color: var(--gx-muted); font-weight: 550; font-size: var(--gx-text-sm); }
+.gx-home-ask.is-open { border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-lg); background: var(--gx-surface); box-shadow: var(--gx-shadow-sm); overflow: hidden; }
+.gx-home-ask.is-open > header { padding: 9px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--gx-line); color: var(--gx-muted); font-size: var(--gx-text-xs); font-weight: 600; }
+.gx-home-ask.is-open > header > span { display: inline-flex; align-items: center; gap: 6px; }
+.gx-home-ask.is-open > header > div { display: flex; align-items: center; gap: 6px; }
+.gx-home-file { position: relative; display: inline-flex; align-items: center; gap: 4px; color: var(--gx-muted); }
+.gx-home-file select { max-width: 150px; padding: 4px 4px; border: 0; background: transparent; color: var(--gx-muted); font: inherit; font-size: var(--gx-text-xs); cursor: pointer; }
+.gx-home-thread { max-height: min(56vh, 560px); padding: 6px 16px 4px; overflow: auto; }
+.gx-home-question { margin: 12px 0 4px; }
+.gx-home-question p { margin: 0; color: var(--gx-ink); font-weight: 600; font-size: var(--gx-text-md); }
+.gx-home-answer { padding: 4px 0 12px; border-bottom: 1px solid var(--gx-line); color: var(--gx-ink-2); font-size: calc(15px * var(--gx-fs, 1)); line-height: 1.7; }
+.gx-home-answer .message-steps, .gx-home-live .message-steps { margin-left: 0; }
+.gx-home-answer footer { margin-top: 8px; color: var(--gx-faint); }
+.gx-home-live { padding: 4px 0 12px; }
+.gx-home-live .message-author { display: none; }
+.gx-home-live .message-body, .gx-home-live .live-wait { margin-left: 0; padding-left: 0; }
+.gx-home-sources { margin: 10px 0 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px; }
+.gx-home-sources li { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 3px 9px 3px 4px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-pill); font-size: var(--gx-text-xs); }
+.gx-home-sources i { width: 18px; height: 18px; display: grid; place-items: center; flex: none; border-radius: 50%; background: var(--gx-hover); color: var(--gx-brand); font-style: normal; font-weight: 700; font-size: var(--gx-text-2xs); }
+.gx-home-sources a, .gx-home-sources button { min-width: 0; display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; background: transparent; color: var(--gx-ink); font: inherit; text-decoration: none; cursor: pointer; }
+.gx-home-sources span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }
+.gx-home-sources small { color: var(--gx-faint); }
+.gx-home-followup { padding: 10px 12px; display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--gx-line); }
+.gx-home-followup input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-sm); background: var(--gx-surface); color: var(--gx-ink); font: inherit; }
+.gx-home-followup input:focus-visible { outline: none; box-shadow: var(--gx-ring); }
+.gx-home-recent-questions { margin-bottom: 20px; }

@@ -1,7 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { knowledgeApi } from "../api";
 import { CaptureSheet } from "./AtlasUtilities";
 
 vi.mock("../api", () => ({
@@ -14,8 +13,6 @@ vi.mock("../api", () => ({
       transcriptionMode: "sensevoice_local",
       transcriptionProvider: "sensevoice",
       transcriptionModel: "sensevoice-small",
-      transcriptionDelay: "medium",
-      transcriptionLanguages: ["en", "zh-cn"],
       summaryMode: "off",
     }),
     search: vi.fn().mockResolvedValue([]),

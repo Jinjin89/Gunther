@@ -15,7 +15,7 @@ from gunther import model_registry, vector_index
 from gunther.api import router
 from gunther.asset_service import AssetService
 from gunther.config import PROJECT_ROOT, Settings, get_settings
-from gunther.conversation import LocalKnowledgeResponder, create_knowledge_responder
+from gunther.conversation import LocalKnowledgeResponder
 from gunther.database import (
     Base,
     create_database_engine,
@@ -121,7 +121,12 @@ def _connect_models(
     )
     knowledge_service.models = models
     knowledge_service.extractor = create_extractor(models)
-    knowledge_service.responder = create_knowledge_responder(models)
+    online_search = create_online_search(
+        settings.tavily_api_key,
+        depth=settings.web_search_depth,
+        max_results=settings.web_search_max_results,
+    )
+    knowledge_service.web_search = online_search
     index = knowledge_service.index
     index.digest_method = digest_writer.method if digest_writer else None
     index.digest_vision = bool(digest_writer and digest_writer.vision)
@@ -132,9 +137,7 @@ def _connect_models(
     application.state.models = models
     application.state.model_registry = registry
     application.state.topic_writer = create_topic_writer(models)
-    application.state.online_search = create_online_search(
-        settings.openai_api_key, settings.openai_web_search_model
-    )
+    application.state.online_search = online_search
     application.state.lecture_summarizer = create_lecture_summarizer(models)
     # Transcription reads its settings per recording, from here.
     application.state.settings = settings

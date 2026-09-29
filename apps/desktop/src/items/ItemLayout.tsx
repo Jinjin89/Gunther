@@ -15,7 +15,7 @@ export interface ItemNavigation {
 }
 
 /** Back, previous / next and the item's own actions. Gains a hairline once the page scrolls. */
-export function ItemToolbar({ nav, actions }: { nav: ItemNavigation; actions?: ReactNode }) {
+function ItemToolbar({ nav, actions }: { nav: ItemNavigation; actions?: ReactNode }) {
   const sentinel = useRef<HTMLSpanElement>(null);
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {
@@ -52,7 +52,7 @@ export function ItemToolbar({ nav, actions }: { nav: ItemNavigation; actions?: R
   );
 }
 
-export function KindTile({ icon: Icon, tone, size = "md" }: { icon: LucideIcon; tone: IdentityTone; size?: "md" | "lg" }) {
+function KindTile({ icon: Icon, tone, size = "md" }: { icon: LucideIcon; tone: IdentityTone; size?: "md" | "lg" }) {
   return <span className={`gx-kind-tile tone-${tone} is-${size}`} aria-hidden="true"><Icon size={size === "lg" ? 20 : 15} /></span>;
 }
 

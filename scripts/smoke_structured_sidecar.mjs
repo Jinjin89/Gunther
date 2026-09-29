@@ -21,7 +21,7 @@ await new Promise((resolve) => probe.close(resolve));
 const data = await mkdtemp(path.join(await realpath(os.tmpdir()), "gunther-structured-smoke-"));
 const nonce = randomBytes(32).toString("hex");
 const tokenFile = path.join(data, "backend-ready", `backend-auth-token.${nonce}`);
-const environment = { ...process.env, DEEPSEEK_API_KEY: "", LLM_API_KEY: "", OPENAI_API_KEY: "", STT_PROVIDER: "openai", OCR_PROVIDER: "disabled" };
+const environment = { ...process.env, DEEPSEEK_API_KEY: "", LLM_API_KEY: "", STT_PROVIDER: "auto", STT_BASE_URL: "", OCR_PROVIDER: "disabled" };
 for (const name of ["EMBEDDING_MODEL_PATH", "DOCLING_PYTHON", "DOCLING_ARTIFACTS_PATH"]) delete environment[name];
 const helper = spawn(executable, ["--data-dir", data, "--port", String(port), "--launch-nonce", nonce, "--disable-mobile-gateway"], { env: environment, stdio: "ignore" });
 let startupError;

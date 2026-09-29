@@ -49,14 +49,14 @@
   --gx-font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", "Noto Sans", "Helvetica Neue", Arial, sans-serif;
   --gx-font-display: ui-serif, "New York", "Iowan Old Style", Charter, "Bitstream Charter", "Source Serif Pro", Georgia, serif;
   --gx-font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
-  --gx-text-2xs: 11px;
-  --gx-text-xs: 12px;
-  --gx-text-sm: 13px;
-  --gx-text-md: 14px;
-  --gx-text-lg: 16px;
-  --gx-text-xl: 20px;
-  --gx-text-2xl: 28px;
-  --gx-text-3xl: 36px;
+  --gx-text-2xs: calc(11px * var(--gx-fs, 1));
+  --gx-text-xs: calc(12px * var(--gx-fs, 1));
+  --gx-text-sm: calc(13px * var(--gx-fs, 1));
+  --gx-text-md: calc(14px * var(--gx-fs, 1));
+  --gx-text-lg: calc(16px * var(--gx-fs, 1));
+  --gx-text-xl: calc(20px * var(--gx-fs, 1));
+  --gx-text-2xl: calc(28px * var(--gx-fs, 1));
+  --gx-text-3xl: calc(36px * var(--gx-fs, 1));
 
   /* Shape */
   --gx-radius-xs: 6px;

@@ -34,7 +34,7 @@
   margin-top: 1.5em;
   color: var(--gx-muted);
   font-family: var(--gx-font-sans);
-  font-size: 12px;
+  font-size: calc(12px * var(--gx-fs, 1));
   font-weight: 650;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -117,7 +117,7 @@ button.gx-md-task:active { transform: scale(0.88); }
   border-bottom: 1px solid var(--gx-line);
   color: var(--gx-faint);
   font-family: var(--gx-font-sans);
-  font-size: 11px;
+  font-size: calc(11px * var(--gx-fs, 1));
   font-weight: 600;
   letter-spacing: 0.02em;
 }
@@ -142,7 +142,7 @@ button.gx-md-task:active { transform: scale(0.88); }
   overflow-x: auto;
   color: var(--gx-ink-2);
   font-family: var(--gx-font-mono);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--gx-fs, 1));
   line-height: 1.6;
   tab-size: 2;
 }
@@ -156,7 +156,7 @@ button.gx-md-task:active { transform: scale(0.88); }
   border-radius: 6px;
   color: var(--gx-muted) !important;
   font-family: var(--gx-font-sans);
-  font-size: 12px;
+  font-size: calc(12px * var(--gx-fs, 1));
   text-decoration: none !important;
   vertical-align: 1px;
 }
@@ -172,10 +172,10 @@ button.gx-md-task:active { transform: scale(0.88); }
   border-radius: var(--gx-radius-md);
 }
 .gx-md-table:focus-visible { outline-offset: 2px; }
-.gx-md-table table { min-width: 100%; border-collapse: collapse; font-family: var(--gx-font-sans); font-size: 13px; line-height: 1.45; font-variant-numeric: tabular-nums; }
+.gx-md-table table { min-width: 100%; border-collapse: collapse; font-family: var(--gx-font-sans); font-size: calc(13px * var(--gx-fs, 1)); line-height: 1.45; font-variant-numeric: tabular-nums; }
 .gx-md-table th,
 .gx-md-table td { padding: 8px 12px; border-bottom: 1px solid var(--gx-line); text-align: left; vertical-align: top; }
-.gx-md-table th { background: var(--gx-surface-2); color: var(--gx-muted); font-size: 12px; font-weight: 620; white-space: nowrap; }
+.gx-md-table th { background: var(--gx-surface-2); color: var(--gx-muted); font-size: calc(12px * var(--gx-fs, 1)); font-weight: 620; white-space: nowrap; }
 .gx-md-table tr:last-child td { border-bottom: 0; }
 .gx-md-table tbody tr:hover td { background: var(--gx-surface-2); }
 
@@ -234,7 +234,7 @@ button.gx-md-task:active { transform: scale(0.88); }
   min-height: var(--gx-md-editor-min, 220px);
   color: var(--gx-ink);
   font-family: var(--gx-font-sans);
-  font-size: 15px;
+  font-size: calc(15px * var(--gx-fs, 1));
   line-height: 1.75;
   white-space: pre-wrap;
   overflow-wrap: anywhere;

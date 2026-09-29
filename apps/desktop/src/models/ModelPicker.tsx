@@ -1,8 +1,8 @@
 import type { Effort, ModelChoice, ModelMenu } from "@gunther/contracts";
 import { EFFORTS } from "@gunther/contracts";
-import { Brain, Check, ChevronDown, Eye, Settings2, Sparkles } from "lucide-react";
+import { Brain, Check, ChevronDown, Eye, Sparkles } from "lucide-react";
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { EFFORT_NAMES, OPEN_SETTINGS_EVENT, resolveEffort, type AskChoice } from "./askModel";
+import { EFFORT_NAMES, resolveEffort, type AskChoice } from "./askModel";
 
 interface ModelPickerProps {
   menu: ModelMenu | null;
@@ -12,8 +12,6 @@ interface ModelPickerProps {
   /** Menus open above a composer at the bottom of the page, below one at the top. */
   placement?: "up" | "down";
 }
-
-const openSettings = () => window.dispatchEvent(new CustomEvent(OPEN_SETTINGS_EVENT));
 
 /** Move focus through a menu's items with the arrow keys, Home and End. */
 function moveFocus(event: KeyboardEvent<HTMLDivElement>) {
@@ -74,9 +72,9 @@ export function ModelPicker({ menu, choice, onChange, disabled = false, placemen
   if (!menu) return null;
   if (!menu.models.length) {
     return <div className="gx-model-picker">
-      <button type="button" className="gx-model-chip is-empty" onClick={openSettings} title="Add a provider and a key in Settings → Models">
-        <Sparkles size={13} /><span>Set up a model</span>
-      </button>
+      <span className="gx-model-chip is-empty" title="Models are set up in Settings → Models">
+        <Sparkles size={13} /><span>No model</span>
+      </span>
     </div>;
   }
 
@@ -140,9 +138,6 @@ export function ModelPicker({ menu, choice, onChange, disabled = false, placemen
           {model.ref === current.ref && <Check size={13} className="gx-model-check" />}
         </button>)}
       </div>)}
-      <button type="button" role="menuitem" className="gx-model-option is-footer" onClick={() => { close(); openSettings(); }}>
-        <Settings2 size={13} /><span>Manage models…</span>
-      </button>
     </Popover>}
 
     {open === "effort" && applied && <Popover id={effortMenuId} label="Thinking effort" placement={placement} onClose={() => close("effort")}>

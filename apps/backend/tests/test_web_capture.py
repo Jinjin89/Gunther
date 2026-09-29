@@ -83,7 +83,7 @@ def make_client(
                 recordings_dir=tmp_path / "recordings",
                 seed_demo=False,
                 deepseek_api_key=None,
-                stt_provider="openai",
+                stt_provider="compatible",
             ),
             web_capture_fetcher=fetcher,
             web_capture_resolver=resolver or FakeResolver(),

@@ -1,11 +1,15 @@
 import asyncio
+import json
+import logging
+import queue
 import re
 import secrets
+import threading
 from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, WebSocket, status
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
@@ -60,6 +64,7 @@ from gunther.schemas import (
     ExchangeDevicePairingInput,
     FileNotebookNoteInput,
     FileNotebookNoteOut,
+    FileSessionInput,
     FileSourceInput,
     FileSourceOut,
     HealthOut,
@@ -106,6 +111,8 @@ from gunther.web_capture import (
     WebCaptureTooLargeError,
     WebCaptureValidationError,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 PAIRING_EXCHANGE_MAX_BYTES = 16 * 1024
@@ -434,13 +441,11 @@ async def health(request: Request) -> HealthOut:
     service = _service(request)
     settings = request.app.state.settings
     sensevoice = None
-    if settings.stt_provider != "openai":
+    if settings.stt_provider != "compatible":
         sensevoice = await sensevoice_health(settings.sensevoice_url)
     use_sensevoice = sensevoice is not None
-    use_openai = (
-        not use_sensevoice
-        and settings.stt_provider != "sensevoice"
-        and bool(settings.openai_api_key)
+    use_compatible = (
+        not use_sensevoice and settings.stt_provider != "sensevoice" and bool(settings.stt_base_url)
     )
     ocr = request.app.state.ocr_provider
     ocr_provider_name = getattr(ocr, "active_name", None) or ocr.name
@@ -452,24 +457,16 @@ async def health(request: Request) -> HealthOut:
         transcription_mode=(
             "sensevoice_local"
             if use_sensevoice
-            else "openai_realtime"
-            if use_openai
+            else "compatible"
+            if use_compatible
             else "not_configured"
         ),
         transcription_provider=(
-            "sensevoice" if use_sensevoice else "openai" if use_openai else "none"
+            "sensevoice" if use_sensevoice else "compatible" if use_compatible else "none"
         ),
         transcription_model=(
-            str(sensevoice.get("model", "sensevoice-small"))
-            if sensevoice
-            else settings.openai_transcription_model
+            str(sensevoice.get("model", "sensevoice-small")) if sensevoice else settings.stt_model
         ),
-        transcription_delay=settings.openai_transcription_delay,
-        transcription_languages=[
-            language.strip()
-            for language in settings.openai_transcription_languages.split(",")
-            if language.strip()
-        ],
         summary_mode=(
             request.app.state.lecture_summarizer.model.display
             if request.app.state.lecture_summarizer
@@ -511,7 +508,8 @@ def web_search(
     request: Request,
     query: Annotated[str, Query(alias="q", min_length=1, max_length=500)],
 ) -> WebSearchOut:
-    return request.app.state.online_search.search(query)
+    # Home shows a short answer above the pages; Ask's agent reads the pages itself.
+    return request.app.state.online_search.search(query, answer=True)
 
 
 @router.post(
@@ -848,18 +846,14 @@ async def live_recording(
     settings = websocket.app.state.settings
     await proxy_realtime_transcription(
         websocket,
-        settings.openai_api_key,
-        settings.openai_transcription_model,
-        context,
-        settings.openai_transcription_delay,
-        [
-            language.strip()
-            for language in settings.openai_transcription_languages.split(",")
-            if language.strip()
-        ],
-        settings.stt_provider,
-        settings.sensevoice_url,
-        settings.sensevoice_segment_seconds,
+        provider=settings.stt_provider,
+        sensevoice_url=settings.sensevoice_url,
+        segment_seconds=settings.sensevoice_segment_seconds,
+        base_url=settings.stt_base_url,
+        api_key=settings.stt_api_key,
+        model=settings.stt_model,
+        language=settings.stt_language,
+        context=context,
     )
 
 
@@ -1073,6 +1067,77 @@ def create_session_message(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.post("/sessions/{session_id}/file", response_model=KnowledgeSessionSummaryOut)
+def file_home_session(
+    session_id: str, payload: FileSessionInput, request: Request
+) -> KnowledgeSessionSummaryOut:
+    try:
+        return _service(request).file_home_session(session_id, payload.knowledge_base_id)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+class _Cancelled(Exception):
+    """The reader went away; the answer is dropped and the question is not saved."""
+
+
+@router.post("/sessions/{session_id}/messages/stream")
+async def stream_session_message(
+    session_id: str,
+    payload: CreateSessionMessageInput,
+    request: Request,
+) -> StreamingResponse:
+    """Like posting a message, but as server-sent events while it is answered.
+
+    ``intent``, ``step`` and ``text`` events report the agent at work; ``done``
+    carries the saved turn, and ``error`` says why there is none. Closing the
+    connection stops the work and saves nothing.
+    """
+
+    service = _service(request)
+    updates: queue.Queue[tuple[str, dict]] = queue.Queue()
+    stopped = threading.Event()
+
+    def hear(event: dict) -> None:
+        if stopped.is_set():
+            raise _Cancelled
+        updates.put((event["type"], event))
+
+    def work() -> None:
+        try:
+            turn = service.create_session_turn(session_id, payload, hear)
+            updates.put(("done", turn.model_dump(mode="json", by_alias=True)))
+        except _Cancelled:
+            updates.put(("cancelled", {}))
+        except LookupError as error:
+            updates.put(("error", {"status": 404, "detail": str(error)}))
+        except ValueError as error:
+            updates.put(("error", {"status": 400, "detail": str(error)}))
+        except Exception:
+            logger.exception("Answering a question failed")
+            updates.put(("error", {"status": 500, "detail": "The answer could not be written."}))
+
+    threading.Thread(target=work, daemon=True).start()
+
+    async def events():
+        try:
+            while True:
+                name, data = await asyncio.to_thread(updates.get)
+                if name == "cancelled":
+                    return
+                yield f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+                if name in ("done", "error"):
+                    return
+        finally:
+            stopped.set()
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post(

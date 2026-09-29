@@ -14,14 +14,16 @@ import {
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { AtlasMode, KnowledgeBase } from "../atlas";
 import { knowledgeApi } from "../api";
+import { HomeAsk, RecentQuestions } from "../components/search/HomeAsk";
 import { SearchComposer, type SearchComposerHandle } from "../components/search/SearchComposer";
 import { SearchResults } from "../components/search/SearchResults";
 import { useKnowledgeSearch } from "../components/search/useKnowledgeSearch";
 import { BrandMark } from "../design/BrandMark";
 import { LibraryGlyph } from "../design/LibraryGlyph";
 import { refFromSearch, type ItemRef } from "../items/itemRef";
-import { usableChoice, useDeviceChoice, useModelMenu } from "../models/askModel";
+import { usableChoice, useDeviceChoice, useModelMenu, WEB_PREFERENCE_KEY } from "../models/askModel";
 import { ModelPicker } from "../models/ModelPicker";
+import { useHomeAsk } from "./useHomeAsk";
 
 export type HomeCaptureKind = "note" | "link" | "file" | "image" | "recording" | "table";
 
@@ -49,7 +51,6 @@ interface HomePageProps {
   resolveWorkspaceId: () => Promise<string>;
 }
 
-const WEB_PREFERENCE_KEY = "gunther:search-web";
 
 const captureActions = [
   { id: "note", label: "Note", title: "Quick note — write a thought before it disappears", icon: NotebookPen, tone: "clay" },
@@ -134,6 +135,7 @@ export function HomePage({
   const { menu: modelMenu } = useModelMenu();
   const [deviceChoice, setDeviceChoice] = useDeviceChoice();
   const { submitted, run, reset } = search;
+  const homeAsk = useHomeAsk();
 
   useEffect(() => {
     let active = true;
@@ -194,7 +196,27 @@ export function HomePage({
     return Boolean(first);
   };
 
+  const askNow = (question = query) => {
+    const text = question.trim();
+    if (!text) return;
+    const choice = usableChoice(modelMenu, deviceChoice);
+    void homeAsk.ask(text, {
+      ...(choice.model && modelMenu?.models.length ? { model: choice.model, effort: choice.effort } : {}),
+      web,
+      libraryIds: mentionIds,
+    });
+  };
+
+  const fileConversation = async (libraryId: string) => {
+    const sessionId = await homeAsk.file(libraryId);
+    if (!sessionId) return;
+    window.localStorage.setItem(`gunther:active-session:${libraryId}`, sessionId);
+    onNotify("Conversation filed in the library.");
+    onOpenBase(libraryId, "ask");
+  };
+
   const clear = () => {
+    homeAsk.close();
     setQuery("");
     setMentionIds([]);
     rememberedSearch = null;
@@ -240,7 +262,7 @@ export function HomePage({
 
   const saveResearch = async () => {
     const webResult = search.webResult;
-    if (!webResult || webResult.mode !== "openai" || !webResult.answer.trim()) return;
+    if (!webResult || webResult.mode !== "tavily" || !(webResult.answer.trim() || webResult.sources.length)) return;
     setSavingResearch(true);
     const references = webResult.sources.map((source, index) => [
       `${index + 1}. ${source.title}`,
@@ -250,7 +272,7 @@ export function HomePage({
     const content = [
       `Search query: ${webResult.query}`,
       "",
-      "Answer captured from web research:",
+      webResult.answer ? "Answer captured from web research:" : "",
       webResult.answer,
       references ? "\nReferenced pages:\n" + references : "",
     ].join("\n").trim();
@@ -296,6 +318,7 @@ export function HomePage({
           onMentionsChange={changeMentions}
           onWebChange={changeWeb}
           onSubmit={submit}
+          onAsk={() => askNow()}
           onClear={clear}
           onArrowDown={submitted ? focusFirstResult : undefined}
           picker={<ModelPicker menu={modelMenu} choice={usableChoice(modelMenu, deviceChoice)} onChange={setDeviceChoice} placement="down" />}
@@ -314,6 +337,22 @@ export function HomePage({
           </div>
         )}
       </section>
+
+      <HomeAsk
+        query={hasResults ? query : ""}
+        bases={bases}
+        messages={homeAsk.messages}
+        pending={homeAsk.pending}
+        live={homeAsk.live}
+        error={homeAsk.error}
+        active={homeAsk.shown}
+        onAsk={askNow}
+        onCancel={homeAsk.cancel}
+        onClose={homeAsk.close}
+        onNew={homeAsk.fresh}
+        onFile={(libraryId) => void fileConversation(libraryId)}
+        onOpenSource={(item) => onOpenItem?.(item, [item])}
+      />
 
       {hasResults && submitted ? (
         <SearchResults
@@ -345,6 +384,8 @@ export function HomePage({
             </span>
             <ArrowRight size={14} className="gx-nudge" />
           </button>
+
+          {!homeAsk.shown && <RecentQuestions items={homeAsk.recent} onOpen={(id) => void homeAsk.open(id)} />}
 
           <div className="gx-home-columns">
             <div className="gx-home-column">
