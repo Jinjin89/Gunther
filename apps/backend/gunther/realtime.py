@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import wave
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 
 import httpx
@@ -37,12 +38,88 @@ def _pcm16_wav(pcm: bytes, sample_rate: int = 24_000) -> bytes:
     return output.getvalue()
 
 
+Transcriber = Callable[[httpx.AsyncClient, bytes], Awaitable[str]]
+
+
+def _form_transcriber(endpoint: str, headers: dict[str, str], form: dict[str, str]) -> Transcriber:
+    """An ``/audio/transcriptions`` server: the segment goes up as a WAV file."""
+
+    async def transcribe(client: httpx.AsyncClient, pcm: bytes) -> str:
+        response = await client.post(
+            endpoint,
+            headers=headers,
+            files={"file": ("segment.wav", _pcm16_wav(pcm), "audio/wav")},
+            data=form,
+        )
+        response.raise_for_status()
+        return str(response.json().get("text", "")).strip()
+
+    return transcribe
+
+
+def qwen_endpoint(base_url: str) -> str:
+    return f"{base_url.rstrip('/')}/chat/completions"
+
+
+def qwen_request(model: str, wav: bytes, language: str = "") -> dict[str, object]:
+    """Qwen3-ASR takes the audio as a data URI inside a chat message."""
+
+    encoded = base64.b64encode(wav).decode("ascii")
+    body: dict[str, object] = {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_audio",
+                        "input_audio": {"data": f"data:audio/wav;base64,{encoded}"},
+                    }
+                ],
+            }
+        ],
+        "stream": False,
+        "asr_options": {"enable_itn": False, **({"language": language} if language else {})},
+    }
+    return body
+
+
+def qwen_text(payload: object) -> str:
+    """The words in a Qwen reply, whichever of its two shapes it came in."""
+
+    if not isinstance(payload, dict):
+        return ""
+    choices = payload.get("choices")
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        content = (choices[0].get("message") or {}).get("content")
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts = (str(part.get("text", "")) for part in content if isinstance(part, dict))
+            return "".join(parts).strip()
+    output = payload.get("output")
+    if isinstance(output, dict) and isinstance(output.get("text"), str):
+        return output["text"].strip()
+    return ""
+
+
+def _qwen_transcriber(base_url: str, api_key: str, model: str, language: str) -> Transcriber:
+    async def transcribe(client: httpx.AsyncClient, pcm: bytes) -> str:
+        response = await client.post(
+            qwen_endpoint(base_url),
+            headers={"Authorization": f"Bearer {api_key}"},
+            json=qwen_request(model, _pcm16_wav(pcm), language),
+        )
+        response.raise_for_status()
+        return qwen_text(response.json())
+
+    return transcribe
+
+
 async def _proxy_segmented_transcription(
     websocket: WebSocket,
     *,
-    endpoint: str,
-    headers: dict[str, str],
-    form: dict[str, str],
+    transcriber: Transcriber,
     provider: str,
     label: str,
     segment_seconds: float,
@@ -72,15 +149,7 @@ async def _proxy_segmented_transcription(
                 nonlocal sequence
                 if len(chunk) < 2:
                     return
-                response = await client.post(
-                    endpoint,
-                    headers=headers,
-                    files={"file": ("segment.wav", _pcm16_wav(chunk), "audio/wav")},
-                    data=form,
-                )
-                response.raise_for_status()
-                payload = response.json()
-                transcript = str(payload.get("text", "")).strip()
+                transcript = await transcriber(client, chunk)
                 if not transcript:
                     return
                 sequence += 1
@@ -156,16 +225,43 @@ async def proxy_realtime_transcription(
     model: str = "whisper-1",
     language: str = "",
     context: str = "",
+    qwen_base_url: str = "",
+    qwen_api_key: str | None = None,
+    qwen_model: str = "qwen3-asr-flash",
 ) -> None:
+    if provider == "qwen":
+        if not qwen_api_key:
+            await websocket.accept()
+            await websocket.send_json(
+                {
+                    "type": "service.error",
+                    "code": "not_configured",
+                    "message": "Qwen transcription needs an API key. "
+                    "Add one in Settings → Services.",
+                }
+            )
+            await websocket.close(code=1011)
+            return
+        await _proxy_segmented_transcription(
+            websocket,
+            transcriber=_qwen_transcriber(qwen_base_url, qwen_api_key, qwen_model, language),
+            provider="qwen",
+            label="Qwen",
+            segment_seconds=segment_seconds,
+            ready={"model": qwen_model, "local": False, "diarize": False},
+        )
+        return
     if provider != "compatible":
         status = await sensevoice_health(sensevoice_url)
         if status is not None:
             root = _sensevoice_root(sensevoice_url)
             await _proxy_segmented_transcription(
                 websocket,
-                endpoint=f"{root}/v1/audio/transcriptions",
-                headers={},
-                form={"model": "sensevoice", "response_format": "json"},
+                transcriber=_form_transcriber(
+                    f"{root}/v1/audio/transcriptions",
+                    {},
+                    {"model": "sensevoice", "response_format": "json"},
+                ),
                 provider="sensevoice",
                 label="SenseVoice",
                 segment_seconds=segment_seconds,
@@ -185,9 +281,11 @@ async def proxy_realtime_transcription(
             form["prompt"] = context.strip()[:1_000]
         await _proxy_segmented_transcription(
             websocket,
-            endpoint=compatible_endpoint(base_url),
-            headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
-            form=form,
+            transcriber=_form_transcriber(
+                compatible_endpoint(base_url),
+                {"Authorization": f"Bearer {api_key}"} if api_key else {},
+                form,
+            ),
             provider="compatible",
             label="The transcription server",
             segment_seconds=segment_seconds,

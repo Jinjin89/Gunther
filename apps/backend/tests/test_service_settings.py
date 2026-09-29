@@ -84,6 +84,10 @@ def test_services_are_described_without_their_secrets(tmp_path: Path) -> None:
         "key": "stt_provider",
         "values": ["auto", "sensevoice"],
     }
+    assert field(listed["transcription"], "qwen_stt_api_key")["shownWhen"] == {
+        "key": "stt_provider",
+        "values": ["qwen"],
+    }
     assert "openai" not in listed
 
 
@@ -212,6 +216,46 @@ def test_a_connection_test_uses_the_values_on_screen(tmp_path: Path, fake_api) -
             json={"values": {"tavily_api_key": "tvly-another-000000005678"}},
         )
         assert services(client)["web_search"]["status"]["state"] == "configured"
+
+
+def test_qwen_transcription_needs_a_key_and_is_tested_with_a_silent_clip(
+    tmp_path: Path, monkeypatch
+) -> None:
+    calls: list[dict] = []
+
+    class Reply:
+        status_code = 200
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args) -> None:
+            return None
+
+        async def post(self, url: str, headers: dict, json: dict) -> Reply:
+            calls.append({"url": url, "auth": headers["Authorization"], "model": json["model"]})
+            reply = Reply()
+            reply.status_code = 401 if headers["Authorization"].endswith("bad") else 200
+            return reply
+
+    monkeypatch.setattr(service_settings.httpx, "AsyncClient", FakeClient)
+    with TestClient(create_app(settings_for(tmp_path, stt_provider="qwen"))) as client:
+        url = "/api/settings/services/transcription/test"
+        tested = client.post(url, headers=SIDECAR, json={"values": {}}).json()
+        assert tested["ok"] is False and "API key" in tested["message"]
+        tested = client.post(
+            url, headers=SIDECAR, json={"values": {"qwen_stt_api_key": "sk-bad"}}
+        ).json()
+        assert tested["ok"] is False and "did not accept the key" in tested["message"]
+        tested = client.post(
+            url, headers=SIDECAR, json={"values": {"qwen_stt_api_key": "sk-good"}}
+        ).json()
+        assert tested["ok"] is True and "qwen3-asr-flash" in tested["message"]
+    assert calls[-1]["url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 
 
 def test_transcription_test_explains_what_is_missing(

@@ -33,7 +33,7 @@ from pydantic import TypeAdapter, ValidationError
 from gunther.config import Settings
 from gunther.model_registry import LEGACY_KEYS, RegistryError, clean_provider, clean_roles
 from gunther.online_search import check_key as check_tavily_key
-from gunther.realtime import sensevoice_health
+from gunther.realtime import _pcm16_wav, qwen_endpoint, qwen_request, sensevoice_health
 
 logger = logging.getLogger(__name__)
 
@@ -170,8 +170,38 @@ async def _check_web_search(settings: Settings) -> CheckResult:
     return CheckResult(ok, message)
 
 
+async def _check_qwen_transcription(settings: Settings) -> CheckResult:
+    """Send half a second of silence: the key and model are right if it is accepted."""
+
+    if not settings.qwen_stt_api_key:
+        return CheckResult(False, "Add a Qwen API key first.")
+    body = qwen_request(settings.qwen_stt_model, _pcm16_wav(bytes(24_000)), "")
+    try:
+        async with httpx.AsyncClient(timeout=CHECK_TIMEOUT_SECONDS) as client:
+            response = await client.post(
+                qwen_endpoint(settings.qwen_stt_base_url),
+                headers={"Authorization": f"Bearer {settings.qwen_stt_api_key}"},
+                json=body,
+            )
+    except httpx.HTTPError as error:
+        return CheckResult(False, f"Could not reach {_host(settings.qwen_stt_base_url)}: {error}")
+    if response.status_code in (401, 403):
+        return CheckResult(
+            False,
+            "Qwen did not accept the key. Keys from the China and international sites differ.",
+        )
+    if response.status_code == 404:
+        where = _host(settings.qwen_stt_base_url)
+        return CheckResult(False, f"{settings.qwen_stt_model} was not found at {where}.")
+    if response.status_code >= 400:
+        return CheckResult(False, f"Qwen answered with an error ({response.status_code}).")
+    return CheckResult(True, f"Connected. {settings.qwen_stt_model} is ready.")
+
+
 async def _check_transcription(settings: Settings) -> CheckResult:
     provider = settings.stt_provider
+    if provider == "qwen":
+        return await _check_qwen_transcription(settings)
     sensevoice = None
     if provider != "compatible":
         health = await sensevoice_health(settings.sensevoice_url, timeout=CHECK_TIMEOUT_SECONDS / 2)
@@ -222,6 +252,11 @@ def _transcription_status(settings: Settings, _models: Any) -> Status:
     server = (
         f"{settings.stt_model} at {_host(settings.stt_base_url)}" if settings.stt_base_url else ""
     )
+    if settings.stt_provider == "qwen":
+        if not settings.qwen_stt_api_key:
+            return Status("error", "Qwen is chosen, but it has no API key.")
+        where = _host(settings.qwen_stt_base_url)
+        return Status("configured", f"{settings.qwen_stt_model} at {where}")
     if settings.stt_provider == "compatible":
         if not settings.stt_base_url:
             return Status("error", "A transcription server is chosen, but it has no address.")
@@ -299,6 +334,7 @@ SERVICES: tuple[Service, ...] = (
                 options=(
                     Option("auto", "Automatic", "SenseVoice when it is running, else the server"),
                     Option("sensevoice", "SenseVoice", "Private, on this device or your network"),
+                    Option("qwen", "Qwen", "Qwen3-ASR on Alibaba Cloud, strong on Chinese"),
                     Option("compatible", "OpenAI-compatible server", "Cloud or self-hosted"),
                 ),
             ),
@@ -310,6 +346,33 @@ SERVICES: tuple[Service, ...] = (
                 placeholder="http://127.0.0.1:8765",
                 required=True,
                 shown_when=("stt_provider", ("auto", "sensevoice")),
+            ),
+            ServiceField(
+                "qwen_stt_base_url",
+                "Qwen address",
+                "url",
+                help="China: dashscope.aliyuncs.com. International: dashscope-intl.aliyuncs.com.",
+                placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                required=True,
+                shown_when=("stt_provider", ("qwen",)),
+            ),
+            ServiceField(
+                "qwen_stt_api_key",
+                "Qwen API key",
+                "secret",
+                help="From Alibaba Cloud Model Studio. It must match the site above.",
+                required=True,
+                shown_when=("stt_provider", ("qwen",)),
+            ),
+            ServiceField(
+                "qwen_stt_model",
+                "Qwen model",
+                "text",
+                required=True,
+                pattern=MODEL_PATTERN,
+                pattern_message=MODEL_MESSAGE,
+                placeholder="qwen3-asr-flash",
+                shown_when=("stt_provider", ("qwen",)),
             ),
             ServiceField(
                 "stt_base_url",
@@ -344,7 +407,7 @@ SERVICES: tuple[Service, ...] = (
                 placeholder="detect",
                 pattern=r"|[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?",
                 pattern_message="Use a code like en or zh, or leave it empty.",
-                shown_when=("stt_provider", ("auto", "compatible")),
+                shown_when=("stt_provider", ("auto", "compatible", "qwen")),
             ),
             ServiceField(
                 "sensevoice_segment_seconds",

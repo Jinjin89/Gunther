@@ -305,9 +305,9 @@ class HealthOut(ApiModel):
     extraction_mode: Literal["local", "model"]
     web_search_mode: Literal["tavily", "not_configured"] = "not_configured"
     transcription_mode: Literal[
-        "sensevoice_local", "compatible", "not_configured"
+        "sensevoice_local", "qwen", "compatible", "not_configured"
     ] = "not_configured"
-    transcription_provider: Literal["sensevoice", "compatible", "none"] = "none"
+    transcription_provider: Literal["sensevoice", "qwen", "compatible", "none"] = "none"
     transcription_model: str = ""
     # The model that writes recording summaries ("DeepSeek · Flash"), or "off".
     summary_mode: str = "off"

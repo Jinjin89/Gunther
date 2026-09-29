@@ -1496,7 +1496,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   useEffect(() => {
     void knowledgeApi.health().then((health) => {
       setProvider(health.transcriptionMode === "not_configured" ? "local-only" : "available");
-      setTranscriptionLabel(health.transcriptionProvider === "sensevoice" ? "SenseVoice · local" : health.transcriptionProvider === "compatible" ? `${health.transcriptionModel} · server` : "Local audio");
+      setTranscriptionLabel(health.transcriptionProvider === "sensevoice" ? "SenseVoice · local" : health.transcriptionProvider === "qwen" ? `Qwen · ${health.transcriptionModel}` : health.transcriptionProvider === "compatible" ? `${health.transcriptionModel} · server` : "Local audio");
     }).catch(() => setProvider("local-only"));
   }, []);
   useEffect(() => () => {

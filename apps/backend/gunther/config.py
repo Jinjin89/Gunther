@@ -61,12 +61,17 @@ class Settings(BaseSettings):
     ai_summary_images: bool = True
     # Transcription: SenseVoice, or any server with an OpenAI-style
     # /audio/transcriptions endpoint (OpenAI, Groq, a self-hosted Whisper, ...).
-    stt_provider: Literal["auto", "sensevoice", "compatible"] = "auto"
+    stt_provider: Literal["auto", "sensevoice", "qwen", "compatible"] = "auto"
     stt_base_url: str = ""
     stt_api_key: str | None = None
     stt_model: str = "whisper-1"
     # Empty lets the model detect the language.
     stt_language: str = ""
+    # Qwen3-ASR on Alibaba Cloud Model Studio (DashScope): audio goes in a
+    # chat-completions request rather than /audio/transcriptions.
+    qwen_stt_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    qwen_stt_api_key: str | None = None
+    qwen_stt_model: str = "qwen3-asr-flash"
     ocr_provider: Literal["auto", "vision", "tesseract", "disabled"] = "auto"
     ocr_tesseract_command: str = "tesseract"
     ocr_pdftoppm_command: str = "pdftoppm"

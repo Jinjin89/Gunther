@@ -441,11 +441,15 @@ async def health(request: Request) -> HealthOut:
     service = _service(request)
     settings = request.app.state.settings
     sensevoice = None
-    if settings.stt_provider != "compatible":
+    if settings.stt_provider not in ("compatible", "qwen"):
         sensevoice = await sensevoice_health(settings.sensevoice_url)
     use_sensevoice = sensevoice is not None
+    use_qwen = settings.stt_provider == "qwen" and bool(settings.qwen_stt_api_key)
     use_compatible = (
-        not use_sensevoice and settings.stt_provider != "sensevoice" and bool(settings.stt_base_url)
+        not use_sensevoice
+        and not use_qwen
+        and settings.stt_provider not in ("sensevoice", "qwen")
+        and bool(settings.stt_base_url)
     )
     ocr = request.app.state.ocr_provider
     ocr_provider_name = getattr(ocr, "active_name", None) or ocr.name
@@ -457,15 +461,27 @@ async def health(request: Request) -> HealthOut:
         transcription_mode=(
             "sensevoice_local"
             if use_sensevoice
+            else "qwen"
+            if use_qwen
             else "compatible"
             if use_compatible
             else "not_configured"
         ),
         transcription_provider=(
-            "sensevoice" if use_sensevoice else "compatible" if use_compatible else "none"
+            "sensevoice"
+            if use_sensevoice
+            else "qwen"
+            if use_qwen
+            else "compatible"
+            if use_compatible
+            else "none"
         ),
         transcription_model=(
-            str(sensevoice.get("model", "sensevoice-small")) if sensevoice else settings.stt_model
+            str(sensevoice.get("model", "sensevoice-small"))
+            if sensevoice
+            else settings.qwen_stt_model
+            if use_qwen
+            else settings.stt_model
         ),
         summary_mode=(
             request.app.state.lecture_summarizer.model.display
@@ -854,6 +870,9 @@ async def live_recording(
         model=settings.stt_model,
         language=settings.stt_language,
         context=context,
+        qwen_base_url=settings.qwen_stt_base_url,
+        qwen_api_key=settings.qwen_stt_api_key,
+        qwen_model=settings.qwen_stt_model,
     )
 
 

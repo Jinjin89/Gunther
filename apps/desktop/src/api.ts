@@ -86,8 +86,8 @@ interface Health {
   status: "ok";
   extractionMode: "local" | "model";
   webSearchMode: "tavily" | "not_configured";
-  transcriptionMode: "sensevoice_local" | "compatible" | "not_configured";
-  transcriptionProvider: "sensevoice" | "compatible" | "none";
+  transcriptionMode: "sensevoice_local" | "qwen" | "compatible" | "not_configured";
+  transcriptionProvider: "sensevoice" | "qwen" | "compatible" | "none";
   transcriptionModel: string;
   /** The model that writes recording summaries ("DeepSeek · Flash"), or "off". */
   summaryMode: string;
