@@ -1,6 +1,6 @@
 import type { ConversationCitation, KnowledgeSessionSummary, SessionMessage } from "@gunther/contracts";
 import { ArrowUp, FolderInput, Globe2, MessageSquareText, Plus, Sparkles, Square, X } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { KnowledgeBase } from "../../atlas";
 import { AgentSteps, AnswerBody, LiveAnswer } from "../../pages/AnswerBody";
 import type { LiveAnswerState } from "../../pages/liveAnswer";
@@ -51,6 +51,9 @@ function Sources({ citations, onOpenSource }: { citations: ConversationCitation[
 export function HomeAsk({ query, bases, messages, pending, live, error, active, onAsk, onCancel, onClose, onNew, onFile, onOpenSource }: HomeAskProps) {
   const [followUp, setFollowUp] = useState("");
   const busy = pending !== null;
+  const tail = useRef<HTMLDivElement>(null);
+  // A new question brings the latest exchange into view once; after that the page is the reader's.
+  useEffect(() => { if (pending !== null) tail.current?.scrollIntoView({ block: "nearest" }); }, [pending]);
   const suggested = looksLikeQuestion(query);
 
   if (!active) {
@@ -105,6 +108,7 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
         {live && <LiveAnswer state={live} className="gx-home-live" />}
       </>}
       {error && <p className="gx-inline-alert" role="alert">{error}</p>}
+      <div ref={tail} />
     </div>
     <form className="gx-home-followup" onSubmit={send}>
       <input value={followUp} onChange={(event) => setFollowUp(event.target.value)} placeholder={messages.length ? "Ask a follow-up…" : "Ask a question…"} aria-label="Ask a follow-up" disabled={busy} />

@@ -14,7 +14,6 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  transition: padding-top var(--gx-dur-slow) var(--gx-ease);
 }
 .gx-home.has-results .gx-home-hero {
   padding-top: 22px;

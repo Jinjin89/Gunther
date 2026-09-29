@@ -478,7 +478,9 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify }: S
   const roomForHistory = useMediaQuery(DOCK_QUERY);
   const [historyChoice, setHistoryChoice] = useState<"open" | "closed" | null>(readHistoryChoice);
   const bootstrapRequest = useRef<{ baseId: string; promise: Promise<{ sessions: KnowledgeSessionSummary[]; detail: KnowledgeSession }> } | null>(null);
-  const messagesEnd = useRef<HTMLDivElement>(null);
+  const scrollPane = useRef<HTMLDivElement>(null);
+  /** Whether the reader is at the bottom; only then does new text pull the view along. */
+  const followTail = useRef(true);
   const responseController = useRef<AbortController | null>(null);
   const localResponseTimer = useRef<number | null>(null);
   const pendingQuestion = useRef("");
@@ -606,7 +608,13 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify }: S
   useEffect(() => {
     if (activeId) window.localStorage.setItem(`gunther:active-session:${base.id}`, activeId);
   }, [activeId, base.id]);
-  useEffect(() => { messagesEnd.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [activeSession?.messages.length, sending, liveAnswer.live?.steps.length, Math.floor((liveAnswer.live?.text.length ?? 0) / 200)]);
+  // Scroll only the conversation pane (scrollIntoView would move every ancestor too), and only
+  // while the reader is at the bottom, so reading earlier messages is never yanked away.
+  useEffect(() => {
+    const pane = scrollPane.current;
+    if (pane && followTail.current) pane.scrollTop = pane.scrollHeight;
+  }, [activeSession?.messages.length, sending, liveAnswer.live?.steps.length, liveAnswer.live?.text.length]);
+  useEffect(() => { followTail.current = true; }, [activeId]);
   useEffect(() => {
     let wasNarrow = window.innerWidth <= 980;
     const onResize = () => {
@@ -970,12 +978,11 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify }: S
             </div>}
           </div>
         </header>
-        <div className="conversation-scroll">
+        <div className="conversation-scroll" ref={scrollPane} onScroll={(event) => { const pane = event.currentTarget; followTail.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 80; }}>
           {error && <div className="conversation-error" role="alert"><CircleAlert size={14} /><span>{error}</span><button onClick={() => setError(null)}><X size={12} /></button></div>}
           {!loading && activeSession?.messages.length === 0 ? <WelcomePanel base={base} onPrompt={setDraft} /> : <h1 className="gx-sr-only">Ask {base.title}</h1>}
           {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} selected={selectedMessageId === message.id} promoting={promotingMessageId === message.id} promoted={proposalMessageIds.has(message.id)} branching={branchingMessageId === message.id} onSelect={() => { setSelectedMessageId(message.id); setInspectorTab("context"); setInspectorCollapsed(false); }} onCopy={() => void copyMessage(message)} onPromote={() => void promoteMessage(message)} onBranch={() => void branchFromMessage(message)} />)}
           {sending && (liveAnswer.live ? <LiveAnswer state={liveAnswer.live} /> : <div className="thinking-row"><span className="assistant-mark"><BrandMark size={14} busy /></span><span><i /><i /><i /></span><small>Working out what to look up…</small></div>)}
-          <div ref={messagesEnd} />
         </div>
         <Composer picker={<ModelPicker menu={modelMenu} choice={askChoice} onChange={chooseModel} disabled={sending || Boolean(activeSession?.archived)} />} web={{ available: webSearch.available, enabled: webSearch.enabled, onChange: webSearch.setEnabled }} value={draft} sending={sending} sourceCount={activeSession?.selectedSourceIds.length ?? 0} chapterTitle={focusedChapter?.title} readOnly={Boolean(activeSession?.archived)} ready={!loading && activeSession !== null} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={() => { setInspectorTab("sources"); setInspectorCollapsed(false); }} />
       </section>
