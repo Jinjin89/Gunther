@@ -33,7 +33,7 @@ After a capture is read, a `digest` job writes a summary suited to what it is:
 | Lecture / course recording | Study notes: key ideas, homework, open questions, terms |
 | Meeting recording | Decisions, action items (owner and date when said), open questions |
 | Voice memo | The thought restated clearly, its ideas, to-dos |
-| Photo or scan | What it shows (OpenAI sees the image; otherwise its recognized text) |
+| Photo or scan | What it shows (a model that can see images reads the photo; otherwise its recognized text) |
 | Table | What it records; per-column ranges, means and common values |
 | Paper | Problem and approach, contributions, findings, limitations |
 | Document, web page, long note | Overview, key points, actions |
@@ -49,8 +49,8 @@ Rules:
   "Lecture · 29/09/2026" or `IMG_2041` takes the summary's title. A name
   someone chose stays.
 - **Only a model writes summaries.** There is no model-free stand-in: without an
-  OpenAI or DeepSeek key there are none (the source page and Settings say a key
-  is needed), and a model that fails is retried twice, then shown as failed with
+  model set up in Settings → Models there are none (the source page says a
+  model is needed), and a model that fails is retried twice, then shown as failed with
   its reason and Try again. The recorder's "Summarize recording" follows the
   same rule.
 - **Short notes are their own summary** (under 280 characters).
@@ -60,7 +60,7 @@ Rules:
 Where it shows: a Summary card at the top of each source page, with the
 passages behind each point one click away and "Write again".
 
-Settings (`.env`): `AI_SUMMARIES=auto|off` (auto uses OpenAI, else DeepSeek)
+Settings (`.env`): `AI_SUMMARIES=auto|off` (auto uses the Analysis model from Settings → Models)
 and `AI_SUMMARY_IMAGES=true|false`.
 
 API: `GET /api/sources/{id}/digest` returns `reading | writing | ready | none |

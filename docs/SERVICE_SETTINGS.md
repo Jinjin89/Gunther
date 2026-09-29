@@ -87,8 +87,8 @@ saved by the first version of this page carries over the same way.
 
 | Service | What it does | Settings |
 | --- | --- | --- |
-| OpenAI | Web search with sources, cloud transcription | API key, web search model |
-| Transcription | Speech to text while recording | Engine (Automatic, SenseVoice, OpenAI), SenseVoice address and segment length, OpenAI model, delay and languages |
+| Web search | Lets Ask look things up online, by Tavily | Tavily API key, depth, pages per search |
+| Transcription | Speech to text while recording | Engine (Automatic, SenseVoice, OpenAI-compatible server), SenseVoice address, server address, key, model and language, segment length |
 | Summaries | A summary of every capture | On/off, show photos to the model |
 
 Each service and provider shows one of four states: **Set up** (**Connected**

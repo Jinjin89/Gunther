@@ -59,14 +59,14 @@ Knowledge Base
 | `POST` | `/api/knowledge-bases` | Create a base with a title, question, boundary description, and accent |
 | `PATCH` | `/api/knowledge-bases/{baseId}` | Edit durable base identity and record a revision |
 | `GET` | `/api/search` | Search notes, units, sources, and sessions across base boundaries |
-| `GET` | `/api/search/web` | Return a current online answer with source URLs, or an explicit configuration/failure state |
+| `GET` | `/api/search/web` | Return Tavily web results with source URLs, or an explicit configuration/failure state |
 | `GET` | `/api/notes` | List or search Notebook notes by inbox, filed, or archived state |
 | `POST` | `/api/notes` | Create a lightweight note without requiring knowledge attribution |
 | `PATCH` | `/api/notes/{noteId}` | Auto-save content, pin a note, archive it, or restore it |
 | `POST` | `/api/notes/{noteId}/file` | Snapshot a note as a source, attach it to one base, and run reviewable extraction |
 | `POST` | `/api/recordings` | Preserve original lecture audio in the local recordings directory |
 | `GET` | `/api/recordings/{recordingId}` | Retrieve a locally preserved original recording |
-| `WS` | `/api/recordings/live` | Proxy 24 kHz PCM audio to realtime transcription without exposing the provider key |
+| `WS` | `/api/recordings/live` | Proxy 24 kHz PCM audio, in short segments, to SenseVoice or an OpenAI-compatible transcription server without exposing the key |
 | `POST` | `/api/lectures/summarize` | Produce overview, key points, actions, questions, and terms from a transcript |
 | `GET` | `/api/sources/{sourceId}` | Inspect the preserved source, extracted entities, claims, and timestamps |
 | `PATCH` | `/api/sources/{sourceId}/assertions/status` | Review every candidate claim from one captured source atomically |
@@ -76,7 +76,7 @@ Knowledge Base
 | `POST` | `/api/knowledge-bases/{baseId}/sessions` | Create a session with optional focus and source scope |
 | `GET` | `/api/sessions/{sessionId}` | Load messages and session state |
 | `PATCH` | `/api/sessions/{sessionId}` | Rename, pin, archive, or change future context |
-| `POST` | `/api/sessions/{sessionId}/messages` | Persist a turn and its grounded response |
+| `POST` | `/api/sessions/{sessionId}/messages` | Persist a turn and its grounded response (the Ask agent; see `ASK_AGENT.md`) |
 | `POST` | `/api/sessions/{sessionId}/messages/{messageId}/branch` | Create an independent session branch at a chosen message |
 | `POST` | `/api/sessions/{sessionId}/messages/{messageId}/proposal` | Promote one assistant answer for review |
 | `GET` | `/api/knowledge-bases/{baseId}/proposals` | Load proposal inbox state |

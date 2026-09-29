@@ -37,7 +37,8 @@ FastAPI domain boundary
 - PyPDF 与有界格式解析；
 - Apple Vision 原生 helper 或 Tesseract 本地 OCR；
 - WebSocket 实时转写代理；
-- 可选 DeepSeek / OpenAI Provider，密钥仅保留在本地服务层。
+- 可选的模型 Provider（DeepSeek、Kimi、GLM、Qwen、OpenAI 兼容及自托管），在 Settings → Models 配置，密钥仅保留在本地服务层；
+- 可选 Tavily 联网搜索。
 
 ### Desktop
 
@@ -208,7 +209,7 @@ durable client chunk
 
 1. `auto` / `sensevoice` 检查 `SENSEVOICE_URL`；
 2. SenseVoice 可用时使用本地 `sensevoice-small` 适配；
-3. `auto` 且配置 `OPENAI_API_KEY` 时才可在线回退；
+3. `auto` 且配置了 OpenAI 兼容转写服务（`STT_BASE_URL`）时才可回退到该服务（同样按段调用 `/audio/transcriptions`）；
 4. 都不可用时返回明确的 not configured / unavailable 状态。
 
 桌面通过 `/api/recordings/live` 发送 24 kHz 单声道 PCM；后端按配置窗口包装 WAV 并调用 SenseVoice `/v1/audio/transcriptions`。开始时可调用 `/reset` 清理说话人会话。
