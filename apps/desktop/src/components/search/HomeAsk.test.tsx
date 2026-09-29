@@ -58,7 +58,12 @@ describe("HomeAsk", () => {
     ]} />);
     expect(screen.getByText("Which marker?")).toBeInTheDocument();
     expect(screen.getByText("Searched your library for “CD3D”")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /A page/ })).toHaveAttribute("href", "https://example.org/x");
+    // A source opens its evidence at the right, with the way out to the page below it.
+    await userEvent.click(screen.getByRole("button", { name: /Show evidence 2: A page/ }));
+    expect(screen.getByRole("complementary", { name: "Evidence" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Open example\.org/ })).toHaveAttribute("href", "https://example.org/x");
+    await userEvent.click(screen.getByRole("button", { name: "Close evidence" }));
+    expect(screen.queryByRole("complementary", { name: "Evidence" })).toBeNull();
     await userEvent.type(screen.getByRole("textbox", { name: "Ask a follow-up" }), "And its gene?{Enter}");
     expect(onAsk).toHaveBeenCalledWith("And its gene?");
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "File in a library" }), "base_1");

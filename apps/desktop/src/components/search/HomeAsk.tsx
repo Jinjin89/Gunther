@@ -3,6 +3,7 @@ import { ArrowUp, FolderInput, Globe2, MessageSquareText, Plus, Sparkles, Square
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { KnowledgeBase } from "../../atlas";
 import { AgentSteps, AnswerBody, LiveAnswer } from "../../pages/AnswerBody";
+import { EvidencePanel } from "../evidence/EvidencePanel";
 import type { LiveAnswerState } from "../../pages/liveAnswer";
 import type { ItemRef } from "../../items/itemRef";
 
@@ -35,14 +36,14 @@ interface HomeAskProps {
   onOpenSource: (item: ItemRef) => void;
 }
 
-function Sources({ citations, onOpenSource }: { citations: ConversationCitation[]; onOpenSource: (item: ItemRef) => void }) {
+function Sources({ citations, onOpen }: { citations: ConversationCitation[]; onOpen: (citation: ConversationCitation, index: number) => void }) {
   if (!citations.length) return null;
   return <ol className="gx-home-sources" aria-label="Sources cited">
     {citations.map((citation, index) => <li key={citation.id}>
       <i>{index + 1}</i>
-      {citation.kind === "web" && citation.url
-        ? <a href={citation.url} target="_blank" rel="noreferrer" title={citation.quote}><Globe2 size={12} /><span>{citation.sourceTitle}</span><small>{citation.locator}</small></a>
-        : <button type="button" onClick={() => onOpenSource({ type: "source", id: citation.sourceId })} title={citation.quote}><span>{citation.sourceTitle}</span><small>{citation.locator}</small></button>}
+      <button type="button" onClick={() => onOpen(citation, index)} title={citation.quote} aria-label={`Show evidence ${index + 1}: ${citation.sourceTitle}`}>
+        {citation.kind === "web" && <Globe2 size={12} />}<span>{citation.sourceTitle}</span><small>{citation.locator}</small>
+      </button>
     </li>)}
   </ol>;
 }
@@ -50,6 +51,7 @@ function Sources({ citations, onOpenSource }: { citations: ConversationCitation[
 /** Ask Gunther from Home: an offer beside a search, and the conversation once it starts. */
 export function HomeAsk({ query, bases, messages, pending, live, error, active, onAsk, onCancel, onClose, onNew, onFile, onOpenSource }: HomeAskProps) {
   const [followUp, setFollowUp] = useState("");
+  const [evidence, setEvidence] = useState<{ citation: ConversationCitation; index: number } | null>(null);
   const busy = pending !== null;
   const tail = useRef<HTMLDivElement>(null);
   // A new question brings the latest exchange into view once; after that the page is the reader's.
@@ -89,8 +91,8 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
             {bases.map((base) => <option key={base.id} value={base.id}>{base.title}</option>)}
           </select>
         </label>
-        <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={onNew} disabled={busy}><Plus size={13} />New</button>
-        <button type="button" className="gx-icon-button" onClick={onClose} aria-label="Close conversation" title="Close (it stays under Recent)"><X size={14} /></button>
+        <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => { setEvidence(null); onNew(); }} disabled={busy}><Plus size={13} />New</button>
+        <button type="button" className="gx-icon-button" onClick={() => { setEvidence(null); onClose(); }} aria-label="Close conversation" title="Close (it stays under Recent)"><X size={14} /></button>
       </div>
     </header>
     <div className="gx-home-thread">
@@ -98,9 +100,9 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
         ? <article key={message.id} className="gx-home-question"><p>{message.content}</p></article>
         : <article key={message.id} className="gx-home-answer">
             <AgentSteps steps={message.context.steps ?? []} />
-            <AnswerBody content={message.content} citationCount={message.citations.length} />
+            <AnswerBody content={message.content} citationCount={message.citations.length} onCitation={(index) => { const citation = message.citations[index]; if (citation) setEvidence({ citation, index }); }} />
             {message.context.modelError && <p className="message-model-error" role="note">{message.context.modelError}{message.citations.length > 0 && " The quotes stand in for its answer."}</p>}
-            <Sources citations={message.citations} onOpenSource={onOpenSource} />
+            <Sources citations={message.citations} onOpen={(citation, index) => setEvidence({ citation, index })} />
             <footer><small>{[message.context.modelLabel, message.context.effortLabel].filter(Boolean).join(" · ")}</small></footer>
           </article>)}
       {pending !== null && <>
@@ -116,6 +118,7 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
         ? <button type="button" className="gx-send is-stop" onClick={onCancel} aria-label="Stop"><Square size={12} fill="currentColor" /></button>
         : <button type="submit" className="gx-send" disabled={!followUp.trim()} aria-label="Send"><ArrowUp size={16} /></button>}
     </form>
+    {evidence && <EvidencePanel citation={evidence.citation} index={evidence.index} onClose={() => setEvidence(null)} onOpenSource={(id) => { setEvidence(null); onOpenSource({ type: "source", id }); }} />}
   </section>;
 }
 

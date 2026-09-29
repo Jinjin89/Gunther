@@ -565,7 +565,7 @@ export function KnowledgeBaseWorkspace(props: KnowledgeBaseWorkspaceProps) {
         {props.mode === "overview" && <OverviewView {...props} />}
         {props.mode === "overview" && <>{topicError && <p role="alert">{topicError}</p>}<TopicManager key={props.base.id} baseId={props.base.id} topics={topics} onChange={() => setTopicReload((value) => value + 1)} onAsk={(id) => void askTopic(id)} {...(props.onOpenSource ? { onOpenSource: (id: string) => props.onOpenSource?.(id, [id]) } : {})} /></>}
         {props.mode === "sources" && <MaterialsView {...props} />}
-        {props.mode === "ask" && <SessionWorkspace base={topicBase} selectedChapterId={props.selectedChapterId} onAdd={props.onAdd} onNotify={props.onNotify} />}
+        {props.mode === "ask" && <SessionWorkspace base={topicBase} selectedChapterId={props.selectedChapterId} onAdd={props.onAdd} onNotify={props.onNotify} onOpenSource={(id) => props.onOpenSource?.(id, [id])} />}
         {props.mode === "outputs" && <StudioView {...props} />}
       </div>
     </div>

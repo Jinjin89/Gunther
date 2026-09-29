@@ -29,7 +29,12 @@ describe("Structured evidence", () => {
     render(<SourceEvidence sourceId="source_1" assetId="asset_1" baseId="biology" revisionId="revision_1" blockId="block_1" />);
     await screen.findByText("Genome quality evidence.");
     expect(knowledgeApi.sourceStructure).toHaveBeenCalledWith("source_1", 0, "revision_1", "block_1");
-    expect(screen.getByRole("link", { name: "Open page 8" }).getAttribute("href")).toContain("#page=8");
+    // A page opens inside the app, where it can be closed, and never navigates the window to the file.
+    vi.spyOn(knowledgeApi, "source").mockRejectedValue(new Error("offline"));
+    await user.click(screen.getByRole("button", { name: "Open page 8" }));
+    expect(screen.getByRole("complementary", { name: "Evidence" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close evidence" }));
+    expect(screen.queryByRole("complementary", { name: "Evidence" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Reprocess source" })).not.toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("Evidence topic"), "topic_1");
     await user.click(screen.getByRole("button", { name: "Link to topic" }));

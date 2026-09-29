@@ -17,13 +17,13 @@ export function withCitationLinks(text: string, citationCount: number): string {
 const SAFE_WEB = /^https?:\/\//i;
 
 /** An answer, as Markdown, with its [n] citations as buttons that open the evidence. */
-export function AnswerBody({ content, citationCount, onCitation }: { content: string; citationCount: number; onCitation?: (() => void) | undefined }) {
+export function AnswerBody({ content, citationCount, onCitation }: { content: string; citationCount: number; onCitation?: ((index: number) => void) | undefined }) {
   const components: Components = {
     a({ href, children }) {
       const cite = href ? CITE_LINK.exec(href) : null;
       if (cite) {
         const label = `[${cite[1]}]`;
-        return <sup>{onCitation ? <button type="button" onClick={(event) => { event.stopPropagation(); onCitation(); }} aria-label={`Inspect citation ${cite[1]}`}>{label}</button> : label}</sup>;
+        return <sup>{onCitation ? <button type="button" onClick={(event) => { event.stopPropagation(); onCitation(Number(cite[1]) - 1); }} aria-label={`Inspect citation ${cite[1]}`}>{label}</button> : label}</sup>;
       }
       if (href && SAFE_WEB.test(href)) return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
       return <span>{children}</span>;

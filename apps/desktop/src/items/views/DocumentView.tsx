@@ -1,7 +1,8 @@
 import type { ContentBlock, SourceDetail, SourceStructure } from "@gunther/contracts";
-import { CircleAlert, Download, FileText, ImageIcon, LoaderCircle, RotateCcw, Sigma } from "lucide-react";
+import { CircleAlert, Download, Eye, FileText, ImageIcon, LoaderCircle, RotateCcw, Sigma } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { knowledgeApi, sourceAssetUrl } from "../../api";
+import { EvidencePanel } from "../../components/evidence/EvidencePanel";
 import { MarkdownView } from "../../components/markdown/MarkdownView";
 import { extensionOf, formatBytes, mediaTypeLabel, parseDelimitedTable, readableOriginal, withoutRepeatedTitle, type DelimitedTable, type FileContent } from "../sourceContent";
 import { PaperCard } from "./PaperCard";
@@ -243,6 +244,8 @@ function FileCard({ source, file, pages, state, onReprocess }: { source: SourceD
   const type = mediaTypeLabel(asset?.mediaType ?? file.mediaType, name);
   const size = asset?.sizeBytes ?? file.sizeBytes;
   const [retrying, setRetrying] = useState(false);
+  const [viewing, setViewing] = useState(false);
+  const viewable = Boolean(asset && (asset.mediaType === "application/pdf" || /\.pdf$/i.test(asset.originalName)));
   const working = state ? WORKING.includes(state) : false;
   return (
     <div className="gx-file-card">
@@ -262,7 +265,9 @@ function FileCard({ source, file, pages, state, onReprocess }: { source: SourceD
           </em>
         )}
       </span>
+      {viewable && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => setViewing(true)}><Eye size={13} />View original</button>}
       {asset && <a className="gx-btn gx-btn-quiet gx-btn-sm" href={sourceAssetUrl(asset.id)} download={asset.originalName}><Download size={13} />Download</a>}
+      {viewing && <EvidencePanel citation={{ id: `view-${source.id}`, kind: "library", sourceId: source.id, sourceTitle: source.title, assertionId: null, quote: "", locator: "Original", status: "verified", confidence: 1 }} onClose={() => setViewing(false)} />}
     </div>
   );
 }

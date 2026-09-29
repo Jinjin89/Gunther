@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import type { KnowledgeTopic, SourceStructure } from "@gunther/contracts";
-import { knowledgeApi, sourceAssetUrl } from "../api";
+import type { ContentBlock, KnowledgeTopic, SourceStructure } from "@gunther/contracts";
+import { knowledgeApi } from "../api";
+import { EvidencePanel } from "./evidence/EvidencePanel";
 
 export function SourceEvidence({ sourceId, baseId, assetId, revisionId, blockId }: {
   sourceId: string; baseId?: string | undefined; assetId?: string | undefined;
@@ -13,6 +14,7 @@ export function SourceEvidence({ sourceId, baseId, assetId, revisionId, blockId 
   const [topicId, setTopicId] = useState("");
   const [linked, setLinked] = useState<string[]>([]);
   const [reload, setReload] = useState(0);
+  const [viewing, setViewing] = useState<ContentBlock | null>(null);
   const generation = useRef(0);
   useEffect(() => {
     const run = ++generation.current;
@@ -73,7 +75,7 @@ export function SourceEvidence({ sourceId, baseId, assetId, revisionId, blockId 
     <div className="structured-blocks">{data?.blocks.map((block) => <article key={block.id} className={`structured-block is-${block.kind}`}>
       <small>{block.headings.join(" / ") || block.locator}</small>
       {block.kind === "heading" ? <h4>{block.content}</h4> : <p>{block.content}</p>}
-      <footer>{assetId && block.anchor.page ? <a href={`${sourceAssetUrl(assetId)}#page=${block.anchor.page}`} target="_blank" rel="noreferrer">Open page {block.anchor.page}</a> : <span>{block.locator}</span>}
+      <footer>{assetId && block.anchor.page ? <button onClick={() => setViewing(block)}>Open page {block.anchor.page}</button> : <span>{block.locator}</span>}
         {baseId && topicId && block.kind !== "heading" && <button disabled={busy || linked.includes(`${topicId}:${block.id}`)} onClick={() => void action(async () => {
           await knowledgeApi.linkTopicEvidence(baseId, topicId, block.id);
           setLinked((items) => [...items, `${topicId}:${block.id}`]);
@@ -83,5 +85,8 @@ export function SourceEvidence({ sourceId, baseId, assetId, revisionId, blockId 
     </article>)}</div>
     {data?.nextOffset != null && <button disabled={busy} onClick={() => void more()}>Load more evidence</button>}
     {data && data.blocks.length === 0 && <p>No readable blocks yet. The original is preserved.</p>}
+    {viewing && <EvidencePanel
+      citation={{ id: `view-${viewing.id}`, kind: "library", sourceId, sourceTitle: viewing.headings[0] ?? "Source", assertionId: null, quote: viewing.content, locator: viewing.locator, status: "verified", confidence: 1, blockId: viewing.id, sourceRevisionId: data?.revisionId ?? null, anchor: viewing.anchor }}
+      onClose={() => setViewing(null)} />}
   </section>;
 }
