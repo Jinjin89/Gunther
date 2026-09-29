@@ -125,14 +125,23 @@ def is_planning(request: dict[str, Any]) -> bool:
     return PLANNER_MARK in str(request["messages"][0]["content"])
 
 
+GRADER_MARK = "You are the relevance step"
+
+
+def is_grading(request: dict[str, Any]) -> bool:
+    return GRADER_MARK in str(request["messages"][0]["content"])
+
+
 def agent_replies(
     answer: Reply,
     *plans: dict[str, Any],
+    relevant: list[int] | None = None,
 ) -> Callable[[dict[str, Any]], Any]:
     """Replies for Ask: each planning call gets the next plan, every other call the answer.
 
     With no plans the agent is told to search the library with the question, then to
-    answer. ``answer`` is a reply as FakeProvider takes them (text or a callable).
+    answer, and a relevance check keeps ``relevant`` (all results by default).
+    ``answer`` is a reply as FakeProvider takes them (text or a callable).
     """
 
     import json
@@ -146,6 +155,11 @@ def agent_replies(
         if is_planning(request):
             plan = queue.pop(0) if len(queue) > 1 else queue[0]
             return json.dumps(plan)
+        if is_grading(request):
+            # By default the grader keeps everything the search found.
+            return json.dumps(
+                {"relevant": relevant if relevant is not None else list(range(1, 25))}
+            )
         return answer(request) if callable(answer) else answer
 
     return reply

@@ -57,3 +57,14 @@
 @keyframes gx-pulse { 50% { opacity: 0.55; } }
 
 @media (max-width: 600px) { .gx-evidence { width: 100vw; } }
+
+/* The drag edge: a wide invisible grip with a hairline that darkens on hover and focus. */
+.gx-evidence-resize { width: 9px; margin-left: -5px; position: absolute; top: 0; bottom: 0; left: 0; z-index: 2; cursor: col-resize; touch-action: none; }
+.gx-evidence-resize::after { content: ""; width: 2px; position: absolute; top: 0; bottom: 0; left: 4px; background: transparent; transition: background-color var(--gx-dur-fast) var(--gx-ease); }
+.gx-evidence-resize:hover::after, .gx-evidence-resize:focus-visible::after, .gx-evidence-resize:active::after { background: var(--gx-line-3); }
+.gx-evidence-resize:focus-visible { outline: 0; }
+.gx-evidence-context h4 { margin: 6px 0 -4px; color: var(--gx-ink); font-size: calc(14px * var(--gx-fs, 1)); font-weight: 650; line-height: 1.4; }
+.gx-evidence-context p.is-cited mark { padding: 1px 0; border-radius: 3px; background: rgba(255, 214, 10, 0.4); color: inherit; }
+.gx-evidence-more { height: 28px; padding: 0 10px; justify-self: start; border: 0; border-radius: var(--gx-radius-pill); background: transparent; color: var(--gx-faint); font-size: var(--gx-text-xs); font-weight: 550; cursor: pointer; }
+.gx-evidence-more:hover { background: var(--gx-hover); color: var(--gx-ink); }
+.gx-evidence-more:focus-visible { outline: 0; box-shadow: var(--gx-ring); }

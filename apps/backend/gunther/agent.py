@@ -118,6 +118,11 @@ class AgentResult:
     error: str | None = None
 
 
+class Relevance(BaseModel):
+    # The numbers of the results that help answer the question; may be empty.
+    relevant: list[int] = Field(default_factory=list, max_length=MAX_EVIDENCE)
+
+
 class Plan(BaseModel):
     intent: Intent
     action: Action
@@ -155,10 +160,19 @@ distinctive words beat a full sentence.
 Rules:
 - Look at "Done so far". If a search came back empty or thin, either reword it once \
 or try the other tool if it is offered; never repeat a search.
+- If the library has nothing relevant on a subject and the web is offered, search \
+the web before answering, unless the question is only about the library itself.
 - If the question is about the library, do search it, even if you think you know.
 - Do not search for greetings or things the conversation already contains.
 - Stop as soon as the evidence can answer; more searching is not better.
 Reply with the JSON object only."""
+
+GRADER = """\
+You are the relevance step of Gunther, a research assistant. A search returned \
+numbered results. Keep only the ones that help answer the user's question: they \
+must be about the same subject, not merely share a word or a general term with it. \
+Results about a different subject are dropped, even when they are the closest the \
+library has. Return the numbers to keep, possibly none."""
 
 WRITER = """\
 You are Gunther, a thoughtful research partner inside the user's personal \
@@ -169,7 +183,9 @@ How to answer:
 lead with the answer, then the support. Use short paragraphs, and lists or a table \
 only when they help. Match length to the question.
 - Ground what you say in the numbered evidence and cite it with [1], [2] right \
-after the claim it supports. Cite only numbers that exist; never invent a source.
+after the claim it supports. Cite only numbers that exist; never invent a source. \
+Cite only evidence that supports a claim you make: never cite an item to say it is \
+unrelated or off-topic, and do not mention results you did not use.
 - Be honest about the evidence: say what it supports, what you are inferring, and \
 what it does not cover. Prefer the library's own material for questions about it. \
 Web pages are outside sources; name the site when it matters.
@@ -190,9 +206,7 @@ def _glance(item: Evidence) -> str:
     return text if len(text) <= GLANCE_CHARS else text[: GLANCE_CHARS - 1] + "…"
 
 
-def _plan_prompt(
-    question: str, tools: Tools, done: list[str], evidence: list[Evidence]
-) -> str:
+def _plan_prompt(question: str, tools: Tools, done: list[str], evidence: list[Evidence]) -> str:
     offered = []
     if tools.search_library:
         about = f" ({tools.library_about})" if tools.library_about else ""
@@ -202,9 +216,7 @@ def _plan_prompt(
     offered.append("- answer")
     lines = [f"Latest message:\n{question}", "", "Actions offered:", *offered]
     if not tools.search_web:
-        lines.append(
-            "(The web is not available for this message; do not choose web actions.)"
-        )
+        lines.append("(The web is not available for this message; do not choose web actions.)")
     lines += ["", "Done so far:" if done else "Done so far: nothing yet."]
     lines += done
     if evidence:
@@ -292,6 +304,31 @@ class AskAgent:
     planner_effort: Effort = "off"
     log: list[str] = field(default_factory=list)
 
+    def _relevant(
+        self, model: ModelInfo, question: str, query: str, found: list[Evidence]
+    ) -> list[Evidence]:
+        """The results that are about the question. A grader that cannot answer keeps them all."""
+
+        if not found:
+            return found
+        listing = "\n".join(
+            f"[{index}] {item.title}: {' '.join(item.text.split())[:300]}"
+            for index, item in enumerate(found, start=1)
+        )
+        try:
+            verdict, _ = self.gateway.complete_json(
+                model,
+                Relevance,
+                system=GRADER,
+                prompt=f"Question:\n{question}\n\nSearch: {query}\n\nResults:\n{listing}",
+                effort=self.planner_effort,
+            )
+        except ModelError as error:
+            logger.info("The relevance step failed: %s", error)
+            return found
+        keep = {number for number in verdict.relevant if 1 <= number <= len(found)}
+        return [item for index, item in enumerate(found, start=1) if index in keep]
+
     def run(
         self,
         question: str,
@@ -340,6 +377,17 @@ class AskAgent:
                     break
             intent = plan.intent
             emit({"type": "intent", "intent": intent})
+            searched_web = any(s.tool == "search_web" for s in steps)
+            # Nothing relevant in the library, and the web is on: look there before giving up.
+            if (
+                tools.search_web
+                and not searched_web
+                and not evidence
+                and any(s.tool == "search_library" for s in steps)
+                and plan.intent not in ("chat", "followup", "clarify")
+                and (plan.action == "answer" or sum(s.tool == "search_library" for s in steps) >= 2)
+            ):
+                plan = Plan(intent="both", action="search_web", query=question[:300])
             if plan.action == "answer":
                 if plan.intent in ("chat", "clarify") and plan.reply.strip():
                     reply = plan.reply.strip()
@@ -361,6 +409,8 @@ class AskAgent:
                 emit({"type": "step", "state": "done", **steps[-1].out()})
                 done.append(f"- {tool}({query!r}) failed: {error}")
                 continue
+            if tool == "search_library":
+                found = self._relevant(model, question, query, found)
             fresh = 0
             known = {item.key for item in evidence}
             for item in found:
@@ -371,7 +421,11 @@ class AskAgent:
                 fresh += 1
             steps.append(Step(tool, _label(tool, query), query, fresh))
             emit({"type": "step", "state": "done", **steps[-1].out()})
-            done.append(f"- {tool}({query!r}) found {fresh} new results")
+            done.append(
+                f"- {tool}({query!r}) found {fresh} new relevant results"
+                if fresh
+                else f"- {tool}({query!r}) found nothing relevant"
+            )
 
         if reply is not None:
             emit({"type": "text", "text": reply})
