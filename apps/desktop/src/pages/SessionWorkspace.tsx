@@ -450,7 +450,17 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
   const [online, setOnline] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("context");
-  const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
+  // Open by default so the sources behind an answer are in view; the reader's choice is kept.
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(() => {
+    if (window.innerWidth <= 980) return true;
+    try { return window.localStorage.getItem("gunther:inspector-collapsed") === "1"; } catch { return false; }
+  });
+  useEffect(() => {
+    if (window.innerWidth <= 980) return;
+    try { window.localStorage.setItem("gunther:inspector-collapsed", inspectorCollapsed ? "1" : "0"); } catch { /* the choice just is not remembered */ }
+  }, [inspectorCollapsed]);
+  // The question just sent, shown in the conversation while it is being answered.
+  const [asking, setAsking] = useState<string | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [sessionOptionsOpen, setSessionOptionsOpen] = useState(false);
@@ -591,7 +601,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
   useEffect(() => {
     const pane = scrollPane.current;
     if (pane && followTail.current) pane.scrollTop = pane.scrollHeight;
-  }, [activeSession?.messages.length, sending, liveAnswer.live?.steps.length, liveAnswer.live?.text.length]);
+  }, [activeSession?.messages.length, sending, asking, liveAnswer.live?.steps.length, liveAnswer.live?.text.length]);
   useEffect(() => { followTail.current = true; }, [activeId]);
   useEffect(() => {
     let wasNarrow = window.innerWidth <= 980;
@@ -721,6 +731,8 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
     if (!question || !activeSession || sending) return;
     if (again === undefined) setDraft("");
     setSending(true);
+    setAsking(question);
+    followTail.current = true;
     setError(null);
     pendingQuestion.current = question;
     if (activeSession.id.startsWith("local-")) {
@@ -732,6 +744,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
         setSessions((current) => sortSessions(current.map((item) => item.id === updated.id ? updated : item)));
         setSelectedMessageId(turn.assistant.id);
         setSending(false);
+        setAsking(null);
         pendingQuestion.current = "";
         localResponseTimer.current = null;
       }, 420);
@@ -761,6 +774,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
       if (responseController.current === controller) responseController.current = null;
       liveAnswer.stop();
       setSending(false);
+      setAsking(null);
     }
   };
 
@@ -774,6 +788,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
     const question = pendingQuestion.current;
     pendingQuestion.current = "";
     setSending(false);
+    setAsking(null);
     if (question && activeSession) {
       // The question stays in the conversation, marked; the service's copy replaces this one.
       const id = activeSession.id;
@@ -967,6 +982,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
           {error && <div className="conversation-error" role="alert"><CircleAlert size={14} /><span>{error}</span><button onClick={() => setError(null)}><X size={12} /></button></div>}
           {!loading && activeSession?.messages.length === 0 ? <WelcomePanel base={base} onPrompt={setDraft} /> : <h1 className="gx-sr-only">Ask {base.title}</h1>}
           {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} retryDisabled={sending || Boolean(activeSession?.archived)} onRetry={() => void send(message.content)} onEdit={() => setDraft(message.content)} onCite={(citation, index) => setEvidence({ citation, index })} selected={selectedMessageId === message.id} promoting={promotingMessageId === message.id} promoted={proposalMessageIds.has(message.id)} branching={branchingMessageId === message.id} onSelect={() => { setSelectedMessageId(message.id); setInspectorTab("context"); setInspectorCollapsed(false); }} onCopy={() => void copyMessage(message)} onPromote={() => void promoteMessage(message)} onBranch={() => void branchFromMessage(message)} />)}
+          {sending && asking && <article className="conversation-message role-user"><div className="message-author"><span className="user-mark"><UserRound size={13} /></span><span>You</span></div><div className="message-body"><MessageContent content={asking} /></div></article>}
           {sending && (liveAnswer.live ? <LiveAnswer state={liveAnswer.live} /> : <div className="thinking-row"><span className="assistant-mark"><BrandMark size={14} busy /></span><span><i /><i /><i /></span><small>Working out what to look up…</small></div>)}
         </div>
         <Composer picker={<ModelPicker menu={modelMenu} choice={askChoice} onChange={chooseModel} disabled={sending || Boolean(activeSession?.archived)} />} web={{ available: webSearch.available, enabled: webSearch.enabled, onChange: webSearch.setEnabled }} value={draft} sending={sending} sourceCount={activeSession?.selectedSourceIds.length ?? 0} chapterTitle={focusedChapter?.title} readOnly={Boolean(activeSession?.archived)} ready={!loading && activeSession !== null} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={() => { setInspectorTab("sources"); setInspectorCollapsed(false); }} />
