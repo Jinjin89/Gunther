@@ -6,7 +6,7 @@ from pathlib import Path
 import httpx
 import openai
 import pytest
-from fake_models import FakeProvider, api_error, gateway, model
+from fake_models import FakeProvider, agent_replies, api_error, gateway, model
 from fastapi.testclient import TestClient
 
 from gunther import service_settings
@@ -29,8 +29,6 @@ def settings_for(tmp_path: Path, **overrides: object) -> Settings:
         "recordings_dir": tmp_path / "recordings",
         "seed_demo": False,
         "deepseek_api_key": None,
-        "openai_api_key": None,
-        "stt_provider": "openai",
         "processing_worker_enabled": False,
         "auth_token": SIDECAR_TOKEN,
         "service_settings_file": tmp_path / "service-settings.json",
@@ -454,7 +452,7 @@ def test_a_conversation_can_switch_model_and_effort_at_any_turn(tmp_path: Path) 
             "reasoning": f"thoughts of {request['model']}",
         }
 
-    fake = FakeProvider(answer)
+    fake = FakeProvider(agent_replies(answer))
     app = create_app(
         settings_for(tmp_path, deepseek_api_key=KEY), model_client_factory=fake.factory
     )

@@ -93,8 +93,7 @@ def _real_settings(data_directory: Path) -> Settings:
         recordings_dir=data_directory / "recordings",
         seed_demo=False,
         deepseek_api_key=None,
-        openai_api_key=None,
-        stt_provider="openai",
+        stt_provider="compatible",
     )
 
 
@@ -728,8 +727,7 @@ def test_backup_reads_originals_from_the_library_root(tmp_path: Path) -> None:
         previous_recordings_dir=data_directory / "recordings",
         seed_demo=False,
         deepseek_api_key=None,
-        openai_api_key=None,
-        stt_provider="openai",
+        stt_provider="compatible",
         processing_worker_enabled=False,
     )
     asset_bytes = b"Original kept in the library root.\n"

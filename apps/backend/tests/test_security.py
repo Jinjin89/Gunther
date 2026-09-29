@@ -36,8 +36,7 @@ def make_client(tmp_path: Path, auth_token: str | None = TOKEN) -> TestClient:
         recordings_dir=tmp_path / "recordings",
         seed_demo=False,
         deepseek_api_key=None,
-        openai_api_key=None,
-        stt_provider="openai",
+        stt_provider="compatible",
         auth_token=auth_token,
         cors_origins=[ALLOWED_ORIGIN],
     )

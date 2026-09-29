@@ -49,17 +49,24 @@ class Settings(BaseSettings):
         default="https://api.deepseek.com",
         validation_alias=AliasChoices("llm_base_url", "deepseek_base_url"),
     )
-    openai_api_key: str | None = None
-    openai_web_search_model: str = "gpt-5.6"
-    openai_transcription_model: str = "gpt-live-transcribe"
-    openai_transcription_delay: Literal["low", "medium", "high"] = "medium"
-    openai_transcription_languages: str = "en,zh-cn"
-    # Summaries of every capture, written after it is read (see digest) by
-    # OpenAI or DeepSeek, whichever has a key. Without a key there are none.
+    # Web search for Ask and Home, by Tavily (tavily.com). Without a key the web
+    # is simply not offered.
+    tavily_api_key: str | None = None
+    web_search_depth: Literal["basic", "advanced"] = "basic"
+    web_search_max_results: int = Field(default=6, ge=1, le=10)
+    # Summaries of every capture, written after it is read (see digest) by the
+    # Analysis model. Without a model there are none.
     ai_summaries: Literal["auto", "off"] = "auto"
-    # Show photos to OpenAI's model as images (otherwise only their recognized text).
+    # Show photos to the model as images (otherwise only their recognized text).
     ai_summary_images: bool = True
-    stt_provider: Literal["auto", "sensevoice", "openai"] = "auto"
+    # Transcription: SenseVoice, or any server with an OpenAI-style
+    # /audio/transcriptions endpoint (OpenAI, Groq, a self-hosted Whisper, ...).
+    stt_provider: Literal["auto", "sensevoice", "compatible"] = "auto"
+    stt_base_url: str = ""
+    stt_api_key: str | None = None
+    stt_model: str = "whisper-1"
+    # Empty lets the model detect the language.
+    stt_language: str = ""
     ocr_provider: Literal["auto", "vision", "tesseract", "disabled"] = "auto"
     ocr_tesseract_command: str = "tesseract"
     ocr_pdftoppm_command: str = "pdftoppm"
@@ -93,6 +100,12 @@ class Settings(BaseSettings):
     # Service settings changed in the app (see service_settings). They win over
     # this file and the environment. Unset keeps changes in memory only.
     service_settings_file: Path | None = None
+
+    @field_validator("stt_provider", mode="before")
+    @classmethod
+    def retire_openai_transcription(cls, value: object) -> object:
+        # OpenAI's own realtime engine is gone; an old setting falls back to automatic.
+        return "auto" if value == "openai" else value
 
     @field_validator("embedding_model_version")
     @classmethod

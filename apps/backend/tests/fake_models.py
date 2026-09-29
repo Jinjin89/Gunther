@@ -116,3 +116,36 @@ def gateway(
         else {"analysis": (first, "low"), "ask": (first, "high"), "photos": (first, "low")},
         client_factory=fake.factory,
     )
+
+
+PLANNER_MARK = "You are the planning step"
+
+
+def is_planning(request: dict[str, Any]) -> bool:
+    return PLANNER_MARK in str(request["messages"][0]["content"])
+
+
+def agent_replies(
+    answer: Reply,
+    *plans: dict[str, Any],
+) -> Callable[[dict[str, Any]], Any]:
+    """Replies for Ask: each planning call gets the next plan, every other call the answer.
+
+    With no plans the agent is told to search the library with the question, then to
+    answer. ``answer`` is a reply as FakeProvider takes them (text or a callable).
+    """
+
+    import json
+
+    queue = list(plans) or [
+        {"intent": "library", "action": "search_library", "query": ""},
+        {"intent": "library", "action": "answer"},
+    ]
+
+    def reply(request: dict[str, Any]) -> Any:
+        if is_planning(request):
+            plan = queue.pop(0) if len(queue) > 1 else queue[0]
+            return json.dumps(plan)
+        return answer(request) if callable(answer) else answer
+
+    return reply

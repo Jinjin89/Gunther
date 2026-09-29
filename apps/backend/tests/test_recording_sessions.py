@@ -14,7 +14,6 @@ def _settings(tmp_path: Path) -> Settings:
         recordings_dir=tmp_path / "recordings",
         seed_demo=False,
         deepseek_api_key=None,
-        openai_api_key=None,
     )
 
 

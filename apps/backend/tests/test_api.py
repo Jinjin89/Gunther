@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from gunther.config import Settings
-from gunther.conversation import GroundingClaim, ModelKnowledgeResponder
 from gunther.database import create_database_engine
 from gunther.extraction import ModelExtractor
 from gunther.main import create_app
@@ -23,7 +22,7 @@ def make_client() -> TestClient:
             database_url="sqlite+pysqlite:///:memory:",
             seed_demo=False,
             deepseek_api_key=None,
-            stt_provider="openai",
+            stt_provider="compatible",
         )
     )
     return TestClient(app)
@@ -665,7 +664,6 @@ def test_recording_audio_is_preserved_and_retrievable(tmp_path) -> None:
             recordings_dir=tmp_path / "recordings",
             seed_demo=False,
             deepseek_api_key=None,
-            openai_api_key=None,
         )
     )
     with TestClient(app) as client:
@@ -690,7 +688,6 @@ def test_long_recording_is_saved_incrementally(tmp_path) -> None:
             recordings_dir=tmp_path / "recordings",
             seed_demo=False,
             deepseek_api_key=None,
-            openai_api_key=None,
         )
     )
     with TestClient(app) as client:
@@ -783,7 +780,10 @@ def test_session_keeps_messages_context_and_citations() -> None:
             "effortLabel": None,
             "notes": [],
             "reasoning": None,
-            "modelError": None,
+            "modelError": "Ask needs a language model. Set one up under Settings → Models.",
+            "intent": None,
+            "steps": [],
+            "webSearched": False,
         }
 
         loaded = client.get(f"/api/sessions/{session_id}").json()
@@ -1185,7 +1185,7 @@ def test_unrelated_question_returns_an_evidence_gap_without_padding_citations() 
         ).json()
 
         assert turn["assistantMessage"]["citations"] == []
-        assert "couldn’t find a claim" in turn["assistantMessage"]["content"]
+        assert "needs a language model" in turn["assistantMessage"]["content"]
         assert turn["assistantMessage"]["context"]["responderMode"] == "local"
         proposal = client.post(
             f"/api/sessions/{knowledge_session['id']}/messages/"
@@ -1222,7 +1222,7 @@ def test_session_does_not_answer_from_one_generic_word_overlap() -> None:
         ).json()
 
         assert turn["assistantMessage"]["citations"] == []
-        assert "couldn’t find a claim" in turn["assistantMessage"]["content"]
+        assert "needs a language model" in turn["assistantMessage"]["content"]
 
 
 def test_session_grounds_an_answer_in_raw_source_text_without_extracted_claims() -> None:
@@ -1276,7 +1276,10 @@ def test_session_grounds_an_answer_in_raw_source_text_without_extracted_claims()
             "effortLabel": None,
             "notes": [],
             "reasoning": None,
-            "modelError": None,
+            "modelError": "Ask needs a language model. Set one up under Settings → Models.",
+            "intent": None,
+            "steps": [],
+            "webSearched": False,
         }
         assert "Clustering lecture" in turn["assistantMessage"]["content"]
 
@@ -1307,7 +1310,7 @@ def test_empty_knowledge_base_does_not_leak_global_sources() -> None:
 
         assert turn["assistantMessage"]["citations"] == []
         assert turn["assistantMessage"]["context"]["sourcesConsidered"] == 0
-        assert "couldn’t find a claim" in turn["assistantMessage"]["content"]
+        assert "needs a language model" in turn["assistantMessage"]["content"]
 
 
 def test_session_rejects_unknown_source_scope() -> None:
@@ -1360,56 +1363,6 @@ def test_writes_reject_an_unknown_knowledge_base() -> None:
             },
         )
         assert imported.status_code == 404
-
-
-def test_deepseek_failure_reports_local_fallback_mode() -> None:
-    failing = FakeProvider(api_error(openai.InternalServerError, 500, "provider unavailable"))
-    responder = ModelKnowledgeResponder(gateway(failing))
-    result = responder.respond(
-        "What supports identity?",
-        [
-            GroundingClaim(
-                subject="CD3D",
-                predicate="marker_of",
-                object="T cell",
-                source_title="Cell note",
-                quote="CD3D is a marker of T cells.",
-                locator="line 1",
-                status="verified",
-                confidence=0.92,
-            )
-        ],
-        [],
-    )
-
-    assert result.mode == "local"
-    assert "CD3D" in result.content
-    assert result.error == "DeepSeek had a problem (500): provider unavailable"
-    assert result.model_label == "DeepSeek · deepseek-flash"
-
-
-def test_deepseek_output_with_invalid_citations_uses_local_fallback() -> None:
-    responder = ModelKnowledgeResponder(gateway(FakeProvider("CD3D identifies T cells [9].")))
-    result = responder.respond(
-        "What supports identity?",
-        [
-            GroundingClaim(
-                subject="CD3D",
-                predicate="marker_of",
-                object="T cell",
-                source_title="Cell note",
-                quote="CD3D is a marker of T cells.",
-                locator="line 1",
-                status="verified",
-                confidence=0.92,
-            )
-        ],
-        [],
-    )
-
-    assert result.mode == "local"
-    assert "[1]" in result.content
-    assert result.error == "DeepSeek · deepseek-flash did not cite the evidence it was given."
 
 
 def test_duplicate_source_can_join_another_knowledge_base() -> None:

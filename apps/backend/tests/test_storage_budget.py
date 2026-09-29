@@ -35,7 +35,6 @@ def _settings(tmp_path: Path, *, quota: int) -> Settings:
         storage_min_free_bytes=0,
         seed_demo=False,
         deepseek_api_key=None,
-        openai_api_key=None,
     )
 
 

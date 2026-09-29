@@ -52,11 +52,7 @@ PRESETS: dict[str, Preset] = {
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
         note="Use your Model Studio workspace address if it gives you one.",
     ),
-    "openai": Preset(
-        "OpenAI",
-        "https://api.openai.com/v1",
-        note="Leave the key empty to use the one under OpenAI services.",
-    ),
+    "openai": Preset("OpenAI", "https://api.openai.com/v1"),
     "compatible": Preset(
         "Self-hosted",
         "http://127.0.0.1:8000/v1",
@@ -255,12 +251,11 @@ def effective(
 
 
 def provider_key(provider: dict[str, Any], settings: Settings) -> tuple[str | None, str]:
-    """The key a provider uses, and where it comes from: saved, openai, or none."""
+    """The key a provider uses, and where it comes from: saved, or none."""
 
+    del settings
     if provider.get("apiKey"):
         return provider["apiKey"], "saved"
-    if provider["kind"] == "openai" and settings.openai_api_key:
-        return settings.openai_api_key, "openai"
     return None, "none"
 
 

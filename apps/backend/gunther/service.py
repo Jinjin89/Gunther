@@ -7,20 +7,23 @@ import secrets
 from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from threading import Lock
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from sqlalchemy import and_, func, or_, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
+from gunther.agent import AskAgent, Evidence, ToolFailure, Tools
 from gunther.conversation import GroundingClaim, KnowledgeResponder
 from gunther.database import session_scope
 from gunther.extraction import CandidateAssertion, ExtractionResult, Extractor
 from gunther.knowledge_index import KnowledgeIndex
-from gunther.llm import ModelGateway, Turn
+from gunther.llm import ModelGateway, ModelInfo, Turn
+from gunther.model_profiles import Effort
 from gunther.models import (
     Artifact,
     ArtifactUnitBinding,
@@ -47,6 +50,7 @@ from gunther.models import (
     WorkspaceIdentity,
     utc_now,
 )
+from gunther.online_search import DisabledOnlineSearch, OnlineSearchProvider
 from gunther.schemas import (
     ArtifactOut,
     ArtifactProvenanceOut,
@@ -100,6 +104,13 @@ from gunther.source_identity import source_fingerprint
 from gunther.topics import topic_block_ids, topic_source_ids
 from gunther.trash import live_membership_source_ids, trashed_library_ids
 
+# Sources found by meaning, added after the exact matches of a search.
+MEANING_RESULTS = 6
+
+# Home's conversations belong to no library: this stands in for the library id.
+# Library ids come from slugs, which never contain "@".
+HOME_SCOPE = "@home"
+
 # Libraries at least this large also get paper-level answers (abstracts).
 PAPER_OVERVIEW_MIN_SOURCES = 12
 PAPER_OVERVIEWS = 4
@@ -142,6 +153,24 @@ class _SourcePassage:
     confidence: float
 
 
+@dataclass
+class _Answer:
+    """What Ask answered with, and how."""
+
+    content: str
+    mode: str
+    evidence: list[Evidence]
+    model_ref: str | None = None
+    model_label: str | None = None
+    effort: str | None = None
+    effort_label: str | None = None
+    notes: tuple[str, ...] = ()
+    reasoning: str | None = None
+    error: str | None = None
+    intent: str | None = None
+    steps: list = field(default_factory=list)
+
+
 # Reasoning is kept for the model that wrote it; past this it is cut.
 MAX_KEPT_REASONING = 60_000
 
@@ -173,6 +202,7 @@ class KnowledgeService:
         self.responder = responder
         # Every model that is set up (see llm); a conversation may pick any of them.
         self.models: ModelGateway | None = None
+        self.web_search: OnlineSearchProvider = DisabledOnlineSearch()
         self.index = KnowledgeIndex(sessions)
         self._source_import_locks_guard = Lock()
         self._source_import_locks: dict[str, tuple[Lock, int]] = {}
@@ -373,7 +403,8 @@ class KnowledgeService:
     def _ensure_source_memberships(
         self, session: Session, knowledge_base_id: str, source_ids: list[str]
     ) -> None:
-        if self._live_knowledge_base(session, knowledge_base_id) is None:
+        home = knowledge_base_id == HOME_SCOPE
+        if not home and self._live_knowledge_base(session, knowledge_base_id) is None:
             raise LookupError(f"Knowledge Base {knowledge_base_id} was not found")
         if not source_ids:
             return
@@ -406,7 +437,8 @@ class KnowledgeService:
     def _validate_source_scope(
         self, session: Session, knowledge_base_id: str, source_ids: list[str]
     ) -> None:
-        if self._live_knowledge_base(session, knowledge_base_id) is None:
+        home = knowledge_base_id == HOME_SCOPE
+        if not home and self._live_knowledge_base(session, knowledge_base_id) is None:
             raise LookupError(f"Knowledge Base {knowledge_base_id} was not found")
         if not source_ids:
             return
@@ -419,6 +451,8 @@ class KnowledgeService:
         if missing_source_ids:
             missing = ", ".join(sorted(missing_source_ids))
             raise ValueError(f"Unknown source IDs: {missing}")
+        if home:
+            return
         member_source_ids = set(
             session.scalars(
                 select(KnowledgeBaseSource.source_id).where(
@@ -1296,7 +1330,10 @@ class KnowledgeService:
     ) -> KnowledgeSessionOut:
         now = utc_now()
         with session_scope(self.sessions) as session:
-            if self._live_knowledge_base(session, knowledge_base_id) is None:
+            if (
+                knowledge_base_id != HOME_SCOPE
+                and self._live_knowledge_base(session, knowledge_base_id) is None
+            ):
                 raise LookupError(f"Knowledge Base {knowledge_base_id} was not found")
             knowledge_session = KnowledgeSession(
                 id=_id("ses"),
@@ -1396,6 +1433,26 @@ class KnowledgeService:
                 **self._session_summary(branch).model_dump(),
                 messages=[self._message_out(message) for message in branch.messages],
             )
+
+    def file_home_session(
+        self, session_id: str, knowledge_base_id: str
+    ) -> KnowledgeSessionSummaryOut:
+        """Move a Home conversation into a library; it keeps its messages and citations."""
+
+        with session_scope(self.sessions) as session:
+            knowledge_session = session.scalar(
+                self._session_query().where(KnowledgeSession.id == session_id)
+            )
+            if knowledge_session is None or knowledge_session.knowledge_base_id != HOME_SCOPE:
+                raise LookupError(f"Home conversation {session_id} was not found")
+            if self._live_knowledge_base(session, knowledge_base_id) is None:
+                raise LookupError(f"Knowledge Base {knowledge_base_id} was not found")
+            knowledge_session.knowledge_base_id = knowledge_base_id
+            knowledge_session.selected_source_ids_json = "[]"
+            knowledge_session.focus_chapter_id = None
+            knowledge_session.updated_at = utc_now()
+            session.flush()
+            return self._session_summary(knowledge_session)
 
     def update_knowledge_session(
         self, session_id: str, payload: UpdateKnowledgeSessionInput
@@ -1583,8 +1640,148 @@ class KnowledgeService:
                 break
         return results
 
+    def _web_tool(
+        self, wanted: bool
+    ) -> tuple[Callable[[str, str], list[Evidence]] | None, str | None]:
+        """The web as a tool for one question, or why it is not offered."""
+
+        if not self.web_search.available:
+            return None, "web search is not set up (Settings → Web search)"
+        if not wanted:
+            return None, "the Web toggle is off for this message"
+        provider = self.web_search
+
+        def search_web(query: str, topic: str) -> list[Evidence]:
+            result = provider.search(query, topic="news" if topic == "news" else "general")
+            if result.mode == "failed":
+                raise ToolFailure(result.message or "Web search failed.")
+            found = []
+            for source in result.sources:
+                host = urlsplit(source.url).netloc.removeprefix("www.")
+                text = source.snippet or source.title
+                citation = ConversationCitationOut(
+                    id=_id("cit"),
+                    kind="web",
+                    url=source.url,
+                    source_id="",
+                    source_title=source.title,
+                    quote=text,
+                    locator=host,
+                    status="provisional",
+                    confidence=0.0,
+                )
+                found.append(
+                    Evidence(
+                        kind="web",
+                        title=source.title,
+                        text=text,
+                        locator=host,
+                        url=source.url,
+                        payload=(citation, None),
+                    )
+                )
+            return found
+
+        return search_web, None
+
+    def _answer(
+        self,
+        question: str,
+        history: list[Turn],
+        tools: Tools,
+        model: ModelInfo | None,
+        effort: Effort | None,
+        events: Callable[[dict], None] | None = None,
+    ) -> _Answer:
+        """Run the agent with the chosen model (or the Ask default) and describe the outcome."""
+
+        if model is None and self.models is not None:
+            chosen = self.models.for_role("ask")
+            if chosen is not None:
+                model, default_effort = chosen
+                effort = effort or default_effort
+        if model is None or self.models is None:
+            found = tools.search_library(question) if tools.search_library else []
+            claims = [item.payload[1] for item in found]
+            content = (
+                self.responder.respond(question, claims, history).content
+                if claims
+                else "Ask needs a language model to answer. Set one up under Settings → Models."
+            )
+            return _Answer(
+                content=content,
+                mode="local",
+                evidence=found,
+                error="Ask needs a language model. Set one up under Settings → Models.",
+            )
+        result = AskAgent(self.models).run(question, history, tools, model, effort, events)
+        about = {
+            "model_ref": model.ref,
+            "model_label": model.display,
+            "effort": effort,
+            "intent": result.intent,
+            "steps": result.steps,
+            "notes": result.notes,
+        }
+        if result.error is not None:
+            # The chosen model could not write the answer: say so; gathered quotes stand in.
+            library = [item for item in result.evidence if item.kind == "library"]
+            claims = [item.payload[1] for item in library]
+            content = (
+                self.responder.respond(question, claims, history).content
+                if claims
+                else f"I couldn't get an answer from {model.display}. Try again, or pick "
+                "another model."
+            )
+            return _Answer(
+                content=content, mode="local", evidence=library, error=result.error, **about
+            )
+        completion = result.completion
+        return _Answer(
+            content=result.content,
+            mode="model",
+            evidence=result.evidence,
+            **{**about, "effort_label": completion.effort_label if completion else None},
+            reasoning=completion.reasoning if completion else None,
+        )
+
+    def _home_source_ids(
+        self,
+        session: Session,
+        selected_source_ids: list[str],
+        library_ids: list[str] | None,
+    ) -> list[str]:
+        """What a Home question may read: every live library's sources and unfiled
+        captures, or only the libraries the person pointed at with ``@``."""
+
+        live = select(KnowledgeBaseRecord.id).where(KnowledgeBaseRecord.trashed_at.is_(None))
+        alive = select(Source.id).where(Source.trashed_at.is_(None))
+        if library_ids:
+            query = select(KnowledgeBaseSource.source_id).where(
+                KnowledgeBaseSource.knowledge_base_id.in_(library_ids),
+                KnowledgeBaseSource.knowledge_base_id.in_(live),
+                KnowledgeBaseSource.source_id.in_(alive),
+            )
+        else:
+            filed = select(KnowledgeBaseSource.source_id).where(
+                KnowledgeBaseSource.knowledge_base_id.in_(live)
+            )
+            anywhere = select(KnowledgeBaseSource.source_id)
+            query = select(Source.id).where(
+                Source.trashed_at.is_(None),
+                or_(Source.id.in_(filed), Source.id.not_in(anywhere)),
+            )
+        found = list(dict.fromkeys(session.scalars(query)))
+        if selected_source_ids:
+            chosen = set(selected_source_ids)
+            return [item for item in found if item in chosen]
+        return found
+
     def create_session_turn(
-        self, session_id: str, payload: CreateSessionMessageInput
+        self,
+        session_id: str,
+        payload: CreateSessionMessageInput,
+        events: Callable[[dict], None] | None = None,
     ) -> ConversationTurnOut:
         with session_scope(self.sessions) as session:
             knowledge_session = session.scalar(
@@ -1623,25 +1820,35 @@ class KnowledgeService:
             assertion_query = self._assertion_query().order_by(
                 Assertion.status.asc(), Assertion.confidence.desc()
             )
-            if selected_source_ids:
-                scoped_source_ids = selected_source_ids
+            if knowledge_session.knowledge_base_id == HOME_SCOPE:
+                scoped_source_ids = self._home_source_ids(
+                    session, selected_source_ids, payload.knowledge_base_ids
+                )
             else:
+                if selected_source_ids:
+                    scoped_source_ids = selected_source_ids
+                else:
+                    scoped_source_ids = list(
+                        session.scalars(
+                            select(KnowledgeBaseSource.source_id).where(
+                                KnowledgeBaseSource.knowledge_base_id
+                                == knowledge_session.knowledge_base_id
+                            )
+                        ).all()
+                    )
+                # Recheck membership on every turn, including persisted session scope.
                 scoped_source_ids = list(
                     session.scalars(
                         select(KnowledgeBaseSource.source_id).where(
                             KnowledgeBaseSource.knowledge_base_id
-                            == knowledge_session.knowledge_base_id
+                            == knowledge_session.knowledge_base_id,
+                            KnowledgeBaseSource.source_id.in_(scoped_source_ids),
+                            KnowledgeBaseSource.source_id.not_in(
+                                select(Source.id).where(Source.trashed_at.is_not(None))
+                            ),
                         )
-                    ).all()
+                    )
                 )
-            # Recheck membership on every turn, including persisted session scope.
-            scoped_source_ids = list(session.scalars(select(KnowledgeBaseSource.source_id).where(
-                KnowledgeBaseSource.knowledge_base_id == knowledge_session.knowledge_base_id,
-                KnowledgeBaseSource.source_id.in_(scoped_source_ids),
-                KnowledgeBaseSource.source_id.not_in(
-                    select(Source.id).where(Source.trashed_at.is_not(None))
-                ),
-            )))
             block_scope = None
             if knowledge_session.focus_chapter_id and knowledge_session.focus_chapter_id.startswith(
                 "topic_"
@@ -1675,7 +1882,6 @@ class KnowledgeService:
                 else []
             )
             available_assertions = list(session.scalars(assertion_query).all())
-            ranked_assertions = self._rank_assertions(available_assertions, payload.content)
             topic_evidence = {}
             if block_scope is not None:
                 topic_evidence = {
@@ -1688,111 +1894,137 @@ class KnowledgeService:
                     )
                 }
 
-            citations: list[ConversationCitationOut] = []
-            claims: list[GroundingClaim] = []
-            for assertion in ranked_assertions:
-                evidence = next((
-                    item for item in assertion.evidence_links
-                    if item.fragment.source_id == assertion.source_id
-                    and (block_scope is None or (
-                        assertion.source_id, item.fragment.content
-                    ) in topic_evidence)
-                ), None)
-                if evidence is None:
-                    continue
-                if block_scope is not None:
-                    evidence_block = topic_evidence[
-                        (assertion.source_id, evidence.fragment.content)
-                    ]
-                else:
-                    evidence_block = session.scalar(select(ContentBlock).join(
-                        SourceIndexHead, SourceIndexHead.revision_id == ContentBlock.revision_id
-                    ).where(
-                        SourceIndexHead.source_id == assertion.source.id,
-                        ContentBlock.content == evidence.fragment.content,
-                    ).limit(1))
-                citation = ConversationCitationOut(
-                    id=_id("cit"),
-                    source_id=assertion.source.id,
-                    source_title=assertion.source.title,
-                    assertion_id=assertion.id,
-                    quote=evidence.fragment.content,
-                    locator=evidence.fragment.locator,
-                    status=assertion.status,
-                    confidence=assertion.confidence,
-                    source_revision_id=evidence_block.revision_id if evidence_block else None,
-                    block_id=evidence_block.id if evidence_block else None,
-                    anchor=json.loads(evidence_block.anchor_json) if evidence_block else {},
-                )
-                citations.append(citation)
-                claims.append(
-                    GroundingClaim(
-                        subject=assertion.subject.label,
-                        predicate=assertion.predicate,
-                        object=assertion.object.label,
+            def search_library(query: str) -> list[Evidence]:
+                """The library's passages and claims for one search, numbered by the agent."""
+
+                found: list[Evidence] = []
+                ranked_assertions = self._rank_assertions(available_assertions, query)
+                citations: list[ConversationCitationOut] = []
+                claims: list[GroundingClaim] = []
+                for assertion in ranked_assertions:
+                    evidence = next((
+                        item for item in assertion.evidence_links
+                        if item.fragment.source_id == assertion.source_id
+                        and (block_scope is None or (
+                            assertion.source_id, item.fragment.content
+                        ) in topic_evidence)
+                    ), None)
+                    if evidence is None:
+                        continue
+                    if block_scope is not None:
+                        evidence_block = topic_evidence[
+                            (assertion.source_id, evidence.fragment.content)
+                        ]
+                    else:
+                        evidence_block = session.scalar(select(ContentBlock).join(
+                            SourceIndexHead, SourceIndexHead.revision_id == ContentBlock.revision_id
+                        ).where(
+                            SourceIndexHead.source_id == assertion.source.id,
+                            ContentBlock.content == evidence.fragment.content,
+                        ).limit(1))
+                    citation = ConversationCitationOut(
+                        id=_id("cit"),
+                        source_id=assertion.source.id,
                         source_title=assertion.source.title,
+                        assertion_id=assertion.id,
                         quote=evidence.fragment.content,
                         locator=evidence.fragment.locator,
                         status=assertion.status,
                         confidence=assertion.confidence,
+                        source_revision_id=evidence_block.revision_id if evidence_block else None,
+                        block_id=evidence_block.id if evidence_block else None,
+                        anchor=json.loads(evidence_block.anchor_json) if evidence_block else {},
                     )
-                )
+                    citations.append(citation)
+                    claims.append(
+                        GroundingClaim(
+                            subject=assertion.subject.label,
+                            predicate=assertion.predicate,
+                            object=assertion.object.label,
+                            source_title=assertion.source.title,
+                            quote=evidence.fragment.content,
+                            locator=evidence.fragment.locator,
+                            status=assertion.status,
+                            confidence=assertion.confidence,
+                        )
+                    )
 
-            # Original passages participate even when an extracted claim matched.
-            # Competing evidence must not disappear behind an assertion-only fallback.
-            seen_quotes = {(c.source_id, c.quote) for c in citations}
-            for hit in self.index.retrieve(
-                session, scoped_source_ids, payload.content, block_ids=block_scope,
-            ):
-                if (hit.source.id, hit.block.content) in seen_quotes:
-                    continue
-                seen_quotes.add((hit.source.id, hit.block.content))
-                citations.append(ConversationCitationOut(
-                    id=_id("cit"), source_id=hit.source.id, source_title=hit.source.title,
-                    quote=hit.block.content, locator=hit.block.locator,
-                    status="provisional", confidence=0.0,
-                    source_revision_id=hit.block.revision_id, block_id=hit.block.id,
-                    anchor=json.loads(hit.block.anchor_json),
-                ))
-                claims.append(GroundingClaim(
-                    subject=hit.source.title, predicate="states", object=hit.block.content,
-                    source_title=hit.source.title, quote=hit.block.content,
-                    locator=hit.block.locator, status="provisional", confidence=0.0,
-                ))
-
-            # In a large library a broad question needs the papers, not only the few
-            # passages that match best: add the abstracts of the closest papers.
-            if block_scope is None and len(scoped_source_ids) >= PAPER_OVERVIEW_MIN_SOURCES:
-                for paper, block in self.index.nearest_papers(
-                    session,
-                    scoped_source_ids,
-                    payload.content,
-                    limit=PAPER_OVERVIEWS,
-                    exclude={c.source_id for c in citations},
+                # Original passages participate even when an extracted claim matched.
+                # Competing evidence must not disappear behind an assertion-only fallback.
+                seen_quotes = {(c.source_id, c.quote) for c in citations}
+                for hit in self.index.retrieve(
+                    session, scoped_source_ids, query, block_ids=block_scope,
                 ):
-                    source = session.get(Source, paper.source_id)
+                    if (hit.source.id, hit.block.content) in seen_quotes:
+                        continue
+                    seen_quotes.add((hit.source.id, hit.block.content))
                     citations.append(ConversationCitationOut(
-                        id=_id("cit"), source_id=source.id, source_title=source.title,
-                        quote=paper.abstract[:900], locator="Abstract",
+                        id=_id("cit"), source_id=hit.source.id, source_title=hit.source.title,
+                        quote=hit.block.content, locator=hit.block.locator,
                         status="provisional", confidence=0.0,
-                        source_revision_id=paper.revision_id,
-                        block_id=block.id if block else None,
-                        anchor=json.loads(block.anchor_json) if block else {},
+                        source_revision_id=hit.block.revision_id, block_id=hit.block.id,
+                        anchor=json.loads(hit.block.anchor_json),
                     ))
                     claims.append(GroundingClaim(
-                        subject=paper.title, predicate="is summarized as",
-                        object=paper.abstract[:900], source_title=source.title,
-                        quote=paper.abstract[:900], locator="Abstract",
-                        status="provisional", confidence=0.0,
+                        subject=hit.source.title, predicate="states", object=hit.block.content,
+                        source_title=hit.source.title, quote=hit.block.content,
+                        locator=hit.block.locator, status="provisional", confidence=0.0,
                     ))
 
-            response = self.responder.respond(
-                payload.content.strip(),
-                claims,
-                conversation_history(knowledge_session.messages),
-                model=model,
-                effort=payload.effort,
+                # In a large library a broad question needs the papers, not only the few
+                # passages that match best: add the abstracts of the closest papers.
+                if block_scope is None and len(scoped_source_ids) >= PAPER_OVERVIEW_MIN_SOURCES:
+                    for paper, block in self.index.nearest_papers(
+                        session,
+                        scoped_source_ids,
+                        query,
+                        limit=PAPER_OVERVIEWS,
+                        exclude={c.source_id for c in citations},
+                    ):
+                        source = session.get(Source, paper.source_id)
+                        citations.append(ConversationCitationOut(
+                            id=_id("cit"), source_id=source.id, source_title=source.title,
+                            quote=paper.abstract[:900], locator="Abstract",
+                            status="provisional", confidence=0.0,
+                            source_revision_id=paper.revision_id,
+                            block_id=block.id if block else None,
+                            anchor=json.loads(block.anchor_json) if block else {},
+                        ))
+                        claims.append(GroundingClaim(
+                            subject=paper.title, predicate="is summarized as",
+                            object=paper.abstract[:900], source_title=source.title,
+                            quote=paper.abstract[:900], locator="Abstract",
+                            status="provisional", confidence=0.0,
+                        ))
+
+                for citation, claim in zip(citations, claims, strict=True):
+                    found.append(
+                        Evidence(
+                            kind="library",
+                            title=citation.source_title,
+                            text=citation.quote,
+                            locator=citation.locator,
+                            status=citation.status,
+                            confidence=citation.confidence,
+                            payload=(citation, claim),
+                        )
+                    )
+                return found
+
+            web_tool, web_off_reason = self._web_tool(payload.web)
+            tools = Tools(
+                search_library=search_library if scoped_source_ids else None,
+                search_web=web_tool,
+                library_about=(
+                    f"{library.title}: {library.question}" if library else "all your libraries"
+                ),
+                library_size=len(scoped_source_ids),
+                web_off_reason=web_off_reason,
             )
+            history = conversation_history(knowledge_session.messages)
+            question = payload.content.strip()
+            response = self._answer(question, history, tools, model, payload.effort, events)
+            citations = [item.payload[0] for item in response.evidence]
             context = ConversationContextOut(
                 sources_considered=len(scoped_sources),
                 assertions_considered=len(available_assertions),
@@ -1806,6 +2038,9 @@ class KnowledgeService:
                 notes=list(response.notes),
                 reasoning=(response.reasoning or "")[:MAX_KEPT_REASONING] or None,
                 model_error=response.error,
+                intent=response.intent,
+                steps=[step.out() for step in response.steps],
+                web_searched=any(step.tool == "search_web" for step in response.steps),
             )
             now = utc_now()
             user_message = SessionMessage(
@@ -2699,6 +2934,12 @@ class KnowledgeService:
                     )
                 )
 
+            # Passages found by meaning (and by several words at once): a sentence such as
+            # "which marker identifies T cells?" rarely has every word in one note.
+            meaning = self._sources_by_meaning(
+                session, needle, knowledge_base_ids, {item.id for item in results}
+            )
+
             notebook_notes = session.scalars(
                 select(NotebookNote)
                 .where(
@@ -2732,6 +2973,7 @@ class KnowledgeService:
                 .where(
                     match_all(KnowledgeSession.title, KnowledgeSession.summary),
                     KnowledgeSession.archived.is_(False),
+                    KnowledgeSession.knowledge_base_id != HOME_SCOPE,
                     KnowledgeSession.knowledge_base_id.not_in(trashed_library_ids()),
                     KnowledgeSession.knowledge_base_id.in_(knowledge_base_ids)
                     if scoped
@@ -2756,7 +2998,7 @@ class KnowledgeService:
                     )
                 )
 
-            return sorted(
+            ranked = sorted(
                 results,
                 key=lambda item: (
                     needle.casefold() in item.title.casefold(),
@@ -2768,6 +3010,57 @@ class KnowledgeService:
                 ),
                 reverse=True,
             )[:limit]
+            # Exact matches first, then up to a few more the words alone did not find.
+            return [*ranked, *meaning[:MEANING_RESULTS]]
+
+    def _sources_by_meaning(
+        self,
+        session: Session,
+        query: str,
+        knowledge_base_ids: list[str] | None,
+        already: set[str],
+    ) -> list[KnowledgeSearchResultOut]:
+        """Sources whose passages match the query by meaning or by most of its words.
+
+        Uses the retrieval Ask uses: keyword and, when Search by meaning is on,
+        vector matches together. The best passage of each source is its snippet.
+        """
+
+        source_ids = self._home_source_ids(session, [], knowledge_base_ids)
+        found: list[KnowledgeSearchResultOut] = []
+        for hit in self.index.retrieve(session, source_ids, query, limit=MEANING_RESULTS * 3):
+            source = hit.source
+            if source.id in already or source.trashed_at is not None:
+                continue
+            already.add(source.id)
+            library_id = session.scalar(
+                select(KnowledgeBaseSource.knowledge_base_id)
+                .join(
+                    KnowledgeBaseRecord,
+                    KnowledgeBaseRecord.id == KnowledgeBaseSource.knowledge_base_id,
+                )
+                .where(
+                    KnowledgeBaseSource.source_id == source.id,
+                    KnowledgeBaseRecord.trashed_at.is_(None),
+                )
+                .limit(1)
+            )
+            summary = self._source_summary(session, source)
+            found.append(
+                KnowledgeSearchResultOut(
+                    id=source.id,
+                    knowledge_base_id=library_id,
+                    kind="source",
+                    title=source.title,
+                    snippet=self._search_snippet(hit.block.content, query),
+                    meta=(
+                        f"{_count_label(summary.assertion_count, 'claim')} · related by "
+                        + ("meaning" if hit.method != "keyword" else "its words")
+                    ),
+                    updated_at=_timestamp(source.created_at),
+                )
+            )
+        return found
 
     def get_graph(self) -> KnowledgeGraphOut:
         with session_scope(self.sessions) as session:

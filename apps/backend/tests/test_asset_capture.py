@@ -74,7 +74,7 @@ def make_client(tmp_path: Path, ocr_provider: OcrProvider | None = None) -> Test
                 recordings_dir=tmp_path / "recordings",
                 seed_demo=False,
                 deepseek_api_key=None,
-                stt_provider="openai",
+                stt_provider="compatible",
             ),
             ocr_provider=ocr_provider,
         )

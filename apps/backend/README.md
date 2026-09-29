@@ -37,7 +37,7 @@ gunther/
   asset_service.py          原件保存、抽取、OCR
   web_capture.py            安全网页快照
   recording_service.py      分片、ledger、checkpoint、恢复
-  realtime.py               SenseVoice / online STT adapter
+  realtime.py               SenseVoice / OpenAI-compatible STT adapter
   ocr.py                    Apple Vision / Tesseract provider
   device_auth.py            workspace、配对、device bearer、撤销
   mobile_gateway_*.py       私网 HTTPS gateway 与 PKI
@@ -118,10 +118,10 @@ Artifact 当前没有 PATCH/DELETE/archive、全局 Search 或 PDF/DOCX renderer
 - `DATABASE_URL`、Asset/Recording 默认目录；
 - `OCR_PROVIDER=auto|vision|tesseract|disabled`；
 - `OCR_TESSERACT_COMMAND`、`OCR_PDFTOPPM_COMMAND`、语言；
-- `STT_PROVIDER=auto|sensevoice|openai`；
+- `STT_PROVIDER=auto|sensevoice|compatible`（`compatible` = 任何 OpenAI 风格的 `/audio/transcriptions` 服务，配 `STT_BASE_URL`、`STT_API_KEY`、`STT_MODEL`、`STT_LANGUAGE`）；
 - `SENSEVOICE_URL` 与 segment seconds；
 - `STORAGE_QUOTA_BYTES`（默认 20 GiB）与 `STORAGE_MIN_FREE_BYTES`（默认 1 GiB）；
-- 可选 `LLM_API_KEY`（旧名 `DEEPSEEK_API_KEY` 仍可用）、`OPENAI_API_KEY`；也可在桌面端 Settings → Services 里填写（见 `docs/SERVICE_SETTINGS.md`）；
+- 可选 `LLM_API_KEY`（旧名 `DEEPSEEK_API_KEY` 仍可用）、`TAVILY_API_KEY`（联网搜索）；也可在桌面端 Settings → Services 里填写（见 `docs/SERVICE_SETTINGS.md`）；
 - `SEED_DEMO=false` 默认创建空工作区。
 
 Provider key 不应进入 Git、日志、前端 bundle 或移动普通 profile。

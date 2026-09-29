@@ -185,7 +185,10 @@ class ModelGateway:
         effort: Effort | None = None,
         json_mode: bool = False,
         max_tokens: int | None = None,
+        on_text: Callable[[str], None] | None = None,
     ) -> Completion:
+        """Ask once. ``on_text`` hears the answer's text as it is written."""
+
         turns = [Turn("user", messages)] if isinstance(messages, str) else list(messages)
         notes: list[str] = []
         if images and not model.vision:
@@ -206,7 +209,7 @@ class ModelGateway:
         while True:
             try:
                 text, reasoning, finish = self._stream(
-                    model, payload, send_effort, send_json, max_tokens
+                    model, payload, send_effort, send_json, max_tokens, on_text
                 )
                 break
             except openai.BadRequestError as error:
@@ -247,6 +250,7 @@ class ModelGateway:
         system: str,
         prompt: str,
         images: Sequence[Image] = (),
+        history: Sequence[Turn] = (),
         effort: Effort | None = None,
     ) -> tuple[T, Completion]:
         """Structured output, checked against ``schema``; one retry with the error shown."""
@@ -255,7 +259,7 @@ class ModelGateway:
             f"{system}\n\nReply with one JSON object and nothing else. It must match this "
             f"JSON schema:\n{json.dumps(schema.model_json_schema(), ensure_ascii=False)}"
         )
-        turns = [Turn("user", prompt)]
+        turns = [*history, Turn("user", prompt)]
         for attempt in range(2):
             completion = self.complete(
                 model,
@@ -317,6 +321,7 @@ class ModelGateway:
         params: Params,
         json_mode: bool,
         max_tokens: int | None,
+        on_text: Callable[[str], None] | None = None,
     ) -> tuple[str, str, str | None]:
         request: dict[str, Any] = {"model": model.model_id, "messages": messages, "stream": True}
         if params.reasoning_effort:
@@ -340,6 +345,8 @@ class ModelGateway:
                 continue
             if delta.content:
                 text.append(delta.content)
+                if on_text:
+                    on_text(delta.content)
             extra = getattr(delta, "model_extra", None) or {}
             thought = extra.get("reasoning_content") or extra.get("reasoning")
             if isinstance(thought, str):

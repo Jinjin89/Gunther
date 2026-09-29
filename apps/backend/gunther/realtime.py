@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import io
 import json
 import wave
 from contextlib import suppress
-from urllib.parse import quote
 
 import httpx
 from fastapi import WebSocket, WebSocketDisconnect
-from websockets.asyncio.client import connect
 
 
 def _sensevoice_root(url: str) -> str:
@@ -40,14 +37,25 @@ def _pcm16_wav(pcm: bytes, sample_rate: int = 24_000) -> bytes:
     return output.getvalue()
 
 
-async def _proxy_sensevoice_transcription(
+async def _proxy_segmented_transcription(
     websocket: WebSocket,
-    url: str,
+    *,
+    endpoint: str,
+    headers: dict[str, str],
+    form: dict[str, str],
+    provider: str,
+    label: str,
     segment_seconds: float,
-    service_status: dict[str, object],
+    ready: dict[str, object],
+    reset_url: str | None = None,
 ) -> None:
+    """Cut live audio into segments and have an OpenAI-style server write each one.
+
+    SenseVoice and any ``/audio/transcriptions`` server work alike: audio in,
+    text out, one segment at a time, sent on as it arrives.
+    """
+
     await websocket.accept()
-    root = _sensevoice_root(url)
     segment_size = max(48_000, int(24_000 * 2 * max(1.0, min(segment_seconds, 10.0))))
     segment_size -= segment_size % 2
     pending = bytearray()
@@ -55,26 +63,20 @@ async def _proxy_sensevoice_transcription(
     audio_cursor_seconds = 0.0
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            with suppress(httpx.HTTPError):
-                await client.post(f"{root}/reset")
-            await websocket.send_json(
-                {
-                    "type": "service.ready",
-                    "provider": "sensevoice",
-                    "model": service_status.get("model", "sensevoice-small"),
-                    "local": True,
-                    "diarize": bool(service_status.get("diarize")),
-                }
-            )
+            if reset_url:
+                with suppress(httpx.HTTPError):
+                    await client.post(reset_url)
+            await websocket.send_json({"type": "service.ready", "provider": provider, **ready})
 
             async def transcribe_segment(chunk: bytes, start_seconds: float) -> None:
                 nonlocal sequence
                 if len(chunk) < 2:
                     return
                 response = await client.post(
-                    f"{root}/v1/audio/transcriptions",
+                    endpoint,
+                    headers=headers,
                     files={"file": ("segment.wav", _pcm16_wav(chunk), "audio/wav")},
-                    data={"model": "sensevoice", "response_format": "json"},
+                    data=form,
                 )
                 response.raise_for_status()
                 payload = response.json()
@@ -85,9 +87,9 @@ async def _proxy_sensevoice_transcription(
                 await websocket.send_json(
                     {
                         "type": "conversation.item.input_audio_transcription.completed",
-                        "item_id": f"sensevoice-{sequence}",
+                        "item_id": f"{provider}-{sequence}",
                         "transcript": transcript,
-                        "provider": "sensevoice",
+                        "provider": provider,
                         "start_seconds": round(start_seconds, 2),
                     }
                 )
@@ -104,8 +106,8 @@ async def _proxy_sensevoice_transcription(
                         await websocket.send_json(
                             {
                                 "type": "service.error",
-                                "code": "sensevoice_segment_failed",
-                                "message": f"SenseVoice missed one segment: {error}",
+                                "code": "segment_failed",
+                                "message": f"{label} missed one segment: {error}",
                             }
                         )
                     audio_cursor_seconds += len(chunk) / (24_000 * 2)
@@ -132,136 +134,64 @@ async def _proxy_sensevoice_transcription(
             await websocket.send_json(
                 {
                     "type": "service.error",
-                    "code": "sensevoice_unavailable",
-                    "message": f"Local SenseVoice stopped responding: {error}",
-                }
-            )
-            await websocket.close(code=1011)
-
-
-async def _proxy_openai_transcription(
-    websocket: WebSocket,
-    api_key: str,
-    model: str,
-    context: str,
-    delay: str,
-    languages: list[str],
-) -> None:
-    await websocket.accept()
-    url = f"wss://api.openai.com/v1/realtime?model={quote(model)}"
-    try:
-        async with connect(
-            url,
-            additional_headers={"Authorization": f"Bearer {api_key}"},
-            max_size=None,
-        ) as upstream:
-            transcription: dict[str, object] = {
-                "model": model,
-                "languages": languages or ["en", "zh-cn"],
-                "delay": delay,
-            }
-            if context.strip():
-                transcription["prompt"] = context.strip()[:1_000]
-            await upstream.send(
-                json.dumps(
-                    {
-                        "type": "session.update",
-                        "session": {
-                            "type": "transcription",
-                            "audio": {
-                                "input": {
-                                    "format": {"type": "audio/pcm", "rate": 24_000},
-                                    "transcription": transcription,
-                                    "turn_detection": {
-                                        "type": "server_vad",
-                                        "threshold": 0.5,
-                                        "prefix_padding_ms": 300,
-                                        "silence_duration_ms": 700,
-                                    },
-                                }
-                            },
-                        },
-                    }
-                )
-            )
-            await websocket.send_json(
-                {"type": "service.ready", "provider": "openai", "model": model}
-            )
-
-            async def client_to_upstream() -> None:
-                while True:
-                    message = await websocket.receive_text()
-                    payload = json.loads(message)
-                    if payload.get("type") not in {
-                        "input_audio_buffer.append",
-                        "input_audio_buffer.commit",
-                        "input_audio_buffer.clear",
-                    }:
-                        continue
-                    await upstream.send(message)
-
-            async def upstream_to_client() -> None:
-                async for message in upstream:
-                    await websocket.send_text(message)
-
-            tasks = {
-                asyncio.create_task(client_to_upstream()),
-                asyncio.create_task(upstream_to_client()),
-            }
-            done, pending_tasks = await asyncio.wait(
-                tasks, return_when=asyncio.FIRST_COMPLETED
-            )
-            for task in pending_tasks:
-                task.cancel()
-            for task in done:
-                with suppress(WebSocketDisconnect, asyncio.CancelledError):
-                    task.result()
-    except WebSocketDisconnect:
-        return
-    except Exception:
-        with suppress(RuntimeError, WebSocketDisconnect):
-            await websocket.send_json(
-                {
-                    "type": "service.error",
                     "code": "provider_unavailable",
-                    "message": (
-                        "Realtime transcription could not connect. "
-                        "The recording is still local."
-                    ),
+                    "message": f"{label} stopped responding: {error}",
                 }
             )
             await websocket.close(code=1011)
+
+
+def compatible_endpoint(base_url: str) -> str:
+    return f"{base_url.rstrip('/')}/audio/transcriptions"
 
 
 async def proxy_realtime_transcription(
     websocket: WebSocket,
-    api_key: str | None,
-    model: str,
-    context: str = "",
-    delay: str = "medium",
-    languages: list[str] | None = None,
+    *,
     provider: str = "auto",
     sensevoice_url: str = "http://127.0.0.1:8765",
-    sensevoice_segment_seconds: float = 3.2,
+    segment_seconds: float = 3.2,
+    base_url: str = "",
+    api_key: str | None = None,
+    model: str = "whisper-1",
+    language: str = "",
+    context: str = "",
 ) -> None:
-    if provider != "openai":
-        service_status = await sensevoice_health(sensevoice_url)
-        if service_status is not None:
-            await _proxy_sensevoice_transcription(
+    if provider != "compatible":
+        status = await sensevoice_health(sensevoice_url)
+        if status is not None:
+            root = _sensevoice_root(sensevoice_url)
+            await _proxy_segmented_transcription(
                 websocket,
-                sensevoice_url,
-                sensevoice_segment_seconds,
-                service_status,
+                endpoint=f"{root}/v1/audio/transcriptions",
+                headers={},
+                form={"model": "sensevoice", "response_format": "json"},
+                provider="sensevoice",
+                label="SenseVoice",
+                segment_seconds=segment_seconds,
+                ready={
+                    "model": status.get("model", "sensevoice-small"),
+                    "local": True,
+                    "diarize": bool(status.get("diarize")),
+                },
+                reset_url=f"{root}/reset",
             )
             return
-    if provider != "sensevoice" and api_key:
-        await _proxy_openai_transcription(
+    if provider != "sensevoice" and base_url:
+        form = {"model": model, "response_format": "json"}
+        if language:
+            form["language"] = language
+        if context.strip():
+            form["prompt"] = context.strip()[:1_000]
+        await _proxy_segmented_transcription(
             websocket,
-            api_key,
-            model,
-            context,
-            delay,
-            languages or ["en", "zh-cn"],
+            endpoint=compatible_endpoint(base_url),
+            headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+            form=form,
+            provider="compatible",
+            label="The transcription server",
+            segment_seconds=segment_seconds,
+            ready={"model": model, "local": False, "diarize": False},
         )
         return
 
@@ -271,7 +201,10 @@ async def proxy_realtime_transcription(
             "type": "service.error",
             "code": "provider_unavailable" if provider == "sensevoice" else "not_configured",
             "message": (
-                "Local SenseVoice is unavailable and no fallback STT provider is configured."
+                "SenseVoice is not running."
+                if provider == "sensevoice"
+                else "No transcription is set up. Start SenseVoice, or add a "
+                "transcription server in Settings."
             ),
         }
     )

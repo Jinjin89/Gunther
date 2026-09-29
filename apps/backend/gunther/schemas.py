@@ -303,14 +303,12 @@ class FileNotebookNoteOut(ApiModel):
 class HealthOut(ApiModel):
     status: Literal["ok"] = "ok"
     extraction_mode: Literal["local", "model"]
-    web_search_mode: Literal["openai", "not_configured"] = "not_configured"
+    web_search_mode: Literal["tavily", "not_configured"] = "not_configured"
     transcription_mode: Literal[
-        "sensevoice_local", "openai_realtime", "not_configured"
+        "sensevoice_local", "compatible", "not_configured"
     ] = "not_configured"
-    transcription_provider: Literal["sensevoice", "openai", "none"] = "none"
-    transcription_model: str = "gpt-live-transcribe"
-    transcription_delay: Literal["low", "medium", "high"] = "medium"
-    transcription_languages: list[str] = Field(default_factory=lambda: ["en", "zh-cn"])
+    transcription_provider: Literal["sensevoice", "compatible", "none"] = "none"
+    transcription_model: str = ""
     # The model that writes recording summaries ("DeepSeek · Flash"), or "off".
     summary_mode: str = "off"
     # The model that writes each capture's summary, or "off" (no model, or turned off).
@@ -409,7 +407,7 @@ class WebSearchOut(ApiModel):
     query: str
     answer: str
     sources: list[WebSearchSourceOut] = Field(default_factory=list)
-    mode: Literal["openai", "not_configured", "failed"]
+    mode: Literal["tavily", "not_configured", "failed"]
     message: str | None = None
 
 
@@ -526,6 +524,9 @@ class UpdateKnowledgeSessionInput(ApiModel):
 
 class ConversationCitationOut(ApiModel):
     id: str
+    # "web": a page found online (no source; ``source_id`` is empty and ``url`` is set).
+    kind: Literal["library", "web"] = "library"
+    url: str | None = None
     source_id: str
     source_title: str
     assertion_id: str | None = None
@@ -555,6 +556,10 @@ class ConversationContextOut(ApiModel):
     notes: list[str] = Field(default_factory=list)
     reasoning: str | None = None
     model_error: str | None = None
+    # What the agent made of the question and what it did to answer.
+    intent: Literal["chat", "followup", "library", "web", "both", "clarify"] | None = None
+    steps: list[dict[str, object]] = Field(default_factory=list)
+    web_searched: bool = False
 
 
 class SessionMessageOut(ApiModel):
@@ -594,6 +599,14 @@ class CreateSessionMessageInput(ApiModel):
     effort: Effort | None = None
     selected_source_ids: list[str] | None = Field(default=None, max_length=200)
     focus_chapter_id: str | None = Field(default=None, max_length=160)
+    # Let the agent search the web for this question (needs a Tavily key).
+    web: bool = False
+    # Home only: read just these libraries (the ones picked with @); none means all.
+    knowledge_base_ids: list[str] | None = Field(default=None, max_length=20)
+
+
+class FileSessionInput(ApiModel):
+    knowledge_base_id: str = Field(min_length=1, max_length=160)
 
 
 class ConversationTurnOut(ApiModel):

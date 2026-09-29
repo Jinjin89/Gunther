@@ -68,7 +68,6 @@ def test_recording_endpoints_reject_oversized_bodies_before_storage(
             recordings_dir=tmp_path / "recordings",
             seed_demo=False,
             deepseek_api_key=None,
-            openai_api_key=None,
         )
     )
 
@@ -105,7 +104,6 @@ def test_global_transport_limit_rejects_declared_json_before_schema_parsing(
             recordings_dir=tmp_path / "recordings",
             seed_demo=False,
             deepseek_api_key=None,
-            openai_api_key=None,
         )
     )
 
