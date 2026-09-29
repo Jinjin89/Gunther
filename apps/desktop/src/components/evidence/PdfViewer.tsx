@@ -20,6 +20,7 @@ export default function PdfViewer({ url, page, quote, title }: { url: string; pa
   const [attempt, setAttempt] = useState(0);
   const [width, setWidth] = useState(0);
   const [ratio, setRatio] = useState(1.3);
+  const [file, setFile] = useState<{ data: Uint8Array } | null>(null);
   const [near, setNear] = useState<ReadonlySet<number>>(new Set());
   const stage = useRef<HTMLDivElement>(null);
   const holders = useRef(new Map<number, HTMLDivElement>());
@@ -35,6 +36,21 @@ export default function PdfViewer({ url, page, quote, title }: { url: string; pa
     setCurrent(target);
     settled.current = false;
   }, [url, target, attempt]);
+
+  // Fetched here, past the web view's cache: it may hold an earlier plain load of this
+  // address that carries no CORS headers, which pdf.js's own request would then be refused.
+  useEffect(() => {
+    let active = true;
+    setFile(null);
+    fetch(url, { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) throw new Error(`The service answered ${response.status}.`);
+        return response.arrayBuffer();
+      })
+      .then((buffer) => { if (active) setFile({ data: new Uint8Array(buffer) }); })
+      .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "The file could not be fetched."); });
+    return () => { active = false; };
+  }, [url, attempt]);
 
   useEffect(() => {
     const node = stage.current;
@@ -112,7 +128,9 @@ export default function PdfViewer({ url, page, quote, title }: { url: string; pa
           <small>{error}</small>
           <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={retry}><RotateCcw size={12} />Try again</button>
         </div>
-        : <Document key={`${url}:${attempt}`} file={url} options={options} loading={<div className="gx-pdf-loading" aria-label={`Opening ${title}`} />} onLoadSuccess={({ numPages }) => setPages(numPages)} onLoadError={(reason) => setError(reason?.message || "The file could not be read.")}>
+        : !file
+          ? <div className="gx-pdf-loading" aria-label={`Opening ${title}`} />
+          : <Document key={`${url}:${attempt}`} file={file} options={options} loading={<div className="gx-pdf-loading" aria-label={`Opening ${title}`} />} onLoadSuccess={({ numPages }) => setPages(numPages)} onLoadError={(reason) => setError(reason?.message || "The file could not be read.")}>
           {width > 0 && Array.from({ length: pages }, (_, index) => index + 1).map((number) => (
             <div key={number} className="gx-pdf-sheet" data-page={number} ref={(node) => { if (node) holders.current.set(number, node); else holders.current.delete(number); }} style={{ minHeight: holderHeight }}>
               {near.has(number) && <Page

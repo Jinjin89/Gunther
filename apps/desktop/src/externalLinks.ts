@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { save } from "@tauri-apps/plugin-dialog";
+import { message, save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 
 const LOCAL_SERVICE = new Set(["127.0.0.1", "localhost", "[::1]"]);
@@ -37,7 +37,9 @@ const fileNameOf = (anchor: HTMLAnchorElement, response: Response) => {
  * replace the whole app with the file. Ask where to save it, then write it.
  */
 export async function saveDownload(anchor: HTMLAnchorElement): Promise<void> {
-  const response = await fetch(anchor.href);
+  const response = await fetch(anchor.href, { cache: "no-store" }).catch((error) => {
+    throw new Error(`The file could not be fetched from ${new URL(anchor.href).origin}: ${error instanceof Error ? error.message : error}`);
+  });
   if (!response.ok) throw new Error(`The file could not be fetched (${response.status}).`);
   const bytes = new Uint8Array(await response.arrayBuffer());
   const path = await save({ defaultPath: fileNameOf(anchor, response) });
@@ -54,7 +56,7 @@ export function installExternalLinkHandler(): void {
     const download = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[download][href]") : null;
     if (download) {
       event.preventDefault();
-      void saveDownload(download).catch((error) => window.alert(error instanceof Error ? error.message : "The file could not be saved."));
+      void saveDownload(download).catch((error) => message(`${error instanceof Error ? error.message : String(error)}`, { title: "The file could not be saved", kind: "error" }));
       return;
     }
     const url = externalLinkFor(event.target, window.location.origin);
