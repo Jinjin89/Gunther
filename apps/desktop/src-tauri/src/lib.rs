@@ -290,8 +290,12 @@ pub fn run() {
             create_capture_window(app)?;
             capture_shell::setup_tray(app)?;
             let handle = app.handle().clone();
-            app.listen(capture_shell::CAPTURE_SAVED_EVENT, move |_| {
-                capture_shell::reset_after_capture_saved(&handle);
+            app.listen(capture_shell::CAPTURE_SAVED_EVENT, move |event| {
+                // Saving a note beside a running recording leaves the recording's
+                // menu bar state alone; the renderer keeps reporting it.
+                if !capture_shell::saved_capture_continues(event.payload()) {
+                    capture_shell::reset_after_capture_saved(&handle);
+                }
             });
             Ok(())
         })

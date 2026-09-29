@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     openai_transcription_delay: Literal["low", "medium", "high"] = "medium"
     openai_transcription_languages: str = "en,zh-cn"
     openai_summary_model: str = "gpt-5.6"
+    # Summaries of every capture, written after it is read (see digest) by
+    # OpenAI or DeepSeek, whichever has a key. Without a key there are none.
+    ai_summaries: Literal["auto", "off"] = "auto"
+    # Show photos to OpenAI's model as images (otherwise only their recognized text).
+    ai_summary_images: bool = True
     stt_provider: Literal["auto", "sensevoice", "openai"] = "auto"
     ocr_provider: Literal["auto", "vision", "tesseract", "disabled"] = "auto"
     ocr_tesseract_command: str = "tesseract"

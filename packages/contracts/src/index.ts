@@ -210,6 +210,46 @@ export interface SourcePaper {
   copies: { id: string; title: string }[];
 }
 
+/** One passage a summary's key point came from. */
+export interface DigestCitation {
+  number: number;
+  blockId: string;
+  quote: string;
+  locator: string;
+}
+
+/** A capture's summary, written after it was read. Never part of the evidence. */
+export interface SourceDigest {
+  sourceId: string;
+  revisionId: string;
+  profile: "lecture" | "meeting" | "memo" | "image" | "table" | "paper" | "document" | "web" | "note";
+  method: string;
+  engine: "openai" | "deepseek";
+  model: string | null;
+  suggestedTitle: string | null;
+  overview: string;
+  keyPoints: { text: string; citations: DigestCitation[] }[];
+  actionItems: string[];
+  openQuestions: string[];
+  terms: string[];
+  markdown: string;
+  updatedAt: string;
+}
+
+export interface SourceDigestState {
+  sourceId: string;
+  /** reading: the source is still being read; writing: its summary is on its way. */
+  state: "reading" | "writing" | "ready" | "none" | "failed" | "off";
+  /** The summary describes an earlier version of the source. */
+  stale: boolean;
+  method: string | null;
+  /** Why there are no summaries: no OpenAI or DeepSeek key, or turned off. */
+  offReason: "no_key" | "setting" | null;
+  /** Why the last attempt failed, when it did. */
+  error: string | null;
+  digest: SourceDigest | null;
+}
+
 export const inboxItemTypes = ["source", "quick_note", "knowledge_suggestion"] as const;
 export type InboxItemType = typeof inboxItemTypes[number];
 export const inboxItemStates = ["unfiled", "needs_review", "held"] as const;
@@ -636,7 +676,7 @@ export interface LectureSummary {
   actionItems: string[];
   openQuestions: string[];
   terms: string[];
-  engine: "local" | "deepseek" | "openai";
+  engine: "deepseek" | "openai";
 }
 
 export interface CreateLectureSummaryInput {

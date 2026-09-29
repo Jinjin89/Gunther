@@ -45,6 +45,7 @@ import type {
   SourceStructure,
   SourceProcessing,
   RetrievalStatus,
+  SourceDigestState,
   SourcePaper,
   TopicOverview,
   TopicSuggestions,
@@ -71,7 +72,10 @@ interface Health {
   transcriptionModel: string;
   transcriptionDelay: "low" | "medium" | "high";
   transcriptionLanguages: string[];
-  summaryMode: "local" | "deepseek" | "openai";
+  summaryMode: "deepseek" | "openai" | "off";
+  /** What writes each capture's summary. */
+  digestMode?: "deepseek" | "openai" | "off";
+  digestImages?: boolean;
 }
 
 interface BackendConnection {
@@ -417,6 +421,8 @@ export const knowledgeApi = {
     { method: "POST" },
   ),
   sourcePaper: (id: string) => request<SourcePaper>(`/sources/${encodeURIComponent(id)}/paper`),
+  sourceDigest: (id: string) => request<SourceDigestState>(`/sources/${encodeURIComponent(id)}/digest`),
+  writeSourceDigest: (id: string) => request<SourceDigestState>(`/sources/${encodeURIComponent(id)}/digest`, { method: "POST" }),
   linkTopicEvidence: (baseId: string, topicId: string, blockId: string) => request<KnowledgeTopic>(
     `/knowledge-bases/${encodeURIComponent(baseId)}/topics/${encodeURIComponent(topicId)}/evidence`,
     { method: "POST", body: JSON.stringify({ blockId }) },

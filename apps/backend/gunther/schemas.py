@@ -309,7 +309,10 @@ class HealthOut(ApiModel):
     transcription_model: str = "gpt-live-transcribe"
     transcription_delay: Literal["low", "medium", "high"] = "medium"
     transcription_languages: list[str] = Field(default_factory=lambda: ["en", "zh-cn"])
-    summary_mode: Literal["local", "deepseek", "openai"] = "local"
+    summary_mode: Literal["deepseek", "openai", "off"] = "off"
+    # Which model writes each capture's summary, or off (no key, or turned off).
+    digest_mode: Literal["deepseek", "openai", "off"] = "off"
+    digest_images: bool = False
     ocr_mode: Literal["local", "not_configured"] = "not_configured"
     ocr_provider: str = "none"
 
@@ -416,7 +419,7 @@ class LectureSummaryOut(ApiModel):
     action_items: list[str] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
     terms: list[str] = Field(default_factory=list)
-    engine: Literal["local", "deepseek", "openai"]
+    engine: Literal["deepseek", "openai"]
 
 
 class RecordingAssetOut(ApiModel):

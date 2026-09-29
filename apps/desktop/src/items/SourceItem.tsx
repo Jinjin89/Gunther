@@ -21,6 +21,7 @@ import {
   withoutRepeatedTitle,
   type SourceView,
 } from "./sourceContent";
+import { DigestCard } from "./views/DigestCard";
 import { DocumentBody } from "./views/DocumentView";
 import { ImageBody } from "./views/ImageView";
 import { ResearchBody, TextBody, WebBody } from "./views/ReaderViews";
@@ -204,6 +205,8 @@ export function SourceItem({ source: initial, bases, nav, onResolved, onOpenBase
       header={<ItemHeader icon={identity.icon} tone={identity.tone} kicker={kicker} title={source.title} meta={meta} />}
       aside={aside}
     >
+      {/* Written after the capture is read; a placeholder title may change with it. */}
+      <DigestCard sourceId={source.id} onWritten={() => { void refresh().catch(() => undefined); }} />
       {body}
     </ItemLayout>
   );

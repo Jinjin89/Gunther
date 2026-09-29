@@ -12,7 +12,8 @@ Inside the library root Gunther writes::
       Topics/<topic>.md            each topic's overview, or its list of papers
       Sources/<date> <title>/      sources whose home is this library
         source.json                what it is, where it came from, your decisions
-        summary.md                 title, authors, year, abstract and outline
+        summary.md                 its summary (key points citing passages); for a
+                                   paper also title, authors, year, abstract, outline
         content.md                 its text: the note, transcript or extracted text
         original.<ext>             the captured file, when there is one
         recording.<ext>            the audio, for a recording
@@ -57,6 +58,7 @@ from gunther.models import (
     NotebookNote,
     RecordingSession,
     Source,
+    SourceDigest,
     SourcePaper,
     TopicNode,
     TopicSourceLink,
@@ -80,6 +82,7 @@ WATCHED_MODELS = (
     NotebookNote,
     RecordingSession,
     Source,
+    SourceDigest,
     SourcePaper,
     TopicNode,
     TopicSourceLink,
@@ -139,6 +142,23 @@ def safe_name(text: str, fallback: str = "Untitled", limit: int = 80) -> str:
     if len(name) > limit:
         name = name[:limit].rstrip()
     return name.rstrip(". ") or fallback
+
+
+def _summary(paper: SourcePaper | None, digest: SourceDigest | None) -> str:
+    """``summary.md``: a paper's own facts, then the written summary.
+
+    Every source's facts are read, but only a paper or document has an abstract
+    and outline worth keeping beside its summary; a note, recording or photo is
+    better described by the summary alone.
+    """
+
+    if digest is None:
+        return paper.summary_md if paper else ""
+    if paper is None or digest.profile not in {"paper", "document"}:
+        return digest.markdown
+    # One document: the summary's title repeats the paper's, so it becomes a section.
+    body = digest.markdown.split("\n", 2)[-1].replace("\n## ", "\n### ")
+    return f"{paper.summary_md.rstrip()}\n\n## Summary\n\n{body.lstrip()}"
 
 
 def _unique(name: str, taken: set[str]) -> str:
@@ -301,6 +321,7 @@ class LibraryFolders:
                     "status": status,
                 })
             summaries = {row.source_id: row for row in session.scalars(select(SourcePaper))}
+            digests = {row.source_id: row for row in session.scalars(select(SourceDigest))}
             topics: dict[str, list[TopicNode]] = defaultdict(list)
             for topic in session.scalars(
                 select(TopicNode).order_by(TopicNode.position, TopicNode.created_at, TopicNode.id)
@@ -391,6 +412,7 @@ class LibraryFolders:
                     library_folder[library.id],
                     listed[library.id],
                     summaries,
+                    set(digests),
                     topics[library.id],
                     filed,
                     overviews,
@@ -398,8 +420,9 @@ class LibraryFolders:
 
             for source in sources:
                 folder = home[source.id]
-                if source.id in summaries:
-                    plan.file(folder / "summary.md", summaries[source.id].summary_md.encode())
+                summary = _summary(summaries.get(source.id), digests.get(source.id))
+                if summary:
+                    plan.file(folder / "summary.md", summary.encode())
                 asset = assets.get(source.asset_id or "")
                 original = None
                 if asset is not None:
@@ -478,6 +501,7 @@ class LibraryFolders:
         folder: PurePosixPath,
         listed: list[dict[str, object]],
         summaries: dict[str, SourcePaper],
+        digested: set[str],
         topics: list[TopicNode],
         filed: dict[str, list[str]],
         overviews: dict[str, str],
@@ -491,7 +515,8 @@ class LibraryFolders:
             paper = summaries.get(source_id)
             title = paper.title if paper else titles[source_id]
             year = f"{paper.year} · " if paper and paper.year else ""
-            target = f"{prefix}{where[source_id]}/" + ("summary.md" if paper else "content.md")
+            summarized = paper is not None or source_id in digested
+            target = f"{prefix}{where[source_id]}/" + ("summary.md" if summarized else "content.md")
             return f"{year}[{title}](<{target}>)"
 
         def by_year(ids: list[str]) -> list[str]:

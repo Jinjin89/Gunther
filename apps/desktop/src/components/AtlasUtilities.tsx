@@ -62,7 +62,7 @@ import { parseDelimitedTable } from "../items/sourceContent";
 import { comboKeys, formatCombo, useEscape, useShortcut, withShortcut } from "../shortcuts/shortcuts";
 import { LibraryFolderSettings } from "./LibraryFolderSettings";
 import { SemanticSearchSetting } from "./SemanticSearchSetting";
-import { CAPTURE_CONTROL_DOM_EVENT, type CaptureControl, type CaptureKind, type RecordingContext } from "../capture/captureTypes";
+import { CAPTURE_CONTROL_DOM_EVENT, CAPTURE_SWITCH_DOM_EVENT, recorderOwnsCapture, type CaptureControl, type CaptureKind, type CaptureLaunchRequest, type RecordingContext } from "../capture/captureTypes";
 import { getMenuBarMode, isTauriRuntime, setMenuBarMode, type MenuBarMode } from "../capture/captureBridge";
 
 export type { CaptureKind, RecordingContext } from "../capture/captureTypes";
@@ -94,7 +94,7 @@ const recordingContexts: Array<{ id: RecordingContext; label: string; descriptio
   { id: "memo", label: "Voice memo", description: "A quick thought captured in your own words" },
 ];
 
-const recordingTitle = (context: RecordingContext) => `${context === "lecture" ? "Lecture" : context === "meeting" ? "Meeting" : "Voice memo"} · ${new Date().toLocaleDateString()}`;
+const defaultRecordingTitle = (context: RecordingContext) => `${context === "lecture" ? "Lecture" : context === "meeting" ? "Meeting" : "Voice memo"} · ${new Date().toLocaleDateString()}`;
 
 const normalizedWebUrl = (value: string): string | null => {
   const raw = value.trim();
@@ -148,7 +148,16 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
   const [fileName, setFileName] = useState("");
   const [fileError, setFileError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  // A recording is its own session beside the other types: it keeps its own
+  // title, text and library, and keeps running while a note, file or link is
+  // captured in the other tabs.
   const [recordingContext, setRecordingContext] = useState<RecordingContext>("lecture");
+  const [recordingTitleText, setRecordingTitleText] = useState("");
+  const [recordingContent, setRecordingContent] = useState("");
+  const [recordingBaseId, setRecordingBaseId] = useState(baseId ?? "");
+  const [recorderKey, setRecorderKey] = useState(0);
+  const [otherKind, setOtherKind] = useState<Exclude<CaptureKind, "recording">>("note");
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [recordingActive, setRecordingActive] = useState(false);
   const [recordingMinimized, setRecordingMinimized] = useState(false);
   const [recorderSnapshot, setRecorderSnapshot] = useState<RecorderSnapshot>(emptyRecorderSnapshot);
@@ -157,21 +166,21 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
   const [dragging, setDragging] = useState(false);
   const [pasteHint, setPasteHint] = useState<{ kind: "link" | "table"; value: string } | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const shortcutActions = useRef({ submit: () => undefined as void, switchKind: (_: CaptureKind) => undefined as void, hide: () => undefined as void });
+  const shortcutActions = useRef({ submit: () => undefined as void, switchKind: (_: CaptureKind) => undefined as void, hide: () => undefined as void, launch: (_: CaptureLaunchRequest) => undefined as void, showRecorder: () => undefined as void });
   const [interruptedRecordings, setInterruptedRecordings] = useState<RecordingSession[]>([]);
   const [recoveringRecordingId, setRecoveringRecordingId] = useState<string | null>(null);
   const recorderRef = useRef<LectureRecorderHandle>(null);
   const captureFormRef = useRef<HTMLFormElement>(null);
   const targetBase = bases.find((base) => base.id === targetBaseId);
-  const targetLabel = targetBase?.title ?? "Inbox · organize later";
+  const recordingBase = bases.find((base) => base.id === recordingBaseId);
+  const recordingTargetLabel = recordingBase?.title ?? "Inbox · organize later";
   const chapter = targetBase?.chapters.find((item) => item.id === chapterId);
   const recoverableRecordingDrafts = useMemo(
     () => recordingDraftsForWorkspace(recordingDrafts, workspaceId),
     [recordingDrafts, workspaceId],
   );
-  const hasUnreviewedWork = kind !== null
-    && kind !== "recording"
-    && Boolean(title.trim() || content.trim() || linkUrl.trim() || selectedFile);
+  // Text, a link or a file waiting in the non-recording tabs, whichever tab is showing.
+  const hasUnreviewedWork = Boolean(title.trim() || content.trim() || linkUrl.trim() || selectedFile);
   useEffect(() => {
     if (!open) return;
     setTargetBaseId(baseId ?? "");
@@ -189,15 +198,17 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
     setRecorderSnapshot(emptyRecorderSnapshot);
     setRecordingDraftId(null);
     setRecordingDrafts(loadRecordingDrafts());
+    setRecordingBaseId(baseId ?? "");
+    setRecordingContent("");
+    setRecordingTitleText(initialKind === "recording" ? defaultRecordingTitle(initialRecordingContext) : "");
+    setSavedNotice(null);
     onRecordingState?.(false);
-    if (initialKind === "recording") {
-      setTitle(recordingTitle(initialRecordingContext));
-      setContent("");
-    } else {
-      setTitle("");
-      setContent("");
-    }
+    setTitle("");
+    setContent("");
   }, [baseId, initialKind, initialRecordingContext, onRecordingState, open]);
+  useEffect(() => {
+    if (kind && kind !== "recording") setOtherKind(kind);
+  }, [kind]);
   useEffect(() => {
     if (!open || kind !== "recording" || !workspaceId) {
       setInterruptedRecordings([]);
@@ -217,13 +228,13 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
     });
     return () => { active = false; };
   }, [kind, open, workspaceId]);
-  const updateLectureContent = useCallback((value: string) => setContent(value), []);
+  const updateLectureContent = useCallback((value: string) => setRecordingContent(value), []);
   const updateRecordingDraft = useCallback((draft: RecordingDraft | null) => {
     setRecordingDraftId(draft?.id ?? null);
     setRecordingDrafts(loadRecordingDrafts());
   }, []);
   useEffect(() => {
-    const expand = () => setRecordingMinimized(false);
+    const expand = () => shortcutActions.current.showRecorder();
     const minimize = () => setRecordingMinimized(true);
     window.addEventListener("gunther:expand-capture", expand);
     window.addEventListener("gunther:minimize-capture", minimize);
@@ -233,8 +244,14 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
     };
   }, []);
   useEffect(() => {
-    onRecorderSnapshot?.(recorderSnapshot, title, hasUnreviewedWork);
-  }, [hasUnreviewedWork, onRecorderSnapshot, recorderSnapshot, title]);
+    // The menu bar names the recording while there is one.
+    onRecorderSnapshot?.(recorderSnapshot, recorderOwnsCapture(recorderSnapshot) ? recordingTitleText : title, hasUnreviewedWork);
+  }, [hasUnreviewedWork, onRecorderSnapshot, recorderSnapshot, recordingTitleText, title]);
+  useEffect(() => {
+    const launch = (event: Event) => shortcutActions.current.launch((event as CustomEvent<CaptureLaunchRequest>).detail);
+    window.addEventListener(CAPTURE_SWITCH_DOM_EVENT, launch);
+    return () => window.removeEventListener(CAPTURE_SWITCH_DOM_EVENT, launch);
+  }, []);
   useEffect(() => {
     if (surface !== "window") return undefined;
     const control = (event: Event) => {
@@ -243,7 +260,7 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
       else if (action === "resume") recorderRef.current?.resume();
       else if (action === "mark") recorderRef.current?.markMoment();
       else if (action === "finish") recorderRef.current?.stop();
-      else if (action === "show") setRecordingMinimized(false);
+      else if (action === "show") shortcutActions.current.showRecorder();
       else if (action === "quit-blocked") {
         setFileError(
           recorderSnapshot.phase === "stopped"
@@ -286,16 +303,16 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
       }
       const recording = await knowledgeApi.recordingMetadata(draft.recording.id, workspaceId);
       const recovered = { ...draft, recording, updatedAt: new Date().toISOString() };
-      setTitle(recovered.title);
+      setRecordingTitleText(recovered.title);
       setRecordingContext(recovered.recordingContext);
-      if (bases.some((base) => base.id === recovered.knowledgeBaseId)) setTargetBaseId(recovered.knowledgeBaseId);
+      if (bases.some((base) => base.id === recovered.knowledgeBaseId)) setRecordingBaseId(recovered.knowledgeBaseId);
       setRecordingDraftId(recovered.id);
       recorderRef.current?.restore(recovered);
       setInterruptedRecordings((current) => current.filter((item) => item.id !== recording.id));
     } catch (reason) {
       if (reason instanceof Error && reason.message.toLowerCase().includes("not found")) {
         // Recordings created before the lifecycle ledger are still downloadable by asset id.
-        setTitle(draft.title);
+        setRecordingTitleText(draft.title);
         setRecordingContext(draft.recordingContext);
         setRecordingDraftId(draft.id);
         recorderRef.current?.restore(draft);
@@ -316,7 +333,7 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
     recording,
     moments: recording.moments,
     recordingContext: recording.recordingContext,
-    knowledgeBaseId: recording.knowledgeBaseId ?? targetBaseId,
+    knowledgeBaseId: recording.knowledgeBaseId ?? recordingBaseId,
     workspaceId,
     updatedAt: recording.checkpointedAt ?? recording.updatedAt,
   });
@@ -355,39 +372,72 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
     setContent("");
   };
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    const normalizedUrl = kind === "link" ? normalizedWebUrl(linkUrl) : null;
-    if (kind === "link" && !normalizedUrl) {
+  /** Start the next recording afresh; whatever the other tabs hold stays. */
+  const resetRecordingSession = () => {
+    setRecorderKey((value) => value + 1);
+    setRecordingActive(false);
+    setRecordingMinimized(false);
+    setRecorderSnapshot(emptyRecorderSnapshot);
+    setRecordingDraftId(null);
+    setRecordingDrafts(loadRecordingDrafts());
+    setRecordingContent("");
+    setRecordingTitleText("");
+    onRecordingState?.(false);
+    setKind(otherKind);
+  };
+
+  const saveCapture = async (saving: CaptureKind | null) => {
+    if (!saving) return;
+    const isRecording = saving === "recording";
+    const saveTitle = isRecording ? recordingTitleText : title;
+    const saveText = isRecording ? recordingContent : content;
+    const saveBaseId = isRecording ? recordingBaseId : targetBaseId;
+    const normalizedUrl = saving === "link" ? normalizedWebUrl(linkUrl) : null;
+    if (saving === "link" && !normalizedUrl) {
       setFileError("Enter a public http or https web page without embedded credentials.");
       return;
     }
-    if (kind !== "link" && !content.trim() && !selectedFile) return;
+    const assetFile = (saving === "file" || saving === "image") ? selectedFile : null;
+    if (saving !== "link" && !saveText.trim() && !assetFile) return;
+    // Captured by value: a recording that ends while this saves is left alone.
+    const recordingContinues = !isRecording && recordingActive;
     setWorking(true);
     setFileError(null);
+    setSavedNotice(null);
     try {
       const boundWorkspaceId = workspaceId ?? await resolveWorkspaceId?.().catch(() => null) ?? null;
       if (!boundWorkspaceId) {
         throw new Error("Gunther could not verify this local workspace yet. Keep this window open and retry when the knowledge service reconnects.");
       }
-      if ((kind === "file" || kind === "image") && selectedFile) {
-        await onAssetCaptured(selectedFile, title || selectedFile.name, targetBaseId || null, kind, content.trim(), boundWorkspaceId);
-        return;
+      if (assetFile && (saving === "file" || saving === "image")) {
+        await onAssetCaptured(assetFile, title || assetFile.name, targetBaseId || null, saving, content.trim(), boundWorkspaceId);
+      } else {
+        const captureId = `cap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        appendStoredCapture({
+          id: captureId,
+          title: saveTitle,
+          content: saveText,
+          kind: saving,
+          baseId: saveBaseId,
+          workspaceId: boundWorkspaceId,
+          ...(normalizedUrl ? { url: normalizedUrl } : {}),
+          createdAt: new Date().toISOString(),
+        });
+        await onCaptured(saving === "link" ? saveTitle : saveTitle || "Untitled source", saveBaseId || null, saveText.trim(), saving, captureId, normalizedUrl ?? undefined, boundWorkspaceId);
       }
-      if (!kind) return;
-      const captureId = `cap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      appendStoredCapture({
-        id: captureId,
-        title,
-        content,
-        kind,
-        baseId: targetBaseId,
-        workspaceId: boundWorkspaceId,
-        ...(normalizedUrl ? { url: normalizedUrl } : {}),
-        createdAt: new Date().toISOString(),
-      });
-      await onCaptured(kind === "link" ? title : title || "Untitled source", targetBaseId || null, content.trim(), kind, captureId, normalizedUrl ?? undefined, boundWorkspaceId);
-      if (kind === "recording" && recordingDraftId) removeRecordingDraft(recordingDraftId);
+      // When the parent keeps Capture open, clear only what was just saved.
+      if (isRecording) {
+        if (recordingDraftId) removeRecordingDraft(recordingDraftId);
+        resetRecordingSession();
+      } else {
+        clearCaptureInput();
+        setPasteHint(null);
+        if (recordingContinues) {
+          setKind("recording");
+          setSavedNotice(`Saved “${saveTitle.trim() || "your capture"}”. The recording kept going.`);
+          if (surface === "overlay") setRecordingMinimized(true);
+        }
+      }
     } catch (reason) {
       setFileError(reason instanceof Error ? reason.message : "This source could not be preserved. It remains open so you can retry.");
     } finally {
@@ -395,9 +445,18 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
     }
   };
 
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    void saveCapture(kind);
+  };
+
   const recorderIsLive = recorderSnapshot.phase === "recording" || recorderSnapshot.phase === "paused";
   const recorderStatus = recorderSnapshot.phase === "recording" ? "Recording" : recorderSnapshot.phase === "paused" ? "Paused" : recorderSnapshot.phase === "stopped" ? "Ready to file" : recorderSnapshot.phase === "importing" ? "Importing audio" : "Preparing";
-  const canSubmit = kind === "link" ? Boolean(normalizedWebUrl(linkUrl)) : Boolean(content.trim() || selectedFile);
+  const canSubmit = kind === "link"
+    ? Boolean(normalizedWebUrl(linkUrl))
+    : kind === "recording"
+      ? Boolean(recordingContent.trim())
+      : Boolean(content.trim() || ((kind === "file" || kind === "image") && selectedFile));
   const confirmDiscard = () => !hasUnreviewedWork || window.confirm("Discard this unsaved Capture? This cannot be undone.");
   const clearCaptureInput = () => {
     setTitle("");
@@ -414,26 +473,54 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
     if (kind === null) setKind("note");
   };
   const switchCaptureKind = (nextKind: CaptureKind) => {
-    if (nextKind === kind || recordingActive) return;
-    const keepsFile = selectedFile && (nextKind === "file" || (nextKind === "image" && selectedFile.type.startsWith("image/")));
+    if (nextKind === kind) return;
+    // The recording tab holds nothing of the others, so visiting it loses nothing.
+    const keepsFile = nextKind === "recording" || nextKind === "file" || (nextKind === "image" && selectedFile?.type.startsWith("image/"));
     const losesFile = Boolean(selectedFile) && !keepsFile;
-    const losesText = nextKind === "recording" && Boolean(content.trim() || linkUrl.trim());
-    if ((losesFile || losesText) && !window.confirm("Switch type and drop what you have entered? This cannot be undone.")) return;
+    if (losesFile && !window.confirm("Switch type and drop the chosen file? This cannot be undone.")) return;
     if (losesFile) {
       setSelectedFile(null);
       setFileName("");
     }
-    if (nextKind === "recording") {
-      setContent("");
-      setLinkUrl("");
-      setTitle(recordingTitle(recordingContext));
-    } else if (kind === "recording") {
-      setTitle("");
-      setContent("");
+    if (nextKind === "recording" && !recordingActive && !recordingTitleText.trim()) {
+      setRecordingTitleText(defaultRecordingTitle(recordingContext));
     }
     setFileError(null);
     setPasteHint(null);
+    setSavedNotice(null);
     setKind(nextKind);
+  };
+  const showRecorder = () => {
+    setRecordingMinimized(false);
+    if (recordingActive) {
+      setSavedNotice(null);
+      setKind("recording");
+    }
+  };
+  /** Another entry point asked for Capture while this one is busy. */
+  const applyLaunch = (request: CaptureLaunchRequest) => {
+    const requested = request.kind ?? "note";
+    setRecordingMinimized(false);
+    setSavedNotice(null);
+    if (requested === "recording") {
+      if (!recordingActive) {
+        const context = request.recordingContext ?? recordingContext;
+        setRecordingContext(context);
+        setRecordingTitleText(defaultRecordingTitle(context));
+        if (request.targetBaseId !== undefined) setRecordingBaseId(request.targetBaseId ?? "");
+      }
+      setKind("recording");
+      return;
+    }
+    if (hasUnreviewedWork) {
+      // Unsaved text is never replaced: show it, and let the person decide.
+      setKind(otherKind);
+      return;
+    }
+    if (request.targetBaseId !== undefined) setTargetBaseId(request.targetBaseId ?? "");
+    setFileError(null);
+    setPasteHint(null);
+    setKind(requested);
   };
   const acceptFile = (file: File, targetKind: "file" | "image") => {
     setFileError(null);
@@ -449,10 +536,8 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
       setFileError("The selected file is empty.");
       return;
     }
-    if (kind !== targetKind) {
-      if (kind === "recording") setContent("");
-      setKind(targetKind);
-    }
+    if (kind !== targetKind) setKind(targetKind);
+    setSavedNotice(null);
     setSelectedFile(file);
     setFileName(file.name);
     if (!title.trim() || title === selectedFile?.name.replace(/\.[^.]+$/, "")) setTitle(file.name.replace(/\.[^.]+$/, ""));
@@ -466,7 +551,6 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
     if (!event.dataTransfer?.types.includes("Files")) return;
     event.preventDefault();
     setDragging(false);
-    if (recordingActive) return;
     const file = event.dataTransfer.files[0];
     if (file) acceptFile(file, file.type.startsWith("image/") ? "image" : "file");
   };
@@ -489,6 +573,12 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
     setPasteHint(null);
   };
   const keepDraftAndClose = () => {
+    if (hasUnreviewedWork) {
+      // The recording stays a draft; the unsaved note beside it stays open.
+      resetRecordingSession();
+      if (surface === "window") onHide?.();
+      return;
+    }
     setRecordingActive(false);
     setRecordingMinimized(false);
     onRecordingState?.(false);
@@ -521,7 +611,8 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
   const linkPreview = kind === "link" ? normalizedWebUrl(linkUrl) : null;
   const statusLine = kind === "recording"
     ? recorderIsLive ? `${recorderStatus} · ${formatRecorderTime(recorderSnapshot.seconds)}` : recorderSnapshot.phase === "stopped" ? "Review the recording, then save it" : "Recording keeps going when this window is hidden"
-    : targetBase ? `Saving to ${targetBase.title}` : "Saved to Inbox until you choose a home";
+    : recorderIsLive ? `${recorderStatus} in the background · ${formatRecorderTime(recorderSnapshot.seconds)}`
+      : targetBase ? `Saving to ${targetBase.title}` : "Saved to Inbox until you choose a home";
   const submitLabel = working ? "Saving…" : ({ note: "Save note", link: "Save web page", file: "Save document", image: "Save photo", table: "Save table", recording: "Save recording" } as const)[activeKind.id];
   const onKindKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
@@ -538,7 +629,7 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
     onMouseDown={(event) => event.stopPropagation()}
     onSubmit={submit}
     onDragOver={(event) => {
-      if (!event.dataTransfer?.types.includes("Files") || recordingActive) return;
+      if (!event.dataTransfer?.types.includes("Files")) return;
       event.preventDefault();
       setDragging(true);
     }}
@@ -557,8 +648,9 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
         {surface === "window"
           ? <button type="button" className="gx-capture-hide" onClick={keepInBackground} title={`${hideActionLabel}  Esc`} aria-label={hideActionLabel}><Minimize2 size={14} /><span>{hideActionLabel}</span></button>
           : <>
-            {kind === "recording" && recordingActive && <button type="button" className="gx-icon-button" onClick={keepInBackground} title="Keep recording in the background" aria-label="Minimize recording"><Minimize2 size={15} /></button>}
-            <button type="button" className="gx-icon-button" onClick={closeCaptureSurface} disabled={recordingActive} title={recordingActive ? "Save or keep this session as a draft before closing" : "Close  Esc"} aria-label="Close capture"><X size={16} /></button>
+            {recordingActive
+              ? <button type="button" className="gx-icon-button" onClick={keepInBackground} title="Keep recording in the background" aria-label="Minimize recording"><Minimize2 size={15} /></button>
+              : <button type="button" className="gx-icon-button" onClick={closeCaptureSurface} title="Close  Esc" aria-label="Close capture"><X size={16} /></button>}
           </>}
       </span>
     </header>
@@ -574,19 +666,19 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
           aria-controls="capture-panel"
           tabIndex={activeKind.id === id ? 0 : -1}
           className={`gx-capture-kind tone-${tone} ${activeKind.id === id ? "is-active" : ""}`}
-          disabled={recordingActive && id !== "recording"}
           onClick={() => switchCaptureKind(id)}
           title={`${label}  ${formatCombo(`mod+${index + 1}`)}`}
         >
           <Icon size={15} />
           <span>{label}</span>
+          {id === "recording" && recordingActive && activeKind.id !== "recording" && <em className={`gx-capture-kind-live ${recorderIsLive && recorderSnapshot.phase === "recording" ? "is-live" : ""}`} aria-label={`${recorderStatus} ${formatRecorderTime(recorderSnapshot.seconds)}`}><i />{recorderSnapshot.phase === "stopped" ? "Review" : formatRecorderTime(recorderSnapshot.seconds)}</em>}
         </button>
       ))}
     </div>
 
     <div className="gx-capture-body" id="capture-panel" role="tabpanel" aria-labelledby={`capture-kind-${activeKind.id}`}>
       {kind === "recording" && <div className="gx-capture-context" role="radiogroup" aria-label="Recording type">
-        {recordingContexts.map((context) => <button type="button" role="radio" aria-checked={recordingContext === context.id} key={context.id} className={recordingContext === context.id ? "is-active" : ""} disabled={recordingActive} onClick={() => { setRecordingContext(context.id); setTitle(recordingTitle(context.id)); }} title={context.description}>{context.label}</button>)}
+        {recordingContexts.map((context) => <button type="button" role="radio" aria-checked={recordingContext === context.id} key={context.id} className={recordingContext === context.id ? "is-active" : ""} disabled={recordingActive} onClick={() => { setRecordingContext(context.id); setRecordingTitleText(defaultRecordingTitle(context.id)); }} title={context.description}>{context.label}</button>)}
       </div>}
       {kind === "recording" && recorderSnapshot.phase === "idle" && (recoverableRecordingDrafts.length > 0 || interruptedRecordings.length > 0) && <div className="gx-capture-drafts">
         <header><strong>Continue a preserved session</strong><em>{recoverableRecordingDrafts.length + interruptedRecordings.length} saved</em></header>
@@ -618,12 +710,17 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
       {kind === "link" && <p className="gx-capture-note">{linkPreview ? "Gunther keeps an unchangeable snapshot of this page, even if it changes or disappears later." : "Any public http or https page. The page itself is fetched and kept on this device."}</p>}
 
       {fileError && <p className="gx-capture-error" role="alert"><CircleAlert size={13} />{fileError}</p>}
+      {savedNotice && <p className="gx-capture-note is-ok" role="status"><Check size={13} />{savedNotice}</p>}
 
       {kind !== null && kind !== "recording" && <input className="gx-capture-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder={kind === "link" ? "Title (optional — the page title is used otherwise)" : kind === "table" ? "What is this table?" : kind === "image" ? "What is this image? (optional)" : kind === "file" ? "Title (optional)" : "Title (optional)"} maxLength={160} aria-label="Title" />}
-      {kind === "recording" && <input className="gx-capture-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder={`${recordingContext === "lecture" ? "Course" : recordingContext === "meeting" ? "Meeting" : "Voice memo"} title`} maxLength={160} aria-label="Title" />}
+      {kind === "recording" && <input className="gx-capture-title" value={recordingTitleText} onChange={(event) => setRecordingTitleText(event.target.value)} placeholder={`${recordingContext === "lecture" ? "Course" : recordingContext === "meeting" ? "Meeting" : "Voice memo"} title`} maxLength={160} aria-label="Title" />}
 
       {(kind === "link" || kind === "file" || kind === "image") && <label className="gx-capture-label" htmlFor="capture-content">{kind === "file" && !selectedFile ? "Or paste the text itself" : "Why you’re saving it"}<span>optional</span></label>}
-      {kind === "recording" ? <LectureRecorder ref={recorderRef} title={title} knowledgeBaseId={targetBaseId} workspaceId={workspaceId} recordingContext={recordingContext} onKnowledgeContent={updateLectureContent} onTitleChange={setTitle} onStatusChange={setRecorderSnapshot} onDraftChange={updateRecordingDraft} onActiveChange={(active) => { setRecordingActive(active); onRecordingState?.(active); }} /> : kind !== null && <textarea
+      {/* Once started, the recorder stays mounted (and recording) while other tabs are in use. */}
+      {(kind === "recording" || recordingActive) && <div className="gx-capture-recorder" hidden={kind !== "recording"}>
+        <LectureRecorder key={recorderKey} ref={recorderRef} title={recordingTitleText} knowledgeBaseId={recordingBaseId} workspaceId={workspaceId} recordingContext={recordingContext} onKnowledgeContent={updateLectureContent} onTitleChange={setRecordingTitleText} onStatusChange={setRecorderSnapshot} onDraftChange={updateRecordingDraft} onActiveChange={(active) => { setRecordingActive(active); onRecordingState?.(active); }} />
+      </div>}
+      {kind !== null && kind !== "recording" && <textarea
         id="capture-content"
         className={`gx-capture-text ${kind === "table" ? "is-data" : ""} ${kind === "note" ? "is-note" : ""}`}
         value={content}
@@ -647,11 +744,13 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
     <footer className="gx-capture-foot">
       <div className="gx-capture-destination" data-no-drag>
         <span>Save to</span>
-        <LibraryPicker bases={bases} value={targetBaseId} onChange={setTargetBaseId} noneLabel="Inbox" disabled={recordingActive} label="Save to" placement="above" />
-        {chapter && <em>→ {chapter.title}</em>}
+        {kind === "recording"
+          ? <LibraryPicker bases={bases} value={recordingBaseId} onChange={setRecordingBaseId} noneLabel="Inbox" disabled={recordingActive} label="Save to" placement="above" />
+          : <LibraryPicker bases={bases} value={targetBaseId} onChange={setTargetBaseId} noneLabel="Inbox" label="Save to" placement="above" />}
+        {chapter && kind !== "recording" && <em>→ {chapter.title}</em>}
       </div>
       <span className="gx-capture-foot-fill" />
-      {hasUnreviewedWork && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={discardCapture} aria-label="Discard this capture" title="Discard this capture"><Trash2 size={13} />Discard</button>}
+      {hasUnreviewedWork && kind !== "recording" && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={discardCapture} aria-label="Discard this capture" title="Discard this capture"><Trash2 size={13} />Discard</button>}
       {kind === "recording" && recorderSnapshot.phase === "stopped" && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={keepDraftAndClose}>Keep as draft</button>}
       {kind === "recording" && recorderIsLive && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={keepInBackground}><Minimize2 size={13} />Keep in background</button>}
       <button className="gx-btn gx-btn-primary gx-capture-save" disabled={working || !canSubmit} aria-label={submitLabel}>
@@ -667,12 +766,14 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
     submit: () => { if (canSubmit && !working) captureFormRef.current?.requestSubmit(); },
     switchKind: switchCaptureKind,
     hide: closeCaptureSurface,
+    launch: applyLaunch,
+    showRecorder,
   };
 
-  const recordingDock = kind === "recording" && recordingMinimized && <aside className={`recording-session-dock is-${recorderSnapshot.phase}`} aria-label="Background recording session">
-      <button type="button" className="recording-dock-summary" onClick={() => setRecordingMinimized(false)}>
+  const recordingDock = recordingActive && recordingMinimized && <aside className={`recording-session-dock is-${recorderSnapshot.phase}`} aria-label="Background recording session">
+      <button type="button" className="recording-dock-summary" onClick={showRecorder}>
         <span className={`recording-dock-pulse ${recorderIsLive ? "is-live" : ""}`}><Mic2 size={15} /></span>
-        <span><small>{recorderStatus} · {recorderSnapshot.transcriptionLabel}</small><strong>{title}</strong><em>{targetLabel} · {recorderSnapshot.transcriptWords ? `${recorderSnapshot.transcriptWords} words` : recorderSnapshot.persistence === "saved" ? "preserved locally" : "saving locally"}{recorderSnapshot.markedMoments ? ` · ${recorderSnapshot.markedMoments} marked` : ""}</em></span>
+        <span><small>{recorderStatus} · {recorderSnapshot.transcriptionLabel}</small><strong>{recordingTitleText}</strong><em>{recordingTargetLabel} · {recorderSnapshot.transcriptWords ? `${recorderSnapshot.transcriptWords} words` : recorderSnapshot.persistence === "saved" ? "preserved locally" : "saving locally"}{recorderSnapshot.markedMoments ? ` · ${recorderSnapshot.markedMoments} marked` : ""}</em></span>
       </button>
       <strong className="recording-dock-time">{formatRecorderTime(recorderSnapshot.seconds)}</strong>
       <div className="recording-dock-controls">
@@ -681,8 +782,8 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
         {recorderSnapshot.phase === "paused" && <button type="button" onClick={() => recorderRef.current?.resume()} aria-label="Resume recording"><Play size={14} /></button>}
         {recorderIsLive && <button type="button" className="is-finish" onClick={() => recorderRef.current?.stop()}><Square size={12} />Finish</button>}
         {recorderSnapshot.phase === "stopped" && <button type="button" onClick={keepDraftAndClose}>Keep draft</button>}
-        {recorderSnapshot.phase === "stopped" && <button type="button" className="is-save" disabled={working || !content.trim()} onClick={() => captureFormRef.current?.requestSubmit()}>Save to knowledge</button>}
-        <button type="button" onClick={() => setRecordingMinimized(false)} aria-label="Expand recording"><Maximize2 size={15} /></button>
+        {recorderSnapshot.phase === "stopped" && <button type="button" className="is-save" disabled={working || !recordingContent.trim()} onClick={() => void saveCapture("recording")}>Save to knowledge</button>}
+        <button type="button" onClick={showRecorder} aria-label="Expand recording"><Maximize2 size={15} /></button>
       </div>
     </aside>;
 
@@ -804,7 +905,7 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
   const [transcriptionMode, setTranscriptionMode] = useState<"sensevoice_local" | "openai_realtime" | "not_configured">("not_configured");
   const [transcriptionProvider, setTranscriptionProvider] = useState<"sensevoice" | "openai" | "none">("none");
   const [transcriptionProfile, setTranscriptionProfile] = useState({ model: "gpt-live-transcribe", delay: "medium", languages: ["en", "zh-cn"] as string[] });
-  const [summaryMode, setSummaryMode] = useState<"local" | "deepseek" | "openai">("local");
+  const [summaryMode, setSummaryMode] = useState<"deepseek" | "openai" | "off">("off");
   const [checking, setChecking] = useState(true);
   const [devices, setDevices] = useState<PairedDevice[]>([]);
   const [devicesLoading, setDevicesLoading] = useState(true);
@@ -930,8 +1031,6 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
   }, [onNotify, pairing, pairingExpired]);
 
   const activeDeviceCount = devices.filter((device) => !device.revokedAt).length;
-  const engineLabel = checking ? "Checking…" : engine === "deepseek" ? "DeepSeek" : engine === "local" ? "Local evidence mode" : "Service offline";
-  const engineDescription = engine === "deepseek" ? "DeepSeek is configured; extraction and synthesis fall back locally if the provider fails." : engine === "local" ? "Deterministic local extraction and evidence synthesis are active." : "Reconnect the local service to use indexed sources and sessions.";
 
   const createPairing = async () => {
     if (connection.kind !== "secure") {
@@ -1006,7 +1105,7 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
         <div className="setting-row"><span><strong>Online research</strong><small>{webMode === "openai" ? "Live, sourced web answers are enabled." : "Add OPENAI_API_KEY to the local backend to enable web answers."}</small></span><span className={`setting-state ${webMode === "not_configured" ? "is-muted" : ""}`}><i />{webMode === "openai" ? "Connected" : "Not configured"}</span></div>
         <div className="setting-row"><span><strong>Live transcript</strong><small>{transcriptionMode === "sensevoice_local" ? `${transcriptionProfile.model} · private on-device STT · speaker labels enabled` : transcriptionMode === "openai_realtime" ? `${transcriptionProfile.languages.join(" + ")} · ${transcriptionProfile.delay} delay · ${transcriptionProfile.model}` : "Audio still records locally; connect SenseVoice or OpenAI for live words."}</small></span><span className={`setting-state ${transcriptionMode === "not_configured" ? "is-muted" : ""}`}><i />{transcriptionProvider === "sensevoice" ? "SenseVoice local" : transcriptionProvider === "openai" ? "OpenAI" : "Local audio"}</span></div>
         <details className="stt-setup"><summary>Live transcription provider</summary><p>Gunther automatically prefers your private SenseVoice service, then falls back to OpenAI when configured.</p><code>STT_PROVIDER=auto<br />SENSEVOICE_URL=http://127.0.0.1:8765<br />SENSEVOICE_SEGMENT_SECONDS=3.2<br />OPENAI_API_KEY=optional-fallback</code></details>
-        <div className="setting-row"><span><strong>Lecture summaries</strong><small>{engineDescription}</small></span><span className="setting-state"><i />{summaryMode === "openai" ? "OpenAI" : summaryMode === "deepseek" ? "DeepSeek" : engineLabel}</span></div>
+        <div className="setting-row"><span><strong>Summaries</strong><small>{summaryMode === "off" ? "Add OPENAI_API_KEY or DEEPSEEK_API_KEY to the local backend. Without a model, captures are kept but not summarized." : `Every capture and recording is summarized by ${summaryMode === "openai" ? "OpenAI" : "DeepSeek"}; each point cites the passages it came from.`}</small></span><span className={`setting-state ${summaryMode === "off" ? "is-muted" : ""}`}><i />{summaryMode === "openai" ? "OpenAI" : summaryMode === "deepseek" ? "DeepSeek" : "Not configured"}</span></div>
         <button className="settings-action" onClick={checkHealth} disabled={checking}>{checking ? "Checking services…" : "Check all services"} <ArrowRight size={13} /></button>
       </section>
     </div>

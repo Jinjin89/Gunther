@@ -621,25 +621,46 @@ def test_search_and_recording_capabilities_degrade_explicitly_without_openai() -
             assert event["code"] == "not_configured"
 
 
-def test_lecture_summary_has_a_local_fallback() -> None:
+def test_lecture_summary_needs_a_model_and_never_stands_in_for_one() -> None:
+    from types import SimpleNamespace
+
+    from gunther.lecture import AILectureSummarizer, LecturePayload
+
+    lecture = {
+        "title": "Cell annotation lecture",
+        "durationSeconds": 95,
+        "transcript": "CD3D supports T cell identity. What remains uncertain?",
+    }
     with make_client() as client:
-        response = client.post(
-            "/api/lectures/summarize",
-            json={
-                "title": "Cell annotation lecture",
-                "durationSeconds": 95,
-                "transcript": (
-                    "CD3D supports T cell identity. We should inspect the full TCR program. "
-                    "What remains uncertain?"
-                ),
-            },
+        missing = client.post("/api/lectures/summarize", json=lecture)
+        assert missing.status_code == 503 and "API key" in missing.json()["detail"]
+
+        def answering(outcome):
+            summarizer = AILectureSummarizer("key", "gpt-test", "openai")
+
+            def parse(**_kwargs):
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return SimpleNamespace(output_parsed=outcome)
+
+            summarizer.client = SimpleNamespace(responses=SimpleNamespace(parse=parse))
+            return summarizer
+
+        client.app.state.lecture_summarizer = answering(ConnectionError("offline"))
+        failed = client.post("/api/lectures/summarize", json=lecture)
+        assert failed.status_code == 502
+        assert failed.json()["detail"] == (
+            "The model could not write the summary (ConnectionError). Try again."
         )
-        assert response.status_code == 200
-        summary = response.json()
-        assert summary["engine"] == "local"
-        assert summary["keyPoints"]
-        assert summary["actionItems"]
-        assert summary["openQuestions"]
+
+        client.app.state.lecture_summarizer = answering(LecturePayload(
+            overview="CD3D marks T cells.", key_points=["CD3D supports T cell identity."],
+            open_questions=["What remains uncertain?"],
+        ))
+        written = client.post("/api/lectures/summarize", json=lecture)
+        assert written.status_code == 200
+        assert written.json()["engine"] == "openai"
+        assert written.json()["openQuestions"] == ["What remains uncertain?"]
 
 
 def test_recording_audio_is_preserved_and_retrievable(tmp_path) -> None:

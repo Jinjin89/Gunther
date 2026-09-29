@@ -18,7 +18,7 @@ from uuid import uuid4
 from sqlalchemy import bindparam, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from gunther import vector_index
+from gunther import digest, vector_index
 from gunther.content import MIN_EMBED_CHARS, ParsedBlock, parse_content, search_tokens
 from gunther.database import session_scope
 from gunther.models import (
@@ -96,6 +96,11 @@ class KnowledgeIndex:
         self.semantic_error: str | None = None
         # Why semantic search is off, when it is; shown in Settings.
         self.semantic_off_reason: str | None = None
+        # What writes each source's summary (see digest); None writes none.
+        self.digest_method: str | None = None
+        self.digest_vision = False
+        # Why there are no summaries: "setting" (turned off) or "no_key".
+        self.digest_off_reason: str | None = None
 
     def publish(
         self,
@@ -177,8 +182,40 @@ class KnowledgeIndex:
             )
         if blocks:
             self.enqueue_summary(session, source.id, revision.id)
+        text_chars = sum(len(b.text) for b in blocks if b.kind != "heading")
+        if self.digest_method and digest.worth_digesting(source, text_chars, self.digest_vision):
+            enqueue(
+                session,
+                source.id,
+                "digest",
+                f"digest:{revision.id}:{self.digest_method}",
+                revision_id=revision.id,
+            )
         session.flush()
         return revision
+
+    def request_digest(self, session: Session, source_id: str) -> ProcessingJob | None:
+        """Write a source's summary again, unless one is already being written."""
+
+        if not self.digest_method:
+            return None
+        head = session.get(SourceIndexHead, source_id)
+        if head is None:
+            return None
+        waiting = session.scalar(
+            select(ProcessingJob).where(
+                ProcessingJob.source_id == source_id,
+                ProcessingJob.kind == "digest",
+                ProcessingJob.state.in_(("queued", "running")),
+            )
+        )
+        return waiting or enqueue(
+            session,
+            source_id,
+            "digest",
+            f"digest:{head.revision_id}:{self.digest_method}:{uuid4().hex[:12]}",
+            revision_id=head.revision_id,
+        )
 
     def summary_key(self, revision_id: str) -> str:
         return f"summarize:{revision_id}:{self.embedder.model_id if self.embedder else 'text'}"

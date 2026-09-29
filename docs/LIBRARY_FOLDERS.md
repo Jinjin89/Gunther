@@ -34,7 +34,7 @@ Keys, tokens and logs stay there too.
 │   ├── Topics/<topic>.md         a topic's overview, or its list of papers
 │   └── Sources/<date> <title>/
 │       ├── source.json           what it is, where it came from, your decisions
-│       ├── summary.md            title, authors, year, DOI, abstract, sections
+│       ├── summary.md            its summary; for a paper also title, authors, abstract…
 │       ├── content.md            its text: note, transcript or extracted text
 │       ├── original.<ext>        the captured file, when there is one
 │       └── recording.<ext>       the audio, for a recording
@@ -73,7 +73,10 @@ Keys, tokens and logs stay there too.
 
 ### `summary.md`, `Overview.md` and `Topics/`
 
-Markdown for people, not a data format. `summary.md` is what the source says
+Markdown for people, not a data format. `summary.md` is the capture's summary
+(see [Capture: AI summaries](CAPTURE_AI_SUMMARIES.md)): study notes for a
+lecture, actions for a meeting, what a photo shows, and so on, with the passages
+each key point cites. For a paper or document it follows what the source says
 about itself, read without a model (see the backend doc, "Papers at scale").
 `Overview.md` links each topic and each source's `summary.md`, newest first.
 A topic's file is its written overview when there is one, else the list of its

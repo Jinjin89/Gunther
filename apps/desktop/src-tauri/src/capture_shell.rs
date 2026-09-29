@@ -398,6 +398,11 @@ fn menu_entries(layout: MenuLayout) -> Vec<MenuEntry> {
                 id: MENU_SHOW_CAPTURE,
                 label: "Show Recorder",
             },
+            // The recording keeps going while a note, file or link is captured.
+            Action {
+                id: MENU_OPEN_CAPTURE,
+                label: "Capture Something Else…",
+            },
             open_main,
         ],
         MenuLayout::Preparing => vec![
@@ -416,6 +421,10 @@ fn menu_entries(layout: MenuLayout) -> Vec<MenuEntry> {
                 id: MENU_SHOW_CAPTURE,
                 label: "Review Recording…",
             },
+            Action {
+                id: MENU_OPEN_CAPTURE,
+                label: "Capture Something Else…",
+            },
             open_main,
         ],
         MenuLayout::Draft => vec![
@@ -424,6 +433,10 @@ fn menu_entries(layout: MenuLayout) -> Vec<MenuEntry> {
             Action {
                 id: MENU_SHOW_CAPTURE,
                 label: "Continue Capture…",
+            },
+            Action {
+                id: MENU_NEW_RECORDING,
+                label: "New Recording",
             },
             open_main,
         ],
@@ -581,25 +594,20 @@ fn emit_capture_control<R: Runtime>(app: &AppHandle<R>, control: &'static str) {
 }
 
 fn open_from_tray<R: Runtime>(app: &AppHandle<R>, request: CaptureLaunchRequest) {
-    let preserve_current_capture = {
+    {
         let shell = app.state::<CaptureShell>();
         let mut runtime = shell.0.lock().expect("capture shell lock poisoned");
-        if !can_replace_capture(&runtime.status) {
-            true
-        } else {
+        // A busy Capture (a recording, import, or unsaved text) is never
+        // replaced, so no fallback request is left to replace it after a
+        // renderer reload.
+        if can_replace_capture(&runtime.status) {
             runtime.pending_launch = Some(request.clone());
-            false
         }
-    };
-    let _ = show_window(app, CAPTURE_WINDOW_LABEL);
-    if preserve_current_capture {
-        // A recording, import, finalization, or unsaved review is a singleton.
-        // New entry points may reveal it but must never leave a launch request
-        // that could replace it after a renderer reload.
-        emit_capture_control(app, "show");
-    } else {
-        let _ = app.emit_to(CAPTURE_WINDOW_LABEL, CAPTURE_REQUEST_EVENT, request);
     }
+    let _ = show_window(app, CAPTURE_WINDOW_LABEL);
+    // The live request always reaches the window: a busy sheet switches to the
+    // asked type beside its recording and keeps unsaved text where it is.
+    let _ = app.emit_to(CAPTURE_WINDOW_LABEL, CAPTURE_REQUEST_EVENT, request);
 }
 
 fn request_quit<R: Runtime>(app: &AppHandle<R>) {
@@ -734,6 +742,20 @@ pub fn block_quit_and_show_capture<R: Runtime>(app: &AppHandle<R>) {
     emit_capture_control(app, "quit-blocked");
 }
 
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureSavedPayload {
+    #[serde(default)]
+    capture_continues: bool,
+}
+
+/// Whether a saved capture left something open (a recording beside a note).
+pub fn saved_capture_continues(payload: &str) -> bool {
+    serde_json::from_str::<CaptureSavedPayload>(payload)
+        .unwrap_or_default()
+        .capture_continues
+}
+
 pub fn reset_after_capture_saved<R: Runtime>(app: &AppHandle<R>) {
     {
         let shell = app.state::<CaptureShell>();
@@ -841,8 +863,9 @@ pub fn set_menu_bar_mode(app: AppHandle, mode: MenuBarMode) -> Result<(), String
 mod tests {
     use super::{
         can_replace_capture, compact_elapsed, menu_action, menu_entries, presentation_for,
-        tray_visible, CaptureStatus, GlyphVariant, MenuAction, MenuBarMode, MenuEntry, MenuLayout,
-        MENU_FINISH, MENU_MARK, MENU_NEW_NOTE, MENU_PAUSE_RESUME, MENU_QUIT, MENU_SETTINGS,
+        saved_capture_continues, tray_visible, CaptureStatus, GlyphVariant, MenuAction,
+        MenuBarMode, MenuEntry, MenuLayout, MENU_FINISH, MENU_MARK, MENU_NEW_NOTE,
+        MENU_NEW_RECORDING, MENU_OPEN_CAPTURE, MENU_PAUSE_RESUME, MENU_QUIT, MENU_SETTINGS,
         MENU_SHOW_CAPTURE,
     };
 
@@ -967,7 +990,12 @@ mod tests {
         assert_eq!(draft.status_text, "Unsaved capture");
         assert_eq!(
             action_ids(draft.layout),
-            vec![MENU_SHOW_CAPTURE, "open-gunther", MENU_QUIT]
+            vec![
+                MENU_SHOW_CAPTURE,
+                MENU_NEW_RECORDING,
+                "open-gunther",
+                MENU_QUIT
+            ]
         );
 
         let preparing = presentation_for(&status("requesting", 0));
@@ -1010,6 +1038,29 @@ mod tests {
             has_unreviewed_work: Some(true),
             ..CaptureStatus::default()
         }));
+    }
+
+    #[test]
+    fn other_captures_stay_reachable_while_a_recording_runs() {
+        for layout in [MenuLayout::Live { paused: false }, MenuLayout::Review] {
+            assert!(
+                action_ids(layout).contains(&MENU_OPEN_CAPTURE),
+                "{layout:?}"
+            );
+        }
+        assert!(action_ids(MenuLayout::Draft).contains(&MENU_NEW_RECORDING));
+    }
+
+    #[test]
+    fn saving_beside_a_recording_keeps_its_menu_bar_state() {
+        assert!(saved_capture_continues(
+            r#"{"message":"Saved","captureContinues":true}"#
+        ));
+        assert!(!saved_capture_continues(
+            r#"{"message":"Saved","captureContinues":false}"#
+        ));
+        assert!(!saved_capture_continues(r#"{"message":"Saved"}"#));
+        assert!(!saved_capture_continues("not json"));
     }
 
     #[test]

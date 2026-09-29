@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import Field, field_validator
 from sqlalchemy import func, select, update
 
-from gunther import library_topics, papers, vector_index
+from gunther import digest, library_topics, papers, vector_index
 from gunther.database import session_scope
 from gunther.knowledge_index import embeddable, enqueue
 from gunther.models import (
@@ -13,6 +13,7 @@ from gunther.models import (
     KnowledgeBaseRecord,
     ProcessingJob,
     Source,
+    SourceDigest,
     SourceIndexHead,
     SourcePaper,
     SourceRevision,
@@ -189,6 +190,78 @@ def source_paper(source_id: str, request: Request):
                 {"id": copy.id, "title": copy.title} for copy in papers.copies(session, source_id)
             ],
         }
+
+
+def _digest_state(session, source_id: str, index) -> dict[str, object]:
+    job = session.scalar(
+        select(ProcessingJob)
+        .where(ProcessingJob.source_id == source_id, ProcessingJob.kind == "digest")
+        .order_by(ProcessingJob.created_at.desc())
+        .limit(1)
+    )
+    row = session.get(SourceDigest, source_id)
+    head = session.get(SourceIndexHead, source_id)
+    if job is not None and job.state in {"queued", "running"}:
+        state = "writing"
+    elif row is not None:
+        state = "ready"
+    elif index.digest_method is None:
+        state = "off"
+    elif job is not None and job.state == "failed":
+        state = "failed"
+    elif head is None or session.scalar(
+        select(ProcessingJob.id).where(
+            ProcessingJob.source_id == source_id,
+            ProcessingJob.kind == "parse_asset",
+            ProcessingJob.state.in_(("queued", "running")),
+        )
+    ):
+        state = "reading"  # It is still being read; its summary comes after.
+    else:
+        state = "none"
+    return {
+        "sourceId": source_id,
+        "state": state,
+        # The summary describes an earlier version of the source.
+        "stale": bool(row and head and row.revision_id != head.revision_id),
+        "method": index.digest_method,
+        # "no_key": summaries need an OpenAI or DeepSeek key; "setting": turned off.
+        "offReason": index.digest_off_reason,
+        # Why the last attempt failed; shown with a retry.
+        "error": job.error if job is not None and job.state == "failed" else None,
+        "digest": digest.digest_out(row) if row else None,
+    }
+
+
+@router.get("/sources/{source_id}/digest")
+def source_digest(source_id: str, request: Request):
+    index = request.app.state.knowledge_service.index
+    with session_scope(index.sessions) as session:
+        if session.get(Source, source_id) is None:
+            raise HTTPException(404, "Source was not found")
+        return _digest_state(session, source_id, index)
+
+
+@router.post("/sources/{source_id}/digest", status_code=202)
+def write_source_digest(source_id: str, request: Request):
+    """Write the summary again, from the source's current version."""
+
+    index = request.app.state.knowledge_service.index
+    with session_scope(index.sessions) as session:
+        source = session.get(Source, source_id)
+        if source is None or source.trashed_at is not None:
+            raise HTTPException(404, "Source was not found")
+        if index.digest_method is None:
+            raise HTTPException(
+                409,
+                "Summaries are turned off (AI_SUMMARIES=off)"
+                if index.digest_off_reason == "setting"
+                else "Summaries need an OpenAI or DeepSeek API key in the local backend",
+            )
+        if index.request_digest(session, source_id) is None:
+            raise HTTPException(409, "This source is still being read. Try again shortly.")
+        session.flush()
+        return _digest_state(session, source_id, index)
 
 
 @router.get("/sources/{source_id}/structure")

@@ -407,6 +407,13 @@ def _create_paper_structure(connection: Connection, metadata: MetaData) -> None:
             metadata.tables[name].create(bind=connection, checkfirst=True)
 
 
+def _create_source_digests(connection: Connection, metadata: MetaData) -> None:
+    """Summaries written after a source is read."""
+
+    if "source_digests" in metadata.tables:
+        metadata.tables["source_digests"].create(bind=connection, checkfirst=True)
+
+
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
 MIGRATIONS: tuple[Migration, ...] = (
@@ -425,6 +432,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(13, "reversible_trash", _add_trash),
     Migration(14, "vectors_in_sqlite_vec", _drop_json_vectors),
     Migration(15, "paper_structure", _create_paper_structure),
+    Migration(16, "source_digests", _create_source_digests),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

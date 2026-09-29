@@ -54,8 +54,8 @@ export async function updateCaptureStatus(status: CaptureRuntimeStatus): Promise
   await invoke("update_capture_status", { status });
 }
 
-export async function emitCaptureSaved(message: string): Promise<void> {
-  await emit(CAPTURE_SAVED_EVENT, { message } satisfies CaptureSavedEvent);
+export async function emitCaptureSaved(message: string, captureContinues = false): Promise<void> {
+  await emit(CAPTURE_SAVED_EVENT, { message, captureContinues } satisfies CaptureSavedEvent);
 }
 
 export async function emitOpenSearch(): Promise<void> {

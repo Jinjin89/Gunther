@@ -659,6 +659,30 @@ class SourcePaper(Base):
     updated_at: Mapped[datetime] = mapped_column(default=utc_now)
 
 
+class SourceDigest(Base):
+    """A summary of a source written after it was read (see digest).
+
+    Derived from one revision and never part of the evidence: its key points
+    cite the source's own passages. ``method`` names what wrote it.
+    """
+
+    __tablename__ = "source_digests"
+
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("sources.id", ondelete="CASCADE"), primary_key=True
+    )
+    revision_id: Mapped[str] = mapped_column(
+        ForeignKey("source_revisions.id", ondelete="CASCADE"), index=True
+    )
+    profile: Mapped[str] = mapped_column(String(24), default="document")
+    method: Mapped[str] = mapped_column(String(240), default="local")
+    suggested_title: Mapped[str] = mapped_column(String(160), default="")
+    overview: Mapped[str] = mapped_column(Text, default="")
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    markdown: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
 class TopicSourceLink(Base):
     """A whole source filed under a topic, as opposed to one of its passages."""
 

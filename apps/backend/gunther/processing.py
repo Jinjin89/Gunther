@@ -1,4 +1,8 @@
-"""Leased, restart-safe processing. Publication and job completion commit together."""
+"""Leased, restart-safe processing. Publication and job completion commit together.
+
+Summaries written by a model (``digest`` jobs) run in a lane of their own, so a
+slow model never holds up reading and indexing what was just captured.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +15,7 @@ from threading import Event
 
 from sqlalchemy import and_, or_, select, update
 
-from gunther import papers, vector_index
+from gunther import digest, papers, vector_index
 from gunther.asset_service import AssetService, extract_asset_content
 from gunther.content import parse_content
 from gunther.database import session_scope
@@ -33,6 +37,8 @@ IDLE_POLL_SECONDS = 1.0
 POLL_STEP_SECONDS = 0.5
 MAX_RETRY_SECONDS = 60.0
 FAILURE_LOG_EVERY = 30
+# Jobs that may wait on a model over the network.
+AI_KINDS = ("digest",)
 
 
 def retry_delay_seconds(failures: int) -> float:
@@ -46,20 +52,27 @@ class ProcessingWorker:
         index: KnowledgeIndex,
         assets: AssetService,
         document_parser: DoclingParser | None = None,
+        digest_writer: digest.DigestWriter | None = None,
     ):
         self.index = index
         self.sessions = index.sessions
         self.assets = assets
         self.document_parser = document_parser
+        self.digest_writer = digest_writer
         self.stopping = Event()
 
-    def claim(self) -> tuple[str, str] | None:
+    def claim(self, ai: bool | None = None) -> tuple[str, str] | None:
+        """The oldest eligible job: any job, or only (``ai``) or never model-bound ones."""
+
         now = utc_now()
         with session_scope(self.sessions) as session:
             eligible = or_(
                 and_(ProcessingJob.state == "queued", ProcessingJob.available_at <= now),
                 and_(ProcessingJob.state == "running", ProcessingJob.lease_until < now),
             )
+            if ai is not None:
+                in_lane = ProcessingJob.kind.in_(AI_KINDS)
+                eligible = and_(eligible, in_lane if ai else ~in_lane)
             candidate = (
                 select(ProcessingJob.id)
                 .where(eligible, ProcessingJob.attempts < 3)
@@ -120,6 +133,15 @@ class ProcessingWorker:
                     path, _, _ = self.assets.download(asset.id)
                     file_name, media_type = asset.original_name, asset.media_type
                     source_content = source.content
+                elif kind == "digest":
+                    image_path = (
+                        self.assets.download(asset.id)[0]
+                        if asset and asset.media_type in digest.VISION_TYPES
+                        else None
+                    )
+                    request = digest.prepare(
+                        session, source, job.revision_id, asset_path=image_path
+                    )
                 elif kind == "summarize":
                     revision_id = job.revision_id
                     model_id = job.model_id
@@ -213,6 +235,8 @@ class ProcessingWorker:
                     paper_vector = embedder.encode([papers.paper_text(facts)])[0]
                     if not paper_vector or not all(math.isfinite(v) for v in paper_vector):
                         raise ValueError("Embedding provider returned an invalid vector")
+            elif kind == "digest":
+                result = self.digest_writer.write(request) if self.digest_writer else None
             else:
                 raise ValueError("Processing provider is not configured")
 
@@ -234,6 +258,8 @@ class ProcessingWorker:
                 source = session.get(Source, source_id)
                 if kind == "parse_asset":
                     self.index.publish(session, source, parsed, parser=parser, warning=warning)
+                elif kind == "digest":
+                    digest.publish(session, source, request, result)
                 elif kind == "summarize":
                     papers.publish(
                         session,
@@ -281,13 +307,17 @@ class ProcessingWorker:
                 job = session.get(ProcessingJob, job_id)
                 if job and job.state == "running" and job.lease_token == token:
                     job.state = "failed" if job.attempts >= 3 else "queued"
-                    job.error = f"Processing failed ({type(error).__name__}). Original preserved."
+                    job.error = (
+                        f"The model could not write the summary ({type(error).__name__})."
+                        if job.kind == "digest"
+                        else f"Processing failed ({type(error).__name__}). Original preserved."
+                    )
                     job.available_at = utc_now() + timedelta(seconds=5 * 2**job.attempts)
                     job.lease_token, job.lease_until = None, None
                     job.updated_at = utc_now()
 
-    def run_once(self) -> bool:
-        claimed = self.claim()
+    def run_once(self, ai: bool | None = None) -> bool:
+        claimed = self.claim(ai)
         if claimed:
             self.process(*claimed)
         return bool(claimed)
@@ -301,11 +331,15 @@ class ProcessingWorker:
             remaining -= step
 
     async def run(self) -> None:
+        await asyncio.gather(self._lane(ai=False), self._lane(ai=True))
+
+    async def _lane(self, *, ai: bool) -> None:
         failures = 0
         while not self.stopping.is_set():
             try:
-                await asyncio.to_thread(self.index.backfill, 10)
-                claimed = await asyncio.to_thread(self.claim)
+                if not ai:
+                    await asyncio.to_thread(self.index.backfill, 10)
+                claimed = await asyncio.to_thread(self.claim, ai)
                 if failures:
                     logger.warning("Knowledge worker recovered after %d failed attempts", failures)
                     failures = 0

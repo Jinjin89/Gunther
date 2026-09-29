@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import re
-from typing import Literal, Protocol
+from typing import Literal
 
 from openai import OpenAI
 from pydantic import BaseModel, Field
@@ -17,52 +16,8 @@ class LecturePayload(BaseModel):
     terms: list[str] = Field(default_factory=list)
 
 
-class LectureSummarizer(Protocol):
-    mode: Literal["local", "deepseek", "openai"]
-
-    def summarize(
-        self, title: str, transcript: str, duration_seconds: int
-    ) -> LectureSummaryOut: ...
-
-
-def _sentences(transcript: str) -> list[str]:
-    chunks = re.split(r"(?<=[.!?。！？])\s+|\n+", transcript)
-    return [re.sub(r"\s+", " ", chunk).strip(" -•\t") for chunk in chunks if chunk.strip()]
-
-
-class LocalLectureSummarizer:
-    mode: Literal["local"] = "local"
-
-    def summarize(self, title: str, transcript: str, duration_seconds: int) -> LectureSummaryOut:
-        del title, duration_seconds
-        sentences = _sentences(transcript)
-        overview = " ".join(sentences[:2])[:900]
-        key_points = [sentence[:320] for sentence in sentences[:6]]
-        actions = [
-            sentence[:320]
-            for sentence in sentences
-            if re.search(
-                r"\b(should|must|next|action|homework|practice)\b|需要|应该|下一步|作业|练习",
-                sentence,
-                re.I,
-            )
-        ][:5]
-        questions = [
-            sentence[:320] for sentence in sentences if "?" in sentence or "？" in sentence
-        ][:5]
-        term_candidates = re.findall(
-            r"\b[A-Z][A-Z0-9-]{1,11}\b|\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b",
-            transcript,
-        )
-        terms = list(dict.fromkeys(term_candidates))[:12]
-        return LectureSummaryOut(
-            overview=overview or transcript[:900],
-            key_points=key_points,
-            action_items=actions,
-            open_questions=questions,
-            terms=terms,
-            engine=self.mode,
-        )
+class LectureSummaryError(RuntimeError):
+    """The model did not write a summary. Nothing stands in for it."""
 
 
 class AILectureSummarizer:
@@ -76,7 +31,6 @@ class AILectureSummarizer:
         self.client = OpenAI(api_key=api_key, base_url=base_url)
         self.model = model
         self.mode = mode
-        self.fallback = LocalLectureSummarizer()
 
     def summarize(self, title: str, transcript: str, duration_seconds: int) -> LectureSummaryOut:
         try:
@@ -95,12 +49,12 @@ class AILectureSummarizer:
                 ),
                 text_format=LecturePayload,
             )
-            parsed = response.output_parsed
-            if parsed is None:
-                return self.fallback.summarize(title, transcript, duration_seconds)
-            return LectureSummaryOut(**parsed.model_dump(), engine=self.mode)
-        except Exception:
-            return self.fallback.summarize(title, transcript, duration_seconds)
+        except Exception as error:
+            raise LectureSummaryError(type(error).__name__) from error
+        parsed = response.output_parsed
+        if parsed is None or not parsed.overview.strip():
+            raise LectureSummaryError("empty response")
+        return LectureSummaryOut(**parsed.model_dump(), engine=self.mode)
 
 
 def create_lecture_summarizer(
@@ -109,7 +63,9 @@ def create_lecture_summarizer(
     deepseek_api_key: str | None,
     deepseek_model: str,
     deepseek_base_url: str,
-) -> LectureSummarizer:
+) -> AILectureSummarizer | None:
+    """A model for recording summaries, or ``None`` when there is no key."""
+
     if openai_api_key:
         return AILectureSummarizer(openai_api_key, openai_model, "openai")
     if deepseek_api_key:
@@ -119,4 +75,4 @@ def create_lecture_summarizer(
             "deepseek",
             deepseek_base_url,
         )
-    return LocalLectureSummarizer()
+    return None

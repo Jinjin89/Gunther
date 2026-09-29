@@ -60,6 +60,7 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (13, "reversible_trash"),
             (14, "vectors_in_sqlite_vec"),
             (15, "paper_structure"),
+            (16, "source_digests"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
@@ -113,6 +114,7 @@ def test_v10_upgrade_backfills_evidence_without_rewriting_original(tmp_path: Pat
         "topic_nodes",
         "topic_evidence_links",
         *PAPER_TABLES,  # later still (v15)
+        "source_digests",  # v16
     }
     legacy = MetaData()
     for table in Base.metadata.sorted_tables:

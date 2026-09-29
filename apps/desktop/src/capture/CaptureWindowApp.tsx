@@ -19,7 +19,10 @@ import { persistAssetCapture, persistTextCapture } from "./capturePersistence";
 import { applyTheme, readThemePreference, resolveTheme, watchSystemTheme } from "../design/theme";
 import {
   CAPTURE_CONTROL_DOM_EVENT,
+  CAPTURE_SWITCH_DOM_EVENT,
+  recorderOwnsCapture,
   type CaptureControl,
+  type CaptureKind,
   type CaptureLaunchRequest,
   type CaptureRuntimeStatus,
 } from "./captureTypes";
@@ -42,12 +45,16 @@ const DEFAULT_REQUEST: Required<Pick<CaptureLaunchRequest, "recordingContext">> 
 };
 
 function requestOwnsCapture(status: CaptureRuntimeStatus): boolean {
-  return status.hasUnreviewedWork
-    || status.phase === "requesting"
-    || status.phase === "importing"
-    || status.phase === "recording"
-    || status.phase === "paused"
-    || status.phase === "stopped";
+  return status.hasUnreviewedWork || recorderOwnsCapture(status);
+}
+
+/**
+ * Whether Capture stays open after one of its captures is saved: saving a note
+ * leaves a running recording alone, and saving the recording leaves an
+ * unsaved note alone.
+ */
+function captureContinuesAfterSaving(kind: CaptureKind, status: CaptureRuntimeStatus): boolean {
+  return kind === "recording" ? status.hasUnreviewedWork : recorderOwnsCapture(status);
 }
 
 export default function CaptureWindowApp() {
@@ -85,7 +92,13 @@ export default function CaptureWindowApp() {
   }, []);
 
   const applyRequest = useCallback((next: CaptureLaunchRequest | null) => {
-    if (!next || requestOwnsCapture(runtimeStatusRef.current)) return;
+    if (!next) return;
+    if (requestOwnsCapture(runtimeStatusRef.current)) {
+      // Never remount a busy Capture: the open sheet switches type in place,
+      // and keeps the recording (or the unsaved text) it already holds.
+      window.dispatchEvent(new CustomEvent(CAPTURE_SWITCH_DOM_EVENT, { detail: next }));
+      return;
+    }
     setRequest({
       kind: next.kind ?? null,
       recordingContext: next.recordingContext ?? "lecture",
@@ -162,7 +175,14 @@ export default function CaptureWindowApp() {
     setRuntimeStatus(nextStatus);
   }, []);
 
-  const finishCapture = useCallback(async (message: string) => {
+  const finishCapture = useCallback(async (message: string, captureContinues = false) => {
+    if (captureContinues) {
+      // The sheet clears only what was saved; the rest stays where it was.
+      await hideCaptureWindow().catch(() => undefined);
+      await refreshWorkspace();
+      await emitCaptureSaved(message, true).catch(() => undefined);
+      return;
+    }
     const idleStatus = { ...EMPTY_SNAPSHOT, title: "Capture something", hasUnreviewedWork: false };
     // Persistence has completed. Release this singleton synchronously before
     // yielding so a later launch can safely claim it without being overwritten
@@ -228,7 +248,7 @@ export default function CaptureWindowApp() {
         url,
         workspaceId: boundWorkspaceId,
       });
-      await finishCapture(result.message);
+      await finishCapture(result.message, captureContinuesAfterSaving(kind, runtimeStatusRef.current));
     }}
     onAssetCaptured={async (file, title, baseId, kind, notes, boundWorkspaceId) => {
       const result = await persistAssetCapture({
@@ -239,7 +259,7 @@ export default function CaptureWindowApp() {
         notes,
         workspaceId: boundWorkspaceId,
       });
-      await finishCapture(result.message);
+      await finishCapture(result.message, captureContinuesAfterSaving(kind, runtimeStatusRef.current));
     }}
   />;
 }

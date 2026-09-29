@@ -27,6 +27,7 @@ from gunther.device_auth import (
     PairingNotFoundError,
     parse_bearer_authorization,
 )
+from gunther.lecture import LectureSummaryError
 from gunther.pairing_exchange_guard import PairingExchangeRejected
 from gunther.realtime import proxy_realtime_transcription, sensevoice_health
 from gunther.recording_service import (
@@ -467,7 +468,15 @@ async def health(request: Request) -> HealthOut:
             for language in settings.openai_transcription_languages.split(",")
             if language.strip()
         ],
-        summary_mode=request.app.state.lecture_summarizer.mode,
+        summary_mode=(
+            request.app.state.lecture_summarizer.mode
+            if request.app.state.lecture_summarizer
+            else "off"
+        ),
+        digest_mode=(
+            request.app.state.knowledge_service.index.digest_method or "off"
+        ).partition(":")[0],
+        digest_images=request.app.state.knowledge_service.index.digest_vision,
         ocr_mode="local" if ocr.available else "not_configured",
         ocr_provider=ocr_provider_name if ocr.available else "none",
     )
@@ -626,11 +635,19 @@ def summarize_lecture(
     payload: CreateLectureSummaryInput,
     request: Request,
 ) -> LectureSummaryOut:
-    return request.app.state.lecture_summarizer.summarize(
-        payload.title,
-        payload.transcript,
-        payload.duration_seconds,
-    )
+    summarizer = request.app.state.lecture_summarizer
+    if summarizer is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Summaries need an OpenAI or DeepSeek API key in the local backend.",
+        )
+    try:
+        return summarizer.summarize(payload.title, payload.transcript, payload.duration_seconds)
+    except LectureSummaryError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"The model could not write the summary ({error}). Try again.",
+        ) from error
 
 
 def _recordings(request: Request) -> RecordingService:

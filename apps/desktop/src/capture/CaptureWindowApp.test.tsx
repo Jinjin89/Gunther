@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import CaptureWindowApp from "./CaptureWindowApp";
 import type { RecorderSnapshot } from "../components/LectureRecorder";
-import type { CaptureControl, CaptureLaunchRequest } from "./captureTypes";
+import { CAPTURE_SWITCH_DOM_EVENT, type CaptureControl, type CaptureLaunchRequest } from "./captureTypes";
 
 const mocks = vi.hoisted(() => ({
   workspaceBootstrap: vi.fn(),
@@ -58,6 +58,7 @@ vi.mock("../components/AtlasUtilities", async () => {
       onRecorderSnapshot?: (snapshot: RecorderSnapshot, title: string, hasUnreviewedWork: boolean) => void;
       onClose: (force?: boolean) => void;
       onSearch?: () => void;
+      onCaptured: (title: string, baseId: string | null, content: string, kind: string, captureId: string, url?: string, workspaceId?: string | null) => Promise<void>;
     }) => {
       React.useEffect(() => {
         mocks.sheetMounts += 1;
@@ -75,6 +76,7 @@ vi.mock("../components/AtlasUtilities", async () => {
         React.createElement("span", null, `${props.initialKind ?? "all"}|${props.initialRecordingContext}|${props.baseId ?? "inbox"}`),
         React.createElement("button", { type: "button", onClick: () => props.onClose(true) }, "Keep draft"),
         React.createElement("button", { type: "button", onClick: () => props.onSearch?.() }, "Web search"),
+        React.createElement("button", { type: "button", onClick: () => void props.onCaptured("Beside", null, "Text", "note", "cap-1", undefined, "wsp-primary") }, "Save note"),
       );
     },
   };
@@ -202,6 +204,39 @@ describe("CaptureWindowApp", () => {
 
     expect(container).toHaveTextContent("all|lecture|inbox");
     expect(container).not.toHaveTextContent("note|lecture|inbox");
+  });
+
+  it("hands a launch to the busy sheet in place and keeps it mounted when a note is saved beside the recording", async () => {
+    mocks.persistText.mockResolvedValue({ message: "Saved beside", savedToService: true });
+    const switched = vi.fn();
+    window.addEventListener(CAPTURE_SWITCH_DOM_EVENT, switched);
+    const user = userEvent.setup();
+    render(<CaptureWindowApp />);
+    expect(await screen.findByText("all|lecture|inbox")).toBeVisible();
+    await waitFor(() => expect(mocks.snapshotHandler).toBeTypeOf("function"));
+    await act(async () => { mocks.resolveTake?.(null); });
+    const mounts = mocks.sheetMounts;
+
+    act(() => {
+      mocks.snapshotHandler?.({
+        phase: "recording",
+        seconds: 42,
+        persistence: "saving",
+        transcriptWords: 3,
+        transcriptionLabel: "Local audio",
+        markedMoments: 0,
+      }, "Lecture 4", false);
+      mocks.requestHandler?.({ kind: "note", source: "tray" });
+    });
+    expect(switched).toHaveBeenCalledOnce();
+    expect((switched.mock.calls[0]?.[0] as CustomEvent<CaptureLaunchRequest>).detail).toEqual({ kind: "note", source: "tray" });
+
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+    await waitFor(() => expect(mocks.emitSaved).toHaveBeenCalledWith("Saved beside", true));
+    expect(mocks.hide).toHaveBeenCalledOnce();
+    expect(mocks.sheetMounts).toBe(mounts);
+    expect(mocks.updateStatus).not.toHaveBeenLastCalledWith(expect.objectContaining({ phase: "idle" }));
+    window.removeEventListener(CAPTURE_SWITCH_DOM_EVENT, switched);
   });
 
   it("guards unsaved non-recording work synchronously and reports it to the shell", async () => {

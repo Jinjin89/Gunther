@@ -112,7 +112,7 @@ describe("bounded microphone permission requests", () => {
       transcriptionModel: "sensevoice-small",
       transcriptionDelay: "medium",
       transcriptionLanguages: ["en", "zh-cn"],
-      summaryMode: "local",
+      summaryMode: "off",
     });
 
     const view = renderRecorder();

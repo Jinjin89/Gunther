@@ -91,7 +91,7 @@ describe("native Capture bridge", () => {
     await emitCaptureSaved("Preserved in Inbox");
     await emitOpenSearch();
 
-    expect(bridge.emit).toHaveBeenNthCalledWith(1, CAPTURE_SAVED_EVENT, { message: "Preserved in Inbox" });
+    expect(bridge.emit).toHaveBeenNthCalledWith(1, CAPTURE_SAVED_EVENT, { message: "Preserved in Inbox", captureContinues: false });
     expect(bridge.emit).toHaveBeenNthCalledWith(2, OPEN_SEARCH_EVENT);
   });
 });

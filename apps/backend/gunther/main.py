@@ -28,6 +28,7 @@ from gunther.device_auth import (
     DeviceAuthService,
     parse_bearer_authorization,
 )
+from gunther.digest import create_digest_writer
 from gunther.document_parser import DoclingParser
 from gunther.embedding import OnnxEmbedder, default_model_directory, model_is_installed
 from gunther.extraction import create_extractor
@@ -170,6 +171,20 @@ def create_app(
         active_settings.deepseek_model,
         active_settings.deepseek_base_url,
     )
+    digest_writer = create_digest_writer(
+        active_settings.ai_summaries,
+        openai_api_key=active_settings.openai_api_key,
+        openai_model=active_settings.openai_summary_model,
+        deepseek_api_key=active_settings.deepseek_api_key,
+        deepseek_model=active_settings.deepseek_model,
+        deepseek_base_url=active_settings.deepseek_base_url,
+        images=active_settings.ai_summary_images,
+    )
+    knowledge_service.index.digest_method = digest_writer.method if digest_writer else None
+    knowledge_service.index.digest_vision = bool(digest_writer and digest_writer.vision)
+    knowledge_service.index.digest_off_reason = (
+        None if digest_writer else "setting" if active_settings.ai_summaries == "off" else "no_key"
+    )
     local_ocr = ocr_provider or create_ocr_provider(
         active_settings.ocr_provider,
         tesseract_command=active_settings.ocr_tesseract_command,
@@ -185,7 +200,8 @@ def create_app(
         sessions, active_settings.assets_dir, knowledge_service, local_ocr, storage_budget,
     ), document_parser=(DoclingParser(
         active_settings.docling_python, active_settings.docling_artifacts_path,
-    ) if active_settings.docling_python and active_settings.docling_artifacts_path else None))
+    ) if active_settings.docling_python and active_settings.docling_artifacts_path else None),
+        digest_writer=digest_writer)
 
     trash_service = TrashService(
         sessions,

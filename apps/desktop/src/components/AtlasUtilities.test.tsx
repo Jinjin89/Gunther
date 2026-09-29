@@ -16,7 +16,7 @@ vi.mock("../api", () => ({
       transcriptionModel: "sensevoice-small",
       transcriptionDelay: "medium",
       transcriptionLanguages: ["en", "zh-cn"],
-      summaryMode: "local",
+      summaryMode: "off",
     }),
     search: vi.fn().mockResolvedValue([]),
     webSearch: vi.fn().mockResolvedValue({ query: "", answer: "", sources: [], mode: "not_configured" }),

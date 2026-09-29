@@ -15,6 +15,8 @@ import { knowledgeApi } from "./api";
 import { loadStoredCaptures, removeStoredCapture } from "./localCaptureQueue";
 import { isTauriRuntime, listenForCaptureSaved, listenForMenuCommand, listenForOpenSearch, openCaptureWindow, type MenuCommand } from "./capture/captureBridge";
 import { persistAssetCapture, persistTextCapture } from "./capture/capturePersistence";
+import { CAPTURE_SWITCH_DOM_EVENT, type CaptureLaunchRequest } from "./capture/captureTypes";
+import type { RecorderSnapshot } from "./components/LectureRecorder";
 import { applyTheme, readThemePreference, resolveTheme, THEME_STORAGE_KEY, watchSystemTheme, type ThemePreference } from "./design/theme";
 import { ItemPage } from "./items/ItemPage";
 import { itemKey, sameItem, type ItemOrigin, type ItemRef } from "./items/itemRef";
@@ -178,8 +180,8 @@ export default function App() {
       return;
     }
     if (captureOpen && captureRecordingActive) {
-      window.dispatchEvent(new CustomEvent("gunther:expand-capture"));
-      notify("Your preserved recording session is already open.");
+      // The recording keeps going; the open Capture switches to what was asked for.
+      window.dispatchEvent(new CustomEvent(CAPTURE_SWITCH_DOM_EVENT, { detail: { kind, recordingContext: context, targetBaseId } satisfies CaptureLaunchRequest }));
       return;
     }
     setCaptureRecordingActive(false);
@@ -193,6 +195,12 @@ export default function App() {
     setRecordingContext(context);
     setCaptureOpen(true);
   }, [captureOpen, captureRecordingActive, notify, refreshWorkspaceId, view, workspaceId]);
+
+  // Unsaved text in Capture's other tabs, so saving a recording leaves it open.
+  const captureUnsavedRef = useRef(false);
+  const trackCaptureSnapshot = useCallback((_snapshot: RecorderSnapshot, _title: string, hasUnreviewedWork: boolean) => {
+    captureUnsavedRef.current = hasUnreviewedWork;
+  }, []);
 
   const closeCapture = useCallback((force = false) => {
     if (captureRecordingActive && !force) {
@@ -547,21 +555,24 @@ export default function App() {
         </main>
       </div>
 
-      <CaptureSheet open={captureOpen} bases={bases} workspaceId={captureWorkspaceId} resolveWorkspaceId={refreshWorkspaceId} baseId={captureTargetBaseId} initialKind={captureKind} initialRecordingContext={recordingContext} onRecordingState={setCaptureRecordingActive} onClose={closeCapture} onSearch={openSearch} onCaptured={async (title, baseId, content, kind, captureId, url, boundWorkspaceId) => {
+      <CaptureSheet open={captureOpen} bases={bases} workspaceId={captureWorkspaceId} resolveWorkspaceId={refreshWorkspaceId} baseId={captureTargetBaseId} initialKind={captureKind} initialRecordingContext={recordingContext} onRecordingState={setCaptureRecordingActive} onRecorderSnapshot={trackCaptureSnapshot} onClose={closeCapture} onSearch={openSearch} onCaptured={async (title, baseId, content, kind, captureId, url, boundWorkspaceId) => {
         const result = await persistTextCapture({ title, baseId, content, kind, captureId, url, workspaceId: boundWorkspaceId });
         await refreshKnowledgeBases().catch(() => undefined);
         window.dispatchEvent(new CustomEvent("gunther:sources-updated"));
         window.dispatchEvent(new CustomEvent("gunther:inbox-updated"));
-        setCaptureRecordingActive(false);
-        setCaptureOpen(false);
+        // Capture itself clears what was saved; it stays open for what is left.
+        const continues = kind === "recording" ? captureUnsavedRef.current : captureRecordingActive;
+        if (!continues) {
+          setCaptureRecordingActive(false);
+          setCaptureOpen(false);
+        }
         notify(result.message);
       }} onAssetCaptured={async (file, title, baseId, kind, notes, boundWorkspaceId) => {
         const result = await persistAssetCapture({ file, title, baseId, kind, notes, workspaceId: boundWorkspaceId });
         await refreshKnowledgeBases().catch(() => undefined);
         window.dispatchEvent(new CustomEvent("gunther:sources-updated"));
         window.dispatchEvent(new CustomEvent("gunther:inbox-updated"));
-        setCaptureRecordingActive(false);
-        setCaptureOpen(false);
+        if (!captureRecordingActive) setCaptureOpen(false);
         notify(result.message);
       }} />
       <CreateKnowledgeBaseSheet open={createBaseOpen} onClose={() => setCreateBaseOpen(false)} onSave={async (payload: CreateKnowledgeBaseInput) => {
