@@ -19,7 +19,7 @@ const sourceKinds: Array<{ value: SourceKind; label: string; icon: typeof FileTe
 ];
 
 interface CaptureComposerProps {
-  extractionMode: "local" | "deepseek";
+  extractionMode: "local" | "model";
   onImport: (payload: CreateSourceInput) => Promise<ImportResult>;
   variant?: "hero" | "panel";
 }
@@ -53,7 +53,7 @@ export function CaptureComposer({ extractionMode, onImport, variant = "panel" }:
     }
   };
 
-  const placeholder = extractionMode === "deepseek"
+  const placeholder = extractionMode === "model"
     ? "Paste a note, course transcript, paper excerpt, or anything you just learned…"
     : "CD3D -> marker_of -> T cell\nBackpropagation -> depends_on -> chain rule";
 
@@ -66,7 +66,7 @@ export function CaptureComposer({ extractionMode, onImport, variant = "panel" }:
           <span>Gunther keeps the original and proposes connected knowledge.</span>
         </div>
         <span className={`mode-badge mode-${extractionMode}`}>
-          <i />{extractionMode === "deepseek" ? "DeepSeek" : "Local rules"}
+          <i />{extractionMode === "model" ? "Language model" : "Local rules"}
         </span>
       </div>
 
@@ -104,7 +104,7 @@ export function CaptureComposer({ extractionMode, onImport, variant = "panel" }:
       </div>
 
       {extractionMode === "local" && variant === "panel" && (
-        <p className="capture-hint">Local mode understands relationship statements. Add a DeepSeek key for free-form extraction.</p>
+        <p className="capture-hint">Local mode understands relationship statements. Add a language model key in Settings for free-form extraction.</p>
       )}
       {error && <p className="capture-message is-error" role="alert">{error}</p>}
       {result && (

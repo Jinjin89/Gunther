@@ -20,6 +20,7 @@ from gunther.conversation import GroundingClaim, KnowledgeResponder
 from gunther.database import session_scope
 from gunther.extraction import CandidateAssertion, ExtractionResult, Extractor
 from gunther.knowledge_index import KnowledgeIndex
+from gunther.llm import ModelGateway, Turn
 from gunther.models import (
     Artifact,
     ArtifactUnitBinding,
@@ -141,6 +142,25 @@ class _SourcePassage:
     confidence: float
 
 
+# Reasoning is kept for the model that wrote it; past this it is cut.
+MAX_KEPT_REASONING = 60_000
+
+
+def conversation_history(messages: list[SessionMessage]) -> list[Turn]:
+    """A conversation in neutral form, for whichever model answers next."""
+
+    turns: list[Turn] = []
+    for message in messages:
+        if message.role == "user":
+            turns.append(Turn("user", message.content))
+        elif message.role == "assistant":
+            context = json.loads(message.context_json or "{}")
+            turns.append(
+                Turn("assistant", message.content, context.get("model"), context.get("reasoning"))
+            )
+    return turns
+
+
 class KnowledgeService:
     def __init__(
         self,
@@ -151,6 +171,8 @@ class KnowledgeService:
         self.sessions = sessions
         self.extractor = extractor
         self.responder = responder
+        # Every model that is set up (see llm); a conversation may pick any of them.
+        self.models: ModelGateway | None = None
         self.index = KnowledgeIndex(sessions)
         self._source_import_locks_guard = Lock()
         self._source_import_locks: dict[str, tuple[Lock, int]] = {}
@@ -1577,6 +1599,15 @@ class KnowledgeService:
                 raise LookupError(f"Session {session_id} was not found")
             if knowledge_session.archived:
                 raise ValueError("Restore the archived session before adding another message")
+            # A conversation may pick any model that is set up, and switch at any turn.
+            model = None
+            if payload.model:
+                model = self.models.get(payload.model) if self.models else None
+                if model is None:
+                    raise ValueError(
+                        "That model is not set up, or its provider needs a key. "
+                        "Choose another in the model menu."
+                    )
 
             if payload.selected_source_ids is not None:
                 knowledge_session.selected_source_ids_json = json.dumps(payload.selected_source_ids)
@@ -1755,14 +1786,26 @@ class KnowledgeService:
                         status="provisional", confidence=0.0,
                     ))
 
-            history = [(message.role, message.content) for message in knowledge_session.messages]
-            response = self.responder.respond(payload.content.strip(), claims, history)
+            response = self.responder.respond(
+                payload.content.strip(),
+                claims,
+                conversation_history(knowledge_session.messages),
+                model=model,
+                effort=payload.effort,
+            )
             context = ConversationContextOut(
                 sources_considered=len(scoped_sources),
                 assertions_considered=len(available_assertions),
                 verified_assertions=sum(item.status == "verified" for item in available_assertions),
                 retrieval_mode="selected" if selected_source_ids else "all",
                 responder_mode=response.mode,
+                model=response.model_ref,
+                model_label=response.model_label,
+                effort=response.effort,
+                effort_label=response.effort_label,
+                notes=list(response.notes),
+                reasoning=(response.reasoning or "")[:MAX_KEPT_REASONING] or None,
+                model_error=response.error,
             )
             now = utc_now()
             user_message = SessionMessage(

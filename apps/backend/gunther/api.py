@@ -444,6 +444,8 @@ async def health(request: Request) -> HealthOut:
     )
     ocr = request.app.state.ocr_provider
     ocr_provider_name = getattr(ocr, "active_name", None) or ocr.name
+    analysis = request.app.state.models.for_role("analysis")
+    ask = request.app.state.models.for_role("ask")
     return HealthOut(
         extraction_mode=service.extraction_mode,
         web_search_mode=request.app.state.online_search.mode,
@@ -469,13 +471,17 @@ async def health(request: Request) -> HealthOut:
             if language.strip()
         ],
         summary_mode=(
-            request.app.state.lecture_summarizer.mode
+            request.app.state.lecture_summarizer.model.display
             if request.app.state.lecture_summarizer
             else "off"
         ),
         digest_mode=(
-            request.app.state.knowledge_service.index.digest_method or "off"
-        ).partition(":")[0],
+            analysis[0].display
+            if analysis and request.app.state.knowledge_service.index.digest_method
+            else "off"
+        ),
+        analysis_model=analysis[0].display if analysis else None,
+        ask_model=ask[0].display if ask else None,
         digest_images=request.app.state.knowledge_service.index.digest_vision,
         ocr_mode="local" if ocr.available else "not_configured",
         ocr_provider=ocr_provider_name if ocr.available else "none",
@@ -639,7 +645,7 @@ def summarize_lecture(
     if summarizer is None:
         raise HTTPException(
             status_code=503,
-            detail="Summaries need an OpenAI or DeepSeek API key in the local backend.",
+            detail="Summaries need a model with an API key. Set one up in Settings, under Models.",
         )
     try:
         return summarizer.summarize(payload.title, payload.transcript, payload.duration_seconds)

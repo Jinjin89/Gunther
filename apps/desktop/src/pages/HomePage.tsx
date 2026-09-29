@@ -20,6 +20,8 @@ import { useKnowledgeSearch } from "../components/search/useKnowledgeSearch";
 import { BrandMark } from "../design/BrandMark";
 import { LibraryGlyph } from "../design/LibraryGlyph";
 import { refFromSearch, type ItemRef } from "../items/itemRef";
+import { usableChoice, useDeviceChoice, useModelMenu } from "../models/askModel";
+import { ModelPicker } from "../models/ModelPicker";
 
 export type HomeCaptureKind = "note" | "link" | "file" | "image" | "recording" | "table";
 
@@ -128,6 +130,9 @@ export function HomePage({
   const [savedResearchQuery, setSavedResearchQuery] = useState<string | null>(null);
   const composer = useRef<SearchComposerHandle>(null);
   const search = useKnowledgeSearch(bases);
+  // The model that answers when a search turns into a question (Ask this library).
+  const { menu: modelMenu } = useModelMenu();
+  const [deviceChoice, setDeviceChoice] = useDeviceChoice();
   const { submitted, run, reset } = search;
 
   useEffect(() => {
@@ -293,6 +298,7 @@ export function HomePage({
           onSubmit={submit}
           onClear={clear}
           onArrowDown={submitted ? focusFirstResult : undefined}
+          picker={<ModelPicker menu={modelMenu} choice={usableChoice(modelMenu, deviceChoice)} onChange={setDeviceChoice} placement="down" />}
         />
         {!hasResults && (
           <div className="gx-capture-row" role="group" aria-label="Capture">

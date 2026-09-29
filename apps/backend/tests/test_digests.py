@@ -3,6 +3,9 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
+import openai
+from fake_models import FakeProvider, gateway, model
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -24,20 +27,6 @@ LECTURE = (
 )
 
 
-class FakeResponses:
-    """Answers like the Responses API; ``outcomes`` are replies or errors, in turn."""
-
-    def __init__(self, *outcomes: object):
-        self.outcomes, self.calls = list(outcomes), []
-
-    def parse(self, **kwargs):
-        self.calls.append(kwargs)
-        outcome = self.outcomes.pop(0) if len(self.outcomes) > 1 else self.outcomes[0]
-        if isinstance(outcome, Exception):
-            raise outcome
-        return SimpleNamespace(output_parsed=outcome)
-
-
 def parsed(**values):
     return digest._Digest(**{
         "title": "T cell recognition",
@@ -50,9 +39,29 @@ def parsed(**values):
 
 
 def model_writer(*outcomes: object, vision: bool = False) -> ModelDigestWriter:
-    writer = ModelDigestWriter("key", "gpt-test", "openai", vision=vision)
-    writer.client = SimpleNamespace(responses=FakeResponses(*(outcomes or (parsed(),))))
+    """A writer whose model answers ``outcomes`` in turn (replies or errors)."""
+
+    replies = [
+        outcome.model_dump_json() if isinstance(outcome, digest._Digest) else outcome
+        for outcome in outcomes or (parsed(),)
+    ]
+    fake = FakeProvider(*replies)
+    chosen = model("gpt-test", kind="openai", vision=vision)
+    writer = ModelDigestWriter(
+        gateway(fake, chosen), (chosen, "low"), (chosen, "low") if vision else None
+    )
+    writer.fake = fake  # type: ignore[attr-defined]
     return writer
+
+
+def asked(writer: ModelDigestWriter, index: int = 0) -> tuple[str, object]:
+    """The instructions and the question of the ``index``-th request."""
+
+    messages = writer.fake.requests[index]["messages"]  # type: ignore[attr-defined]
+    return messages[0]["content"], messages[-1]["content"]
+
+
+OFFLINE = openai.APIConnectionError(request=httpx.Request("POST", "https://model.test"))
 
 
 def client_for(path: Path, **overrides) -> TestClient:
@@ -117,7 +126,7 @@ def test_a_capture_is_summarized_after_it_is_read_and_its_points_cite_passages(t
         state = client.get(f"/api/sources/{source_id}/digest").json()
         assert state["state"] == "ready" and not state["stale"] and state["error"] is None
         summary = state["digest"]
-        assert summary["engine"] == "openai" and summary["model"] == "gpt-test"
+        assert summary["engine"] == "OpenAI" and summary["model"] == "gpt-test"
         assert summary["profile"] == "note"
         assert summary["overview"] == "How T cells recognise antigen."
         [point] = summary["keyPoints"]
@@ -126,8 +135,8 @@ def test_a_capture_is_summarized_after_it_is_read_and_its_points_cite_passages(t
         assert citation["quote"].startswith("Today we covered")
         assert summary["actionItems"] == ["Read chapter four before Friday"]
         assert "## Key points" in summary["markdown"] and "OpenAI gpt-test" in summary["markdown"]
-        call = writer.client.responses.calls[0]
-        assert "personal note" in call["instructions"] and "[1]" in call["input"]
+        instructions, question = asked(writer)
+        assert "personal note" in instructions and "[1]" in question
 
 
 def test_without_a_key_there_are_no_summaries_and_it_says_why(tmp_path):
@@ -153,7 +162,7 @@ def test_without_a_key_there_are_no_summaries_and_it_says_why(tmp_path):
 
 def test_a_failing_model_is_retried_then_shown_as_failed_never_replaced(tmp_path):
     with client_for(tmp_path) as client:
-        use_model(client, model_writer(ConnectionError("offline")))
+        use_model(client, model_writer(OFFLINE))
         source_id = add(client, "Lecture", LECTURE)
         for _ in range(3):
             drain(client)
@@ -161,7 +170,9 @@ def test_a_failing_model_is_retried_then_shown_as_failed_never_replaced(tmp_path
 
         state = client.get(f"/api/sources/{source_id}/digest").json()
         assert state["state"] == "failed" and state["digest"] is None
-        assert state["error"] == "The model could not write the summary (ConnectionError)."
+        assert state["error"] == (
+            "The model could not write the summary: Could not reach model.test."
+        )
 
         # Trying again once the model answers writes it.
         use_model(client, model_writer(parsed()))
@@ -248,15 +259,15 @@ def test_a_models_citations_are_checked_against_the_passages_it_was_given():
 
     result = writer.write(request)
 
-    assert result.method == "openai:gpt-test" and result.title == "T cell recognition"
+    assert result.method == "OpenAI:gpt-test" and result.title == "T cell recognition"
     assert [(p.text, p.passages) for p in result.key_points] == [
         ("T cells bind peptides on MHC.", [1]),
         ("Selection removes strong binders.", [2]),
     ]
     assert result.terms == ["MHC"]
-    call = writer.client.responses.calls[0]
-    assert "recorded lecture" in call["instructions"]
-    assert "[1]" in call["input"] and "[2]" in call["input"]
+    instructions, question = asked(writer)
+    assert "recorded lecture" in instructions
+    assert "[1]" in question and "[2]" in question
 
 
 def test_a_photo_is_shown_to_a_vision_model(tmp_path):
@@ -271,13 +282,13 @@ def test_a_photo_is_shown_to_a_vision_model(tmp_path):
     result = writer.write(request)
 
     assert result.overview.startswith("A whiteboard sketch")
-    content = writer.client.responses.calls[0]["input"][0]["content"]
-    assert content[1]["type"] == "input_image"
-    assert content[1]["image_url"].startswith("data:image/png;base64,")
-    # DeepSeek is never sent the picture; without text there is nothing to summarize.
-    deepseek = ModelDigestWriter("key", "flash", "deepseek", "https://example.invalid",
-                                 vision=True)
-    assert not deepseek.vision and deepseek.write(request) is None
+    _, content = asked(writer)
+    assert content[1]["type"] == "image_url"
+    assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+    # A model that cannot see is never sent the picture; without text there is nothing to do.
+    blind = model("deepseek-v4-pro")
+    unseeing = ModelDigestWriter(gateway(FakeProvider(), blind), (blind, "low"), (blind, "low"))
+    assert not unseeing.vision and unseeing.write(request) is None
 
 
 def test_a_table_is_described_to_the_model_by_its_columns():
@@ -293,7 +304,7 @@ def test_a_table_is_described_to_the_model_by_its_columns():
     )
     writer = model_writer()
     writer.write(request)
-    prompt = writer.client.responses.calls[0]["input"]
+    _, prompt = asked(writer)
     assert "Column statistics:" in prompt and "log2fc: 2.1 to 3.4" in prompt
 
 

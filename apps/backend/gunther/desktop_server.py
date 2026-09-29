@@ -24,10 +24,13 @@ import uvicorn
 from gunther.config import Settings
 from gunther.mobile_gateway_pki import ensure_mobile_gateway_pki
 from gunther.mobile_gateway_runtime import MobileGatewayRuntime
+from gunther.service_settings import ServiceSettingsStore
 
 TOKEN_FILE_NAME = "backend-auth-token"
 READY_TOKEN_DIR_NAME = "backend-ready"
 INSTANCE_LOCK_FILE_NAME = "backend-instance.lock"
+# API keys and service addresses set in the app's Settings; private like the database.
+SERVICE_SETTINGS_FILE_NAME = "service-settings.json"
 MOBILE_GATEWAY_PORT = 8788
 MOBILE_GATEWAY_PKI_DIR_NAME = "mobile-gateway-pki"
 _LAUNCH_NONCE = re.compile(r"^[a-f0-9]{64}$")
@@ -191,6 +194,7 @@ def _desktop_settings(data_dir: Path, auth_token: str) -> Settings:
         "previous_recordings_dir": data_dir / "recordings",
         "auth_token": auth_token,
         "seed_demo": False,
+        "service_settings_file": data_dir / SERVICE_SETTINGS_FILE_NAME,
     }
     settings = Settings(**base)
     configured = settings.library_root
@@ -480,6 +484,7 @@ def _run_mobile_gateway(
     runtime: MobileGatewayRuntime,
     handle: MobileGatewayHandle,
     port: int,
+    service_settings: ServiceSettingsStore | None = None,
 ) -> None:
     listener: socket.socket | None = None
     try:
@@ -509,6 +514,7 @@ def _run_mobile_gateway(
             settings,
             allow_sidecar_auth=False,
             mobile_gateway=runtime,
+            service_settings=service_settings,
         )
         config = uvicorn.Config(
             gateway_app,
@@ -542,11 +548,12 @@ def _start_mobile_gateway(
     settings: Settings,
     runtime: MobileGatewayRuntime,
     port: int,
+    service_settings: ServiceSettingsStore | None = None,
 ) -> MobileGatewayHandle:
     handle = MobileGatewayHandle(runtime)
     thread = threading.Thread(
         target=_run_mobile_gateway,
-        args=(data_dir, settings, runtime, handle, port),
+        args=(data_dir, settings, runtime, handle, port, service_settings),
         name="gunther-mobile-gateway",
         daemon=True,
     )
@@ -607,7 +614,11 @@ def main() -> None:
             auth_token = secrets.token_urlsafe(32)
             settings = _desktop_settings(data_dir, auth_token)
             gateway_runtime = MobileGatewayRuntime(enabled=not args.disable_mobile_gateway)
-            sidecar_app = create_app(settings, mobile_gateway=gateway_runtime)
+            # One store for both apps, so a change saved in Settings reaches the phone too.
+            service_settings = ServiceSettingsStore(settings.service_settings_file)
+            sidecar_app = create_app(
+                settings, mobile_gateway=gateway_runtime, service_settings=service_settings
+            )
             config = uvicorn.Config(
                 sidecar_app,
                 host="127.0.0.1",
@@ -629,6 +640,7 @@ def main() -> None:
                     settings,
                     gateway_runtime,
                     args.mobile_gateway_port,
+                    service_settings,
                 )
             server = uvicorn.Server(config)
             if args.exit_when_stdin_closes:

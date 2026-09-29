@@ -50,6 +50,16 @@ import type {
   TopicOverview,
   TopicSuggestions,
   StorageStatus,
+  ServiceSettings,
+  ServiceSettingsList,
+  Effort,
+  ModelMenu,
+  ModelsOverview,
+  ModelRole,
+  ProviderInput,
+  ProviderTestResult,
+  ServiceSettingValue,
+  ServiceTestResult,
   TrashItem,
   TrashItemKind,
 } from "@gunther/contracts";
@@ -65,16 +75,19 @@ import type {
 
 interface Health {
   status: "ok";
-  extractionMode: "local" | "deepseek";
+  extractionMode: "local" | "model";
   webSearchMode: "openai" | "not_configured";
   transcriptionMode: "sensevoice_local" | "openai_realtime" | "not_configured";
   transcriptionProvider: "sensevoice" | "openai" | "none";
   transcriptionModel: string;
   transcriptionDelay: "low" | "medium" | "high";
   transcriptionLanguages: string[];
-  summaryMode: "deepseek" | "openai" | "off";
-  /** What writes each capture's summary. */
-  digestMode?: "deepseek" | "openai" | "off";
+  /** The model that writes recording summaries ("DeepSeek · Flash"), or "off". */
+  summaryMode: string;
+  /** The model that writes each capture's summary, or "off". */
+  digestMode?: string;
+  analysisModel?: string | null;
+  askModel?: string | null;
   digestImages?: boolean;
 }
 
@@ -498,6 +511,35 @@ export const knowledgeApi = {
   storage: () => request<StorageStatus>("/storage"),
   retrievalStatus: () => request<RetrievalStatus>("/retrieval/status"),
   revealLibraryFolder: () => request<{ opened: boolean }>("/storage/reveal", { method: "POST" }),
+  serviceSettings: () => request<ServiceSettingsList>("/settings/services"),
+  /** Save a service's values: null goes back to the default; a secret left out stays. */
+  saveServiceSettings: (id: string, values: Record<string, ServiceSettingValue>) =>
+    request<ServiceSettings>(`/settings/services/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ values }),
+    }),
+  /** The models Ask can use now, for the model menu. */
+  modelMenu: () => request<ModelMenu>("/models"),
+  modelsOverview: () => request<ModelsOverview>("/settings/models"),
+  addProvider: (payload: ProviderInput) =>
+    request<ModelsOverview>("/settings/providers", { method: "POST", body: JSON.stringify(payload) }),
+  updateProvider: (id: string, payload: ProviderInput) =>
+    request<ModelsOverview>(`/settings/providers/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(payload) }),
+  removeProvider: (id: string) =>
+    request<ModelsOverview>(`/settings/providers/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  /** Try a provider with the values on screen; without an id, one not added yet. */
+  testProvider: (id: string | null, payload: ProviderInput) =>
+    request<ProviderTestResult>(id ? `/settings/providers/${encodeURIComponent(id)}/test` : "/settings/providers/test", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  saveModelRoles: (roles: Partial<Record<ModelRole["id"], { model: string | null; effort: Effort }>>) =>
+    request<ModelsOverview>("/settings/model-roles", { method: "PUT", body: JSON.stringify({ roles }) }),
+  testServiceSettings: (id: string, values: Record<string, ServiceSettingValue>) =>
+    request<ServiceTestResult>(`/settings/services/${encodeURIComponent(id)}/test`, {
+      method: "POST",
+      body: JSON.stringify({ values }),
+    }),
   trash: () => request<TrashItem[]>("/trash"),
   trashSource: (id: string) => request<TrashItem>(`/sources/${encodeURIComponent(id)}/trash`, { method: "POST" }),
   trashNote: (id: string) => request<TrashItem>(`/notes/${encodeURIComponent(id)}/trash`, { method: "POST" }),

@@ -22,7 +22,9 @@ const POLL_MS = 2_500;
 const POLL_LIMIT = 120;
 
 function engineLabel(digest: SourceDigest): string {
-  return `Written by ${digest.engine === "openai" ? "OpenAI" : "DeepSeek"}${digest.model ? ` ${digest.model}` : ""}`;
+  // The provider by name ("DeepSeek", "Kimi", "My server"); older summaries say "openai" / "deepseek".
+  const legacy: Record<string, string> = { openai: "OpenAI", deepseek: "DeepSeek" };
+  return `Written by ${legacy[digest.engine] ?? digest.engine}${digest.model ? ` ${digest.model}` : ""}`;
 }
 
 /**
@@ -94,7 +96,7 @@ export function DigestCard({ sourceId, onWritten }: { sourceId: string; onWritte
   if (!status || (status.state === "off" && status.offReason !== "no_key")) return null;
   if (status.state === "off") {
     return <section className="gx-digest is-empty" aria-label="Summary">
-      <p className="gx-digest-waiting"><Sparkles size={14} />Summaries need an OpenAI or DeepSeek API key. Add one to the local backend (OPENAI_API_KEY or DEEPSEEK_API_KEY).</p>
+      <p className="gx-digest-waiting"><Sparkles size={14} />Summaries need an API key. Add one in Settings, under Services.</p>
     </section>;
   }
   const digest = status.digest;

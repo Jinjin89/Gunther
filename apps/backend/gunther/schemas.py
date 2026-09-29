@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from gunther.model_profiles import Effort
+
 SourceKind = Literal[
     "note", "paper", "link", "file", "image", "table", "recording", "course"
 ]
@@ -276,7 +278,7 @@ class ImportCountsOut(ApiModel):
 class ImportResultOut(ApiModel):
     source: SourceSummaryOut
     created: ImportCountsOut
-    extraction_mode: Literal["local", "deepseek"]
+    extraction_mode: Literal["local", "model"]
     duplicate: bool
 
 
@@ -300,7 +302,7 @@ class FileNotebookNoteOut(ApiModel):
 
 class HealthOut(ApiModel):
     status: Literal["ok"] = "ok"
-    extraction_mode: Literal["local", "deepseek"]
+    extraction_mode: Literal["local", "model"]
     web_search_mode: Literal["openai", "not_configured"] = "not_configured"
     transcription_mode: Literal[
         "sensevoice_local", "openai_realtime", "not_configured"
@@ -309,9 +311,13 @@ class HealthOut(ApiModel):
     transcription_model: str = "gpt-live-transcribe"
     transcription_delay: Literal["low", "medium", "high"] = "medium"
     transcription_languages: list[str] = Field(default_factory=lambda: ["en", "zh-cn"])
-    summary_mode: Literal["deepseek", "openai", "off"] = "off"
-    # Which model writes each capture's summary, or off (no key, or turned off).
-    digest_mode: Literal["deepseek", "openai", "off"] = "off"
+    # The model that writes recording summaries ("DeepSeek · Flash"), or "off".
+    summary_mode: str = "off"
+    # The model that writes each capture's summary, or "off" (no model, or turned off).
+    digest_mode: str = "off"
+    # The models each job uses by default, e.g. "DeepSeek · Flash"; None when not set up.
+    analysis_model: str | None = None
+    ask_model: str | None = None
     digest_images: bool = False
     ocr_mode: Literal["local", "not_configured"] = "not_configured"
     ocr_provider: str = "none"
@@ -419,7 +425,8 @@ class LectureSummaryOut(ApiModel):
     action_items: list[str] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
     terms: list[str] = Field(default_factory=list)
-    engine: Literal["deepseek", "openai"]
+    # The model that wrote it, e.g. "DeepSeek · Flash".
+    engine: str
 
 
 class RecordingAssetOut(ApiModel):
@@ -536,7 +543,18 @@ class ConversationContextOut(ApiModel):
     assertions_considered: int = 0
     verified_assertions: int = 0
     retrieval_mode: Literal["selected", "all"] = "all"
-    responder_mode: Literal["local", "deepseek"] = "local"
+    # "model": a language model wrote the answer; "local": the quotes themselves.
+    # Messages from before model choice say "deepseek".
+    responder_mode: Literal["local", "model", "deepseek"] = "local"
+    # The model asked (a ref like "deepseek/deepseek-flash") and its name, even when
+    # it failed and the quotes stand in; the effort asked for and the one it used.
+    model: str | None = None
+    model_label: str | None = None
+    effort: Effort | None = None
+    effort_label: str | None = None
+    notes: list[str] = Field(default_factory=list)
+    reasoning: str | None = None
+    model_error: str | None = None
 
 
 class SessionMessageOut(ApiModel):
@@ -571,6 +589,9 @@ class KnowledgeSessionOut(KnowledgeSessionSummaryOut):
 
 class CreateSessionMessageInput(ApiModel):
     content: str = Field(min_length=1, max_length=20_000)
+    # The model and effort for this answer; the Ask job's defaults when left out.
+    model: str | None = Field(default=None, max_length=300)
+    effort: Effort | None = None
     selected_source_ids: list[str] | None = Field(default=None, max_length=200)
     focus_chapter_id: str | None = Field(default=None, max_length=160)
 

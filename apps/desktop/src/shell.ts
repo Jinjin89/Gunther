@@ -66,7 +66,7 @@ export interface KnowledgeState {
   graph: KnowledgeGraph;
   sources: SourceSummary[];
   provisional: Assertion[];
-  extractionMode: "local" | "deepseek";
+  extractionMode: "local" | "model";
 }
 
 export const emptyKnowledgeState: KnowledgeState = {

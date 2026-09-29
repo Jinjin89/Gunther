@@ -7,14 +7,14 @@ numbered passages it came from, so it can be checked against the original.
 
 The original is never changed. A summary is derived from the source's current
 revision, labelled with the model that wrote it, and can be written again.
-OpenAI or DeepSeek writes it (a photo is shown to OpenAI's model as an image).
-There is no model-free stand-in: without a key there are no summaries, and a
+The Analysis model writes it; a photo is shown to the Photos model, if one that
+sees images is set up (see model_registry).
+There is no model-free stand-in: without a model there are no summaries, and a
 model that fails leaves a visible error to retry rather than a worse summary.
 """
 
 from __future__ import annotations
 
-import base64
 import csv
 import io
 import json
@@ -25,11 +25,12 @@ from pathlib import Path
 from statistics import fmean
 from typing import Literal, Protocol
 
-from openai import OpenAI
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from gunther.llm import Image, ModelError, ModelGateway, ModelInfo
+from gunther.model_profiles import Effort
 from gunther.models import (
     Asset,
     ContentBlock,
@@ -378,36 +379,18 @@ class DigestError(RuntimeError):
 class ModelDigestWriter:
     def __init__(
         self,
-        api_key: str,
-        model: str,
-        provider: Literal["openai", "deepseek"],
-        base_url: str | None = None,
+        gateway: ModelGateway,
+        analysis: tuple[ModelInfo, Effort],
+        photos: tuple[ModelInfo, Effort] | None = None,
         *,
-        vision: bool = False,
+        images: bool = True,
     ) -> None:
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
-        self.model = model
-        self.method = f"{provider}:{model}"
-        # Only OpenAI's models are shown photos; DeepSeek reads their recognized text.
-        self.vision = vision and provider == "openai"
-
-    def _input(self, request: DigestRequest) -> str | list[dict[str, object]]:
-        prompt = _prompt(request)
-        if not (self.vision and request.image_path and request.image_type):
-            return prompt
-        encoded = base64.b64encode(request.image_path.read_bytes()).decode()
-        return [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": prompt},
-                    {
-                        "type": "input_image",
-                        "image_url": f"data:{request.image_type};base64,{encoded}",
-                    },
-                ],
-            }
-        ]
+        self.gateway = gateway
+        self.analysis = analysis
+        # Photos go to a model that sees them; otherwise their recognized text is read.
+        self.photos = photos if images and photos and photos[0].vision else None
+        self.method = analysis[0].method
+        self.vision = self.photos is not None
 
     def write(self, request: DigestRequest) -> DigestResult | None:
         """The model's summary; ``None`` only when there is nothing to summarize.
@@ -415,21 +398,31 @@ class ModelDigestWriter:
         A failed call raises, so the job retries and then shows as failed.
         """
 
-        if not request.passages and not (self.vision and request.image_path):
+        sees = bool(self.photos and request.image_path and request.image_type)
+        if not request.passages and not sees:
             return None
-        response = self.client.responses.parse(
-            model=self.model,
-            store=False,
-            instructions=INSTRUCTIONS.format(guide=GUIDES[request.profile]),
-            input=self._input(request),
-            text_format=_Digest,
+        model, effort = self.photos if sees and self.photos else self.analysis
+        images = (
+            [Image.from_path(request.image_path, request.image_type)]
+            if sees and request.image_path and request.image_type
+            else []
         )
-        parsed = response.output_parsed
-        if parsed is None or not parsed.overview.strip():
+        try:
+            parsed, _ = self.gateway.complete_json(
+                model,
+                _Digest,
+                system=INSTRUCTIONS.format(guide=GUIDES[request.profile]),
+                prompt=_prompt(request),
+                images=images,
+                effort=effort,
+            )
+        except ModelError as error:
+            raise DigestError(str(error)) from error
+        if not parsed.overview.strip():
             raise DigestError("The model returned no summary")
         known = {passage.number for passage in request.passages}
         return DigestResult(
-            method=self.method,
+            method=model.method,
             title=parsed.title.strip()[:160],
             overview=parsed.overview.strip(),
             # A citation to a passage that was not given is dropped, never trusted.
@@ -445,32 +438,31 @@ class ModelDigestWriter:
 
 
 def create_digest_writer(
-    mode: Literal["auto", "off"],
-    *,
-    openai_api_key: str | None,
-    openai_model: str,
-    deepseek_api_key: str | None,
-    deepseek_model: str,
-    deepseek_base_url: str,
-    images: bool = True,
+    mode: Literal["auto", "off"], gateway: ModelGateway | None, *, images: bool = True
 ) -> DigestWriter | None:
-    """A model that writes summaries, or ``None``: turned off, or no key to use."""
+    """A model that writes summaries, or ``None``: turned off, or no model to use."""
 
-    if mode == "off":
+    analysis = gateway.for_role("analysis") if gateway else None
+    if mode == "off" or gateway is None or analysis is None:
         return None
-    if openai_api_key:
-        return ModelDigestWriter(openai_api_key, openai_model, "openai", vision=images)
-    if deepseek_api_key:
-        return ModelDigestWriter(deepseek_api_key, deepseek_model, "deepseek", deepseek_base_url)
-    return None
+    return ModelDigestWriter(gateway, analysis, gateway.for_role("photos"), images=images)
 
 
 # Keeping it --------------------------------------------------------------------
 
 
-def _engine(method: str) -> str:
+LEGACY_ENGINES = {"openai": "OpenAI", "deepseek": "DeepSeek"}
+
+
+def engine_name(method: str) -> tuple[str, str]:
+    """Who wrote an output, and with which model: ``DeepSeek:deepseek-flash``."""
+
     provider, _, model = method.partition(":")
-    return f"{'OpenAI' if provider == 'openai' else 'DeepSeek'} {model}"
+    return LEGACY_ENGINES.get(provider, provider), model
+
+
+def _engine(method: str) -> str:
+    return " ".join(part for part in engine_name(method) if part)
 
 
 def markdown(title: str, result: DigestResult, passages: dict[int, Passage]) -> str:
@@ -580,8 +572,9 @@ def digest_out(row: SourceDigest) -> dict[str, object]:
         "revisionId": row.revision_id,
         "profile": row.profile,
         "method": row.method,
-        "engine": row.method.partition(":")[0],
-        "model": row.method.partition(":")[2] or None,
+        # Who wrote it, by name ("DeepSeek", "OpenAI", "My server"), and the model.
+        "engine": engine_name(row.method)[0],
+        "model": engine_name(row.method)[1] or None,
         "suggestedTitle": row.suggested_title or None,
         "overview": row.overview,
         "keyPoints": payload.get("keyPoints", []),

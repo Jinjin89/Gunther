@@ -15,6 +15,8 @@ import "./design/item.css";
 import "./design/shortcuts.css";
 import "./design/trash.css";
 import "./design/legacy.css";
+import "./design/services.css";
+import "./design/models.css";
 // Capture's new surface loads after the legacy layer so its layout wins.
 import "./design/capture.css";
 import { applyTheme, readThemePreference, resolveTheme } from "./design/theme";

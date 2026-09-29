@@ -254,9 +254,9 @@ def write_source_digest(source_id: str, request: Request):
         if index.digest_method is None:
             raise HTTPException(
                 409,
-                "Summaries are turned off (AI_SUMMARIES=off)"
+                "Summaries are turned off in Settings"
                 if index.digest_off_reason == "setting"
-                else "Summaries need an OpenAI or DeepSeek API key in the local backend",
+                else "Summaries need a model with an API key. Set one up in Settings, under Models",
             )
         if index.request_digest(session, source_id) is None:
             raise HTTPException(409, "This source is still being read. Try again shortly.")

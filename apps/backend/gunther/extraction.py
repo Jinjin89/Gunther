@@ -4,8 +4,9 @@ import re
 from abc import ABC, abstractmethod
 from typing import Literal
 
-from openai import OpenAI
 from pydantic import BaseModel, Field
+
+from gunther.llm import ModelError, ModelGateway
 
 
 class Qualifier(BaseModel):
@@ -30,11 +31,11 @@ class ExtractionPayload(BaseModel):
 
 class ExtractionResult(BaseModel):
     assertions: list[CandidateAssertion]
-    mode: Literal["local", "deepseek"]
+    mode: Literal["local", "model"]
 
 
 class Extractor(ABC):
-    mode: Literal["local", "deepseek"]
+    mode: Literal["local", "model"]
 
     @abstractmethod
     def extract(self, title: str, content: str) -> ExtractionResult:
@@ -114,35 +115,40 @@ class LocalExtractor(Extractor):
         return ExtractionResult(assertions=candidates, mode=self.mode)
 
 
-class DeepSeekExtractor(Extractor):
-    mode: Literal["deepseek"] = "deepseek"
+class ModelExtractor(Extractor):
+    """The Analysis model reads a source; local rules stand in if it fails."""
 
-    def __init__(self, api_key: str, model: str, base_url: str) -> None:
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
-        self.model = model
+    mode: Literal["model"] = "model"
+
+    def __init__(self, gateway: ModelGateway) -> None:
+        self.gateway = gateway
         self.fallback = LocalExtractor()
 
     def extract(self, title: str, content: str) -> ExtractionResult:
+        chosen = self.gateway.for_role("analysis")
+        if chosen is None:
+            return self.fallback.extract(title, content)
+        model, effort = chosen
         try:
-            response = self.client.responses.parse(
-                model=self.model,
-                store=False,
-                instructions=(
+            payload, _ = self.gateway.complete_json(
+                model,
+                ExtractionPayload,
+                system=(
                     "Extract explicit, evidence-backed knowledge assertions. Preserve exact "
                     "source wording in evidence_quote. Use concise canonical entity labels, "
                     "snake_case predicates, useful domain entity types, and qualifiers for "
                     "context such as species, tissue, method, course, or time. Never add "
                     "unsupported facts."
                 ),
-                input=f"Source title: {title}\n\n{content}",
-                text_format=ExtractionPayload,
+                prompt=f"Source title: {title}\n\n{content}",
+                effort=effort,
             )
-            if response.output_parsed is None:
-                return self.fallback.extract(title, content)
-            return ExtractionResult(assertions=response.output_parsed.assertions, mode=self.mode)
-        except Exception:
+        except ModelError:
             return self.fallback.extract(title, content)
+        return ExtractionResult(assertions=payload.assertions, mode=self.mode)
 
 
-def create_extractor(api_key: str | None, model: str, base_url: str) -> Extractor:
-    return DeepSeekExtractor(api_key, model, base_url) if api_key else LocalExtractor()
+def create_extractor(gateway: ModelGateway | None) -> Extractor:
+    if gateway is not None and gateway.for_role("analysis") is not None:
+        return ModelExtractor(gateway)
+    return LocalExtractor()

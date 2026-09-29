@@ -22,12 +22,13 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from openai import OpenAI
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gunther import vector_index
 from gunther.content import search_tokens
+from gunther.llm import ModelError, ModelGateway, ModelInfo
+from gunther.model_profiles import Effort
 from gunther.models import (
     ContentBlock,
     KnowledgeBaseSource,
@@ -289,11 +290,14 @@ class LocalTopicWriter:
         return None
 
 
-class DeepSeekTopicWriter:
-    def __init__(self, api_key: str, model: str, base_url: str) -> None:
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
-        self.method = f"deepseek:{model}"
+class ModelTopicWriter:
+    """The Analysis model writes a topic's overview from its papers' abstracts."""
+
+    def __init__(self, gateway: ModelGateway, model: ModelInfo, effort: Effort) -> None:
+        self.gateway = gateway
         self.model = model
+        self.effort = effort
+        self.method = model.method
 
     def write(self, title: str, description: str, papers: list[Paper]) -> str | None:
         sources = "\n\n".join(
@@ -301,10 +305,9 @@ class DeepSeekTopicWriter:
             for index, paper in enumerate(papers, start=1)
         )
         try:
-            response = self.client.responses.create(
-                model=self.model,
-                store=False,
-                instructions=(
+            text = self.gateway.complete(
+                self.model,
+                system=(
                     "You write a literature overview for one topic, only from the numbered "
                     "abstracts given. Use Markdown with these sections: ## Overview, "
                     "## Main lines of work, ## Where papers agree or differ, ## Open questions. "
@@ -312,10 +315,10 @@ class DeepSeekTopicWriter:
                     "anything else or add outside knowledge. Write in the language of the "
                     "topic title."
                 ),
-                input=f"Topic: {title}\n{description}\n\nAbstracts:\n\n{sources}",
-            )
-            text = response.output_text.strip()
-        except Exception:
+                messages=f"Topic: {title}\n{description}\n\nAbstracts:\n\n{sources}",
+                effort=self.effort,
+            ).text
+        except ModelError:
             return None
         cited = [int(value) for value in re.findall(r"\[(\d+)\]", text)]
         if not text or not cited or any(not 1 <= value <= len(papers) for value in cited):
@@ -323,8 +326,9 @@ class DeepSeekTopicWriter:
         return text
 
 
-def create_topic_writer(api_key: str | None, model: str, base_url: str) -> TopicWriter:
-    return DeepSeekTopicWriter(api_key, model, base_url) if api_key else LocalTopicWriter()
+def create_topic_writer(gateway: ModelGateway | None) -> TopicWriter:
+    chosen = gateway.for_role("analysis") if gateway else None
+    return ModelTopicWriter(gateway, *chosen) if gateway and chosen else LocalTopicWriter()
 
 
 def _opening(text: str, sentences: int = 2) -> str:

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from typing import Literal
-
-from openai import OpenAI
 from pydantic import BaseModel, Field
 
+from gunther.llm import ModelError, ModelGateway, ModelInfo
+from gunther.model_profiles import Effort
 from gunther.schemas import LectureSummaryOut
 
 
@@ -21,58 +20,40 @@ class LectureSummaryError(RuntimeError):
 
 
 class AILectureSummarizer:
-    def __init__(
-        self,
-        api_key: str,
-        model: str,
-        mode: Literal["deepseek", "openai"],
-        base_url: str | None = None,
-    ) -> None:
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+    """Study notes from a recording's transcript, by the Analysis model."""
+
+    def __init__(self, gateway: ModelGateway, model: ModelInfo, effort: Effort) -> None:
+        self.gateway = gateway
         self.model = model
-        self.mode = mode
+        self.effort = effort
+        self.mode = model.method
 
     def summarize(self, title: str, transcript: str, duration_seconds: int) -> LectureSummaryOut:
         try:
-            response = self.client.responses.parse(
-                model=self.model,
-                store=False,
-                instructions=(
+            parsed, _ = self.gateway.complete_json(
+                self.model,
+                LecturePayload,
+                system=(
                     "Turn a lecture transcript into faithful study notes. Do not add facts that "
                     "were not said. Keep disagreements and uncertainty visible. Return a concise "
                     "overview, 3-8 key points, explicit action items, unanswered questions, and "
                     "important technical terms. Preserve the transcript language."
                 ),
-                input=(
+                prompt=(
                     f"Lecture: {title}\nDuration: {duration_seconds} seconds\n\n"
                     f"Transcript:\n{transcript}"
                 ),
-                text_format=LecturePayload,
+                effort=self.effort,
             )
-        except Exception as error:
-            raise LectureSummaryError(type(error).__name__) from error
-        parsed = response.output_parsed
-        if parsed is None or not parsed.overview.strip():
+        except ModelError as error:
+            raise LectureSummaryError(str(error)) from error
+        if not parsed.overview.strip():
             raise LectureSummaryError("empty response")
-        return LectureSummaryOut(**parsed.model_dump(), engine=self.mode)
+        return LectureSummaryOut(**parsed.model_dump(), engine=self.model.display)
 
 
-def create_lecture_summarizer(
-    openai_api_key: str | None,
-    openai_model: str,
-    deepseek_api_key: str | None,
-    deepseek_model: str,
-    deepseek_base_url: str,
-) -> AILectureSummarizer | None:
-    """A model for recording summaries, or ``None`` when there is no key."""
+def create_lecture_summarizer(gateway: ModelGateway | None) -> AILectureSummarizer | None:
+    """A model for recording summaries, or ``None`` when none is set up."""
 
-    if openai_api_key:
-        return AILectureSummarizer(openai_api_key, openai_model, "openai")
-    if deepseek_api_key:
-        return AILectureSummarizer(
-            deepseek_api_key,
-            deepseek_model,
-            "deepseek",
-            deepseek_base_url,
-        )
-    return None
+    chosen = gateway.for_role("analysis") if gateway else None
+    return AILectureSummarizer(gateway, *chosen) if gateway and chosen else None

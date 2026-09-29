@@ -94,7 +94,7 @@ describe("DigestCard", () => {
   it("says a key is needed rather than showing a lesser summary", async () => {
     vi.mocked(knowledgeApi.sourceDigest).mockResolvedValue({ ...ready, state: "off", offReason: "no_key", method: null, digest: null });
     render(<DigestCard sourceId="src_1" />);
-    expect(await screen.findByText(/Summaries need an OpenAI or DeepSeek API key/)).toBeVisible();
+    expect(await screen.findByText(/Summaries need an API key/)).toBeVisible();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 

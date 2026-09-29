@@ -308,7 +308,10 @@ class ProcessingWorker:
                 if job and job.state == "running" and job.lease_token == token:
                     job.state = "failed" if job.attempts >= 3 else "queued"
                     job.error = (
-                        f"The model could not write the summary ({type(error).__name__})."
+                        # The gateway's own words: which provider, and what to do about it.
+                        f"The model could not write the summary: {error}"
+                        if isinstance(error, digest.DigestError)
+                        else f"The model could not write the summary ({type(error).__name__})."
                         if job.kind == "digest"
                         else f"Processing failed ({type(error).__name__}). Original preserved."
                     )

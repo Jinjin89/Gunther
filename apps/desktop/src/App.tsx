@@ -19,6 +19,7 @@ import { CAPTURE_SWITCH_DOM_EVENT, type CaptureLaunchRequest } from "./capture/c
 import type { RecorderSnapshot } from "./components/LectureRecorder";
 import { applyTheme, readThemePreference, resolveTheme, THEME_STORAGE_KEY, watchSystemTheme, type ThemePreference } from "./design/theme";
 import { ItemPage } from "./items/ItemPage";
+import { OPEN_SETTINGS_EVENT } from "./models/askModel";
 import { itemKey, sameItem, type ItemOrigin, type ItemRef } from "./items/itemRef";
 import { ShortcutSheet } from "./shortcuts/ShortcutSheet";
 import { formatCombo, useEscape, useShortcut } from "./shortcuts/shortcuts";
@@ -375,6 +376,12 @@ export default function App() {
     window.addEventListener("gunther:sources-updated", refreshSourceCounts);
     return () => window.removeEventListener("gunther:sources-updated", refreshSourceCounts);
   }, [refreshKnowledgeBases]);
+  useEffect(() => {
+    // "Set up a model" in Ask's model menu opens Settings.
+    const openSettings = () => navigate("settings");
+    window.addEventListener(OPEN_SETTINGS_EVENT, openSettings);
+    return () => window.removeEventListener(OPEN_SETTINGS_EVENT, openSettings);
+  }, [navigate]);
   useEffect(() => {
     const refreshInboxCount = () => void knowledgeApi.inbox().then((items) => setInboxCount(items.filter((item) => item.state !== "held").length)).catch(() => undefined);
     refreshInboxCount();

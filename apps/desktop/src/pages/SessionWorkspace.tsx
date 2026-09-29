@@ -15,6 +15,7 @@ import {
   BookOpen,
   Check,
   ChevronDown,
+  ChevronRight,
   CircleAlert,
   Clock3,
   Copy,
@@ -42,9 +43,11 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { KnowledgeBase, KnowledgeSource } from "../atlas";
 import { knowledgeApi } from "../api";
+import { lastAnswerChoice, usableChoice, useDeviceChoice, useModelMenu, type AskChoice } from "../models/askModel";
+import { ModelPicker } from "../models/ModelPicker";
 import { BrandMark } from "../design/BrandMark";
 import { LibraryGlyph } from "../design/LibraryGlyph";
 import { WebSnapshotCard } from "../components/WebSnapshotCard";
@@ -228,21 +231,38 @@ function WelcomePanel({ base, onPrompt }: { base: KnowledgeBase; onPrompt: (valu
   );
 }
 
+/** Which model wrote an answer, at what effort, and anything it has to admit. */
+export function AnswerModel({ context }: { context: ConversationContext }) {
+  const byModel = context.responderMode !== "local";
+  const name = context.modelLabel ?? (context.responderMode === "deepseek" ? "DeepSeek" : "Language model");
+  const label = byModel
+    ? [name, context.effortLabel].filter(Boolean).join(" · ")
+    : context.modelError ? "Quotes only" : "Local evidence synthesis";
+  const notes = context.notes ?? [];
+  return <span className="message-method message-model">
+    <i className={byModel ? "is-ai" : ""} />{label}
+    {notes.length > 0 && <small className="message-model-note">· {notes.join(" ")}</small>}
+  </span>;
+}
+
 function ConversationMessage({ message, selected, promoting, promoted, branching, onSelect, onCopy, onPromote, onBranch }: { message: SessionMessage; selected: boolean; promoting: boolean; promoted: boolean; branching: boolean; onSelect: () => void; onCopy: () => void; onPromote: () => void; onBranch: () => void }) {
   const isAssistant = message.role === "assistant";
   return (
     <article className={`conversation-message role-${message.role} ${selected ? "is-selected" : ""}`} onClick={isAssistant ? onSelect : undefined}>
       <div className="message-author">{isAssistant ? <span className="assistant-mark"><BrandMark size={14} /></span> : <span className="user-mark"><UserRound size={13} /></span>}<span>{isAssistant ? "Gunther" : "You"}</span><time>{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(message.createdAt))}</time></div>
       <div className="message-body"><MessageContent content={message.content} {...(isAssistant ? { onCitation: onSelect } : {})} /></div>
+      {isAssistant && message.context.modelError && <p className="message-model-error" role="note"><CircleAlert size={13} /><span>{message.context.modelError} The quotes below stand in for its answer.</span></p>}
+      {isAssistant && message.context.reasoning && <details className="message-thinking" onClick={(event) => event.stopPropagation()}><summary><ChevronRight size={12} />Thinking</summary><pre>{message.context.reasoning}</pre></details>}
       {isAssistant && <footer className="message-footer">
         <div className="message-actions">{message.citations.length > 0 ? <button className="citation-count" onClick={(event) => { event.stopPropagation(); onSelect(); }}><Quote size={12} />{message.citations.length} grounded {message.citations.length === 1 ? "citation" : "citations"}</button> : <span className="no-citation-state"><CircleAlert size={12} />No direct support found</span>}<button className="copy-answer" onClick={(event) => { event.stopPropagation(); onCopy(); }}><Copy size={12} />Copy</button><button className="branch-answer" disabled={branching} onClick={(event) => { event.stopPropagation(); onBranch(); }}><GitBranch size={12} />{branching ? "Branching…" : "Branch"}</button><button className={`promote-answer ${promoted ? "is-promoted" : ""}`} disabled={promoting || promoted || message.citations.length === 0} title={message.citations.length === 0 ? "Add or retrieve supporting evidence before proposing this answer as knowledge." : undefined} onClick={(event) => { event.stopPropagation(); onPromote(); }}><Sparkles size={12} />{promoting ? "Creating proposal…" : promoted ? "Proposal created" : message.citations.length === 0 ? "Needs evidence" : "Propose as knowledge"}</button></div>
-        <span className="message-method"><i className={message.context.responderMode === "deepseek" ? "is-ai" : ""} />{message.context.responderMode === "deepseek" ? "DeepSeek · evidence constrained" : "Local evidence synthesis"}</span>
+        <AnswerModel context={message.context} />
       </footer>}
     </article>
   );
 }
 
 export function Composer({
+  picker,
   value,
   sending,
   sourceCount,
@@ -254,6 +274,8 @@ export function Composer({
   readOnly,
   ready,
 }: {
+  /** The model and effort chips. */
+  picker?: ReactNode;
   value: string;
   sending: boolean;
   sourceCount: number;
@@ -271,7 +293,7 @@ export function Composer({
       <div className="composer">
         <textarea value={value} rows={1} disabled={composerDisabled} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} placeholder={!ready ? "Opening a durable session…" : readOnly ? "Restore this session to continue the conversation." : "Ask, compare, challenge, or trace a claim…"} aria-label="Message Gunther" />
         <div className="composer-toolbar">
-          <div><button title="Attach sources" aria-label="Attach sources" onClick={onSources}><Paperclip size={15} /></button><button className="scope-chip" onClick={onSources}><FolderOpen size={13} /><span>{sourceCount ? `${sourceCount} selected` : "All sources"}</span><ChevronDown size={11} /></button>{chapterTitle && <span className="chapter-chip"><BookOpen size={12} />{chapterTitle}</span>}</div>
+          <div><button title="Attach sources" aria-label="Attach sources" onClick={onSources}><Paperclip size={15} /></button><button className="scope-chip" onClick={onSources}><FolderOpen size={13} /><span>{sourceCount ? `${sourceCount} selected` : "All sources"}</span><ChevronDown size={11} /></button>{chapterTitle && <span className="chapter-chip"><BookOpen size={12} />{chapterTitle}</span>}{picker}</div>
           <button className={`send-button ${sending ? "is-stop" : ""}`} disabled={composerDisabled || (!sending && !value.trim())} onClick={sending ? onStop : onSend} aria-label={sending ? "Stop waiting for response" : "Send message"}>{sending ? <Square size={12} fill="currentColor" /> : <ArrowUp size={16} />}</button>
         </div>
       </div>
@@ -418,8 +440,23 @@ export function SessionWorkspace({ base, selectedChapterId, onChapter, onAdd, on
   const [sourceDetail, setSourceDetail] = useState<SourceDetail | null>(null);
   const [sourceCitation, setSourceCitation] = useState<ConversationCitation | null>(null);
   const [sourceDetailLoading, setSourceDetailLoading] = useState(false);
+  // Which model answers next, and how hard it thinks: what this conversation picked,
+  // else the model of its last answer, else this device's last choice, else the Ask default.
+  const { menu: modelMenu } = useModelMenu();
+  const [deviceChoice, setDeviceChoice] = useDeviceChoice();
+  const [pickedChoices, setPickedChoices] = useState<Record<string, AskChoice>>({});
+  const askChoice = usableChoice(
+    modelMenu,
+    activeId ? pickedChoices[activeId] : null,
+    activeSession ? lastAnswerChoice(activeSession.messages) : null,
+    deviceChoice,
+  );
+  const chooseModel = (next: AskChoice) => {
+    if (activeId) setPickedChoices((current) => ({ ...current, [activeId]: next }));
+    setDeviceChoice(next);
+  };
 
-  const sortSessions = useCallback((items: KnowledgeSessionSummary[]) => [...items].sort((a, b) => Number(b.pinned) - Number(a.pinned) || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()), []);
+  const sortSessions =useCallback((items: KnowledgeSessionSummary[]) => [...items].sort((a, b) => Number(b.pinned) - Number(a.pinned) || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()), []);
 
   const loadSession = useCallback(async (id: string) => {
     setActiveId(id);
@@ -656,7 +693,8 @@ export function SessionWorkspace({ base, selectedChapterId, onChapter, onAdd, on
     const controller = new AbortController();
     responseController.current = controller;
     try {
-      const turn = await knowledgeApi.sendMessage(activeSession.id, { content: question, selectedSourceIds: activeSession.selectedSourceIds, focusChapterId: activeSession.focusChapterId }, controller.signal);
+      const chosen = askChoice.model && modelMenu?.models.length ? { model: askChoice.model, effort: askChoice.effort } : {};
+      const turn = await knowledgeApi.sendMessage(activeSession.id, { content: question, selectedSourceIds: activeSession.selectedSourceIds, focusChapterId: activeSession.focusChapterId, ...chosen }, controller.signal);
       const updated = { ...activeSession, ...turn.session, messages: [...activeSession.messages, turn.userMessage, turn.assistantMessage] };
       setActiveSession(updated);
       setSessions((current) => sortSessions(current.map((item) => item.id === updated.id ? turn.session : item)));
@@ -871,7 +909,7 @@ export function SessionWorkspace({ base, selectedChapterId, onChapter, onAdd, on
           {sending && <div className="thinking-row"><span className="assistant-mark"><BrandMark size={14} busy /></span><span><i /><i /><i /></span><small>Tracing claims and source fragments…</small></div>}
           <div ref={messagesEnd} />
         </div>
-        <Composer value={draft} sending={sending} sourceCount={activeSession?.selectedSourceIds.length ?? 0} chapterTitle={focusedChapter?.title} readOnly={Boolean(activeSession?.archived)} ready={!loading && activeSession !== null} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={() => { setInspectorTab("sources"); setInspectorCollapsed(false); }} />
+        <Composer picker={<ModelPicker menu={modelMenu} choice={askChoice} onChange={chooseModel} disabled={sending || Boolean(activeSession?.archived)} />} value={draft} sending={sending} sourceCount={activeSession?.selectedSourceIds.length ?? 0} chapterTitle={focusedChapter?.title} readOnly={Boolean(activeSession?.archived)} ready={!loading && activeSession !== null} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={() => { setInspectorTab("sources"); setInspectorCollapsed(false); }} />
       </section>
       <ContextInspector base={base} sources={scopeSources} session={activeSession} knowledgeUnits={knowledgeUnits} selectedMessage={selectedMessage} tab={inspectorTab} sourceQuery={sourceQuery} collapsed={inspectorCollapsed} readOnly={Boolean(activeSession?.archived)} onTab={setInspectorTab} onSourceQuery={setSourceQuery} onToggleSource={(id) => void toggleSource(id)} onUseAll={() => { if (activeSession) void patchSession(activeSession.id, { selectedSourceIds: [] }); }} onAdd={onAdd} onOpenSource={(id, citation) => void openSourceDetail(id, citation)} onOpenUnit={(unit) => void openKnowledgeUnitOrigin(unit)} onCollapse={() => setInspectorCollapsed((value) => !value)} />
       <SourceDetailDrawer open={sourceDetailId !== null} loading={sourceDetailLoading} source={sourceDetail} citation={sourceCitation} onClose={closeSourceDetail} />

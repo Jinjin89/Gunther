@@ -3,7 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from gunther.storage_budget import (
@@ -34,15 +34,26 @@ class Settings(BaseSettings):
     storage_min_free_bytes: int = DEFAULT_STORAGE_MIN_FREE_BYTES
     # Items rest in Trash this long before they are deleted for good.
     trash_retention_days: int = Field(default=30, ge=1, le=3650)
-    deepseek_api_key: str | None = None
-    deepseek_model: str = "deepseek-v4-flash"
-    deepseek_base_url: str = "https://api.deepseek.com"
+    # The language model that reads captures, answers Ask and writes topic
+    # overviews: any service speaking OpenAI's API. The provider only picks the
+    # defaults people start from. DEEPSEEK_* names from earlier versions still work.
+    llm_provider: Literal["deepseek", "kimi", "glm", "qwen", "openai", "compatible"] = "deepseek"
+    llm_api_key: str | None = Field(
+        default=None, validation_alias=AliasChoices("llm_api_key", "deepseek_api_key")
+    )
+    llm_model: str = Field(
+        default="deepseek-flash",
+        validation_alias=AliasChoices("llm_model", "deepseek_model"),
+    )
+    llm_base_url: str = Field(
+        default="https://api.deepseek.com",
+        validation_alias=AliasChoices("llm_base_url", "deepseek_base_url"),
+    )
     openai_api_key: str | None = None
     openai_web_search_model: str = "gpt-5.6"
     openai_transcription_model: str = "gpt-live-transcribe"
     openai_transcription_delay: Literal["low", "medium", "high"] = "medium"
     openai_transcription_languages: str = "en,zh-cn"
-    openai_summary_model: str = "gpt-5.6"
     # Summaries of every capture, written after it is read (see digest) by
     # OpenAI or DeepSeek, whichever has a key. Without a key there are none.
     ai_summaries: Literal["auto", "off"] = "auto"
@@ -79,6 +90,9 @@ class Settings(BaseSettings):
     embedding_model_version: str = "me5-small-q8-761b726"
     docling_python: Path | None = None
     docling_artifacts_path: Path | None = None
+    # Service settings changed in the app (see service_settings). They win over
+    # this file and the environment. Unset keeps changes in memory only.
+    service_settings_file: Path | None = None
 
     @field_validator("embedding_model_version")
     @classmethod
@@ -147,6 +161,7 @@ class Settings(BaseSettings):
         env_file=PROJECT_ROOT / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
 

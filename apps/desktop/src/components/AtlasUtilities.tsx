@@ -62,6 +62,8 @@ import { parseDelimitedTable } from "../items/sourceContent";
 import { comboKeys, formatCombo, useEscape, useShortcut, withShortcut } from "../shortcuts/shortcuts";
 import { LibraryFolderSettings } from "./LibraryFolderSettings";
 import { SemanticSearchSetting } from "./SemanticSearchSetting";
+import { ServiceSettings } from "./ServiceSettings";
+import { ModelSettings } from "../models/ModelSettings";
 import { CAPTURE_CONTROL_DOM_EVENT, CAPTURE_SWITCH_DOM_EVENT, recorderOwnsCapture, type CaptureControl, type CaptureKind, type CaptureLaunchRequest, type RecordingContext } from "../capture/captureTypes";
 import { getMenuBarMode, isTauriRuntime, setMenuBarMode, type MenuBarMode } from "../capture/captureBridge";
 
@@ -900,13 +902,7 @@ async function writeClipboard(value: string): Promise<void> {
 }
 
 export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePreference; onTheme: (theme: ThemePreference) => void; onNotify: (message: string) => void }) {
-  const [engine, setEngine] = useState<"local" | "deepseek" | "offline">("offline");
-  const [webMode, setWebMode] = useState<"openai" | "not_configured">("not_configured");
-  const [transcriptionMode, setTranscriptionMode] = useState<"sensevoice_local" | "openai_realtime" | "not_configured">("not_configured");
-  const [transcriptionProvider, setTranscriptionProvider] = useState<"sensevoice" | "openai" | "none">("none");
-  const [transcriptionProfile, setTranscriptionProfile] = useState({ model: "gpt-live-transcribe", delay: "medium", languages: ["en", "zh-cn"] as string[] });
-  const [summaryMode, setSummaryMode] = useState<"deepseek" | "openai" | "off">("off");
-  const [checking, setChecking] = useState(true);
+  const [online, setOnline] = useState<boolean | null>(null);
   const [devices, setDevices] = useState<PairedDevice[]>([]);
   const [devicesLoading, setDevicesLoading] = useState(true);
   const [devicesError, setDevicesError] = useState<string | null>(null);
@@ -931,22 +927,6 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
     const current = mobileConnectionFromGateway(gatewayStatus);
     return gatewayError ? { ...current, explanation: gatewayError } : current;
   }, [gatewayError, gatewayStatus]);
-
-  const checkHealth = () => {
-    setChecking(true);
-    void knowledgeApi.health().then((health) => {
-      setEngine(health.extractionMode);
-      setWebMode(health.webSearchMode);
-      setTranscriptionMode(health.transcriptionMode);
-      setTranscriptionProvider(health.transcriptionProvider);
-      setTranscriptionProfile({ model: health.transcriptionModel, delay: health.transcriptionDelay, languages: health.transcriptionLanguages });
-      setSummaryMode(health.summaryMode);
-      onNotify(`Local workbook ready · web ${health.webSearchMode === "openai" ? "connected" : "not configured"} · transcript ${health.transcriptionMode === "sensevoice_local" ? "SenseVoice local" : health.transcriptionMode === "openai_realtime" ? "OpenAI connected" : "local audio only"}.`);
-    }).catch(() => {
-      setEngine("offline");
-      onNotify("The local service is not reachable. Your browser-only view is still available.");
-    }).finally(() => setChecking(false));
-  };
 
   const loadDevices = useCallback(async (announce = false) => {
     setDevicesLoading(true);
@@ -980,15 +960,7 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
   }, [onNotify]);
 
   useEffect(() => {
-    setChecking(true);
-    void knowledgeApi.health().then((health) => {
-      setEngine(health.extractionMode);
-      setWebMode(health.webSearchMode);
-      setTranscriptionMode(health.transcriptionMode);
-      setTranscriptionProvider(health.transcriptionProvider);
-      setTranscriptionProfile({ model: health.transcriptionModel, delay: health.transcriptionDelay, languages: health.transcriptionLanguages });
-      setSummaryMode(health.summaryMode);
-    }).catch(() => setEngine("offline")).finally(() => setChecking(false));
+    void knowledgeApi.health().then(() => setOnline(true)).catch(() => setOnline(false));
     void loadDevices();
     void loadGateway();
   }, [loadDevices, loadGateway]);
@@ -1099,16 +1071,15 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
         <div className="setting-row"><span><strong>Keyboard shortcuts</strong><small>Capture, search and move through Inbox without the mouse. Press {formatCombo("mod+/")} any time.</small></span><button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => window.dispatchEvent(new CustomEvent("gunther:show-shortcuts"))}>Show all</button></div>
       </section>
       <section>
-        <div className="setting-heading"><ShieldCheck size={16} /><span><strong>Knowledge services</strong><small>Storage, search, transcript, and synthesis</small></span></div>
-        <div className="setting-row"><span><strong>Local workbook</strong><small>Sources, audio, and accepted revisions stay on this device.</small></span><span className="setting-state"><i />{engine === "offline" && !checking ? "Offline" : "Ready"}</span></div>
+        <div className="setting-heading"><ShieldCheck size={16} /><span><strong>On this device</strong><small>Where your knowledge is kept and searched</small></span></div>
+        <div className="setting-row"><span><strong>Local workbook</strong><small>Sources, audio, and accepted revisions stay on this device.</small></span><span className={`setting-state ${online === false ? "is-muted" : ""}`}><i />{online === null ? "Checking" : online ? "Ready" : "Offline"}</span></div>
         <SemanticSearchSetting />
-        <div className="setting-row"><span><strong>Online research</strong><small>{webMode === "openai" ? "Live, sourced web answers are enabled." : "Add OPENAI_API_KEY to the local backend to enable web answers."}</small></span><span className={`setting-state ${webMode === "not_configured" ? "is-muted" : ""}`}><i />{webMode === "openai" ? "Connected" : "Not configured"}</span></div>
-        <div className="setting-row"><span><strong>Live transcript</strong><small>{transcriptionMode === "sensevoice_local" ? `${transcriptionProfile.model} · private on-device STT · speaker labels enabled` : transcriptionMode === "openai_realtime" ? `${transcriptionProfile.languages.join(" + ")} · ${transcriptionProfile.delay} delay · ${transcriptionProfile.model}` : "Audio still records locally; connect SenseVoice or OpenAI for live words."}</small></span><span className={`setting-state ${transcriptionMode === "not_configured" ? "is-muted" : ""}`}><i />{transcriptionProvider === "sensevoice" ? "SenseVoice local" : transcriptionProvider === "openai" ? "OpenAI" : "Local audio"}</span></div>
-        <details className="stt-setup"><summary>Live transcription provider</summary><p>Gunther automatically prefers your private SenseVoice service, then falls back to OpenAI when configured.</p><code>STT_PROVIDER=auto<br />SENSEVOICE_URL=http://127.0.0.1:8765<br />SENSEVOICE_SEGMENT_SECONDS=3.2<br />OPENAI_API_KEY=optional-fallback</code></details>
-        <div className="setting-row"><span><strong>Summaries</strong><small>{summaryMode === "off" ? "Add OPENAI_API_KEY or DEEPSEEK_API_KEY to the local backend. Without a model, captures are kept but not summarized." : `Every capture and recording is summarized by ${summaryMode === "openai" ? "OpenAI" : "DeepSeek"}; each point cites the passages it came from.`}</small></span><span className={`setting-state ${summaryMode === "off" ? "is-muted" : ""}`}><i />{summaryMode === "openai" ? "OpenAI" : summaryMode === "deepseek" ? "DeepSeek" : "Not configured"}</span></div>
-        <button className="settings-action" onClick={checkHealth} disabled={checking}>{checking ? "Checking services…" : "Check all services"} <ArrowRight size={13} /></button>
       </section>
     </div>
+
+    <ModelSettings onNotify={onNotify} />
+
+    <ServiceSettings onNotify={onNotify} />
 
     <LibraryFolderSettings onNotify={onNotify} onCopy={(label, value) => void copyValue(label, value)} />
 

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, Protocol
 
-from openai import OpenAI
+from gunther.llm import ModelError, ModelGateway, ModelInfo, Turn
+from gunther.model_profiles import Effort
 
 
 @dataclass(frozen=True)
@@ -22,17 +23,29 @@ class GroundingClaim:
 @dataclass(frozen=True)
 class ResponderResult:
     content: str
-    mode: Literal["local", "deepseek"]
+    mode: Literal["local", "model"]
+    # Which model answered (or was asked), at what effort, and anything to admit.
+    model_ref: str | None = None
+    model_label: str | None = None
+    effort: str | None = None
+    effort_label: str | None = None
+    notes: tuple[str, ...] = ()
+    reasoning: str | None = None
+    # Why the chosen model's answer is not shown; the quotes stand in.
+    error: str | None = None
 
 
 class KnowledgeResponder(Protocol):
-    mode: Literal["local", "deepseek"]
+    mode: Literal["local", "model"]
 
     def respond(
         self,
         question: str,
         claims: list[GroundingClaim],
-        history: list[tuple[str, str]],
+        history: list[Turn],
+        *,
+        model: ModelInfo | None = None,
+        effort: Effort | None = None,
     ) -> ResponderResult: ...
 
 
@@ -47,9 +60,12 @@ class LocalKnowledgeResponder:
         self,
         question: str,
         claims: list[GroundingClaim],
-        history: list[tuple[str, str]],
+        history: list[Turn],
+        *,
+        model: ModelInfo | None = None,
+        effort: Effort | None = None,
     ) -> ResponderResult:
-        del history
+        del history, model, effort
         if not claims:
             return ResponderResult(
                 content=(
@@ -86,22 +102,43 @@ class LocalKnowledgeResponder:
         )
 
 
-class DeepSeekKnowledgeResponder:
-    mode: Literal["deepseek"] = "deepseek"
+INSTRUCTIONS = (
+    "You are Gunther, an evidence-first knowledge partner. Answer only from the evidence "
+    "given with the latest question. Cite claims inline as [1], [2], and so on. Clearly "
+    "separate what is supported, what is an inference, and what remains unknown. Be concise "
+    "but useful. Never invent a source or citation. Earlier turns are context only; their "
+    "citation numbers do not carry over."
+)
+HISTORY_TURNS = 6
 
-    def __init__(self, api_key: str, model: str, base_url: str) -> None:
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
-        self.model = model
+
+class ModelKnowledgeResponder:
+    """Answers with the Ask model, or the one a conversation picked."""
+
+    mode: Literal["model"] = "model"
+
+    def __init__(self, gateway: ModelGateway) -> None:
+        self.gateway = gateway
         self.fallback = LocalKnowledgeResponder()
 
     def respond(
         self,
         question: str,
         claims: list[GroundingClaim],
-        history: list[tuple[str, str]],
+        history: list[Turn],
+        *,
+        model: ModelInfo | None = None,
+        effort: Effort | None = None,
     ) -> ResponderResult:
+        if model is None:
+            chosen = self.gateway.for_role("ask")
+            if chosen is None:
+                return self.fallback.respond(question, claims, history)
+            model, default_effort = chosen
+            effort = effort or default_effort
+        about = {"model_ref": model.ref, "model_label": model.display, "effort": effort}
         if not claims:
-            return self.fallback.respond(question, claims, history)
+            return replace(self.fallback.respond(question, claims, history), **about)
 
         evidence = "\n".join(
             f"[{index}] {claim.subject} {_display_predicate(claim.predicate)} "
@@ -109,38 +146,36 @@ class DeepSeekKnowledgeResponder:
             f"status={claim.status}; confidence={claim.confidence:.2f}"
             for index, claim in enumerate(claims, start=1)
         )
-        recent_history = "\n".join(f"{role}: {content}" for role, content in history[-6:])
+        turns = [
+            *history[-HISTORY_TURNS:],
+            Turn("user", f"Question:\n{question}\n\nEvidence:\n{evidence}"),
+        ]
         try:
-            response = self.client.responses.create(
-                model=self.model,
-                store=False,
-                instructions=(
-                    "You are Gunther, an evidence-first knowledge partner. Answer only from the "
-                    "provided evidence. Cite claims inline as [1], [2], and so on. Clearly "
-                    "separate what is supported, what is an inference, and what remains unknown. "
-                    "Be concise but useful. Never invent a source or citation."
-                ),
-                input=(
-                    f"Recent session context:\n{recent_history or '(new session)'}\n\n"
-                    f"Question:\n{question}\n\nEvidence:\n{evidence}"
-                ),
+            completion = self.gateway.complete(
+                model, system=INSTRUCTIONS, messages=turns, effort=effort
             )
-            content = response.output_text.strip()
-            citation_numbers = [int(value) for value in re.findall(r"\[(\d+)\]", content)]
-            if (
-                not content
-                or not citation_numbers
-                or any(value < 1 or value > len(claims) for value in citation_numbers)
-            ):
-                return self.fallback.respond(question, claims, history)
-            return ResponderResult(content=content, mode=self.mode)
-        except Exception:
-            return self.fallback.respond(question, claims, history)
+        except ModelError as error:
+            return replace(
+                self.fallback.respond(question, claims, history), **about, error=str(error)
+            )
+        content = completion.text
+        citation_numbers = [int(value) for value in re.findall(r"\[(\d+)\]", content)]
+        answered = {
+            **about,
+            "effort_label": completion.effort_label,
+            "notes": completion.notes,
+            "reasoning": completion.reasoning,
+        }
+        if not citation_numbers or any(v < 1 or v > len(claims) for v in citation_numbers):
+            return replace(
+                self.fallback.respond(question, claims, history),
+                **answered,
+                error=f"{model.display} did not cite the evidence it was given.",
+            )
+        return ResponderResult(content=content, mode=self.mode, **answered)
 
 
-def create_knowledge_responder(
-    api_key: str | None, model: str, base_url: str
-) -> KnowledgeResponder:
-    if api_key:
-        return DeepSeekKnowledgeResponder(api_key, model, base_url)
+def create_knowledge_responder(gateway: ModelGateway | None) -> KnowledgeResponder:
+    if gateway is not None and gateway.models:
+        return ModelKnowledgeResponder(gateway)
     return LocalKnowledgeResponder()

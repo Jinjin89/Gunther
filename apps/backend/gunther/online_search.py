@@ -23,7 +23,7 @@ class DisabledOnlineSearch:
             query=query,
             answer="",
             mode=self.mode,
-            message="Online search is not configured. Add OPENAI_API_KEY to enable it.",
+            message="Online search is off. Add an OpenAI API key in Settings to turn it on.",
         )
 
 

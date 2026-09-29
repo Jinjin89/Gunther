@@ -1,15 +1,17 @@
 import io
 import wave
 from pathlib import Path
-from types import SimpleNamespace
 
+import httpx
+import openai
+from fake_models import FakeProvider, api_error, gateway, model
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from gunther.config import Settings
-from gunther.conversation import DeepSeekKnowledgeResponder, GroundingClaim
+from gunther.conversation import GroundingClaim, ModelKnowledgeResponder
 from gunther.database import create_database_engine
-from gunther.extraction import DeepSeekExtractor
+from gunther.extraction import ModelExtractor
 from gunther.main import create_app
 from gunther.models import Artifact, ArtifactUnitBinding
 from gunther.realtime import _pcm16_wav
@@ -594,7 +596,7 @@ def test_local_extractor_understands_simple_english_relationships() -> None:
         assert assertion["predicate"] == "improves"
 
 
-def test_deepseek_key_selects_deepseek_extraction() -> None:
+def test_a_language_model_key_selects_model_extraction() -> None:
     app = create_app(
         Settings(
             database_url="sqlite+pysqlite:///:memory:",
@@ -603,7 +605,9 @@ def test_deepseek_key_selects_deepseek_extraction() -> None:
         )
     )
     with TestClient(app) as client:
-        assert client.get("/api/health").json()["extractionMode"] == "deepseek"
+        health = client.get("/api/health").json()
+        assert health["extractionMode"] == "model"
+        assert health["analysisModel"] == "DeepSeek · Flash"
 
 
 def test_search_and_recording_capabilities_degrade_explicitly_without_openai() -> None:
@@ -622,9 +626,7 @@ def test_search_and_recording_capabilities_degrade_explicitly_without_openai() -
 
 
 def test_lecture_summary_needs_a_model_and_never_stands_in_for_one() -> None:
-    from types import SimpleNamespace
-
-    from gunther.lecture import AILectureSummarizer, LecturePayload
+    from gunther.lecture import AILectureSummarizer
 
     lecture = {
         "title": "Cell annotation lecture",
@@ -636,30 +638,23 @@ def test_lecture_summary_needs_a_model_and_never_stands_in_for_one() -> None:
         assert missing.status_code == 503 and "API key" in missing.json()["detail"]
 
         def answering(outcome):
-            summarizer = AILectureSummarizer("key", "gpt-test", "openai")
+            return AILectureSummarizer(gateway(FakeProvider(outcome)), model(), "low")
 
-            def parse(**_kwargs):
-                if isinstance(outcome, Exception):
-                    raise outcome
-                return SimpleNamespace(output_parsed=outcome)
-
-            summarizer.client = SimpleNamespace(responses=SimpleNamespace(parse=parse))
-            return summarizer
-
-        client.app.state.lecture_summarizer = answering(ConnectionError("offline"))
+        offline = openai.APIConnectionError(request=httpx.Request("POST", "https://model.test"))
+        client.app.state.lecture_summarizer = answering(offline)
         failed = client.post("/api/lectures/summarize", json=lecture)
         assert failed.status_code == 502
         assert failed.json()["detail"] == (
-            "The model could not write the summary (ConnectionError). Try again."
+            "The model could not write the summary (Could not reach model.test.). Try again."
         )
 
-        client.app.state.lecture_summarizer = answering(LecturePayload(
-            overview="CD3D marks T cells.", key_points=["CD3D supports T cell identity."],
-            open_questions=["What remains uncertain?"],
-        ))
+        client.app.state.lecture_summarizer = answering(
+            '{"overview": "CD3D marks T cells.", "key_points": ["CD3D supports T cell '
+            'identity."], "open_questions": ["What remains uncertain?"]}'
+        )
         written = client.post("/api/lectures/summarize", json=lecture)
         assert written.status_code == 200
-        assert written.json()["engine"] == "openai"
+        assert written.json()["engine"] == "DeepSeek · deepseek-flash"
         assert written.json()["openQuestions"] == ["What remains uncertain?"]
 
 
@@ -740,20 +735,8 @@ def test_long_recording_is_saved_incrementally(tmp_path) -> None:
 
 
 def test_deepseek_extraction_failure_preserves_source_with_local_rules() -> None:
-    extractor = DeepSeekExtractor(
-        api_key="test-key",
-        model="deepseek-chat",
-        base_url="https://example.invalid",
-    )
-
-    class FailingParsedResponses:
-        @staticmethod
-        def parse(**_kwargs: object) -> None:
-            raise RuntimeError("provider unavailable")
-
-    extractor.client = SimpleNamespace(  # type: ignore[assignment]
-        responses=FailingParsedResponses()
-    )
+    failing = FakeProvider(api_error(openai.InternalServerError, 500, "provider unavailable"))
+    extractor = ModelExtractor(gateway(failing))
     result = extractor.extract("Cell note", "CD3D -> marker_of -> T cell")
 
     assert result.mode == "local"
@@ -794,6 +777,13 @@ def test_session_keeps_messages_context_and_citations() -> None:
             "verifiedAssertions": 0,
             "retrievalMode": "selected",
             "responderMode": "local",
+            "model": None,
+            "modelLabel": None,
+            "effort": None,
+            "effortLabel": None,
+            "notes": [],
+            "reasoning": None,
+            "modelError": None,
         }
 
         loaded = client.get(f"/api/sessions/{session_id}").json()
@@ -1280,6 +1270,13 @@ def test_session_grounds_an_answer_in_raw_source_text_without_extracted_claims()
             "verifiedAssertions": 0,
             "retrievalMode": "all",
             "responderMode": "local",
+            "model": None,
+            "modelLabel": None,
+            "effort": None,
+            "effortLabel": None,
+            "notes": [],
+            "reasoning": None,
+            "modelError": None,
         }
         assert "Clustering lecture" in turn["assistantMessage"]["content"]
 
@@ -1366,18 +1363,8 @@ def test_writes_reject_an_unknown_knowledge_base() -> None:
 
 
 def test_deepseek_failure_reports_local_fallback_mode() -> None:
-    responder = DeepSeekKnowledgeResponder(
-        api_key="test-key",
-        model="deepseek-chat",
-        base_url="https://example.invalid",
-    )
-
-    class FailingResponses:
-        @staticmethod
-        def create(**_kwargs: object) -> None:
-            raise RuntimeError("provider unavailable")
-
-    responder.client = SimpleNamespace(responses=FailingResponses())  # type: ignore[assignment]
+    failing = FakeProvider(api_error(openai.InternalServerError, 500, "provider unavailable"))
+    responder = ModelKnowledgeResponder(gateway(failing))
     result = responder.respond(
         "What supports identity?",
         [
@@ -1397,23 +1384,12 @@ def test_deepseek_failure_reports_local_fallback_mode() -> None:
 
     assert result.mode == "local"
     assert "CD3D" in result.content
+    assert result.error == "DeepSeek had a problem (500): provider unavailable"
+    assert result.model_label == "DeepSeek · deepseek-flash"
 
 
 def test_deepseek_output_with_invalid_citations_uses_local_fallback() -> None:
-    responder = DeepSeekKnowledgeResponder(
-        api_key="test-key",
-        model="deepseek-chat",
-        base_url="https://example.invalid",
-    )
-
-    class InvalidCitationResponses:
-        @staticmethod
-        def create(**_kwargs: object) -> SimpleNamespace:
-            return SimpleNamespace(output_text="CD3D identifies T cells [9].")
-
-    responder.client = SimpleNamespace(  # type: ignore[assignment]
-        responses=InvalidCitationResponses()
-    )
+    responder = ModelKnowledgeResponder(gateway(FakeProvider("CD3D identifies T cells [9].")))
     result = responder.respond(
         "What supports identity?",
         [
@@ -1433,6 +1409,7 @@ def test_deepseek_output_with_invalid_citations_uses_local_fallback() -> None:
 
     assert result.mode == "local"
     assert "[1]" in result.content
+    assert result.error == "DeepSeek · deepseek-flash did not cite the evidence it was given."
 
 
 def test_duplicate_source_can_join_another_knowledge_base() -> None:

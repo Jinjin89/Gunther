@@ -84,7 +84,7 @@ function TopicOverviewPanel({ baseId, topic, onOpenSource }: { baseId: string; t
     {state === "loading" && <p>Loading overview…</p>}
     {(state === "none" || (state === "writing" && !overview)) && <p>{topic.sourceIds.length ? "No overview yet. Gunther gathers each paper's abstract into one page, with citations." : "File papers under this topic to write its overview."}</p>}
     {overview && <>
-      <small>{overview.method === "local" ? "From the papers’ own abstracts" : `Written by ${overview.method.replace(/^deepseek:/, "DeepSeek ")} from the abstracts`} · {new Date(overview.createdAt).toLocaleDateString()}{stale ? " · papers changed since" : ""}</small>
+      <small>{overview.method === "local" ? "From the papers’ own abstracts" : `Written by ${overview.method.replace(/^deepseek:/, "DeepSeek:").replace(":", " ")} from the abstracts`} · {new Date(overview.createdAt).toLocaleDateString()}{stale ? " · papers changed since" : ""}</small>
       <MarkdownView source={overview.markdown} headingLevel={3} className="topic-overview-text" />
       {overview.citations.length > 0 && <ol className="topic-overview-sources">{overview.citations.map((citation) => <li key={citation.number} value={citation.number}>
         {onOpenSource ? <button type="button" className="link-button" onClick={() => onOpenSource(citation.sourceId)}>{citation.sourceTitle}</button> : citation.sourceTitle}

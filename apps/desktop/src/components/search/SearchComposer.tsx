@@ -1,5 +1,5 @@
 import { ArrowUp, AtSign, CornerDownLeft, Globe2, X } from "lucide-react";
-import { forwardRef, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { forwardRef, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import type { KnowledgeBase } from "../../atlas";
 import { LibraryGlyph } from "../../design/LibraryGlyph";
 
@@ -21,6 +21,8 @@ interface SearchComposerProps {
   onClear: () => void;
   /** Called on ↓ at the end of the text; return true when focus moved elsewhere. */
   onArrowDown?: (() => boolean) | undefined;
+  /** The model and effort chips for questions asked from here. */
+  picker?: ReactNode;
 }
 
 interface MentionTrigger {
@@ -94,6 +96,7 @@ export const SearchComposer = forwardRef<SearchComposerHandle, SearchComposerPro
   onSubmit,
   onClear,
   onArrowDown,
+  picker,
 }, ref) {
   const textarea = useRef<HTMLTextAreaElement>(null);
   const [caret, setCaret] = useState(0);
@@ -253,6 +256,7 @@ export const SearchComposer = forwardRef<SearchComposerHandle, SearchComposerPro
           <Globe2 size={15} />
           <span>Web</span>
         </button>
+        {picker}
         <span className="gx-composer-hint" id={hintId}>{hint}</span>
         {(value || mentionIds.length > 0) && (
           <button type="button" className="gx-tool gx-tool-icon" onClick={() => { onClear(); textarea.current?.focus(); }} aria-label="Clear search" title="Clear">

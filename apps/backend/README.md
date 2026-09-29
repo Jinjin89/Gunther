@@ -121,7 +121,7 @@ Artifact 当前没有 PATCH/DELETE/archive、全局 Search 或 PDF/DOCX renderer
 - `STT_PROVIDER=auto|sensevoice|openai`；
 - `SENSEVOICE_URL` 与 segment seconds；
 - `STORAGE_QUOTA_BYTES`（默认 20 GiB）与 `STORAGE_MIN_FREE_BYTES`（默认 1 GiB）；
-- 可选 `DEEPSEEK_API_KEY`、`OPENAI_API_KEY`；
+- 可选 `LLM_API_KEY`（旧名 `DEEPSEEK_API_KEY` 仍可用）、`OPENAI_API_KEY`；也可在桌面端 Settings → Services 里填写（见 `docs/SERVICE_SETTINGS.md`）；
 - `SEED_DEMO=false` 默认创建空工作区。
 
 Provider key 不应进入 Git、日志、前端 bundle 或移动普通 profile。

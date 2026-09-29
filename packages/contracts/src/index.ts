@@ -224,7 +224,8 @@ export interface SourceDigest {
   revisionId: string;
   profile: "lecture" | "meeting" | "memo" | "image" | "table" | "paper" | "document" | "web" | "note";
   method: string;
-  engine: "openai" | "deepseek";
+  /** Who wrote it: a provider's name ("DeepSeek", "Kimi", "My server"). */
+  engine: string;
   model: string | null;
   suggestedTitle: string | null;
   overview: string;
@@ -325,6 +326,180 @@ export interface StorageStatus {
   lastError: string | null;
 }
 
+/** A level a model can do, named its own way ("High", or "On" where thinking only switches). */
+export interface EffortLevel {
+  id: Effort;
+  label: string;
+}
+
+/** A model Ask can use now, for the model menu. */
+export interface ModelChoice {
+  ref: string;
+  provider: string;
+  label: string;
+  display: string;
+  vision: boolean;
+  /** Empty when the model has no thinking setting. */
+  levels: EffortLevel[];
+}
+
+export interface ModelMenu {
+  models: ModelChoice[];
+  default: { model: string; effort: Effort } | null;
+  efforts: EffortLevel[];
+}
+
+export type ProviderKind = "deepseek" | "kimi" | "glm" | "qwen" | "openai" | "compatible";
+
+export interface ProviderModel {
+  id: string;
+  ref: string;
+  label: string;
+  vision: boolean;
+  visionBuiltIn: boolean;
+  dialect: string;
+  dialectBuiltIn: string;
+  levels: EffortLevel[];
+}
+
+export interface ModelProvider {
+  id: string;
+  name: string;
+  kind: ProviderKind;
+  baseUrl: string;
+  keySet: boolean;
+  keyHint: string | null;
+  /** saved here, the OpenAI services key, the environment (.env), or none. */
+  keySource: "saved" | "openai" | "environment" | "none";
+  keyOptional: boolean;
+  note: string;
+  models: ProviderModel[];
+  status: {
+    state: ServiceState;
+    summary: string;
+    check: (ServiceCheck & { checkedAt: string }) | null;
+  };
+}
+
+export interface ModelRole {
+  id: "analysis" | "ask" | "photos";
+  label: string;
+  description: string;
+  needsVision: boolean;
+  model: string | null;
+  effort: Effort;
+  problem: string | null;
+}
+
+export interface ProviderPreset {
+  kind: ProviderKind;
+  name: string;
+  baseUrl: string;
+  models: string[];
+  keyOptional: boolean;
+  note: string;
+}
+
+export interface ModelsOverview {
+  persisted: boolean;
+  /** Providers come from LLM_* settings until some are saved here. */
+  fromEnvironment: boolean;
+  providers: ModelProvider[];
+  roles: ModelRole[];
+  presets: ProviderPreset[];
+  dialects: { id: string; label: string; levels: EffortLevel[] }[];
+  efforts: EffortLevel[];
+}
+
+export interface ProviderInput {
+  kind?: ProviderKind;
+  name?: string;
+  baseUrl?: string;
+  /** Left out: keep the saved key. Empty: remove it. */
+  apiKey?: string;
+  models?: (string | { id: string; label?: string; vision?: boolean | null; dialect?: string | null })[];
+}
+
+export interface ProviderTestResult extends ServiceCheck {
+  /** The models the provider offers. */
+  available: string[];
+  overview?: ModelsOverview;
+}
+
+/** How a service setting is edited on the Settings page. */
+export type ServiceFieldKind = "text" | "secret" | "url" | "select" | "toggle" | "number";
+export type ServiceSettingValue = string | number | boolean | null;
+
+export interface ServiceFieldOption {
+  value: string;
+  label: string;
+  description: string;
+  /** Values other fields take when this option is picked (a provider's address, say). */
+  presets: Record<string, string>;
+}
+
+export interface ServiceField {
+  key: string;
+  label: string;
+  kind: ServiceFieldKind;
+  help: string;
+  placeholder: string;
+  options: ServiceFieldOption[];
+  min: number | null;
+  max: number | null;
+  step: number | null;
+  required: boolean;
+  pattern: string | null;
+  patternMessage: string;
+  /** Shown only while another field has one of these values. */
+  shownWhen: { key: string; values: string[] } | null;
+  /** Always null for secrets: the service keeps them. */
+  value: ServiceSettingValue;
+  default: ServiceSettingValue;
+  isSet: boolean;
+  /** A secret's last four characters. */
+  hint: string | null;
+  /** Where the value in use comes from. */
+  source: "saved" | "environment" | "default";
+  envVar: string;
+}
+
+export type ServiceState = "configured" | "not_configured" | "error" | "off";
+
+export interface ServiceCheck {
+  ok: boolean;
+  message: string;
+  warning: string | null;
+}
+
+/** An outside service (language model, transcription…) and its settings. */
+export interface ServiceSettings {
+  id: string;
+  title: string;
+  description: string;
+  note: string;
+  fields: ServiceField[];
+  canTest: boolean;
+  status: {
+    state: ServiceState;
+    summary: string;
+    /** The last connection test of the values in use, if any. */
+    checkedAt: string | null;
+    check: ServiceCheck | null;
+  };
+}
+
+export interface ServiceSettingsList {
+  /** Saved changes outlast a restart. */
+  persisted: boolean;
+  services: ServiceSettings[];
+}
+
+export interface ServiceTestResult extends ServiceCheck {
+  checkedAt: string;
+  service: ServiceSettings;
+}
+
 export type TrashItemKind = "source" | "note" | "library";
 
 /** One thing moved to Trash, with everything that went in alongside it. */
@@ -408,7 +583,7 @@ export interface ImportResult {
     entities: number;
     assertions: number;
   };
-  extractionMode: "local" | "deepseek";
+  extractionMode: "local" | "model";
   duplicate: boolean;
 }
 
@@ -481,7 +656,19 @@ export interface ConversationContext {
   assertionsConsidered: number;
   verifiedAssertions: number;
   retrievalMode: "selected" | "all";
-  responderMode: "local" | "deepseek";
+  /** "model": a language model wrote it; "local": the quotes themselves. Older answers say "deepseek". */
+  responderMode: "local" | "model" | "deepseek";
+  /** The model asked ("deepseek/deepseek-flash") and its name, even when it failed. */
+  model?: string | null;
+  modelLabel?: string | null;
+  effort?: Effort | null;
+  /** The level the model was sent, in its own words ("High", "On"); null when it has none. */
+  effortLabel?: string | null;
+  /** What the answer admits to, e.g. a level the model does not have. */
+  notes?: string[];
+  reasoning?: string | null;
+  /** Why the chosen model's answer is not shown; the quotes stand in. */
+  modelError?: string | null;
 }
 
 export interface SessionMessage {
@@ -530,10 +717,17 @@ export const updateKnowledgeSessionSchema = z.object({
 });
 export type UpdateKnowledgeSessionInput = z.infer<typeof updateKnowledgeSessionSchema>;
 
+/** One thinking-effort scale for every model; each model maps it to its own setting. */
+export const EFFORTS = ["off", "low", "medium", "high", "max"] as const;
+export type Effort = (typeof EFFORTS)[number];
+
 export const createSessionMessageSchema = z.object({
   content: z.string().trim().min(1).max(20_000),
   selectedSourceIds: z.array(z.string()).max(200).optional(),
   focusChapterId: z.string().max(160).nullable().optional(),
+  /** The model and effort for this answer; the Ask job's defaults when left out. */
+  model: z.string().max(300).optional(),
+  effort: z.enum(EFFORTS).optional(),
 });
 export type CreateSessionMessageInput = z.infer<typeof createSessionMessageSchema>;
 
@@ -676,7 +870,8 @@ export interface LectureSummary {
   actionItems: string[];
   openQuestions: string[];
   terms: string[];
-  engine: "deepseek" | "openai";
+  /** The model that wrote it, e.g. "DeepSeek · Flash". */
+  engine: string;
 }
 
 export interface CreateLectureSummaryInput {

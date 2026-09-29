@@ -18,9 +18,9 @@ def _sensevoice_root(url: str) -> str:
     return normalized[:-3] if normalized.endswith("/v1") else normalized
 
 
-async def sensevoice_health(url: str) -> dict[str, object] | None:
+async def sensevoice_health(url: str, timeout: float = 1.2) -> dict[str, object] | None:
     try:
-        async with httpx.AsyncClient(timeout=1.2) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.get(f"{_sensevoice_root(url)}/health")
             response.raise_for_status()
             payload = response.json()

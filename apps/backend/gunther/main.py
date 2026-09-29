@@ -11,11 +11,11 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import event, select
 from sqlalchemy.orm import ORMExecuteState, Session, sessionmaker
 
-from gunther import vector_index
+from gunther import model_registry, vector_index
 from gunther.api import router
 from gunther.asset_service import AssetService
 from gunther.config import PROJECT_ROOT, Settings, get_settings
-from gunther.conversation import create_knowledge_responder
+from gunther.conversation import LocalKnowledgeResponder, create_knowledge_responder
 from gunther.database import (
     Base,
     create_database_engine,
@@ -31,21 +31,25 @@ from gunther.device_auth import (
 from gunther.digest import create_digest_writer
 from gunther.document_parser import DoclingParser
 from gunther.embedding import OnnxEmbedder, default_model_directory, model_is_installed
-from gunther.extraction import create_extractor
+from gunther.extraction import LocalExtractor, create_extractor
 from gunther.knowledge_api import router as knowledge_router
 from gunther.lecture import create_lecture_summarizer
 from gunther.library_folders import WATCHED_MODELS, LibraryFolders
 from gunther.library_root import LibraryRootConflict, prepare_library_root
 from gunther.library_topics import create_topic_writer
+from gunther.llm import ClientFactory
 from gunther.migrations import run_migrations
 from gunther.mobile_gateway_runtime import MobileGatewayRuntime
 from gunther.models import WorkspaceIdentity
+from gunther.models_api import router as models_router
 from gunther.ocr import OcrProvider, create_ocr_provider
 from gunther.online_search import create_online_search
 from gunther.pairing_exchange_guard import PairingExchangeGuard
 from gunther.processing import ProcessingWorker
 from gunther.request_body_limit import RequestBodyLimitMiddleware
 from gunther.service import KnowledgeService
+from gunther.service_settings import ServiceSettingsStore
+from gunther.settings_api import router as settings_router
 from gunther.storage_api import router as storage_router
 from gunther.storage_budget import StorageBudget
 from gunther.trash import TrashService
@@ -94,6 +98,48 @@ def _refresh_folders_on_change(
             folders.request_sync()
 
 
+def _connect_models(
+    application: FastAPI,
+    settings: Settings,
+    store: ServiceSettingsStore,
+    knowledge_service: KnowledgeService,
+    worker: ProcessingWorker,
+) -> None:
+    """Point every model-backed part of the app at the models set up now.
+
+    Runs at startup and again whenever service settings are saved; requests
+    already running finish with the clients they started with.
+    """
+
+    registry = model_registry.effective(*store.models(), settings)
+    options = {}
+    if application.state.model_client_factory is not None:
+        options["client_factory"] = application.state.model_client_factory
+    models = model_registry.build_gateway(registry, settings, **options)
+    digest_writer = create_digest_writer(
+        settings.ai_summaries, models, images=settings.ai_summary_images
+    )
+    knowledge_service.models = models
+    knowledge_service.extractor = create_extractor(models)
+    knowledge_service.responder = create_knowledge_responder(models)
+    index = knowledge_service.index
+    index.digest_method = digest_writer.method if digest_writer else None
+    index.digest_vision = bool(digest_writer and digest_writer.vision)
+    index.digest_off_reason = (
+        None if digest_writer else "setting" if settings.ai_summaries == "off" else "no_key"
+    )
+    worker.digest_writer = digest_writer
+    application.state.models = models
+    application.state.model_registry = registry
+    application.state.topic_writer = create_topic_writer(models)
+    application.state.online_search = create_online_search(
+        settings.openai_api_key, settings.openai_web_search_model
+    )
+    application.state.lecture_summarizer = create_lecture_summarizer(models)
+    # Transcription reads its settings per recording, from here.
+    application.state.settings = settings
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -102,8 +148,16 @@ def create_app(
     web_capture_fetcher: WebFetcher | None = None,
     web_capture_resolver: WebResolver | None = None,
     ocr_provider: OcrProvider | None = None,
+    service_settings: ServiceSettingsStore | None = None,
+    model_client_factory: ClientFactory | None = None,
 ) -> FastAPI:
-    active_settings = settings or get_settings()
+    if settings is None:
+        settings = get_settings()
+        if settings.service_settings_file is None:
+            settings = settings.model_copy(
+                update={"service_settings_file": PROJECT_ROOT / "data" / "service-settings.json"}
+            )
+    active_settings = settings
     engine = create_database_engine(active_settings.database_url)
     run_migrations(engine, Base.metadata)
     sessions = create_session_factory(engine)
@@ -141,50 +195,15 @@ def create_app(
                 }
             )
     device_auth = DeviceAuthService(sessions)
-    extractor = create_extractor(
-        active_settings.deepseek_api_key,
-        active_settings.deepseek_model,
-        active_settings.deepseek_base_url,
-    )
-    responder = create_knowledge_responder(
-        active_settings.deepseek_api_key,
-        active_settings.deepseek_model,
-        active_settings.deepseek_base_url,
-    )
-    knowledge_service = KnowledgeService(sessions, extractor, responder)
-    topic_writer = create_topic_writer(
-        active_settings.deepseek_api_key,
-        active_settings.deepseek_model,
-        active_settings.deepseek_base_url,
-    )
+    # Settings from the environment; values saved in the app go on top of them.
+    base_settings = active_settings
+    service_store = service_settings or ServiceSettingsStore(active_settings.service_settings_file)
+    active_settings = service_store.apply(base_settings)
+    # The models are connected below, once the worker exists (see _connect_models).
+    knowledge_service = KnowledgeService(sessions, LocalExtractor(), LocalKnowledgeResponder())
     embedder, off_reason = _semantic_search(active_settings, sessions)
     knowledge_service.index.embedder = embedder
     knowledge_service.index.semantic_off_reason = off_reason
-    online_search = create_online_search(
-        active_settings.openai_api_key,
-        active_settings.openai_web_search_model,
-    )
-    lecture_summarizer = create_lecture_summarizer(
-        active_settings.openai_api_key,
-        active_settings.openai_summary_model,
-        active_settings.deepseek_api_key,
-        active_settings.deepseek_model,
-        active_settings.deepseek_base_url,
-    )
-    digest_writer = create_digest_writer(
-        active_settings.ai_summaries,
-        openai_api_key=active_settings.openai_api_key,
-        openai_model=active_settings.openai_summary_model,
-        deepseek_api_key=active_settings.deepseek_api_key,
-        deepseek_model=active_settings.deepseek_model,
-        deepseek_base_url=active_settings.deepseek_base_url,
-        images=active_settings.ai_summary_images,
-    )
-    knowledge_service.index.digest_method = digest_writer.method if digest_writer else None
-    knowledge_service.index.digest_vision = bool(digest_writer and digest_writer.vision)
-    knowledge_service.index.digest_off_reason = (
-        None if digest_writer else "setting" if active_settings.ai_summaries == "off" else "no_key"
-    )
     local_ocr = ocr_provider or create_ocr_provider(
         active_settings.ocr_provider,
         tesseract_command=active_settings.ocr_tesseract_command,
@@ -200,8 +219,7 @@ def create_app(
         sessions, active_settings.assets_dir, knowledge_service, local_ocr, storage_budget,
     ), document_parser=(DoclingParser(
         active_settings.docling_python, active_settings.docling_artifacts_path,
-    ) if active_settings.docling_python and active_settings.docling_artifacts_path else None),
-        digest_writer=digest_writer)
+    ) if active_settings.docling_python and active_settings.docling_artifacts_path else None))
 
     trash_service = TrashService(
         sessions,
@@ -251,13 +269,23 @@ def create_app(
     application.state.knowledge_service = knowledge_service
     application.state.processing_worker = worker
     application.state.trash_service = trash_service
-    application.state.topic_writer = topic_writer
     application.state.library_folders = library_folders
     application.state.storage_problem = storage_problem
-    application.state.online_search = online_search
-    application.state.lecture_summarizer = lecture_summarizer
     application.state.device_auth = device_auth
-    application.state.settings = active_settings
+    application.state.base_settings = base_settings
+    application.state.service_settings = service_store
+    # Tests stand in for the providers here.
+    application.state.model_client_factory = model_client_factory
+    _connect_models(application, active_settings, service_store, knowledge_service, worker)
+    service_store.subscribe(
+        lambda: _connect_models(
+            application,
+            service_store.apply(base_settings),
+            service_store,
+            knowledge_service,
+            worker,
+        )
+    )
     application.state.allow_sidecar_auth = allow_sidecar_auth
     application.state.mobile_gateway = mobile_gateway or MobileGatewayRuntime(enabled=False)
     application.state.pairing_exchange_guard = PairingExchangeGuard()
@@ -382,6 +410,8 @@ def create_app(
     application.include_router(knowledge_router, prefix=active_settings.api_prefix)
     application.include_router(trash_router, prefix=active_settings.api_prefix)
     application.include_router(storage_router, prefix=active_settings.api_prefix)
+    application.include_router(settings_router, prefix=active_settings.api_prefix)
+    application.include_router(models_router, prefix=active_settings.api_prefix)
     return application
 
 
