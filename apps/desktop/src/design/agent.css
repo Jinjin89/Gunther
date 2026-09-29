@@ -107,3 +107,24 @@
 .gx-home-followup input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-sm); background: var(--gx-surface); color: var(--gx-ink); font: inherit; }
 .gx-home-followup input:focus-visible { outline: none; box-shadow: var(--gx-ring); }
 .gx-home-recent-questions { margin-bottom: 20px; }
+
+/* The Ask composer: one quiet border that darkens on focus, like Home's. No halo, no inner outline. */
+.composer-wrap { border-top: 0; background: linear-gradient(to bottom, transparent, var(--gx-canvas) 30%); }
+.composer {
+  border: 1px solid var(--gx-line-2);
+  border-radius: var(--gx-radius-xl);
+  background: var(--gx-surface);
+  box-shadow: 0 1px 2px rgba(20, 20, 18, 0.03), 0 10px 28px -18px rgba(20, 20, 18, 0.16);
+}
+.composer:hover { border-color: var(--gx-line-3); }
+.composer:focus-within {
+  border-color: color-mix(in srgb, var(--gx-ink) 32%, transparent);
+  box-shadow: 0 1px 2px rgba(20, 20, 18, 0.04), 0 14px 36px -18px rgba(20, 20, 18, 0.24);
+}
+:root[data-theme="dark"] .composer { box-shadow: 0 14px 36px -20px rgba(0, 0, 0, 0.7); }
+:root[data-theme="dark"] .composer:focus-within { border-color: rgba(255, 255, 255, 0.28); }
+.composer textarea:focus, .composer textarea:focus-visible { outline: 0; box-shadow: none; }
+.composer-toolbar button:focus-visible { outline: 0; box-shadow: var(--gx-ring); }
+
+/* Home's follow-up: same treatment, the ring on the field's own border instead of an outline. */
+.gx-home-followup input:focus-visible { outline: 0; border-color: color-mix(in srgb, var(--gx-ink) 32%, transparent); box-shadow: none; }

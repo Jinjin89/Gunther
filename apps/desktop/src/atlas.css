@@ -73,7 +73,8 @@
 .base-mode-switch { margin: 0 auto; padding: 3px; display: flex; gap: 2px; border: 1px solid var(--atlas-line); border-radius: 10px; background: var(--atlas-paper-soft); }.base-mode-switch button { height: 27px; padding: 0 13px; border: 0; border-radius: 7px; background: transparent; color: var(--atlas-faint) !important; font-size: calc(12px * var(--gx-fs, 1)); font-weight: 700; }.base-mode-switch button.is-active { background: var(--atlas-paper); color: var(--atlas-ink) !important; box-shadow: 0 2px 8px -5px rgba(20, 40, 32, .4); }
 .base-export { height: 31px; padding: 0 10px; display: flex; align-items: center; gap: 6px; border: 1px solid var(--atlas-line); border-radius: 8px; background: transparent; color: var(--atlas-muted) !important; font-size: calc(12px * var(--gx-fs, 1)); }.base-export:hover { border-color: var(--atlas-green); color: var(--atlas-green) !important; }
 .base-edit { width: 31px; height: 31px; display: grid; place-items: center; border: 1px solid var(--atlas-line); border-radius: 8px; background: transparent; color: var(--atlas-faint) !important; }.base-edit:hover { border-color: var(--atlas-green); color: var(--atlas-green) !important; }
-.base-workspace-body { flex: 1; min-height: 0; }
+.base-workspace-body { flex: 1; min-height: 0; position: relative; }
+.base-workspace:has(> .base-workspace-body > .session-workspace) { height: 100%; }
 
 /* Materials view: the source layer inside a knowledge base */
 .materials-view { min-height: calc(100vh - 107px); padding: 46px clamp(32px, 5vw, 72px) 80px; background: var(--atlas-canvas); }

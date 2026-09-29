@@ -1,5 +1,5 @@
 .session-workspace {
-  height: calc(100vh - var(--gx-titlebar-h, 44px));
+  height: 100%;
   min-height: 580px;
   display: grid;
   grid-template-columns: 252px minmax(460px, 1fr) 326px;
