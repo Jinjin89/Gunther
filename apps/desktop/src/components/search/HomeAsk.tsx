@@ -1,11 +1,13 @@
 import type { ConversationCitation, KnowledgeSessionSummary, SessionMessage } from "@gunther/contracts";
-import { ArrowUp, FolderInput, Globe2, MessageSquareText, Plus, Sparkles, Square, X } from "lucide-react";
+import { ArrowUp, FolderInput, Globe2, MessageSquareText, Mic, Plus, Sparkles, Square, X } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { KnowledgeBase } from "../../atlas";
 import { AgentSteps, AnswerBody, LiveAnswer } from "../../pages/AnswerBody";
 import { EvidencePanel } from "../evidence/EvidencePanel";
 import type { LiveAnswerState } from "../../pages/liveAnswer";
 import type { ItemRef } from "../../items/itemRef";
+import { useDictatedField } from "../../services/useDictatedField";
+import { withShortcut } from "../../shortcuts/shortcuts";
 
 const QUESTION_WORDS = /^(what|why|how|when|where|who|whom|which|whose|is|are|was|were|do|does|did|can|could|should|would|will|explain|compare|summari[sz]e|tell me|find out|list|show me|什么|为什么|为何|如何|怎么|怎样|是否|哪|谁|能否|请问|帮我|比较|总结|解释)/i;
 
@@ -53,6 +55,7 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
   const [followUp, setFollowUp] = useState("");
   const [evidence, setEvidence] = useState<{ citation: ConversationCitation; index: number } | null>(null);
   const busy = pending !== null;
+  const dictation = useDictatedField(followUp, setFollowUp, { enabled: active });
   const tail = useRef<HTMLDivElement>(null);
   // A new question brings the latest exchange into view once; after that the page is the reader's.
   useEffect(() => { if (pending !== null) tail.current?.scrollIntoView({ block: "nearest" }); }, [pending]);
@@ -113,7 +116,8 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
       <div ref={tail} />
     </div>
     <form className="gx-home-followup" onSubmit={send}>
-      <input value={followUp} onChange={(event) => setFollowUp(event.target.value)} placeholder={messages.length ? "Ask a follow-up…" : "Ask a question…"} aria-label="Ask a follow-up" disabled={busy} />
+      <input value={followUp} onChange={(event) => setFollowUp(event.target.value)} placeholder={messages.length ? "Ask a follow-up…" : "Ask a question…"} aria-label="Ask a follow-up" disabled={busy} onFocus={dictation.claim} />
+      <button type="button" className={`gx-tool gx-tool-icon gx-mic ${dictation.dictating ? "is-on" : ""}`} onClick={dictation.toggle} disabled={busy} aria-pressed={dictation.listening} aria-label={dictation.listening ? "Stop voice input" : "Voice input"} title={dictation.error ?? withShortcut(dictation.listening ? "Stop voice input" : "Speak instead of typing", "dictate")}><Mic size={15} /></button>
       {busy
         ? <button type="button" className="gx-send is-stop" onClick={onCancel} aria-label="Stop"><Square size={12} fill="currentColor" /></button>
         : <button type="submit" className="gx-send" disabled={!followUp.trim()} aria-label="Send"><ArrowUp size={16} /></button>}

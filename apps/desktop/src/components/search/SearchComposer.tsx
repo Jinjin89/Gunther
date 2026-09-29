@@ -2,7 +2,8 @@ import { ArrowUp, AtSign, CornerDownLeft, Globe2, Mic, X } from "lucide-react";
 import { forwardRef, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import type { KnowledgeBase } from "../../atlas";
 import { LibraryGlyph } from "../../design/LibraryGlyph";
-import { useDictation } from "../../services/useDictation";
+import { useDictatedField } from "../../services/useDictatedField";
+import { withShortcut } from "../../shortcuts/shortcuts";
 
 export interface SearchComposerHandle {
   focus: () => void;
@@ -110,17 +111,8 @@ export const SearchComposer = forwardRef<SearchComposerHandle, SearchComposerPro
   const listId = useId();
   const hintId = useId();
 
-  const latest = useRef(value);
-  latest.current = value;
-  const dictation = useDictation((text) => {
-    const before = latest.current;
-    const spacer = before && !/\s$/.test(before) && !/^[\u3000-\u9fff\uff00-\uffef]/.test(text) ? " " : "";
-    latest.current = `${before}${spacer}${text}`;
-    onValueChange(latest.current);
-    pendingCaret.current = latest.current.length;
-  });
-  const listening = dictation.state === "listening" || dictation.state === "starting";
-  const dictating = dictation.state !== "idle";
+  const dictation = useDictatedField(value, onValueChange, { onAppended: (next) => { pendingCaret.current = next.length; } });
+  const { listening, dictating } = dictation;
 
   useImperativeHandle(ref, () => ({ focus: () => textarea.current?.focus() }), []);
 
@@ -264,7 +256,7 @@ export const SearchComposer = forwardRef<SearchComposerHandle, SearchComposerPro
           onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? 0)}
           onKeyDown={handleKeyDown}
           onBlur={() => setDismissedStart(trigger?.start ?? null)}
-          onFocus={() => setDismissedStart(null)}
+          onFocus={() => { dictation.claim(); setDismissedStart(null); }}
         />
       </div>
 
@@ -279,7 +271,7 @@ export const SearchComposer = forwardRef<SearchComposerHandle, SearchComposerPro
         </button>
         {picker}
         <span className="gx-composer-hint" id={hintId} role={dictation.error ? "alert" : undefined}>{dictation.error ?? (dictating ? (dictation.state === "finishing" ? "Finishing…" : "Listening… click the mic to stop") : hint)}</span>
-        <button type="button" className={`gx-tool gx-tool-icon gx-mic ${dictating ? "is-on" : ""}`} onClick={() => (listening ? dictation.stop() : dictation.state === "idle" ? void dictation.start() : undefined)} aria-pressed={listening} aria-label={listening ? "Stop voice input" : "Voice input"} title={listening ? "Stop voice input" : "Speak instead of typing"}>
+        <button type="button" className={`gx-tool gx-tool-icon gx-mic ${dictating ? "is-on" : ""}`} onClick={dictation.toggle} aria-pressed={listening} aria-label={listening ? "Stop voice input" : "Voice input"} title={withShortcut(listening ? "Stop voice input" : "Speak instead of typing", "dictate")}>
           <Mic size={15} />
         </button>
         {(value || mentionIds.length > 0) && (

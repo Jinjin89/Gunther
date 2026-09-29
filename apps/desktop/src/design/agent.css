@@ -128,3 +128,12 @@
 
 /* Home's follow-up: same treatment, the ring on the field's own border instead of an outline. */
 .gx-home-followup input:focus-visible { outline: 0; border-color: color-mix(in srgb, var(--gx-ink) 32%, transparent); box-shadow: none; }
+
+/* Voice input beside Send, in the library Ask box. */
+.composer-actions { display: flex; align-items: center; gap: 4px; }
+.mic-button { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; color: var(--gx-ink-3, currentColor); }
+.mic-button:hover:not(:disabled) { background: var(--gx-hover); color: var(--gx-ink); }
+.mic-button:disabled { opacity: .3; }
+.mic-button.is-on { background: var(--gx-hover); color: var(--gx-ink); }
+.mic-button.is-on svg { animation: gx-mic-pulse 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .mic-button.is-on svg { animation: none; } }
