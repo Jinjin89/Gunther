@@ -21,3 +21,19 @@
 .structured-block footer { display: flex; gap: 12px; align-items: center; justify-content: space-between; font-size: 12px; }
 .structured-block a { color: #22856c; }
 @media (max-width: 640px) { .topic-manager { margin: 0 16px 24px; padding: 16px; } .topic-manager form { grid-template-columns: 1fr; } .topic-manager-list article { flex-wrap: wrap; } }
+.topic-manager-actions { display: flex; align-items: center; gap: 12px; }
+.topic-suggestions, .topic-overview { margin: 16px 0; padding: 16px; border: 1px solid var(--border, #deded6); border-radius: 12px; }
+.topic-suggestions > header { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; }
+.topic-suggestion-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }
+.topic-suggestion-list article { display: grid; gap: 8px; align-content: start; padding: 14px; border: 1px solid var(--border, #deded6); border-radius: 10px; min-width: 0; overflow: hidden; }
+.topic-suggestion-list label, .topic-suggestion-list input { min-width: 0; box-sizing: border-box; }
+.topic-suggestion-list ul { min-width: 0; overflow: hidden; }
+.topic-suggestion-list small { color: var(--text-muted, #737d76); overflow-wrap: anywhere; }
+.topic-suggestion-list ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.45; }
+.topic-suggestion-list li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topic-suggestion-list button { justify-self: start; }
+.topic-overview { margin-top: 0; }
+.topic-overview > small { display: block; margin-bottom: 8px; color: var(--text-muted, #737d76); }
+.topic-overview-text { max-width: 72ch; }
+.topic-overview-sources { margin: 12px 0; padding-left: 22px; font-size: 13px; line-height: 1.6; }
+.topic-manager .link-button { padding: 0; border: 0; border-radius: 0; text-align: left; text-decoration: underline; text-underline-offset: 2px; }

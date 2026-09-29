@@ -10,6 +10,7 @@ from gunther.migrations import (
     LATEST_SCHEMA_VERSION,
     MIGRATION_TABLE,
     MIGRATIONS,
+    PAPER_TABLES,
     Migration,
     MigrationExecutionError,
     add_column_if_missing,
@@ -58,6 +59,7 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (12, "repair_legacy_artifact_tables"),
             (13, "reversible_trash"),
             (14, "vectors_in_sqlite_vec"),
+            (15, "paper_structure"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
@@ -110,6 +112,7 @@ def test_v10_upgrade_backfills_evidence_without_rewriting_original(tmp_path: Pat
         "processing_jobs",
         "topic_nodes",
         "topic_evidence_links",
+        *PAPER_TABLES,  # later still (v15)
     }
     legacy = MetaData()
     for table in Base.metadata.sorted_tables:

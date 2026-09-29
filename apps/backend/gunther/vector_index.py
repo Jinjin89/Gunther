@@ -24,6 +24,8 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 TABLE = re.compile(r"block_vectors_(\d+)")
+# One vector per paper (title and abstract), for topics and broad questions.
+PAPER_TABLE = re.compile(r"paper_vectors_(\d+)")
 MAX_DIMENSIONS = 4096
 # SQLite binds at most 32766 values per statement; stay well under it.
 CHUNK = 10_000
@@ -57,11 +59,11 @@ def table_name(dimensions: int) -> str:
     return f"block_vectors_{dimensions}"
 
 
-def _tables(session: Session) -> list[str]:
+def _tables(session: Session, pattern: re.Pattern[str] = TABLE) -> list[str]:
     names = session.execute(
-        text("SELECT name FROM sqlite_master WHERE name LIKE 'block_vectors_%'")
+        text("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%_vectors_%'")
     ).scalars()
-    return [name for name in names if TABLE.fullmatch(name)]
+    return [name for name in names if pattern.fullmatch(name)]
 
 
 def _blob(vector: Sequence[float]) -> bytes:
@@ -195,10 +197,70 @@ def forget_sources(session: Session, source_ids: Sequence[str]) -> None:
 
     if extension_version(session) is None:
         return
-    for table in _tables(session):
+    for table in _tables(session) + _tables(session, PAPER_TABLE):
         statement = text(f"DELETE FROM {table} WHERE source_id IN :sources").bindparams(
             bindparam("sources", expanding=True)
         )
         for sources in _chunks(source_ids):
             session.execute(statement, {"sources": sources})
 
+
+
+def _paper_table(dimensions: int) -> str:
+    return table_name(dimensions).replace("block_", "paper_")
+
+
+def store_paper(session: Session, *, source_id: str, model: str, vector: list[float]) -> None:
+    table = _paper_table(len(vector))
+    session.execute(
+        text(
+            f"CREATE VIRTUAL TABLE IF NOT EXISTS {table} USING vec0("
+            "source_id text primary key, model text, "
+            f"embedding float[{len(vector)}] distance_metric=cosine)"
+        )
+    )
+    session.execute(text(f"DELETE FROM {table} WHERE source_id = :source"), {"source": source_id})
+    session.execute(
+        text(f"INSERT INTO {table}(source_id, model, embedding) VALUES (:source, :model, :v)"),
+        {"source": source_id, "model": model, "v": _blob(vector)},
+    )
+
+
+def paper_vectors(session: Session, *, model: str, source_ids: Sequence[str]) -> dict[str, Any]:
+    """Each paper's vector (numpy), for the papers that have one."""
+
+    import numpy
+
+    found: dict[str, Any] = {}
+    for table in _tables(session, PAPER_TABLE):
+        statement = text(
+            f"SELECT source_id, embedding FROM {table} "
+            "WHERE model = :model AND source_id IN :sources"
+        ).bindparams(bindparam("sources", expanding=True))
+        for sources in _chunks(source_ids):
+            for source_id, embedding in session.execute(
+                statement, {"model": model, "sources": sources}
+            ):
+                found[source_id] = numpy.frombuffer(embedding, dtype=numpy.float32)
+    return found
+
+
+def nearest_papers(
+    session: Session, *, model: str, query: Sequence[float], source_ids: Sequence[str], k: int
+) -> list[tuple[str, float]]:
+    """The k papers whose title and abstract are closest to the query."""
+
+    table = _paper_table(len(query))
+    if table not in _tables(session, PAPER_TABLE) or not source_ids:
+        return []
+    statement = text(
+        f"SELECT source_id, distance FROM {table} WHERE embedding MATCH :query AND k = :k "
+        "AND model = :model AND source_id IN :sources"
+    ).bindparams(bindparam("sources", expanding=True))
+    found: list[tuple[str, float]] = []
+    for sources in _chunks(source_ids):
+        rows = session.execute(
+            statement, {"query": _blob(query), "k": k, "model": model, "sources": sources}
+        )
+        found.extend((source_id, 1.0 - distance) for source_id, distance in rows)
+    return sorted(found, key=lambda item: item[1], reverse=True)[:k]

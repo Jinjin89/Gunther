@@ -106,6 +106,62 @@ sqlite-vec version, passages and how many have vectors, pending embedding jobs, 
 last fallback; Settings shows the same as "Search by meaning". When the model or the
 extension is missing, search is keyword-only and capture is unaffected.
 
+## Papers at scale (schema 15)
+
+Built for a library of about a thousand papers. Measured on 11 real arXiv PDFs
+(Linux, four CPU threads): upload about 1 s; reading, embedding and summarising
+about 5 s per paper in the background, so a thousand papers take roughly 1.5 hours
+and are searchable as they finish.
+
+**Passages.** PDF text is reflowed before it becomes the source body: printed lines
+join into paragraphs, a line-end hyphen is removed only when the document itself uses
+the joined word ("mod-els" becomes "models", "open-source" stays), ligatures become
+letters, and section headings ("3.2.1 Scaled Dot-Product Attention", "References")
+become Markdown headings, so every passage carries its section path. A block is a
+passage of whole sentences up to 600 characters instead of one sentence or one printed
+line; offsets still point at exact substrings. The E5 report went from 622 blocks to
+112. Passages under References are kept out of search; title pages, emails, figure
+labels, table rows and fragments under six words are searchable by keyword but get no
+vector, because in E5 they resemble every question a little. Parser v2 revisions
+replace v1 ones: existing files are parsed again once, in the background.
+
+**Papers** (`source_papers`, `summary.md`). After each parse a `summarize` job reads,
+without a model: the title (the largest type on a PDF's first page, with small caps;
+else PDF metadata; else the source title), authors (between the title and the
+abstract), year (arXiv id, a dated notice, or the PDF date), DOI or arXiv id, the
+abstract with the blocks it came from, and the section outline. On the 11 test papers
+every title, author list, year and abstract came out right. A source still named after
+its file takes the paper's title. With the local model, the title and abstract also
+become one paper vector (`paper_vectors_<width>`).
+
+**Copies** (`works`). Sources with the same DOI or arXiv id, or failing that the same
+title (20 characters or more), share a work: two versions of "Attention Is All You
+Need" count as one paper. Topics, overviews and paper-level answers use one copy.
+
+**Topics.** A topic can hold whole sources (`topic_sources`) as well as passages.
+`GET /knowledge-bases/{id}/topic-suggestions` groups the papers not yet in a topic:
+spherical k-means (seeded, so stable) over paper vectors, or TF-IDF of titles and
+abstracts without the model; about √(n/2) groups, at most 15, each named by its most
+distinctive terms. Creating a topic with `sourceIds` files them. Asking a topic of
+papers searches all of them.
+
+**Overviews** (`topic_syntheses`, `Topics/<topic>.md`). `POST
+…/topics/{topic}/overview` writes one page: without a model, each paper by year with
+authors and the opening of its abstract, cited `[n]` to the abstract's own blocks.
+With `DEEPSEEK_API_KEY`, DeepSeek writes a synthesis (overview, lines of work,
+agreements, open questions) from at most 40 abstracts, the most central ones; an
+answer citing a number it was not given is discarded for the local page.
+
+**Ask.** In a library of 12 sources or more, a question also gets the abstracts of up
+to four closest papers not already cited (paper vectors), so a broad question sees the
+breadth of the library, not only the few best passages.
+
+Limits: multilingual-e5-small separates Chinese questions about English papers well
+when they are specific ("医学图像分割用什么网络？" finds U-Net at 0.85, the rest below
+0.80) and poorly when they are vague: scores then sit together near 0.82. A larger
+model or translating the question first would help. Author and title reading is
+heuristic; unusual layouts can still come out wrong, and the original is unchanged.
+
 ## Optional Docling layout parsing
 
 Set `DOCLING_PYTHON` to an absolute Python interpreter in a separately provisioned
@@ -192,6 +248,6 @@ This is a production-oriented foundation, not a production certification.
   does not invent word alignment, speaker identities, or transcribe raw audio uploads.
 - PDF/OCR safety limits can produce partial results; resumable page-by-page parsing
   for very large books is not yet implemented.
-- AI topic suggestions, topic merging/deletion, multimodal visual retrieval, reranking,
-  GraphRAG/RAPTOR and hierarchical summaries are not enabled.
+- Topic merging/deletion, multimodal visual retrieval, reranking and model-written
+  per-paper summaries are not enabled; topic suggestions and overviews are.
 - Keep untrusted retrieved content as evidence, never as instructions to execute tools.

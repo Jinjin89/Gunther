@@ -45,6 +45,9 @@ import type {
   SourceStructure,
   SourceProcessing,
   RetrievalStatus,
+  SourcePaper,
+  TopicOverview,
+  TopicSuggestions,
   StorageStatus,
   TrashItem,
   TrashItemKind,
@@ -403,6 +406,17 @@ export const knowledgeApi = {
     `/knowledge-bases/${encodeURIComponent(baseId)}/topics${id ? `/${encodeURIComponent(id)}` : ""}`,
     { method: id ? "PATCH" : "POST", body: JSON.stringify(payload) },
   ),
+  fileTopicSources: (baseId: string, topicId: string, sourceIds: string[]) => request<KnowledgeTopic>(
+    `/knowledge-bases/${encodeURIComponent(baseId)}/topics/${encodeURIComponent(topicId)}/sources`,
+    { method: "POST", body: JSON.stringify({ sourceIds }) },
+  ),
+  topicSuggestions: (baseId: string) => request<TopicSuggestions>(`/knowledge-bases/${encodeURIComponent(baseId)}/topic-suggestions`),
+  topicOverview: (baseId: string, topicId: string) => request<TopicOverview>(`/knowledge-bases/${encodeURIComponent(baseId)}/topics/${encodeURIComponent(topicId)}/overview`),
+  writeTopicOverview: (baseId: string, topicId: string) => request<TopicOverview>(
+    `/knowledge-bases/${encodeURIComponent(baseId)}/topics/${encodeURIComponent(topicId)}/overview`,
+    { method: "POST" },
+  ),
+  sourcePaper: (id: string) => request<SourcePaper>(`/sources/${encodeURIComponent(id)}/paper`),
   linkTopicEvidence: (baseId: string, topicId: string, blockId: string) => request<KnowledgeTopic>(
     `/knowledge-bases/${encodeURIComponent(baseId)}/topics/${encodeURIComponent(topicId)}/evidence`,
     { method: "POST", body: JSON.stringify({ blockId }) },

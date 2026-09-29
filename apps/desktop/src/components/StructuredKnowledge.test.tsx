@@ -8,7 +8,7 @@ import { TopicManager } from "./TopicManager";
 
 const topic: KnowledgeTopic = {
   id: "topic_1", knowledgeBaseId: "biology", parentId: null, title: "Genomics",
-  description: "Study genes", position: 0, version: 2, blockIds: [],
+  description: "Study genes", position: 0, version: 2, blockIds: [], sourceIds: [],
 };
 const ready: SourceStructure = {
   sourceId: "source_1", revisionId: "revision_1", parser: "text-v1", nextOffset: null,
@@ -70,6 +70,49 @@ describe("Knowledge topics", () => {
     await user.click(screen.getByRole("button", { name: "Add topic" }));
     expect(save).toHaveBeenCalledWith("biology", expect.objectContaining({ title: "Quality control", parentId: "topic_1" }), undefined);
     await waitFor(() => expect(changed).toHaveBeenCalledOnce());
+  });
+
+  it("turns a suggested group of papers into a topic", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(knowledgeApi, "topicSuggestions").mockResolvedValue({
+      suggestions: [{ key: "k1", title: "Rocket · Fuel", keywords: ["rocket", "fuel"], sourceIds: ["s1", "s2"], examples: ["Reusable boosters", "Liquid oxygen"], years: [2019, 2024] }],
+      unfiled: 9, method: "semantic", reason: null,
+    });
+    const save = vi.spyOn(knowledgeApi, "saveTopic").mockResolvedValue({ ...topic, id: "topic_2", sourceIds: ["s1", "s2"] });
+    const changed = vi.fn();
+    render(<TopicManager baseId="biology" topics={[topic]} onChange={changed} onAsk={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Suggest topics" }));
+    expect(await screen.findByText("9 papers not in a topic, grouped by meaning.")).toBeVisible();
+    expect(screen.getByText("2 papers · 2019–2024 · rocket, fuel")).toBeVisible();
+    const name = screen.getByDisplayValue("Rocket · Fuel");
+    await user.clear(name);
+    await user.type(name, "Launch vehicles");
+    await user.click(screen.getByRole("button", { name: "Create topic" }));
+    expect(save).toHaveBeenCalledWith("biology", expect.objectContaining({ title: "Launch vehicles", sourceIds: ["s1", "s2"] }));
+    await waitFor(() => expect(changed).toHaveBeenCalledOnce());
+    expect(await screen.findByText("All suggestions are now topics.")).toBeVisible();
+  });
+
+  it("writes a topic overview and opens a cited paper", async () => {
+    const user = userEvent.setup();
+    const filed = { ...topic, sourceIds: ["s1"] };
+    vi.spyOn(knowledgeApi, "topicOverview").mockRejectedValue(new Error("This topic has no overview yet"));
+    const write = vi.spyOn(knowledgeApi, "writeTopicOverview").mockResolvedValue({
+      topicId: "topic_1", markdown: "# Genomics\n\n1 paper.\n\n## Papers\n\nGenome quality needs controls. [1]\n",
+      citations: [{ number: 1, sourceId: "s1", sourceTitle: "Quality paper", blockId: "b1", revisionId: "r1", quote: "Genome quality needs controls." }],
+      method: "local", sourceCount: 1, createdAt: "2026-09-28T10:00:00",
+    });
+    const open = vi.fn();
+    render(<TopicManager baseId="biology" topics={[filed]} onChange={vi.fn()} onAsk={vi.fn()} onOpenSource={open} />);
+    expect(screen.getByText("1 paper")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Overview" }));
+    await user.click(await screen.findByRole("button", { name: "Write overview" }));
+    expect(write).toHaveBeenCalledWith("biology", "topic_1");
+    expect(await screen.findByText("Genome quality needs controls. [1]")).toBeVisible();
+    expect(screen.getByText(/From the papers’ own abstracts/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Quality paper" }));
+    expect(open).toHaveBeenCalledWith("s1");
+    expect(screen.getByRole("button", { name: "Rewrite overview" })).toBeEnabled();
   });
 
   it("retains edits and reports a version conflict", async () => {

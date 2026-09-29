@@ -96,8 +96,12 @@ from gunther.schemas import (
     WebSnapshotOut,
 )
 from gunther.source_identity import source_fingerprint
-from gunther.topics import topic_block_ids
+from gunther.topics import topic_block_ids, topic_source_ids
 from gunther.trash import live_membership_source_ids, trashed_library_ids
+
+# Libraries at least this large also get paper-level answers (abstracts).
+PAPER_OVERVIEW_MIN_SOURCES = 12
+PAPER_OVERVIEWS = 4
 
 
 def _id(prefix: str) -> str:
@@ -1611,9 +1615,22 @@ class KnowledgeService:
             if knowledge_session.focus_chapter_id and knowledge_session.focus_chapter_id.startswith(
                 "topic_"
             ):
-                block_scope = topic_block_ids(
-                    session, knowledge_session.knowledge_base_id, knowledge_session.focus_chapter_id
-                )
+                base_id = knowledge_session.knowledge_base_id
+                topic_id = knowledge_session.focus_chapter_id
+                block_scope = topic_block_ids(session, base_id, topic_id)
+                filed = topic_source_ids(session, base_id, topic_id)
+                if filed:
+                    # A topic of whole papers: ask all of them, and the sources of any
+                    # passages linked to it one by one.
+                    linked = set(filed) | set(
+                        session.scalars(
+                            select(SourceRevision.source_id)
+                            .join(ContentBlock, ContentBlock.revision_id == SourceRevision.id)
+                            .where(ContentBlock.id.in_(block_scope))
+                        )
+                    )
+                    scoped_source_ids = [item for item in scoped_source_ids if item in linked]
+                    block_scope = None
             assertion_query = assertion_query.where(Assertion.source_id.in_(scoped_source_ids))
             scoped_sources = (
                 list(
@@ -1711,6 +1728,32 @@ class KnowledgeService:
                     source_title=hit.source.title, quote=hit.block.content,
                     locator=hit.block.locator, status="provisional", confidence=0.0,
                 ))
+
+            # In a large library a broad question needs the papers, not only the few
+            # passages that match best: add the abstracts of the closest papers.
+            if block_scope is None and len(scoped_source_ids) >= PAPER_OVERVIEW_MIN_SOURCES:
+                for paper, block in self.index.nearest_papers(
+                    session,
+                    scoped_source_ids,
+                    payload.content,
+                    limit=PAPER_OVERVIEWS,
+                    exclude={c.source_id for c in citations},
+                ):
+                    source = session.get(Source, paper.source_id)
+                    citations.append(ConversationCitationOut(
+                        id=_id("cit"), source_id=source.id, source_title=source.title,
+                        quote=paper.abstract[:900], locator="Abstract",
+                        status="provisional", confidence=0.0,
+                        source_revision_id=paper.revision_id,
+                        block_id=block.id if block else None,
+                        anchor=json.loads(block.anchor_json) if block else {},
+                    ))
+                    claims.append(GroundingClaim(
+                        subject=paper.title, predicate="is summarized as",
+                        object=paper.abstract[:900], source_title=source.title,
+                        quote=paper.abstract[:900], locator="Abstract",
+                        status="provisional", confidence=0.0,
+                    ))
 
             history = [(message.role, message.content) for message in knowledge_session.messages]
             response = self.responder.respond(payload.content.strip(), claims, history)

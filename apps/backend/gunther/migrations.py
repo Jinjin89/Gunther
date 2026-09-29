@@ -396,6 +396,17 @@ def _drop_json_vectors(connection: Connection, _metadata: MetaData) -> None:
         connection.exec_driver_sql("DELETE FROM block_embeddings WHERE vector_json != ''")
 
 
+PAPER_TABLES = ("works", "source_papers", "topic_sources", "topic_syntheses")
+
+
+def _create_paper_structure(connection: Connection, metadata: MetaData) -> None:
+    """Papers, their copies, topics of whole papers, and topic overviews."""
+
+    for name in PAPER_TABLES:
+        if name in metadata.tables:
+            metadata.tables[name].create(bind=connection, checkfirst=True)
+
+
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
 MIGRATIONS: tuple[Migration, ...] = (
@@ -413,6 +424,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(12, "repair_legacy_artifact_tables", _repair_legacy_artifact_tables),
     Migration(13, "reversible_trash", _add_trash),
     Migration(14, "vectors_in_sqlite_vec", _drop_json_vectors),
+    Migration(15, "paper_structure", _create_paper_structure),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

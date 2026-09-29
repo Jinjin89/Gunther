@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { knowledgeApi, sourceAssetUrl } from "../../api";
 import { MarkdownView } from "../../components/markdown/MarkdownView";
 import { extensionOf, formatBytes, mediaTypeLabel, parseDelimitedTable, readableOriginal, withoutRepeatedTitle, type DelimitedTable, type FileContent } from "../sourceContent";
+import { PaperCard } from "./PaperCard";
 import { ContextNote, PlainText } from "./ReaderViews";
 import { DataTable } from "./TableView";
 
@@ -286,6 +287,7 @@ export function DocumentBody({ source, file }: { source: SourceDetail; file: Fil
   return (
     <div className="gx-reader">
       <FileCard source={source} file={file} pages={pages} state={state} onReprocess={structure.reprocess} />
+      {state === "ready" || state === "partial" ? <PaperCard sourceId={source.id} revisionId={structure.data?.revisionId} /> : null}
       <ContextNote text={file.context} />
       {structure.data?.processing.warning && blocks.length > 0 && <p className="gx-reader-warning"><CircleAlert size={13} />{structure.data.processing.warning}</p>}
       {content}

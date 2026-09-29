@@ -8,7 +8,7 @@ vi.mock("../api", () => ({ knowledgeApi: api }));
 const status = { semanticConfigured: true, semanticOffReason: null, model: "e5-onnx:v1", warning: null, passages: 1200, embeddedBlocks: 1200, embeddingJobs: 0 };
 
 describe("SemanticSearchSetting", () => {
-  beforeEach(() => api.retrievalStatus.mockReset());
+  beforeEach(() => { api.retrievalStatus.mockReset(); });
 
   it("shows that search by meaning is on", async () => {
     api.retrievalStatus.mockResolvedValue(status);

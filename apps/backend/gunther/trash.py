@@ -24,7 +24,7 @@ from pathlib import Path
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
-from gunther import vector_index
+from gunther import papers, vector_index
 from gunther.database import session_scope
 from gunther.knowledge_index import new_id
 from gunther.models import (
@@ -383,6 +383,7 @@ class TrashService:
             session.execute(delete(Source).where(Source.id.in_(source_ids)))
             # Virtual tables sit outside foreign keys, so vectors go explicitly.
             vector_index.forget_sources(session, source_ids)
+            papers.drop_orphan_works(session)
         session.flush()
 
         files: list[Path] = []

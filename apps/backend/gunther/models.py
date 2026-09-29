@@ -609,3 +609,82 @@ class ArtifactUnitBinding(Base):
         ForeignKey("knowledge_unit_revisions.id", ondelete="RESTRICT"), index=True
     )
     content_hash: Mapped[str] = mapped_column(String(64))
+
+
+class Work(Base):
+    """One paper (or book, or talk), however many copies of it were captured.
+
+    Copies share a work when they carry the same DOI or arXiv id, or failing
+    that the same title. ``identifier`` is ``doi:…`` or ``arxiv:…``.
+    """
+
+    __tablename__ = "works"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    identifier: Mapped[str | None] = mapped_column(String(240), nullable=True, unique=True)
+    title_key: Mapped[str] = mapped_column(String(300), index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
+class SourcePaper(Base):
+    """What a source says about itself, read from its current revision.
+
+    Title, authors, year, identifiers, abstract and outline are drawn from the
+    text without a model; ``summary_md`` is the readable ``summary.md``.
+    """
+
+    __tablename__ = "source_papers"
+
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("sources.id", ondelete="CASCADE"), primary_key=True
+    )
+    revision_id: Mapped[str] = mapped_column(
+        ForeignKey("source_revisions.id", ondelete="CASCADE"), index=True
+    )
+    work_id: Mapped[str | None] = mapped_column(
+        ForeignKey("works.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    title: Mapped[str] = mapped_column(String(300))
+    authors: Mapped[str] = mapped_column(Text, default="")
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    doi: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    arxiv_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    abstract: Mapped[str] = mapped_column(Text, default="")
+    abstract_block_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    outline_json: Mapped[str] = mapped_column(Text, default="[]")
+    summary_md: Mapped[str] = mapped_column(Text, default="")
+    # The embedding model whose paper vector is stored (vector_index), if any.
+    vector_model: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
+class TopicSourceLink(Base):
+    """A whole source filed under a topic, as opposed to one of its passages."""
+
+    __tablename__ = "topic_sources"
+    __table_args__ = (UniqueConstraint("topic_id", "source_id"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    topic_id: Mapped[str] = mapped_column(
+        ForeignKey("topic_nodes.id", ondelete="CASCADE"), index=True
+    )
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("sources.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
+class TopicSynthesis(Base):
+    """The latest written overview of a topic, with the passages it cites."""
+
+    __tablename__ = "topic_syntheses"
+
+    topic_id: Mapped[str] = mapped_column(
+        ForeignKey("topic_nodes.id", ondelete="CASCADE"), primary_key=True
+    )
+    markdown: Mapped[str] = mapped_column(Text)
+    citations_json: Mapped[str] = mapped_column(Text, default="[]")
+    method: Mapped[str] = mapped_column(String(120))
+    source_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)

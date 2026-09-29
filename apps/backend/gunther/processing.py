@@ -11,12 +11,12 @@ from threading import Event
 
 from sqlalchemy import and_, or_, select, update
 
-from gunther import vector_index
+from gunther import papers, vector_index
 from gunther.asset_service import AssetService, extract_asset_content
 from gunther.content import parse_content
 from gunther.database import session_scope
 from gunther.document_parser import DoclingParser
-from gunther.knowledge_index import KnowledgeIndex, new_id
+from gunther.knowledge_index import ASSET_PARSER, KnowledgeIndex, embeddable, new_id
 from gunther.models import (
     Asset,
     BlockEmbedding,
@@ -120,6 +120,23 @@ class ProcessingWorker:
                     path, _, _ = self.assets.download(asset.id)
                     file_name, media_type = asset.original_name, asset.media_type
                     source_content = source.content
+                elif kind == "summarize":
+                    revision_id = job.revision_id
+                    model_id = job.model_id
+                    source_title = source.title
+                    file_name = asset.original_name if asset else None
+                    pdf_path = (
+                        self.assets.download(asset.id)[0]
+                        if asset and asset.media_type == "application/pdf"
+                        else None
+                    )
+                    blocks = list(
+                        session.scalars(
+                            select(ContentBlock)
+                            .where(ContentBlock.revision_id == revision_id)
+                            .order_by(ContentBlock.ordinal)
+                        )
+                    )
                 else:
                     head = session.get(SourceIndexHead, source_id)
                     revision_id = job.revision_id or (head.revision_id if head else None)
@@ -127,10 +144,7 @@ class ProcessingWorker:
                     blocks = list(
                         session.scalars(
                             select(ContentBlock)
-                            .where(
-                                ContentBlock.revision_id == revision_id,
-                                ContentBlock.kind != "heading",
-                            )
+                            .where(ContentBlock.revision_id == revision_id, *embeddable())
                             .order_by(ContentBlock.ordinal)
                         )
                     )
@@ -143,7 +157,7 @@ class ProcessingWorker:
                     source_content + "\n\n## Extracted content\n\n" + extracted.text
                 )
                 warning = extracted.limitation
-                parser = "gunther-asset-v1"
+                parser = ASSET_PARSER
                 if self.document_parser and media_type == "application/pdf":
                     try:
                         structured = self.document_parser.parse(path)
@@ -189,6 +203,16 @@ class ProcessingWorker:
                         ):
                             raise ValueError("Embedding provider returned an invalid vector")
                         vectors.append((block.id, vector))
+            elif kind == "summarize":
+                facts = papers.read_paper(
+                    source_title, blocks, papers.pdf_facts(pdf_path) if pdf_path else None
+                )
+                paper_vector = None
+                embedder = self.index.embedder
+                if embedder and model_id == embedder.model_id and papers.paper_text(facts):
+                    paper_vector = embedder.encode([papers.paper_text(facts)])[0]
+                    if not paper_vector or not all(math.isfinite(v) for v in paper_vector):
+                        raise ValueError("Embedding provider returned an invalid vector")
             else:
                 raise ValueError("Processing provider is not configured")
 
@@ -210,6 +234,16 @@ class ProcessingWorker:
                 source = session.get(Source, source_id)
                 if kind == "parse_asset":
                     self.index.publish(session, source, parsed, parser=parser, warning=warning)
+                elif kind == "summarize":
+                    papers.publish(
+                        session,
+                        source,
+                        revision_id,
+                        facts,
+                        file_name=file_name,
+                        model=model_id if paper_vector is not None else None,
+                        vector=paper_vector,
+                    )
                 else:
                     vector_index.store(
                         session,

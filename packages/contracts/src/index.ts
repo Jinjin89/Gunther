@@ -143,9 +143,72 @@ export interface KnowledgeTopic {
   position: number;
   version: number;
   blockIds: string[];
+  /** Whole sources filed under this topic. */
+  sourceIds: string[];
 }
 
-export type TopicInput = Pick<KnowledgeTopic, "title" | "description" | "parentId" | "position"> & { version?: number };
+export type TopicInput = Pick<KnowledgeTopic, "title" | "description" | "parentId" | "position"> & {
+  version?: number;
+  /** Whole sources to file under a new topic. */
+  sourceIds?: string[];
+};
+
+/** A group of papers, not yet in a topic, that could become one. */
+export interface TopicSuggestion {
+  key: string;
+  title: string;
+  keywords: string[];
+  sourceIds: string[];
+  /** Titles of the most typical papers in the group. */
+  examples: string[];
+  years: [number, number] | null;
+}
+
+export interface TopicSuggestions {
+  suggestions: TopicSuggestion[];
+  /** Papers not in any topic yet (copies counted once). */
+  unfiled: number;
+  method: "semantic" | "keywords" | null;
+  /** Why there are no suggestions, when there are none. */
+  reason: string | null;
+}
+
+export interface TopicOverviewCitation {
+  number: number;
+  sourceId: string;
+  sourceTitle: string;
+  blockId: string | null;
+  revisionId: string;
+  quote: string;
+}
+
+/** A topic's written overview, cited to its papers' abstracts. */
+export interface TopicOverview {
+  topicId: string;
+  markdown: string;
+  citations: TopicOverviewCitation[];
+  /** "local" (the papers' own abstracts) or "deepseek:<model>". */
+  method: string;
+  sourceCount: number;
+  createdAt: string;
+}
+
+/** What a source says about itself: read from its text, without a model. */
+export interface SourcePaper {
+  sourceId: string;
+  revisionId: string;
+  title: string;
+  authors: string;
+  year: number | null;
+  doi: string | null;
+  arxivId: string | null;
+  abstract: string;
+  abstractBlockIds: string[];
+  outline: string[];
+  summaryMarkdown: string;
+  /** Other sources that are copies of the same paper. */
+  copies: { id: string; title: string }[];
+}
 
 export const inboxItemTypes = ["source", "quick_note", "knowledge_suggestion"] as const;
 export type InboxItemType = typeof inboxItemTypes[number];

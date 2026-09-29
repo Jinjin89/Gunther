@@ -399,17 +399,19 @@ def test_topic_assertions_choose_scoped_evidence_and_its_pinned_revision(tmp_pat
 def test_embedding_backfill_after_enabling_model_pins_revision(tmp_path):
     with client_for(tmp_path) as client:
         index = client.app.state.knowledge_service.index
-        src = source(client, base(client), "Felines eat fish.")
+        src = source(client, base(client), "Felines eat fish most days of the week.")
         old_revision = client.get(f"/api/sources/{src}/structure").json()["revisionId"]
         index.embedder = FakeEmbedder()
         index.backfill()
         with session_scope(index.sessions) as session:
             job = session.scalar(select(ProcessingJob).where(ProcessingJob.kind == "embed"))
             assert job.revision_id == old_revision
-            index.publish(session, session.get(Source, src), parse_content("Updated feline notes."))
-        worker = client.app.state.processing_worker
-        assert worker.run_once()
-        assert worker.run_once()
+            index.publish(
+                session,
+                session.get(Source, src),
+                parse_content("Updated feline notes about their diet."),
+            )
+        drain(client)
         with session_scope(index.sessions) as session:
             # The pinned old revision and the new one both have vectors ...
             assert session.scalar(text("SELECT count(*) FROM block_vectors_2")) == 2
@@ -431,8 +433,8 @@ def test_optional_semantic_retrieval_is_scoped_and_falls_back_safely(tmp_path):
         index = client.app.state.knowledge_service.index
         index.embedder = FakeEmbedder()
         biology, other = base(client), base(client, "Other")
-        kept = source(client, biology, "Felines eat fish.")
-        source(client, other, "Classified dietary information.")
+        kept = source(client, biology, "Felines eat fish most days of the week.")
+        source(client, other, "Classified dietary information for staff.")
         worker = client.app.state.processing_worker
         while worker.run_once():
             pass
@@ -473,14 +475,17 @@ def vector_rows(index, table: str = "block_vectors_4") -> int:
         return session.scalar(text(f"SELECT count(*) FROM {table}"))
 
 
+ROCKETS = "Rockets burn fuel to reach orbit."
+
+
 def test_semantic_search_reads_current_revisions_and_forgets_deleted_sources(tmp_path):
     with client_for(tmp_path) as client:
         index = client.app.state.knowledge_service.index
         index.embedder = AxisEmbedder()
-        src = source(client, base(client), "Felines eat fish.")
+        src = source(client, base(client), "Felines eat fish most days of the week.")
         drain(client)
         with session_scope(index.sessions) as session:
-            index.publish(session, session.get(Source, src), parse_content("Rockets burn fuel."))
+            index.publish(session, session.get(Source, src), parse_content(ROCKETS))
         drain(client)
         assert vector_rows(index) == 2
 
@@ -488,7 +493,7 @@ def test_semantic_search_reads_current_revisions_and_forgets_deleted_sources(tmp
             # The old revision's vector is still stored but never returned.
             assert index.retrieve(session, [src], "fish supper") == []
             [hit] = index.retrieve(session, [src], "rocket launch")
-            assert (hit.block.content, hit.method) == ("Rockets burn fuel.", "semantic")
+            assert (hit.block.content, hit.method) == (ROCKETS, "semantic")
 
         client.post(f"/api/sources/{src}/trash")
         assert vector_rows(index) == 2  # restorable, so kept

@@ -4,16 +4,20 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import Field, field_validator
 from sqlalchemy import func, select, update
 
-from gunther import vector_index
+from gunther import library_topics, papers, vector_index
 from gunther.database import session_scope
-from gunther.knowledge_index import enqueue
+from gunther.knowledge_index import embeddable, enqueue
 from gunther.models import (
     BlockEmbedding,
     ContentBlock,
+    KnowledgeBaseRecord,
     ProcessingJob,
     Source,
     SourceIndexHead,
+    SourcePaper,
     SourceRevision,
+    TopicNode,
+    TopicSynthesis,
     utc_now,
 )
 from gunther.schemas import ApiModel
@@ -28,6 +32,8 @@ class TopicInput(ApiModel):
     parent_id: str | None = Field(default=None, max_length=160)
     position: int = Field(default=0, ge=0, le=100_000)
     version: int = Field(default=1, ge=1)
+    # Whole sources to file under a new topic (an accepted suggestion).
+    source_ids: list[str] = Field(default_factory=list, max_length=10_000)
 
     @field_validator("title")
     @classmethod
@@ -39,6 +45,10 @@ class TopicInput(ApiModel):
 
 class EvidenceInput(ApiModel):
     block_id: str = Field(min_length=1, max_length=160)
+
+
+class TopicSourcesInput(ApiModel):
+    source_ids: list[str] = Field(min_length=1, max_length=10_000)
 
 
 def structure_error(error: Exception) -> HTTPException:
@@ -61,8 +71,9 @@ def list_topics(base_id: str, request: Request):
 @router.post("/knowledge-bases/{base_id}/topics", status_code=201)
 def create_topic(base_id: str, payload: TopicInput, request: Request):
     try:
+        values = payload.model_dump(exclude={"source_ids"})
         return TopicService(request.app.state.knowledge_service.sessions).save(
-            base_id, payload.model_dump()
+            base_id, values, source_ids=payload.source_ids
         )
     except (LookupError, ValueError) as error:
         raise structure_error(error) from error
@@ -72,7 +83,7 @@ def create_topic(base_id: str, payload: TopicInput, request: Request):
 def update_topic(base_id: str, topic_id: str, payload: TopicInput, request: Request):
     try:
         return TopicService(request.app.state.knowledge_service.sessions).save(
-            base_id, payload.model_dump(exclude_unset=True), topic_id
+            base_id, payload.model_dump(exclude_unset=True, exclude={"source_ids"}), topic_id
         )
     except (LookupError, ValueError) as error:
         raise structure_error(error) from error
@@ -86,6 +97,98 @@ def link_evidence(base_id: str, topic_id: str, payload: EvidenceInput, request: 
         )
     except (LookupError, ValueError) as error:
         raise structure_error(error) from error
+
+
+@router.post("/knowledge-bases/{base_id}/topics/{topic_id}/sources")
+def file_sources(base_id: str, topic_id: str, payload: TopicSourcesInput, request: Request):
+    try:
+        return TopicService(request.app.state.knowledge_service.sessions).file_sources(
+            base_id, topic_id, payload.source_ids
+        )
+    except (LookupError, ValueError) as error:
+        raise structure_error(error) from error
+
+
+@router.delete("/knowledge-bases/{base_id}/topics/{topic_id}/sources/{source_id}")
+def unfile_source(base_id: str, topic_id: str, source_id: str, request: Request):
+    try:
+        return TopicService(request.app.state.knowledge_service.sessions).unfile_source(
+            base_id, topic_id, source_id
+        )
+    except LookupError as error:
+        raise structure_error(error) from error
+
+
+def _live_library(session, base_id: str) -> None:
+    library = session.get(KnowledgeBaseRecord, base_id)
+    if library is None or library.trashed_at is not None:
+        raise HTTPException(404, "Knowledge base was not found")
+
+
+@router.get("/knowledge-bases/{base_id}/topic-suggestions")
+def topic_suggestions(base_id: str, request: Request):
+    index = request.app.state.knowledge_service.index
+    with session_scope(index.sessions) as session:
+        _live_library(session, base_id)
+        return library_topics.suggest(
+            session, base_id, index.embedder.model_id if index.embedder else None
+        )
+
+
+@router.get("/knowledge-bases/{base_id}/topics/{topic_id}/overview")
+def topic_overview(base_id: str, topic_id: str, request: Request):
+    with session_scope(request.app.state.knowledge_service.sessions) as session:
+        _live_library(session, base_id)
+        topic = session.get(TopicNode, topic_id)
+        row = session.get(TopicSynthesis, topic_id)
+        if topic is None or topic.knowledge_base_id != base_id or row is None:
+            raise HTTPException(404, "This topic has no overview yet")
+        return library_topics.overview_out(row)
+
+
+@router.post("/knowledge-bases/{base_id}/topics/{topic_id}/overview")
+def write_topic_overview(base_id: str, topic_id: str, request: Request):
+    index = request.app.state.knowledge_service.index
+    with session_scope(index.sessions) as session:
+        _live_library(session, base_id)
+        try:
+            row = library_topics.write_overview(
+                session,
+                base_id,
+                topic_id,
+                request.app.state.topic_writer,
+                index.embedder.model_id if index.embedder else None,
+            )
+        except (LookupError, ValueError) as error:
+            raise structure_error(error) from error
+        return library_topics.overview_out(row)
+
+
+@router.get("/sources/{source_id}/paper")
+def source_paper(source_id: str, request: Request):
+    import json
+
+    with session_scope(request.app.state.knowledge_service.sessions) as session:
+        source = session.get(Source, source_id)
+        row = session.get(SourcePaper, source_id)
+        if source is None or row is None:
+            raise HTTPException(404, "This source has not been read yet")
+        return {
+            "sourceId": source_id,
+            "revisionId": row.revision_id,
+            "title": row.title,
+            "authors": row.authors,
+            "year": row.year,
+            "doi": row.doi,
+            "arxivId": row.arxiv_id,
+            "abstract": row.abstract,
+            "abstractBlockIds": json.loads(row.abstract_block_ids_json or "[]"),
+            "outline": json.loads(row.outline_json or "[]"),
+            "summaryMarkdown": row.summary_md,
+            "copies": [
+                {"id": copy.id, "title": copy.title} for copy in papers.copies(session, source_id)
+            ],
+        }
 
 
 @router.get("/sources/{source_id}/structure")
@@ -217,7 +320,7 @@ def retrieval_status(request: Request):
         current = (
             select(ContentBlock.id)
             .join(SourceIndexHead, SourceIndexHead.revision_id == ContentBlock.revision_id)
-            .where(ContentBlock.kind != "heading")
+            .where(*embeddable())
         )
         passages = session.scalar(select(func.count()).select_from(current.subquery()))
         embedded = session.scalar(

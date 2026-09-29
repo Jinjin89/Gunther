@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from gunther.database import session_scope
 from gunther.models import Asset, Source
 from gunther.ocr import OcrError, OcrPage, OcrProvider, UnavailableOcrProvider
+from gunther.pdf_text import reflow, vocabulary_of
 from gunther.schemas import (
     AssetCaptureOut,
     AssetOut,
@@ -398,6 +399,7 @@ def _pdf_text(path: Path, ocr_provider: OcrProvider) -> AssetTextExtraction:
         )
 
     pages: list[str] = []
+    raw_pages: set[int] = set()  # pages of printed lines, reflowed below
     extracted_characters = 0
     failed_pages = 0
     ocr_attempted_pages = 0
@@ -450,6 +452,7 @@ def _pdf_text(path: Path, ocr_provider: OcrProvider) -> AssetTextExtraction:
                     continue
             else:
                 block = f"<!-- gunther:page={page_number} -->\n{text.strip()}"
+                raw_pages.add(len(pages))
             separator_size = 2 if pages else 0
             remaining = MAX_EXTRACTED_CHARACTERS - extracted_characters - separator_size
             if remaining <= 0:
@@ -467,6 +470,11 @@ def _pdf_text(path: Path, ocr_provider: OcrProvider) -> AssetTextExtraction:
                 break
             pages.append(block)
             extracted_characters += separator_size + len(block)
+    # Printed lines become paragraphs; the whole document decides hyphenation.
+    vocabulary = vocabulary_of("\n".join(pages[index] for index in raw_pages))
+    for index in raw_pages:
+        marker, _, text = pages[index].partition("\n")
+        pages[index] = f"{marker}\n{reflow(text, vocabulary)}"
     if failed_pages:
         limitations.append(
             f"Text could not be safely extracted from {failed_pages:,} PDF "

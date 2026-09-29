@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   updateProposal: vi.fn(),
   knowledgeBases: vi.fn(),
   reprocessSource: vi.fn(),
+  sourcePaper: vi.fn(),
   trashSource: vi.fn(),
   trashNote: vi.fn(),
   restoreFromTrash: vi.fn(),
@@ -91,6 +92,7 @@ const renderPage = (overrides: Partial<ItemPageProps> = {}) => {
 beforeEach(() => {
   Object.values(api).forEach((mock) => mock.mockReset());
   api.sourceStructure.mockResolvedValue(structure([]));
+  api.sourcePaper.mockRejectedValue(new Error("This source has not been read yet"));
   api.fileSource.mockResolvedValue({});
   api.updateSourceAssertionStatuses.mockResolvedValue([]);
   api.updateProposal.mockResolvedValue({});

@@ -30,8 +30,11 @@ Keys, tokens and logs stay there too.
 │   └── Notes/<title>.md          quick notes waiting in Inbox
 ├── Libraries/<title>/
 │   ├── library.json              the library and where each source is
+│   ├── Overview.md               the library at a glance: topics, then papers by year
+│   ├── Topics/<topic>.md         a topic's overview, or its list of papers
 │   └── Sources/<date> <title>/
 │       ├── source.json           what it is, where it came from, your decisions
+│       ├── summary.md            title, authors, year, DOI, abstract, sections
 │       ├── content.md            its text: note, transcript or extracted text
 │       ├── original.<ext>        the captured file, when there is one
 │       └── recording.<ext>       the audio, for a recording
@@ -67,6 +70,15 @@ Keys, tokens and logs stay there too.
 `id`, `title`, `question`, `description`, `color`, `createdAt`, `trashedAt`, and
 `sources`: each with `id`, `title`, its `folder` relative to the library, and
 `alias: true` when the folder is an alias to its home elsewhere.
+
+### `summary.md`, `Overview.md` and `Topics/`
+
+Markdown for people, not a data format. `summary.md` is what the source says
+about itself, read without a model (see the backend doc, "Papers at scale").
+`Overview.md` links each topic and each source's `summary.md`, newest first.
+A topic's file is its written overview when there is one, else the list of its
+papers. Links are relative, so the folder can be moved or opened in any
+Markdown editor.
 
 ### Notes (`gunther.note/1`)
 

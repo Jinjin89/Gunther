@@ -1247,7 +1247,11 @@ def test_session_grounds_an_answer_in_raw_source_text_without_extracted_claims()
         assert citations[0]["sourceId"] == source_id
         assert citations[0]["assertionId"] is None
         assert citations[0]["locator"] == "Summary"
-        assert citations[0]["quote"] == "RNA counts need quality control before clustering."
+        # A passage of whole sentences, not a lone sentence.
+        assert citations[0]["quote"] == (
+            "RNA counts need quality control before clustering. "
+            "Doublets and low quality cells can distort downstream annotation."
+        )
         assert citations[0]["status"] == "provisional"
         assert turn["assistantMessage"]["context"] == {
             "sourcesConsidered": 1,

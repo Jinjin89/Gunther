@@ -35,6 +35,7 @@ from gunther.knowledge_api import router as knowledge_router
 from gunther.lecture import create_lecture_summarizer
 from gunther.library_folders import WATCHED_MODELS, LibraryFolders
 from gunther.library_root import LibraryRootConflict, prepare_library_root
+from gunther.library_topics import create_topic_writer
 from gunther.migrations import run_migrations
 from gunther.mobile_gateway_runtime import MobileGatewayRuntime
 from gunther.models import WorkspaceIdentity
@@ -150,6 +151,11 @@ def create_app(
         active_settings.deepseek_base_url,
     )
     knowledge_service = KnowledgeService(sessions, extractor, responder)
+    topic_writer = create_topic_writer(
+        active_settings.deepseek_api_key,
+        active_settings.deepseek_model,
+        active_settings.deepseek_base_url,
+    )
     embedder, off_reason = _semantic_search(active_settings, sessions)
     knowledge_service.index.embedder = embedder
     knowledge_service.index.semantic_off_reason = off_reason
@@ -229,6 +235,7 @@ def create_app(
     application.state.knowledge_service = knowledge_service
     application.state.processing_worker = worker
     application.state.trash_service = trash_service
+    application.state.topic_writer = topic_writer
     application.state.library_folders = library_folders
     application.state.storage_problem = storage_problem
     application.state.online_search = online_search

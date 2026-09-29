@@ -12,22 +12,39 @@ import json
 import math
 from collections import Counter
 from dataclasses import asdict, dataclass
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import uuid4
 
-from sqlalchemy import bindparam, select, text
+from sqlalchemy import bindparam, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from gunther import vector_index
-from gunther.content import ParsedBlock, parse_content, search_tokens
+from gunther.content import MIN_EMBED_CHARS, ParsedBlock, parse_content, search_tokens
 from gunther.database import session_scope
 from gunther.models import (
     ContentBlock,
     ProcessingJob,
     Source,
     SourceIndexHead,
+    SourcePaper,
     SourceRevision,
 )
+
+# Parser versions are part of a revision's fingerprint. v2 reflows PDF lines into
+# paragraphs and makes passage-sized blocks; v1 revisions are parsed again.
+TEXT_PARSER = "gunther-text-v2"
+ASSET_PARSER = "gunther-asset-v2"
+LEGACY_ASSET_PARSER = "gunther-asset-v1"
+
+
+def embeddable() -> list[Any]:
+    """SQL conditions for passages that get a vector (see content.passage_flags)."""
+
+    return [
+        ContentBlock.kind != "heading",
+        func.length(ContentBlock.content) >= MIN_EMBED_CHARS,
+        func.coalesce(func.json_extract(ContentBlock.payload_json, "$.noEmbed"), 0) == 0,
+    ]
 
 
 def new_id(prefix: str) -> str:
@@ -86,7 +103,7 @@ class KnowledgeIndex:
         source: Source,
         blocks: list[ParsedBlock],
         *,
-        parser: str = "gunther-text-v1",
+        parser: str = TEXT_PARSER,
         warning: str | None = None,
     ) -> SourceRevision:
         fingerprint = hashlib.sha256(
@@ -131,7 +148,7 @@ class KnowledgeIndex:
                 session.add(block)
                 # Flush parents before children for the self-referential foreign key.
                 session.flush()
-                if parsed.kind != "heading":
+                if parsed.kind != "heading" and not parsed.payload.get("reference"):
                     session.execute(
                         text(
                             "INSERT INTO knowledge_fts(block_id,source_id,revision_id,tokens) "
@@ -158,8 +175,25 @@ class KnowledgeIndex:
                 revision_id=revision.id,
                 model_id=self.embedder.model_id,
             )
+        if blocks:
+            self.enqueue_summary(session, source.id, revision.id)
         session.flush()
         return revision
+
+    def summary_key(self, revision_id: str) -> str:
+        return f"summarize:{revision_id}:{self.embedder.model_id if self.embedder else 'text'}"
+
+    def enqueue_summary(self, session: Session, source_id: str, revision_id: str) -> None:
+        """Read the paper's facts (and, with a model, its vector) in the background."""
+
+        enqueue(
+            session,
+            source_id,
+            "summarize",
+            self.summary_key(revision_id),
+            revision_id=revision_id,
+            model_id=self.embedder.model_id if self.embedder else None,
+        )
 
     def add_source(self, session: Session, source: Source) -> None:
         self.publish(session, source, parse_content(source.content))
@@ -180,6 +214,24 @@ class KnowledgeIndex:
             ).all()
             for source in sources:
                 self.add_source(session, source)
+            # Files parsed before passages existed are parsed again, once.
+            for source_id in session.scalars(
+                select(SourceIndexHead.source_id)
+                .join(SourceRevision, SourceRevision.id == SourceIndexHead.revision_id)
+                .join(Source, Source.id == SourceIndexHead.source_id)
+                .where(
+                    SourceRevision.parser == LEGACY_ASSET_PARSER,
+                    Source.asset_id.is_not(None),
+                    Source.trashed_at.is_(None),
+                    ~SourceIndexHead.source_id.in_(
+                        select(ProcessingJob.source_id).where(
+                            ProcessingJob.dedupe_key.like("parse_asset:%:v2")
+                        )
+                    ),
+                )
+                .limit(limit)
+            ).all():
+                enqueue(session, source_id, "parse_asset", f"parse_asset:{source_id}:v2")
             if self.embedder:
                 heads = session.scalars(
                     select(SourceIndexHead)
@@ -203,6 +255,25 @@ class KnowledgeIndex:
                         revision_id=head.revision_id,
                         model_id=self.embedder.model_id,
                     )
+            # Sources indexed before papers were read, or before the model was on.
+            summarized = select(ProcessingJob.dedupe_key).where(
+                ProcessingJob.kind == "summarize"
+            )
+            heads = session.scalars(
+                select(SourceIndexHead)
+                .join(Source, Source.id == SourceIndexHead.source_id)
+                .where(
+                    Source.trashed_at.is_(None),
+                    (
+                        "summarize:"
+                        + SourceIndexHead.revision_id
+                        + (":" + (self.embedder.model_id if self.embedder else "text"))
+                    ).not_in(summarized),
+                )
+                .limit(limit)
+            ).all()
+            for head in heads:
+                self.enqueue_summary(session, head.source_id, head.revision_id)
             return len(sources)
 
     def retrieve(
@@ -298,6 +369,50 @@ class KnowledgeIndex:
             if len(hits) >= limit:
                 break
         return hits
+
+    def nearest_papers(
+        self,
+        session: Session,
+        source_ids: list[str],
+        question: str,
+        *,
+        limit: int,
+        exclude: set[str] | None = None,
+    ) -> list[tuple[SourcePaper, ContentBlock | None]]:
+        """Papers whose title and abstract are closest to the question (semantic only).
+
+        ``exclude``: sources already cited, which are skipped rather than counted.
+        """
+
+        if not self.embedder or not source_ids:
+            return []
+        try:
+            query = self.embedder.encode([question], query=True)[0]
+            found = vector_index.nearest_papers(
+                session,
+                model=self.embedder.model_id,
+                query=query,
+                source_ids=[item for item in source_ids if item not in (exclude or set())],
+                k=limit * 3,
+            )
+        except Exception as error:
+            self.semantic_error = f"Semantic retrieval unavailable ({type(error).__name__})."
+            return []
+        floor = getattr(self.embedder, "min_similarity", 0.75)
+        results: list[tuple[SourcePaper, ContentBlock | None]] = []
+        works: set[str] = set()
+        for source_id, similarity in found:
+            paper = session.get(SourcePaper, source_id)
+            if similarity < floor or paper is None or not paper.abstract:
+                continue
+            if paper.work_id and paper.work_id in works:
+                continue  # one copy of a paper is enough
+            works.add(paper.work_id or source_id)
+            block_ids = json.loads(paper.abstract_block_ids_json or "[]")
+            results.append((paper, session.get(ContentBlock, block_ids[0]) if block_ids else None))
+            if len(results) >= limit:
+                break
+        return results
 
     def processing(self, session: Session, source_id: str) -> dict[str, object]:
         job = session.scalar(

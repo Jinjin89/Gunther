@@ -8,8 +8,11 @@ Inside the library root Gunther writes::
       Notes/<title>.md             quick notes waiting in Inbox
     Libraries/<title>/
       library.json                 the library and where each of its sources is
+      Overview.md                  the library at a glance: topics and papers
+      Topics/<topic>.md            each topic's overview, or its list of papers
       Sources/<date> <title>/      sources whose home is this library
         source.json                what it is, where it came from, your decisions
+        summary.md                 title, authors, year, abstract and outline
         content.md                 its text: the note, transcript or extracted text
         original.<ext>             the captured file, when there is one
         recording.<ext>            the audio, for a recording
@@ -54,6 +57,10 @@ from gunther.models import (
     NotebookNote,
     RecordingSession,
     Source,
+    SourcePaper,
+    TopicNode,
+    TopicSourceLink,
+    TopicSynthesis,
     WebSnapshot,
     utc_now,
 )
@@ -73,6 +80,10 @@ WATCHED_MODELS = (
     NotebookNote,
     RecordingSession,
     Source,
+    SourcePaper,
+    TopicNode,
+    TopicSourceLink,
+    TopicSynthesis,
     WebSnapshot,
 )
 
@@ -289,6 +300,22 @@ class LibraryFolders:
                     "object": object_label,
                     "status": status,
                 })
+            summaries = {row.source_id: row for row in session.scalars(select(SourcePaper))}
+            topics: dict[str, list[TopicNode]] = defaultdict(list)
+            for topic in session.scalars(
+                select(TopicNode).order_by(TopicNode.position, TopicNode.created_at, TopicNode.id)
+            ):
+                topics[topic.knowledge_base_id].append(topic)
+            filed: dict[str, list[str]] = defaultdict(list)
+            for topic_id, source_id in session.execute(
+                select(TopicSourceLink.topic_id, TopicSourceLink.source_id).order_by(
+                    TopicSourceLink.created_at, TopicSourceLink.id
+                )
+            ):
+                filed[topic_id].append(source_id)
+            overviews = {
+                row.topic_id: row.markdown for row in session.scalars(select(TopicSynthesis))
+            }
             notes = session.scalars(
                 select(NotebookNote)
                 .where(NotebookNote.status == "inbox")
@@ -357,8 +384,22 @@ class LibraryFolders:
                     "sources": listed[library.id],
                 }))
 
+            for library in libraries:
+                self._plan_knowledge(
+                    plan,
+                    library,
+                    library_folder[library.id],
+                    listed[library.id],
+                    summaries,
+                    topics[library.id],
+                    filed,
+                    overviews,
+                )
+
             for source in sources:
                 folder = home[source.id]
+                if source.id in summaries:
+                    plan.file(folder / "summary.md", summaries[source.id].summary_md.encode())
                 asset = assets.get(source.asset_id or "")
                 original = None
                 if asset is not None:
@@ -429,6 +470,74 @@ class LibraryFolders:
                 ))
                 plan.file(parent / f"{name}.md", f"{front}\n\n{note.content.rstrip()}\n".encode())
         return plan
+
+    @staticmethod
+    def _plan_knowledge(
+        plan: _Plan,
+        library: KnowledgeBaseRecord,
+        folder: PurePosixPath,
+        listed: list[dict[str, object]],
+        summaries: dict[str, SourcePaper],
+        topics: list[TopicNode],
+        filed: dict[str, list[str]],
+        overviews: dict[str, str],
+    ) -> None:
+        """``Overview.md`` and ``Topics/`` for one library."""
+
+        where = {str(item["id"]): str(item["folder"]) for item in listed}
+        titles = {str(item["id"]): str(item["title"]) for item in listed}
+
+        def link(source_id: str, prefix: str = "") -> str:
+            paper = summaries.get(source_id)
+            title = paper.title if paper else titles[source_id]
+            year = f"{paper.year} · " if paper and paper.year else ""
+            target = f"{prefix}{where[source_id]}/" + ("summary.md" if paper else "content.md")
+            return f"{year}[{title}](<{target}>)"
+
+        def by_year(ids: list[str]) -> list[str]:
+            return sorted(
+                (i for i in dict.fromkeys(ids) if i in where),
+                key=lambda i: (-(summaries[i].year or 0) if i in summaries else 0, titles[i]),
+            )
+
+        topic_names: set[str] = set()
+        topic_files: dict[str, str] = {}
+        for topic in topics:
+            name = _unique(safe_name(topic.title, "Topic"), topic_names)
+            topic_files[topic.id] = f"Topics/{name}.md"
+            if topic.id in overviews:
+                body = overviews[topic.id]
+            else:
+                lines = [f"# {topic.title}", ""]
+                if topic.description.strip():
+                    lines += [topic.description.strip(), ""]
+                lines += [f"- {link(i, '../')}" for i in by_year(filed.get(topic.id, []))]
+                body = "\n".join(lines) + "\n"
+            plan.file(folder / topic_files[topic.id], body.encode())
+
+        works = {summaries[i].work_id or i for i in where if i in summaries}
+        in_topics = {i for topic in topics for i in filed.get(topic.id, [])}
+        lines = [f"# {library.title}", ""]
+        if library.question.strip():
+            lines += [f"> {library.question.strip()}", ""]
+        if library.description.strip():
+            lines += [library.description.strip(), ""]
+        lines += [f"{len(where)} sources · {len(works)} papers · {len(topics)} topics", ""]
+        if topics:
+            lines += ["## Topics", ""]
+            lines += [
+                f"- [{topic.title}](<{topic_files[topic.id]}>) — "
+                f"{len([i for i in dict.fromkeys(filed.get(topic.id, [])) if i in where])} sources"
+                for topic in topics
+            ]
+            lines.append("")
+        rest = by_year([i for i in where if i not in in_topics])
+        if rest:
+            lines += ["## Not in a topic" if topics else "## Sources", ""]
+            lines += [f"- {link(i)}" for i in rest]
+            lines.append("")
+        lines += ["---", "", "Written by Gunther; edits here are not read back."]
+        plan.file(folder / "Overview.md", ("\n".join(lines) + "\n").encode())
 
     # Writing ---------------------------------------------------------------
 

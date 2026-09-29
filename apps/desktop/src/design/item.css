@@ -698,3 +698,16 @@ input.gx-item-title.is-editable::placeholder { color: var(--gx-ghost); }
   .gx-player { flex-wrap: wrap; }
   .gx-item-stepper > span { display: none; }
 }
+
+/* What a paper says about itself, above its text. */
+.gx-paper-card { margin: 14px 0 6px; padding: 14px 16px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-lg); display: grid; gap: 6px; }
+.gx-paper-card h3 { margin: 6px 0 0; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: var(--gx-muted); }
+.gx-paper-byline { margin: 0; color: var(--gx-ink); font-size: 13.5px; line-height: 1.5; }
+.gx-paper-ids { margin: 0; display: flex; flex-wrap: wrap; gap: 12px; font-size: 12.5px; }
+.gx-paper-ids a { color: var(--gx-muted); text-decoration: underline; text-underline-offset: 2px; }
+.gx-paper-abstract { margin: 0; font-size: 14px; line-height: 1.6; }
+.gx-paper-abstract.is-clamped { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.gx-paper-card > .gx-link { justify-self: start; }
+.gx-paper-outline summary { cursor: pointer; color: var(--gx-muted); font-size: 12.5px; }
+.gx-paper-outline ol { margin: 6px 0 0; padding-left: 20px; font-size: 13px; line-height: 1.55; list-style: none; }
+.gx-paper-copies { margin: 0; color: var(--gx-muted); font-size: 12.5px; }

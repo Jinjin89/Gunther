@@ -11,9 +11,11 @@ from gunther.models import (
     ContentBlock,
     KnowledgeBaseRecord,
     KnowledgeBaseSource,
+    Source,
     SourceRevision,
     TopicEvidenceLink,
     TopicNode,
+    TopicSourceLink,
 )
 
 
@@ -21,7 +23,7 @@ class TopicConflict(ValueError):
     pass
 
 
-def topic_block_ids(session: Session, base_id: str, topic_id: str) -> list[str]:
+def subtree_ids(session: Session, base_id: str, topic_id: str) -> set[str]:
     topic = session.get(TopicNode, topic_id)
     if not topic or topic.knowledge_base_id != base_id:
         raise LookupError("Topic was not found in this knowledge base")
@@ -32,6 +34,25 @@ def topic_block_ids(session: Session, base_id: str, topic_id: str) -> list[str]:
         if not added:
             break
         selected.update(added)
+    return selected
+
+
+def topic_source_ids(session: Session, base_id: str, topic_id: str) -> list[str]:
+    """Live sources filed under a topic or any topic inside it."""
+
+    selected = subtree_ids(session, base_id, topic_id)
+    return list(
+        session.scalars(
+            select(TopicSourceLink.source_id)
+            .join(Source, Source.id == TopicSourceLink.source_id)
+            .where(TopicSourceLink.topic_id.in_(selected), Source.trashed_at.is_(None))
+            .distinct()
+        )
+    )
+
+
+def topic_block_ids(session: Session, base_id: str, topic_id: str) -> list[str]:
+    selected = subtree_ids(session, base_id, topic_id)
     return list(
         session.scalars(
             select(TopicEvidenceLink.block_id).where(TopicEvidenceLink.topic_id.in_(selected))
@@ -58,6 +79,14 @@ class TopicService:
                     select(TopicEvidenceLink.block_id).where(TopicEvidenceLink.topic_id == node.id)
                 )
             ),
+            "sourceIds": list(
+                session.scalars(
+                    select(TopicSourceLink.source_id)
+                    .join(Source, Source.id == TopicSourceLink.source_id)
+                    .where(TopicSourceLink.topic_id == node.id, Source.trashed_at.is_(None))
+                    .order_by(TopicSourceLink.created_at, TopicSourceLink.id)
+                )
+            ),
         }
 
     def list(self, base_id: str) -> list[dict[str, object]]:
@@ -79,6 +108,7 @@ class TopicService:
         base_id: str,
         values: dict[str, object],
         node_id: str | None = None,
+        source_ids: list[str] | None = None,
     ) -> dict[str, object]:
         with session_scope(self.sessions) as session:
             # Serialize tree edits before checking ancestry to prevent concurrent
@@ -119,7 +149,68 @@ class TopicService:
                     setattr(node, field, value.strip() if isinstance(value, str) else value)
             node.parent_id = parent_id
             session.flush()
+            if source_ids:
+                self._file(session, base_id, node, source_ids)
             return self.out(session, node)
+
+    @staticmethod
+    def _file(session: Session, base_id: str, node: TopicNode, source_ids: list[str]) -> None:
+        wanted = list(dict.fromkeys(source_ids))
+        members = set(
+            session.scalars(
+                select(KnowledgeBaseSource.source_id)
+                .join(Source, Source.id == KnowledgeBaseSource.source_id)
+                .where(
+                    KnowledgeBaseSource.knowledge_base_id == base_id,
+                    KnowledgeBaseSource.source_id.in_(wanted),
+                    Source.trashed_at.is_(None),
+                )
+            )
+        )
+        if set(wanted) - members:
+            raise ValueError("Every source must belong to this knowledge base")
+        filed = set(
+            session.scalars(
+                select(TopicSourceLink.source_id).where(TopicSourceLink.topic_id == node.id)
+            )
+        )
+        for source_id in wanted:
+            if source_id not in filed:
+                session.add(
+                    TopicSourceLink(id=new_id("tsl"), topic_id=node.id, source_id=source_id)
+                )
+        session.flush()
+
+    def file_sources(
+        self, base_id: str, topic_id: str, source_ids: list[str]
+    ) -> dict[str, object]:
+        """File whole sources under a topic."""
+
+        with session_scope(self.sessions) as session:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            topic = session.get(TopicNode, topic_id)
+            if not topic or topic.knowledge_base_id != base_id:
+                raise LookupError("Topic was not found")
+            self._file(session, base_id, topic, source_ids)
+            topic.version += 1
+            session.flush()
+            return self.out(session, topic)
+
+    def unfile_source(self, base_id: str, topic_id: str, source_id: str) -> dict[str, object]:
+        with session_scope(self.sessions) as session:
+            topic = session.get(TopicNode, topic_id)
+            if not topic or topic.knowledge_base_id != base_id:
+                raise LookupError("Topic was not found")
+            link = session.scalar(
+                select(TopicSourceLink).where(
+                    TopicSourceLink.topic_id == topic_id, TopicSourceLink.source_id == source_id
+                )
+            )
+            if link is not None:
+                session.delete(link)
+                topic.version += 1
+            session.flush()
+            return self.out(session, topic)
 
     def link(self, base_id: str, topic_id: str, block_id: str) -> dict[str, object]:
         with session_scope(self.sessions) as session:

@@ -49,6 +49,7 @@ import { knowledgeApi, recordingAssetUrl, sourceAssetUrl } from "../api";
 import { WebSnapshotCard } from "../components/WebSnapshotCard";
 import { SourceEvidence } from "../components/SourceEvidence";
 import { TopicManager } from "../components/TopicManager";
+import { BulkImport } from "../components/BulkImport";
 import { LibraryGlyph } from "../design/LibraryGlyph";
 import "../knowledge.css";
 import { SessionWorkspace } from "./SessionWorkspace";
@@ -368,6 +369,7 @@ function MaterialsView({ base, onAdd, onOpenSource }: Pick<KnowledgeBaseWorkspac
 
       <section className="material-collection">
         <header><span><strong>All sources</strong><small>{(() => { const count = materials.length || base.indexedSourceCount || 0; return `${count} ${count === 1 ? "source" : "sources"} · ${recordingCount} ${recordingCount === 1 ? "recording" : "recordings"}`; })()}</small></span><div><button onClick={() => onAdd()}><FilePlus2 size={13} />Add source</button></div></header>
+        <BulkImport knowledgeBaseId={base.id} />
         {materials.length > 0 && <div className="material-list">{materials.map((material) => {
           const Icon = materialIcon(material.kind);
           return <button type="button" className="material-row" disabled={!material.indexed} key={material.id} onClick={() => onOpenSource ? onOpenSource(material.id, materials.filter((item) => item.indexed).map((item) => item.id)) : openSource(material.id)}><span className={`material-kind-icon kind-${material.kind}`}><Icon size={16} /></span><span><small>{materialLabel(material.kind)} · {material.date}</small><strong>{material.title}</strong><p>{material.detail}</p></span><span className="material-state"><i />{material.indexed ? "Open source" : "Reference"}<ChevronRight size={13} /></span></button>;
@@ -757,7 +759,7 @@ export function KnowledgeBaseWorkspace(props: KnowledgeBaseWorkspaceProps) {
       <BaseHeader {...props} />
       <div className="base-workspace-body">
         {props.mode === "overview" && <OverviewView {...props} />}
-        {props.mode === "overview" && <>{topicError && <p role="alert">{topicError}</p>}<TopicManager key={props.base.id} baseId={props.base.id} topics={topics} onChange={() => setTopicReload((value) => value + 1)} onAsk={(id) => void askTopic(id)} /></>}
+        {props.mode === "overview" && <>{topicError && <p role="alert">{topicError}</p>}<TopicManager key={props.base.id} baseId={props.base.id} topics={topics} onChange={() => setTopicReload((value) => value + 1)} onAsk={(id) => void askTopic(id)} {...(props.onOpenSource ? { onOpenSource: (id: string) => props.onOpenSource?.(id, [id]) } : {})} /></>}
         {props.mode === "sources" && <MaterialsView {...props} />}
         {props.mode === "ask" && <SessionWorkspace base={topicBase} selectedChapterId={props.selectedChapterId} onChapter={props.onChapter} onAdd={props.onAdd} onEvidence={props.onEvidence} onNotify={props.onNotify} />}
         {props.mode === "outputs" && <StudioView {...props} />}
