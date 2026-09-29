@@ -80,14 +80,7 @@ def test_services_are_described_without_their_secrets(tmp_path: Path) -> None:
         "checkedAt": None,
         "check": None,
     }
-    assert field(listed["transcription"], "sensevoice_url")["shownWhen"] == {
-        "key": "stt_provider",
-        "values": ["auto", "sensevoice"],
-    }
-    assert field(listed["transcription"], "qwen_stt_api_key")["shownWhen"] == {
-        "key": "stt_provider",
-        "values": ["qwen"],
-    }
+    assert field(listed["transcription"], "sensevoice_url")["group"] == "SenseVoice"
     assert "openai" not in listed
 
 
@@ -151,6 +144,25 @@ def test_saved_values_win_over_the_environment(tmp_path: Path) -> None:
         assert client.app.state.settings.sensevoice_url == "http://10.0.0.5:8765"
 
 
+def test_ask_dictation_has_its_own_engine_and_language(tmp_path: Path) -> None:
+    with TestClient(create_app(settings_for(tmp_path, stt_provider="sensevoice"))) as client:
+        transcription = services(client)["transcription"]
+        assert field(transcription, "dictation_stt_provider")["value"] == "same"
+        client.put(
+            "/api/settings/services/transcription",
+            headers=SIDECAR,
+            json={"values": {"dictation_stt_provider": "qwen", "dictation_stt_language": "zh"}},
+        )
+        settings = client.app.state.settings
+        assert (settings.stt_provider, settings.dictation_stt_provider) == ("sensevoice", "qwen")
+        assert settings.dictation_stt_language == "zh"
+        # Every provider is set up once, under its own heading, whichever job uses it.
+        transcription = services(client)["transcription"]
+        assert field(transcription, "qwen_stt_api_key")["group"] == "Qwen"
+        assert field(transcription, "dictation_stt_provider")["group"] == "Used for"
+        assert field(transcription, "qwen_stt_api_key")["shownWhen"] is None
+
+
 @pytest.mark.parametrize(
     ("service", "values", "message"),
     [
@@ -158,9 +170,9 @@ def test_saved_values_win_over_the_environment(tmp_path: Path) -> None:
         ("web_search", {"tavily_api_key": "tvly two"}, "Tavily API key: Paste the key on its own"),
         ("web_search", {"web_search_max_results": 40}, "Use a number from 1 to 10"),
         ("transcription", {"sensevoice_url": "127.0.0.1:8765"}, "Use a full address"),
-        ("transcription", {"stt_provider": "somebody"}, "Engine: Choose one of the options"),
+        ("transcription", {"stt_provider": "somebody"}, "Recording: Choose one of the options"),
         ("transcription", {"sensevoice_segment_seconds": 40}, "Use a number from 1 to 10"),
-        ("transcription", {"stt_language": "english!"}, "Language: Use a code"),
+        ("transcription", {"stt_language": "english!"}, "Recording language: Use a code"),
         ("summaries", {"ai_summary_images": "yes"}, "Turn it on or off"),
         ("web_search", {"stt_provider": "auto"}, "Unknown setting"),
         ("web_search", {"auth_token": "x"}, "Unknown setting"),

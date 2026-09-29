@@ -65,6 +65,8 @@ class ServiceField:
     step: float | None = None
     # Shown only while another field has one of these values.
     shown_when: tuple[str, tuple[str, ...]] | None = None
+    # A heading shared by the fields around it.
+    group: str = ""
     required: bool = False
     pattern: str | None = None
     pattern_message: str = ""
@@ -320,7 +322,7 @@ SERVICES: tuple[Service, ...] = (
     Service(
         id="transcription",
         title="Transcription",
-        description="Turns speech into words while you record.",
+        description="Turns speech into words: while you record, and when you talk to Ask.",
         note=(
             "Audio is always saved on this device first, whichever engine writes the words. "
             "Any server with an OpenAI-style /audio/transcriptions works: OpenAI, Groq, "
@@ -329,85 +331,49 @@ SERVICES: tuple[Service, ...] = (
         fields=(
             ServiceField(
                 "stt_provider",
-                "Engine",
+                "Recording",
                 "select",
+                help="What writes the words while you record. Its address and key are set below.",
                 options=(
                     Option("auto", "Automatic", "SenseVoice when it is running, else the server"),
                     Option("sensevoice", "SenseVoice", "Private, on this device or your network"),
                     Option("qwen", "Qwen", "Qwen3-ASR on Alibaba Cloud, strong on Chinese"),
                     Option("compatible", "OpenAI-compatible server", "Cloud or self-hosted"),
                 ),
-            ),
-            ServiceField(
-                "sensevoice_url",
-                "SenseVoice address",
-                "url",
-                help="The SenseVoice server Gunther sends audio to.",
-                placeholder="http://127.0.0.1:8765",
-                required=True,
-                shown_when=("stt_provider", ("auto", "sensevoice")),
-            ),
-            ServiceField(
-                "qwen_stt_base_url",
-                "Qwen address",
-                "url",
-                help="China: dashscope.aliyuncs.com. International: dashscope-intl.aliyuncs.com.",
-                placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1",
-                required=True,
-                shown_when=("stt_provider", ("qwen",)),
-            ),
-            ServiceField(
-                "qwen_stt_api_key",
-                "Qwen API key",
-                "secret",
-                help="From Alibaba Cloud Model Studio. It must match the site above.",
-                required=True,
-                shown_when=("stt_provider", ("qwen",)),
-            ),
-            ServiceField(
-                "qwen_stt_model",
-                "Qwen model",
-                "text",
-                required=True,
-                pattern=MODEL_PATTERN,
-                pattern_message=MODEL_MESSAGE,
-                placeholder="qwen3-asr-flash",
-                shown_when=("stt_provider", ("qwen",)),
-            ),
-            ServiceField(
-                "stt_base_url",
-                "Server address",
-                "url",
-                help="The base URL, without /audio/transcriptions.",
-                placeholder="https://api.openai.com/v1",
-                shown_when=("stt_provider", ("auto", "compatible")),
-            ),
-            ServiceField(
-                "stt_api_key",
-                "Server API key",
-                "secret",
-                help="Only if the server asks for one.",
-                shown_when=("stt_provider", ("auto", "compatible")),
-            ),
-            ServiceField(
-                "stt_model",
-                "Server model",
-                "text",
-                required=True,
-                pattern=MODEL_PATTERN,
-                pattern_message=MODEL_MESSAGE,
-                placeholder="whisper-1",
-                shown_when=("stt_provider", ("auto", "compatible")),
+                group="Used for",
             ),
             ServiceField(
                 "stt_language",
-                "Language",
+                "Recording language",
                 "text",
                 help="A code like en or zh. Empty lets the model detect it.",
                 placeholder="detect",
                 pattern=r"|[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?",
                 pattern_message="Use a code like en or zh, or leave it empty.",
-                shown_when=("stt_provider", ("auto", "compatible", "qwen")),
+                group="Used for",
+            ),
+            ServiceField(
+                "dictation_stt_provider",
+                "Ask dictation",
+                "select",
+                help="What writes the words when you speak into Ask. Set its address below.",
+                options=(
+                    Option("same", "Same as recording", "Use the recording engine"),
+                    Option("sensevoice", "SenseVoice", "Private, on this device or your network"),
+                    Option("qwen", "Qwen", "Qwen3-ASR on Alibaba Cloud, strong on Chinese"),
+                    Option("compatible", "OpenAI-compatible server", "Cloud or self-hosted"),
+                ),
+                group="Used for",
+            ),
+            ServiceField(
+                "dictation_stt_language",
+                "Ask dictation language",
+                "text",
+                help="A code like en or zh. Empty follows the recording language.",
+                placeholder="same as recording",
+                pattern=r"|[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?",
+                pattern_message="Use a code like en or zh, or leave it empty.",
+                group="Used for",
             ),
             ServiceField(
                 "sensevoice_segment_seconds",
@@ -417,6 +383,68 @@ SERVICES: tuple[Service, ...] = (
                 minimum=1,
                 maximum=10,
                 step=0.1,
+                group="Used for",
+            ),
+            ServiceField(
+                "sensevoice_url",
+                "SenseVoice address",
+                "url",
+                help="The SenseVoice server Gunther sends audio to.",
+                placeholder="http://127.0.0.1:8765",
+                required=True,
+                group="SenseVoice",
+            ),
+            ServiceField(
+                "qwen_stt_base_url",
+                "Qwen address",
+                "url",
+                help="China: dashscope.aliyuncs.com. International: dashscope-intl.aliyuncs.com.",
+                placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                required=True,
+                group="Qwen",
+            ),
+            ServiceField(
+                "qwen_stt_api_key",
+                "Qwen API key",
+                "secret",
+                help="From Alibaba Cloud Model Studio. It must match the site above.",
+                required=True,
+                group="Qwen",
+            ),
+            ServiceField(
+                "qwen_stt_model",
+                "Qwen model",
+                "text",
+                required=True,
+                pattern=MODEL_PATTERN,
+                pattern_message=MODEL_MESSAGE,
+                placeholder="qwen3-asr-flash",
+                group="Qwen",
+            ),
+            ServiceField(
+                "stt_base_url",
+                "Server address",
+                "url",
+                help="The base URL, without /audio/transcriptions.",
+                placeholder="https://api.openai.com/v1",
+                group="OpenAI-compatible server",
+            ),
+            ServiceField(
+                "stt_api_key",
+                "Server API key",
+                "secret",
+                help="Only if the server asks for one.",
+                group="OpenAI-compatible server",
+            ),
+            ServiceField(
+                "stt_model",
+                "Server model",
+                "text",
+                required=True,
+                pattern=MODEL_PATTERN,
+                pattern_message=MODEL_MESSAGE,
+                placeholder="whisper-1",
+                group="OpenAI-compatible server",
             ),
         ),
         status=_transcription_status,
@@ -772,6 +800,7 @@ def describe(
                     if item.shown_when
                     else None
                 ),
+                "group": item.group,
                 "value": None if item.kind == "secret" else value,
                 "default": None if item.kind == "secret" else default,
                 "isSet": bool(value),

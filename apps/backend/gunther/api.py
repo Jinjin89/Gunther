@@ -856,19 +856,27 @@ def get_recording(recording_id: str, request: Request) -> FileResponse:
 async def live_recording(
     websocket: WebSocket,
     context: str = "",
+    purpose: Literal["recording", "dictation"] = "recording",
 ) -> None:
     if not await _authorize_websocket(websocket):
         return
     settings = websocket.app.state.settings
+    dictating = purpose == "dictation"
+    provider = settings.stt_provider
+    language = settings.stt_language
+    if dictating:
+        if settings.dictation_stt_provider != "same":
+            provider = settings.dictation_stt_provider
+        language = settings.dictation_stt_language or language
     await proxy_realtime_transcription(
         websocket,
-        provider=settings.stt_provider,
+        provider=provider,
         sensevoice_url=settings.sensevoice_url,
         segment_seconds=settings.sensevoice_segment_seconds,
         base_url=settings.stt_base_url,
         api_key=settings.stt_api_key,
         model=settings.stt_model,
-        language=settings.stt_language,
+        language=language,
         context=context,
         qwen_base_url=settings.qwen_stt_base_url,
         qwen_api_key=settings.qwen_stt_api_key,

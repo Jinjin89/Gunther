@@ -453,6 +453,8 @@ export interface ServiceField {
   patternMessage: string;
   /** Shown only while another field has one of these values. */
   shownWhen: { key: string; values: string[] } | null;
+  /** A heading this field sits under, shared with the fields around it. */
+  group?: string;
   /** Always null for secrets: the service keeps them. */
   value: ServiceSettingValue;
   default: ServiceSettingValue;

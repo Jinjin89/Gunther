@@ -88,7 +88,7 @@ saved by the first version of this page carries over the same way.
 | Service | What it does | Settings |
 | --- | --- | --- |
 | Web search | Lets Ask look things up online, by Tavily | Tavily API key, depth, pages per search |
-| Transcription | Speech to text while recording | Engine (Automatic, SenseVoice, Qwen, OpenAI-compatible server), SenseVoice address, Qwen address, key and model, server address, key, model and language, segment length |
+| Transcription | Speech to text while recording, and when you speak into Ask | which provider does Recording and which does Ask dictation (each with its language), then each provider once: SenseVoice address, Qwen address, key and model, server address, key, model and language, segment length |
 | Summaries | A summary of every capture | On/off, show photos to the model |
 
 Each service and provider shows one of four states: **Set up** (**Connected**

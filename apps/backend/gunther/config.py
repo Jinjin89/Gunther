@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     qwen_stt_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     qwen_stt_api_key: str | None = None
     qwen_stt_model: str = "qwen3-asr-flash"
+    # Dictation in Ask can use another engine and language from recordings:
+    # "same" follows stt_provider. Each engine's address and key are shared.
+    dictation_stt_provider: Literal["same", "sensevoice", "qwen", "compatible"] = "same"
+    # Empty follows stt_language.
+    dictation_stt_language: str = ""
     ocr_provider: Literal["auto", "vision", "tesseract", "disabled"] = "auto"
     ocr_tesseract_command: str = "tesseract"
     ocr_pdftoppm_command: str = "pdftoppm"

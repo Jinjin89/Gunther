@@ -15,7 +15,7 @@ const micMessage = (reason: unknown) => {
 
 /**
  * Speak into a text field: microphone audio goes to the same live transcription
- * service the recorder uses (SenseVoice or a compatible server), and each
+ * service chosen for dictation in Settings → Services, and each
  * finished phrase is handed to `onText`.
  */
 export function useDictation(onText: (text: string) => void) {
@@ -75,7 +75,7 @@ export function useDictation(onText: (text: string) => void) {
     if (cancelled.current) { stream.getTracks().forEach((track) => track.stop()); setState("idle"); return; }
     const context = new AudioContext();
     const processor = context.createScriptProcessor(4_096, 1, 1);
-    const socket = new WebSocket(recordingSocketUrl(""));
+    const socket = new WebSocket(recordingSocketUrl("", "dictation"));
     const live = { stream, context, processor, socket, ready: false, queue: [] as string[], timer: null as number | null };
     parts.current = live;
     context.createMediaStreamSource(stream).connect(processor);
