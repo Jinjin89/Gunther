@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # the OS, and successful finalization from an otherwise full filesystem.
     storage_quota_bytes: int = DEFAULT_STORAGE_QUOTA_BYTES
     storage_min_free_bytes: int = DEFAULT_STORAGE_MIN_FREE_BYTES
+    # Answers read aloud are kept here as audio (see tts_service); deleting it only
+    # makes them be spoken again.
+    speech_dir: Path = PROJECT_ROOT / "data" / "speech"
     # Items rest in Trash this long before they are deleted for good.
     trash_retention_days: int = Field(default=30, ge=1, le=3650)
     # The language model that reads captures, answers Ask and writes topic

@@ -55,6 +55,8 @@ import type { KnowledgeBase, KnowledgeSource } from "../atlas";
 import { knowledgeApi } from "../api";
 import { lastAnswerChoice, readAnswerStyle, usableChoice, useDeviceChoice, useModelMenu, useWebSearch, type AskChoice } from "../models/askModel";
 import { StylePicker } from "../models/StylePicker";
+import { SpeakerButton } from "../speech/SpeakerButton";
+import { readAloud } from "../speech/readAloud";
 import { AgentSteps, AnswerBody, LiveAnswer, citationNumbers } from "./AnswerBody";
 import { useLiveAnswer } from "./liveAnswer";
 import { ModelPicker } from "../models/ModelPicker";
@@ -273,7 +275,7 @@ function ConversationMessage({ message, retryDisabled, onRetry, onEdit, onCite, 
       {isAssistant && message.context.modelError && <p className="message-model-error" role="note"><CircleAlert size={13} /><span>{message.context.modelError}{message.citations.length > 0 && " The quotes stand in for its answer."}</span></p>}
       {isAssistant && message.context.reasoning && <details className="message-thinking" onClick={(event) => event.stopPropagation()}><summary><ChevronRight size={12} />Thinking</summary><pre>{message.context.reasoning}</pre></details>}
       {isAssistant && <footer className="message-footer">
-        <div className="message-actions">{message.citations.length > 0 ? <button className="citation-count" onClick={(event) => { event.stopPropagation(); onSelect(); }}><Quote size={12} />{message.citations.length} {message.citations.length === 1 ? "source" : "sources"}</button> : conversational ? null : <span className="no-citation-state"><CircleAlert size={12} />Not from your sources</span>}<button className="copy-answer" onClick={(event) => { event.stopPropagation(); onCopy(); }}><Copy size={12} />Copy</button><button className="branch-answer" disabled={branching} onClick={(event) => { event.stopPropagation(); onBranch(); }}><GitBranch size={12} />{branching ? "Branching…" : "Branch"}</button>{!(conversational && message.citations.length === 0) && <button className={`promote-answer ${promoted ? "is-promoted" : ""}`} disabled={promoting || promoted || message.citations.length === 0} title={message.citations.length === 0 ? "Add or retrieve supporting evidence before proposing this answer as knowledge." : undefined} onClick={(event) => { event.stopPropagation(); onPromote(); }}><Sparkles size={12} />{promoting ? "Creating proposal…" : promoted ? "Proposal created" : message.citations.length === 0 ? "Needs evidence" : "Propose as knowledge"}</button>}</div>
+        <div className="message-actions">{message.citations.length > 0 ? <button className="citation-count" onClick={(event) => { event.stopPropagation(); onSelect(); }}><Quote size={12} />{message.citations.length} {message.citations.length === 1 ? "source" : "sources"}</button> : conversational ? null : <span className="no-citation-state"><CircleAlert size={12} />Not from your sources</span>}<button className="copy-answer" onClick={(event) => { event.stopPropagation(); onCopy(); }}><Copy size={12} />Copy</button><SpeakerButton message={message} /><button className="branch-answer" disabled={branching} onClick={(event) => { event.stopPropagation(); onBranch(); }}><GitBranch size={12} />{branching ? "Branching…" : "Branch"}</button>{!(conversational && message.citations.length === 0) && <button className={`promote-answer ${promoted ? "is-promoted" : ""}`} disabled={promoting || promoted || message.citations.length === 0} title={message.citations.length === 0 ? "Add or retrieve supporting evidence before proposing this answer as knowledge." : undefined} onClick={(event) => { event.stopPropagation(); onPromote(); }}><Sparkles size={12} />{promoting ? "Creating proposal…" : promoted ? "Proposal created" : message.citations.length === 0 ? "Needs evidence" : "Propose as knowledge"}</button>}</div>
         <AnswerModel context={message.context} />
       </footer>}
     </article>
@@ -802,6 +804,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
       setSelectedMessageId(turn.assistantMessage.id);
       setInspectorTab("context");
       pendingQuestion.current = "";
+      void readAloud.auto(turn.assistantMessage);
     } catch (reason) {
       if (!controller.signal.aborted) {
         // The service keeps a question it could not answer in the history; only one it refused goes back to the composer.

@@ -2,6 +2,7 @@ import type { ConversationCitation, KnowledgeSessionSummary, SessionMessage } fr
 import { ArrowUp, FolderInput, Globe2, MessageSquareText, Plus, Search, Sparkles, Square, X } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { KnowledgeBase } from "../../atlas";
+import { SpeakerButton } from "../../speech/SpeakerButton";
 import { AgentSteps, AnswerBody, LiveAnswer, citationNumbers } from "../../pages/AnswerBody";
 import { EvidencePanel } from "../evidence/EvidencePanel";
 import type { LiveAnswerState } from "../../pages/liveAnswer";
@@ -121,7 +122,7 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
             <AnswerBody content={message.content} numbers={citationNumbers(message.citations)} onCitation={(index) => { const citation = message.citations[index]; if (citation) setEvidence({ citation, index }); }} />
             {message.context.modelError && <p className="message-model-error" role="note">{message.context.modelError}{message.citations.length > 0 && " The quotes stand in for its answer."}</p>}
             <Sources citations={message.citations} onOpen={(citation, index) => setEvidence({ citation, index })} />
-            <footer><small>{[message.context.modelLabel, message.context.effortLabel].filter(Boolean).join(" · ")}</small></footer>
+            <footer><SpeakerButton message={message} /><small>{[message.context.modelLabel, message.context.effortLabel].filter(Boolean).join(" · ")}</small></footer>
           </article>)}
       {pending !== null && <>
         <article className="gx-home-question"><p>{pending}</p></article>

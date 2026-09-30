@@ -64,6 +64,9 @@ import type {
   SpeechProviderInput,
   SpeechRole,
   SpeechTestResult,
+  SpeechClip,
+  TtsInput,
+  TtsOverview,
   ServiceSettingValue,
   ServiceTestResult,
   TrashItem,
@@ -393,6 +396,22 @@ async function request<T>(path: string, init?: RequestInit, expectedWorkspaceId?
   return response.json() as Promise<T>;
 }
 
+async function requestBlob(path: string, init?: RequestInit): Promise<Blob> {
+  await waitForDesktopBackend();
+  let response: Response;
+  try {
+    response = await backendFetch(`${apiBase}${path}`, { ...init, headers: { "Content-Type": "application/json", ...init?.headers } });
+  } catch (reason) {
+    if (reason instanceof TypeError) throw new ServiceUnavailableError();
+    throw reason;
+  }
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail ?? `Request failed with status ${response.status}`);
+  }
+  return response.blob();
+}
+
 export const knowledgeApi = {
   health: () => request<Health>("/health"),
   mobileGatewayStatus: () => request<MobileGatewayStatus>("/mobile-gateway/status"),
@@ -549,6 +568,15 @@ export const knowledgeApi = {
     request<SpeechOverview>(`/settings/speech/providers/${encodeURIComponent(id)}`, { method: "DELETE" }),
   testSpeechProvider: (id: string, payload: SpeechProviderInput) =>
     request<SpeechTestResult>(`/settings/speech/providers/${encodeURIComponent(id)}/test`, { method: "POST", body: JSON.stringify(payload) }),
+  ttsOverview: () => request<TtsOverview>("/settings/tts"),
+  saveTts: (payload: TtsInput) => request<TtsOverview>("/settings/tts", { method: "PUT", body: JSON.stringify(payload) }),
+  clearTtsCache: () => request<TtsOverview>("/settings/tts/cache", { method: "DELETE" }),
+  /** A short line spoken with the settings on screen, saved or not. */
+  ttsSample: (payload: TtsInput) => requestBlob("/settings/tts/sample", { method: "POST", body: JSON.stringify(payload) }),
+  /** Make (or find) the audio of an answer. */
+  speakMessage: (sessionId: string, messageId: string) =>
+    request<SpeechClip>(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/speech`, { method: "POST" }),
+  speechAudio: (clipId: string) => requestBlob(`/speech/clips/${encodeURIComponent(clipId)}/audio`),
   saveSpeechRoles: (roles: Partial<Record<SpeechRole["id"], { model: string | null; stream: boolean; language: string }>>) =>
     request<SpeechOverview>("/settings/speech/roles", { method: "PUT", body: JSON.stringify({ roles }) }),
   testServiceSettings: (id: string, values: Record<string, ServiceSettingValue>) =>

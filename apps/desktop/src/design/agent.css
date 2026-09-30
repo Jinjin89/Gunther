@@ -200,3 +200,20 @@
   .mic-button.is-listening, .gx-mic.is-listening { animation: none; }
   .gx-dictation-bars i { transition: none; animation: none !important; }
 }
+
+/* Reading answers aloud ------------------------------------------------------- */
+.speak-answer.is-playing, .speak-answer.is-paused { color: var(--gx-ink) !important; border-color: var(--atlas-line); }
+.speak-answer.is-error { color: var(--gx-ink) !important; }
+.speak-error { flex-basis: 100%; font-size: calc(12px * var(--gx-fs, 1)); color: var(--atlas-faint); }
+.is-spinning { animation: gx-spin 0.9s linear infinite; }
+.gx-home-answer footer { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gx-home-answer footer .speak-answer { margin-left: -6px; }
+
+.tts-panel { padding: 4px 0 8px; }
+.tts-editor { display: grid; gap: 12px; }
+.tts-field { display: grid; gap: 4px; }
+.tts-field > label { font-size: calc(12px * var(--gx-fs, 1)); font-weight: 600; }
+.tts-field > small { color: var(--atlas-faint); font-size: calc(12px * var(--gx-fs, 1)); }
+.tts-advanced summary { cursor: pointer; font-size: calc(12px * var(--gx-fs, 1)); color: var(--atlas-faint); }
+.tts-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.tts-problem { margin: 0 0 6px; }

@@ -55,6 +55,8 @@ from gunther.storage_api import router as storage_router
 from gunther.storage_budget import StorageBudget
 from gunther.trash import TrashService
 from gunther.trash_api import router as trash_router
+from gunther.tts_api import router as tts_router
+from gunther.tts_service import TtsService
 from gunther.web_capture import (
     PinnedHttpFetcher,
     SystemWebResolver,
@@ -279,6 +281,7 @@ def create_app(
     application.state.device_auth = device_auth
     application.state.base_settings = base_settings
     application.state.service_settings = service_store
+    application.state.tts = TtsService(sessions, active_settings.speech_dir)
     # Tests stand in for the providers here.
     application.state.model_client_factory = model_client_factory
     _connect_models(application, active_settings, service_store, knowledge_service, worker)
@@ -418,6 +421,7 @@ def create_app(
     application.include_router(settings_router, prefix=active_settings.api_prefix)
     application.include_router(models_router, prefix=active_settings.api_prefix)
     application.include_router(speech_router, prefix=active_settings.api_prefix)
+    application.include_router(tts_router, prefix=active_settings.api_prefix)
     return application
 
 

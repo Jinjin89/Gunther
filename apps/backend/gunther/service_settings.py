@@ -333,6 +333,8 @@ class ServiceSettingsStore:
         # Transcription providers and jobs, the same way.
         self._speech_providers: list[dict[str, Any]] | None = None
         self._speech_roles: dict[str, dict[str, Any]] | None = None
+        # Read-aloud settings (see tts_service); None until someone saves them.
+        self._tts: dict[str, Any] | None = None
         self._listeners: list[Callable[[], None]] = []
         self._load()
 
@@ -365,6 +367,8 @@ class ServiceSettingsStore:
                 self._values[key] = validate_value(key, value)
             except ServiceSettingsError:
                 logger.warning("Ignoring a saved setting that is no longer valid: %s", key)
+        if isinstance(payload.get("tts"), dict):
+            self._tts = payload["tts"]
         checks = payload.get("checks") or {}
         self._checks = {
             key: dict(value) for key, value in checks.items() if isinstance(value, dict)
@@ -408,6 +412,7 @@ class ServiceSettingsStore:
             "roles": self._roles,
             "speechProviders": self._speech_providers,
             "speechRoles": self._speech_roles,
+            "tts": self._tts,
         }
         descriptor, temporary = tempfile.mkstemp(
             prefix=".service-settings.", suffix=".json", dir=self.path.parent
@@ -497,6 +502,22 @@ class ServiceSettingsStore:
                     self._values.pop(key, None)
             if roles is not None:
                 self._speech_roles = copy.deepcopy(roles)
+            self._write()
+            listeners = list(self._listeners)
+        for listener in listeners:
+            listener()
+
+    def tts(self) -> dict[str, Any] | None:
+        """Saved read-aloud settings, or None when never saved."""
+
+        with self._lock:
+            return copy.deepcopy(self._tts)
+
+    def save_tts(self, config: dict[str, Any]) -> None:
+        """Save read-aloud settings, already checked (see tts_service)."""
+
+        with self._lock:
+            self._tts = copy.deepcopy(config)
             self._write()
             listeners = list(self._listeners)
         for listener in listeners:

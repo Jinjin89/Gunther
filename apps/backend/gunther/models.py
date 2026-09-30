@@ -469,6 +469,32 @@ class SessionMessage(Base):
     session: Mapped[KnowledgeSession] = relationship(back_populates="messages")
 
 
+class SpeechClip(Base):
+    """An answer read aloud, kept so the second listen is only played.
+
+    ``cache_key`` covers the text, the supplier, its model and its options, so a
+    changed voice makes a new clip and the old one stays until the cache is cleared.
+    """
+
+    __tablename__ = "speech_clips"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    message_id: Mapped[str] = mapped_column(
+        ForeignKey("session_messages.id", ondelete="CASCADE"), index=True
+    )
+    cache_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    provider: Mapped[str] = mapped_column(String(40))
+    model: Mapped[str] = mapped_column(String(200))
+    options_json: Mapped[str] = mapped_column(Text, default="{}")
+    # What was actually spoken, and the model that described tables or pictures in it.
+    script: Mapped[str] = mapped_column(Text)
+    described_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    audio_file: Mapped[str] = mapped_column(String(200))
+    audio_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    duration_seconds: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now, index=True)
+
+
 class SessionBranch(Base):
     __tablename__ = "session_branches"
 

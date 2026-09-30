@@ -62,6 +62,7 @@ import { ServiceSettings } from "./ServiceSettings";
 import { TypographySettings } from "./TypographySettings";
 import { ModelSettings } from "../models/ModelSettings";
 import { SpeechSettings } from "../models/SpeechSettings";
+import { TtsSettings } from "../speech/TtsSettings";
 import { CAPTURE_CONTROL_DOM_EVENT, CAPTURE_SWITCH_DOM_EVENT, recorderOwnsCapture, type CaptureControl, type CaptureKind, type CaptureLaunchRequest, type RecordingContext } from "../capture/captureTypes";
 import { getMenuBarMode, isTauriRuntime, setMenuBarMode, type MenuBarMode } from "../capture/captureBridge";
 
@@ -1045,6 +1046,8 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
     <ModelSettings onNotify={onNotify} />
 
     <SpeechSettings onNotify={onNotify} />
+
+    <TtsSettings onNotify={onNotify} />
 
     <ServiceSettings onNotify={onNotify} />
 

@@ -496,6 +496,75 @@ export interface SpeechTestResult extends ServiceCheck {
   overview?: SpeechOverview;
 }
 
+/** One option only a voice supplier has (voice, language, tone...). */
+export interface TtsOption {
+  key: string;
+  label: string;
+  default: string;
+  /** A value the list lacks may be typed. */
+  allowCustom: boolean;
+  help: string;
+  choices: { value: string; label: string }[];
+}
+
+export interface TtsProvider {
+  kind: string;
+  name: string;
+  baseUrl: string;
+  model: string;
+  models: string[];
+  keyOptional: boolean;
+  /** Its voice model speaks tables and pictures itself, so nothing is described first. */
+  readsStructure: boolean;
+  note: string;
+  options: TtsOption[];
+  /** The option values in use. */
+  values: Record<string, string>;
+  keySet: boolean;
+  keyHint: string | null;
+  /** The key comes from the same company's language or transcription models. */
+  keyShared: boolean;
+  problem: string | null;
+}
+
+export interface TtsOverview {
+  persisted: boolean;
+  active: string | null;
+  autoRead: boolean;
+  /** Why reading aloud is not ready, or null when it is. */
+  problem: string | null;
+  providers: TtsProvider[];
+  cache: { clips: number; bytes: number };
+}
+
+export interface TtsInput {
+  active?: string | null;
+  autoRead?: boolean;
+  /** Which supplier `provider` edits; the active one when left out. */
+  kind?: string;
+  provider?: {
+    /** Left out: keep the saved key. Empty: remove it. */
+    apiKey?: string;
+    baseUrl?: string;
+    model?: string;
+    options?: Record<string, string>;
+  };
+}
+
+/** An answer read aloud and kept on this computer. */
+export interface SpeechClip {
+  id: string;
+  messageId: string;
+  durationSeconds: number;
+  bytes: number;
+  /** Found on disk rather than made just now. */
+  cached: boolean;
+  /** The model that described a table or picture in the answer, if any. */
+  describedBy: string | null;
+  provider: string;
+  voice: string | null;
+}
+
 /** How a service setting is edited on the Settings page. */
 export type ServiceFieldKind = "text" | "secret" | "url" | "select" | "toggle" | "number";
 export type ServiceSettingValue = string | number | boolean | null;

@@ -1,5 +1,6 @@
 import type { Effort, KnowledgeSession, KnowledgeSessionSummary, SessionMessage } from "@gunther/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { readAloud } from "../speech/readAloud";
 import { knowledgeApi } from "../api";
 import { useLiveAnswer } from "./liveAnswer";
 import { interruptedQuestion } from "./interrupted";
@@ -100,6 +101,7 @@ export function useHomeAsk() {
       }, hear, abort.signal);
       setSession({ ...current, ...turn.session, messages: [...current.messages, turn.userMessage, turn.assistantMessage] });
       reloadRecent();
+      void readAloud.auto(turn.assistantMessage);
     } catch (reason) {
       if (controller.current === abort) controller.current = null;
       if (abort.signal.aborted) {
