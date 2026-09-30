@@ -522,7 +522,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
   // else the model of its last answer, else this device's last choice, else the Ask default.
   const { menu: modelMenu } = useModelMenu();
   const webSearch = useWebSearch();
-  const inspectorWidth = useDragWidth({ storageKey: "gunther:inspector-width", min: INSPECTOR_MIN, max: inspectorMax, fallback: INSPECTOR_DEFAULT });
+  const inspectorWidth = useDragWidth({ storageKey: "gunther:inspector-width", min: INSPECTOR_MIN, max: inspectorMax, fallback: INSPECTOR_DEFAULT, observe: () => document.querySelector(".session-workspace") });
   const liveAnswer = useLiveAnswer();
   const [deviceChoice, setDeviceChoice] = useDeviceChoice();
   const [pickedChoices, setPickedChoices] = useState<Record<string, AskChoice>>({});

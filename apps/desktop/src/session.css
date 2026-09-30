@@ -180,20 +180,20 @@
 .composer-note { margin-top: 6px; color: var(--atlas-faint); font-size: calc(12px * var(--gx-fs, 1)); text-align: center; }
 
 /* Evidence and source inspector */
-.context-inspector { display: flex; flex-direction: column; border-left: 1px solid var(--atlas-line); background: var(--atlas-paper-soft); position: relative; }
+.context-inspector { overflow: hidden; display: flex; flex-direction: column; border-left: 1px solid var(--atlas-line); background: var(--atlas-paper-soft); position: relative; }
 .inspector-reopen { width: 40px; height: 100%; display: flex; align-items: flex-start; justify-content: center; padding-top: 19px; border: 0; border-left: 1px solid var(--atlas-line); background: var(--atlas-paper-soft); color: var(--atlas-faint) !important; }
 .inspector-reopen:hover { color: var(--atlas-green) !important; }
 .inspector-heading { min-height: 57px; padding: 8px 11px 8px 15px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--atlas-line); }
-.inspector-heading > span { display: grid; gap: 2px; }
+.inspector-heading > span { min-width: 0; display: grid; gap: 2px; }
 .inspector-heading small { color: var(--atlas-faint); font-size: calc(12px * var(--gx-fs, 1)); letter-spacing: .08em; text-transform: uppercase; }
 .inspector-heading strong { font-family: var(--atlas-serif); font-size: calc(14px * var(--gx-fs, 1)); font-weight: 620; }
 .inspector-heading button { width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--atlas-faint) !important; }
 .inspector-heading button:hover { background: var(--atlas-paper); color: var(--atlas-ink) !important; }
-.inspector-tabs { min-height: 39px; padding: 0 13px; display: flex; gap: 15px; border-bottom: 1px solid var(--atlas-line); }
+.inspector-tabs { min-height: 39px; padding: 0 13px; display: flex; gap: 15px; overflow: hidden; border-bottom: 1px solid var(--atlas-line); }
 .inspector-tabs button { height: 39px; padding: 0 1px; display: flex; align-items: center; gap: 5px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--atlas-faint) !important; font-size: calc(12px * var(--gx-fs, 1)); font-weight: 650; }
 .inspector-tabs button.is-active { border-color: var(--atlas-green); color: var(--atlas-ink) !important; }
 .inspector-tabs span { padding: 2px 5px; border-radius: 5px; background: var(--atlas-line); font-size: calc(12px * var(--gx-fs, 1)); }
-.inspector-scroll { flex: 1; min-height: 0; padding: 16px 14px 32px; overflow: auto; scrollbar-width: thin; }
+.inspector-scroll { flex: 1; min-height: 0; padding: 16px 14px 32px; overflow: auto; overflow-x: hidden; overflow-wrap: anywhere; scrollbar-width: thin; }
 .section-label { color: var(--atlas-faint); font-size: calc(12px * var(--gx-fs, 1)); font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
 .answer-scope { padding-bottom: 18px; border-bottom: 1px solid var(--atlas-line); }
 .scope-metrics { margin-top: 10px; display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--atlas-line); border-radius: 10px; background: var(--atlas-paper); }
@@ -206,7 +206,7 @@
 .citation-section { margin-top: 18px; }
 .citation-section > header { margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
 .citation-section > header small { color: var(--atlas-faint); font-size: calc(12px * var(--gx-fs, 1)); }
-.citation-card { width: 100%; padding: 12px; display: block; border: 1px solid var(--atlas-line); border-radius: 10px; background: var(--atlas-paper); color: inherit; text-align: left; }
+.citation-card { min-width: 0; overflow-wrap: anywhere; width: 100%; padding: 12px; display: block; border: 1px solid var(--atlas-line); border-radius: 10px; background: var(--atlas-paper); color: inherit; text-align: left; }
 .citation-card:hover { border-color: color-mix(in srgb, var(--atlas-green) 42%, var(--atlas-line)); box-shadow: 0 8px 24px -22px rgba(15, 50, 37, .7); transform: translateY(-1px); }
 .citation-card + .citation-card { margin-top: 8px; }
 .citation-card > header { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 6px; color: var(--atlas-faint); }
@@ -438,8 +438,8 @@
 }
 
 /* The right panel's edge: drag to resize it. */
-.gx-panel-resize { width: 9px; margin-left: -5px; position: absolute; top: 0; bottom: 0; left: 0; z-index: 5; cursor: col-resize; touch-action: none; }
-.gx-panel-resize::after { content: ""; width: 2px; position: absolute; top: 0; bottom: 0; left: 4px; background: transparent; transition: background-color var(--gx-dur-fast, 120ms) ease; }
+.gx-panel-resize { width: 8px; position: absolute; top: 0; bottom: 0; left: 0; z-index: 5; cursor: col-resize; touch-action: none; }
+.gx-panel-resize::after { content: ""; width: 2px; position: absolute; top: 0; bottom: 0; left: 0; background: transparent; transition: background-color var(--gx-dur-fast, 120ms) ease; }
 .gx-panel-resize:hover::after, .gx-panel-resize:focus-visible::after, .gx-panel-resize:active::after { background: var(--atlas-line-strong, var(--atlas-muted)); }
 .gx-panel-resize:focus-visible { outline: 0; }
 @media (max-width: 760px) { .gx-panel-resize { display: none; } }

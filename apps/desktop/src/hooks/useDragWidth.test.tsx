@@ -32,4 +32,18 @@ describe("useDragWidth", () => {
     act(() => result.current.handle.onDoubleClick());
     expect(result.current.width).toBe(300);
   });
+
+  it("keeps what is shown within what fits when the window shrinks, without forgetting the choice", () => {
+    let room = 500;
+    const { result } = renderHook(() => useDragWidth({ ...options, max: () => room }));
+    act(() => result.current.handle.onKeyDown({ key: "ArrowLeft", preventDefault: () => undefined } as never));
+    act(() => result.current.handle.onKeyDown({ key: "ArrowLeft", preventDefault: () => undefined } as never));
+    expect(result.current.width).toBe(348);
+    room = 320;
+    act(() => { window.dispatchEvent(new Event("resize")); });
+    expect(result.current.width).toBe(320);
+    room = 500;
+    act(() => { window.dispatchEvent(new Event("resize")); });
+    expect(result.current.width).toBe(348);
+  });
 });
