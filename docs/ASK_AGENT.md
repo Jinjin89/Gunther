@@ -29,21 +29,28 @@ is visibly marked as not sourced.
 
 ## The source pool
 
-A conversation holds one pool of sources: everything its answers cited. A source
-gets a number the first time it is cited and keeps it for good, in every later
-answer, so `[3]` means the same thing throughout a conversation.
+A conversation holds one pool of sources: everything its answers cited. Inside,
+each source has an id that never changes (`ref`). What a reader sees is different:
 
-- A new search is compared with the pool (by kind, URL or title, and the start of
-  the text). Known results reuse their number; only new ones are numbered, from the
-  highest number ever given. The planner is told what the pool already holds, so a
-  follow-up ("shorten that") can answer with no search.
-- Each saved answer stores the sources it cites, each with its `ref`. The pool is
-  rebuilt from those, so there is no separate table.
-- A library source that is out of scope for a question (another library was picked
-  with `@`, the source was removed) is left out of the pool for that question, but
-  its number is never reused.
-- Answers from before the pool have no `ref`; their `[n]` count within the
-  answer, and their numbers are removed from what the model reads.
+- **One answer numbers its sources 1, 2, 3 in the order its text first cites them**,
+  and its source list is in that same order, so `[2]` in the text is the second card.
+  Sources the text does not cite are dropped.
+- Saved answers are never rewritten. A later answer that reuses a source numbers it by
+  its own reading order, so the same source can be `[2]` in one answer and `[1]` in
+  another; each answer's text and list always agree.
+- The hidden id is what lets a later answer reuse a source without searching again and
+  lets Gunther trace a number back to its source. The model always sees the ids: the
+  pool is shown to it with them, and earlier answers are turned back into them when it
+  reads the conversation.
+- A new search is compared with the pool (by kind, URL or title, and the start of the
+  text). Known results reuse their id; only new ones get one, from the highest ever given.
+  The planner is told what the pool already holds, so a follow-up ("shorten that") can
+  answer with no search.
+- Each saved answer stores the sources it cites, in list order, each with its `ref`. The
+  pool is rebuilt from those, so there is no separate table.
+- A library source out of scope for a question (another library was picked with `@`, the
+  source was removed) is left out of the pool for that question, but its id is never reused.
+- Answers from before the pool have no `ref`; their `[n]` are removed from what the model reads.
 
 ## Tools are a registry
 
@@ -84,15 +91,15 @@ bypass that gateway for a loop of about 200 lines.
 
 `POST /api/sessions/{id}/messages/stream` runs the same turn as server-sent events:
 `step` (`running`, then `done` with the result count), `text` (the answer as it is
-written; it carries the pool's numbers and any `[?]`) and finally `done` with the
+written; the reader hides its numbers and `[?]` until the finished text replaces it) and finally `done` with the
 saved turn, or `error`. Claim checks run after the text ends and show as steps; the
 saved answer replaces the streamed one. Closing the connection stops the work and
 nothing is saved.
 
 ## Conversation sources panel
 
-The context panel lists every source the conversation has cited, once each, under its
-pool number, with the ones the selected answer cites in bold.
+The context panel lists every source the conversation has cited, once each and without
+numbers, with the ones the selected answer cites in bold.
 
 ## Known limit
 

@@ -297,14 +297,19 @@ export function HomePage({
   };
 
   const hasResults = Boolean(submitted);
+  // While a conversation is open it has the page: the greeting, captures, recents and
+  // search results step aside (results can be brought back from the conversation's header).
+  const asking = homeAsk.shown;
+  const [resultsWhileAsking, setResultsWhileAsking] = useState(false);
+  useEffect(() => { if (!asking) setResultsWhileAsking(false); }, [asking]);
   const firstName = profileName.trim().split(/\s+/)[0] ?? "";
   const greeting = `${greetingFor(new Date())}${firstName ? `, ${firstName}` : ""}`;
   const recentBases = bases.slice(0, 3);
 
   return (
-    <div className={`gx-home ${hasResults ? "has-results" : "is-idle"}`}>
+    <div className={`gx-home ${hasResults || asking ? "has-results" : "is-idle"} ${asking ? "is-asking" : ""}`}>
       <section className="gx-home-hero">
-        <h1 className="gx-greeting" aria-hidden={hasResults}>
+        <h1 className="gx-greeting" aria-hidden={hasResults || asking}>
           <BrandMark size={30} animated busy={search.searching} className="gx-greeting-mark" />
           <span>{greeting}</span>
         </h1>
@@ -325,7 +330,7 @@ export function HomePage({
           onArrowDown={submitted ? focusFirstResult : undefined}
           picker={<><ModelPicker menu={modelMenu} choice={usableChoice(modelMenu, deviceChoice)} onChange={setDeviceChoice} placement="down" /><StylePicker /></>}
         />
-        {!hasResults && (
+        {!hasResults && !asking && (
           <div className="gx-capture-row" role="group" aria-label="Capture">
             {captureActions.map(({ id, label, title, icon: Icon, tone }, index) => (
               <button type="button" key={id} className={`gx-chip tone-${tone}`} style={{ "--i": index } as CSSProperties} onClick={() => onCapture(id)} title={title} aria-label={title.split(" — ")[0]}>
@@ -354,9 +359,10 @@ export function HomePage({
         onNew={homeAsk.fresh}
         onFile={(libraryId) => void fileConversation(libraryId)}
         onOpenSource={(item) => onOpenItem?.(item, [item])}
+        results={hasResults ? { open: resultsWhileAsking, onToggle: () => setResultsWhileAsking((open) => !open) } : undefined}
       />
 
-      {hasResults && submitted ? (
+      {asking && !resultsWhileAsking ? null : hasResults && submitted ? (
         <SearchResults
           bases={bases}
           submitted={submitted}

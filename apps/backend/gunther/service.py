@@ -197,21 +197,28 @@ def conversation_history(messages: list[SessionMessage]) -> list[Turn]:
             turns.append(Turn("user", message.content))
         elif message.role == "assistant":
             context = json.loads(message.context_json or "{}")
-            content = message.content
-            if not _pooled(message):
-                # Before the source pool, [n] counted within one answer; the numbers now
-                # mean the pool's, so an old answer's are left out of what the model reads.
-                content = re.sub(r"\s?\[\d+(?:\s*[,，、]\s*\d+)*\]", "", content)
+            content = _in_pool_numbers(message)
             turns.append(Turn("assistant", content, context.get("model"), context.get("reasoning")))
     return turns
 
 
-def _pooled(message: SessionMessage) -> bool:
-    """Whether an answer's citations carry pool numbers (older ones do not)."""
+def _in_pool_numbers(message: SessionMessage) -> str:
+    """An answer as the model should read it: its [1], [2]… (numbered per answer, in the
+    order of its source list) turned back into the conversation pool's numbers, which
+    are what the model is shown for every source. Answers from before the pool have no
+    such numbers, so their markers are left out."""
 
-    return any(
-        item.get("ref") is not None for item in json.loads(message.citations_json or "[]")
-    )
+    refs = [item.get("ref") for item in json.loads(message.citations_json or "[]")]
+
+    def replace(match: re.Match[str]) -> str:
+        found = []
+        for part in re.split(r"[,，、]", match.group(2)):
+            at = int(part) - 1
+            if 0 <= at < len(refs) and refs[at] is not None:
+                found.append(f"[{refs[at]}]")
+        return f"{match.group(1)}{''.join(found)}" if found else ""
+
+    return re.sub(r"(\s?)\[(\d+(?:\s*[,，、]\s*\d+)*)\]", replace, message.content)
 
 
 def conversation_pool(messages: list[SessionMessage]) -> list[Evidence]:

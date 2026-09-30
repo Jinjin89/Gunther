@@ -1,5 +1,5 @@
 import type { ConversationCitation, KnowledgeSessionSummary, SessionMessage } from "@gunther/contracts";
-import { ArrowUp, FolderInput, Globe2, MessageSquareText, Mic, Plus, Sparkles, Square, X } from "lucide-react";
+import { ArrowUp, FolderInput, Globe2, MessageSquareText, Plus, Search, Sparkles, Square, X } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { KnowledgeBase } from "../../atlas";
 import { AgentSteps, AnswerBody, LiveAnswer, citationNumbers } from "../../pages/AnswerBody";
@@ -8,6 +8,7 @@ import type { LiveAnswerState } from "../../pages/liveAnswer";
 import type { ItemRef } from "../../items/itemRef";
 import { useAutosize } from "../../services/useAutosize";
 import { InterruptedNote, isInterrupted } from "../../pages/interrupted";
+import { DictationStatus, MicGlyph } from "../Dictation";
 import { useDictatedField } from "../../services/useDictatedField";
 import { withShortcut } from "../../shortcuts/shortcuts";
 
@@ -38,14 +39,16 @@ interface HomeAskProps {
   onNew: () => void;
   onFile: (libraryId: string) => void;
   onOpenSource: (item: ItemRef) => void;
+  /** The search results the conversation covered; offered in its header when there are some. */
+  results?: { open: boolean; onToggle: () => void } | undefined;
 }
 
 function Sources({ citations, onOpen }: { citations: ConversationCitation[]; onOpen: (citation: ConversationCitation, index: number) => void }) {
   if (!citations.length) return null;
   return <ol className="gx-home-sources" aria-label="Sources cited">
     {citations.map((citation, index) => <li key={citation.id}>
-      <i>{citation.ref ?? index + 1}</i>
-      <button type="button" onClick={() => onOpen(citation, index)} title={citation.quote} aria-label={`Show evidence ${citation.ref ?? index + 1}: ${citation.sourceTitle}`}>
+      <i>{index + 1}</i>
+      <button type="button" onClick={() => onOpen(citation, index)} title={citation.quote} aria-label={`Show evidence ${index + 1}: ${citation.sourceTitle}`}>
         {citation.kind === "web" && <Globe2 size={12} />}<span>{citation.sourceTitle}</span><small>{citation.locator}</small>
       </button>
     </li>)}
@@ -53,7 +56,7 @@ function Sources({ citations, onOpen }: { citations: ConversationCitation[]; onO
 }
 
 /** Ask Gunther from Home: an offer beside a search, and the conversation once it starts. */
-export function HomeAsk({ query, bases, messages, pending, live, error, active, onAsk, onCancel, onClose, onNew, onFile, onOpenSource }: HomeAskProps) {
+export function HomeAsk({ query, bases, messages, pending, live, error, active, onAsk, onCancel, onClose, onNew, onFile, onOpenSource, results }: HomeAskProps) {
   const [followUp, setFollowUp] = useState("");
   const [evidence, setEvidence] = useState<{ citation: ConversationCitation; index: number } | null>(null);
   const busy = pending !== null;
@@ -61,6 +64,9 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
   const field = useRef<HTMLTextAreaElement>(null);
   useAutosize(field, followUp, 200);
   const tail = useRef<HTMLDivElement>(null);
+  const card = useRef<HTMLElement>(null);
+  // When the conversation opens it comes into view, so the change is seen.
+  useEffect(() => { if (active) card.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" }); }, [active]);
   // A new question brings the latest exchange into view once; after that the page is the reader's.
   useEffect(() => { if (pending !== null) tail.current?.scrollIntoView({ block: "nearest" }); }, [pending]);
   const suggested = looksLikeQuestion(query);
@@ -88,10 +94,11 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
     onAsk(text);
   };
 
-  return <section className="gx-home-ask is-open" aria-label="Conversation with Gunther">
+  return <section ref={card} className="gx-home-ask is-open" aria-label="Conversation with Gunther">
     <header>
-      <span><MessageSquareText size={14} />Conversation</span>
+      <span className="gx-home-ask-title"><Sparkles size={14} />Ask Gunther<small aria-live="polite">{busy ? "Answering…" : ""}</small></span>
       <div>
+        {results && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={results.onToggle} aria-pressed={results.open}><Search size={13} />{results.open ? "Hide search results" : "Search results"}</button>}
         <label className="gx-home-file" title="Move this conversation into a library">
           <FolderInput size={13} />
           <select aria-label="File in a library" value="" disabled={busy || !messages.length} onChange={(event) => { if (event.target.value) onFile(event.target.value); }}>
@@ -123,9 +130,10 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
       {error && <p className="gx-inline-alert" role="alert">{error}</p>}
       <div ref={tail} />
     </div>
-    <form className="gx-home-followup" onSubmit={send}>
+    {dictation.dictating && <DictationStatus className="gx-home-dictation" state={dictation.state} level={dictation.level} />}
+    <form className={`gx-home-followup ${dictation.dictating ? "is-dictating" : ""}`} onSubmit={send}>
       <textarea ref={field} rows={1} value={followUp} onChange={(event) => setFollowUp(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={messages.length ? "Ask a follow-up…" : "Ask a question…"} aria-label="Ask a follow-up" disabled={busy} onFocus={dictation.claim} />
-      <button type="button" className={`gx-tool gx-tool-icon gx-mic ${dictation.dictating ? "is-on" : ""}`} onClick={dictation.toggle} disabled={busy} aria-pressed={dictation.listening} aria-label={dictation.listening ? "Stop voice input" : "Voice input"} title={dictation.error ?? withShortcut(dictation.listening ? "Stop voice input" : "Speak instead of typing", "dictate")}><Mic size={15} /></button>
+      <button type="button" className={`gx-tool gx-tool-icon gx-mic ${dictation.dictating ? "is-on" : ""} is-${dictation.state}`} onClick={dictation.toggle} disabled={busy} aria-pressed={dictation.listening} aria-label={dictation.listening ? "Stop voice input" : "Voice input"} title={dictation.error ?? withShortcut(dictation.listening ? "Stop voice input" : "Speak instead of typing", "dictate")}><MicGlyph state={dictation.state} /></button>
       {busy
         ? <button type="button" className="gx-send is-stop" onClick={onCancel} aria-label="Stop"><Square size={12} fill="currentColor" /></button>
         : <button type="submit" className="gx-send" disabled={!followUp.trim()} aria-label="Send"><ArrowUp size={16} /></button>}

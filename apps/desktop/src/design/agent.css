@@ -162,3 +162,41 @@
 .conversation-sources li button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-sources li.is-cited button { color: var(--gx-ink); font-weight: 550; }
 .conversation-sources li button:hover { color: var(--gx-ink); }
+
+/* Opening a conversation on Home: it arrives, and says it is working. */
+.gx-home-ask.is-open { animation: gx-ask-in 260ms var(--gx-ease) both; }
+.gx-home-ask-title small { margin-left: 4px; color: var(--gx-faint); font-weight: 500; }
+@keyframes gx-ask-in {
+  from { opacity: 0; transform: translateY(10px); box-shadow: 0 0 0 3px color-mix(in srgb, var(--gx-brand) 22%, transparent); }
+  to { opacity: 1; transform: none; }
+}
+.gx-home.is-asking .gx-home-hero { padding-bottom: 8px; }
+@media (prefers-reduced-motion: reduce) { .gx-home-ask.is-open { animation: none; } }
+
+/* Voice input: unmistakable while it is on. Ink and white only; the bars follow your voice. */
+.gx-dictation { display: inline-flex; align-items: center; gap: 8px; color: var(--gx-ink); font-weight: 550; }
+.gx-dictation-bars { display: inline-flex; align-items: center; gap: 2px; height: 14px; }
+.gx-dictation-bars i { width: 3px; height: 100%; border-radius: 2px; background: var(--gx-ink); transform: scaleY(calc(0.2 + var(--level, 0) * var(--k, 0.8))); transition: transform 90ms linear; }
+.gx-dictation-bars i:nth-child(1) { --k: 0.55; }
+.gx-dictation-bars i:nth-child(2) { --k: 0.8; }
+.gx-dictation-bars i:nth-child(3) { --k: 0.7; }
+.gx-dictation-bars i:nth-child(4) { --k: 0.45; }
+.gx-dictation.is-starting .gx-dictation-bars i,
+.gx-dictation.is-finishing .gx-dictation-bars i { animation: gx-dictation-wait 900ms ease-in-out infinite alternate; }
+.gx-dictation-bars i:nth-child(2) { animation-delay: 120ms; }
+.gx-dictation-bars i:nth-child(3) { animation-delay: 240ms; }
+.gx-dictation-bars i:nth-child(4) { animation-delay: 360ms; }
+@keyframes gx-dictation-wait { from { transform: scaleY(0.25); } to { transform: scaleY(0.6); } }
+.gx-home-dictation { padding: 8px 14px 0; font-size: var(--gx-text-xs); }
+.mic-button.is-listening, .gx-mic.is-listening {
+  background: var(--gx-ink) !important; color: var(--gx-canvas) !important; border-color: transparent !important;
+  animation: gx-mic-ring 1.6s ease-out infinite;
+}
+.mic-button.is-listening svg, .gx-mic.is-listening svg { animation: none; }
+.mic-button.is-starting, .mic-button.is-finishing, .gx-mic.is-starting, .gx-mic.is-finishing { background: var(--gx-hover); }
+@keyframes gx-mic-ring { from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--gx-ink) 35%, transparent); } to { box-shadow: 0 0 0 9px transparent; } }
+.gx-composer.is-dictating, .composer.is-dictating, .gx-home-followup.is-dictating { border-color: var(--gx-ink) !important; box-shadow: 0 0 0 1px var(--gx-ink); }
+@media (prefers-reduced-motion: reduce) {
+  .mic-button.is-listening, .gx-mic.is-listening { animation: none; }
+  .gx-dictation-bars i { transition: none; animation: none !important; }
+}

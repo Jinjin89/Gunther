@@ -28,13 +28,11 @@ import {
   Info,
   Library,
   MessageSquareText,
-  Mic,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
-  Paperclip,
   Pin,
   Plus,
   Quote,
@@ -48,9 +46,11 @@ import {
 } from "lucide-react";
 import { useAutosize } from "../services/useAutosize";
 import { InterruptedNote, endsWithInterrupted, interruptedQuestion, isInterrupted } from "./interrupted";
+import { DictationStatus, MicGlyph } from "../components/Dictation";
+import { useDragWidth } from "../hooks/useDragWidth";
 import { useDictatedField } from "../services/useDictatedField";
 import { withShortcut } from "../shortcuts/shortcuts";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { KnowledgeBase, KnowledgeSource } from "../atlas";
 import { knowledgeApi } from "../api";
 import { lastAnswerChoice, readAnswerStyle, usableChoice, useDeviceChoice, useModelMenu, useWebSearch, type AskChoice } from "../models/askModel";
@@ -316,14 +316,14 @@ export function Composer({
   const submit = () => { dictation.discard(); onSend(); };
   return (
     <div className="composer-wrap">
-      <div className="composer">
+      <div className={`composer ${dictation.dictating ? "is-dictating" : ""}`}>
         <textarea ref={field} value={value} rows={1} disabled={composerDisabled} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } }} placeholder={!ready ? "Opening a durable session…" : readOnly ? "Restore this session to continue the conversation." : "Ask, compare, challenge, or trace a claim…"} aria-label="Message Gunther" onFocus={dictation.claim} />
         <div className="composer-toolbar">
-          <div><button title="Attach sources" aria-label="Attach sources" onClick={onSources}><Paperclip size={15} /></button><button className="scope-chip" onClick={onSources}><FolderOpen size={13} /><span>{sourceCount ? `${sourceCount} selected` : "All sources"}</span><ChevronDown size={11} /></button>{chapterTitle && <span className="chapter-chip"><BookOpen size={12} />{chapterTitle}</span>}{picker}{web && <button type="button" className={`web-toggle ${web.enabled ? "is-on" : ""}`} disabled={!web.available} aria-pressed={web.enabled} onClick={() => web.onChange(!web.enabled)} title={web.available ? (web.enabled ? "Ask may search the web. Click to keep it to your library." : "Ask is limited to your library. Click to let it search the web.") : "Web search is not set up. Add a Tavily key in Settings."}><Globe2 size={13} /><span>Web</span></button>}</div>
-          <div className="composer-actions"><button type="button" className={`mic-button ${dictation.dictating ? "is-on" : ""}`} disabled={composerDisabled || sending} onClick={dictation.toggle} aria-pressed={dictation.listening} aria-label={dictation.listening ? "Stop voice input" : "Voice input"} title={dictation.error ?? withShortcut(dictation.listening ? "Stop voice input" : "Speak instead of typing", "dictate")}><Mic size={15} /></button><button className={`send-button ${sending ? "is-stop" : ""}`} disabled={composerDisabled || (!sending && !value.trim())} onClick={sending ? onStop : submit} aria-label={sending ? "Stop waiting for response" : "Send message"}>{sending ? <Square size={12} fill="currentColor" /> : <ArrowUp size={16} />}</button></div>
+          <div><button className="scope-chip" onClick={onSources}><FolderOpen size={13} /><span>{sourceCount ? `${sourceCount} selected` : "All sources"}</span><ChevronDown size={11} /></button>{chapterTitle && <span className="chapter-chip"><BookOpen size={12} />{chapterTitle}</span>}{picker}{web && <button type="button" className={`web-toggle ${web.enabled ? "is-on" : ""}`} disabled={!web.available} aria-pressed={web.enabled} onClick={() => web.onChange(!web.enabled)} title={web.available ? (web.enabled ? "Ask may search the web. Click to keep it to your library." : "Ask is limited to your library. Click to let it search the web.") : "Web search is not set up. Add a Tavily key in Settings."}><Globe2 size={13} /><span>Web</span></button>}</div>
+          <div className="composer-actions"><button type="button" className={`mic-button ${dictation.dictating ? "is-on" : ""} is-${dictation.state}`} disabled={composerDisabled || sending} onClick={dictation.toggle} aria-pressed={dictation.listening} aria-label={dictation.listening ? "Stop voice input" : "Voice input"} title={dictation.error ?? withShortcut(dictation.listening ? "Stop voice input" : "Speak instead of typing", "dictate")}><MicGlyph state={dictation.state} /></button><button className={`send-button ${sending ? "is-stop" : ""}`} disabled={composerDisabled || (!sending && !value.trim())} onClick={sending ? onStop : submit} aria-label={sending ? "Stop waiting for response" : "Send message"}>{sending ? <Square size={12} fill="currentColor" /> : <ArrowUp size={16} />}</button></div>
         </div>
       </div>
-      <p className="composer-note" role={dictation.error ? "alert" : undefined}>{dictation.error ? dictation.error : dictation.dictating ? (dictation.state === "finishing" ? "Finishing…" : "Listening… press the mic or ⌘⇧M to stop") : !ready ? "Preparing a durable conversation before accepting questions…" : readOnly ? "Archived sessions are read-only. Restore this session from its options to continue." : "Gunther can be wrong. Verify important conclusions in the cited source."}</p>
+      <p className="composer-note" role={dictation.error ? "alert" : undefined}>{dictation.error ? dictation.error : dictation.dictating ? <DictationStatus state={dictation.state} level={dictation.level} /> : !ready ? "Preparing a durable conversation before accepting questions…" : readOnly ? "Archived sessions are read-only. Restore this session from its options to continue." : "Gunther can be wrong. Verify important conclusions in the cited source."}</p>
     </div>
   );
 }
@@ -332,7 +332,7 @@ function CitationCard({ citation, index, onOpen }: { citation: ConversationCitat
   const web = citation.kind === "web";
   return (
     <button className={`citation-card ${web ? "is-web" : ""}`} onClick={onOpen} aria-label={`Show evidence: ${citation.sourceTitle}`}>
-      <header><span>{String(citation.ref ?? index + 1).padStart(2, "0")}</span><small>{web ? "web" : citation.status}</small><strong>{web ? citation.locator : citation.assertionId ? `${Math.round(citation.confidence * 100)}%` : "Source"}</strong></header>
+      <header><span>{String(index + 1).padStart(2, "0")}</span><small>{web ? "web" : citation.status}</small><strong>{web ? citation.locator : citation.assertionId ? `${Math.round(citation.confidence * 100)}%` : "Source"}</strong></header>
       <h3>{citation.sourceTitle}</h3>
       <blockquote>“{citation.quote}”</blockquote>
       {web
@@ -342,7 +342,12 @@ function CitationCard({ citation, index, onOpen }: { citation: ConversationCitat
   );
 }
 
-/** The sources a conversation has cited so far, each once, under the number it keeps in every answer. */
+const INSPECTOR_MIN = 280;
+const INSPECTOR_DEFAULT = 326;
+/** The right panel may take up to 45% of the window, so the conversation keeps its room. */
+const inspectorMax = () => Math.min(640, Math.max(INSPECTOR_MIN, Math.round(window.innerWidth * 0.45)));
+
+/** The sources a conversation has cited so far, each once (by the id it keeps in the conversation, not the number an answer shows). */
 export function conversationSources(session: KnowledgeSession | null): ConversationCitation[] {
   const held = new Map<number, ConversationCitation>();
   for (const message of session?.messages ?? []) {
@@ -354,6 +359,7 @@ export function conversationSources(session: KnowledgeSession | null): Conversat
 }
 
 function ContextInspector({
+  resize,
   base,
   sources,
   session,
@@ -372,6 +378,8 @@ function ContextInspector({
   onCollapse,
   readOnly,
 }: {
+  /** The panel's width and the handle on its left edge that drags it. */
+  resize: ReturnType<typeof useDragWidth>;
   base: KnowledgeBase;
   sources: ScopedKnowledgeSource[];
   session: KnowledgeSession | null;
@@ -399,13 +407,14 @@ function ContextInspector({
   const context = selectedMessage?.context ?? emptyContext;
   return (
     <aside className="context-inspector" aria-label="Session evidence and sources">
+      <div className="gx-panel-resize" role="separator" aria-orientation="vertical" aria-label="Resize panel" aria-valuenow={resize.width} aria-valuemin={INSPECTOR_MIN} aria-valuemax={inspectorMax()} tabIndex={0} title="Drag to resize · double-click to reset" {...resize.handle} />
       <header className="inspector-heading"><span><small>Session intelligence</small><strong>{tab === "context" ? "Evidence context" : "Source scope"}</strong></span><button onClick={onCollapse} aria-label="Close context panel"><PanelRightClose size={15} /></button></header>
       <nav className="inspector-tabs"><button className={tab === "context" ? "is-active" : ""} onClick={() => onTab("context")}>Context</button><button className={tab === "sources" ? "is-active" : ""} onClick={() => onTab("sources")}>Sources <span>{selectedIds.length || indexedCount}</span></button></nav>
       {tab === "context" ? <div className="inspector-scroll">
         {selectedMessage ? <>
           <section className="answer-scope"><span className="section-label">Answer scope</span><div className="scope-metrics"><span><strong>{context.assertionsConsidered}</strong><small>claims scanned</small></span><span><strong>{context.sourcesConsidered}</strong><small>sources searched</small></span><span><strong>{context.verifiedAssertions}</strong><small>trusted scanned</small></span></div><p><Info size={12} />This is the retrieval snapshot for the selected answer—not the current library state.</p></section>
           <section className="citation-section"><header><span className="section-label">Sources cited</span><small>{selectedMessage.citations.length} {selectedMessage.citations.length === 1 ? "source" : "sources"}</small></header>{selectedMessage.citations.length ? selectedMessage.citations.map((citation, index) => <CitationCard key={citation.id} citation={citation} index={index} onOpen={() => onOpenSource(citation.sourceId, citation)} />) : <div className="empty-citations"><CircleAlert size={20} /><strong>{noSourcesNeeded(context) ? "No sources needed" : "Nothing cited"}</strong><span>{noSourcesNeeded(context) ? "This reply came from the conversation itself." : "Nothing in the searches supported a citation, so this answer is not grounded."}</span></div>}</section>
-          {pooledSources.length > selectedMessage.citations.length && <section className="conversation-sources"><header><span className="section-label">All sources in this conversation</span><small>{pooledSources.length}</small></header><ol>{pooledSources.map((citation) => <li key={citation.id} className={selectedMessage.citations.some((item) => item.ref === citation.ref) ? "is-cited" : ""}><i>{citation.ref}</i><button type="button" onClick={() => onOpenSource(citation.sourceId, citation)} title={citation.quote}>{citation.kind === "web" && <Globe2 size={11} />}<span>{citation.sourceTitle}</span></button></li>)}</ol></section>}
+          {pooledSources.length > selectedMessage.citations.length && <section className="conversation-sources"><header><span className="section-label">All sources in this conversation</span><small>{pooledSources.length}</small></header><ol>{pooledSources.map((citation) => <li key={citation.id} className={selectedMessage.citations.some((item) => item.ref === citation.ref) ? "is-cited" : ""}><i aria-hidden>•</i><button type="button" onClick={() => onOpenSource(citation.sourceId, citation)} title={citation.quote}>{citation.kind === "web" && <Globe2 size={11} />}<span>{citation.sourceTitle}</span></button></li>)}</ol></section>}
         </> : <>
           <section className="context-overview"><div className="context-glyph"><LibraryGlyph base={base} size="lg" /></div><span className="section-label">Current library</span><h2>{base.title}</h2><p>{base.description}</p></section>
           <section className="knowledge-health"><header><span className="section-label">Knowledge health</span><strong>{base.progress}%</strong></header><div><i style={{ width: `${base.progress}%` }} /></div><ul><li><Check size={12} />{base.chapters.filter((chapter) => chapter.status === "grounded").length} grounded chapters</li><li><Clock3 size={12} />{base.chapters.filter((chapter) => chapter.status !== "grounded").length} chapters still growing</li><li><FileText size={12} />{indexedCount} indexed {indexedCount === 1 ? "source" : "sources"} · {referenceCount} curated {referenceCount === 1 ? "reference" : "references"}</li></ul></section>
@@ -501,6 +510,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
   // else the model of its last answer, else this device's last choice, else the Ask default.
   const { menu: modelMenu } = useModelMenu();
   const webSearch = useWebSearch();
+  const inspectorWidth = useDragWidth({ storageKey: "gunther:inspector-width", min: INSPECTOR_MIN, max: inspectorMax, fallback: INSPECTOR_DEFAULT });
   const liveAnswer = useLiveAnswer();
   const [deviceChoice, setDeviceChoice] = useDeviceChoice();
   const [pickedChoices, setPickedChoices] = useState<Record<string, AskChoice>>({});
@@ -980,7 +990,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
   }, [base.sources, indexedSources]);
 
   return (
-    <div className={`session-workspace page-enter ${historyDocked ? "history-is-docked" : "history-is-drawer"} ${inspectorCollapsed ? "inspector-is-collapsed" : ""}`}>
+    <div className={`session-workspace page-enter ${historyDocked ? "history-is-docked" : "history-is-drawer"} ${inspectorCollapsed ? "inspector-is-collapsed" : ""}`} style={{ "--inspector-w": `${inspectorWidth.width}px` } as CSSProperties}>
       {historyDocked && <SessionsSidebar base={base} indexedCount={scopeSources.filter((source) => source.indexed).length} referenceCount={scopeSources.filter((source) => !source.indexed).length} sessions={sessions} archivedSessions={archivedSessions} showArchived={showArchived} activeId={activeId} loading={loading} query={sessionQuery} onQuery={setSessionQuery} onNew={() => void createSession()} onOpen={(id) => void loadSession(id)} onPin={(session) => void patchSession(session.id, { pinned: !session.pinned })} onArchive={(session) => void archiveSession(session)} onToggleArchived={() => void toggleArchived()} onRestore={(session) => void restoreSession(session)} />}
       <section className="conversation-pane" aria-label="Conversation">
         <header className="conversation-header">
@@ -1007,7 +1017,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
         </div>
         <Composer picker={<><ModelPicker menu={modelMenu} choice={askChoice} onChange={chooseModel} disabled={sending || Boolean(activeSession?.archived)} /><StylePicker disabled={sending || Boolean(activeSession?.archived)} /></>} web={{ available: webSearch.available, enabled: webSearch.enabled, onChange: webSearch.setEnabled }} value={draft} sending={sending} sourceCount={activeSession?.selectedSourceIds.length ?? 0} chapterTitle={focusedChapter?.title} readOnly={Boolean(activeSession?.archived)} ready={!loading && activeSession !== null} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={() => { setInspectorTab("sources"); setInspectorCollapsed(false); }} />
       </section>
-      <ContextInspector base={base} sources={scopeSources} session={activeSession} knowledgeUnits={knowledgeUnits} selectedMessage={selectedMessage} tab={inspectorTab} sourceQuery={sourceQuery} collapsed={inspectorCollapsed} readOnly={Boolean(activeSession?.archived)} onTab={setInspectorTab} onSourceQuery={setSourceQuery} onToggleSource={(id) => void toggleSource(id)} onUseAll={() => { if (activeSession) void patchSession(activeSession.id, { selectedSourceIds: [] }); }} onAdd={onAdd} onOpenSource={(id, citation) => void openSourceDetail(id, citation)} onOpenUnit={(unit) => void openKnowledgeUnitOrigin(unit)} onCollapse={() => setInspectorCollapsed((value) => !value)} />
+      <ContextInspector resize={inspectorWidth} base={base} sources={scopeSources} session={activeSession} knowledgeUnits={knowledgeUnits} selectedMessage={selectedMessage} tab={inspectorTab} sourceQuery={sourceQuery} collapsed={inspectorCollapsed} readOnly={Boolean(activeSession?.archived)} onTab={setInspectorTab} onSourceQuery={setSourceQuery} onToggleSource={(id) => void toggleSource(id)} onUseAll={() => { if (activeSession) void patchSession(activeSession.id, { selectedSourceIds: [] }); }} onAdd={onAdd} onOpenSource={(id, citation) => void openSourceDetail(id, citation)} onOpenUnit={(unit) => void openKnowledgeUnitOrigin(unit)} onCollapse={() => setInspectorCollapsed((value) => !value)} />
       {evidence && <EvidencePanel citation={evidence.citation} index={evidence.index} onClose={() => setEvidence(null)} onOpenSource={onOpenSource ? (id) => { setEvidence(null); onOpenSource(id); } : undefined} />}
       {mobileSessionsOpen && <div className="mobile-session-drawer" role="dialog" aria-modal="true" aria-label="Session history"><button className="mobile-session-scrim" onClick={() => setMobileSessionsOpen(false)} aria-label="Close session history" /><div className="mobile-session-sheet"><button className="mobile-session-close" autoFocus onClick={() => setMobileSessionsOpen(false)} aria-label="Close session history"><X size={15} /></button><SessionsSidebar base={base} indexedCount={scopeSources.filter((source) => source.indexed).length} referenceCount={scopeSources.filter((source) => !source.indexed).length} sessions={sessions} archivedSessions={archivedSessions} showArchived={showArchived} activeId={activeId} loading={loading} query={sessionQuery} onQuery={setSessionQuery} onNew={() => { setMobileSessionsOpen(false); void createSession(); }} onOpen={(id) => { setMobileSessionsOpen(false); void loadSession(id); }} onPin={(session) => void patchSession(session.id, { pinned: !session.pinned })} onArchive={(session) => void archiveSession(session)} onToggleArchived={() => void toggleArchived()} onRestore={(session) => void restoreSession(session)} /></div></div>}
     </div>

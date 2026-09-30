@@ -1,7 +1,8 @@
-import { ArrowUp, AtSign, CornerDownLeft, Globe2, Mic, X } from "lucide-react";
+import { ArrowUp, AtSign, CornerDownLeft, Globe2, X } from "lucide-react";
 import { forwardRef, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import type { KnowledgeBase } from "../../atlas";
 import { LibraryGlyph } from "../../design/LibraryGlyph";
+import { DictationStatus, MicGlyph } from "../Dictation";
 import { useDictatedField } from "../../services/useDictatedField";
 import { withShortcut } from "../../shortcuts/shortcuts";
 
@@ -229,7 +230,7 @@ export const SearchComposer = forwardRef<SearchComposerHandle, SearchComposerPro
         : "";
 
   return (
-    <form className={`gx-composer ${menuOpen ? "is-menu-open" : ""}`} role="search" onSubmit={submit}>
+    <form className={`gx-composer ${menuOpen ? "is-menu-open" : ""} ${dictating ? "is-dictating" : ""}`} role="search" onSubmit={submit}>
       <div className="gx-composer-field" onMouseDown={(event) => { if (event.target === event.currentTarget) { event.preventDefault(); textarea.current?.focus(); } }}>
         {mentioned.map((base) => (
           <span className="gx-mention" key={base.id}>
@@ -270,9 +271,9 @@ export const SearchComposer = forwardRef<SearchComposerHandle, SearchComposerPro
           <span>Web</span>
         </button>
         {picker}
-        <span className="gx-composer-hint" id={hintId} role={dictation.error ? "alert" : undefined}>{dictation.error ?? (dictating ? (dictation.state === "finishing" ? "Finishing…" : "Listening… click the mic to stop") : hint)}</span>
-        <button type="button" className={`gx-tool gx-tool-icon gx-mic ${dictating ? "is-on" : ""}`} onClick={dictation.toggle} aria-pressed={listening} aria-label={listening ? "Stop voice input" : "Voice input"} title={withShortcut(listening ? "Stop voice input" : "Speak instead of typing", "dictate")}>
-          <Mic size={15} />
+        <span className="gx-composer-hint" id={hintId} role={dictation.error ? "alert" : undefined}>{dictation.error ?? (dictating ? <DictationStatus state={dictation.state} level={dictation.level} /> : hint)}</span>
+        <button type="button" className={`gx-tool gx-tool-icon gx-mic ${dictating ? "is-on" : ""} is-${dictation.state}`} onClick={dictation.toggle} aria-pressed={listening} aria-label={listening ? "Stop voice input" : "Voice input"} title={withShortcut(listening ? "Stop voice input" : "Speak instead of typing", "dictate")}>
+          <MicGlyph state={dictation.state} />
         </button>
         {(value || mentionIds.length > 0) && (
           <button type="button" className="gx-tool gx-tool-icon" onClick={() => { onClear(); textarea.current?.focus(); }} aria-label="Clear search" title="Clear">

@@ -76,4 +76,12 @@ describe("HomeAsk", () => {
     await userEvent.click(screen.getByRole("button", { name: "Stop" }));
     expect(onCancel).toHaveBeenCalledOnce();
   });
+
+  it("says it is answering, and brings the search results back on request", async () => {
+    const onToggle = vi.fn();
+    render(<HomeAsk {...baseProps} active query="" pending="Why?" live={{ steps: [], text: "" }} results={{ open: false, onToggle }} />);
+    expect(screen.getByText("Answering…")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Search results" }));
+    expect(onToggle).toHaveBeenCalledOnce();
+  });
 });

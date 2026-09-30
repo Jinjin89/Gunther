@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { AgentSteps, AnswerBody, withCitationLinks } from "./AnswerBody";
+import { AgentSteps, AnswerBody, citationNumbers, withCitationLinks, withoutMarks } from "./AnswerBody";
 
 describe("AnswerBody", () => {
   it("links only citations that exist", () => {
@@ -18,12 +18,17 @@ describe("AnswerBody", () => {
     expect(onCitation).toHaveBeenCalledOnce();
   });
 
-  it("opens the citation by its pool number and marks claims no source backs", async () => {
+  it("numbers sources in list order and marks claims no source backs", async () => {
     const onCitation = vi.fn();
-    render(<AnswerBody content="Sourced [6]. Own knowledge [?]." numbers={[4, 6]} onCitation={onCitation} />);
-    await userEvent.click(screen.getByRole("button", { name: "Inspect citation 6" }));
+    expect(citationNumbers([{}, {}, {}])).toEqual([1, 2, 3]);
+    render(<AnswerBody content="Sourced [2]. Own knowledge [?]." numbers={[1, 2]} onCitation={onCitation} />);
+    await userEvent.click(screen.getByRole("button", { name: "Inspect citation 2" }));
     expect(onCitation).toHaveBeenCalledWith(1);
     expect(screen.getByText("unverified")).toBeInTheDocument();
+  });
+
+  it("hides numbers and marks while an answer is still being written", () => {
+    expect(withoutMarks("A [4] and B [1, 3]. C [?].")).toBe("A and B. C.");
   });
 
   it("never loads remote images and only opens web links", () => {

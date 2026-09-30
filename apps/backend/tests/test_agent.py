@@ -1,6 +1,7 @@
 """Ask's agent: tools, the source pool, cited answers, and claims from the model's own knowledge."""
 
 import json
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -232,8 +233,9 @@ def test_the_pool_keeps_numbers_and_a_search_only_adds_what_is_new() -> None:
     )
     result = run(fake, box(lib(search_library)), "and the lung?", pool=held)
     # The known passage keeps [4]; only the lung note is new and follows the highest number.
+    # Hidden ids stay 4, 6, 5; the answer shows them as 1, 2, 3 in the order it cites them.
     assert [item.ref for item in result.evidence] == [4, 6, 5]
-    assert result.content == "CD3D [4] and AT2 [6]; the site [5]."
+    assert result.content == "CD3D [1] and AT2 [2]; the site [3]."
     assert result.steps[0].found == 2
     prompt = writer_prompts(fake)[0]
     assert "[4] (library · Cell note" in prompt and "[6] (library · Lung note" in prompt
@@ -283,7 +285,8 @@ def test_a_claim_with_no_source_stays_marked_and_one_that_sources_contradict_is_
     )
     assert "100 C" not in result.content and "Closing." in result.content
     assert any("sources disagree" in note for note in result.notes)
-    assert [item.ref for item in result.evidence] == [1]
+    # Only cited sources are listed, and none cites a claim that was left out.
+    assert result.evidence == []
 
 
 def test_a_claim_left_with_no_source_and_no_marker_is_found_and_checked() -> None:
@@ -662,3 +665,61 @@ def test_another_tool_can_be_tried_when_the_first_finds_nothing_relevant() -> No
     assert [step.tool for step in result.steps] == ["search_library", "search_web"]
     assert result.steps[0].found == 0
     assert [item.title for item in result.evidence] == ["Lung atlas"]
+
+
+def test_sources_are_numbered_in_the_order_the_text_cites_them_and_uncited_ones_dropped() -> None:
+    found = [
+        passage("First", "one"),
+        passage("Second", "two"),
+        passage("Third", "three"),
+        passage("Unused", "four"),
+    ]
+    fake = FakeProvider(
+        agent_replies(
+            "Third comes first [3]. Then the first [1, 3]. Last the second [2].",
+            {"action": "search_library", "query": "x"},
+            {"action": "answer"},
+        )
+    )
+    result = run(fake, box(lib(lambda q: list(found))))
+    assert result.content == "Third comes first [1]. Then the first [2][1]. Last the second [3]."
+    assert [item.title for item in result.evidence] == ["Third", "First", "Second"]
+    assert [item.ref for item in result.evidence] == [3, 1, 2]
+
+
+def test_renumbering_and_the_history_the_model_reads_use_the_same_ids() -> None:
+    from gunther.agent import renumber_citations
+    from gunther.models import SessionMessage
+    from gunther.service import conversation_history
+
+    assert renumber_citations("A [6]. B [4][6]. C [?].", [6, 4]) == "A [1]. B [2][1]. C [?]."
+
+    def cited(ref: int | None) -> dict:
+        return {
+            "id": f"cit_{ref}",
+            "source_id": "s",
+            "source_title": "S",
+            "quote": "q",
+            "locator": "l",
+            "status": "provisional",
+            "confidence": 0.0,
+            "ref": ref,
+        }
+
+    def answer(content: str, refs: list[int | None]) -> SessionMessage:
+        return SessionMessage(
+            id="m",
+            session_id="x",
+            role="assistant",
+            content=content,
+            citations_json=json.dumps([cited(ref) for ref in refs]),
+            context_json="{}",
+            created_at=datetime(2026, 1, 1),
+        )
+
+    # The answer shows [1][2]; the model reads the pool's ids for those sources.
+    [turn] = conversation_history([answer("A [1]. B [2]. C [?].", [6, 4])])
+    assert turn.content == "A [6]. B [4]. C [?]."
+    # Before the pool there were no ids, so the markers are left out.
+    [older] = conversation_history([answer("A [1]. B [2].", [None, None])])
+    assert older.content == "A. B."

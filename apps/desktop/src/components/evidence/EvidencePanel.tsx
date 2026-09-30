@@ -1,8 +1,9 @@
 import type { ConversationCitation, ContentBlock, SourceDetail } from "@gunther/contracts";
 import { ArrowUpRight, FileText, Globe2, X } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { knowledgeApi, sourceAssetUrl } from "../../api";
+import { useDragWidth } from "../../hooks/useDragWidth";
 import { useEscape } from "../../shortcuts/shortcuts";
 import "../../design/evidence.css";
 
@@ -16,42 +17,6 @@ const MIN_WIDTH = 340;
 const DEFAULT_WIDTH = 460;
 
 const maxWidth = () => Math.max(MIN_WIDTH, Math.min(960, Math.round(window.innerWidth * 0.8)));
-const clampWidth = (value: number) => Math.min(Math.max(value, MIN_WIDTH), maxWidth());
-const storedWidth = () => {
-  const value = Number(window.localStorage.getItem(WIDTH_KEY));
-  return Number.isFinite(value) && value > 0 ? clampWidth(value) : DEFAULT_WIDTH;
-};
-
-/** The panel's width: dragged by its left edge, moved by the arrow keys, and remembered. */
-function usePanelWidth() {
-  const [width, setWidth] = useState(storedWidth);
-  const drag = useRef<{ startX: number; startWidth: number } | null>(null);
-  const commit = useCallback((next: number) => {
-    const value = clampWidth(next);
-    setWidth(value);
-    window.localStorage.setItem(WIDTH_KEY, String(value));
-  }, []);
-  const handle = {
-    onPointerDown: (event: PointerEvent<HTMLDivElement>) => {
-      drag.current = { startX: event.clientX, startWidth: width };
-      event.currentTarget.setPointerCapture(event.pointerId);
-    },
-    onPointerMove: (event: PointerEvent<HTMLDivElement>) => {
-      if (drag.current) setWidth(clampWidth(drag.current.startWidth + drag.current.startX - event.clientX));
-    },
-    onPointerUp: (event: PointerEvent<HTMLDivElement>) => {
-      if (!drag.current) return;
-      commit(drag.current.startWidth + drag.current.startX - event.clientX);
-      drag.current = null;
-    },
-    onDoubleClick: () => commit(DEFAULT_WIDTH),
-    onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
-      if (event.key === "ArrowLeft") { event.preventDefault(); commit(width + 24); }
-      if (event.key === "ArrowRight") { event.preventDefault(); commit(width - 24); }
-    },
-  };
-  return { width, handle };
-}
 
 /** The quote marked inside the block that holds it, when it is a piece of it. */
 function Marked({ text, quote }: { text: string; quote: string }) {
@@ -168,7 +133,7 @@ export function EvidencePanel({ citation, index, onClose, onOpenSource }: {
   onOpenSource?: ((sourceId: string) => void) | undefined;
 }) {
   const close = useRef<HTMLButtonElement>(null);
-  const { width, handle } = usePanelWidth();
+  const { width, handle } = useDragWidth({ storageKey: WIDTH_KEY, min: MIN_WIDTH, max: maxWidth, fallback: DEFAULT_WIDTH });
   useEscape(onClose);
   useEffect(() => { close.current?.focus(); }, [citation.id]);
   const web = citation.kind === "web";

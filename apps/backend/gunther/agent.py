@@ -308,6 +308,18 @@ def check_citations(content: str, valid: set[int]) -> tuple[str, list[int]]:
     return text, order
 
 
+def renumber_citations(text: str, used: Sequence[int]) -> str:
+    """Show the pool's numbers as 1, 2, 3 in the order the answer first cites them.
+
+    ``used`` is the pool numbers in that order (from ``check_citations``); the source
+    list of the answer follows the same order, so a number in the text is the number
+    of the source beside it.
+    """
+
+    place = {ref: index for index, ref in enumerate(used, start=1)}
+    return re.sub(r"\[(\d+)\]", lambda m: f"[{place.get(int(m.group(1)), m.group(1))}]", text)
+
+
 def leads_in(text: str, limit: int) -> list[tuple[int, int, str]]:
     """The first ``limit`` claims marked as the model's own: (start, end, claim).
 
@@ -479,12 +491,12 @@ class AskAgent:
                 error=str(error),
             )
         text = completion.text
-        keep: list[int] = []
         text = self._mark_unsourced(model, text)
-        text = self._check_leads(model, text, toolbox, adopt, steps, notes, keep, emit)
+        text = self._check_leads(model, text, toolbox, adopt, steps, notes, emit)
         by_ref = {item.ref: item for item in held}
         text, used = check_citations(text, set(by_ref))
-        used += [ref for ref in dict.fromkeys(keep) if ref not in used and ref in by_ref]
+        # Only sources the text cites are kept, numbered in the order it cites them.
+        text = renumber_citations(text, used)
         return AgentResult(
             content=text,
             evidence=[by_ref[ref] for ref in used],
@@ -531,7 +543,6 @@ class AskAgent:
         adopt: Callable[[Evidence], Evidence],
         steps: list[Step],
         notes: list[str],
-        keep: list[int],
         emit: Events,
     ) -> str:
         """Look for a source for each claim the model made from its own knowledge.
@@ -581,15 +592,13 @@ class AskAgent:
                 refs = [adopt(candidates[n - 1]).ref for n in supports[:3]]
                 edits.append((at, at + len(UNSOURCED), "".join(f"[{ref}]" for ref in refs)))
             elif contradicts and not supports:
-                refs = [adopt(candidates[n - 1]).ref for n in contradicts[:3]]
-                keep += [ref for ref in refs if ref is not None]
+                titles = ", ".join(dict.fromkeys(candidates[n - 1].title for n in contradicts[:3]))
                 stop = leads[number + 1][0] if number + 1 < len(leads) else len(text)
                 tail = SENTENCE_END.search(text, at + len(UNSOURCED), stop)
                 edits.append((start, tail.end() if tail else stop, ""))
-                where = "".join(f"[{ref}]" for ref in refs)
                 notes.append(
-                    f"Left out a statement from the model's own knowledge, "
-                    f"because the sources disagree with it {where}: “{claim[:120]}”"
+                    f"Left out a statement from the model's own knowledge, because "
+                    f"the sources disagree with it ({titles}): “{claim[:120]}”"
                 )
         for start, end, replacement in sorted(edits, reverse=True):
             text = text[:start] + replacement + text[end:]

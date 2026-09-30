@@ -11,12 +11,14 @@ const CITE_LINK = /^#cite-(\d+)$/;
 const UNSOURCED = /\[\?\]/g;
 const UNSOURCED_LINK = "#unverified";
 
-/**
- * The number each citation goes by in the answer: its place in the conversation's
- * source pool, or, for answers from before the pool, its place in the list.
- */
-export function citationNumbers(citations: Array<{ ref?: number | null | undefined }>): number[] {
-  return citations.map((citation, index) => citation.ref ?? index + 1);
+/** An answer numbers its sources 1, 2, 3 in the order the text first cites them, and lists them the same way. */
+export function citationNumbers(citations: unknown[]): number[] {
+  return citations.map((_, index) => index + 1);
+}
+
+/** While an answer is written its numbers are not final, so they and the unverified marks wait for the finished text. */
+export function withoutMarks(text: string): string {
+  return text.replace(/\s?\[(?:\d+(?:\s*[,，、]\s*\d+)*|\?)\]/g, "");
 }
 
 /**
@@ -72,7 +74,7 @@ export function LiveAnswer({ state, className = "" }: { state: LiveAnswerState; 
     <div className="message-author"><span className="assistant-mark"><BrandMark size={14} busy /></span><span>Gunther</span></div>
     <AgentSteps steps={state.steps} />
     {state.text
-      ? <div className="message-body"><AnswerBody content={state.text} numbers={[]} /></div>
+      ? <div className="message-body"><AnswerBody content={withoutMarks(state.text)} numbers={[]} /></div>
       : <div className="live-wait"><span><i /><i /><i /></span><small>{state.steps.length ? "Reading what it found…" : "Working out what to look up…"}</small></div>}
   </article>;
 }

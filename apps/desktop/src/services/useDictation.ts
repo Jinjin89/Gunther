@@ -23,6 +23,9 @@ const micMessage = (reason: unknown) => {
 export function useDictation(onText: (text: string) => void) {
   const [state, setState] = useState<DictationState>("idle");
   const [error, setError] = useState<string | null>(null);
+  // How loud the microphone hears you, 0 to 1, so the field can show that it is listening.
+  const [level, setLevel] = useState(0);
+  const lastLevel = useRef(0);
   const handler = useRef(onText);
   handler.current = onText;
   const parts = useRef<{ stream: MediaStream; context: AudioContext; processor: ScriptProcessorNode; socket: WebSocket; ready: boolean; streaming: boolean; queue: string[]; timer: number | null } | null>(null);
@@ -40,6 +43,7 @@ export function useDictation(onText: (text: string) => void) {
     live.socket.onclose = null;
     live.socket.onerror = null;
     if (live.socket.readyState <= WebSocket.OPEN) live.socket.close();
+    setLevel(0);
     setState("idle");
   }, []);
 
@@ -83,7 +87,15 @@ export function useDictation(onText: (text: string) => void) {
     context.createMediaStreamSource(stream).connect(processor);
     processor.connect(context.destination);
     processor.onaudioprocess = (event) => {
-      const audio = encodePcm16(event.inputBuffer.getChannelData(0), context.sampleRate);
+      const samples = event.inputBuffer.getChannelData(0);
+      const now = performance.now();
+      if (now - lastLevel.current > 90) {
+        lastLevel.current = now;
+        let sum = 0;
+        for (const sample of samples) sum += sample * sample;
+        setLevel(Math.min(1, Math.sqrt(sum / samples.length) * 8));
+      }
+      const audio = encodePcm16(samples, context.sampleRate);
       if (live.ready && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "input_audio_buffer.append", audio }));
       else if (live.queue.length < 120) live.queue.push(audio);
     };
@@ -115,5 +127,5 @@ export function useDictation(onText: (text: string) => void) {
 
   useEffect(() => () => { cancelled.current = true; release(); }, [release]);
 
-  return { state, error, start, stop, cancel: release, clearError: () => setError(null) };
+  return { state, error, level, start, stop, cancel: release, clearError: () => setError(null) };
 }
