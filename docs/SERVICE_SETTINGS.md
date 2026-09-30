@@ -17,6 +17,10 @@ Set up like Models: **providers** first, then **jobs** that pick a model.
 (Qwen3-ASR on Alibaba Cloud), OpenAI, or any server with an OpenAI-style
 `/audio/transcriptions` (Groq, a Whisper you host). Each has an address, a key
 (SenseVoice needs none) and its models; **Fetch models** lists what it offers.
+For Qwen it offers the recognisers that answer on `compatible-mode/v1/chat/completions`:
+the documented `qwen3-asr-flash`, `-2026-02-10` and `-2025-09-08` first, then any other
+`qwen3-asr-flash` version the key's list names (DashScope's list is mostly chat models;
+`-filetrans` and real-time recognisers need other addresses and are left out).
 
 **Jobs** pick one model each, whether it works **live**, and a language:
 

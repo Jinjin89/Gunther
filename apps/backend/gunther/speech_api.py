@@ -282,10 +282,16 @@ async def _test(provider: dict[str, Any], api_key: str | None) -> dict[str, Any]
             "warning": None,
             "available": [model],
         }
-    optional = PRESETS[provider["kind"]].key_optional
-    result, available = await list_models(
-        provider["baseUrl"], api_key, provider["name"], key_optional=optional
+    preset = PRESETS[provider["kind"]]
+    result, listed = await list_models(
+        provider["baseUrl"], api_key, provider["name"], key_optional=preset.key_optional
     )
+    available = listed
+    if preset.transcribes is not None and result.ok:
+        # A supplier's list may be of chat models (DashScope's is): offer its documented
+        # recognisers first, then any other one the list names that answers here.
+        extra = [m for m in listed if preset.transcribes(m) and m not in preset.documented]
+        available = [*preset.documented, *extra]
     chosen = [model["id"] for model in provider["models"]]
     missing = [model for model in chosen if available and model not in available]
     warning = result.warning

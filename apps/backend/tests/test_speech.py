@@ -216,3 +216,43 @@ def test_ask_dictation_sends_the_whole_take_at_the_end(
         assert event["transcript"] == "hello there"
         assert len(posted) == 1
         assert str(posted[0].url) == "https://asr.example/v1/audio/transcriptions"
+
+
+def test_fetch_models_offers_the_qwen_recognisers_that_answer_here(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gunther import speech_api
+    from gunther.service_settings import CheckResult
+
+    async def listed(url, key, name, *, key_optional=False):
+        # DashScope's list is of chat models, with a recogniser or two among them.
+        return CheckResult(True, "Connected, and the key works."), [
+            "qwen-plus",
+            "qwen3-asr-flash",
+            "qwen3-asr-flash-2027-01-01",
+            "qwen3-asr-flash-filetrans",
+            "qwen3-asr-flash-realtime",
+            "qwen3-tts-flash",
+        ]
+
+    monkeypatch.setattr(speech_api, "list_models", listed)
+    with TestClient(create_app(settings_for(tmp_path))) as client:
+        added = client.post(
+            "/api/settings/speech/providers", headers=SIDECAR, json={"kind": "qwen"}
+        ).json()
+        qwen = next(item for item in added["providers"] if item["kind"] == "qwen")
+        tested = client.post(
+            f"/api/settings/speech/providers/{qwen['id']}/test",
+            headers=SIDECAR,
+            json={"apiKey": KEY},
+        ).json()
+    assert tested["ok"] is True
+    # Documented ones first, then others the list names that answer on chat completions.
+    assert tested["available"] == [
+        "qwen3-asr-flash",
+        "qwen3-asr-flash-2026-02-10",
+        "qwen3-asr-flash-2025-09-08",
+        "qwen3-asr-flash-2027-01-01",
+    ]
+    # The chosen model is documented, so no "not in this account's list" warning.
+    assert tested["warning"] is None
