@@ -595,7 +595,9 @@ def test_unavailable_worker_backs_off_logs_sparingly_and_stops_promptly(
         monkeypatch.setattr(worker.index, "backfill", unavailable)
         monkeypatch.setattr(worker, "_pause", record_pause)
         with caplog.at_level(logging.WARNING, logger="gunther.processing"):
-            asyncio.run(asyncio.wait_for(worker.run(), timeout=5))
+            # Only the lane that reads sources calls backfill; run() would also start
+            # the AI lane, whose idle pauses land in `pauses` in no fixed order.
+            asyncio.run(asyncio.wait_for(worker._lane(ai=False), timeout=5))
 
     assert attempts["count"] == 40
     assert pauses[:4] == [2.0, 4.0, 8.0, 16.0]
