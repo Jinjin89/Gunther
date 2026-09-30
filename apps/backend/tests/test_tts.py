@@ -12,7 +12,13 @@ from gunther.config import Settings
 from gunther.database import session_scope
 from gunther.main import create_app
 from gunther.models import SessionMessage
-from gunther.tts_providers import TtsError, join_wav, split_for_speech, wav_seconds
+from gunther.tts_providers import (
+    TtsError,
+    join_wav,
+    split_for_listening,
+    split_for_speech,
+    wav_seconds,
+)
 from tests.fake_models import FakeProvider, gateway
 
 SIDECAR_TOKEN = "sidecar-token-for-tests"
@@ -452,3 +458,31 @@ def test_joining_wav_files_adds_their_lengths() -> None:
     assert wav_seconds(joined) == pytest.approx(0.3, abs=0.01)
     with pytest.raises(TtsError):
         join_wav([wav(0.1), b"not audio"])
+
+
+def test_split_for_listening_starts_with_the_first_paragraph() -> None:
+    first = ("First paragraph, long enough to stand alone. " * 4).strip()
+    parts = split_for_listening(f"{first}\n\nShort.\n\nAlso short.", 500)
+    assert parts[0] == first[:260].rsplit(" ", 1)[0] or parts[0] == first
+    assert parts[-1] == "Short.\nAlso short."
+
+
+def test_a_long_answer_is_handed_over_in_parts_and_kept_whole(tmp_path: Path, spoken) -> None:
+    paragraph = "Paragraph says something fairly long about T cells. " * 5
+    text = "\n\n".join(paragraph for _ in range(3))
+    with app_for(tmp_path) as client:
+        setup(client)
+        session_id, message_id = answer(client, text)
+        url = f"/api/sessions/{session_id}/messages/{message_id}/speech/begin"
+        begun = client.post(url, headers=SIDECAR).json()
+        assert begun["clip"] is None and begun["parts"] >= 3
+        for index in range(begun["parts"]):
+            part = client.get(f"/api/speech/jobs/{begun['jobId']}/parts/{index}", headers=SIDECAR)
+            assert part.status_code == 200 and part.headers["content-type"] == "audio/wav"
+        count = len(spoken)
+        assert count == begun["parts"]
+        missing = client.get(f"/api/speech/jobs/{begun['jobId']}/parts/99", headers=SIDECAR)
+        assert missing.status_code == 404
+        # Afterwards the whole answer is on disk and later listens just play it.
+        again = client.post(url, headers=SIDECAR).json()
+        assert again["clip"]["cached"] is True and again["parts"] == 1 and len(spoken) == count

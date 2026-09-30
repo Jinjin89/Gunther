@@ -395,6 +395,42 @@ async def speak_message(session_id: str, message_id: str, request: Request) -> d
     return _clip_out(clip)
 
 
+@router.post("/sessions/{session_id}/messages/{message_id}/speech/begin")
+async def begin_speech(session_id: str, message_id: str, request: Request) -> dict[str, Any]:
+    """Like speak_message, but a first reading is handed over in parts to play as they arrive."""
+
+    _owner_only(request)
+    resolved, problem = resolve(_config(request), *_registries(request))
+    if resolved is None:
+        raise HTTPException(409, problem)
+    try:
+        begun = await _service(request).begin(
+            session_id, message_id, resolved, request.app.state.models
+        )
+    except SpeechNotFound as error:
+        raise HTTPException(404, str(error)) from error
+    except TtsError as error:
+        raise HTTPException(502, str(error)) from error
+    if begun.clip is not None:
+        return {"clip": _clip_out(begun.clip), "jobId": None, "parts": 1}
+    assert begun.job is not None
+    return {"clip": None, "jobId": begun.job.id, "parts": len(begun.job.pieces)}
+
+
+@router.get("/speech/jobs/{job_id}/parts/{index}")
+async def job_part(job_id: str, index: int, request: Request) -> Response:
+    """One part of an answer being made; waits until it exists."""
+
+    _owner_only(request)
+    try:
+        audio = await _service(request).job_part(job_id, index)
+    except SpeechNotFound as error:
+        raise HTTPException(404, str(error)) from error
+    except TtsError as error:
+        raise HTTPException(502, str(error)) from error
+    return Response(audio, media_type="audio/wav")
+
+
 @router.get("/speech/clips/{clip_id}/audio")
 def clip_audio(clip_id: str, request: Request) -> FileResponse:
     _owner_only(request)

@@ -7,7 +7,8 @@ import { SpeakerButton } from "./SpeakerButton";
 import { TtsSettings } from "./TtsSettings";
 
 const api = vi.hoisted(() => ({
-  speakMessage: vi.fn(),
+  beginSpeech: vi.fn(),
+  speechPart: vi.fn(),
   speechAudio: vi.fn(),
   ttsOverview: vi.fn(),
   saveTtsRoles: vi.fn(),
@@ -57,7 +58,7 @@ describe("reading an answer aloud", () => {
     vi.stubGlobal("Audio", FakeAudio);
     URL.createObjectURL = vi.fn(() => "blob:clip");
     URL.revokeObjectURL = vi.fn();
-    api.speakMessage.mockResolvedValue({ id: "c1" });
+    api.beginSpeech.mockResolvedValue({ clip: { id: "c1" }, jobId: null, parts: 1 });
     api.speechAudio.mockResolvedValue(new Blob(["x"]));
   });
 
@@ -73,13 +74,30 @@ describe("reading an answer aloud", () => {
     act(() => players[0]?.onended?.());
     await user.click(await screen.findByRole("button", { name: "Read aloud" }));
     await screen.findByRole("button", { name: "Pause" });
-    expect(api.speakMessage).toHaveBeenCalledTimes(1);
+    expect(api.beginSpeech).toHaveBeenCalledTimes(2);
     expect(api.speechAudio).toHaveBeenCalledTimes(1);
+  });
+
+  it("plays a long answer part by part, fetching the next while one plays", async () => {
+    api.beginSpeech.mockResolvedValue({ clip: null, jobId: "j1", parts: 2 });
+    api.speechPart.mockResolvedValue(new Blob(["x"]));
+    const user = userEvent.setup();
+    render(<SpeakerButton message={message} />);
+    await user.click(screen.getByRole("button", { name: "Read aloud" }));
+    expect(await screen.findByRole("button", { name: "Pause" })).toBeTruthy();
+    expect(players).toHaveLength(1);
+    await waitFor(() => expect(api.speechPart).toHaveBeenCalledTimes(2));
+    act(() => players[0]?.onended?.());
+    await waitFor(() => expect(players).toHaveLength(2));
+    act(() => players[1]?.onended?.());
+    expect(await screen.findByRole("button", { name: "Read aloud" })).toBeTruthy();
+    expect(api.speechPart).toHaveBeenNthCalledWith(1, "j1", 0);
+    expect(api.speechPart).toHaveBeenNthCalledWith(2, "j1", 1);
   });
 
   it("shows why it failed and lets you retry", async () => {
     const user = userEvent.setup();
-    api.speakMessage.mockRejectedValueOnce(new Error("Qwen did not accept this API key."));
+    api.beginSpeech.mockRejectedValueOnce(new Error("Qwen did not accept this API key."));
     render(<SpeakerButton message={{ id: "m-fail", sessionId: "s1" }} />);
     await user.click(screen.getByRole("button", { name: "Read aloud" }));
     expect((await screen.findByRole("alert")).textContent).toContain("did not accept");
@@ -97,13 +115,13 @@ describe("reading an answer aloud", () => {
   it("reads a fresh answer by itself only when asked to and ready", async () => {
     api.ttsOverview.mockResolvedValueOnce(overview({ autoRead: false }));
     await readAloud.auto({ id: "auto-1", sessionId: "s1" });
-    expect(api.speakMessage).not.toHaveBeenCalled();
+    expect(api.beginSpeech).not.toHaveBeenCalled();
     api.ttsOverview.mockResolvedValueOnce(overview({ autoRead: true, problem: "Qwen needs an API key." }));
     await readAloud.auto({ id: "auto-1", sessionId: "s1" });
-    expect(api.speakMessage).not.toHaveBeenCalled();
+    expect(api.beginSpeech).not.toHaveBeenCalled();
     api.ttsOverview.mockResolvedValueOnce(overview({ autoRead: true }));
     await readAloud.auto({ id: "auto-1", sessionId: "s1" });
-    await waitFor(() => expect(api.speakMessage).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.beginSpeech).toHaveBeenCalledTimes(1));
   });
 });
 

@@ -14,6 +14,7 @@ import json
 import logging
 import re
 import secrets
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,7 @@ from gunther.tts_providers import (
     TtsError,
     TtsProvider,
     join_wav,
+    split_for_listening,
     split_for_speech,
     wav_seconds,
 )
@@ -387,11 +389,49 @@ class SpeechNotFound(LookupError):
     pass
 
 
+class Job:
+    """An answer being made part by part, so the first part can play before the last exists."""
+
+    def __init__(self, job_id: str, pieces: list[str]) -> None:
+        self.id = job_id
+        self.pieces = pieces
+        self.audio: list[bytes | None] = [None] * len(pieces)
+        self.error: TtsError | None = None
+        self.changed = asyncio.Event()
+
+    def publish(self) -> None:
+        self.changed.set()
+        self.changed = asyncio.Event()
+
+    async def part(self, index: int) -> bytes:
+        while True:
+            audio = self.audio[index]
+            if audio is not None:
+                return audio
+            if self.error is not None:
+                raise self.error
+            await self.changed.wait()
+
+
+@dataclass(frozen=True)
+class Begun:
+    """Either the finished clip, or a job whose parts are fetched one by one."""
+
+    clip: Clip | None
+    job: Job | None
+
+
+MAX_JOBS = 6
+
+
 class TtsService:
     def __init__(self, sessions: sessionmaker[Session], directory: Path) -> None:
         self.sessions = sessions
         self.directory = directory
         self._locks: dict[str, asyncio.Lock] = {}
+        self._running: dict[str, Job] = {}
+        self._jobs: dict[str, Job] = {}
+        self._tasks: set[asyncio.Task[None]] = set()
 
     # Making speech ---------------------------------------------------------------
 
@@ -440,6 +480,75 @@ class TtsService:
             return await asyncio.to_thread(
                 self._store, message_id, key, resolved, script.text, script.model, audio
             )
+
+    async def begin(
+        self, session_id: str, message_id: str, resolved: Resolved, gateway: ModelGateway | None
+    ) -> Begun:
+        """Start an answer: found on disk, or made in parts that can be played as they arrive."""
+
+        with session_scope(self.sessions) as session:
+            message = session.scalar(
+                select(SessionMessage).where(
+                    SessionMessage.id == message_id, SessionMessage.session_id == session_id
+                )
+            )
+            if message is None:
+                raise SpeechNotFound("There is no such message")
+            if message.role != "assistant":
+                raise TtsError("Only answers are read aloud.")
+            content = message.content
+        key = cache_key(content, resolved)
+        found = self._find(key)
+        if found is not None:
+            return Begun(found, None)
+        running = self._running.get(key)
+        if running is not None:
+            return Begun(None, running)
+        script = await narrate(
+            content, gateway, understands_structure=resolved.provider.reads_structure
+        )
+        running = self._running.get(key)
+        if running is not None:
+            return Begun(None, running)
+        pieces = split_for_listening(script.text, resolved.provider.max_chars)
+        if not pieces:
+            raise TtsError("There is nothing in this answer to read aloud.")
+        job = Job(f"job-{secrets.token_hex(8)}", pieces)
+        self._running[key] = job
+        self._jobs[job.id] = job
+        while len(self._jobs) > MAX_JOBS:
+            self._jobs.pop(next(iter(self._jobs)))
+        task = asyncio.create_task(self._make(job, key, message_id, resolved, script))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return Begun(None, job)
+
+    async def _make(self, job: Job, key: str, message_id: str, resolved: Resolved, script: Any) -> None:
+        # In order and one at a time, like synthesize(): suppliers rate-limit.
+        try:
+            for index, piece in enumerate(job.pieces):
+                job.audio[index] = await resolved.provider.synthesize(resolved.config, piece)
+                job.publish()
+            if self._find(key) is None:
+                audio = join_wav([part for part in job.audio if part is not None])
+                await asyncio.to_thread(
+                    self._store, message_id, key, resolved, script.text, script.model, audio
+                )
+        except TtsError as error:
+            job.error = error
+            job.publish()
+        except Exception:  # a broken join or disk must still end the wait
+            logger.exception("Making speech failed")
+            job.error = TtsError("The answer could not be turned into speech.")
+            job.publish()
+        finally:
+            self._running.pop(key, None)
+
+    def job_part(self, job_id: str, index: int) -> Awaitable[bytes]:
+        job = self._jobs.get(job_id)
+        if job is None or not 0 <= index < len(job.pieces):
+            raise SpeechNotFound("This recording is gone. Read the answer again to make it.")
+        return job.part(index)
 
     def _find(self, key: str) -> Clip | None:
         with session_scope(self.sessions) as session:

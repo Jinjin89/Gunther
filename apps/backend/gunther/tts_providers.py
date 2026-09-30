@@ -14,6 +14,7 @@ parts go through the narrator first (see tts_narration).
 from __future__ import annotations
 
 import io
+import re
 import wave
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -267,6 +268,28 @@ def split_for_speech(text: str, limit: int) -> list[str]:
     if current:
         pieces.append(current)
     return [piece.strip() for piece in pieces if piece.strip()]
+
+
+def split_for_listening(text: str, limit: int, target: int = 260) -> list[str]:
+    """Parts to play one after another: a paragraph each, short ones joined up to ``target``.
+
+    The first part is the first paragraph, so playback can begin while the rest is made.
+    """
+
+    parts: list[str] = []
+    current = ""
+    for paragraph in re.split(r"\n\s*\n", text):
+        for piece in split_for_speech(paragraph, limit):
+            if current and len(current) + 1 + len(piece) > min(target, limit):
+                parts.append(current)
+                current = ""
+            current = f"{current}\n{piece}" if current else piece
+        if current and len(current) >= target // 2:
+            parts.append(current)
+            current = ""
+    if current:
+        parts.append(current)
+    return parts
 
 
 def describe(provider: TtsProvider) -> dict[str, Any]:

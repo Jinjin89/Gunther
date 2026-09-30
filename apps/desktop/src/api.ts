@@ -65,6 +65,7 @@ import type {
   SpeechRole,
   SpeechTestResult,
   SpeechClip,
+  SpeechStart,
   TtsProviderInput,
   TtsRoleInput,
   TtsSampleInput,
@@ -629,6 +630,10 @@ export const knowledgeApi = {
   /** Make (or find) the audio of an answer. */
   speakMessage: (sessionId: string, messageId: string) =>
     request<SpeechClip>(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/speech`, { method: "POST" }),
+  /** Find the audio of an answer, or start making it in parts that can play as they arrive. */
+  beginSpeech: (sessionId: string, messageId: string) =>
+    request<SpeechStart>(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/speech/begin`, { method: "POST" }),
+  speechPart: (jobId: string, index: number) => requestBlob(`/speech/jobs/${encodeURIComponent(jobId)}/parts/${index}`),
   speechAudio: (clipId: string) => requestBlob(`/speech/clips/${encodeURIComponent(clipId)}/audio`),
   saveSpeechRoles: (roles: Partial<Record<SpeechRole["id"], { model: string | null; stream: boolean; language: string }>>) =>
     request<SpeechOverview>("/settings/speech/roles", { method: "PUT", body: JSON.stringify({ roles }) }),

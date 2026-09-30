@@ -8,6 +8,11 @@ Answers can be spoken: a **Listen** button under every answer (Ask page and Home
 message text → **narrator** (`tts_narration.py`) → pieces ≤ the supplier's limit → supplier audio
 (`tts_providers.py`) → one WAV kept in `SPEECH_DIR` (default `data/speech/`) and listed in `speech_clips`.
 
+- **Long answers play as they are made.** The first reading is split into parts (a paragraph each, short
+  ones joined; `split_for_listening`). `POST …/speech/begin` returns either the kept clip or a job;
+  the app fetches `GET /speech/jobs/{id}/parts/{n}` in order, playing part 1 while part 2 is made.
+  When the last part is done the parts are joined and kept as the clip, so later listens are one file.
+  Jobs live in memory only (the last few).
 - **Cache key** = narration version + supplier + model + options (voice, language…) + message text.
   The second listen only plays the file. A new voice makes a new clip; *Delete* in Settings clears all.
 - **Tables, pictures, code, formulas** are not read as written. A language model (Analysis, else Ask;

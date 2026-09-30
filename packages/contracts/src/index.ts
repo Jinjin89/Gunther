@@ -639,6 +639,13 @@ export interface BackgroundJob {
 }
 
 /** An answer read aloud and kept on this computer. */
+/** Starting an answer: the finished clip, or a job whose parts are fetched one by one. */
+export interface SpeechStart {
+  clip: SpeechClip | null;
+  jobId: string | null;
+  parts: number;
+}
+
 export interface SpeechClip {
   id: string;
   messageId: string;
