@@ -36,6 +36,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from gunther import trace
 from gunther.llm import Completion, ModelError, ModelGateway, ModelInfo, Turn
 from gunther.model_profiles import Effort
 
@@ -308,6 +309,20 @@ def check_citations(content: str, valid: set[int]) -> tuple[str, list[int]]:
     return text, order
 
 
+def _traced(found: Sequence[Evidence]) -> list[dict[str, Any]]:
+    """What a search returned, as the trace shows it."""
+
+    return [
+        {
+            "title": item.title,
+            "kind": item.kind,
+            "where": item.url or item.locator,
+            "text": " ".join(item.text.split())[:400],
+        }
+        for item in found
+    ]
+
+
 def renumber_citations(text: str, used: Sequence[int]) -> str:
     """Show the pool's numbers as 1, 2, 3 in the order the answer first cites them.
 
@@ -417,23 +432,28 @@ class AskAgent:
             return fresh
 
         for _ in range(self.limits.tool_calls + 1):
-            try:
-                plan, planned = self.gateway.complete_json(
-                    model,
-                    Plan,
-                    system=PLANNER,
-                    prompt=_plan_prompt(question, toolbox, done, held),
-                    history=recent,
-                    effort=self.planner_effort,
-                )
-                notes.extend(n for n in planned.notes if n not in notes and "refused" in n)
-            except ModelError as error:
-                logger.info("The planning step failed: %s", error)
-                # Unreadable plan: search the first tool with the question as asked.
-                first = toolbox.tools[0] if toolbox.tools else None
-                if first is None or steps:
-                    break
-                plan = Plan(action=first.name, query=question[:300])
+            with trace.step(
+                "plan", "Deciding the next step" if steps else "Deciding what to look up"
+            ) as planning:
+                try:
+                    plan, planned = self.gateway.complete_json(
+                        model,
+                        Plan,
+                        system=PLANNER,
+                        prompt=_plan_prompt(question, toolbox, done, held),
+                        history=recent,
+                        effort=self.planner_effort,
+                    )
+                    notes.extend(n for n in planned.notes if n not in notes and "refused" in n)
+                except ModelError as error:
+                    logger.info("The planning step failed: %s", error)
+                    trace.update(planning, failed=str(error))
+                    # Unreadable plan: search the first tool with the question as asked.
+                    first = toolbox.tools[0] if toolbox.tools else None
+                    if first is None or steps:
+                        break
+                    plan = Plan(action=first.name, query=question[:300])
+                trace.update(planning, action=plan.action, query=plan.query)
             tool = toolbox.get(plan.action)
             if tool is None or len(steps) >= self.limits.tool_calls:
                 break
@@ -447,12 +467,16 @@ class AskAgent:
             try:
                 found = tool.run(query)
             except ToolFailure as error:
+                trace.note("search", label, tool=tool.name, query=query, error=str(error))
                 steps.append(Step(tool.name, label, query, 0, str(error)))
                 emit({"type": "step", "state": "done", **steps[-1].out()})
                 done.append(f"- {tool.name}({query!r}) failed: {error}")
                 continue
+            trace.note("search", label, tool=tool.name, query=query, results=_traced(found))
             if tool.grade:
-                found = self._relevant(model, question, query, found)
+                with trace.step("grade", "Keeping the results about the question") as grading:
+                    found = self._relevant(model, question, query, found)
+                    trace.update(grading, kept=[item.title for item in found])
             fresh = repeated = 0
             for item in found:
                 if item.key in known:
@@ -473,13 +497,21 @@ class AskAgent:
 
         turns = [*recent, Turn("user", _write_prompt(question, toolbox, held, steps))]
         try:
-            completion = self.gateway.complete(
-                model,
-                system=writer_prompt(style),
-                messages=turns,
-                effort=effort,
-                on_text=(lambda piece: emit({"type": "text", "text": piece})) if events else None,
-            )
+            with trace.step(
+                "write",
+                "Writing the answer",
+                style=style or "balanced",
+                sources=[f"[{item.ref}] {item.title}" for item in held],
+            ):
+                completion = self.gateway.complete(
+                    model,
+                    system=writer_prompt(style),
+                    messages=turns,
+                    effort=effort,
+                    on_text=(lambda piece: emit({"type": "text", "text": piece}))
+                    if events
+                    else None,
+                )
         except ModelError as error:
             return AgentResult(
                 content="",
@@ -497,6 +529,12 @@ class AskAgent:
         text, used = check_citations(text, set(by_ref))
         # Only sources the text cites are kept, numbered in the order it cites them.
         text = renumber_citations(text, used)
+        trace.note(
+            "cite",
+            "Numbering the sources in reading order",
+            sources=[f"[{n}] {by_ref[ref].title} (pool {ref})" for n, ref in enumerate(used, 1)],
+            uncited=[f"[{item.ref}] {item.title}" for item in held if item.ref not in used],
+        )
         return AgentResult(
             content=text,
             evidence=[by_ref[ref] for ref in used],
@@ -514,13 +552,15 @@ class AskAgent:
         if len(text) < 40:
             return text
         try:
-            verdict, _ = self.gateway.complete_json(
-                model,
-                Unmarked,
-                system=AUDITOR,
-                prompt=f"Answer:\n{text}",
-                effort=self.planner_effort,
-            )
+            with trace.step("audit", "Marking claims that have no source") as auditing:
+                verdict, _ = self.gateway.complete_json(
+                    model,
+                    Unmarked,
+                    system=AUDITOR,
+                    prompt=f"Answer:\n{text}",
+                    effort=self.planner_effort,
+                )
+                trace.update(auditing, claims=list(verdict.claims))
         except ModelError as error:
             logger.info("The audit step failed: %s", error)
             return text
@@ -575,13 +615,29 @@ class AskAgent:
                 for index, item in enumerate(candidates, start=1)
             )
             try:
-                verdict, _ = self.gateway.complete_json(
-                    model,
-                    Verdict,
-                    system=CHECKER,
-                    prompt=f"Claim:\n{claim}\n\nResults:\n{listing}",
-                    effort=self.planner_effort,
-                )
+                with trace.step(
+                    "check", "Checking a claim against sources", claim=claim
+                ) as checking:
+                    verdict, _ = self.gateway.complete_json(
+                        model,
+                        Verdict,
+                        system=CHECKER,
+                        prompt=f"Claim:\n{claim}\n\nResults:\n{listing}",
+                        effort=self.planner_effort,
+                    )
+                    trace.update(
+                        checking,
+                        supports=[
+                            candidates[n - 1].title
+                            for n in verdict.supports
+                            if 0 < n <= len(candidates)
+                        ],
+                        contradicts=[
+                            candidates[n - 1].title
+                            for n in verdict.contradicts
+                            if 0 < n <= len(candidates)
+                        ],
+                    )
             except ModelError as error:
                 logger.info("The checking step failed: %s", error)
                 continue

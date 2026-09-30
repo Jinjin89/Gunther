@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import event, select
 from sqlalchemy.orm import ORMExecuteState, Session, sessionmaker
 
-from gunther import model_registry, speech_registry, tts_service, vector_index
+from gunther import log_buffer, model_registry, speech_registry, tts_service, vector_index
 from gunther.answer_runs import AnswerRuns
 from gunther.api import router
 from gunther.asset_service import AssetService
@@ -23,6 +23,7 @@ from gunther.database import (
     create_session_factory,
     session_scope,
 )
+from gunther.developer_api import router as developer_router
 from gunther.device_auth import (
     AuthPrincipal,
     DeviceAuthError,
@@ -131,6 +132,8 @@ def _connect_models(
         max_results=settings.web_search_max_results,
     )
     knowledge_service.web_search = online_search
+    # Settings → Developer: keep how each answer is made.
+    knowledge_service.tracing = bool(store.developer().get("traces"))
     index = knowledge_service.index
     index.digest_method = digest_writer.method if digest_writer else None
     index.digest_vision = bool(digest_writer and digest_writer.vision)
@@ -305,6 +308,7 @@ def create_app(
     application.state.service_settings = service_store
     application.state.tts = TtsService(sessions, active_settings.speech_dir)
     application.state.answer_runs = AnswerRuns()
+    application.state.recent_log = log_buffer.install()
     # Tests stand in for the providers here.
     application.state.model_client_factory = model_client_factory
     _connect_models(application, active_settings, service_store, knowledge_service, worker)
@@ -445,6 +449,7 @@ def create_app(
     application.include_router(models_router, prefix=active_settings.api_prefix)
     application.include_router(speech_router, prefix=active_settings.api_prefix)
     application.include_router(tts_router, prefix=active_settings.api_prefix)
+    application.include_router(developer_router, prefix=active_settings.api_prefix)
     return application
 
 

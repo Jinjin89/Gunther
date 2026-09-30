@@ -469,6 +469,18 @@ class SessionMessage(Base):
     session: Mapped[KnowledgeSession] = relationship(back_populates="messages")
 
 
+class MessageTrace(Base):
+    """How an answer was made, step by step (see trace); kept while Settings → Developer asks."""
+
+    __tablename__ = "message_traces"
+
+    message_id: Mapped[str] = mapped_column(
+        ForeignKey("session_messages.id", ondelete="CASCADE"), primary_key=True
+    )
+    trace_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now, index=True)
+
+
 class SpeechClip(Base):
     """An answer read aloud, kept so the second listen is only played.
 

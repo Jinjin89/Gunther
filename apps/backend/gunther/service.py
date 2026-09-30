@@ -14,10 +14,11 @@ from typing import Literal
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from sqlalchemy import and_, func, or_, select, true
+from sqlalchemy import and_, delete, func, or_, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
+from gunther import trace
 from gunther.agent import (
     DEFAULT_STYLE,
     STYLES,
@@ -48,6 +49,7 @@ from gunther.models import (
     KnowledgeSession,
     KnowledgeUnit,
     KnowledgeUnitRevision,
+    MessageTrace,
     NotebookNote,
     Revision,
     SessionBranch,
@@ -181,6 +183,8 @@ class _Answer:
 
 # Reasoning is kept for the model that wrote it; past this it is cut.
 MAX_KEPT_REASONING = 60_000
+# Traces of the latest answers kept for Settings → Developer; older ones are dropped.
+KEPT_TRACES = 200
 
 
 def conversation_history(messages: list[SessionMessage]) -> list[Turn]:
@@ -261,6 +265,8 @@ class KnowledgeService:
         # Every model that is set up (see llm); a conversation may pick any of them.
         self.models: ModelGateway | None = None
         self.web_search: OnlineSearchProvider = DisabledOnlineSearch()
+        # Settings → Developer: keep how each answer is made (see trace).
+        self.tracing = False
         self.index = KnowledgeIndex(sessions)
         self._source_import_locks_guard = Lock()
         self._source_import_locks: dict[str, tuple[Lock, int]] = {}
@@ -2109,17 +2115,20 @@ class KnowledgeService:
                 for item in everything
                 if item.kind != "library" or item.payload[0].source_id in in_scope
             ]
-            response = self._answer(
-                question,
-                history,
-                toolbox,
-                model,
-                payload.effort,
-                events,
-                pool,
-                payload.style,
-                max((item.ref or 0 for item in everything), default=0),
-            )
+            # Settings → Developer: keep how this answer is made, step by step.
+            kept = trace.Trace() if self.tracing else None
+            with trace.tracing(kept):
+                response = self._answer(
+                    question,
+                    history,
+                    toolbox,
+                    model,
+                    payload.effort,
+                    events,
+                    pool,
+                    payload.style,
+                    max((item.ref or 0 for item in everything), default=0),
+                )
             citations = [
                 item.payload[0].model_copy(update={"ref": item.ref}) for item in response.evidence
             ]
@@ -2168,11 +2177,41 @@ class KnowledgeService:
             knowledge_session.summary = re.sub(r"\s+", " ", response.content)[:220]
             knowledge_session.updated_at = now
             session.flush()
+            if kept is not None:
+                self._keep_trace(session, assistant_message.id, kept)
             return ConversationTurnOut(
                 session=self._session_summary(knowledge_session),
                 user_message=self._message_out(user_message),
                 assistant_message=self._message_out(assistant_message),
             )
+
+    def _keep_trace(self, session: Session, message_id: str, kept: trace.Trace) -> None:
+        """Save how an answer was made; only the latest traces stay."""
+
+        text = json.dumps(kept.out(), ensure_ascii=False)
+        session.add(MessageTrace(message_id=message_id, trace_json=text))
+        session.flush()
+        stale = session.scalars(
+            select(MessageTrace.message_id)
+            .order_by(MessageTrace.created_at.desc())
+            .offset(KEPT_TRACES)
+        ).all()
+        if stale:
+            session.execute(delete(MessageTrace).where(MessageTrace.message_id.in_(stale)))
+
+    def message_trace(self, session_id: str, message_id: str) -> dict | None:
+        """How an answer in this conversation was made, if it was kept."""
+
+        with session_scope(self.sessions) as session:
+            row = session.scalar(
+                select(MessageTrace)
+                .join(SessionMessage, SessionMessage.id == MessageTrace.message_id)
+                .where(
+                    MessageTrace.message_id == message_id,
+                    SessionMessage.session_id == session_id,
+                )
+            )
+            return json.loads(row.trace_json) if row else None
 
     def record_interrupted_question(
         self, session_id: str, content: str, reason: Literal["stopped", "failed"]

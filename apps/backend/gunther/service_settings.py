@@ -335,6 +335,8 @@ class ServiceSettingsStore:
         self._speech_roles: dict[str, dict[str, Any]] | None = None
         # Read-aloud settings (see tts_service); None until someone saves them.
         self._tts: dict[str, Any] | None = None
+        # Settings → Developer: keep how each answer was made (see trace).
+        self._developer: dict[str, Any] = {"traces": False}
         self._listeners: list[Callable[[], None]] = []
         self._load()
 
@@ -369,6 +371,9 @@ class ServiceSettingsStore:
                 logger.warning("Ignoring a saved setting that is no longer valid: %s", key)
         if isinstance(payload.get("tts"), dict):
             self._tts = payload["tts"]
+        developer = payload.get("developer")
+        if isinstance(developer, dict) and isinstance(developer.get("traces"), bool):
+            self._developer = {"traces": developer["traces"]}
         checks = payload.get("checks") or {}
         self._checks = {
             key: dict(value) for key, value in checks.items() if isinstance(value, dict)
@@ -413,6 +418,7 @@ class ServiceSettingsStore:
             "speechProviders": self._speech_providers,
             "speechRoles": self._speech_roles,
             "tts": self._tts,
+            "developer": self._developer,
         }
         descriptor, temporary = tempfile.mkstemp(
             prefix=".service-settings.", suffix=".json", dir=self.path.parent
@@ -518,6 +524,20 @@ class ServiceSettingsStore:
 
         with self._lock:
             self._tts = copy.deepcopy(config)
+            self._write()
+            listeners = list(self._listeners)
+        for listener in listeners:
+            listener()
+
+    def developer(self) -> dict[str, Any]:
+        """Settings → Developer: whether each answer keeps how it was made."""
+
+        with self._lock:
+            return dict(self._developer)
+
+    def save_developer(self, *, traces: bool) -> None:
+        with self._lock:
+            self._developer = {"traces": bool(traces)}
             self._write()
             listeners = list(self._listeners)
         for listener in listeners:

@@ -31,6 +31,7 @@ import openai
 from openai import OpenAI
 from pydantic import BaseModel, ValidationError
 
+from gunther import trace
 from gunther.model_profiles import EFFORT_LABELS, Effort, ModelProfile, Params
 
 logger = logging.getLogger(__name__)
@@ -190,6 +191,45 @@ class ModelGateway:
         """Ask once. ``on_text`` hears the answer's text as it is written."""
 
         turns = [Turn("user", messages)] if isinstance(messages, str) else list(messages)
+        if trace.current() is None:
+            return self._complete(
+                model, system, turns, images, effort, json_mode, max_tokens, on_text
+            )
+        # Settings → Developer keeps how answers are made: the exact request and reply.
+        with trace.step(
+            "model",
+            model.display,
+            model=model.ref,
+            effort=effort,
+            json=json_mode,
+            system=system,
+            messages=[{"role": turn.role, "content": turn.content} for turn in turns],
+            images=len(images),
+        ) as call:
+            completion = self._complete(
+                model, system, turns, images, effort, json_mode, max_tokens, on_text, call
+            )
+            trace.update(
+                call,
+                reply=completion.text,
+                reasoning=completion.reasoning,
+                effortApplied=completion.effort_applied,
+                notes=list(completion.notes),
+            )
+            return completion
+
+    def _complete(
+        self,
+        model: ModelInfo,
+        system: str,
+        turns: list[Turn],
+        images: Sequence[Image],
+        effort: Effort | None,
+        json_mode: bool,
+        max_tokens: int | None,
+        on_text: Callable[[str], None] | None,
+        call: dict[str, Any] | None = None,
+    ) -> Completion:
         notes: list[str] = []
         if images and not model.vision:
             notes.append(f"{model.label} cannot see images; it read their text instead.")
@@ -208,9 +248,11 @@ class ModelGateway:
         send_effort, send_json = params, json_mode
         while True:
             try:
-                text, reasoning, finish = self._stream(
+                text, reasoning, finish, usage = self._stream(
                     model, payload, send_effort, send_json, max_tokens, on_text
                 )
+                if call is not None:
+                    trace.update(call, finish=finish, usage=usage)
                 break
             except openai.BadRequestError as error:
                 # A setting this server does not know: once without it, and say so.
@@ -322,7 +364,7 @@ class ModelGateway:
         json_mode: bool,
         max_tokens: int | None,
         on_text: Callable[[str], None] | None = None,
-    ) -> tuple[str, str, str | None]:
+    ) -> tuple[str, str, str | None, dict[str, Any] | None]:
         request: dict[str, Any] = {"model": model.model_id, "messages": messages, "stream": True}
         if params.reasoning_effort:
             request["reasoning_effort"] = params.reasoning_effort
@@ -335,7 +377,16 @@ class ModelGateway:
         text: list[str] = []
         reasoning: list[str] = []
         finish: str | None = None
+        usage: dict[str, Any] | None = None
         for chunk in self._client(model).chat.completions.create(**request):
+            # Token counts, when the provider sends them unasked (asking can be refused).
+            counted = getattr(chunk, "usage", None)
+            if counted is not None:
+                usage = {
+                    key: getattr(counted, key)
+                    for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+                    if isinstance(getattr(counted, key, None), int)
+                } or None
             if not chunk.choices:
                 continue
             choice = chunk.choices[0]
@@ -351,7 +402,7 @@ class ModelGateway:
             thought = extra.get("reasoning_content") or extra.get("reasoning")
             if isinstance(thought, str):
                 reasoning.append(thought)
-        return "".join(text), "".join(reasoning), finish
+        return "".join(text), "".join(reasoning), finish, usage
 
 
 def _json_text(text: str) -> str:

@@ -421,6 +421,13 @@ def _create_speech_clips(connection: Connection, metadata: MetaData) -> None:
         metadata.tables["speech_clips"].create(bind=connection, checkfirst=True)
 
 
+def _create_message_traces(connection: Connection, metadata: MetaData) -> None:
+    """How answers were made, kept while Settings → Developer asks for it."""
+
+    if "message_traces" in metadata.tables:
+        metadata.tables["message_traces"].create(bind=connection, checkfirst=True)
+
+
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
 MIGRATIONS: tuple[Migration, ...] = (
@@ -441,6 +448,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(15, "paper_structure", _create_paper_structure),
     Migration(16, "source_digests", _create_source_digests),
     Migration(17, "speech_clips", _create_speech_clips),
+    Migration(18, "message_traces", _create_message_traces),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version
