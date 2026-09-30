@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "build:bundle": "npm run prepare:sidecar && npm run build",
     "prepare:sidecar": "node ../../scripts/build-backend-sidecar.mjs",
+    "prepare:sidecar:dev": "node ../../scripts/build-backend-sidecar.mjs --if-missing",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -b --pretty false",

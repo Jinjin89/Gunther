@@ -4,7 +4,7 @@
   "version": "0.1.1",
   "identifier": "com.gunther.knowledge",
   "build": {
-    "beforeDevCommand": "npm run prepare:sidecar && npm run dev",
+    "beforeDevCommand": "npm run prepare:sidecar:dev && npm run dev",
     "devUrl": "http://127.0.0.1:5173",
     "beforeBuildCommand": "npm run build:bundle",
     "frontendDist": "../dist"

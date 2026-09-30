@@ -38,6 +38,13 @@ const inputs = [
   fileURLToPath(import.meta.url),
 ];
 const latestInput = Math.max(...inputs.filter(existsSync).map(newestModifiedTime));
+// `tauri dev` runs the backend with uvicorn on 8787 and never starts the helper; it only has
+// to exist for the bundle config. Rebuilding it after every backend edit cost a minute of
+// PyInstaller output (and its harmless "Hidden import ... not found" warnings) per start.
+if (process.argv.includes("--if-missing") && existsSync(completedOutput)) {
+  process.stdout.write(`Gunther backend helper exists; development uses the live backend instead: ${completedOutput}\n`);
+  process.exit(0);
+}
 // A signed release always rebuilds, so an ad-hoc helper from a dev build never ships.
 if (
   !signingIdentity
