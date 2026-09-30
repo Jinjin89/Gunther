@@ -38,9 +38,13 @@ message text → **narrator** (`tts_narration.py`) → pieces ≤ the supplier's
 Laid out like Transcription. **Providers** are connections you add (a supplier, its address, a key,
 the models chosen from it); two of one kind are fine, e.g. Beijing and international Qwen accounts.
 **Used for** lists the jobs; *Answers* (Listen and automatic reading) picks a model, or Off, and the
-voice options of that model's supplier. **Fetch models** asks the supplier which models this key may
-use (DashScope's `compatible-mode/v1/models`, unsaved address and key included) and offers the voice
-ones; Qwen's real-time voices are left out, since they need a WebSocket rather than one request. Settings saved before this shape (one entry per supplier and
+voice options of that model's supplier. **Fetch models** checks the key against the supplier's
+model list (DashScope's `compatible-mode/v1/models`, unsaved address and key included), then offers
+the voice models Qwen documents for that address's region (Beijing adds the first-generation
+`qwen-tts`), plus any other voice the list names. DashScope's list is of chat models, and DashScope
+has no OpenAI-style `/audio/speech`: speech goes to `api/v1/services/aigc/multimodal-generation/generation`
+as its documentation says. Real-time voices (a WebSocket), voice design/clone models (`-vd`, `-vc`)
+and Qwen-Audio-3.0 / CosyVoice (another endpoint, a workspace address and other voices) are not offered. Settings saved before this shape (one entry per supplier and
 an `active` one) are converted when read (`tts_service.upgrade_config`).
 
 ## Adding a supplier

@@ -19,6 +19,7 @@ import wave
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -77,6 +78,9 @@ class TtsProvider:
     models_url: Callable[[str], str] | None = None
     # Which listed models speak through ``synthesize``.
     speaks: Callable[[str], bool] = lambda _model: True
+    # The supplier's documented models for an address (its region), offered by Fetch
+    # models even when its model list leaves voices out.
+    documented: Callable[[str], tuple[str, ...]] = lambda _base_url: ()
 
     def defaults(self) -> dict[str, str]:
         return {option.key: option.default for option in self.options}
@@ -124,6 +128,31 @@ def _qwen_endpoint(base_url: str) -> str:
     root = base_url.rstrip("/")
     root = root.removesuffix("/compatible-mode/v1").removesuffix("/api/v1")
     return f"{root}/api/v1/services/aigc/multimodal-generation/generation"
+
+
+# Qwen's non-real-time voice models, as its documentation lists them (Model Studio,
+# "Non-real-time speech synthesis", 2026-09). All take the request _qwen_synthesize makes;
+# the voice design and voice clone models (-vd, -vc) need voices made first, so are left out.
+QWEN_INTERNATIONAL_MODELS = (
+    "qwen3-tts-flash",
+    "qwen3-tts-flash-2025-11-27",
+    "qwen3-tts-flash-2025-09-18",
+    "qwen3-tts-instruct-flash",
+    "qwen3-tts-instruct-flash-2026-01-26",
+)
+# Beijing also keeps the first generation.
+QWEN_BEIJING_MODELS = (
+    *QWEN_INTERNATIONAL_MODELS,
+    "qwen-tts",
+    "qwen-tts-latest",
+    "qwen-tts-2025-05-22",
+    "qwen-tts-2025-04-10",
+)
+
+
+def _qwen_documented(base_url: str) -> tuple[str, ...]:
+    host = urlsplit(base_url).netloc.lower()
+    return QWEN_INTERNATIONAL_MODELS if "-intl" in host else QWEN_BEIJING_MODELS
 
 
 def _qwen_models_url(base_url: str) -> str:
@@ -213,6 +242,7 @@ PROVIDERS: dict[str, TtsProvider] = {
         max_chars=500,
         models_url=_qwen_models_url,
         speaks=_qwen_speaks,
+        documented=_qwen_documented,
         note=(
             "Outside China use dashscope-intl.aliyuncs.com. "
             "The key is the same as Qwen's other services."

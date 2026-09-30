@@ -35,6 +35,10 @@ export default defineConfig({
     target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari13",
     minify: process.env.TAURI_ENV_DEBUG ? false : "esbuild",
     sourcemap: Boolean(process.env.TAURI_ENV_DEBUG),
+    // Vite's 500 kB warning is sized for pages fetched over a network; the desktop app
+    // reads its files from disk. Gunther's own code is one ~510 kB chunk; libraries that
+    // are only needed sometimes (the Markdown editor, the PDF viewer) load on first use.
+    chunkSizeWarningLimit: 600,
     rollupOptions: {
       output: {
         // Vendor code changes rarely; keeping it apart keeps the app chunk small and cacheable.
@@ -45,6 +49,8 @@ export default defineConfig({
           if (id.includes("@tauri-apps")) return "tauri";
           // The Markdown editor loads on first use; keep CodeMirror out of the startup chunk.
           if (/[\\/](@codemirror|@lezer|crelt|style-mod|w3c-keyname)[\\/]/.test(id)) return "editor";
+          // The PDF viewer also loads on first use; left in "vendor", pdf.js would load at every start.
+          if (/[\\/](pdfjs-dist|react-pdf|make-cancellable-promise|make-event-props|merge-refs)[\\/]/.test(id)) return "pdf";
           return "vendor";
         },
       },

@@ -385,6 +385,7 @@ async def fetch_models(provider_id: str, payload: ModelsIn, request: Request) ->
             "offered": [],
         }
     key, _shared = key_for(provider, *registries)
+    # Asking the list also proves the address and the key.
     result, listed = await list_models(
         supplier.models_url(provider["baseUrl"]),
         key,
@@ -393,14 +394,21 @@ async def fetch_models(provider_id: str, payload: ModelsIn, request: Request) ->
     )
     if not result.ok:
         return {"ok": False, "message": result.message, "offered": []}
-    offered = [model for model in listed if supplier.speaks(model)]
+    # The list may leave voices out (DashScope's lists chat models); the documented
+    # models of this address's region come first, then any other voice the list names.
+    documented = supplier.documented(provider["baseUrl"])
+    extra = [m for m in listed if supplier.speaks(m) and m not in documented]
+    offered = [*documented, *extra]
+    count = f"{len(offered)} voice model{'s' if len(offered) != 1 else ''}"
     if not offered:
+        message = f"{supplier.name} names no voice models for this key. Type the model's id."
+    elif extra:
         message = (
-            f"{supplier.name} lists {len(listed)} models for this key, none of them a voice. "
-            "Type the voice model's id from its console."
+            f"Key works. {count}: {supplier.name}'s documented ones and {len(extra)} more "
+            "it lists."
         )
     else:
-        message = f"{len(offered)} voice model{'s' if len(offered) != 1 else ''} offered."
+        message = f"Key works. {count}, as {supplier.name} documents them for this region."
     return {"ok": True, "message": message, "offered": offered}
 
 

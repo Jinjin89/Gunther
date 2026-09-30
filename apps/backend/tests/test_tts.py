@@ -542,12 +542,21 @@ def test_fetch_models_offers_the_voices_the_key_can_use(tmp_path: Path, monkeypa
             json={"apiKey": "sk-unsaved-9999"},
         ).json()
         missing = client.post("/api/settings/tts/providers/nobody/models", headers=SIDECAR, json={})
-    # Text models and real-time voices (a WebSocket) are not offered.
-    assert fetched == {
-        "ok": True,
-        "message": "2 voice models offered.",
-        "offered": ["qwen3-tts-flash", "qwen3-tts-instruct-flash"],
-    }
+    # The documented voices of the address's region (Beijing here), then others the list
+    # names; text models and real-time voices (a WebSocket) are not offered.
+    assert fetched["ok"] is True
+    assert fetched["offered"][:5] == [
+        "qwen3-tts-flash",
+        "qwen3-tts-flash-2025-11-27",
+        "qwen3-tts-flash-2025-09-18",
+        "qwen3-tts-instruct-flash",
+        "qwen3-tts-instruct-flash-2026-01-26",
+    ]
+    assert "qwen-tts" in fetched["offered"]
+    assert not {"qwen-plus", "qwen3-tts-flash-realtime"} & set(fetched["offered"])
+    assert fetched["message"] == (
+        "Key works. 9 voice models, as Qwen documents them for this region."
+    )
     # DashScope lists models on its compatible address, asked with the unsaved key.
     assert asked == [("https://dashscope.aliyuncs.com/compatible-mode/v1", "sk-unsaved-9999")]
     assert missing.status_code == 404
@@ -567,3 +576,10 @@ def test_fetch_models_says_when_the_key_is_refused(tmp_path: Path, monkeypatch) 
             "/api/settings/tts/providers/qwen/models", headers=SIDECAR, json={}
         ).json()
     assert fetched == {"ok": False, "message": "Qwen did not accept this API key.", "offered": []}
+
+
+def test_international_addresses_offer_only_the_voices_there() -> None:
+    qwen = tts_providers.PROVIDERS["qwen"]
+    international = qwen.documented("https://dashscope-intl.aliyuncs.com")
+    assert "qwen3-tts-flash" in international and "qwen-tts" not in international
+    assert "qwen-tts" in qwen.documented("https://dashscope.aliyuncs.com/compatible-mode/v1")
