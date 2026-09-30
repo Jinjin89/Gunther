@@ -542,21 +542,16 @@ def test_fetch_models_offers_the_voices_the_key_can_use(tmp_path: Path, monkeypa
             json={"apiKey": "sk-unsaved-9999"},
         ).json()
         missing = client.post("/api/settings/tts/providers/nobody/models", headers=SIDECAR, json={})
-    # The documented voices of the address's region (Beijing here), then others the list
-    # names; text models and real-time voices (a WebSocket) are not offered.
+    # Every model named tts the list has, then documented ones it leaves out; no text models.
     assert fetched["ok"] is True
-    assert fetched["offered"][:5] == [
+    assert fetched["offered"][:3] == [
         "qwen3-tts-flash",
-        "qwen3-tts-flash-2025-11-27",
-        "qwen3-tts-flash-2025-09-18",
+        "qwen3-tts-flash-realtime",
         "qwen3-tts-instruct-flash",
-        "qwen3-tts-instruct-flash-2026-01-26",
     ]
-    assert "qwen-tts" in fetched["offered"]
-    assert not {"qwen-plus", "qwen3-tts-flash-realtime"} & set(fetched["offered"])
-    assert fetched["message"] == (
-        "Key works. 9 voice models, as Qwen documents them for this region."
-    )
+    assert {"qwen-tts", "qwen3-tts-flash-2025-11-27"} <= set(fetched["offered"])
+    assert "qwen-plus" not in fetched["offered"]
+    assert fetched["message"] == "Key works. 10 voice models offered."
     # DashScope lists models on its compatible address, asked with the unsaved key.
     assert asked == [("https://dashscope.aliyuncs.com/compatible-mode/v1", "sk-unsaved-9999")]
     assert missing.status_code == 404

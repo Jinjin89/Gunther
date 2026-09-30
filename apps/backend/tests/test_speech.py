@@ -247,12 +247,14 @@ def test_fetch_models_offers_the_qwen_recognisers_that_answer_here(
             json={"apiKey": KEY},
         ).json()
     assert tested["ok"] is True
-    # Documented ones first, then others the list names that answer on chat completions.
+    # Every model named asr the list has, then documented ones it leaves out.
     assert tested["available"] == [
         "qwen3-asr-flash",
+        "qwen3-asr-flash-2027-01-01",
+        "qwen3-asr-flash-filetrans",
+        "qwen3-asr-flash-realtime",
         "qwen3-asr-flash-2026-02-10",
         "qwen3-asr-flash-2025-09-08",
-        "qwen3-asr-flash-2027-01-01",
     ]
     # The chosen model is documented, so no "not in this account's list" warning.
     assert tested["warning"] is None

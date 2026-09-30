@@ -288,10 +288,10 @@ async def _test(provider: dict[str, Any], api_key: str | None) -> dict[str, Any]
     )
     available = listed
     if preset.transcribes is not None and result.ok:
-        # A supplier's list may be of chat models (DashScope's is): offer its documented
-        # recognisers first, then any other one the list names that answers here.
-        extra = [m for m in listed if preset.transcribes(m) and m not in preset.documented]
-        available = [*preset.documented, *extra]
+        # A supplier's list may be mostly chat models (DashScope's is): every recogniser
+        # it names, then documented ones it leaves out.
+        named = [m for m in listed if preset.transcribes(m)]
+        available = [*named, *(m for m in preset.documented if m not in named)]
     chosen = [model["id"] for model in provider["models"]]
     missing = [model for model in chosen if available and model not in available]
     warning = result.warning

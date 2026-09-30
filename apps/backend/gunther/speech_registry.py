@@ -42,12 +42,7 @@ class Preset:
 
 
 def _qwen_transcribes(model: str) -> bool:
-    # Of Qwen's recognisers only Qwen3-ASR-Flash answers on compatible-mode's chat
-    # completions; -filetrans (asynchronous files) and real-time ones need other addresses.
-    model = model.lower()
-    return model.startswith("qwen3-asr-flash") and not (
-        "filetrans" in model or "realtime" in model
-    )
+    return "asr" in model.lower()
 
 
 PRESETS: dict[str, Preset] = {

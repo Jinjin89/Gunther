@@ -131,8 +131,8 @@ def _qwen_endpoint(base_url: str) -> str:
 
 
 # Qwen's non-real-time voice models, as its documentation lists them (Model Studio,
-# "Non-real-time speech synthesis", 2026-09). All take the request _qwen_synthesize makes;
-# the voice design and voice clone models (-vd, -vc) need voices made first, so are left out.
+# "Non-real-time speech synthesis", 2026-09): added to Fetch models when the key's list
+# leaves them out. Voice design and clone models (-vd, -vc) show when the list names them.
 QWEN_INTERNATIONAL_MODELS = (
     "qwen3-tts-flash",
     "qwen3-tts-flash-2025-11-27",
@@ -164,9 +164,7 @@ def _qwen_models_url(base_url: str) -> str:
 
 
 def _qwen_speaks(model: str) -> bool:
-    # Real-time voices take a WebSocket, not the request synthesize() makes.
-    model = model.lower()
-    return "tts" in model and "realtime" not in model
+    return "tts" in model.lower()
 
 
 async def _qwen_synthesize(config: ProviderConfig, text: str) -> bytes:
