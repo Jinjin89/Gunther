@@ -1,6 +1,9 @@
 """Ask's agent: tools, the source pool, cited answers, and claims from the model's own knowledge."""
 
+import asyncio
 import json
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,6 +33,7 @@ from gunther.agent import (
     leads_in,
     writer_prompt,
 )
+from gunther.answer_runs import AnswerRun
 from gunther.config import Settings
 from gunther.llm import Turn
 from gunther.main import create_app
@@ -515,6 +519,143 @@ def test_a_streamed_question_that_cannot_be_answered_says_why(tmp_path: Path) ->
     ):
         events = read_events(response)
     assert events == [("error", {"status": 404, "detail": "Session ses_missing was not found"})]
+
+
+def held_answers(client: TestClient, gate: threading.Event):
+    """The service's answering, made to pause after "Part one" until ``gate`` opens."""
+
+    service = client.app.state.knowledge_service
+    real = service.create_session_turn
+
+    def answer(session_id, payload, hear):
+        hear({"type": "step", "state": "running", "tool": "search_library", "label": "Library"})
+        hear({"type": "text", "text": "Part "})
+        hear({"type": "text", "text": "one "})
+        assert gate.wait(10)
+        hear({"type": "text", "text": "part two."})
+        # The real turn is saved; only its own progress events are left out.
+        return real(
+            session_id, payload, lambda event: hear(event) if event["type"] == "saving" else None
+        )
+
+    service.create_session_turn = answer
+
+
+def in_background(call) -> tuple[threading.Thread, list]:
+    box: list = []
+    thread = threading.Thread(target=lambda: box.append(call()), daemon=True)
+    thread.start()
+    return thread, box
+
+
+def wait_for(check, seconds: float = 5.0) -> None:
+    deadline = time.monotonic() + seconds
+    while not check():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.02)
+
+
+def stream(client: TestClient, method: str, url: str, **kwargs) -> list[tuple[str, dict]]:
+    with client.stream(method, url, headers=SIDECAR, **kwargs) as response:
+        return read_events(response)
+
+
+def test_an_answer_goes_on_when_the_page_leaves_and_can_be_followed_again(
+    tmp_path: Path,
+) -> None:
+    fake = FakeProvider(agent_replies("Saved answer.", {"action": "answer"}))
+    gate = threading.Event()
+    with app_for(tmp_path, fake) as client:
+        session_id = ready_session(client)
+        held_answers(client, gate)
+        runs = client.app.state.answer_runs
+        first, first_events = in_background(
+            lambda: stream(
+                client, "POST", f"/api/sessions/{session_id}/messages/stream",
+                json={"content": "CD3D?"},
+            )
+        )
+        wait_for(lambda: runs.get(session_id) is not None and len(runs.get(session_id).events) >= 3)
+        # One answer at a time per conversation.
+        busy = client.post(
+            f"/api/sessions/{session_id}/messages/stream",
+            headers=SIDECAR,
+            json={"content": "Again?"},
+        )
+        assert busy.status_code == 409
+        # A page that comes back is told the question and what it missed, then the rest.
+        again, again_events = in_background(
+            lambda: stream(client, "GET", f"/api/sessions/{session_id}/answer/stream")
+        )
+        wait_for(lambda: len(runs.get(session_id)._watchers) == 2)
+        gate.set()
+        first.join(10)
+        again.join(10)
+        [followed] = again_events
+        saved = client.get(f"/api/sessions/{session_id}", headers=SIDECAR).json()
+        after = client.get(f"/api/sessions/{session_id}/answer/stream", headers=SIDECAR)
+    names = [name for name, _ in followed]
+    assert names[0] == "resumed" and followed[0][1]["question"] == "CD3D?"
+    assert names[1] == "step" and names[-1] == "done"
+    texts = [data["text"] for name, data in followed if name == "text"]
+    assert texts == ["Part one ", "part two."]
+    assert first_events[0][-1][0] == "done"
+    assert [m["role"] for m in saved["messages"]] == ["user", "assistant"]
+    assert after.status_code == 204
+
+
+def test_only_stop_ends_an_answer_early_and_keeps_the_question(tmp_path: Path) -> None:
+    fake = FakeProvider("unused")
+    gate = threading.Event()
+    with app_for(tmp_path, fake) as client:
+        session_id = ready_session(client)
+        held_answers(client, gate)
+        runs = client.app.state.answer_runs
+        first, first_events = in_background(
+            lambda: stream(
+                client, "POST", f"/api/sessions/{session_id}/messages/stream",
+                json={"content": "Stop me?"},
+            )
+        )
+        wait_for(lambda: runs.get(session_id) is not None and len(runs.get(session_id).events) >= 3)
+        stopped = client.post(f"/api/sessions/{session_id}/answer/stop", headers=SIDECAR)
+        assert stopped.status_code == 204
+        gate.set()
+        first.join(10)
+        saved = client.get(f"/api/sessions/{session_id}", headers=SIDECAR).json()
+    [events] = first_events
+    assert events[-1][0] == "stopped"
+    [message] = saved["messages"]
+    assert message["content"] == "Stop me?" and message["context"]["interrupted"] == "stopped"
+
+
+def test_a_reader_leaving_only_stops_listening() -> None:
+    run = AnswerRun("ses_1", "Why?")
+    run.publish("text", {"type": "text", "text": "Half "})
+
+    async def leave_after_one() -> list:
+        seen = []
+        stream = run.follow()
+        async for event in stream:
+            seen.append(event)
+            break
+        await stream.aclose()
+        return seen
+
+    assert asyncio.run(leave_after_one()) == [("text", {"type": "text", "text": "Half "})]
+    assert not run.stop_requested.is_set() and run._watchers == []
+    run.publish("text", {"type": "text", "text": "and whole."})
+    run.publish("done", {"ok": True})
+
+    async def come_back() -> list:
+        return [event async for event in run.follow(resumed=True)]
+
+    back = asyncio.run(come_back())
+    assert back[0][0] == "resumed"
+    assert back[1:] == [
+        ("text", {"type": "text", "text": "Half and whole."}),
+        ("done", {"ok": True}),
+    ]
 
 
 def test_a_stopped_question_stays_in_the_history_but_not_in_what_the_model_reads(

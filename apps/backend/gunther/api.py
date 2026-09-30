@@ -1,10 +1,8 @@
 import asyncio
 import json
 import logging
-import queue
 import re
 import secrets
-import threading
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
@@ -14,6 +12,7 @@ from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from gunther import speech_registry
+from gunther.answer_runs import AnswerRun, AnswerRuns, Stopped
 from gunther.asset_service import (
     AssetNotFoundError,
     AssetService,
@@ -1078,8 +1077,22 @@ def file_home_session(
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
-class _Cancelled(Exception):
-    """The reader went away; the answer is dropped and the question is kept, marked stopped."""
+
+
+def _answer_runs(request: Request) -> AnswerRuns:
+    return request.app.state.answer_runs
+
+
+def _sse(run: AnswerRun, *, resumed: bool = False):
+    async def events():
+        async for name, data in run.follow(resumed=resumed):
+            yield f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/sessions/{session_id}/messages/stream")
@@ -1090,75 +1103,62 @@ async def stream_session_message(
 ) -> StreamingResponse:
     """Like posting a message, but as server-sent events while it is answered.
 
-    ``step`` and ``text`` events report the agent at work; ``done``
-    carries the saved turn, and ``error`` says why there is none. Closing the
-    connection stops the work and keeps the question in the
-    history, marked as stopped.
+    ``step`` and ``text`` events report the agent at work; ``done`` carries
+    the saved turn, ``error`` says why there is none, and ``stopped`` follows
+    a stop. Closing the connection only stops listening: the answer is still
+    written and saved, and ``GET .../answer/stream`` follows it again. Only
+    ``POST .../answer/stop`` ends it early, keeping the question marked stopped.
     """
 
     service = _service(request)
-    updates: queue.Queue[tuple[str, dict]] = queue.Queue()
-    stopped = threading.Event()
-    finished = threading.Event()
-    settle_lock = threading.Lock()
-    settled = False
 
-    def keep_question(reason: Literal["stopped", "failed"]) -> None:
-        """Save the unanswered question once, whichever side notices first."""
-        nonlocal settled
-        with settle_lock:
-            if settled:
-                return
-            settled = True
-        service.record_interrupted_question(session_id, payload.content, reason)
+    def work(run: AnswerRun) -> None:
+        def hear(event: dict) -> None:
+            if run.stop_requested.is_set():
+                raise Stopped
+            if event["type"] != "saving":
+                run.publish(event["type"], event)
 
-    def hear(event: dict) -> None:
-        if stopped.is_set():
-            raise _Cancelled
-        if event["type"] != "saving":
-            updates.put((event["type"], event))
-
-    def work() -> None:
         try:
             turn = service.create_session_turn(session_id, payload, hear)
-            finished.set()
-            updates.put(("done", turn.model_dump(mode="json", by_alias=True)))
-        except _Cancelled:
-            keep_question("stopped")
-            updates.put(("cancelled", {}))
+            run.publish("done", turn.model_dump(mode="json", by_alias=True))
+        except Stopped:
+            service.record_interrupted_question(session_id, payload.content, "stopped")
+            run.publish("stopped", {"type": "stopped"})
         except LookupError as error:
-            finished.set()
-            updates.put(("error", {"status": 404, "detail": str(error)}))
+            run.publish("error", {"status": 404, "detail": str(error)})
         except ValueError as error:
-            finished.set()
-            updates.put(("error", {"status": 400, "detail": str(error)}))
+            run.publish("error", {"status": 400, "detail": str(error)})
         except Exception:
             logger.exception("Answering a question failed")
-            finished.set()
-            keep_question("failed")
-            updates.put(("error", {"status": 500, "detail": "The answer could not be written."}))
+            service.record_interrupted_question(session_id, payload.content, "failed")
+            run.publish("error", {"status": 500, "detail": "The answer could not be written."})
 
-    threading.Thread(target=work, daemon=True).start()
+    run = _answer_runs(request).start(session_id, payload.content, work)
+    if run is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Gunther is still answering the last question here. Wait, or stop it first.",
+        )
+    return _sse(run)
 
-    async def events():
-        try:
-            while True:
-                name, data = await asyncio.to_thread(updates.get)
-                if name == "cancelled":
-                    return
-                yield f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-                if name in ("done", "error"):
-                    return
-        finally:
-            stopped.set()
-            if not finished.is_set():
-                keep_question("stopped")
 
-    return StreamingResponse(
-        events(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
-    )
+@router.get("/sessions/{session_id}/answer/stream", response_model=None)
+async def follow_session_answer(session_id: str, request: Request) -> Response:
+    """Follow an answer still being written: what it did so far, then live. 204 when none is."""
+
+    run = _answer_runs(request).get(session_id)
+    if run is None or run.finished:
+        return Response(status_code=204)
+    return _sse(run, resumed=True)
+
+
+@router.post("/sessions/{session_id}/answer/stop", status_code=204)
+def stop_session_answer(session_id: str, request: Request) -> Response:
+    """Stop the answer being written; the question stays in the conversation, marked."""
+
+    _answer_runs(request).stop(session_id)
+    return Response(status_code=204)
 
 
 @router.post(

@@ -16,6 +16,7 @@ const EMPTY: LiveAnswerState = { steps: [], text: "" };
 
 export function applyAnswerEvent(state: LiveAnswerState, event: AnswerEvent): LiveAnswerState {
   if (event.type === "text") return { ...state, text: state.text + event.text };
+  if (event.type === "resumed") return state;
   const step: LiveStep = {
     tool: event.tool,
     label: event.label,

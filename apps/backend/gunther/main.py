@@ -12,6 +12,7 @@ from sqlalchemy import event, select
 from sqlalchemy.orm import ORMExecuteState, Session, sessionmaker
 
 from gunther import model_registry, speech_registry, tts_service, vector_index
+from gunther.answer_runs import AnswerRuns
 from gunther.api import router
 from gunther.asset_service import AssetService
 from gunther.config import PROJECT_ROOT, Settings, get_settings
@@ -303,6 +304,7 @@ def create_app(
     application.state.base_settings = base_settings
     application.state.service_settings = service_store
     application.state.tts = TtsService(sessions, active_settings.speech_dir)
+    application.state.answer_runs = AnswerRuns()
     # Tests stand in for the providers here.
     application.state.model_client_factory = model_client_factory
     _connect_models(application, active_settings, service_store, knowledge_service, worker)

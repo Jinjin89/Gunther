@@ -1,6 +1,7 @@
 import type {
   ConversationCitation,
   ConversationContext,
+  ConversationTurn,
   KnowledgeSession,
   KnowledgeSessionSummary,
   KnowledgeUnit,
@@ -45,14 +46,14 @@ import {
   X,
 } from "lucide-react";
 import { useAutosize } from "../services/useAutosize";
-import { InterruptedNote, endsWithInterrupted, interruptedQuestion, isInterrupted } from "./interrupted";
+import { InterruptedNote, endsWithInterrupted, isInterrupted } from "./interrupted";
 import { DictationStatus, MicGlyph } from "../components/Dictation";
 import { useDragWidth } from "../hooks/useDragWidth";
 import { useDictatedField } from "../services/useDictatedField";
 import { withShortcut } from "../shortcuts/shortcuts";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { KnowledgeBase, KnowledgeSource } from "../atlas";
-import { knowledgeApi } from "../api";
+import { AnswerStoppedError, knowledgeApi } from "../api";
 import { lastAnswerChoice, readAnswerStyle, usableChoice, useDeviceChoice, useModelMenu, useWebSearch, type AskChoice } from "../models/askModel";
 import { StylePicker } from "../models/StylePicker";
 import { SpeakerButton } from "../speech/SpeakerButton";
@@ -515,6 +516,8 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
   /** Whether the reader is at the bottom; only then does new text pull the view along. */
   const followTail = useRef(true);
   const responseController = useRef<AbortController | null>(null);
+  // The conversation on screen; an answer finishing elsewhere must not pull the view back to it.
+  const shownId = useRef<string | null>(null);
   const localResponseTimer = useRef<number | null>(null);
   const pendingQuestion = useRef("");
   const [evidence, setEvidence] = useState<{ citation: ConversationCitation; index?: number } | null>(null);
@@ -768,6 +771,47 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
     }
   };
 
+  /** Show a finished answer, but only if its conversation is still the one on screen. */
+  const showTurn = (sessionId: string, turn: ConversationTurn) => {
+    setSessions((current) => sortSessions(current.map((item) => item.id === sessionId ? turn.session : item)));
+    if (shownId.current !== sessionId) return;
+    setActiveSession((current) => current && current.id === sessionId ? { ...current, ...turn.session, messages: [...current.messages.filter((message) => !message.id.startsWith("local-interrupted-")), turn.userMessage, turn.assistantMessage] } : current);
+    setSelectedMessageId(turn.assistantMessage.id);
+    setInspectorTab("context");
+    void readAloud.auto(turn.assistantMessage);
+  };
+
+  /** Listen to an answer until it is saved, fails or is stopped. Leaving the conversation only stops listening. */
+  const watchAnswer = async (sessionId: string, question: string, controller: AbortController, listen: () => Promise<ConversationTurn | null>) => {
+    try {
+      const turn = await listen();
+      if (turn) showTurn(sessionId, turn);
+      pendingQuestion.current = "";
+    } catch (reason) {
+      if (controller.signal.aborted) return;
+      if (responseController.current === controller) responseController.current = null;
+      if (shownId.current !== sessionId) return;
+      if (reason instanceof AnswerStoppedError) {
+        // The service kept the question, marked stopped; show its copy.
+        await reloadSession(sessionId);
+        onNotify(reason.message);
+        return;
+      }
+      // The service keeps a question it could not answer in the history; only one it refused goes back to the composer.
+      const fresh = await reloadSession(sessionId);
+      if (!fresh || !endsWithInterrupted(fresh.messages, question)) setDraft(question);
+      setError(reason instanceof Error ? reason.message : "The answer could not be generated");
+    } finally {
+      // A conversation left behind cleared these already; another may be answering on screen now.
+      if (!controller.signal.aborted && (responseController.current === controller || responseController.current === null)) {
+        responseController.current = null;
+        liveAnswer.stop();
+        setSending(false);
+        setAsking(null);
+      }
+    }
+  };
+
   const send = async (again?: string) => {
     const question = (again ?? draft).trim();
     if (!question || !activeSession || sending) return;
@@ -794,53 +838,73 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
     }
     const controller = new AbortController();
     responseController.current = controller;
-    try {
-      const chosen = askChoice.model && modelMenu?.models.length ? { model: askChoice.model, effort: askChoice.effort } : {};
-      liveAnswer.start();
-      const turn = await knowledgeApi.sendMessageStream(activeSession.id, { content: question, selectedSourceIds: activeSession.selectedSourceIds, focusChapterId: activeSession.focusChapterId, ...chosen, style: readAnswerStyle(), ...(webSearch.enabled ? { web: true } : {}) }, liveAnswer.hear, controller.signal);
-      const updated = { ...activeSession, ...turn.session, messages: [...activeSession.messages, turn.userMessage, turn.assistantMessage] };
-      setActiveSession(updated);
-      setSessions((current) => sortSessions(current.map((item) => item.id === updated.id ? turn.session : item)));
-      setSelectedMessageId(turn.assistantMessage.id);
-      setInspectorTab("context");
-      pendingQuestion.current = "";
-      void readAloud.auto(turn.assistantMessage);
-    } catch (reason) {
-      if (!controller.signal.aborted) {
-        // The service keeps a question it could not answer in the history; only one it refused goes back to the composer.
-        if (responseController.current === controller) responseController.current = null;
-        const fresh = await reloadSession(activeSession.id);
-        if (!fresh || !endsWithInterrupted(fresh.messages, question)) setDraft(question);
-        setError(reason instanceof Error ? reason.message : "The answer could not be generated");
+    const session = activeSession;
+    const chosen = askChoice.model && modelMenu?.models.length ? { model: askChoice.model, effort: askChoice.effort } : {};
+    liveAnswer.start();
+    await watchAnswer(session.id, question, controller, () => knowledgeApi.sendMessageStream(session.id, { content: question, selectedSourceIds: session.selectedSourceIds, focusChapterId: session.focusChapterId, ...chosen, style: readAnswerStyle(), ...(webSearch.enabled ? { web: true } : {}) }, liveAnswer.hear, controller.signal));
+  };
+
+  // Opening a conversation that is still being answered follows the answer again, from the start.
+  useEffect(() => {
+    shownId.current = activeId;
+    if (!activeId || activeId.startsWith("local-")) return undefined;
+    const controller = new AbortController();
+    let following = false;
+    const follow = () => knowledgeApi.followAnswer(activeId, (event) => {
+      if (event.type === "resumed") {
+        // A question just sent from here is already being listened to.
+        if (responseController.current) { controller.abort(); return; }
+        following = true;
+        responseController.current = controller;
+        pendingQuestion.current = event.question;
+        followTail.current = true;
+        setSending(true);
+        setAsking(event.question);
+        liveAnswer.start();
+        return;
       }
-    } finally {
+      if (following) liveAnswer.hear(event);
+    }, controller.signal);
+    // Nothing to follow, or the service is away: say nothing unless an answer was on screen.
+    void watchAnswer(activeId, "", controller, () => follow().catch((reason: unknown) => {
+      if (following) throw reason;
+      return null;
+    }));
+    return () => {
+      // Leaving: stop listening only. The answer is still written and saved.
+      controller.abort();
+      const current = responseController.current;
+      if (current && current !== controller) current.abort();
+      responseController.current = null;
+      pendingQuestion.current = "";
+      liveAnswer.stop();
+      setSending(false);
+      setAsking(null);
+    };
+    // Only a different conversation on screen changes what is followed.
+  }, [activeId]);
+
+  const stopResponse = () => {
+    if (localResponseTimer.current) {
+      window.clearTimeout(localResponseTimer.current);
+      localResponseTimer.current = null;
+      pendingQuestion.current = "";
+      setSending(false);
+      setAsking(null);
+      return;
+    }
+    if (!activeId || !responseController.current) return;
+    const controller = responseController.current;
+    // The answer ends where it is; its stream then reports it stopped, and the saved question is shown.
+    knowledgeApi.stopAnswer(activeId).catch(() => {
+      // The service is unreachable: at least stop listening, so the composer is free again.
+      controller.abort();
       if (responseController.current === controller) responseController.current = null;
       liveAnswer.stop();
       setSending(false);
       setAsking(null);
-    }
+    });
   };
-
-  const stopResponse = () => {
-    responseController.current?.abort();
-    responseController.current = null;
-    if (localResponseTimer.current) {
-      window.clearTimeout(localResponseTimer.current);
-      localResponseTimer.current = null;
-    }
-    const question = pendingQuestion.current;
-    pendingQuestion.current = "";
-    setSending(false);
-    setAsking(null);
-    if (question && activeSession) {
-      // The question stays in the conversation, marked; the service's copy replaces this one.
-      const id = activeSession.id;
-      setActiveSession((current) => current && current.id === id ? { ...current, messages: [...current.messages, interruptedQuestion(id, question, "stopped")] } : current);
-      window.setTimeout(() => void reloadSession(id), 900);
-    }
-    onNotify("Stopped. Your question stays in the conversation.");
-  };
-
   const toggleSource = async (id: string) => {
     if (!activeSession) return;
     const next = activeSession.selectedSourceIds.includes(id) ? activeSession.selectedSourceIds.filter((item) => item !== id) : [...activeSession.selectedSourceIds, id];

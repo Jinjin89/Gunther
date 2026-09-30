@@ -1,9 +1,8 @@
 import type { Effort, KnowledgeSession, KnowledgeSessionSummary, SessionMessage } from "@gunther/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { readAloud } from "../speech/readAloud";
-import { knowledgeApi } from "../api";
+import { AnswerStoppedError, knowledgeApi } from "../api";
 import { useLiveAnswer } from "./liveAnswer";
-import { interruptedQuestion } from "./interrupted";
 
 /** Home's conversations belong to no library; the service files them under this id. */
 const HOME_SCOPE = "@home";
@@ -48,6 +47,8 @@ export function useHomeAsk() {
   const [shown, setShown] = useState(false);
   const { live, start, stop, hear } = useLiveAnswer();
   const controller = useRef<AbortController | null>(null);
+  // The conversation whose answer is being listened to, for Stop.
+  const answeringId = useRef<string | null>(null);
 
   const reloadRecent = useCallback(() => {
     void Promise.resolve()
@@ -56,15 +57,54 @@ export function useHomeAsk() {
       .catch(() => undefined);
   }, []);
 
+  /** Follow an answer still being written in a Home conversation, e.g. after closing and reopening it. */
+  const follow = useCallback((id: string) => {
+    if (controller.current) return;
+    const abort = new AbortController();
+    let following = false;
+    void knowledgeApi.followAnswer(id, (event) => {
+      if (event.type === "resumed") {
+        if (controller.current) { abort.abort(); return; }
+        following = true;
+        controller.current = abort;
+        answeringId.current = id;
+        setPending(event.question);
+        start();
+        return;
+      }
+      if (following) hear(event);
+    }, abort.signal).then(async (turn) => {
+      if (!following) return;
+      controller.current = null;
+      setSession(await knowledgeApi.session(id));
+      reloadRecent();
+      if (turn) void readAloud.auto(turn.assistantMessage);
+    }).catch(async (reason: unknown) => {
+      if (!following || abort.signal.aborted) return;
+      controller.current = null;
+      if (!(reason instanceof AnswerStoppedError)) setError(reason instanceof Error ? reason.message : "The answer could not be written.");
+      await knowledgeApi.session(id).then(setSession).catch(() => undefined);
+    }).finally(() => {
+      if (!following || abort.signal.aborted) return;
+      if (controller.current === abort) controller.current = null;
+      stop();
+      setPending(null);
+    });
+  }, [hear, reloadRecent, start, stop]);
+
   useEffect(() => {
     reloadRecent();
     const id = remembered();
     if (!id) return;
     void Promise.resolve()
       .then(() => knowledgeApi.session(id))
-      .then((loaded) => { if (loaded.knowledgeBaseId === HOME_SCOPE) setSession(loaded); else remember(null); })
+      .then((loaded) => {
+        if (loaded.knowledgeBaseId !== HOME_SCOPE) { remember(null); return; }
+        setSession(loaded);
+        follow(loaded.id);
+      })
       .catch(() => remember(null));
-  }, [reloadRecent]);
+  }, [follow, reloadRecent]);
 
   const ask = useCallback(async (question: string, options: AskOptions = {}) => {
     const content = question.trim();
@@ -92,6 +132,7 @@ export function useHomeAsk() {
         current = await knowledgeApi.createSession(HOME_SCOPE, { selectedSourceIds: [] });
         remember(current.id);
       }
+      answeringId.current = current.id;
       const turn = await knowledgeApi.sendMessageStream(current.id, {
         content,
         ...(options.model ? { model: options.model, ...(options.effort ? { effort: options.effort } : {}) } : {}),
@@ -103,40 +144,50 @@ export function useHomeAsk() {
       reloadRecent();
       void readAloud.auto(turn.assistantMessage);
     } catch (reason) {
+      // Closed or started afresh: only the listening stopped. The answer is still saved.
+      if (abort.signal.aborted) return;
       if (controller.current === abort) controller.current = null;
-      if (abort.signal.aborted) {
-        // Stopped: the question stays in the conversation, marked, until the saved copy arrives.
-        const stopped = current;
-        if (stopped) {
-          setSession({ ...stopped, messages: [...stopped.messages, interruptedQuestion(stopped.id, content, "stopped")] });
-          window.setTimeout(() => void reload(), 900);
-        }
-      } else {
-        setError(reason instanceof Error ? reason.message : "The answer could not be written.");
-        void reload();
-      }
+      // Stopped: the service kept the question, marked; show its copy.
+      if (!(reason instanceof AnswerStoppedError)) setError(reason instanceof Error ? reason.message : "The answer could not be written.");
+      void reload();
     } finally {
       if (controller.current === abort) controller.current = null;
-      stop();
-      setPending(null);
+      if (!abort.signal.aborted) {
+        stop();
+        setPending(null);
+      }
     }
   }, [hear, pending, reloadRecent, session, start, stop]);
 
-  const cancel = useCallback(() => controller.current?.abort(), []);
-
-  const close = useCallback(() => {
-    controller.current?.abort();
-    setShown(false);
-    setError(null);
+  /** Stop the answer where it is; the question stays in the conversation, marked. */
+  const cancel = useCallback(() => {
+    const id = answeringId.current;
+    const listening = controller.current;
+    if (!id || !listening) return;
+    knowledgeApi.stopAnswer(id).catch(() => listening.abort());
   }, []);
 
-  const fresh = useCallback(() => {
+  /** Put the conversation away. An answer being written goes on and is there when it is opened again. */
+  const detach = useCallback(() => {
     controller.current?.abort();
+    controller.current = null;
+    stop();
+    setPending(null);
+  }, [stop]);
+
+  const close = useCallback(() => {
+    detach();
+    setShown(false);
+    setError(null);
+  }, [detach]);
+
+  const fresh = useCallback(() => {
+    detach();
     remember(null);
     setSession(null);
     setError(null);
     setShown(false);
-  }, []);
+  }, [detach]);
 
   const open = useCallback(async (id: string) => {
     setError(null);
@@ -145,11 +196,11 @@ export function useHomeAsk() {
       remember(loaded.id);
       setSession(loaded);
       setShown(true);
+      follow(loaded.id);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "That conversation could not be opened.");
     }
-  }, []);
-
+  }, [follow]);
   /** Move the conversation into a library; it stops being Home's. */
   const file = useCallback(async (libraryId: string): Promise<string | null> => {
     if (!session) return null;

@@ -89,7 +89,9 @@ import type {
 /** What the agent reports while answering (see the service's message stream). */
 export type AnswerEvent =
   | { type: "step"; state: "running" | "done"; tool: AgentStep["tool"]; label: string; query?: string; found?: number; error?: string | null }
-  | { type: "text"; text: string };
+  | { type: "text"; text: string }
+  /** Following an answer again after leaving: the question it answers. */
+  | { type: "resumed"; question: string; startedAt: number };
 
 interface Health {
   status: "ok";
@@ -374,6 +376,26 @@ export class ServiceUnavailableError extends Error {
   }
 }
 
+/** Someone pressed Stop; the question stays in the conversation, marked. */
+export class AnswerStoppedError extends Error {
+  constructor() {
+    super("Stopped. Your question stays in the conversation.");
+    this.name = "AnswerStoppedError";
+  }
+}
+
+/** The events of an answer until it is saved, fails or is stopped. */
+async function readAnswer(body: ReadableStream<Uint8Array>, onEvent: (event: AnswerEvent) => void): Promise<ConversationTurn> {
+  for await (const message of readServerEvents(body)) {
+    const data = JSON.parse(message.data) as Record<string, unknown>;
+    if (message.event === "done") return data as unknown as ConversationTurn;
+    if (message.event === "stopped") throw new AnswerStoppedError();
+    if (message.event === "error") throw new Error(typeof data.detail === "string" ? data.detail : "The answer could not be written.");
+    onEvent(data as unknown as AnswerEvent);
+  }
+  throw new Error("The connection closed before the answer was finished.");
+}
+
 async function request<T>(path: string, init?: RequestInit, expectedWorkspaceId?: string): Promise<T> {
   await waitForDesktopBackend();
   let response: Response;
@@ -396,6 +418,7 @@ async function request<T>(path: string, init?: RequestInit, expectedWorkspaceId?
     const body = (await response.json().catch(() => null)) as { detail?: string } | null;
     throw new Error(body?.detail ?? `Request failed with status ${response.status}`);
   }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
@@ -657,14 +680,21 @@ export const knowledgeApi = {
       const body = (await response.json().catch(() => null)) as { detail?: string } | null;
       throw new Error(body?.detail ?? `Request failed with status ${response.status}`);
     }
-    for await (const message of readServerEvents(response.body)) {
-      const data = JSON.parse(message.data) as Record<string, unknown>;
-      if (message.event === "done") return data as unknown as ConversationTurn;
-      if (message.event === "error") throw new Error(typeof data.detail === "string" ? data.detail : "The answer could not be written.");
-      onEvent(data as unknown as AnswerEvent);
-    }
-    throw new Error("The connection closed before the answer was finished.");
+    return readAnswer(response.body, onEvent);
   },
+  /**
+   * Follow an answer still being written in this conversation: what it did so far, then live.
+   * Null when none is. Aborting only stops listening; the answer is still saved.
+   */
+  followAnswer: async (id: string, onEvent: (event: AnswerEvent) => void, signal?: AbortSignal): Promise<ConversationTurn | null> => {
+    await waitForDesktopBackend();
+    const response = await backendFetch(`${apiBase}/sessions/${encodeURIComponent(id)}/answer/stream`, signal ? { signal } : {});
+    if (response.status === 204 || !response.body) return null;
+    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+    return readAnswer(response.body, onEvent);
+  },
+  /** Stop the answer being written; its stream then ends with AnswerStoppedError. */
+  stopAnswer: (id: string) => request<void>(`/sessions/${encodeURIComponent(id)}/answer/stop`, { method: "POST" }),
   fileSession: (id: string, knowledgeBaseId: string) =>
     request<KnowledgeSessionSummary>(`/sessions/${encodeURIComponent(id)}/file`, {
       method: "POST",
