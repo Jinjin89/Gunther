@@ -62,9 +62,7 @@ def exchange_pairing(
 def test_workspace_identity_is_stable_across_app_restarts(tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     with TestClient(create_app(settings)) as first:
-        first_bootstrap = first.get(
-            "/api/workspace/bootstrap", headers=SIDECAR_HEADERS
-        )
+        first_bootstrap = first.get("/api/workspace/bootstrap", headers=SIDECAR_HEADERS)
         assert first_bootstrap.status_code == 200
         first_body = first_bootstrap.json()
         assert first_body["protocolVersion"] == 1
@@ -72,9 +70,7 @@ def test_workspace_identity_is_stable_across_app_restarts(tmp_path: Path) -> Non
         assert first_body["authKind"] == "sidecar"
 
     with TestClient(create_app(settings)) as restarted:
-        second_body = restarted.get(
-            "/api/workspace/bootstrap", headers=SIDECAR_HEADERS
-        ).json()
+        second_body = restarted.get("/api/workspace/bootstrap", headers=SIDECAR_HEADERS).json()
 
     assert second_body["workspaceId"] == first_body["workspaceId"]
     assert second_body["workspaceName"] == first_body["workspaceName"]
@@ -84,9 +80,9 @@ def test_expected_workspace_header_prevents_cross_workspace_writes(
     tmp_path: Path,
 ) -> None:
     with TestClient(create_app(settings_for(tmp_path))) as client:
-        workspace_id = client.get(
-            "/api/workspace/bootstrap", headers=SIDECAR_HEADERS
-        ).json()["workspaceId"]
+        workspace_id = client.get("/api/workspace/bootstrap", headers=SIDECAR_HEADERS).json()[
+            "workspaceId"
+        ]
 
         accepted = client.post(
             "/api/notes",
@@ -111,9 +107,7 @@ def test_expected_workspace_header_prevents_cross_workspace_writes(
 
         notes = client.get("/api/notes", headers=SIDECAR_HEADERS)
         assert notes.status_code == 200
-        assert [item["title"] for item in notes.json()] == [
-            "Bound to this workspace"
-        ]
+        assert [item["title"] for item in notes.json()] == ["Bound to this workspace"]
 
 
 def test_pairing_is_one_time_hashed_and_device_is_revocable(tmp_path: Path) -> None:
@@ -165,9 +159,7 @@ def test_pairing_is_one_time_hashed_and_device_is_revocable(tmp_path: Path) -> N
         assert bootstrap.json()["deviceId"] == device_id
         assert "accessToken" not in bootstrap.text
 
-        device_cannot_administer = client.post(
-            "/api/pairing/sessions", headers=bearer, json={}
-        )
+        device_cannot_administer = client.post("/api/pairing/sessions", headers=bearer, json={})
         assert device_cannot_administer.status_code == 403
 
         listed = client.get("/api/devices", headers=SIDECAR_HEADERS)
@@ -189,9 +181,7 @@ def test_pairing_is_one_time_hashed_and_device_is_revocable(tmp_path: Path) -> N
         assert client.get(f"/api/health?token={access_token}").status_code == 401
         assert client.get(f"/api/health?token={SIDECAR_TOKEN}").status_code == 200
 
-        revoked = client.post(
-            f"/api/devices/{device_id}/revoke", headers=SIDECAR_HEADERS
-        )
+        revoked = client.post(f"/api/devices/{device_id}/revoke", headers=SIDECAR_HEADERS)
         assert revoked.status_code == 200
         assert revoked.json()["revokedAt"] is not None
         assert client.get("/api/health", headers=bearer).status_code == 401
@@ -300,9 +290,7 @@ def test_device_bearer_authenticates_websocket_but_never_from_query(
 
         device_id = str(credential["device"]["id"])
         assert (
-            client.post(
-                f"/api/devices/{device_id}/revoke", headers=SIDECAR_HEADERS
-            ).status_code
+            client.post(f"/api/devices/{device_id}/revoke", headers=SIDECAR_HEADERS).status_code
             == 200
         )
         with (
@@ -337,9 +325,7 @@ def test_device_scopes_are_enforced_for_rest_and_websocket(tmp_path: Path) -> No
             create_pairing(client, scopes=["transcription:stream"]),
             name="Transcription only",
         )
-        transcription_headers = {
-            "Authorization": f"Bearer {transcription_only['accessToken']}"
-        }
+        transcription_headers = {"Authorization": f"Bearer {transcription_only['accessToken']}"}
         assert client.get("/api/health", headers=transcription_headers).status_code == 403
         with client.websocket_connect(
             "/api/recordings/live", headers=transcription_headers

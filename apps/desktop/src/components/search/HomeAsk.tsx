@@ -2,7 +2,7 @@ import type { ConversationCitation, KnowledgeSessionSummary, SessionMessage } fr
 import { ArrowUp, FolderInput, Globe2, MessageSquareText, Mic, Plus, Sparkles, Square, X } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { KnowledgeBase } from "../../atlas";
-import { AgentSteps, AnswerBody, LiveAnswer } from "../../pages/AnswerBody";
+import { AgentSteps, AnswerBody, LiveAnswer, citationNumbers } from "../../pages/AnswerBody";
 import { EvidencePanel } from "../evidence/EvidencePanel";
 import type { LiveAnswerState } from "../../pages/liveAnswer";
 import type { ItemRef } from "../../items/itemRef";
@@ -44,8 +44,8 @@ function Sources({ citations, onOpen }: { citations: ConversationCitation[]; onO
   if (!citations.length) return null;
   return <ol className="gx-home-sources" aria-label="Sources cited">
     {citations.map((citation, index) => <li key={citation.id}>
-      <i>{index + 1}</i>
-      <button type="button" onClick={() => onOpen(citation, index)} title={citation.quote} aria-label={`Show evidence ${index + 1}: ${citation.sourceTitle}`}>
+      <i>{citation.ref ?? index + 1}</i>
+      <button type="button" onClick={() => onOpen(citation, index)} title={citation.quote} aria-label={`Show evidence ${citation.ref ?? index + 1}: ${citation.sourceTitle}`}>
         {citation.kind === "web" && <Globe2 size={12} />}<span>{citation.sourceTitle}</span><small>{citation.locator}</small>
       </button>
     </li>)}
@@ -111,7 +111,7 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
           </article>
         : <article key={message.id} className="gx-home-answer">
             <AgentSteps steps={message.context.steps ?? []} />
-            <AnswerBody content={message.content} citationCount={message.citations.length} onCitation={(index) => { const citation = message.citations[index]; if (citation) setEvidence({ citation, index }); }} />
+            <AnswerBody content={message.content} numbers={citationNumbers(message.citations)} onCitation={(index) => { const citation = message.citations[index]; if (citation) setEvidence({ citation, index }); }} />
             {message.context.modelError && <p className="message-model-error" role="note">{message.context.modelError}{message.citations.length > 0 && " The quotes stand in for its answer."}</p>}
             <Sources citations={message.citations} onOpen={(citation, index) => setEvidence({ citation, index })} />
             <footer><small>{[message.context.modelLabel, message.context.effortLabel].filter(Boolean).join(" · ")}</small></footer>

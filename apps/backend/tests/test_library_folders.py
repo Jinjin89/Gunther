@@ -82,7 +82,7 @@ def test_a_library_root_belongs_to_one_workspace(tmp_path: Path) -> None:
 
 
 def test_names_are_safe_everywhere() -> None:
-    assert safe_name("a/b\\c:d*e?f\"g<h>i|j") == "a b c d e f g h i j"
+    assert safe_name('a/b\\c:d*e?f"g<h>i|j') == "a b c d e f g h i j"
     assert safe_name("..hidden") == "hidden"
     assert safe_name("   ") == "Untitled"
     assert len(safe_name("x" * 300)) == 80
@@ -154,14 +154,21 @@ def test_libraries_become_readable_folders_that_follow_every_change(tmp_path: Pa
         with session_scope(client.app.state.knowledge_service.sessions) as session:
             session.add(
                 RecordingSession(
-                    id=RECORDING_ID, title="Lecture 3", status="completed",
-                    file_name=audio.name, knowledge_base_id=cells,
+                    id=RECORDING_ID,
+                    title="Lecture 3",
+                    status="completed",
+                    file_name=audio.name,
+                    knowledge_base_id=cells,
                 )
             )
             session.add(
                 Asset(
-                    id="ast_paper", content_hash="c" * 64, original_name="Paper.PDF",
-                    media_type="application/pdf", size_bytes=10, relative_path="cd/cdef",
+                    id="ast_paper",
+                    content_hash="c" * 64,
+                    original_name="Paper.PDF",
+                    media_type="application/pdf",
+                    size_bytes=10,
+                    relative_path="cd/cdef",
                 )
             )
             session.get(Source, marker).asset_id = "ast_paper"

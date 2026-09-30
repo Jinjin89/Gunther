@@ -153,3 +153,12 @@
 .gx-home-followup textarea { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-sm); background: var(--gx-surface); color: var(--gx-ink); font: inherit; line-height: 1.5; resize: none; max-height: 200px; overflow-y: auto; }
 .gx-home-followup textarea:focus-visible { outline: 0; border-color: color-mix(in srgb, var(--gx-ink) 32%, transparent); box-shadow: none; }
 .composer textarea { max-height: 220px; overflow-y: auto; resize: none; }
+
+/* Every source a conversation has cited, under the number it keeps in each answer. */
+.conversation-sources ol { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 2px; }
+.conversation-sources li { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.conversation-sources li i { flex: none; min-width: 1.6em; color: var(--gx-faint); font-size: var(--gx-text-xs); font-style: normal; text-align: right; }
+.conversation-sources li button { min-width: 0; display: inline-flex; align-items: center; gap: 4px; padding: 3px 0; border: 0; background: transparent; color: var(--gx-muted); font: inherit; font-size: var(--gx-text-sm); text-align: left; cursor: pointer; }
+.conversation-sources li button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-sources li.is-cited button { color: var(--gx-ink); font-weight: 550; }
+.conversation-sources li button:hover { color: var(--gx-ink); }

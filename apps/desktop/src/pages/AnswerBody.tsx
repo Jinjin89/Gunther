@@ -8,22 +8,38 @@ import type { LiveAnswerState } from "./liveAnswer";
 
 const CITATION = /\[(\d+)\]/g;
 const CITE_LINK = /^#cite-(\d+)$/;
+const UNSOURCED = /\[\?\]/g;
+const UNSOURCED_LINK = "#unverified";
 
-/** `[2]` becomes a link to `#cite-2`, so the Markdown renderer can turn it into a button. */
-export function withCitationLinks(text: string, citationCount: number): string {
-  return text.replace(CITATION, (whole, digits: string) => Number(digits) >= 1 && Number(digits) <= citationCount ? `[${digits}](#cite-${digits})` : whole);
+/**
+ * The number each citation goes by in the answer: its place in the conversation's
+ * source pool, or, for answers from before the pool, its place in the list.
+ */
+export function citationNumbers(citations: Array<{ ref?: number | null | undefined }>): number[] {
+  return citations.map((citation, index) => citation.ref ?? index + 1);
+}
+
+/**
+ * `[2]` becomes a link to `#cite-2`, so the Markdown renderer can turn it into a button, and
+ * `[?]` (a claim from the model's own knowledge that no source backs) a marker.
+ */
+export function withCitationLinks(text: string, numbers: number[]): string {
+  return text
+    .replace(CITATION, (whole, digits: string) => numbers.includes(Number(digits)) ? `[${digits}](#cite-${digits})` : whole)
+    .replace(UNSOURCED, `[?](${UNSOURCED_LINK})`);
 }
 
 const SAFE_WEB = /^https?:\/\//i;
 
 /** An answer, as Markdown, with its [n] citations as buttons that open the evidence. */
-export function AnswerBody({ content, citationCount, onCitation }: { content: string; citationCount: number; onCitation?: ((index: number) => void) | undefined }) {
+export function AnswerBody({ content, numbers, onCitation }: { content: string; numbers: number[]; onCitation?: ((index: number) => void) | undefined }) {
   const components: Components = {
     a({ href, children }) {
+      if (href === UNSOURCED_LINK) return <sup className="unverified-mark" title="From the model's own knowledge; no source was found for it">unverified</sup>;
       const cite = href ? CITE_LINK.exec(href) : null;
       if (cite) {
         const label = `[${cite[1]}]`;
-        return <sup>{onCitation ? <button type="button" onClick={(event) => { event.stopPropagation(); onCitation(Number(cite[1]) - 1); }} aria-label={`Inspect citation ${cite[1]}`}>{label}</button> : label}</sup>;
+        return <sup>{onCitation ? <button type="button" onClick={(event) => { event.stopPropagation(); onCitation(numbers.indexOf(Number(cite[1]))); }} aria-label={`Inspect citation ${cite[1]}`}>{label}</button> : label}</sup>;
       }
       if (href && SAFE_WEB.test(href)) return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
       return <span>{children}</span>;
@@ -31,7 +47,7 @@ export function AnswerBody({ content, citationCount, onCitation }: { content: st
     // Answers are prose; raw images in them would be remote loads.
     img: () => null,
   };
-  return <div className="answer-markdown"><Markdown remarkPlugins={[remarkGfm]} components={components} urlTransform={(url) => (CITE_LINK.test(url) || SAFE_WEB.test(url) ? url : "")}>{withCitationLinks(content, citationCount)}</Markdown></div>;
+  return <div className="answer-markdown"><Markdown remarkPlugins={[remarkGfm]} components={components} urlTransform={(url) => (CITE_LINK.test(url) || url === UNSOURCED_LINK || SAFE_WEB.test(url) ? url : "")}>{withCitationLinks(content, numbers)}</Markdown></div>;
 }
 
 /** What the agent did to answer: each search, with what it found. */
@@ -56,7 +72,7 @@ export function LiveAnswer({ state, className = "" }: { state: LiveAnswerState; 
     <div className="message-author"><span className="assistant-mark"><BrandMark size={14} busy /></span><span>Gunther</span></div>
     <AgentSteps steps={state.steps} />
     {state.text
-      ? <div className="message-body"><AnswerBody content={state.text} citationCount={0} /></div>
+      ? <div className="message-body"><AnswerBody content={state.text} numbers={[]} /></div>
       : <div className="live-wait"><span><i /><i /><i /></span><small>{state.steps.length ? "Reading what it found…" : "Working out what to look up…"}</small></div>}
   </article>;
 }

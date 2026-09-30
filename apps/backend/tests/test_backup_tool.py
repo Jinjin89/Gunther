@@ -49,8 +49,7 @@ def _create_data_directory(root: Path) -> tuple[Path, sqlite3.Connection]:
         """
     )
     connection.executemany(
-        "INSERT INTO gunther_schema_migrations (version, name, applied_at) "
-        "VALUES (?, ?, ?)",
+        "INSERT INTO gunther_schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
         [
             (1, "baseline_current_schema", "2026-01-01T00:00:00Z"),
             (2, "durable_recording_lifecycle", "2026-01-02T00:00:00Z"),
@@ -58,9 +57,7 @@ def _create_data_directory(root: Path) -> tuple[Path, sqlite3.Connection]:
             (4, "recording_recovery_checkpoints", "2026-01-04T00:00:00Z"),
         ],
     )
-    connection.execute(
-        "INSERT INTO knowledge_bases (id, title) VALUES ('biology', 'Biology')"
-    )
+    connection.execute("INSERT INTO knowledge_bases (id, title) VALUES ('biology', 'Biology')")
     connection.commit()
     # Keep a committed row in the active WAL while this connection remains open.
     connection.execute(
@@ -517,18 +514,19 @@ def test_nonempty_asset_and_completed_recording_survive_full_restore(
     assert not (restored_data / "manifest.json").exists()
     assert not (restored_data / "manifest.sha256").exists()
 
-    quick_check, foreign_key_errors = _database_integrity(
-        restored_data / "gunther.sqlite"
-    )
+    quick_check, foreign_key_errors = _database_integrity(restored_data / "gunther.sqlite")
     assert quick_check == ["ok"]
     assert foreign_key_errors == []
 
     restored_connection = sqlite3.connect(restored_data / "gunther.sqlite")
     try:
         restored_connection.row_factory = sqlite3.Row
-        assert restored_connection.execute(
-            "SELECT MAX(version) FROM gunther_schema_migrations"
-        ).fetchone()[0] == LATEST_SCHEMA_VERSION
+        assert (
+            restored_connection.execute(
+                "SELECT MAX(version) FROM gunther_schema_migrations"
+            ).fetchone()[0]
+            == LATEST_SCHEMA_VERSION
+        )
         restored_asset_row = restored_connection.execute(
             "SELECT s.asset_id, a.relative_path, a.content_hash, a.size_bytes "
             "FROM sources AS s JOIN assets AS a ON a.id = s.asset_id WHERE s.id = ?",
@@ -586,9 +584,10 @@ def test_nonempty_asset_and_completed_recording_survive_full_restore(
     assert restored_asset.read_bytes() == asset_bytes
     assert restored_recording.read_bytes() == recording_bytes
     assert hashlib.sha256(restored_asset.read_bytes()).hexdigest() == asset_hash
-    assert hashlib.sha256(restored_recording.read_bytes()).hexdigest() == hashlib.sha256(
-        recording_bytes
-    ).hexdigest()
+    assert (
+        hashlib.sha256(restored_recording.read_bytes()).hexdigest()
+        == hashlib.sha256(recording_bytes).hexdigest()
+    )
 
     with TestClient(create_app(_real_settings(restored_data))) as restored_client:
         source = restored_client.get(f"/api/sources/{source_id}")
@@ -599,15 +598,11 @@ def test_nonempty_asset_and_completed_recording_survive_full_restore(
         assert downloaded_asset.status_code == 200
         assert downloaded_asset.content == asset_bytes
 
-        library_sources = restored_client.get(
-            f"/api/knowledge-bases/{knowledge_base_id}/sources"
-        )
+        library_sources = restored_client.get(f"/api/knowledge-bases/{knowledge_base_id}/sources")
         assert library_sources.status_code == 200
         assert [item["id"] for item in library_sources.json()] == [source_id]
 
-        recording_metadata = restored_client.get(
-            f"/api/recordings/{recording_id}/metadata"
-        )
+        recording_metadata = restored_client.get(f"/api/recordings/{recording_id}/metadata")
         assert recording_metadata.status_code == 200
         assert recording_metadata.json()["status"] == "completed"
         assert recording_metadata.json()["sizeBytes"] == len(recording_bytes)
@@ -624,9 +619,7 @@ def test_nonempty_asset_and_completed_recording_survive_full_restore(
         assert restored_artifact.status_code == 200
         assert restored_artifact.json() == artifact
 
-    quick_check, foreign_key_errors = _database_integrity(
-        restored_data / "gunther.sqlite"
-    )
+    quick_check, foreign_key_errors = _database_integrity(restored_data / "gunther.sqlite")
     assert quick_check == ["ok"]
     assert foreign_key_errors == []
     assert original_payload_fingerprints == {
@@ -751,9 +744,12 @@ def test_backup_reads_originals_from_the_library_root(tmp_path: Path) -> None:
 
     with_root = _run(
         "backup",
-        "--data-dir", str(data_directory),
-        "--library-root", str(library_root),
-        "--output-dir", str(tmp_path / "b"),
+        "--data-dir",
+        str(data_directory),
+        "--library-root",
+        str(library_root),
+        "--output-dir",
+        str(tmp_path / "b"),
     )
     assert with_root.returncode == 0, with_root.stderr
     [backup] = list((tmp_path / "b").iterdir())

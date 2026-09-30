@@ -145,3 +145,42 @@ export function useWebSearch() {
   }, []);
   return { available, enabled: available && preferred, preferred, setEnabled };
 }
+
+/** How answers are worded. Only the wording: every style still cites its sources. */
+export const ANSWER_STYLES = [
+  { id: "balanced", label: "Balanced", hint: "The answer first, then the support" },
+  { id: "concise", label: "Concise", hint: "As short as the question allows" },
+  { id: "detailed", label: "Detailed", hint: "Background, reasoning and caveats" },
+  { id: "academic", label: "Academic", hint: "Formal, claim by claim with evidence" },
+] as const;
+export const ANSWER_STYLE_KEY = "gunther:answer-style";
+const ANSWER_STYLE_EVENT = "gunther:answer-style-changed";
+
+/** The style this device last chose; balanced until then. */
+export function readAnswerStyle(): string {
+  const stored = window.localStorage.getItem(ANSWER_STYLE_KEY);
+  return ANSWER_STYLES.some((style) => style.id === stored) ? stored! : "balanced";
+}
+
+export function useAnswerStyle(): [string, (style: string) => void] {
+  const [style, setStyle] = useState(readAnswerStyle);
+  useEffect(() => {
+    const sync = () => setStyle(readAnswerStyle());
+    window.addEventListener(ANSWER_STYLE_EVENT, sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener(ANSWER_STYLE_EVENT, sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
+  const choose = useCallback((next: string) => {
+    try {
+      window.localStorage.setItem(ANSWER_STYLE_KEY, next);
+    } catch {
+      // The choice still holds for this session of the app.
+    }
+    setStyle(next);
+    window.dispatchEvent(new CustomEvent(ANSWER_STYLE_EVENT));
+  }, []);
+  return [style, choose];
+}

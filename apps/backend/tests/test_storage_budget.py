@@ -157,9 +157,7 @@ def test_low_disk_rejection_is_507_and_does_not_create_recording(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    settings = _settings(tmp_path, quota=100).model_copy(
-        update={"storage_min_free_bytes": 8}
-    )
+    settings = _settings(tmp_path, quota=100).model_copy(update={"storage_min_free_bytes": 8})
     app = create_app(settings)
     monkeypatch.setattr(
         budget_module.shutil,

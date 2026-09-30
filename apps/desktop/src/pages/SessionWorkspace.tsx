@@ -53,8 +53,9 @@ import { withShortcut } from "../shortcuts/shortcuts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { KnowledgeBase, KnowledgeSource } from "../atlas";
 import { knowledgeApi } from "../api";
-import { lastAnswerChoice, usableChoice, useDeviceChoice, useModelMenu, useWebSearch, type AskChoice } from "../models/askModel";
-import { AgentSteps, AnswerBody, LiveAnswer } from "./AnswerBody";
+import { lastAnswerChoice, readAnswerStyle, usableChoice, useDeviceChoice, useModelMenu, useWebSearch, type AskChoice } from "../models/askModel";
+import { StylePicker } from "../models/StylePicker";
+import { AgentSteps, AnswerBody, LiveAnswer, citationNumbers } from "./AnswerBody";
 import { useLiveAnswer } from "./liveAnswer";
 import { ModelPicker } from "../models/ModelPicker";
 import { BrandMark } from "../design/BrandMark";
@@ -122,6 +123,12 @@ function renderInline(value: string, onCitation?: () => void) {
     if (/^\[\d+\]$/.test(part)) return <sup key={index}>{onCitation ? <button onClick={(event) => { event.stopPropagation(); onCitation(); }} aria-label={`Inspect citation ${part.slice(1, -1)}`}>{part}</button> : part}</sup>;
     return <span key={index}>{part}</span>;
   });
+}
+
+/** A reply that searched nothing and cited nothing needed none: small talk, or a request about an earlier answer. */
+function noSourcesNeeded(context: ConversationContext): boolean {
+  if (context.intent) return context.intent === "chat" || context.intent === "followup" || context.intent === "clarify";
+  return !(context.steps?.length);
 }
 
 function MessageContent({ content, onCitation }: { content: string; onCitation?: () => void }) {
@@ -256,12 +263,12 @@ function AnswerModel({ context }: { context: ConversationContext }) {
 function ConversationMessage({ message, retryDisabled, onRetry, onEdit, onCite, selected, promoting, promoted, branching, onSelect, onCopy, onPromote, onBranch }: { message: SessionMessage; retryDisabled: boolean; onRetry: () => void; onEdit: () => void; onCite: (citation: ConversationCitation, index: number) => void; selected: boolean; promoting: boolean; promoted: boolean; branching: boolean; onSelect: () => void; onCopy: () => void; onPromote: () => void; onBranch: () => void }) {
   const isAssistant = message.role === "assistant";
   // Small talk and follow-ups on the conversation itself need no sources.
-  const conversational = message.context.intent === "chat" || message.context.intent === "followup" || message.context.intent === "clarify";
+  const conversational = noSourcesNeeded(message.context);
   return (
     <article className={`conversation-message role-${message.role} ${selected ? "is-selected" : ""} ${isInterrupted(message) ? "is-interrupted" : ""}`} onClick={isAssistant ? onSelect : undefined}>
       <div className="message-author">{isAssistant ? <span className="assistant-mark"><BrandMark size={14} /></span> : <span className="user-mark"><UserRound size={13} /></span>}<span>{isAssistant ? "Gunther" : "You"}</span><time>{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(message.createdAt))}</time></div>
       {isAssistant && <AgentSteps steps={message.context.steps ?? []} />}
-      <div className="message-body">{isAssistant ? <AnswerBody content={message.content} citationCount={message.citations.length} onCitation={(index) => { onSelect(); const citation = message.citations[index]; if (citation) onCite(citation, index); }} /> : <MessageContent content={message.content} />}</div>
+      <div className="message-body">{isAssistant ? <AnswerBody content={message.content} numbers={citationNumbers(message.citations)} onCitation={(index) => { onSelect(); const citation = message.citations[index]; if (citation) onCite(citation, index); }} /> : <MessageContent content={message.content} />}</div>
       {message.context.interrupted && <InterruptedNote reason={message.context.interrupted} disabled={retryDisabled} onRetry={onRetry} onEdit={onEdit} />}
       {isAssistant && message.context.modelError && <p className="message-model-error" role="note"><CircleAlert size={13} /><span>{message.context.modelError}{message.citations.length > 0 && " The quotes stand in for its answer."}</span></p>}
       {isAssistant && message.context.reasoning && <details className="message-thinking" onClick={(event) => event.stopPropagation()}><summary><ChevronRight size={12} />Thinking</summary><pre>{message.context.reasoning}</pre></details>}
@@ -325,7 +332,7 @@ function CitationCard({ citation, index, onOpen }: { citation: ConversationCitat
   const web = citation.kind === "web";
   return (
     <button className={`citation-card ${web ? "is-web" : ""}`} onClick={onOpen} aria-label={`Show evidence: ${citation.sourceTitle}`}>
-      <header><span>{String(index + 1).padStart(2, "0")}</span><small>{web ? "web" : citation.status}</small><strong>{web ? citation.locator : citation.assertionId ? `${Math.round(citation.confidence * 100)}%` : "Source"}</strong></header>
+      <header><span>{String(citation.ref ?? index + 1).padStart(2, "0")}</span><small>{web ? "web" : citation.status}</small><strong>{web ? citation.locator : citation.assertionId ? `${Math.round(citation.confidence * 100)}%` : "Source"}</strong></header>
       <h3>{citation.sourceTitle}</h3>
       <blockquote>“{citation.quote}”</blockquote>
       {web
@@ -333,6 +340,17 @@ function CitationCard({ citation, index, onOpen }: { citation: ConversationCitat
         : <footer><span><FileText size={11} />{citation.locator}</span><span className={`citation-status is-${citation.status}`}><i />{citation.status === "verified" ? "Trusted" : "Review"}</span></footer>}
     </button>
   );
+}
+
+/** The sources a conversation has cited so far, each once, under the number it keeps in every answer. */
+export function conversationSources(session: KnowledgeSession | null): ConversationCitation[] {
+  const held = new Map<number, ConversationCitation>();
+  for (const message of session?.messages ?? []) {
+    for (const citation of message.citations) {
+      if (citation.ref != null && !held.has(citation.ref)) held.set(citation.ref, citation);
+    }
+  }
+  return [...held.values()].sort((a, b) => (a.ref ?? 0) - (b.ref ?? 0));
 }
 
 function ContextInspector({
@@ -374,6 +392,7 @@ function ContextInspector({
 }) {
   if (collapsed) return <button className="inspector-reopen" onClick={onCollapse} aria-label="Open context panel"><PanelRightOpen size={16} /></button>;
   const selectedIds = session?.selectedSourceIds ?? [];
+  const pooledSources = conversationSources(session);
   const filteredSources = sources.filter((source) => `${source.title} ${source.publisher}`.toLowerCase().includes(sourceQuery.toLowerCase()));
   const indexedCount = sources.filter((source) => source.indexed).length;
   const referenceCount = sources.length - indexedCount;
@@ -385,7 +404,8 @@ function ContextInspector({
       {tab === "context" ? <div className="inspector-scroll">
         {selectedMessage ? <>
           <section className="answer-scope"><span className="section-label">Answer scope</span><div className="scope-metrics"><span><strong>{context.assertionsConsidered}</strong><small>claims scanned</small></span><span><strong>{context.sourcesConsidered}</strong><small>sources searched</small></span><span><strong>{context.verifiedAssertions}</strong><small>trusted scanned</small></span></div><p><Info size={12} />This is the retrieval snapshot for the selected answer—not the current library state.</p></section>
-          <section className="citation-section"><header><span className="section-label">Sources cited</span><small>{selectedMessage.citations.length} {selectedMessage.citations.length === 1 ? "source" : "sources"}</small></header>{selectedMessage.citations.length ? selectedMessage.citations.map((citation, index) => <CitationCard key={citation.id} citation={citation} index={index} onOpen={() => onOpenSource(citation.sourceId, citation)} />) : <div className="empty-citations"><CircleAlert size={20} /><strong>{context.intent === "chat" || context.intent === "followup" || context.intent === "clarify" ? "No sources needed" : "Nothing cited"}</strong><span>{context.intent === "chat" || context.intent === "followup" || context.intent === "clarify" ? "This reply came from the conversation itself." : "Nothing in the searches supported a citation, so this answer is not grounded."}</span></div>}</section>
+          <section className="citation-section"><header><span className="section-label">Sources cited</span><small>{selectedMessage.citations.length} {selectedMessage.citations.length === 1 ? "source" : "sources"}</small></header>{selectedMessage.citations.length ? selectedMessage.citations.map((citation, index) => <CitationCard key={citation.id} citation={citation} index={index} onOpen={() => onOpenSource(citation.sourceId, citation)} />) : <div className="empty-citations"><CircleAlert size={20} /><strong>{noSourcesNeeded(context) ? "No sources needed" : "Nothing cited"}</strong><span>{noSourcesNeeded(context) ? "This reply came from the conversation itself." : "Nothing in the searches supported a citation, so this answer is not grounded."}</span></div>}</section>
+          {pooledSources.length > selectedMessage.citations.length && <section className="conversation-sources"><header><span className="section-label">All sources in this conversation</span><small>{pooledSources.length}</small></header><ol>{pooledSources.map((citation) => <li key={citation.id} className={selectedMessage.citations.some((item) => item.ref === citation.ref) ? "is-cited" : ""}><i>{citation.ref}</i><button type="button" onClick={() => onOpenSource(citation.sourceId, citation)} title={citation.quote}>{citation.kind === "web" && <Globe2 size={11} />}<span>{citation.sourceTitle}</span></button></li>)}</ol></section>}
         </> : <>
           <section className="context-overview"><div className="context-glyph"><LibraryGlyph base={base} size="lg" /></div><span className="section-label">Current library</span><h2>{base.title}</h2><p>{base.description}</p></section>
           <section className="knowledge-health"><header><span className="section-label">Knowledge health</span><strong>{base.progress}%</strong></header><div><i style={{ width: `${base.progress}%` }} /></div><ul><li><Check size={12} />{base.chapters.filter((chapter) => chapter.status === "grounded").length} grounded chapters</li><li><Clock3 size={12} />{base.chapters.filter((chapter) => chapter.status !== "grounded").length} chapters still growing</li><li><FileText size={12} />{indexedCount} indexed {indexedCount === 1 ? "source" : "sources"} · {referenceCount} curated {referenceCount === 1 ? "reference" : "references"}</li></ul></section>
@@ -755,7 +775,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
     try {
       const chosen = askChoice.model && modelMenu?.models.length ? { model: askChoice.model, effort: askChoice.effort } : {};
       liveAnswer.start();
-      const turn = await knowledgeApi.sendMessageStream(activeSession.id, { content: question, selectedSourceIds: activeSession.selectedSourceIds, focusChapterId: activeSession.focusChapterId, ...chosen, ...(webSearch.enabled ? { web: true } : {}) }, liveAnswer.hear, controller.signal);
+      const turn = await knowledgeApi.sendMessageStream(activeSession.id, { content: question, selectedSourceIds: activeSession.selectedSourceIds, focusChapterId: activeSession.focusChapterId, ...chosen, style: readAnswerStyle(), ...(webSearch.enabled ? { web: true } : {}) }, liveAnswer.hear, controller.signal);
       const updated = { ...activeSession, ...turn.session, messages: [...activeSession.messages, turn.userMessage, turn.assistantMessage] };
       setActiveSession(updated);
       setSessions((current) => sortSessions(current.map((item) => item.id === updated.id ? turn.session : item)));
@@ -985,7 +1005,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
           {sending && asking && <article className="conversation-message role-user"><div className="message-author"><span className="user-mark"><UserRound size={13} /></span><span>You</span></div><div className="message-body"><MessageContent content={asking} /></div></article>}
           {sending && (liveAnswer.live ? <LiveAnswer state={liveAnswer.live} /> : <div className="thinking-row"><span className="assistant-mark"><BrandMark size={14} busy /></span><span><i /><i /><i /></span><small>Working out what to look up…</small></div>)}
         </div>
-        <Composer picker={<ModelPicker menu={modelMenu} choice={askChoice} onChange={chooseModel} disabled={sending || Boolean(activeSession?.archived)} />} web={{ available: webSearch.available, enabled: webSearch.enabled, onChange: webSearch.setEnabled }} value={draft} sending={sending} sourceCount={activeSession?.selectedSourceIds.length ?? 0} chapterTitle={focusedChapter?.title} readOnly={Boolean(activeSession?.archived)} ready={!loading && activeSession !== null} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={() => { setInspectorTab("sources"); setInspectorCollapsed(false); }} />
+        <Composer picker={<><ModelPicker menu={modelMenu} choice={askChoice} onChange={chooseModel} disabled={sending || Boolean(activeSession?.archived)} /><StylePicker disabled={sending || Boolean(activeSession?.archived)} /></>} web={{ available: webSearch.available, enabled: webSearch.enabled, onChange: webSearch.setEnabled }} value={draft} sending={sending} sourceCount={activeSession?.selectedSourceIds.length ?? 0} chapterTitle={focusedChapter?.title} readOnly={Boolean(activeSession?.archived)} ready={!loading && activeSession !== null} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={() => { setInspectorTab("sources"); setInspectorCollapsed(false); }} />
       </section>
       <ContextInspector base={base} sources={scopeSources} session={activeSession} knowledgeUnits={knowledgeUnits} selectedMessage={selectedMessage} tab={inspectorTab} sourceQuery={sourceQuery} collapsed={inspectorCollapsed} readOnly={Boolean(activeSession?.archived)} onTab={setInspectorTab} onSourceQuery={setSourceQuery} onToggleSource={(id) => void toggleSource(id)} onUseAll={() => { if (activeSession) void patchSession(activeSession.id, { selectedSourceIds: [] }); }} onAdd={onAdd} onOpenSource={(id, citation) => void openSourceDetail(id, citation)} onOpenUnit={(unit) => void openKnowledgeUnitOrigin(unit)} onCollapse={() => setInspectorCollapsed((value) => !value)} />
       {evidence && <EvidencePanel citation={evidence.citation} index={evidence.index} onClose={() => setEvidence(null)} onOpenSource={onOpenSource ? (id) => { setEvidence(null); onOpenSource(id); } : undefined} />}

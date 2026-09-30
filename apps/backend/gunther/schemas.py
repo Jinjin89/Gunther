@@ -537,6 +537,9 @@ class ConversationCitationOut(ApiModel):
     source_revision_id: str | None = None
     block_id: str | None = None
     anchor: dict[str, object] = Field(default_factory=dict)
+    # Its number in the conversation's source pool: `[ref]` in an answer, the same in
+    # every answer of the conversation. Older answers have none and count from 1.
+    ref: int | None = None
 
 
 class ConversationContextOut(ApiModel):
@@ -556,7 +559,8 @@ class ConversationContextOut(ApiModel):
     notes: list[str] = Field(default_factory=list)
     reasoning: str | None = None
     model_error: str | None = None
-    # What the agent made of the question and what it did to answer.
+    # What the agent did to answer. `intent` is only on answers from before the source pool.
+    style: str | None = None
     intent: Literal["chat", "followup", "library", "web", "both", "clarify"] | None = None
     steps: list[dict[str, object]] = Field(default_factory=list)
     web_searched: bool = False
@@ -603,6 +607,8 @@ class CreateSessionMessageInput(ApiModel):
     focus_chapter_id: str | None = Field(default=None, max_length=160)
     # Let the agent search the web for this question (needs a Tavily key).
     web: bool = False
+    # How the answer is worded: a preset name; the default when left out or unknown.
+    style: str | None = Field(default=None, max_length=40)
     # Home only: read just these libraries (the ones picked with @); none means all.
     knowledge_base_ids: list[str] | None = Field(default=None, max_length=20)
 

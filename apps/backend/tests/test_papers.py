@@ -48,16 +48,18 @@ def make_pdf(lines: list[tuple[int, str]]) -> bytes:
 
 
 def paper_pdf(title: str, doi: str, note: str = "") -> bytes:
-    return make_pdf([
-        (20, title),
-        (11, "Ada Lovelace, Grace Hopper"),
-        (10, "Abstract"),
-        (10, "We compare marker gene methods for labelling cell types in single-cell"),
-        (10, "RNA sequencing data across twelve tissues and find that curated"),
-        (10, "markers remain competitive with reference mapping."),
-        (10, "1 Introduction"),
-        (10, f"Cell type annotation is a central step in analysis. doi:{doi} {note}"),
-    ])
+    return make_pdf(
+        [
+            (20, title),
+            (11, "Ada Lovelace, Grace Hopper"),
+            (10, "Abstract"),
+            (10, "We compare marker gene methods for labelling cell types in single-cell"),
+            (10, "RNA sequencing data across twelve tissues and find that curated"),
+            (10, "markers remain competitive with reference mapping."),
+            (10, "1 Introduction"),
+            (10, f"Cell type annotation is a central step in analysis. doi:{doi} {note}"),
+        ]
+    )
 
 
 def client_for(path: Path, **overrides) -> TestClient:
@@ -123,23 +125,27 @@ def drain(client: TestClient) -> None:
 
 
 def test_reflow_joins_wrapped_lines_and_keeps_headings_and_words():
-    page = "\n".join([
-        "Abstract",
-        "This technical report presents the training methodology and evaluation re-",
-        "sults of the open-",
-        "source multilingual models released in mid-2023 for many languages here.",
-        "They work well.",
-        "# Sampled counts",
-        "1 Introduction",
-        "• first point in a list that is long enough to wrap onto the next line",
-        "细胞类型注释通过标记基因为聚类分配身份，例如",
-        "细胞的标记基因为聚类分配身份，这一段很长很长很长很长很长很长很长。",
-    ])
+    page = "\n".join(
+        [
+            "Abstract",
+            "This technical report presents the training methodology and evaluation re-",
+            "sults of the open-",
+            "source multilingual models released in mid-2023 for many languages here.",
+            "They work well.",
+            "# Sampled counts",
+            "1 Introduction",
+            "• first point in a list that is long enough to wrap onto the next line",
+            "细胞类型注释通过标记基因为聚类分配身份，例如",
+            "细胞的标记基因为聚类分配身份，这一段很长很长很长很长很长很长很长。",
+        ]
+    )
     lines = reflow(page, vocabulary={"results", "open", "source"}).split("\n")
     # Section headings become Markdown headings, numbered ones by depth.
     assert lines[0] == "## Abstract"
-    assert lines[1].startswith("This technical report presents the training methodology and "
-                               "evaluation results of the open-source multilingual")
+    assert lines[1].startswith(
+        "This technical report presents the training methodology and "
+        "evaluation results of the open-source multilingual"
+    )
     assert "## 1 Introduction" in lines
     assert any(line.startswith("• first point") for line in lines)
     # Chinese wrapped across lines joins without a space.
@@ -225,7 +231,9 @@ def test_an_abstract_announced_inside_the_front_matter_is_found():
             anchor_json='{"page": 1}',
         ),
         ContentBlock(
-            id="rest", kind="paragraph", content="In this paper, we present a network.",
+            id="rest",
+            kind="paragraph",
+            content="In this paper, we present a network.",
             anchor_json='{"page": 1}',
         ),
     ]
@@ -256,13 +264,27 @@ def test_papers_are_read_retitled_and_copies_share_a_work(tmp_path):
     root = tmp_path / "Gunther"
     with client_for(tmp_path, library_root=root) as client:
         base = library(client)
-        first = upload(client, base, "lovelace2021.pdf", paper_pdf(
-            "Marker Genes for Cell Type Annotation", "10.1234/cells.2021.001"))
+        first = upload(
+            client,
+            base,
+            "lovelace2021.pdf",
+            paper_pdf("Marker Genes for Cell Type Annotation", "10.1234/cells.2021.001"),
+        )
         # The same paper again, from a different file (another download of it).
-        second = upload(client, base, "download (1).pdf", paper_pdf(
-            "Marker Genes for Cell Type Annotation", "10.1234/cells.2021.001", "Preprint copy."))
-        other = upload(client, base, "other.pdf", paper_pdf(
-            "Reference Mapping at Atlas Scale", "10.1234/atlas.2022.9"))
+        second = upload(
+            client,
+            base,
+            "download (1).pdf",
+            paper_pdf(
+                "Marker Genes for Cell Type Annotation", "10.1234/cells.2021.001", "Preprint copy."
+            ),
+        )
+        other = upload(
+            client,
+            base,
+            "other.pdf",
+            paper_pdf("Reference Mapping at Atlas Scale", "10.1234/atlas.2022.9"),
+        )
         drain(client)
 
         paper = client.get(f"/api/sources/{first}/paper").json()
@@ -360,9 +382,10 @@ def test_topics_are_suggested_accepted_asked_and_written_up(tmp_path):
         assert answer["citations"]
         assert {c["sourceId"] for c in answer["citations"]} <= set(rockets)
 
-        assert client.get(
-            f"/api/knowledge-bases/{base}/topics/{topic['id']}/overview"
-        ).status_code == 404
+        assert (
+            client.get(f"/api/knowledge-bases/{base}/topics/{topic['id']}/overview").status_code
+            == 404
+        )
         written = client.post(f"/api/knowledge-bases/{base}/topics/{topic['id']}/overview")
         assert written.status_code == 200, written.text
         overview = written.json()
@@ -388,8 +411,11 @@ class TopicAxes:
 
     def encode(self, texts, *, query=False):
         return [
-            [float("rocket" in t.lower() or "orbit" in t.lower()),
-             float("cell" in t.lower() or "marker" in t.lower()), 0.05]
+            [
+                float("rocket" in t.lower() or "orbit" in t.lower()),
+                float("cell" in t.lower() or "marker" in t.lower()),
+                0.05,
+            ]
             for t in texts
         ]
 

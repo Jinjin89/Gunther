@@ -89,11 +89,16 @@ def test_each_job_picks_its_own_model_and_live_setting(tmp_path: Path) -> None:
             json={"roles": {"recording": {"model": "nobody/model", "stream": True}}},
         )
         assert refused.status_code == 422
-        assert client.put(
-            "/api/settings/speech/roles",
-            headers=SIDECAR,
-            json={"roles": {"recording": {"model": None, "stream": True, "language": "english!"}}},
-        ).status_code == 422
+        assert (
+            client.put(
+                "/api/settings/speech/roles",
+                headers=SIDECAR,
+                json={
+                    "roles": {"recording": {"model": None, "stream": True, "language": "english!"}}
+                },
+            ).status_code
+            == 422
+        )
 
     saved_file = json.loads((tmp_path / "service-settings.json").read_text())
     assert saved_file["speechRoles"]["dictation"]["language"] == "zh"

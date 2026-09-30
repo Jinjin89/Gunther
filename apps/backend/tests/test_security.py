@@ -349,10 +349,7 @@ def test_frozen_helper_publishes_private_nonce_bound_readiness(tmp_path: Path) -
 def test_configured_token_requires_constant_boundary_on_http(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
         assert client.get("/api/health").status_code == 401
-        assert (
-            client.get("/api/health", headers={"X-Gunther-Token": "wrong"}).status_code
-            == 401
-        )
+        assert client.get("/api/health", headers={"X-Gunther-Token": "wrong"}).status_code == 401
         assert client.get("/api/health?token=wrong").status_code == 401
 
         response = client.get("/api/health", headers={"X-Gunther-Token": TOKEN})
@@ -366,10 +363,7 @@ def test_configured_token_requires_constant_boundary_on_http(tmp_path: Path) -> 
 def test_tokenless_service_rejects_an_unexpected_token(tmp_path: Path) -> None:
     with make_client(tmp_path, auth_token=None) as client:
         assert client.get("/api/health").status_code == 200
-        assert (
-            client.get("/api/health", headers={"X-Gunther-Token": TOKEN}).status_code
-            == 401
-        )
+        assert client.get("/api/health", headers={"X-Gunther-Token": TOKEN}).status_code == 401
         assert client.get(f"/api/health?token={TOKEN}").status_code == 401
 
 
@@ -442,10 +436,13 @@ def test_websocket_rejects_missing_or_wrong_token_and_origin(
 
 
 def test_websocket_accepts_query_token_and_allowed_origin(tmp_path: Path) -> None:
-    with make_client(tmp_path) as client, client.websocket_connect(
-        f"/api/recordings/live?token={TOKEN}",
-        headers={"Origin": ALLOWED_ORIGIN},
-    ) as websocket:
+    with (
+        make_client(tmp_path) as client,
+        client.websocket_connect(
+            f"/api/recordings/live?token={TOKEN}",
+            headers={"Origin": ALLOWED_ORIGIN},
+        ) as websocket,
+    ):
         event = websocket.receive_json()
         assert event["type"] == "service.error"
         assert event["code"] == "not_configured"

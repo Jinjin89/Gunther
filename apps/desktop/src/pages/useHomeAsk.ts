@@ -12,6 +12,8 @@ export interface AskOptions {
   model?: string | null;
   effort?: Effort;
   web?: boolean;
+  /** How the answer is worded; the balanced style when left out. */
+  style?: string;
   /** The libraries pointed at with @; none means all of them. */
   libraryIds?: string[];
 }
@@ -93,6 +95,7 @@ export function useHomeAsk() {
         content,
         ...(options.model ? { model: options.model, ...(options.effort ? { effort: options.effort } : {}) } : {}),
         ...(options.web ? { web: true } : {}),
+        ...(options.style ? { style: options.style } : {}),
         ...(options.libraryIds?.length ? { knowledgeBaseIds: options.libraryIds } : {}),
       }, hear, abort.signal);
       setSession({ ...current, ...turn.session, messages: [...current.messages, turn.userMessage, turn.assistantMessage] });

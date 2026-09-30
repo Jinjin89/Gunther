@@ -132,10 +132,26 @@ def is_grading(request: dict[str, Any]) -> bool:
     return GRADER_MARK in str(request["messages"][0]["content"])
 
 
+CHECKER_MARK = "You are the checking step"
+
+
+def is_checking(request: dict[str, Any]) -> bool:
+    return CHECKER_MARK in str(request["messages"][0]["content"])
+
+
+AUDITOR_MARK = "You are the audit step"
+
+
+def is_auditing(request: dict[str, Any]) -> bool:
+    return AUDITOR_MARK in str(request["messages"][0]["content"])
+
+
 def agent_replies(
     answer: Reply,
     *plans: dict[str, Any],
     relevant: list[int] | None = None,
+    verdict: dict[str, list[int]] | None = None,
+    unmarked: list[str] | None = None,
 ) -> Callable[[dict[str, Any]], Any]:
     """Replies for Ask: each planning call gets the next plan, every other call the answer.
 
@@ -147,8 +163,8 @@ def agent_replies(
     import json
 
     queue = list(plans) or [
-        {"intent": "library", "action": "search_library", "query": ""},
-        {"intent": "library", "action": "answer"},
+        {"action": "search_library", "query": ""},
+        {"action": "answer"},
     ]
 
     def reply(request: dict[str, Any]) -> Any:
@@ -160,6 +176,10 @@ def agent_replies(
             return json.dumps(
                 {"relevant": relevant if relevant is not None else list(range(1, 25))}
             )
+        if is_auditing(request):
+            return json.dumps({"claims": unmarked or []})
+        if is_checking(request):
+            return json.dumps(verdict or {"supports": [], "contradicts": []})
         return answer(request) if callable(answer) else answer
 
     return reply

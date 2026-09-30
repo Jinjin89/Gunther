@@ -18,7 +18,15 @@ from sqlalchemy import and_, func, or_, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
-from gunther.agent import AskAgent, Evidence, ToolFailure, Tools
+from gunther.agent import (
+    DEFAULT_STYLE,
+    STYLES,
+    AskAgent,
+    Evidence,
+    Tool,
+    Toolbox,
+    ToolFailure,
+)
 from gunther.conversation import GroundingClaim, KnowledgeResponder
 from gunther.database import session_scope
 from gunther.extraction import CandidateAssertion, ExtractionResult, Extractor
@@ -168,7 +176,6 @@ class _Answer:
     notes: tuple[str, ...] = ()
     reasoning: str | None = None
     error: str | None = None
-    intent: str | None = None
     steps: list = field(default_factory=list)
 
 
@@ -190,10 +197,48 @@ def conversation_history(messages: list[SessionMessage]) -> list[Turn]:
             turns.append(Turn("user", message.content))
         elif message.role == "assistant":
             context = json.loads(message.context_json or "{}")
-            turns.append(
-                Turn("assistant", message.content, context.get("model"), context.get("reasoning"))
-            )
+            content = message.content
+            if not _pooled(message):
+                # Before the source pool, [n] counted within one answer; the numbers now
+                # mean the pool's, so an old answer's are left out of what the model reads.
+                content = re.sub(r"\s?\[\d+(?:\s*[,，、]\s*\d+)*\]", "", content)
+            turns.append(Turn("assistant", content, context.get("model"), context.get("reasoning")))
     return turns
+
+
+def _pooled(message: SessionMessage) -> bool:
+    """Whether an answer's citations carry pool numbers (older ones do not)."""
+
+    return any(
+        item.get("ref") is not None for item in json.loads(message.citations_json or "[]")
+    )
+
+
+def conversation_pool(messages: list[SessionMessage]) -> list[Evidence]:
+    """The sources a conversation holds: everything its answers cited, each under the
+    number it was given the first time."""
+
+    held: dict[int, Evidence] = {}
+    for message in messages:
+        if message.role != "assistant":
+            continue
+        for item in json.loads(message.citations_json or "[]"):
+            ref = item.get("ref")
+            if ref is None or ref in held:
+                continue
+            citation = ConversationCitationOut.model_validate(item)
+            held[ref] = Evidence(
+                kind=citation.kind,
+                title=citation.source_title,
+                text=citation.quote,
+                locator=citation.locator,
+                status=citation.status,
+                confidence=citation.confidence,
+                url=citation.url,
+                ref=ref,
+                payload=(citation, None),
+            )
+    return [held[ref] for ref in sorted(held)]
 
 
 class KnowledgeService:
@@ -1646,9 +1691,7 @@ class KnowledgeService:
                 break
         return results
 
-    def _web_tool(
-        self, wanted: bool
-    ) -> tuple[Callable[[str, str], list[Evidence]] | None, str | None]:
+    def _web_tool(self, wanted: bool) -> tuple[Tool | None, str | None]:
         """The web as a tool for one question, or why it is not offered."""
 
         if not self.web_search.available:
@@ -1657,8 +1700,8 @@ class KnowledgeService:
             return None, "the Web toggle is off for this message"
         provider = self.web_search
 
-        def search_web(query: str, topic: str) -> list[Evidence]:
-            result = provider.search(query, topic="news" if topic == "news" else "general")
+        def search_web(query: str) -> list[Evidence]:
+            result = provider.search(query)
             if result.mode == "failed":
                 raise ToolFailure(result.message or "Web search failed.")
             found = []
@@ -1688,16 +1731,24 @@ class KnowledgeService:
                 )
             return found
 
-        return search_web, None
+        return Tool(
+            "search_web",
+            "the public web, for facts outside the library",
+            search_web,
+            "the web",
+        ), None
 
     def _answer(
         self,
         question: str,
         history: list[Turn],
-        tools: Tools,
+        toolbox: Toolbox,
         model: ModelInfo | None,
         effort: Effort | None,
         events: Callable[[dict], None] | None = None,
+        pool: list[Evidence] | None = None,
+        style: str | None = None,
+        numbered: int = 0,
     ) -> _Answer:
         """Run the agent with the chosen model (or the Ask default) and describe the outcome."""
 
@@ -1707,7 +1758,8 @@ class KnowledgeService:
                 model, default_effort = chosen
                 effort = effort or default_effort
         if model is None or self.models is None:
-            found = tools.search_library(question) if tools.search_library else []
+            library_tool = toolbox.get("search_library")
+            found = library_tool.run(question) if library_tool else []
             claims = [item.payload[1] for item in found]
             content = (
                 self.responder.respond(question, claims, history).content
@@ -1720,12 +1772,13 @@ class KnowledgeService:
                 evidence=found,
                 error="Ask needs a language model. Set one up under Settings → Models.",
             )
-        result = AskAgent(self.models).run(question, history, tools, model, effort, events)
+        result = AskAgent(self.models).run(
+            question, history, toolbox, model, effort, events, pool or (), style, numbered
+        )
         about = {
             "model_ref": model.ref,
             "model_label": model.display,
             "effort": effort,
-            "intent": result.intent,
             "steps": result.steps,
             "notes": result.notes,
         }
@@ -2018,19 +2071,51 @@ class KnowledgeService:
                 return found
 
             web_tool, web_off_reason = self._web_tool(payload.web)
-            tools = Tools(
-                search_library=search_library if scoped_source_ids else None,
-                search_web=web_tool,
-                library_about=(
-                    f"{library.title}: {library.question}" if library else "all your libraries"
-                ),
-                library_size=len(scoped_source_ids),
-                web_off_reason=web_off_reason,
-            )
+            about = f"{library.title}: {library.question}" if library else "all your libraries"
+            offered = []
+            notes = []
+            if scoped_source_ids:
+                offered.append(
+                    Tool(
+                        "search_library",
+                        f"the user's library ({about}), {len(scoped_source_ids)} sources",
+                        search_library,
+                        "your library",
+                        grade=True,
+                    )
+                )
+            else:
+                notes.append("there is no library to search here")
+            if web_tool:
+                offered.append(web_tool)
+            else:
+                notes.append(f"the web was not searched: {web_off_reason}")
+            toolbox = Toolbox(tuple(offered), tuple(notes))
             history = conversation_history(knowledge_session.messages)
             question = payload.content.strip()
-            response = self._answer(question, history, tools, model, payload.effort, events)
-            citations = [item.payload[0] for item in response.evidence]
+            everything = conversation_pool(knowledge_session.messages)
+            # Only what this question may read: a library source that is out of scope now
+            # (another library was picked, a source was removed) stays out of the answer.
+            in_scope = set(scoped_source_ids)
+            pool = [
+                item
+                for item in everything
+                if item.kind != "library" or item.payload[0].source_id in in_scope
+            ]
+            response = self._answer(
+                question,
+                history,
+                toolbox,
+                model,
+                payload.effort,
+                events,
+                pool,
+                payload.style,
+                max((item.ref or 0 for item in everything), default=0),
+            )
+            citations = [
+                item.payload[0].model_copy(update={"ref": item.ref}) for item in response.evidence
+            ]
             context = ConversationContextOut(
                 sources_considered=len(scoped_sources),
                 assertions_considered=len(available_assertions),
@@ -2044,7 +2129,7 @@ class KnowledgeService:
                 notes=list(response.notes),
                 reasoning=(response.reasoning or "")[:MAX_KEPT_REASONING] or None,
                 model_error=response.error,
-                intent=response.intent,
+                style=payload.style if payload.style in STYLES else DEFAULT_STYLE,
                 steps=[step.out() for step in response.steps],
                 web_searched=any(step.tool == "search_web" for step in response.steps),
             )

@@ -72,7 +72,7 @@ describe("HomeAsk", () => {
 
   it("can be stopped while it is answering", async () => {
     const onCancel = vi.fn();
-    render(<HomeAsk {...baseProps} active query="" pending="Why?" live={{ intent: null, steps: [], text: "" }} onCancel={onCancel} />);
+    render(<HomeAsk {...baseProps} active query="" pending="Why?" live={{ steps: [], text: "" }} onCancel={onCancel} />);
     await userEvent.click(screen.getByRole("button", { name: "Stop" }));
     expect(onCancel).toHaveBeenCalledOnce();
   });

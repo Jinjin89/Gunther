@@ -201,9 +201,7 @@ def test_completed_recording_corruption_fails_closed_without_deleting_bytes(
         assert metadata.json()["status"] == "failed"
         assert metadata.json()["recovery"]["audioAvailable"] is True
         listed = next(
-            item
-            for item in client.get("/api/recordings").json()
-            if item["id"] == recording_id
+            item for item in client.get("/api/recordings").json() if item["id"] == recording_id
         )
         assert listed["status"] == "failed"
         assert client.post(f"/api/recordings/{recording_id}/complete").status_code == 409

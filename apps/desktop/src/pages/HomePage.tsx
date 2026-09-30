@@ -21,8 +21,9 @@ import { useKnowledgeSearch } from "../components/search/useKnowledgeSearch";
 import { BrandMark } from "../design/BrandMark";
 import { LibraryGlyph } from "../design/LibraryGlyph";
 import { refFromSearch, type ItemRef } from "../items/itemRef";
-import { usableChoice, useDeviceChoice, useModelMenu, WEB_PREFERENCE_KEY } from "../models/askModel";
+import { readAnswerStyle, usableChoice, useDeviceChoice, useModelMenu, WEB_PREFERENCE_KEY } from "../models/askModel";
 import { ModelPicker } from "../models/ModelPicker";
+import { StylePicker } from "../models/StylePicker";
 import { useHomeAsk } from "./useHomeAsk";
 
 export type HomeCaptureKind = "note" | "link" | "file" | "image" | "recording" | "table";
@@ -203,6 +204,7 @@ export function HomePage({
     void homeAsk.ask(text, {
       ...(choice.model && modelMenu?.models.length ? { model: choice.model, effort: choice.effort } : {}),
       web,
+      style: readAnswerStyle(),
       libraryIds: mentionIds,
     });
   };
@@ -321,7 +323,7 @@ export function HomePage({
           onAsk={() => askNow()}
           onClear={clear}
           onArrowDown={submitted ? focusFirstResult : undefined}
-          picker={<ModelPicker menu={modelMenu} choice={usableChoice(modelMenu, deviceChoice)} onChange={setDeviceChoice} placement="down" />}
+          picker={<><ModelPicker menu={modelMenu} choice={usableChoice(modelMenu, deviceChoice)} onChange={setDeviceChoice} placement="down" /><StylePicker /></>}
         />
         {!hasResults && (
           <div className="gx-capture-row" role="group" aria-label="Capture">

@@ -199,3 +199,32 @@
   font-size: var(--gx-text-xs);
 }
 .speech-language:focus-visible { outline: none; box-shadow: var(--gx-ring); }
+
+/* Answer style: a quiet native menu beside the model chips. */
+.gx-style-picker { display: inline-flex; align-items: center; }
+.gx-style-picker select {
+  height: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--gx-muted);
+  font: inherit;
+  font-size: var(--gx-text-xs);
+  font-weight: 550;
+  cursor: pointer;
+}
+.gx-style-picker select:hover:not(:disabled) { background: var(--gx-hover); color: var(--gx-ink); }
+.gx-style-picker select:focus-visible { outline: none; box-shadow: var(--gx-ring); }
+
+/* A claim from the model's own knowledge that no source backs. */
+.unverified-mark {
+  margin-left: 2px;
+  padding: 0 4px;
+  border: 1px solid var(--gx-line);
+  border-radius: 4px;
+  color: var(--gx-muted);
+  font-size: 0.7em;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+}

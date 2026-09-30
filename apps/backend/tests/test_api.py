@@ -269,8 +269,7 @@ def test_unified_inbox_files_an_unassigned_source_idempotently() -> None:
         assert filed_again.status_code == 200
         assert filed_again.json()["membershipCreated"] is False
         assert [
-            item["id"]
-            for item in client.get(f"/api/knowledge-bases/{base_id}/sources").json()
+            item["id"] for item in client.get(f"/api/knowledge-bases/{base_id}/sources").json()
         ] == [source_id]
 
         assert client.get("/api/inbox?state=unfiled&itemType=source").json() == []
@@ -281,9 +280,7 @@ def test_unified_inbox_files_an_unassigned_source_idempotently() -> None:
         assert len(review_item) == 1
         assert review_item[0]["sourceId"] == source_id
         assert review_item[0]["assertionCount"] == 1
-        assert review_item[0]["knowledgeBases"] == [
-            {"id": base_id, "title": "Research Inbox"}
-        ]
+        assert review_item[0]["knowledgeBases"] == [{"id": base_id, "title": "Research Inbox"}]
 
         reviewed = client.patch(
             f"/api/sources/{source_id}/assertions/status",
@@ -363,18 +360,14 @@ def test_unified_inbox_aggregates_quick_notes_and_knowledge_suggestions() -> Non
         assert suggestion["itemType"] == "knowledge_suggestion"
         assert suggestion["state"] == "needs_review"
         assert suggestion["proposalStatus"] == "pending"
-        assert suggestion["knowledgeBases"] == [
-            {"id": base_id, "title": "Learning Queue"}
-        ]
+        assert suggestion["knowledgeBases"] == [{"id": base_id, "title": "Learning Queue"}]
 
         held = client.patch(
             f"/api/proposals/{proposal['id']}",
             json={"status": "held", "reason": "Needs another source"},
         )
         assert held.status_code == 200
-        held_items = client.get(
-            "/api/inbox?state=held&itemType=knowledge_suggestion"
-        ).json()
+        held_items = client.get("/api/inbox?state=held&itemType=knowledge_suggestion").json()
         assert [item["proposalId"] for item in held_items] == [proposal["id"]]
         assert held_items[0]["proposalStatus"] == "held"
 
@@ -455,9 +448,7 @@ def test_notebook_notes_can_be_filtered_archived_and_searched() -> None:
             "/api/notes",
             json={"title": "Old fragment", "content": "A thought to keep out of search."},
         ).json()
-        response = client.patch(
-            f"/api/notes/{archived['id']}", json={"status": "archived"}
-        )
+        response = client.patch(f"/api/notes/{archived['id']}", json={"status": "archived"})
         assert response.status_code == 200
 
         inbox = client.get("/api/notes?status=inbox&q=priors").json()
@@ -545,9 +536,7 @@ def test_natural_language_search_ignores_query_framing_words() -> None:
             },
         ).json()
 
-        results = client.get(
-            "/api/search?q=What+have+I+learned+about+uncertainty"
-        ).json()
+        results = client.get("/api/search?q=What+have+I+learned+about+uncertainty").json()
 
         assert any(item["id"] == note["id"] for item in results)
         note_result = next(item for item in results if item["id"] == note["id"])
@@ -569,9 +558,7 @@ def test_notebook_filing_rejects_empty_invalid_and_repeated_promotions() -> None
     with make_client() as client:
         base_id = create_base(client, "Reliable Filing")
         note = client.post("/api/notes", json={}).json()
-        too_empty = client.post(
-            f"/api/notes/{note['id']}/file", json={"knowledgeBaseId": base_id}
-        )
+        too_empty = client.post(f"/api/notes/{note['id']}/file", json={"knowledgeBaseId": base_id})
         assert too_empty.status_code == 409
         missing_base = client.post(
             f"/api/notes/{note['id']}/file", json={"knowledgeBaseId": "missing"}
@@ -579,12 +566,13 @@ def test_notebook_filing_rejects_empty_invalid_and_repeated_promotions() -> None
         assert missing_base.status_code == 404
 
         client.patch(f"/api/notes/{note['id']}", json={"content": "A durable fragment."})
-        assert client.post(
-            f"/api/notes/{note['id']}/file", json={"knowledgeBaseId": base_id}
-        ).status_code == 200
-        repeated = client.post(
-            f"/api/notes/{note['id']}/file", json={"knowledgeBaseId": base_id}
+        assert (
+            client.post(
+                f"/api/notes/{note['id']}/file", json={"knowledgeBaseId": base_id}
+            ).status_code
+            == 200
         )
+        repeated = client.post(f"/api/notes/{note['id']}/file", json={"knowledgeBaseId": base_id})
         assert repeated.status_code == 409
         edit_snapshot = client.patch(
             f"/api/notes/{note['id']}", json={"content": "Changed after filing"}
@@ -794,6 +782,7 @@ def test_session_keeps_messages_context_and_citations() -> None:
             "reasoning": None,
             "modelError": "Ask needs a language model. Set one up under Settings → Models.",
             "intent": None,
+            "style": "balanced",
             "steps": [],
             "webSearched": False,
             "interrupted": None,
@@ -1004,10 +993,15 @@ def test_artifact_history_is_immutable_versioned_and_bound_to_workspace_and_base
         )
         assert idempotent_retry.status_code == 201
         assert idempotent_retry.json() == first
-        assert len(client.get(
-            f"/api/knowledge-bases/{base_id}/artifacts",
-            headers=headers,
-        ).json()) == 1
+        assert (
+            len(
+                client.get(
+                    f"/api/knowledge-bases/{base_id}/artifacts",
+                    headers=headers,
+                ).json()
+            )
+            == 1
+        )
         conflicting_retry = client.post(
             f"/api/knowledge-bases/{base_id}/artifacts",
             headers=headers,
@@ -1017,9 +1011,7 @@ def test_artifact_history_is_immutable_versioned_and_bound_to_workspace_and_base
         assert "already used" in conflicting_retry.json()["detail"]
         with client.app.state.knowledge_service.sessions() as database_session:
             bindings = database_session.scalars(
-                select(ArtifactUnitBinding).where(
-                    ArtifactUnitBinding.artifact_id == first["id"]
-                )
+                select(ArtifactUnitBinding).where(ArtifactUnitBinding.artifact_id == first["id"])
             ).all()
         assert [
             (
@@ -1053,10 +1045,13 @@ def test_artifact_history_is_immutable_versioned_and_bound_to_workspace_and_base
         assert second["versionNumber"] == 2
         assert second["supersedesArtifactId"] == first["id"]
         assert second["id"] != first["id"]
-        assert client.get(
-            f"/api/knowledge-bases/{base_id}/artifacts/{first['id']}",
-            headers=headers,
-        ).json() == first
+        assert (
+            client.get(
+                f"/api/knowledge-bases/{base_id}/artifacts/{first['id']}",
+                headers=headers,
+            ).json()
+            == first
+        )
         stale_parent = client.post(
             f"/api/knowledge-bases/{base_id}/artifacts",
             headers=headers,
@@ -1069,26 +1064,31 @@ def test_artifact_history_is_immutable_versioned_and_bound_to_workspace_and_base
         assert stale_parent.status_code == 409
         assert "current Artifact lineage head" in stale_parent.json()["detail"]
 
-        assert client.get(
-            f"/api/knowledge-bases/{other_base_id}/artifacts/{first['id']}",
-            headers=headers,
-        ).status_code == 404
+        assert (
+            client.get(
+                f"/api/knowledge-bases/{other_base_id}/artifacts/{first['id']}",
+                headers=headers,
+            ).status_code
+            == 404
+        )
         rejected_cross_base = client.post(
             f"/api/knowledge-bases/{other_base_id}/artifacts",
             headers=headers,
             json={**payload, "clientRequestId": "artifact_request_0004"},
         )
         assert rejected_cross_base.status_code == 400
-        assert "trusted Knowledge Units from this Knowledge Base" in (
-            rejected_cross_base.json()["detail"]
+        assert (
+            "trusted Knowledge Units from this Knowledge Base"
+            in (rejected_cross_base.json()["detail"])
         )
-        assert client.get(
-            f"/api/knowledge-bases/{base_id}/artifacts",
-            headers={"X-Gunther-Workspace-Id": "wsp_wrong"},
-        ).status_code == 409
-        assert client.get(
-            f"/api/knowledge-bases/{base_id}/artifacts"
-        ).status_code == 422
+        assert (
+            client.get(
+                f"/api/knowledge-bases/{base_id}/artifacts",
+                headers={"X-Gunther-Workspace-Id": "wsp_wrong"},
+            ).status_code
+            == 409
+        )
+        assert client.get(f"/api/knowledge-bases/{base_id}/artifacts").status_code == 422
 
         with client.app.state.knowledge_service.sessions() as database_session:
             artifact = database_session.get(Artifact, first["id"])
@@ -1101,10 +1101,13 @@ def test_artifact_history_is_immutable_versioned_and_bound_to_workspace_and_base
         )
         assert corrupted_detail.status_code == 409
         assert "integrity" in corrupted_detail.json()["detail"].lower()
-        assert client.get(
-            f"/api/knowledge-bases/{base_id}/artifacts",
-            headers=headers,
-        ).status_code == 409
+        assert (
+            client.get(
+                f"/api/knowledge-bases/{base_id}/artifacts",
+                headers=headers,
+            ).status_code
+            == 409
+        )
 
 
 def test_session_retrieval_excludes_unrelated_claims_from_citations() -> None:
@@ -1221,16 +1224,12 @@ def test_session_does_not_answer_from_one_generic_word_overlap() -> None:
                 "knowledgeBaseId": "biology",
             },
         )
-        knowledge_session = client.post(
-            "/api/knowledge-bases/biology/sessions", json={}
-        ).json()
+        knowledge_session = client.post("/api/knowledge-bases/biology/sessions", json={}).json()
 
         turn = client.post(
             f"/api/sessions/{knowledge_session['id']}/messages",
             json={
-                "content": (
-                    "What evidence supports checking doublets before cell-type annotation?"
-                )
+                "content": ("What evidence supports checking doublets before cell-type annotation?")
             },
         ).json()
 
@@ -1291,6 +1290,7 @@ def test_session_grounds_an_answer_in_raw_source_text_without_extracted_claims()
             "reasoning": None,
             "modelError": "Ask needs a language model. Set one up under Settings → Models.",
             "intent": None,
+            "style": "balanced",
             "steps": [],
             "webSearched": False,
             "interrupted": None,

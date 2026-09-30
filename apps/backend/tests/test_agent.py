@@ -1,4 +1,4 @@
-"""Ask's agent: intent, tools, evidence, and an answer that is never a bare "not found"."""
+"""Ask's agent: tools, the source pool, cited answers, and claims from the model's own knowledge."""
 
 import json
 from pathlib import Path
@@ -6,11 +6,29 @@ from types import SimpleNamespace
 
 import httpx
 import openai
-from fake_models import FakeProvider, agent_replies, api_error, gateway, is_grading, is_planning
+from fake_models import (
+    FakeProvider,
+    agent_replies,
+    api_error,
+    gateway,
+    is_auditing,
+    is_checking,
+    is_grading,
+    is_planning,
+)
 from fastapi.testclient import TestClient
 
 from gunther import online_search
-from gunther.agent import AskAgent, Evidence, ToolFailure, Tools, tidy_citations
+from gunther.agent import (
+    AskAgent,
+    Evidence,
+    Tool,
+    Toolbox,
+    ToolFailure,
+    check_citations,
+    leads_in,
+    writer_prompt,
+)
 from gunther.config import Settings
 from gunther.llm import Turn
 from gunther.main import create_app
@@ -20,46 +38,71 @@ SIDECAR_TOKEN = "sidecar-token-with-at-least-256-bits-000000000000000000000000"
 SIDECAR = {"X-Gunther-Token": SIDECAR_TOKEN}
 
 
-def passage(title: str, text: str) -> Evidence:
-    return Evidence(kind="library", title=title, text=text, locator="line 1", payload=None)
+def passage(title: str, text: str, ref: int | None = None) -> Evidence:
+    return Evidence(kind="library", title=title, text=text, locator="line 1", ref=ref)
 
 
 def page(title: str, url: str, text: str) -> Evidence:
     return Evidence(kind="web", title=title, text=text, url=url, locator="example.org")
 
 
-def run(fake: FakeProvider, tools: Tools, question: str = "What marks T cells?", history=()):
+def lib(search) -> Tool:
+    return Tool(
+        "search_library", "the user's library, 3 sources", search, "your library", grade=True
+    )
+
+
+def web(search) -> Tool:
+    return Tool("search_web", "the public web", search, "the web")
+
+
+def box(*tools: Tool, notes: tuple[str, ...] = ()) -> Toolbox:
+    return Toolbox(tuple(tools), notes)
+
+
+def run(
+    fake: FakeProvider,
+    toolbox: Toolbox,
+    question: str = "What marks T cells?",
+    history=(),
+    **kwargs,
+):
     chosen = gateway(fake)
     model = chosen.models[0]
-    return AskAgent(chosen).run(question, list(history), tools, model, "high")
+    return AskAgent(chosen).run(question, list(history), toolbox, model, "high", **kwargs)
 
 
 def writer_prompts(fake: FakeProvider) -> list[str]:
     return [
         str(r["messages"][-1]["content"])
         for r in fake.requests
-        if not is_planning(r) and not is_grading(r)
+        if not is_planning(r) and not is_grading(r) and not is_checking(r) and not is_auditing(r)
     ]
 
 
-def test_citations_are_kept_only_when_they_exist_and_renumbered() -> None:
-    text, used = tidy_citations("A [3] and B [1, 3]; C [9] too.", 4)
-    assert text == "A [1] and B [2][1]; C too."
+def test_citations_are_kept_only_when_they_exist_and_keep_their_numbers() -> None:
+    text, used = check_citations("A [3] and B [1, 3]; C [9] too.", {1, 3, 4})
+    assert text == "A [3] and B [1][3]; C too."
     assert used == [3, 1]
-    assert tidy_citations("No citations here.", 2) == ("No citations here.", [])
+    assert check_citations("No citations here.", {1}) == ("No citations here.", [])
+    assert check_citations("Own knowledge [?].", {1}) == ("Own knowledge [?].", [])
 
 
-def test_small_talk_is_answered_by_the_planner_without_a_second_call() -> None:
-    fake = FakeProvider(
-        agent_replies(
-            "unused",
-            {"intent": "chat", "action": "answer", "reply": "Hi! What shall we look into?"},
-        )
-    )
-    result = run(fake, Tools(search_library=lambda q: [passage("A", "x")], library_size=3), "hi")
+def test_leads_are_the_claims_marked_as_the_models_own() -> None:
+    text = "Sourced fact [1]. Water boils at 100 C [?]. 另一个说法[?]。Third [?]."
+    assert [claim for _, _, claim in leads_in(text, 2)] == [
+        "Water boils at 100 C",
+        "另一个说法",
+    ]
+    assert leads_in("Nothing marked [1].", 3) == []
+
+
+def test_small_talk_needs_no_search_and_no_sources() -> None:
+    fake = FakeProvider(agent_replies("Hi! What shall we look into?", {"action": "answer"}))
+    result = run(fake, box(lib(lambda q: [passage("A", "x")])), "hi")
     assert result.content == "Hi! What shall we look into?"
-    assert result.intent == "chat" and result.evidence == [] and result.steps == []
-    assert len(fake.requests) == 1
+    assert result.evidence == [] and result.steps == []
+    assert len(writer_prompts(fake)) == 1
 
 
 def test_library_question_searches_with_a_rewritten_query_then_answers_with_citations() -> None:
@@ -75,20 +118,17 @@ def test_library_question_searches_with_a_rewritten_query_then_answers_with_cita
     fake = FakeProvider(
         agent_replies(
             "CD3D marks T cells [1]. Nothing else [7].",
-            {"intent": "library", "action": "search_library", "query": "T cell marker CD3D"},
-            {"intent": "library", "action": "answer"},
+            {"action": "search_library", "query": "T cell marker CD3D"},
+            {"action": "answer"},
         )
     )
     history = [Turn("user", "Tell me about CD3D"), Turn("assistant", "It is a gene.")]
-    result = run(
-        fake, Tools(search_library=search_library, library_size=5), "and T cells?", history
-    )
+    result = run(fake, box(lib(search_library)), "and T cells?", history)
     assert searched == ["T cell marker CD3D"]
     assert result.content == "CD3D marks T cells [1]. Nothing else."
-    assert [item.title for item in result.evidence] == ["Cell note"]
+    assert [(item.title, item.ref) for item in result.evidence] == [("Cell note", 1)]
     assert result.steps[0].found == 2
-    prompt = writer_prompts(fake)[0]
-    assert "[1] (library · Cell note · line 1)" in prompt
+    assert "[1] (library · Cell note · line 1)" in writer_prompts(fake)[0]
     # The planner saw the conversation, to resolve "and T cells?".
     planning = next(r for r in fake.requests if is_planning(r))
     assert any(m["content"] == "Tell me about CD3D" for m in planning["messages"])
@@ -97,47 +137,42 @@ def test_library_question_searches_with_a_rewritten_query_then_answers_with_cita
 def test_when_nothing_is_found_the_writer_is_still_asked_to_help() -> None:
     fake = FakeProvider(
         agent_replies(
-            "I looked for that in your library and found nothing. In general, ...",
-            {"intent": "library", "action": "search_library", "query": "quantum gravity"},
-            {"intent": "library", "action": "answer"},
+            "I looked for that in your library and found nothing.",
+            {"action": "search_library", "query": "quantum gravity"},
+            {"action": "answer"},
         )
     )
     result = run(
         fake,
-        Tools(
-            search_library=lambda q: [],
-            library_size=5,
-            web_off_reason="the Web toggle is off for this message",
-        ),
+        box(lib(lambda q: []), notes=("the web was not searched: the Web toggle is off",)),
     )
     assert result.content.startswith("I looked for that")
     prompt = writer_prompts(fake)[0]
     assert "none of the searches found anything relevant" in prompt
-    assert "The web was not searched: the Web toggle is off" in prompt
+    assert "the web was not searched: the Web toggle is off" in prompt
 
 
-def test_the_web_is_offered_only_when_it_is_a_tool_and_failures_are_reported() -> None:
-    def broken_web(query: str, topic: str) -> list[Evidence]:
+def test_tool_failures_are_reported_and_only_offered_tools_are_listed() -> None:
+    def broken_web(query: str) -> list[Evidence]:
         raise ToolFailure("Tavily did not accept the API key.")
 
     fake = FakeProvider(
         agent_replies(
             "I could not reach the web.",
-            {"intent": "web", "action": "search_web", "query": "latest release", "topic": "news"},
-            {"intent": "web", "action": "answer"},
+            {"action": "search_web", "query": "latest release"},
+            {"action": "answer"},
         )
     )
-    result = run(fake, Tools(search_web=broken_web))
+    result = run(fake, box(web(broken_web)))
     planning = next(r for r in fake.requests if is_planning(r))
     assert "search_web: the public web" in str(planning["messages"][-1]["content"])
     assert result.steps[0].error == "Tavily did not accept the API key."
     assert "failed: Tavily did not accept the API key." in writer_prompts(fake)[0]
 
-    fake = FakeProvider(agent_replies("ok", {"intent": "chat", "action": "answer"}))
-    run(fake, Tools(search_library=lambda q: []))
+    fake = FakeProvider(agent_replies("ok", {"action": "answer"}))
+    run(fake, box(lib(lambda q: [])))
     prompt = str(next(r for r in fake.requests if is_planning(r))["messages"][-1]["content"])
-    assert "search_web" not in prompt.split("Actions offered:")[1].split("Done so far")[0]
-    assert "The web is not available" in prompt
+    assert "search_web" not in prompt
 
 
 def test_a_search_is_never_repeated_and_the_loop_stops() -> None:
@@ -147,14 +182,14 @@ def test_a_search_is_never_repeated_and_the_loop_stops() -> None:
         calls.append(query)
         return []
 
-    same = {"intent": "library", "action": "search_library", "query": "same words"}
+    same = {"action": "search_library", "query": "same words"}
     fake = FakeProvider(agent_replies("Answer.", same))
-    result = run(fake, Tools(search_library=search_library, library_size=1))
+    result = run(fake, box(lib(search_library)))
     assert calls == ["same words"]
     assert result.content == "Answer."
 
 
-def test_an_unreadable_plan_falls_back_to_searching_the_library_as_asked() -> None:
+def test_an_unreadable_plan_falls_back_to_searching_the_first_tool_as_asked() -> None:
     calls: list[str] = []
 
     def replies(request):
@@ -164,20 +199,128 @@ def test_an_unreadable_plan_falls_back_to_searching_the_library_as_asked() -> No
         calls.append(query)
         return [passage("Cell note", "CD3D is a marker of T cells.")]
 
-    fake = FakeProvider(replies)
-    result = run(fake, Tools(search_library=search_library, library_size=1), "What marks T cells?")
+    result = run(FakeProvider(replies), box(lib(search_library)), "What marks T cells?")
     assert calls == ["What marks T cells?"]
     assert result.content == "Answer from the note [1]."
 
 
 def test_a_model_that_cannot_answer_returns_its_error_not_an_invented_reply() -> None:
     fake = FakeProvider(api_error(openai.RateLimitError, 429, "Insufficient Balance"))
-    result = run(fake, Tools(search_library=lambda q: [passage("A", "x")], library_size=1))
+    result = run(fake, box(lib(lambda q: [passage("A", "x")])))
     assert (
         result.error
         == "DeepSeek is busy or out of credit (Insufficient Balance). Try again shortly."
     )
     assert result.content == ""
+
+
+def test_the_pool_keeps_numbers_and_a_search_only_adds_what_is_new() -> None:
+    site = Evidence(kind="web", title="Site", text="x", url="https://a.org", ref=5)
+    held = [passage("Cell note", "CD3D marks T cells.", ref=4), site]
+    searched: list[str] = []
+
+    def search_library(query: str) -> list[Evidence]:
+        searched.append(query)
+        return [passage("Cell note", "CD3D marks T cells."), passage("Lung note", "AT2 cells.")]
+
+    fake = FakeProvider(
+        agent_replies(
+            "CD3D [4] and AT2 [6]; the site [5].",
+            {"action": "search_library", "query": "lung"},
+            {"action": "answer"},
+        )
+    )
+    result = run(fake, box(lib(search_library)), "and the lung?", pool=held)
+    # The known passage keeps [4]; only the lung note is new and follows the highest number.
+    assert [item.ref for item in result.evidence] == [4, 6, 5]
+    assert result.content == "CD3D [4] and AT2 [6]; the site [5]."
+    assert result.steps[0].found == 2
+    prompt = writer_prompts(fake)[0]
+    assert "[4] (library · Cell note" in prompt and "[6] (library · Lung note" in prompt
+    planning = next(r for r in fake.requests if is_planning(r))
+    assert "[5] web · Site" in str(planning["messages"][-1]["content"])
+
+
+def test_a_follow_up_can_answer_from_the_pool_without_searching() -> None:
+    held = [passage("Cell note", "CD3D marks T cells.", ref=2)]
+    calls: list[str] = []
+    fake = FakeProvider(agent_replies("In short: CD3D [2].", {"action": "answer"}))
+    result = run(fake, box(lib(lambda q: calls.append(q) or [])), "shorter", pool=held)
+    assert calls == [] and result.steps == []
+    assert [item.ref for item in result.evidence] == [2]
+
+
+def claim_run(verdict: dict, found: list[Evidence], answer: str):
+    fake = FakeProvider(agent_replies(answer, {"action": "answer"}, verdict=verdict))
+    result = run(fake, box(web(lambda q: list(found))), "Tell me")
+    return fake, result
+
+
+def test_a_claim_from_the_models_own_knowledge_gets_a_source_when_one_is_found() -> None:
+    fake, result = claim_run(
+        {"supports": [1], "contradicts": []},
+        [page("Physics", "https://a.org/p", "Water boils at 100 C at sea level.")],
+        "Water boils at 100 C [?]. It is a common fact.",
+    )
+    assert result.content == "Water boils at 100 C [1]. It is a common fact."
+    assert [(item.ref, item.kind) for item in result.evidence] == [(1, "web")]
+    assert any("Checked the web" in step.label for step in result.steps)
+    assert sum(is_checking(r) for r in fake.requests) == 1
+
+
+def test_a_claim_with_no_source_stays_marked_and_one_that_sources_contradict_is_left_out() -> None:
+    _, result = claim_run(
+        {"supports": [], "contradicts": []},
+        [page("Other", "https://a.org/o", "Unrelated.")],
+        "It is likely so [?].",
+    )
+    assert result.content == "It is likely so [?]." and result.evidence == []
+
+    _, result = claim_run(
+        {"supports": [], "contradicts": [1]},
+        [page("Physics", "https://a.org/p", "Water boils at 90 C on this mountain.")],
+        "Intro [?]. Water boils at 100 C here [?]. Closing.",
+    )
+    assert "100 C" not in result.content and "Closing." in result.content
+    assert any("sources disagree" in note for note in result.notes)
+    assert [item.ref for item in result.evidence] == [1]
+
+
+def test_a_claim_left_with_no_source_and_no_marker_is_found_and_checked() -> None:
+    answer = "The marker is CD3D [1]. Water boils at 100 C. It was named in 1990."
+    fake = FakeProvider(
+        agent_replies(
+            answer,
+            {"action": "search_library", "query": "cd3d"},
+            {"action": "answer"},
+            unmarked=["Water boils at 100 C.", "It was named in 1990."],
+            verdict={"supports": [], "contradicts": []},
+        )
+    )
+    result = run(fake, box(lib(lambda q: [passage("Cell note", "CD3D marks T cells.")])))
+    assert (
+        result.content
+        == "The marker is CD3D [1]. Water boils at 100 C [?]. It was named in 1990 [?]."
+    )
+    assert sum(is_checking(r) for r in fake.requests) == 2
+    # A claim the audit names that is already marked, or short small talk, is left alone.
+    fake = FakeProvider(agent_replies("Hi!", {"action": "answer"}, unmarked=["Hi!"]))
+    assert run(fake, box(lib(lambda q: []))).content == "Hi!"
+    assert sum(is_auditing(r) for r in fake.requests) == 0
+
+
+def test_at_most_a_few_claims_are_checked_and_style_never_overrides_the_rules() -> None:
+    fake, result = claim_run(
+        {"supports": [], "contradicts": []},
+        [page("X", "https://a.org/x", "x")],
+        "A [?]. B [?]. C [?]. D [?].",
+    )
+    assert sum(is_checking(r) for r in fake.requests) == 3
+    assert result.content == "A [?]. B [?]. C [?]. D [?]."
+    concise = writer_prompt("concise")
+    assert "As short as the question allows" in concise and "the rules win" in concise
+    assert writer_prompt("nonsense") == writer_prompt("balanced")
+    assert "[?]" in writer_prompt(None) and "right after it" in writer_prompt(None)
 
 
 # Through the API ----------------------------------------------------------------------
@@ -241,11 +384,10 @@ def test_web_results_become_citations_and_the_steps_are_kept(tmp_path: Path, mon
         agent_replies(
             "CD3D is covered by a recent review [1].",
             {
-                "intent": "web",
                 "action": "search_web",
                 "query": "CD3D latest research",
             },
-            {"intent": "web", "action": "answer"},
+            {"action": "answer"},
         )
     )
     with app_for(tmp_path, fake, tavily_api_key="tvly-test-0000000000001234") as client:
@@ -260,7 +402,7 @@ def test_web_results_become_citations_and_the_steps_are_kept(tmp_path: Path, mon
     assert citation["kind"] == "web" and citation["url"] == "https://www.example.org/cd3d"
     assert citation["locator"] == "example.org" and citation["sourceId"] == ""
     context = reply["context"]
-    assert context["intent"] == "web" and context["webSearched"] is True
+    assert context["webSearched"] is True
     assert context["steps"][0]["tool"] == "search_web" and context["steps"][0]["found"] == 1
     assert context["responderMode"] == "model"
 
@@ -274,8 +416,8 @@ def test_the_web_stays_off_unless_the_question_asks_for_it(tmp_path: Path, monke
     fake = FakeProvider(
         agent_replies(
             "From your notes [1].",
-            {"intent": "library", "action": "search_library", "query": "CD3D"},
-            {"intent": "library", "action": "answer"},
+            {"action": "search_library", "query": "CD3D"},
+            {"action": "answer"},
         )
     )
     with app_for(tmp_path, fake, tavily_api_key="tvly-test-0000000000001234") as client:
@@ -286,7 +428,7 @@ def test_the_web_stays_off_unless_the_question_asks_for_it(tmp_path: Path, monke
             json={"content": "CD3D?"},
         ).json()["assistantMessage"]
     planning = next(r for r in fake.requests if is_planning(r))
-    assert "The web is not available" in str(planning["messages"][-1]["content"])
+    assert "the web was not searched" in str(planning["messages"][-1]["content"])
     assert reply["context"]["webSearched"] is False
     assert reply["citations"][0]["kind"] == "library"
 
@@ -330,8 +472,8 @@ def test_an_answer_can_be_streamed_as_it_is_worked_out(tmp_path: Path) -> None:
     fake = FakeProvider(
         agent_replies(
             "CD3D marks T cells [1].",
-            {"intent": "library", "action": "search_library", "query": "CD3D"},
-            {"intent": "library", "action": "answer"},
+            {"action": "search_library", "query": "CD3D"},
+            {"action": "answer"},
         )
     )
     with app_for(tmp_path, fake) as client:
@@ -346,7 +488,7 @@ def test_an_answer_can_be_streamed_as_it_is_worked_out(tmp_path: Path) -> None:
             events = read_events(response)
         saved = client.get(f"/api/sessions/{session_id}", headers=SIDECAR).json()
     names = [name for name, _ in events]
-    assert names[0] == "intent" and names[-1] == "done"
+    assert names[-1] == "done" and "intent" not in names
     steps = [data for name, data in events if name == "step"]
     assert [s["state"] for s in steps] == ["running", "done"] and steps[1]["found"] == 1
     assert "".join(data["text"] for name, data in events if name == "text") == (
@@ -396,8 +538,8 @@ def test_home_questions_read_every_library_or_the_ones_pointed_at(tmp_path: Path
     fake = FakeProvider(
         agent_replies(
             "Both notes agree [1][2].",
-            {"intent": "library", "action": "search_library", "query": "CD3D marker"},
-            {"intent": "library", "action": "answer"},
+            {"action": "search_library", "query": "CD3D marker"},
+            {"action": "answer"},
         )
     )
     with app_for(tmp_path, fake) as client:
@@ -468,14 +610,12 @@ def test_library_hits_about_something_else_are_dropped_before_the_answer() -> No
     fake = FakeProvider(
         agent_replies(
             "AT2 cells make surfactant [1].",
-            {"intent": "library", "action": "search_library", "query": "lung epithelium"},
-            {"intent": "library", "action": "answer"},
+            {"action": "search_library", "query": "lung epithelium"},
+            {"action": "answer"},
             relevant=[2],
         )
     )
-    result = run(
-        fake, Tools(search_library=lambda q: list(hits), library_size=5), "lung epithelial markers?"
-    )
+    result = run(fake, box(lib(lambda q: list(hits))), "lung epithelial markers?")
     assert [item.title for item in result.evidence] == ["Lung note"]
     assert result.steps[0].found == 1
     prompt = writer_prompts(fake)[0]
@@ -485,22 +625,20 @@ def test_library_hits_about_something_else_are_dropped_before_the_answer() -> No
 def test_a_grader_that_cannot_answer_keeps_what_the_search_found() -> None:
     def replies(request):
         if is_planning(request):
-            return json.dumps({"intent": "library", "action": "search_library", "query": "cd3d"})
+            return json.dumps({"action": "search_library", "query": "cd3d"})
         return "not json at all" if is_grading(request) else "CD3D marks T cells [1]."
 
     result = run(
         FakeProvider(replies),
-        Tools(
-            search_library=lambda q: [passage("Cell note", "CD3D marks T cells.")], library_size=1
-        ),
+        box(lib(lambda q: [passage("Cell note", "CD3D marks T cells.")])),
     )
     assert [item.title for item in result.evidence] == ["Cell note"]
 
 
-def test_the_web_is_tried_when_the_library_has_nothing_relevant() -> None:
+def test_another_tool_can_be_tried_when_the_first_finds_nothing_relevant() -> None:
     web_queries: list[str] = []
 
-    def search_web(query: str, topic: str) -> list[Evidence]:
+    def search_web(query: str) -> list[Evidence]:
         web_queries.append(query)
         return [
             page("Lung atlas", "https://example.org/lung", "AT1, AT2, club and ciliated cells.")
@@ -509,45 +647,18 @@ def test_the_web_is_tried_when_the_library_has_nothing_relevant() -> None:
     fake = FakeProvider(
         agent_replies(
             "The lung epithelium has AT1, AT2, club and ciliated cells [1].",
-            {"intent": "library", "action": "search_library", "query": "lung epithelium"},
-            # The planner would stop here; with the web on, the agent goes on to the web.
-            {"intent": "library", "action": "answer"},
+            {"action": "search_library", "query": "lung epithelium"},
+            {"action": "search_web", "query": "lung epithelium cell types"},
+            {"action": "answer"},
             relevant=[],
         )
     )
     result = run(
         fake,
-        Tools(
-            search_library=lambda q: [passage("T cell note", "CD3D.")],
-            search_web=search_web,
-            library_size=5,
-        ),
+        box(lib(lambda q: [passage("T cell note", "CD3D.")]), web(search_web)),
         "What are the lung epithelial cell types?",
     )
-    assert web_queries == ["What are the lung epithelial cell types?"]
+    assert web_queries == ["lung epithelium cell types"]
     assert [step.tool for step in result.steps] == ["search_library", "search_web"]
     assert result.steps[0].found == 0
     assert [item.title for item in result.evidence] == ["Lung atlas"]
-
-
-def test_the_web_is_not_tried_for_small_talk_or_when_it_is_off() -> None:
-    called: list[str] = []
-
-    def search_web(query: str, topic: str) -> list[Evidence]:
-        called.append(query)
-        return []
-
-    fake = FakeProvider(
-        agent_replies("Hi.", {"intent": "chat", "action": "answer", "reply": "Hi!"})
-    )
-    run(fake, Tools(search_library=lambda q: [], search_web=search_web), "hi")
-    fake = FakeProvider(
-        agent_replies(
-            "Nothing.",
-            {"intent": "library", "action": "search_library", "query": "x"},
-            {"intent": "library", "action": "answer"},
-            relevant=[],
-        )
-    )
-    result = run(fake, Tools(search_library=lambda q: [passage("A", "b")], library_size=1))
-    assert called == [] and [step.tool for step in result.steps] == ["search_library"]

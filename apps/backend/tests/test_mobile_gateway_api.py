@@ -157,9 +157,9 @@ def test_pairing_exchange_rejects_declared_and_chunked_oversized_bodies(
         )
 
         def chunked_body():
-            yield b"{\"deviceName\":\""
+            yield b'{"deviceName":"'
             yield b"x" * (16 * 1024)
-            yield b"\"}"
+            yield b'"}'
 
         chunked = gateway.post(
             "/api/pairing/exchange",

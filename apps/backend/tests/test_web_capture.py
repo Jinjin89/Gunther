@@ -112,9 +112,7 @@ def test_web_capture_preserves_bytes_body_hash_locator_provenance_and_inbox(
         b"<p>BRCA1 -> associated_with -> DNA repair</p>"
         b"<script>not evidence</script></body></html>"
     )
-    fetcher = ScriptedFetcher(
-        {"https://example.com/guide": html_response(original)}
-    )
+    fetcher = ScriptedFetcher({"https://example.com/guide": html_response(original)})
     with make_client(tmp_path, fetcher) as client:
         response = client.post(
             "/api/captures/web",
@@ -187,13 +185,9 @@ def test_web_capture_can_be_filed_directly_and_url_alias_is_accepted(tmp_path: P
         source_id = response.json()["importResult"]["source"]["id"]
         assert source_id in {
             source["id"]
-            for source in client.get(
-                f"/api/knowledge-bases/{knowledge_base_id}/sources"
-            ).json()
+            for source in client.get(f"/api/knowledge-bases/{knowledge_base_id}/sources").json()
         }
-        assert all(
-            item["sourceId"] != source_id for item in client.get("/api/inbox").json()
-        )
+        assert all(item["sourceId"] != source_id for item in client.get("/api/inbox").json())
 
 
 def test_client_capture_id_is_idempotent_without_refetching(tmp_path: Path) -> None:
@@ -238,11 +232,7 @@ def test_client_capture_id_is_idempotent_without_refetching(tmp_path: Path) -> N
             {**normalized_payload, "knowledgeBaseId": other_base_id},
             {key: value for key, value in normalized_payload.items() if key != "title"},
             {key: value for key, value in normalized_payload.items() if key != "notes"},
-            {
-                key: value
-                for key, value in normalized_payload.items()
-                if key != "knowledgeBaseId"
-            },
+            {key: value for key, value in normalized_payload.items() if key != "knowledgeBaseId"},
         ]
         for conflicting_payload in conflicting_intents:
             conflict = client.post("/api/captures/web", json=conflicting_payload)
@@ -264,9 +254,7 @@ def test_client_capture_id_is_idempotent_without_refetching(tmp_path: Path) -> N
 
 
 def test_redirects_are_manually_validated_and_preserve_both_urls(tmp_path: Path) -> None:
-    resolver = FakeResolver(
-        {"example.com": [PUBLIC_IP], "cdn.example.net": ["1.1.1.1"]}
-    )
+    resolver = FakeResolver({"example.com": [PUBLIC_IP], "cdn.example.net": ["1.1.1.1"]})
     fetcher = ScriptedFetcher(
         {
             "https://example.com/start": html_response(

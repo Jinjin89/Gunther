@@ -28,14 +28,16 @@ LECTURE = (
 
 
 def parsed(**values):
-    return digest._Digest(**{
-        "title": "T cell recognition",
-        "overview": "How T cells recognise antigen.",
-        "key_points": [
-            digest._Point(text="T cells bind peptides on MHC.", passages=[1]),
-        ],
-        **values,
-    })
+    return digest._Digest(
+        **{
+            "title": "T cell recognition",
+            "overview": "How T cells recognise antigen.",
+            "key_points": [
+                digest._Point(text="T cells bind peptides on MHC.", passages=[1]),
+            ],
+            **values,
+        }
+    )
 
 
 def model_writer(*outcomes: object, vision: bool = False) -> ModelDigestWriter:
@@ -112,11 +114,16 @@ def fail_now(client: TestClient) -> None:
 
 def test_a_capture_is_summarized_after_it_is_read_and_its_points_cite_passages(tmp_path):
     with client_for(tmp_path) as client:
-        writer = use_model(client, model_writer(parsed(
-            action_items=["Read chapter four before Friday"],
-            open_questions=["Why do some autoreactive T cells escape?"],
-            terms=["MHC", "CD4"],
-        )))
+        writer = use_model(
+            client,
+            model_writer(
+                parsed(
+                    action_items=["Read chapter four before Friday"],
+                    open_questions=["Why do some autoreactive T cells escape?"],
+                    terms=["MHC", "CD4"],
+                )
+            ),
+        )
         source_id = add(client, "Immunology lecture 3", LECTURE)
         assert client.get(f"/api/sources/{source_id}/digest").json()["state"] == "writing"
 
@@ -237,9 +244,10 @@ def test_model_summaries_run_in_their_own_lane(tmp_path):
         assert all(state == "completed" for kind, state in left.items() if kind != "digest")
         drain(client, ai=True)
         with session_scope(client.app.state.knowledge_service.sessions) as session:
-            assert session.scalar(
-                select(ProcessingJob.state).where(ProcessingJob.kind == "digest")
-            ) == "completed"
+            assert (
+                session.scalar(select(ProcessingJob.state).where(ProcessingJob.kind == "digest"))
+                == "completed"
+            )
 
 
 def test_a_models_citations_are_checked_against_the_passages_it_was_given():
@@ -250,11 +258,17 @@ def test_a_models_citations_are_checked_against_the_passages_it_was_given():
         profile="lecture",
         passages=[Passage(1, "blk_1", LECTURE[:200], ""), Passage(2, "blk_2", LECTURE[200:], "")],
     )
-    writer = model_writer(parsed(key_points=[
-        digest._Point(text="T cells bind peptides on MHC.", passages=[1, 7]),
-        digest._Point(text="Selection removes strong binders.", passages=[2]),
-        digest._Point(text="  ", passages=[1]),
-    ], action_items=["Read chapter four"], terms=["MHC", ""]))
+    writer = model_writer(
+        parsed(
+            key_points=[
+                digest._Point(text="T cells bind peptides on MHC.", passages=[1, 7]),
+                digest._Point(text="Selection removes strong binders.", passages=[2]),
+                digest._Point(text="  ", passages=[1]),
+            ],
+            action_items=["Read chapter four"],
+            terms=["MHC", ""],
+        )
+    )
 
     result = writer.write(request)
 
@@ -273,11 +287,17 @@ def test_a_photo_is_shown_to_a_vision_model(tmp_path):
     image = tmp_path / "board.png"
     image.write_bytes(b"\x89PNG\r\n\x1a\nfake")
     request = DigestRequest(
-        source_id="src", revision_id="rev", title="Whiteboard", profile="image",
-        passages=[], image_path=image, image_type="image/png",
+        source_id="src",
+        revision_id="rev",
+        title="Whiteboard",
+        profile="image",
+        passages=[],
+        image_path=image,
+        image_type="image/png",
     )
-    writer = model_writer(parsed(overview="A whiteboard sketch of the T cell receptor."),
-                          vision=True)
+    writer = model_writer(
+        parsed(overview="A whiteboard sketch of the T cell receptor."), vision=True
+    )
     result = writer.write(request)
 
     assert result.overview.startswith("A whiteboard sketch")
@@ -298,8 +318,12 @@ def test_a_table_is_described_to_the_model_by_its_columns():
     assert any(fact.startswith("cluster: 2 values, most often T cell (2)") for fact in facts)
 
     request = DigestRequest(
-        source_id="src", revision_id="rev", title="Markers", profile="table",
-        passages=[Passage(1, "blk_1", table, "")], table=table,
+        source_id="src",
+        revision_id="rev",
+        title="Markers",
+        profile="table",
+        passages=[Passage(1, "blk_1", table, "")],
+        table=table,
     )
     writer = model_writer()
     writer.write(request)
@@ -330,8 +354,11 @@ def test_the_summary_is_written_into_the_library_folder(tmp_path):
         use_model(client, model_writer())
         base = client.post(
             "/api/knowledge-bases",
-            json={"title": "Immunology", "question": "How do T cells work?",
-                  "description": "Lectures"},
+            json={
+                "title": "Immunology",
+                "question": "How do T cells work?",
+                "description": "Lectures",
+            },
         ).json()["id"]
         add(client, "Lecture 3", LECTURE, knowledgeBaseId=base)
         drain(client)
@@ -354,8 +381,12 @@ def test_a_placeholder_title_gives_way_to_the_written_one():
         ("handout", "handout.pdf"),
     ]:
         assert digest.placeholder_title(title, file_name), title
-    for title in ["Immunology lecture 3", "Meeting with Dana", "Imaging pipeline notes",
-                  "Photo of the lab whiteboard"]:
+    for title in [
+        "Immunology lecture 3",
+        "Meeting with Dana",
+        "Imaging pipeline notes",
+        "Photo of the lab whiteboard",
+    ]:
         assert not digest.placeholder_title(title, None), title
 
 

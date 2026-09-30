@@ -1090,7 +1090,7 @@ async def stream_session_message(
 ) -> StreamingResponse:
     """Like posting a message, but as server-sent events while it is answered.
 
-    ``intent``, ``step`` and ``text`` events report the agent at work; ``done``
+    ``step`` and ``text`` events report the agent at work; ``done``
     carries the saved turn, and ``error`` says why there is none. Closing the
     connection stops the work and keeps the question in the
     history, marked as stopped.

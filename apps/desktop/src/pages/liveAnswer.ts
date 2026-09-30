@@ -1,4 +1,4 @@
-import type { AgentStep, ConversationContext } from "@gunther/contracts";
+import type { AgentStep } from "@gunther/contracts";
 import { useCallback, useState } from "react";
 import type { AnswerEvent } from "../api";
 
@@ -8,15 +8,13 @@ export interface LiveStep extends AgentStep {
 
 /** An answer being worked out: what the agent is doing and the text so far. */
 export interface LiveAnswerState {
-  intent: ConversationContext["intent"];
   steps: LiveStep[];
   text: string;
 }
 
-const EMPTY: LiveAnswerState = { intent: null, steps: [], text: "" };
+const EMPTY: LiveAnswerState = { steps: [], text: "" };
 
 export function applyAnswerEvent(state: LiveAnswerState, event: AnswerEvent): LiveAnswerState {
-  if (event.type === "intent") return { ...state, intent: event.intent };
   if (event.type === "text") return { ...state, text: state.text + event.text };
   const step: LiveStep = {
     tool: event.tool,

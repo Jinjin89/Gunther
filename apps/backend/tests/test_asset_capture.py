@@ -152,8 +152,7 @@ def compressed_pdf_bytes(content: bytes) -> bytes:
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
-        b"/Resources << >> /Contents 4 0 R >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> /Contents 4 0 R >>",
         b"<< /Filter /FlateDecode /Length "
         + str(len(stream)).encode()
         + b">>\nstream\n"
@@ -173,8 +172,7 @@ def compressed_pdf_bytes(content: bytes) -> bytes:
     for offset in offsets[1:]:
         result.extend(f"{offset:010d} 00000 n \n".encode())
     result.extend(
-        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
-        f"startxref\n{xref}\n%%EOF\n".encode()
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
     )
     return bytes(result)
 
@@ -211,8 +209,7 @@ def test_original_file_is_preserved_downloadable_and_visible_in_inbox(tmp_path: 
         assert downloaded.content == original
         inbox = client.get("/api/inbox").json()
         assert any(
-            item["sourceId"] == source["id"] and item["state"] == "unfiled"
-            for item in inbox
+            item["sourceId"] == source["id"] and item["state"] == "unfiled" for item in inbox
         )
 
     stored = [path for path in (tmp_path / "assets").rglob("*") if path.is_file()]
@@ -347,9 +344,7 @@ def test_image_ocr_creates_traceable_text_and_region_evidence(tmp_path: Path) ->
         ) in source["content"]
         evidence = source["assertions"][0]["evidence"][0]
         assert evidence["quote"] == "Genome -> contains -> genes"
-        assert evidence["locator"].startswith(
-            "page 1 · region 100000,200000,500000,50000 ppm"
-        )
+        assert evidence["locator"].startswith("page 1 · region 100000,200000,500000,50000 ppm")
         assert client.get(captured["asset"]["downloadUrl"]).content == original
         assert provider.image_calls and provider.image_calls[0][1] == 1
 
@@ -369,9 +364,7 @@ def test_scanned_pdf_uses_ocr_and_preserves_pdf_page_region(tmp_path: Path) -> N
         captured = response.json()
         assert captured["processing"]["ocrStatus"] == "completed"
         assert captured["processing"]["ocrProvider"] == "fake_local"
-        source = client.get(
-            f"/api/sources/{captured['importResult']['source']['id']}"
-        ).json()
+        source = client.get(f"/api/sources/{captured['importResult']['source']['id']}").json()
         assert "Genome -> contains -> genes" in source["content"]
         assert source["assertions"][0]["evidence"][0]["locator"].startswith(
             "page 1 · region 100000,200000,500000,50000 ppm"
@@ -406,9 +399,7 @@ def test_scanned_pdf_keeps_partial_ocr_when_one_page_fails(tmp_path: Path) -> No
         captured = response.json()
         assert captured["processing"]["ocrStatus"] == "degraded"
         assert "page 1" in captured["processing"]["note"]
-        source = client.get(
-            f"/api/sources/{captured['importResult']['source']['id']}"
-        ).json()
+        source = client.get(f"/api/sources/{captured['importResult']['source']['id']}").json()
         assert "<!-- gunther:page=2 -->" in source["content"]
         assert source["assertions"][0]["evidence"][0]["locator"].startswith("page 2")
         assert [page for _, page in provider.pdf_calls] == [1, 2]
@@ -454,9 +445,7 @@ def test_unavailable_ocr_is_explicitly_degraded_and_keeps_original(tmp_path: Pat
         assert captured["processing"]["ocrStatus"] == "degraded"
         assert captured["processing"]["ocrProvider"] is None
         assert "deliberately absent" in captured["processing"]["note"]
-        source = client.get(
-            f"/api/sources/{captured['importResult']['source']['id']}"
-        ).json()
+        source = client.get(f"/api/sources/{captured['importResult']['source']['id']}").json()
         assert "OCR status: degraded" in source["content"]
         assert "complete original remains available" in source["content"]
         assert client.get(captured["asset"]["downloadUrl"]).content == original

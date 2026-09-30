@@ -616,4 +616,3 @@ def test_worker_pause_wakes_when_stopping(tmp_path):
         started = time.monotonic()
         asyncio.run(worker._pause(30))
         assert time.monotonic() - started < 1
-

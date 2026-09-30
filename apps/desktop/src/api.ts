@@ -82,7 +82,6 @@ import type {
 
 /** What the agent reports while answering (see the service's message stream). */
 export type AnswerEvent =
-  | { type: "intent"; intent: NonNullable<ConversationContext["intent"]> }
   | { type: "step"; state: "running" | "done"; tool: AgentStep["tool"]; label: string; query?: string; found?: number; error?: string | null }
   | { type: "text"; text: string };
 

@@ -40,9 +40,12 @@ def test_audio_is_sent_to_the_configured_server_in_segments(tmp_path: Path, monk
         auth_token=SIDECAR_TOKEN,
     )
     with TestClient(create_app(settings)) as client:
-        assert client.get("/api/health", headers={"X-Gunther-Token": SIDECAR_TOKEN}).json()[
-            "transcriptionProvider"
-        ] == "compatible"
+        assert (
+            client.get("/api/health", headers={"X-Gunther-Token": SIDECAR_TOKEN}).json()[
+                "transcriptionProvider"
+            ]
+            == "compatible"
+        )
         with client.websocket_connect(
             f"/api/recordings/live?token={SIDECAR_TOKEN}",
             headers={"Origin": "http://localhost:5173"},

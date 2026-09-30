@@ -55,9 +55,7 @@ def create_base(client: TestClient, title: str) -> str:
     return created.json()["id"]
 
 
-def add_source(
-    client: TestClient, title: str, content: str, base_id: str | None = None
-) -> str:
+def add_source(client: TestClient, title: str, content: str, base_id: str | None = None) -> str:
     payload = {"title": title, "kind": "note", "content": content}
     if base_id:
         payload["knowledgeBaseId"] = base_id
@@ -132,9 +130,7 @@ def test_trashing_a_library_takes_only_its_own_sources_and_restores_them_togethe
         shared_detail = client.get(f"/api/sources/{shared}").json()
         assert shared_detail["trashedAt"] is None
         assert [base["id"] for base in shared_detail["knowledgeBases"]] == [genes]
-        assert filed_note["note"]["id"] not in {
-            n["id"] for n in client.get("/api/notes").json()
-        }
+        assert filed_note["note"]["id"] not in {n["id"] for n in client.get("/api/notes").json()}
         assert [item["kind"] for item in client.get("/api/trash").json()] == ["library"]
 
         client.post(f"/api/trash/library/{cells}/restore")
@@ -205,10 +201,13 @@ def test_delete_forever_removes_rows_index_and_only_unused_originals(storage: Pa
         assert kept_asset.exists(), "another source still uses this original"
         with session_scope(sessions_of(client)) as session:
             assert session.get(RecordingSession, RECORDING_ID) is None
-            assert session.execute(
-                text("SELECT COUNT(*) FROM knowledge_fts WHERE source_id IN (:a, :b)"),
-                {"a": recording_source, "b": first_pdf},
-            ).scalar_one() == 0
+            assert (
+                session.execute(
+                    text("SELECT COUNT(*) FROM knowledge_fts WHERE source_id IN (:a, :b)"),
+                    {"a": recording_source, "b": first_pdf},
+                ).scalar_one()
+                == 0
+            )
             assert session.execute(text("PRAGMA foreign_key_check")).all() == []
 
         client.post(f"/api/sources/{second_pdf}/trash")

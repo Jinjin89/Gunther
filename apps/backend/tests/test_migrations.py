@@ -771,9 +771,7 @@ def _prepare_pre_release_outputs(engine) -> str:
                 "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
             )
         )
-        return connection.execute(
-            text("SELECT workspace_id FROM workspace_identity")
-        ).scalar_one()
+        return connection.execute(text("SELECT workspace_id FROM workspace_identity")).scalar_one()
 
 
 def test_v11_outputs_without_request_identity_are_repaired_in_place(tmp_path: Path) -> None:
@@ -879,9 +877,10 @@ def test_unrecognised_output_tables_are_kept_as_legacy_beside_current_ones(
             assert connection.execute(text("PRAGMA foreign_key_check")).all() == []
         sessions = create_session_factory(engine)
         with session_scope(sessions) as session:
-            assert session.scalars(
-                select(Artifact).where(Artifact.workspace_id == workspace_id)
-            ).all() == []
+            assert (
+                session.scalars(select(Artifact).where(Artifact.workspace_id == workspace_id)).all()
+                == []
+            )
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()

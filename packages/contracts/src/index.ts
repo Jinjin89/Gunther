@@ -722,6 +722,8 @@ export interface ConversationCitation {
   sourceRevisionId?: string | null;
   blockId?: string | null;
   anchor?: ContentBlock["anchor"];
+  /** Its number in the conversation's source pool: `[ref]` in every answer of the conversation. Older answers have none and count from 1. */
+  ref?: number | null;
 }
 
 export interface ConversationContext {
@@ -742,7 +744,9 @@ export interface ConversationContext {
   reasoning?: string | null;
   /** Why the chosen model's answer is not shown; the quotes stand in. */
   modelError?: string | null;
-  /** What the agent made of the question. */
+  /** How the answer was worded (a style preset). */
+  style?: string | null;
+  /** Only on answers from before the source pool. */
   intent?: "chat" | "followup" | "library" | "web" | "both" | "clarify" | null;
   /** What it did to answer: the searches it ran, in order. */
   steps?: AgentStep[];
@@ -752,7 +756,7 @@ export interface ConversationContext {
 }
 
 export interface AgentStep {
-  tool: "search_library" | "search_web";
+  tool: string;
   label: string;
   query: string;
   found: number;
@@ -820,6 +824,7 @@ export const createSessionMessageSchema = z.object({
   web: z.boolean().optional(),
   /** Home only: read just these libraries; none means all of them. */
   knowledgeBaseIds: z.array(z.string()).max(20).optional(),
+  style: z.string().max(40).optional(),
 });
 export type CreateSessionMessageInput = z.infer<typeof createSessionMessageSchema>;
 

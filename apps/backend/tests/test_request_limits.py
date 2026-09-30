@@ -57,9 +57,7 @@ def test_bounded_reader_rejects_stream_without_content_length() -> None:
         asyncio.run(_read_limited_body(request, 5))
 
 
-def test_recording_endpoints_reject_oversized_bodies_before_storage(
-    tmp_path, monkeypatch
-) -> None:
+def test_recording_endpoints_reject_oversized_bodies_before_storage(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(api_module, "MAX_CHUNK_BYTES", 5)
     monkeypatch.setattr(api_module, "MAX_DIRECT_UPLOAD_BYTES", 5)
     app = create_app(

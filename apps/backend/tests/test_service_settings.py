@@ -193,9 +193,12 @@ def test_a_connection_test_uses_the_values_on_screen(tmp_path: Path, fake_api) -
 
 def test_a_service_that_cannot_be_tested_says_so(tmp_path: Path) -> None:
     with TestClient(create_app(settings_for(tmp_path))) as client:
-        assert client.post(
-            "/api/settings/services/summaries/test", headers=SIDECAR, json={"values": {}}
-        ).status_code == 409
+        assert (
+            client.post(
+                "/api/settings/services/summaries/test", headers=SIDECAR, json={"values": {}}
+            ).status_code
+            == 409
+        )
 
 
 def test_a_paired_phone_cannot_read_or_change_service_settings(tmp_path: Path) -> None:
@@ -244,8 +247,16 @@ def test_an_unreadable_or_outdated_file_falls_back_to_defaults(tmp_path: Path) -
     path.write_text("{not json")
     assert ServiceSettingsStore(path).values() == {}
     path.write_text(
-        json.dumps({"version": 1, "values": {"stt_provider": "sensevoice",
-                                             "openai_api_key": "sk-old", "retired_setting": 1}})
+        json.dumps(
+            {
+                "version": 1,
+                "values": {
+                    "stt_provider": "sensevoice",
+                    "openai_api_key": "sk-old",
+                    "retired_setting": 1,
+                },
+            }
+        )
     )
     assert ServiceSettingsStore(path).values() == {"stt_provider": "sensevoice"}
 

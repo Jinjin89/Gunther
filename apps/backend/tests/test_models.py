@@ -519,7 +519,7 @@ def test_a_conversation_can_switch_model_and_effort_at_any_turn(tmp_path: Path) 
         assert third["context"]["model"] == "kimi/kimi-k2.7-code"
         # Kimi got its own earlier thinking back; DeepSeek's stayed out.
         # Reading the note asked the Analysis model too; only Ask requests count here.
-        asked = [r for r in fake.requests if "Evidence:" in str(r["messages"][-1]["content"])]
+        asked = [r for r in fake.requests if "The pool:" in str(r["messages"][-1]["content"])]
         history = asked[2]["messages"]
         assistants = [m for m in history if m["role"] == "assistant"]
         assert "reasoning_content" not in assistants[0]
@@ -533,7 +533,7 @@ def test_a_conversation_can_switch_model_and_effort_at_any_turn(tmp_path: Path) 
         )
         assert fourth["context"]["effortLabel"] == "High"
         assert fourth["context"]["notes"] == ["Flash has no Medium setting; used High."]
-        asked = [r for r in fake.requests if "Evidence:" in str(r["messages"][-1]["content"])]
+        asked = [r for r in fake.requests if "The pool:" in str(r["messages"][-1]["content"])]
         assert asked[3]["reasoning_effort"] == "high"
         assert all("reasoning_content" not in m for m in asked[3]["messages"])
 
