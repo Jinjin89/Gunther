@@ -414,6 +414,13 @@ def _create_source_digests(connection: Connection, metadata: MetaData) -> None:
         metadata.tables["source_digests"].create(bind=connection, checkfirst=True)
 
 
+def _create_speech_clips(connection: Connection, metadata: MetaData) -> None:
+    """Answers read aloud, cached so a second listen only plays."""
+
+    if "speech_clips" in metadata.tables:
+        metadata.tables["speech_clips"].create(bind=connection, checkfirst=True)
+
+
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
 MIGRATIONS: tuple[Migration, ...] = (
@@ -433,6 +440,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(14, "vectors_in_sqlite_vec", _drop_json_vectors),
     Migration(15, "paper_structure", _create_paper_structure),
     Migration(16, "source_digests", _create_source_digests),
+    Migration(17, "speech_clips", _create_speech_clips),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

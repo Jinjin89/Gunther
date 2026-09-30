@@ -61,6 +61,7 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (14, "vectors_in_sqlite_vec"),
             (15, "paper_structure"),
             (16, "source_digests"),
+            (17, "speech_clips"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
@@ -115,6 +116,7 @@ def test_v10_upgrade_backfills_evidence_without_rewriting_original(tmp_path: Pat
         "topic_evidence_links",
         *PAPER_TABLES,  # later still (v15)
         "source_digests",  # v16
+        "speech_clips",  # v17
     }
     legacy = MetaData()
     for table in Base.metadata.sorted_tables:
@@ -921,6 +923,37 @@ def test_v12_database_gains_trash_columns_without_touching_rows(tmp_path: Path) 
             assert connection.execute(
                 text("SELECT title, trashed_at FROM sources WHERE id = 'src_kept'")
             ).one() == ("Kept", None)
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
+    finally:
+        engine.dispose()
+
+
+def test_v16_database_gains_speech_clips(tmp_path: Path) -> None:
+    """Read aloud shipped its table without a migration; v17 adds it to older databases."""
+
+    engine = make_engine(tmp_path)
+    try:
+        run_migrations(engine, Base.metadata, MIGRATIONS[:16])
+        with engine.begin() as connection:
+            # Baseline adopts current metadata; drop the table a v16 app never made.
+            connection.exec_driver_sql("DROP TABLE speech_clips")
+        assert not inspect(engine).has_table("speech_clips")
+
+        history = run_migrations(engine, Base.metadata)
+        assert run_migrations(engine, Base.metadata) == history
+        inspector = inspect(engine)
+        assert {column["name"] for column in inspector.get_columns("speech_clips")} == {
+            column.name for column in Base.metadata.tables["speech_clips"].columns
+        }
+        assert {
+            "ix_speech_clips_message_id",
+            "ix_speech_clips_cache_key",
+        } <= {index["name"] for index in inspector.get_indexes("speech_clips")}
+        with engine.connect() as connection:
+            # The query that failed before, when Settings asked for the cache's size.
+            assert connection.exec_driver_sql(
+                "SELECT COUNT(id), COALESCE(SUM(audio_bytes), 0) FROM speech_clips"
+            ).one() == (0, 0)
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()
