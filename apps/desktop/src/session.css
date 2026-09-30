@@ -167,9 +167,7 @@
 .composer-toolbar { min-height: 39px; padding: 4px 6px 6px 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .composer-toolbar > div { min-width: 0; display: flex; align-items: center; gap: 5px; }
 .composer-toolbar button { border: 0; }
-.composer-toolbar > div > button:first-child { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 7px; background: transparent; color: var(--atlas-faint) !important; }
-.composer-toolbar > div > button:first-child:hover { background: var(--atlas-paper-soft); color: var(--atlas-green) !important; }
-.scope-chip, .chapter-chip { height: 28px; padding: 0 7px; display: flex; align-items: center; gap: 5px; border-radius: 7px; background: var(--atlas-paper-soft); color: var(--atlas-muted) !important; font-size: calc(12px * var(--gx-fs, 1)); }
+.scope-chip, .chapter-chip { height: 28px; padding: 0 7px; flex: none; display: flex; align-items: center; gap: 5px; border-radius: 7px; background: var(--atlas-paper-soft); color: var(--atlas-muted) !important; font-size: calc(12px * var(--gx-fs, 1)); }
 .scope-chip:hover { background: var(--atlas-green-soft); color: var(--atlas-green) !important; }
 .chapter-chip { max-width: 150px; overflow: hidden; color: var(--atlas-faint) !important; text-overflow: ellipsis; white-space: nowrap; }
 .send-button { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; background: var(--atlas-ink); color: var(--atlas-paper) !important; }

@@ -344,8 +344,18 @@ function CitationCard({ citation, index, onOpen }: { citation: ConversationCitat
 
 const INSPECTOR_MIN = 280;
 const INSPECTOR_DEFAULT = 326;
-/** The right panel may grow until the list (252px) and the conversation (at least 460px) would be squeezed. */
-const inspectorMax = () => Math.min(640, Math.max(INSPECTOR_MIN, window.innerWidth - 252 - 460));
+const CHAT_MIN = 440;
+/**
+ * The right panel may grow until the conversation (at least CHAT_MIN) and the history list, when it
+ * is docked, would be squeezed: measured on the workspace itself, not the window, which also holds
+ * the app's own sidebar.
+ */
+const inspectorMax = () => {
+  const workspace = document.querySelector<HTMLElement>(".session-workspace");
+  const list = document.querySelector<HTMLElement>(".session-workspace > .sessions-sidebar");
+  const room = (workspace?.clientWidth ?? window.innerWidth) - (list?.offsetWidth ?? 0) - CHAT_MIN;
+  return Math.min(960, Math.max(INSPECTOR_MIN, room));
+};
 
 /** The sources a conversation has cited so far, each once (by the id it keeps in the conversation, not the number an answer shows). */
 export function conversationSources(session: KnowledgeSession | null): ConversationCitation[] {
