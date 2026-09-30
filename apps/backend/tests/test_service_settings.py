@@ -80,7 +80,7 @@ def test_services_are_described_without_their_secrets(tmp_path: Path) -> None:
         "checkedAt": None,
         "check": None,
     }
-    assert field(listed["transcription"], "sensevoice_url")["group"] == "SenseVoice"
+    assert "transcription" not in listed
     assert "openai" not in listed
 
 
@@ -129,50 +129,11 @@ def test_saving_applies_at_once_and_survives_a_restart(tmp_path: Path) -> None:
         assert health["webSearchMode"] == "not_configured"
 
 
-def test_saved_values_win_over_the_environment(tmp_path: Path) -> None:
-    settings = settings_for(tmp_path, stt_provider="auto")
-    with TestClient(create_app(settings)) as client:
-        client.put(
-            "/api/settings/services/transcription",
-            headers=SIDECAR,
-            json={"values": {"stt_provider": "sensevoice", "sensevoice_url": "http://10.0.0.5:8765/"}},
-        )
-        transcription = services(client)["transcription"]
-        assert field(transcription, "stt_provider")["value"] == "sensevoice"
-        assert field(transcription, "sensevoice_url")["value"] == "http://10.0.0.5:8765"
-        assert transcription["status"]["summary"] == "SenseVoice at 10.0.0.5:8765"
-        assert client.app.state.settings.sensevoice_url == "http://10.0.0.5:8765"
-
-
-def test_ask_dictation_has_its_own_engine_and_language(tmp_path: Path) -> None:
-    with TestClient(create_app(settings_for(tmp_path, stt_provider="sensevoice"))) as client:
-        transcription = services(client)["transcription"]
-        assert field(transcription, "dictation_stt_provider")["value"] == "same"
-        client.put(
-            "/api/settings/services/transcription",
-            headers=SIDECAR,
-            json={"values": {"dictation_stt_provider": "qwen", "dictation_stt_language": "zh"}},
-        )
-        settings = client.app.state.settings
-        assert (settings.stt_provider, settings.dictation_stt_provider) == ("sensevoice", "qwen")
-        assert settings.dictation_stt_language == "zh"
-        # Every provider is set up once, under its own heading, whichever job uses it.
-        transcription = services(client)["transcription"]
-        assert field(transcription, "qwen_stt_api_key")["group"] == "Qwen"
-        assert field(transcription, "dictation_stt_provider")["group"] == "Used for"
-        assert field(transcription, "qwen_stt_api_key")["shownWhen"] is None
-
-
 @pytest.mark.parametrize(
     ("service", "values", "message"),
     [
-        ("transcription", {"stt_model": "two words"}, "Server model: Use the"),
         ("web_search", {"tavily_api_key": "tvly two"}, "Tavily API key: Paste the key on its own"),
         ("web_search", {"web_search_max_results": 40}, "Use a number from 1 to 10"),
-        ("transcription", {"sensevoice_url": "127.0.0.1:8765"}, "Use a full address"),
-        ("transcription", {"stt_provider": "somebody"}, "Recording: Choose one of the options"),
-        ("transcription", {"sensevoice_segment_seconds": 40}, "Use a number from 1 to 10"),
-        ("transcription", {"stt_language": "english!"}, "Recording language: Use a code"),
         ("summaries", {"ai_summary_images": "yes"}, "Turn it on or off"),
         ("web_search", {"stt_provider": "auto"}, "Unknown setting"),
         ("web_search", {"auth_token": "x"}, "Unknown setting"),
@@ -230,89 +191,8 @@ def test_a_connection_test_uses_the_values_on_screen(tmp_path: Path, fake_api) -
         assert services(client)["web_search"]["status"]["state"] == "configured"
 
 
-def test_qwen_transcription_needs_a_key_and_is_tested_with_a_silent_clip(
-    tmp_path: Path, monkeypatch
-) -> None:
-    calls: list[dict] = []
-
-    class Reply:
-        status_code = 200
-
-    class FakeClient:
-        def __init__(self, *args, **kwargs) -> None:
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args) -> None:
-            return None
-
-        async def post(self, url: str, headers: dict, json: dict) -> Reply:
-            calls.append({"url": url, "auth": headers["Authorization"], "model": json["model"]})
-            reply = Reply()
-            reply.status_code = 401 if headers["Authorization"].endswith("bad") else 200
-            return reply
-
-    monkeypatch.setattr(service_settings.httpx, "AsyncClient", FakeClient)
-    with TestClient(create_app(settings_for(tmp_path, stt_provider="qwen"))) as client:
-        url = "/api/settings/services/transcription/test"
-        tested = client.post(url, headers=SIDECAR, json={"values": {}}).json()
-        assert tested["ok"] is False and "API key" in tested["message"]
-        tested = client.post(
-            url, headers=SIDECAR, json={"values": {"qwen_stt_api_key": "sk-bad"}}
-        ).json()
-        assert tested["ok"] is False and "did not accept the key" in tested["message"]
-        tested = client.post(
-            url, headers=SIDECAR, json={"values": {"qwen_stt_api_key": "sk-good"}}
-        ).json()
-        assert tested["ok"] is True and "qwen3-asr-flash" in tested["message"]
-    assert calls[-1]["url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-
-
-def test_transcription_test_explains_what_is_missing(
-    tmp_path: Path, monkeypatch, fake_api
-) -> None:
-    async def not_running(url: str, timeout: float = 1.2) -> None:
-        return None
-
-    monkeypatch.setattr(service_settings, "sensevoice_health", not_running)
-    seen, _answer = fake_api
-    with TestClient(create_app(settings_for(tmp_path, stt_provider="auto"))) as client:
-        tested = client.post(
-            "/api/settings/services/transcription/test", headers=SIDECAR, json={"values": {}}
-        ).json()
-        assert tested["ok"] is False
-        assert "no transcription server is set up" in tested["message"]
-        tested = client.post(
-            "/api/settings/services/transcription/test",
-            headers=SIDECAR,
-            json={"values": {"stt_provider": "sensevoice"}},
-        ).json()
-        assert tested["message"] == (
-            "SenseVoice is not answering at http://127.0.0.1:8765. Is it running?"
-        )
-        # Any OpenAI-style server works, with or without a key.
-        tested = client.post(
-            "/api/settings/services/transcription/test",
-            headers=SIDECAR,
-            json={
-                "values": {
-                    "stt_provider": "compatible",
-                    "stt_base_url": "https://asr.example/v1/",
-                    "stt_model": "whisper-1",
-                }
-            },
-        ).json()
-        assert tested["ok"] is True
-        assert str(seen[-1].url) == "https://asr.example/v1/models"
-        assert "authorization" not in seen[-1].headers
-        no_address = client.put(
-            "/api/settings/services/transcription",
-            headers=SIDECAR,
-            json={"values": {"stt_provider": "compatible"}},
-        ).json()
-        assert no_address["status"]["state"] == "error"
+def test_a_service_that_cannot_be_tested_says_so(tmp_path: Path) -> None:
+    with TestClient(create_app(settings_for(tmp_path))) as client:
         assert client.post(
             "/api/settings/services/summaries/test", headers=SIDECAR, json={"values": {}}
         ).status_code == 409
@@ -352,11 +232,11 @@ def test_a_paired_phone_cannot_read_or_change_service_settings(tmp_path: Path) -
 
         # A change saved on the desktop reaches the phone's app too.
         sidecar.put(
-            "/api/settings/services/transcription",
+            "/api/settings/services/web_search",
             headers=SIDECAR,
-            json={"values": {"stt_provider": "sensevoice"}},
+            json={"values": {"tavily_api_key": KEY}},
         )
-        assert gateway.app.state.settings.stt_provider == "sensevoice"
+        assert gateway.app.state.settings.tavily_api_key == KEY
 
 
 def test_an_unreadable_or_outdated_file_falls_back_to_defaults(tmp_path: Path) -> None:
@@ -364,7 +244,7 @@ def test_an_unreadable_or_outdated_file_falls_back_to_defaults(tmp_path: Path) -
     path.write_text("{not json")
     assert ServiceSettingsStore(path).values() == {}
     path.write_text(
-        json.dumps({"version": 1, "values": {"stt_provider": "sensevoice", "sensevoice_url": "ftp://x",
+        json.dumps({"version": 1, "values": {"stt_provider": "sensevoice",
                                              "openai_api_key": "sk-old", "retired_setting": 1}})
     )
     assert ServiceSettingsStore(path).values() == {"stt_provider": "sensevoice"}

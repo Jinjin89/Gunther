@@ -284,7 +284,7 @@ def test_a_language_model_saved_by_the_first_settings_page_carries_over(tmp_path
             json={"name": "Lab server"},
         )
     saved = json.loads(path.read_text())
-    assert saved["version"] == 2 and "llm_api_key" not in saved["values"]
+    assert saved["version"] == 3 and "llm_api_key" not in saved["values"]
     assert saved["values"]["stt_provider"] == "sensevoice"
     assert saved["providers"][0]["name"] == "Lab server"
     assert saved["providers"][0]["apiKey"] == KEY

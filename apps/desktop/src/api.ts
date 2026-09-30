@@ -60,6 +60,10 @@ import type {
   ModelRole,
   ProviderInput,
   ProviderTestResult,
+  SpeechOverview,
+  SpeechProviderInput,
+  SpeechRole,
+  SpeechTestResult,
   ServiceSettingValue,
   ServiceTestResult,
   TrashItem,
@@ -537,6 +541,17 @@ export const knowledgeApi = {
     }),
   saveModelRoles: (roles: Partial<Record<ModelRole["id"], { model: string | null; effort: Effort }>>) =>
     request<ModelsOverview>("/settings/model-roles", { method: "PUT", body: JSON.stringify({ roles }) }),
+  speechOverview: () => request<SpeechOverview>("/settings/speech"),
+  addSpeechProvider: (payload: SpeechProviderInput) =>
+    request<SpeechOverview>("/settings/speech/providers", { method: "POST", body: JSON.stringify(payload) }),
+  updateSpeechProvider: (id: string, payload: SpeechProviderInput) =>
+    request<SpeechOverview>(`/settings/speech/providers/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(payload) }),
+  removeSpeechProvider: (id: string) =>
+    request<SpeechOverview>(`/settings/speech/providers/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  testSpeechProvider: (id: string, payload: SpeechProviderInput) =>
+    request<SpeechTestResult>(`/settings/speech/providers/${encodeURIComponent(id)}/test`, { method: "POST", body: JSON.stringify(payload) }),
+  saveSpeechRoles: (roles: Partial<Record<SpeechRole["id"], { model: string | null; stream: boolean; language: string }>>) =>
+    request<SpeechOverview>("/settings/speech/roles", { method: "PUT", body: JSON.stringify({ roles }) }),
   testServiceSettings: (id: string, values: Record<string, ServiceSettingValue>) =>
     request<ServiceTestResult>(`/settings/services/${encodeURIComponent(id)}/test`, {
       method: "POST",

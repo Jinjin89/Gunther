@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import event, select
 from sqlalchemy.orm import ORMExecuteState, Session, sessionmaker
 
-from gunther import model_registry, vector_index
+from gunther import model_registry, speech_registry, vector_index
 from gunther.api import router
 from gunther.asset_service import AssetService
 from gunther.config import PROJECT_ROOT, Settings, get_settings
@@ -50,6 +50,7 @@ from gunther.request_body_limit import RequestBodyLimitMiddleware
 from gunther.service import KnowledgeService
 from gunther.service_settings import ServiceSettingsStore
 from gunther.settings_api import router as settings_router
+from gunther.speech_api import router as speech_router
 from gunther.storage_api import router as storage_router
 from gunther.storage_budget import StorageBudget
 from gunther.trash import TrashService
@@ -136,6 +137,7 @@ def _connect_models(
     worker.digest_writer = digest_writer
     application.state.models = models
     application.state.model_registry = registry
+    application.state.speech_registry = speech_registry.effective(*store.speech(), settings)
     application.state.topic_writer = create_topic_writer(models)
     application.state.online_search = online_search
     application.state.lecture_summarizer = create_lecture_summarizer(models)
@@ -415,6 +417,7 @@ def create_app(
     application.include_router(storage_router, prefix=active_settings.api_prefix)
     application.include_router(settings_router, prefix=active_settings.api_prefix)
     application.include_router(models_router, prefix=active_settings.api_prefix)
+    application.include_router(speech_router, prefix=active_settings.api_prefix)
     return application
 
 

@@ -1,6 +1,6 @@
 import type { ServiceField, ServiceSettings as Service, ServiceSettingValue, ServiceState, ServiceTestResult } from "@gunther/contracts";
 import { AudioLines, Check, ChevronRight, CircleAlert, Eye, EyeOff, FileText, Globe, KeyRound, Plug, TriangleAlert } from "lucide-react";
-import { Fragment, useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { knowledgeApi } from "../api";
 import { announceModelsChanged, MODELS_CHANGED_EVENT } from "../models/askModel";
 
@@ -255,16 +255,13 @@ function ServiceEditor({ service, persisted, onSaved, onNotify }: {
   return <form className="service-editor" onSubmit={(event) => { event.preventDefault(); void save(); }} noValidate>
     <p className="service-editor-lead">{service.description}{service.note && <> {service.note}</>}</p>
     <div className="service-fields">
-      {shown.map((field, index) => {
-        const heading = field.group && field.group !== shown[index - 1]?.group ? field.group : null;
+      {shown.map((field) => {
         const inputId = `${baseId}-${field.key}`;
         const helpId = `${inputId}-help`;
         const problem = showProblems || field.key in draft ? problems[field.key] : null;
         const selected = field.kind === "select" ? field.options.find((option) => option.value === values[field.key]) : undefined;
         const help = [selected?.description, field.help].filter(Boolean).join(" ");
-        return <Fragment key={field.key}>
-        {heading && <h4 className="service-group">{heading}</h4>}
-        <div className={`service-field ${problem ? "has-problem" : ""}`}>
+        return <div className={`service-field ${problem ? "has-problem" : ""}`} key={field.key}>
           <label id={`${inputId}-label`} htmlFor={field.kind === "select" ? undefined : inputId}>
             {field.label}
             {field.source === "environment" && !(field.key in draft) && <span className="service-source" title={`Set as ${field.envVar} in the backend’s environment or .env file. Saving here takes its place.`}>from .env</span>}
@@ -273,8 +270,7 @@ function ServiceEditor({ service, persisted, onSaved, onNotify }: {
             <FieldControl field={field} value={values[field.key] ?? null} draftValue={draft[field.key]} onChange={(next) => change(field, next)} inputId={inputId} describedBy={helpId} invalid={Boolean(problem)} />
             <small id={helpId} className={problem ? "is-problem" : ""}>{problem ?? help}</small>
           </div>
-        </div>
-        </Fragment>;
+        </div>;
       })}
     </div>
     <footer className="service-editor-footer">

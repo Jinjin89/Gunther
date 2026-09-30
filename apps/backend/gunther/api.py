@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
+from gunther import speech_registry
 from gunther.asset_service import (
     AssetNotFoundError,
     AssetService,
@@ -439,18 +440,22 @@ def workspace_bootstrap(request: Request) -> WorkspaceBootstrapOut:
 @router.get("/health", response_model=HealthOut)
 async def health(request: Request) -> HealthOut:
     service = _service(request)
-    settings = request.app.state.settings
-    sensevoice = None
-    if settings.stt_provider not in ("compatible", "qwen"):
-        sensevoice = await sensevoice_health(settings.sensevoice_url)
-    use_sensevoice = sensevoice is not None
-    use_qwen = settings.stt_provider == "qwen" and bool(settings.qwen_stt_api_key)
-    use_compatible = (
-        not use_sensevoice
-        and not use_qwen
-        and settings.stt_provider not in ("sensevoice", "qwen")
-        and bool(settings.stt_base_url)
-    )
+    recording, _ = speech_registry.resolve(request.app.state.speech_registry, "recording")
+    transcription_mode = "not_configured"
+    transcription_provider = "none"
+    transcription_model = ""
+    if recording is not None:
+        transcription_model = recording.model
+        if recording.kind == "sensevoice":
+            running = await sensevoice_health(recording.base_url)
+            transcription_mode = "sensevoice_local" if running else "not_configured"
+            transcription_provider = "sensevoice" if running else "none"
+            if running:
+                transcription_model = str(running.get("model", recording.model))
+        elif recording.kind == "qwen":
+            transcription_mode, transcription_provider = "qwen", "qwen"
+        else:
+            transcription_mode, transcription_provider = "compatible", "compatible"
     ocr = request.app.state.ocr_provider
     ocr_provider_name = getattr(ocr, "active_name", None) or ocr.name
     analysis = request.app.state.models.for_role("analysis")
@@ -458,31 +463,9 @@ async def health(request: Request) -> HealthOut:
     return HealthOut(
         extraction_mode=service.extraction_mode,
         web_search_mode=request.app.state.online_search.mode,
-        transcription_mode=(
-            "sensevoice_local"
-            if use_sensevoice
-            else "qwen"
-            if use_qwen
-            else "compatible"
-            if use_compatible
-            else "not_configured"
-        ),
-        transcription_provider=(
-            "sensevoice"
-            if use_sensevoice
-            else "qwen"
-            if use_qwen
-            else "compatible"
-            if use_compatible
-            else "none"
-        ),
-        transcription_model=(
-            str(sensevoice.get("model", "sensevoice-small"))
-            if sensevoice
-            else settings.qwen_stt_model
-            if use_qwen
-            else settings.stt_model
-        ),
+        transcription_mode=transcription_mode,
+        transcription_provider=transcription_provider,
+        transcription_model=transcription_model,
         summary_mode=(
             request.app.state.lecture_summarizer.model.display
             if request.app.state.lecture_summarizer
@@ -860,27 +843,16 @@ async def live_recording(
 ) -> None:
     if not await _authorize_websocket(websocket):
         return
-    settings = websocket.app.state.settings
-    dictating = purpose == "dictation"
-    provider = settings.stt_provider
-    language = settings.stt_language
-    if dictating:
-        if settings.dictation_stt_provider != "same":
-            provider = settings.dictation_stt_provider
-        language = settings.dictation_stt_language or language
+    state = websocket.app.state
+    choice, problem = speech_registry.resolve(
+        state.speech_registry, "dictation" if purpose == "dictation" else "recording"
+    )
     await proxy_realtime_transcription(
         websocket,
-        provider=provider,
-        sensevoice_url=settings.sensevoice_url,
-        segment_seconds=settings.sensevoice_segment_seconds,
-        base_url=settings.stt_base_url,
-        api_key=settings.stt_api_key,
-        model=settings.stt_model,
-        language=language,
+        choice=choice,
+        problem=problem or "",
+        segment_seconds=state.settings.sensevoice_segment_seconds,
         context=context,
-        qwen_base_url=settings.qwen_stt_base_url,
-        qwen_api_key=settings.qwen_stt_api_key,
-        qwen_model=settings.qwen_stt_model,
     )
 
 

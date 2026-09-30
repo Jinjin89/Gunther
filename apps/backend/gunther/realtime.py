@@ -10,6 +10,8 @@ from contextlib import suppress
 import httpx
 from fastapi import WebSocket, WebSocketDisconnect
 
+from gunther.speech_registry import Choice
+
 
 def _sensevoice_root(url: str) -> str:
     normalized = url.rstrip("/")
@@ -133,7 +135,7 @@ async def _proxy_segmented_transcription(
     """
 
     await websocket.accept()
-    segment_size = max(48_000, int(24_000 * 2 * max(1.0, min(segment_seconds, 10.0))))
+    segment_size = max(48_000, int(24_000 * 2 * max(1.0, segment_seconds)))
     segment_size -= segment_size % 2
     pending = bytearray()
     sequence = 0
@@ -214,96 +216,78 @@ def compatible_endpoint(base_url: str) -> str:
     return f"{base_url.rstrip('/')}/audio/transcriptions"
 
 
+# A take sent whole is cut only when it gets long (Qwen takes about five minutes).
+WHOLE_TAKE_SECONDS = 150.0
+
+
+async def _fail(websocket: WebSocket, code: str, message: str) -> None:
+    await websocket.accept()
+    await websocket.send_json({"type": "service.error", "code": code, "message": message})
+    await websocket.close(code=1011)
+
+
 async def proxy_realtime_transcription(
     websocket: WebSocket,
     *,
-    provider: str = "auto",
-    sensevoice_url: str = "http://127.0.0.1:8765",
+    choice: Choice | None,
+    problem: str = "",
     segment_seconds: float = 3.2,
-    base_url: str = "",
-    api_key: str | None = None,
-    model: str = "whisper-1",
-    language: str = "",
     context: str = "",
-    qwen_base_url: str = "",
-    qwen_api_key: str | None = None,
-    qwen_model: str = "qwen3-asr-flash",
 ) -> None:
-    if provider == "qwen":
-        if not qwen_api_key:
-            await websocket.accept()
-            await websocket.send_json(
-                {
-                    "type": "service.error",
-                    "code": "not_configured",
-                    "message": "Qwen transcription needs an API key. "
-                    "Add one in Settings → Services.",
-                }
-            )
-            await websocket.close(code=1011)
-            return
-        await _proxy_segmented_transcription(
+    """Have the model chosen for a job write the words of audio sent over the socket.
+
+    Live works in short segments as the audio arrives; otherwise the take waits
+    until it ends and goes up whole, which reads better.
+    """
+
+    if choice is None:
+        await _fail(
             websocket,
-            transcriber=_qwen_transcriber(qwen_base_url, qwen_api_key, qwen_model, language),
-            provider="qwen",
-            label="Qwen",
-            segment_seconds=segment_seconds,
-            ready={"model": qwen_model, "local": False, "diarize": False},
+            "not_configured",
+            f"No transcription is set up. {problem} Choose one in Settings → Transcription.",
         )
         return
-    if provider != "compatible":
-        status = await sensevoice_health(sensevoice_url)
-        if status is not None:
-            root = _sensevoice_root(sensevoice_url)
-            await _proxy_segmented_transcription(
+    seconds = max(1.0, min(segment_seconds, 10.0)) if choice.stream else WHOLE_TAKE_SECONDS
+    ready = {"model": choice.model, "stream": choice.stream, "local": False, "diarize": False}
+    reset_url = None
+    if choice.kind == "sensevoice":
+        status = await sensevoice_health(choice.base_url)
+        if status is None:
+            await _fail(
                 websocket,
-                transcriber=_form_transcriber(
-                    f"{root}/v1/audio/transcriptions",
-                    {},
-                    {"model": "sensevoice", "response_format": "json"},
-                ),
-                provider="sensevoice",
-                label="SenseVoice",
-                segment_seconds=segment_seconds,
-                ready={
-                    "model": status.get("model", "sensevoice-small"),
-                    "local": True,
-                    "diarize": bool(status.get("diarize")),
-                },
-                reset_url=f"{root}/reset",
+                "provider_unavailable",
+                f"SenseVoice is not running at {choice.base_url}.",
             )
             return
-    if provider != "sensevoice" and base_url:
-        form = {"model": model, "response_format": "json"}
-        if language:
-            form["language"] = language
+        root = _sensevoice_root(choice.base_url)
+        transcriber = _form_transcriber(
+            f"{root}/v1/audio/transcriptions",
+            {},
+            {"model": "sensevoice", "response_format": "json"},
+        )
+        ready = {**ready, "local": True, "diarize": bool(status.get("diarize"))}
+        reset_url = f"{root}/reset"
+    elif choice.kind == "qwen":
+        transcriber = _qwen_transcriber(
+            choice.base_url, choice.api_key or "", choice.model, choice.language
+        )
+    else:
+        form = {"model": choice.model, "response_format": "json"}
+        if choice.language:
+            form["language"] = choice.language
         if context.strip():
             form["prompt"] = context.strip()[:1_000]
-        await _proxy_segmented_transcription(
-            websocket,
-            transcriber=_form_transcriber(
-                compatible_endpoint(base_url),
-                {"Authorization": f"Bearer {api_key}"} if api_key else {},
-                form,
-            ),
-            provider="compatible",
-            label="The transcription server",
-            segment_seconds=segment_seconds,
-            ready={"model": model, "local": False, "diarize": False},
+        transcriber = _form_transcriber(
+            compatible_endpoint(choice.base_url),
+            {"Authorization": f"Bearer {choice.api_key}"} if choice.api_key else {},
+            form,
         )
-        return
-
-    await websocket.accept()
-    await websocket.send_json(
-        {
-            "type": "service.error",
-            "code": "provider_unavailable" if provider == "sensevoice" else "not_configured",
-            "message": (
-                "SenseVoice is not running."
-                if provider == "sensevoice"
-                else "No transcription is set up. Start SenseVoice, or add a "
-                "transcription server in Settings."
-            ),
-        }
+    await _proxy_segmented_transcription(
+        websocket,
+        transcriber=transcriber,
+        provider=choice.kind,
+        label=choice.provider,
+        segment_seconds=seconds,
+        ready=ready,
+        reset_url=reset_url,
     )
-    await websocket.close(code=1011)

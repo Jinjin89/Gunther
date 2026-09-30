@@ -426,6 +426,76 @@ export interface ProviderTestResult extends ServiceCheck {
   overview?: ModelsOverview;
 }
 
+export type SpeechKind = "sensevoice" | "qwen" | "openai" | "compatible";
+
+export interface SpeechModel {
+  id: string;
+  ref: string;
+  label: string;
+}
+
+export interface SpeechProvider {
+  id: string;
+  name: string;
+  kind: SpeechKind;
+  baseUrl: string;
+  keySet: boolean;
+  keyHint: string | null;
+  keySource: "saved" | "environment";
+  keyOptional: boolean;
+  note: string;
+  models: SpeechModel[];
+  status: {
+    state: ServiceState;
+    summary: string;
+    check: (ServiceCheck & { checkedAt: string }) | null;
+  };
+}
+
+/** A job: which transcription model does it, and whether it works live. */
+export interface SpeechRole {
+  id: "recording" | "dictation";
+  label: string;
+  description: string;
+  model: string | null;
+  /** Live: words appear as you speak. Off: the whole take is sent at the end. */
+  stream: boolean;
+  language: string;
+  problem: string | null;
+}
+
+export interface SpeechPreset {
+  kind: SpeechKind;
+  name: string;
+  baseUrl: string;
+  models: string[];
+  keyOptional: boolean;
+  note: string;
+}
+
+export interface SpeechOverview {
+  persisted: boolean;
+  /** Providers come from STT_* settings until some are saved here. */
+  fromEnvironment: boolean;
+  providers: SpeechProvider[];
+  roles: SpeechRole[];
+  presets: SpeechPreset[];
+}
+
+export interface SpeechProviderInput {
+  kind?: SpeechKind;
+  name?: string;
+  baseUrl?: string;
+  /** Left out: keep the saved key. Empty: remove it. */
+  apiKey?: string;
+  models?: (string | { id: string; label?: string })[];
+}
+
+export interface SpeechTestResult extends ServiceCheck {
+  available: string[];
+  overview?: SpeechOverview;
+}
+
 /** How a service setting is edited on the Settings page. */
 export type ServiceFieldKind = "text" | "secret" | "url" | "select" | "toggle" | "number";
 export type ServiceSettingValue = string | number | boolean | null;
@@ -453,8 +523,6 @@ export interface ServiceField {
   patternMessage: string;
   /** Shown only while another field has one of these values. */
   shownWhen: { key: string; values: string[] } | null;
-  /** A heading this field sits under, shared with the fields around it. */
-  group?: string;
   /** Always null for secrets: the service keeps them. */
   value: ServiceSettingValue;
   default: ServiceSettingValue;

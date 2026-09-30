@@ -5,7 +5,35 @@ than in environment variables:
 
 - **Models**: the language models, from as many providers as you like, and
   which one does each job.
-- **Services**: web search, transcription and summaries.
+- **Transcription**: the speech-to-text models, from as many providers as you
+  like, and which one does recording and which does Ask dictation.
+- **Services**: web search and summaries.
+
+## Transcription
+
+Set up like Models: **providers** first, then **jobs** that pick a model.
+
+**Providers** are SenseVoice (private, on this computer or your network), Qwen
+(Qwen3-ASR on Alibaba Cloud), OpenAI, or any server with an OpenAI-style
+`/audio/transcriptions` (Groq, a Whisper you host). Each has an address, a key
+(SenseVoice needs none) and its models; **Fetch models** lists what it offers.
+
+**Jobs** pick one model each, whether it works **live**, and a language:
+
+| Job | Does | Live |
+| --- | --- | --- |
+| Recording | Writes the words while you record | On: segments are written as you speak |
+| Ask dictation | Writes the words when you speak into Ask | Off: the whole take is sent when you stop, which reads better |
+
+Live off sends the take in one request (cut only past about two and a half
+minutes). Words then appear when you stop speaking rather than as you go. Audio
+is always saved on this computer first.
+
+Until providers are saved, they are made from the older `STT_*`, `SENSEVOICE_*`
+and `QWEN_STT_*` settings, and both jobs use the one they chose. Code:
+`speech_registry.py` (providers, jobs, choosing the model), `speech_api.py`
+(`/settings/speech…`, desktop owner only) and `realtime.py` (the live socket,
+`/recordings/live?purpose=dictation`).
 
 ## Models
 
@@ -88,7 +116,6 @@ saved by the first version of this page carries over the same way.
 | Service | What it does | Settings |
 | --- | --- | --- |
 | Web search | Lets Ask look things up online, by Tavily | Tavily API key, depth, pages per search |
-| Transcription | Speech to text while recording, and when you speak into Ask | which provider does Recording and which does Ask dictation (each with its language), then each provider once: SenseVoice address, Qwen address, key and model, server address, key, model and language, segment length |
 | Summaries | A summary of every capture | On/off, show photos to the model |
 
 Each service and provider shows one of four states: **Set up** (**Connected**

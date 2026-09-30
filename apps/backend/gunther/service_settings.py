@@ -30,10 +30,10 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic import TypeAdapter, ValidationError
 
+from gunther import speech_registry
 from gunther.config import Settings
 from gunther.model_registry import LEGACY_KEYS, RegistryError, clean_provider, clean_roles
 from gunther.online_search import check_key as check_tavily_key
-from gunther.realtime import _pcm16_wav, qwen_endpoint, qwen_request, sensevoice_health
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +65,6 @@ class ServiceField:
     step: float | None = None
     # Shown only while another field has one of these values.
     shown_when: tuple[str, tuple[str, ...]] | None = None
-    # A heading shared by the fields around it.
-    group: str = ""
     required: bool = False
     pattern: str | None = None
     pattern_message: str = ""
@@ -142,102 +140,11 @@ async def list_models(
     return CheckResult(True, "Connected, and the key works."), sorted(set(listed))
 
 
-async def _check_models(
-    base_url: str,
-    api_key: str | None,
-    models: list[str],
-    service_name: str,
-    *,
-    key_optional: bool = False,
-) -> CheckResult:
-    """Connect, then look for the models this service will ask for."""
-
-    result, listed = await list_models(base_url, api_key, service_name, key_optional=key_optional)
-    if not result.ok:
-        return result
-    missing = [model for model in models if listed and model not in listed]
-    if missing:
-        return CheckResult(
-            True,
-            "Connected, and the key works.",
-            warning=f"{', '.join(missing)} is not in this account's model list.",
-        )
-    return CheckResult(True, f"Connected. {', '.join(models)} is available.")
-
-
 async def _check_web_search(settings: Settings) -> CheckResult:
     if not settings.tavily_api_key:
         return CheckResult(False, "Add a Tavily API key first.")
     ok, message = await check_tavily_key(settings.tavily_api_key)
     return CheckResult(ok, message)
-
-
-async def _check_qwen_transcription(settings: Settings) -> CheckResult:
-    """Send half a second of silence: the key and model are right if it is accepted."""
-
-    if not settings.qwen_stt_api_key:
-        return CheckResult(False, "Add a Qwen API key first.")
-    body = qwen_request(settings.qwen_stt_model, _pcm16_wav(bytes(24_000)), "")
-    try:
-        async with httpx.AsyncClient(timeout=CHECK_TIMEOUT_SECONDS) as client:
-            response = await client.post(
-                qwen_endpoint(settings.qwen_stt_base_url),
-                headers={"Authorization": f"Bearer {settings.qwen_stt_api_key}"},
-                json=body,
-            )
-    except httpx.HTTPError as error:
-        return CheckResult(False, f"Could not reach {_host(settings.qwen_stt_base_url)}: {error}")
-    if response.status_code in (401, 403):
-        return CheckResult(
-            False,
-            "Qwen did not accept the key. Keys from the China and international sites differ.",
-        )
-    if response.status_code == 404:
-        where = _host(settings.qwen_stt_base_url)
-        return CheckResult(False, f"{settings.qwen_stt_model} was not found at {where}.")
-    if response.status_code >= 400:
-        return CheckResult(False, f"Qwen answered with an error ({response.status_code}).")
-    return CheckResult(True, f"Connected. {settings.qwen_stt_model} is ready.")
-
-
-async def _check_transcription(settings: Settings) -> CheckResult:
-    provider = settings.stt_provider
-    if provider == "qwen":
-        return await _check_qwen_transcription(settings)
-    sensevoice = None
-    if provider != "compatible":
-        health = await sensevoice_health(settings.sensevoice_url, timeout=CHECK_TIMEOUT_SECONDS / 2)
-        if health is not None:
-            model = health.get("model", "sensevoice-small")
-            sensevoice = f"SenseVoice is running at {_host(settings.sensevoice_url)} ({model})."
-        elif provider == "sensevoice":
-            return CheckResult(
-                False, f"SenseVoice is not answering at {settings.sensevoice_url}. Is it running?"
-            )
-    if sensevoice:
-        return CheckResult(True, sensevoice)
-    if not settings.stt_base_url:
-        return CheckResult(
-            False,
-            "SenseVoice is not answering, and no transcription server is set up."
-            if provider == "auto"
-            else "Add the address of a transcription server.",
-        )
-    result = await _check_models(
-        settings.stt_base_url,
-        settings.stt_api_key,
-        [settings.stt_model],
-        "The transcription server",
-        key_optional=True,
-    )
-    if result.ok and sensevoice is None and provider == "auto":
-        return CheckResult(
-            True,
-            result.message,
-            warning=result.warning
-            or f"SenseVoice is not answering at {settings.sensevoice_url}, so this one will write.",
-        )
-    return result
 
 
 # Status ------------------------------------------------------------------------
@@ -247,25 +154,6 @@ def _web_search_status(settings: Settings, _models: Any) -> Status:
     if not settings.tavily_api_key:
         return Status("not_configured", "No key yet. Ask cannot search the web.")
     return Status("configured", f"Tavily · {settings.web_search_depth} search")
-
-
-def _transcription_status(settings: Settings, _models: Any) -> Status:
-    sensevoice = f"SenseVoice at {_host(settings.sensevoice_url)}"
-    server = (
-        f"{settings.stt_model} at {_host(settings.stt_base_url)}" if settings.stt_base_url else ""
-    )
-    if settings.stt_provider == "qwen":
-        if not settings.qwen_stt_api_key:
-            return Status("error", "Qwen is chosen, but it has no API key.")
-        where = _host(settings.qwen_stt_base_url)
-        return Status("configured", f"{settings.qwen_stt_model} at {where}")
-    if settings.stt_provider == "compatible":
-        if not settings.stt_base_url:
-            return Status("error", "A transcription server is chosen, but it has no address.")
-        return Status("configured", server)
-    if settings.stt_provider == "sensevoice":
-        return Status("configured", sensevoice)
-    return Status("configured", f"{sensevoice}, then {server}" if server else sensevoice)
 
 
 def _summaries_status(settings: Settings, models: Any) -> Status:
@@ -318,137 +206,6 @@ SERVICES: tuple[Service, ...] = (
         ),
         status=_web_search_status,
         check=_check_web_search,
-    ),
-    Service(
-        id="transcription",
-        title="Transcription",
-        description="Turns speech into words: while you record, and when you talk to Ask.",
-        note=(
-            "Audio is always saved on this device first, whichever engine writes the words. "
-            "Any server with an OpenAI-style /audio/transcriptions works: OpenAI, Groq, "
-            "or a Whisper you host."
-        ),
-        fields=(
-            ServiceField(
-                "stt_provider",
-                "Recording",
-                "select",
-                help="What writes the words while you record. Its address and key are set below.",
-                options=(
-                    Option("auto", "Automatic", "SenseVoice when it is running, else the server"),
-                    Option("sensevoice", "SenseVoice", "Private, on this device or your network"),
-                    Option("qwen", "Qwen", "Qwen3-ASR on Alibaba Cloud, strong on Chinese"),
-                    Option("compatible", "OpenAI-compatible server", "Cloud or self-hosted"),
-                ),
-                group="Used for",
-            ),
-            ServiceField(
-                "stt_language",
-                "Recording language",
-                "text",
-                help="A code like en or zh. Empty lets the model detect it.",
-                placeholder="detect",
-                pattern=r"|[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?",
-                pattern_message="Use a code like en or zh, or leave it empty.",
-                group="Used for",
-            ),
-            ServiceField(
-                "dictation_stt_provider",
-                "Ask dictation",
-                "select",
-                help="What writes the words when you speak into Ask. Set its address below.",
-                options=(
-                    Option("same", "Same as recording", "Use the recording engine"),
-                    Option("sensevoice", "SenseVoice", "Private, on this device or your network"),
-                    Option("qwen", "Qwen", "Qwen3-ASR on Alibaba Cloud, strong on Chinese"),
-                    Option("compatible", "OpenAI-compatible server", "Cloud or self-hosted"),
-                ),
-                group="Used for",
-            ),
-            ServiceField(
-                "dictation_stt_language",
-                "Ask dictation language",
-                "text",
-                help="A code like en or zh. Empty follows the recording language.",
-                placeholder="same as recording",
-                pattern=r"|[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?",
-                pattern_message="Use a code like en or zh, or leave it empty.",
-                group="Used for",
-            ),
-            ServiceField(
-                "sensevoice_segment_seconds",
-                "Segment length",
-                "number",
-                help="Seconds of audio per request: longer is more accurate, shorter is livelier.",
-                minimum=1,
-                maximum=10,
-                step=0.1,
-                group="Used for",
-            ),
-            ServiceField(
-                "sensevoice_url",
-                "SenseVoice address",
-                "url",
-                help="The SenseVoice server Gunther sends audio to.",
-                placeholder="http://127.0.0.1:8765",
-                required=True,
-                group="SenseVoice",
-            ),
-            ServiceField(
-                "qwen_stt_base_url",
-                "Qwen address",
-                "url",
-                help="China: dashscope.aliyuncs.com. International: dashscope-intl.aliyuncs.com.",
-                placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1",
-                required=True,
-                group="Qwen",
-            ),
-            ServiceField(
-                "qwen_stt_api_key",
-                "Qwen API key",
-                "secret",
-                help="From Alibaba Cloud Model Studio. It must match the site above.",
-                required=True,
-                group="Qwen",
-            ),
-            ServiceField(
-                "qwen_stt_model",
-                "Qwen model",
-                "text",
-                required=True,
-                pattern=MODEL_PATTERN,
-                pattern_message=MODEL_MESSAGE,
-                placeholder="qwen3-asr-flash",
-                group="Qwen",
-            ),
-            ServiceField(
-                "stt_base_url",
-                "Server address",
-                "url",
-                help="The base URL, without /audio/transcriptions.",
-                placeholder="https://api.openai.com/v1",
-                group="OpenAI-compatible server",
-            ),
-            ServiceField(
-                "stt_api_key",
-                "Server API key",
-                "secret",
-                help="Only if the server asks for one.",
-                group="OpenAI-compatible server",
-            ),
-            ServiceField(
-                "stt_model",
-                "Server model",
-                "text",
-                required=True,
-                pattern=MODEL_PATTERN,
-                pattern_message=MODEL_MESSAGE,
-                placeholder="whisper-1",
-                group="OpenAI-compatible server",
-            ),
-        ),
-        status=_transcription_status,
-        check=_check_transcription,
     ),
     Service(
         id="summaries",
@@ -562,7 +319,8 @@ class ServiceSettingsStore:
     """
 
     # 2: language models moved from one set of llm_* values to providers and roles.
-    VERSION = 2
+    # 3: transcription moved from one service to providers and jobs.
+    VERSION = 3
 
     def __init__(self, path: Path | None) -> None:
         self.path = path
@@ -572,6 +330,9 @@ class ServiceSettingsStore:
         # None until someone saves them: the environment's model is used meanwhile.
         self._providers: list[dict[str, Any]] | None = None
         self._roles: dict[str, dict[str, Any]] | None = None
+        # Transcription providers and jobs, the same way.
+        self._speech_providers: list[dict[str, Any]] | None = None
+        self._speech_roles: dict[str, dict[str, Any]] | None = None
         self._listeners: list[Callable[[], None]] = []
         self._load()
 
@@ -588,9 +349,10 @@ class ServiceSettingsStore:
             logger.warning("Saved service settings could not be read; using defaults")
             return
         for key, value in dict(payload.get("values") or {}).items():
-            if key in LEGACY_KEYS:
-                # A language model saved by version 1; it stands in for providers until
-                # providers are saved (see model_registry.providers_from_environment).
+            if key in LEGACY_KEYS or key in speech_registry.LEGACY_KEYS:
+                # A language model saved by version 1, or the one transcription service
+                # before providers: each stands in until providers are saved (see
+                # model_registry and speech_registry, providers_from_environment).
                 try:
                     annotation = Settings.model_fields[key].annotation
                     self._values[key] = TypeAdapter(annotation).validate_python(value)
@@ -620,6 +382,19 @@ class ServiceSettingsStore:
                 self._roles = clean_roles(payload["roles"])
         except (RegistryError, TypeError, AttributeError):
             logger.warning("Saved model providers could not be read; using the defaults")
+        try:
+            if payload.get("speechProviders") is not None:
+                taken = set()
+                speech = []
+                for raw in payload["speechProviders"]:
+                    provider = speech_registry.clean_provider(raw, taken)
+                    taken.add(provider["id"])
+                    speech.append(provider)
+                self._speech_providers = speech
+            if payload.get("speechRoles") is not None:
+                self._speech_roles = speech_registry.clean_roles(payload["speechRoles"])
+        except (speech_registry.SpeechError, TypeError, AttributeError):
+            logger.warning("Saved transcription providers could not be read; using the defaults")
 
     def _write(self) -> None:
         if self.path is None:
@@ -631,6 +406,8 @@ class ServiceSettingsStore:
             "checks": self._checks,
             "providers": self._providers,
             "roles": self._roles,
+            "speechProviders": self._speech_providers,
+            "speechRoles": self._speech_roles,
         }
         descriptor, temporary = tempfile.mkstemp(
             prefix=".service-settings.", suffix=".json", dir=self.path.parent
@@ -698,6 +475,45 @@ class ServiceSettingsStore:
             listeners = list(self._listeners)
         for listener in listeners:
             listener()
+
+    def speech(self) -> tuple[list[dict[str, Any]] | None, dict[str, dict[str, Any]] | None]:
+        """Saved transcription providers and jobs, or None for each not saved yet."""
+
+        with self._lock:
+            return copy.deepcopy(self._speech_providers), copy.deepcopy(self._speech_roles)
+
+    def save_speech(
+        self,
+        providers: list[dict[str, Any]] | None = None,
+        roles: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
+        """Save transcription providers and/or jobs, already checked (see speech_registry)."""
+
+        with self._lock:
+            if providers is not None:
+                self._speech_providers = copy.deepcopy(providers)
+                # Providers replace the single service of before.
+                for key in speech_registry.LEGACY_KEYS:
+                    self._values.pop(key, None)
+            if roles is not None:
+                self._speech_roles = copy.deepcopy(roles)
+            self._write()
+            listeners = list(self._listeners)
+        for listener in listeners:
+            listener()
+
+    def record_speech_check(self, provider_id: str, entry: dict[str, Any]) -> None:
+        with self._lock:
+            self._checks[f"speech:{provider_id}"] = {**entry, "checkedAt": _now()}
+            try:
+                self._write()
+            except OSError:
+                logger.warning("The result of a connection test could not be saved", exc_info=True)
+
+    def speech_check(self, provider_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            entry = self._checks.get(f"speech:{provider_id}")
+            return dict(entry) if entry else None
 
     def record_model_check(self, provider_id: str, entry: dict[str, Any]) -> None:
         with self._lock:
@@ -800,7 +616,6 @@ def describe(
                     if item.shown_when
                     else None
                 ),
-                "group": item.group,
                 "value": None if item.kind == "secret" else value,
                 "default": None if item.kind == "secret" else default,
                 "isSet": bool(value),

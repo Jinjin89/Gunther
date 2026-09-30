@@ -186,3 +186,16 @@
   .provider-model { grid-template-columns: 1fr auto; }
   .provider-model code, .provider-model-vision, .provider-model select { grid-column: 1 / -1; }
 }
+.speech-live { display: inline-flex; align-items: center; gap: 6px; color: var(--gx-muted); font-size: var(--gx-text-xs); cursor: pointer; }
+.speech-live input { accent-color: var(--gx-ink); }
+.speech-language {
+  width: 84px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--gx-line-2);
+  border-radius: 7px;
+  background: var(--gx-surface);
+  color: var(--gx-ink);
+  font-size: var(--gx-text-xs);
+}
+.speech-language:focus-visible { outline: none; box-shadow: var(--gx-ring); }

@@ -5,6 +5,8 @@ import { encodePcm16 } from "./pcm";
 export type DictationState = "idle" | "starting" | "listening" | "finishing";
 
 const FINISH_WAIT_MS = 4_000;
+// A take sent whole is written only after it ends, which takes longer.
+const WHOLE_TAKE_WAIT_MS = 45_000;
 
 const micMessage = (reason: unknown) => {
   const name = reason instanceof DOMException ? reason.name : "";
@@ -15,7 +17,7 @@ const micMessage = (reason: unknown) => {
 
 /**
  * Speak into a text field: microphone audio goes to the same live transcription
- * service chosen for dictation in Settings → Services, and each
+ * model chosen for Ask dictation in Settings → Transcription, and each
  * finished phrase is handed to `onText`.
  */
 export function useDictation(onText: (text: string) => void) {
@@ -23,7 +25,7 @@ export function useDictation(onText: (text: string) => void) {
   const [error, setError] = useState<string | null>(null);
   const handler = useRef(onText);
   handler.current = onText;
-  const parts = useRef<{ stream: MediaStream; context: AudioContext; processor: ScriptProcessorNode; socket: WebSocket; ready: boolean; queue: string[]; timer: number | null } | null>(null);
+  const parts = useRef<{ stream: MediaStream; context: AudioContext; processor: ScriptProcessorNode; socket: WebSocket; ready: boolean; streaming: boolean; queue: string[]; timer: number | null } | null>(null);
   const cancelled = useRef(false);
 
   const release = useCallback(() => {
@@ -55,7 +57,7 @@ export function useDictation(onText: (text: string) => void) {
     if (live.socket.readyState === WebSocket.OPEN && live.ready) {
       setState("finishing");
       live.socket.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-      live.timer = window.setTimeout(release, FINISH_WAIT_MS);
+      live.timer = window.setTimeout(release, live.streaming ? FINISH_WAIT_MS : WHOLE_TAKE_WAIT_MS);
     } else release();
   }, [release]);
 
@@ -76,7 +78,7 @@ export function useDictation(onText: (text: string) => void) {
     const context = new AudioContext();
     const processor = context.createScriptProcessor(4_096, 1, 1);
     const socket = new WebSocket(recordingSocketUrl("", "dictation"));
-    const live = { stream, context, processor, socket, ready: false, queue: [] as string[], timer: null as number | null };
+    const live = { stream, context, processor, socket, ready: false, streaming: true, queue: [] as string[], timer: null as number | null };
     parts.current = live;
     context.createMediaStreamSource(stream).connect(processor);
     processor.connect(context.destination);
@@ -89,10 +91,12 @@ export function useDictation(onText: (text: string) => void) {
       const event = JSON.parse(String(message.data)) as Record<string, unknown>;
       if (event.type === "service.ready") {
         live.ready = true;
+        live.streaming = event.stream !== false;
         live.queue.splice(0).forEach((audio) => socket.send(JSON.stringify({ type: "input_audio_buffer.append", audio })));
         setState((current) => (current === "starting" ? "listening" : current));
       } else if (event.type === "service.error") {
-        if (event.code === "segment_failed" || event.code === "sensevoice_segment_failed") return;
+        // A missed segment of a live take is skipped; a whole take that failed is all there is.
+        if (live.streaming && (event.code === "segment_failed" || event.code === "sensevoice_segment_failed")) return;
         setError(String(event.message ?? "Voice input is unavailable."));
         release();
       } else if (event.type === "conversation.item.input_audio_transcription.completed") {
