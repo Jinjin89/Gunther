@@ -56,7 +56,7 @@ describe("SpeechSettings", () => {
     api.saveSpeechRoles.mockResolvedValue(overview());
     render(<SpeechSettings onNotify={() => undefined} />);
     const jobs = await screen.findByRole("group", { name: "Used for" });
-    await userEvent.click(within(jobs).getAllByRole("switch")[1]);
+    await userEvent.click(within(jobs).getAllByRole("switch")[1]!);
     expect(api.saveSpeechRoles).toHaveBeenCalledWith({ dictation: { model: "sensevoice/sensevoice-small", stream: true, language: "" } });
   });
 });
