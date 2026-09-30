@@ -67,10 +67,12 @@ def install() -> RecentLog:
     logger.setLevel(logging.INFO)
     logger.addHandler(recent)
     # With a handler of its own, Python's last resort no longer prints Gunther's
-    # warnings; this keeps them in stderr (backend.log in the desktop app).
-    stderr = logging.StreamHandler(sys.stderr)
-    stderr.setLevel(logging.WARNING)
-    stderr.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
-    logger.addHandler(stderr)
+    # warnings; this keeps them in stderr, unless the desktop service's log files
+    # (see app_log) already take every line.
+    if not logging.getLogger().handlers:
+        stderr = logging.StreamHandler(sys.stderr)
+        stderr.setLevel(logging.WARNING)
+        stderr.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        logger.addHandler(stderr)
     _installed = recent
     return recent

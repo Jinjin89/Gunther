@@ -83,6 +83,7 @@ import type {
 import { readServerEvents } from "./sse";
 import { createArtifactSchema, webCaptureSchema } from "@gunther/contracts";
 import { invoke } from "@tauri-apps/api/core";
+import { log } from "./log";
 import type {
   CreateDevicePairingInput,
   DevicePairingSession,
@@ -136,10 +137,11 @@ async function initializeBackendConnection(): Promise<void> {
     let connection: BackendConnection;
     try {
       connection = await invoke<BackendConnection>("backend_connection");
-    } catch {
-      throw new Error(
-        "Gunther's authenticated local knowledge service did not start. No local data was sent.",
-      );
+    } catch (reason) {
+      // The shell says why: the service stopped (and what it said), or it took too long.
+      const why = typeof reason === "string" && reason ? reason : "Gunther's knowledge service did not start.";
+      log.error("startup", why);
+      throw new Error(why);
     }
     if (!DESKTOP_BACKEND_URLS.includes(connection.baseUrl)) {
       throw new Error("Gunther refused an unsafe local knowledge service address.");
@@ -173,20 +175,26 @@ async function waitForDesktopBackend(): Promise<void> {
   await initializeBackendConnection();
   if (!tauriRuntime) return;
   desktopBackendReady ??= (async () => {
+    let last = "no answer";
     for (let attempt = 0; attempt < 40; attempt += 1) {
       try {
         const response = await authenticatedFetch(`${apiBase}/health`, { cache: "no-store" });
         if (response.ok) {
           const health = (await response.json().catch(() => null)) as Partial<Health> | null;
           if (health?.status === "ok" && typeof health.extractionMode === "string") return;
+          last = "an answer that was not Gunther's";
+        } else {
+          last = `status ${response.status}`;
         }
-      } catch {
+      } catch (reason) {
         // The frozen Python sidecar may still be unpacking on first launch.
+        last = reason instanceof Error ? reason.message : "no answer";
       }
       await wait(250);
     }
+    log.error("startup", `The knowledge service was ready but its health check failed (${last})`);
     throw new Error(
-      "Gunther's authenticated local knowledge service did not start. Another app may be using its local port. No local data was sent.",
+      `Gunther's knowledge service started but did not answer its health check (${last}). No local data was sent.`,
     );
   })();
   return desktopBackendReady;
@@ -408,6 +416,11 @@ async function readAnswer(body: ReadableStream<Uint8Array>, onEvent: (event: Ans
   throw new Error("The connection closed before the answer was finished.");
 }
 
+/** A failed call, in the log: method, path without its query, and what the service said. */
+function logFailure(init: RequestInit | undefined, path: string, what: string) {
+  log.warn("api", `${init?.method ?? "GET"} ${path.split("?")[0]} → ${what}`);
+}
+
 async function request<T>(path: string, init?: RequestInit, expectedWorkspaceId?: string): Promise<T> {
   await waitForDesktopBackend();
   let response: Response;
@@ -422,12 +435,16 @@ async function request<T>(path: string, init?: RequestInit, expectedWorkspaceId?
     });
   } catch (reason) {
     // fetch rejects with a TypeError when the service is unreachable; aborts keep their own error.
-    if (reason instanceof TypeError) throw new ServiceUnavailableError();
+    if (reason instanceof TypeError) {
+      logFailure(init, path, `unreachable (${reason.message})`);
+      throw new ServiceUnavailableError();
+    }
     throw reason;
   }
 
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { detail?: string } | null;
+    logFailure(init, path, `${response.status} ${body?.detail ?? ""}`.trim());
     throw new Error(body?.detail ?? `Request failed with status ${response.status}`);
   }
   if (response.status === 204) return undefined as T;
@@ -440,11 +457,15 @@ async function requestBlob(path: string, init?: RequestInit): Promise<Blob> {
   try {
     response = await backendFetch(`${apiBase}${path}`, { ...init, headers: { "Content-Type": "application/json", ...init?.headers } });
   } catch (reason) {
-    if (reason instanceof TypeError) throw new ServiceUnavailableError();
+    if (reason instanceof TypeError) {
+      logFailure(init, path, `unreachable (${reason.message})`);
+      throw new ServiceUnavailableError();
+    }
     throw reason;
   }
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { detail?: string } | null;
+    logFailure(init, path, `${response.status} ${body?.detail ?? ""}`.trim());
     throw new Error(body?.detail ?? `Request failed with status ${response.status}`);
   }
   return response.blob();

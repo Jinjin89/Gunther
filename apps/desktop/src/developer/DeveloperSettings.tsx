@@ -1,7 +1,8 @@
 import type { BackgroundJob, LogLine } from "@gunther/contracts";
-import { Activity, Route, ScrollText, RefreshCw } from "lucide-react";
+import { Activity, FolderOpen, Route, ScrollText, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { knowledgeApi } from "../api";
+import { logsFolder, showLogsFolder } from "../log";
 import { useTraces } from "./useTraces";
 
 const time = (value: string) => new Date(value).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
@@ -15,6 +16,8 @@ export function DeveloperSettings({ onNotify }: { onNotify: (message: string) =>
   const [lines, setLines] = useState<LogLine[] | null>(null);
   const [jobs, setJobs] = useState<BackgroundJob[] | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const [folder, setFolder] = useState<string | null>(null);
+  useEffect(() => { void logsFolder().then(setFolder); }, []);
 
   const load = useCallback(async (chosen: Level) => {
     setProblem(null);
@@ -59,6 +62,10 @@ export function DeveloperSettings({ onNotify }: { onNotify: (message: string) =>
           <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => void load(level)}><RefreshCw size={13} />Refresh</button>
         </span>
       </div>
+      {folder && <div className="setting-row">
+        <span><strong>Log files</strong><small>Everything the app, its windows and the local service did, one file each per day, kept 14 days: <code>{folder}</code></small></span>
+        <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => void showLogsFolder().catch((reason: unknown) => onNotify(reason instanceof Error ? reason.message : String(reason)))}><FolderOpen size={13} />Show</button>
+      </div>}
       {problem && <div className="setting-row is-problem"><span><strong>Unavailable</strong><small>{problem}</small></span></div>}
       {lines && lines.length === 0 && <div className="setting-row"><span><small>Nothing yet.</small></span></div>}
       {lines && lines.length > 0 && <ol className="developer-log">{lines.map((line, index) => <li key={index} className={`is-${line.level}`}>

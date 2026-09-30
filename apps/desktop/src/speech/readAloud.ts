@@ -1,6 +1,7 @@
 import type { SessionMessage } from "@gunther/contracts";
 import { useSyncExternalStore } from "react";
 import { knowledgeApi } from "../api";
+import { describeError, log } from "../log";
 
 /**
  * Reading answers aloud, one at a time for the whole app.
@@ -43,11 +44,38 @@ const set = (next: State) => {
   listeners.forEach((listener) => listener());
 };
 const patch = (change: Partial<State>) => set({ ...state, ...change });
+const say = (message: string) => log.info("read-aloud", message);
+
+/** Fetch one piece of audio, noting its size, type and how long it took, so a silent play can be traced. */
+async function fetched(label: string, load: () => Promise<Blob>): Promise<Blob> {
+  const started = performance.now();
+  const blob = await load();
+  say(`${label}: ${blob.size} bytes, ${blob.type || "no type"}, ${Math.round(performance.now() - started)} ms`);
+  return blob;
+}
+
+const MEDIA_ERRORS: Record<number, string> = { 1: "aborted", 2: "network", 3: "decode", 4: "format not supported" };
+
+/** What the audio element reports while playing: enough to tell silence from a stall or a bad file. */
+function watch(player: HTMLAudioElement, label: string) {
+  const started = performance.now();
+  const at = () => `${Math.round(performance.now() - started)} ms`;
+  player.addEventListener("loadedmetadata", () => say(`${label}: ${Number.isFinite(player.duration) ? `${player.duration.toFixed(1)} s long` : `length ${player.duration}`}, ${at()}`));
+  player.addEventListener("playing", () => say(`${label}: playing at ${player.currentTime.toFixed(1)} s, volume ${player.volume}${player.muted ? ", muted" : ""}, ${at()}`));
+  for (const kind of ["waiting", "stalled", "suspend", "emptied"] as const) {
+    player.addEventListener(kind, () => say(`${label}: ${kind} at ${player.currentTime.toFixed(1)} s, ready state ${player.readyState}, ${at()}`));
+  }
+  player.addEventListener("ended", () => say(`${label}: ended after ${player.currentTime.toFixed(1)} s, ${at()}`));
+  player.addEventListener("error", () => {
+    const problem = player.error;
+    log.warn("read-aloud", `${label}: audio error ${problem ? `${problem.code} (${MEDIA_ERRORS[problem.code] ?? "unknown"}) ${problem.message}` : "without details"}, ${at()}`);
+  });
+}
 
 async function clipUrl(clipId: string): Promise<string> {
   const known = urls.get(clipId);
   if (known) return known;
-  const url = URL.createObjectURL(await knowledgeApi.speechAudio(clipId));
+  const url = URL.createObjectURL(await fetched(`clip ${clipId}`, () => knowledgeApi.speechAudio(clipId)));
   urls.set(clipId, url);
   for (const [oldest, oldUrl] of urls) {
     if (urls.size <= MEMORY_CLIPS) break;
@@ -82,6 +110,7 @@ async function playParts(mine: number, count: number, part: (index: number) => P
     if (index + 1 < count) { next = part(index + 1); next.catch(() => undefined); }
     await new Promise<void>((resolve, reject) => {
       const player = new Audio(url);
+      watch(player, count > 1 ? `part ${index + 1}/${count}` : "audio");
       audio = player;
       player.onended = () => { free(url); resolve(); };
       player.onerror = () => reject(new Error("This audio could not be played."));
@@ -89,7 +118,10 @@ async function playParts(mine: number, count: number, part: (index: number) => P
         if (mine !== turn || !player.duration || !Number.isFinite(player.duration)) return;
         patch({ progress: (index + player.currentTime / player.duration) / count, elapsed: count === 1 ? player.currentTime : 0 });
       };
-      player.play().then(() => { if (mine === turn) patch({ status: "playing", part: index, error: null }); onStart(); }, reject);
+      player.play().then(() => { if (mine === turn) patch({ status: "playing", part: index, error: null }); onStart(); }, (reason: unknown) => {
+        log.warn("read-aloud", `play() was refused: ${describeError(reason)}`);
+        reject(reason);
+      });
     });
     if (mine !== turn) return;
   }
@@ -104,6 +136,7 @@ export const readAloud = {
     return () => { listeners.delete(listener); };
   },
   stop() {
+    if (state.status) say(`stopped (${state.status})`);
     turn += 1;
     release();
     set(IDLE);
@@ -114,12 +147,13 @@ export const readAloud = {
    */
   async toggle(message: Pick<SessionMessage, "id" | "sessionId">, again = false) {
     if (!again && state.messageId === message.id) {
-      if (state.status === "playing") { audio?.pause(); patch({ status: "paused" }); return; }
-      if (state.status === "paused" && audio) { void audio.play(); patch({ status: "playing" }); return; }
+      if (state.status === "playing") { audio?.pause(); say("paused"); patch({ status: "paused" }); return; }
+      if (state.status === "paused" && audio) { say("resumed"); void audio.play(); patch({ status: "playing" }); return; }
       if (state.status === "making") { readAloud.stop(); return; }
     }
     readAloud.stop();
     const mine = turn;
+    say(`${message.id}: start${again ? ", recording again" : ""}`);
     set({ ...IDLE, messageId: message.id, status: "making" });
     // Resolves once the first part plays (or it failed); the rest carries on by itself.
     await new Promise<void>((started) => {
@@ -129,17 +163,21 @@ export const readAloud = {
           if (mine !== turn) return;
           if (begun.clip) {
             const clipId = begun.clip.id;
+            say(`${message.id}: kept clip ${clipId}`);
             patch({ parts: 1, source: { clipId } });
             const url = await clipUrl(clipId);
             if (mine !== turn) return;
             await playParts(mine, 1, async () => url, false, started);
           } else if (begun.jobId) {
             const jobId = begun.jobId;
-            patch({ parts: begun.parts, source: { jobId } });
-            await playParts(mine, begun.parts, async (index) => URL.createObjectURL(await knowledgeApi.speechPart(jobId, index)), true, started);
+            const count = begun.parts;
+            say(`${message.id}: being made as ${jobId}, ${count} part(s)`);
+            patch({ parts: count, source: { jobId } });
+            await playParts(mine, count, async (index) => URL.createObjectURL(await fetched(`${jobId} part ${index + 1}/${count}`, () => knowledgeApi.speechPart(jobId, index))), true, started);
           }
         } catch (reason) {
           if (mine !== turn) return;
+          log.warn("read-aloud", `${message.id}: failed: ${describeError(reason)}`);
           release();
           set({ ...IDLE, messageId: message.id, status: "error", error: reason instanceof Error ? reason.message : "The answer could not be read aloud." });
         } finally {

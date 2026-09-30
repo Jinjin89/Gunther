@@ -236,6 +236,51 @@ def wav_seconds(data: bytes) -> float:
         return 0.0
 
 
+def describe_wav(data: bytes) -> tuple[str, bool]:
+    """The format of a WAV for the log, and whether its header agrees with its length.
+
+    A header that claims more or less audio than the file holds plays in Chrome but
+    can play as silence in the macOS app's WebKit, so a mismatch is worth a warning.
+    """
+
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        return f"{len(data)} bytes, not a WAV file (starts {data[:4]!r})", False
+    problems: list[str] = []
+    riff = int.from_bytes(data[4:8], "little")
+    if riff != len(data) - 8:
+        problems.append(f"RIFF size says {riff + 8} bytes")
+    form, seconds, found_data = "no format chunk", None, False
+    rate_bytes = 0
+    offset = 12
+    while offset + 8 <= len(data):
+        chunk = data[offset : offset + 4]
+        size = int.from_bytes(data[offset + 4 : offset + 8], "little")
+        body = offset + 8
+        if chunk == b"fmt " and size >= 16 and body + 16 <= len(data):
+            channels = int.from_bytes(data[body + 2 : body + 4], "little")
+            rate = int.from_bytes(data[body + 4 : body + 8], "little")
+            rate_bytes = int.from_bytes(data[body + 8 : body + 12], "little")
+            bits = int.from_bytes(data[body + 14 : body + 16], "little")
+            form = f"{rate} Hz, {bits}-bit, {channels} channel(s)"
+        elif chunk == b"data":
+            found_data = True
+            actual = len(data) - body
+            if size != actual:
+                problems.append(f"data size says {size} bytes but {actual} follow")
+            if rate_bytes:
+                seconds = actual / rate_bytes
+            break
+        offset = body + size + (size & 1)
+    if not found_data:
+        problems.append("no data chunk")
+    text = f"{len(data)} bytes, {form}"
+    if seconds is not None:
+        text += f", {seconds:.1f} s"
+    if problems:
+        text += "; header disagrees: " + "; ".join(problems)
+    return text, not problems
+
+
 def split_for_speech(text: str, limit: int) -> list[str]:
     """Pieces no longer than ``limit``, cut after sentences (and lines) where possible."""
 

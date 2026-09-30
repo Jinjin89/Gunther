@@ -24,8 +24,11 @@ import "./design/capture.css";
 import { applyTheme, readThemePreference, resolveTheme } from "./design/theme";
 import { applyTypography } from "./design/typography";
 import { installExternalLinkHandler } from "./externalLinks";
+import { StartupError } from "./StartupError";
+import { describeError, installLogForwarding, log } from "./log";
 
 document.documentElement.dataset.runtime = "__TAURI_INTERNALS__" in window ? "native" : "web";
+installLogForwarding();
 if ("__TAURI_INTERNALS__" in window) installExternalLinkHandler();
 // Apply the saved appearance before the first paint so dark mode never flashes light.
 applyTheme(resolveTheme(readThemePreference()));
@@ -33,24 +36,19 @@ applyTypography();
 
 const root = createRoot(document.getElementById("root")!);
 const surface = new URLSearchParams(window.location.search).get("surface");
+const opened = performance.now();
+log.info("startup", `${surface ?? "main"} window opened`);
 
 void ensureBackendReady()
   .then(() => {
+    log.info("startup", `${surface ?? "main"} window connected after ${Math.round(performance.now() - opened)} ms`);
     root.render(
       <StrictMode>
         {surface === "capture" ? <CaptureWindowApp /> : <App />}
       </StrictMode>,
     );
   })
-  .catch(() => {
-    root.render(
-      <main className="startup-error" role="alert">
-        <h1>Gunther could not start its private knowledge service</h1>
-        <p>
-          Another app may be using the local service port. Gunther did not send your captures or
-          knowledge to that process.
-        </p>
-        <button type="button" onClick={() => window.location.reload()}>Try again</button>
-      </main>,
-    );
+  .catch((reason: unknown) => {
+    log.error("startup", `${surface ?? "main"} window could not connect: ${describeError(reason)}`);
+    root.render(<StartupError reason={reason instanceof Error ? reason.message : String(reason)} />);
   });

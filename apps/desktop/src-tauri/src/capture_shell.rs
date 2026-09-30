@@ -828,6 +828,9 @@ pub fn update_capture_status(app: AppHandle, status: CaptureStatus) -> Result<()
         // fallback launch slot must not survive a reload and replace it.
         runtime.pending_launch = None;
     }
+    if runtime.status.phase != status.phase {
+        log::info!("Capture: {} → {}", runtime.status.phase, status.phase);
+    }
     runtime.status = status;
     drop(runtime);
     apply_tray_presentation(&app)

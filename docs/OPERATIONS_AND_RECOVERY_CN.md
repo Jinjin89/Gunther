@@ -87,7 +87,7 @@ npm run backup:data -- --data-dir <数据目录> --library-root <LIBRARY_ROOT>
 ├── backend-ready/
 │   └── backend-auth-token.<launchNonce>  本次启动 ready token
 ├── backend-instance.lock
-├── backend.log
+├── backend.log             旧版本的日志；现在的日志在资料库的 .gunther/logs/
 └── .env                    可选 Provider secrets
 ```
 
@@ -99,7 +99,7 @@ Asset 与 Recording 默认共用 20 GiB 总存储预算，并保留至少 1 GiB 
 
 - `apps/desktop/dist/`、Rust `target/`、Flutter `build/`；
 - `node_modules/`、`.uv-cache/`、虚拟环境；
-- `backend.log`；
+- `backend.log` 与资料库里的 `.gunther/logs/`；
 - 每次启动的 `backend-ready/backend-auth-token.<launchNonce>` token；
 - 导出的 Markdown 或 `.gunther.json` workbook。
 
@@ -149,7 +149,7 @@ gunther-backup-<timestamp>-<id>/
 ### 4.3 普通备份故意不包含什么
 
 - `.env`：可能含 Provider key；
-- `backend.log`：可能含诊断上下文；
+- `backend.log` 与 `.gunther/logs/`：诊断记录（密钥已遮蔽，但含文件名与操作经过）；
 - sidecar token：每次启动轮换，不能跨恢复复用；
 - `mobile-gateway-pki/`：含 CA / leaf 私钥，不应混入普通业务数据副本。
 
@@ -365,7 +365,9 @@ Gunther 健康响应应明确显示 `sensevoice_local`、在线回退或 `not_co
 - 安装版 Helper 固定使用 `127.0.0.1:28787`（开发后端为 8787）；端口被占用时，Helper 会在发布本次 token 前失败；
 - 查占用：macOS/Linux `lsof -nP -iTCP:28787 -sTCP:LISTEN`，Windows `netstat -ano | findstr 28787`；
 - 不要向占位进程发送数据，也不要关闭认证绕过；
-- 检查 `backend.log`、实例锁和本次 ready token；
+- 看资料库 `.gunther/logs/` 里当天的 `*.backend.log`：启动失败时最后有一行 `FATAL … knowledge service stopped: <原因>`，启动页也会直接显示这个原因；`*.app.log` 记录外壳与窗口一侧（见 [DEVELOPER.md](DEVELOPER.md#log-files)）；
+- 刚退出就重开不会再因旧连接的 TIME_WAIT 而占不到端口；如果仍提示端口被占用，就是确实有别的程序在监听；
+- 再检查实例锁和本次 ready token；
 - token 是一次启动凭据，不能从旧备份复用。
 
 ### Mobile gateway

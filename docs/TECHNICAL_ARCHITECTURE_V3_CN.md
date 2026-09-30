@@ -279,7 +279,7 @@ macOS 打包默认：
 ├── backend-ready/
 │   └── backend-auth-token.<launchNonce>  本次启动 ready token；不属于业务备份
 ├── backend-instance.lock
-├── backend.log
+├── backend.log             旧版本的日志；现在按天写在资料库的 .gunther/logs/
 └── .env                    可选秘密配置；备份需单独加密管理
 ```
 

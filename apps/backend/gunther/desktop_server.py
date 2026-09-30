@@ -15,12 +15,14 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
 import uvicorn
 
+from gunther import app_log
 from gunther.config import Settings
 from gunther.mobile_gateway_pki import ensure_mobile_gateway_pki
 from gunther.mobile_gateway_runtime import MobileGatewayRuntime
@@ -35,6 +37,7 @@ MOBILE_GATEWAY_PORT = 8788
 MOBILE_GATEWAY_PKI_DIR_NAME = "mobile-gateway-pki"
 _LAUNCH_NONCE = re.compile(r"^[a-f0-9]{64}$")
 _AUTH_TOKEN = re.compile(r"^[A-Za-z0-9_-]{43}$")
+logger = logging.getLogger("gunther.desktop_server")
 
 
 class MobileGatewayNetworkUnavailableError(RuntimeError):
@@ -147,20 +150,33 @@ def _ensure_private_directory(path: Path) -> None:
         os.chmod(path, 0o700, follow_symlinks=False)
 
 
-def _secure_data_tree(data_dir: Path) -> None:
-    """Harden sidecar data without traversing or accepting symlinks."""
+def _secure_data_tree(data_dir: Path) -> int:
+    """Harden sidecar data without traversing or accepting symlinks; return the entries seen.
+
+    An entry that disappears while this runs (a temporary file renamed into place, say)
+    is simply gone: it no longer needs hardening, and must not stop the service.
+    """
 
     _ensure_private_directory(data_dir)
+    seen = 0
     for root, directory_names, file_names in os.walk(data_dir, followlinks=False):
         root_path = Path(root)
-        root_metadata = root_path.lstat()
+        try:
+            root_metadata = root_path.lstat()
+        except FileNotFoundError:
+            continue
         if stat.S_ISLNK(root_metadata.st_mode) or not stat.S_ISDIR(root_metadata.st_mode):
             raise RuntimeError("Gunther's private data tree contains a symlink")
         if os.name != "nt":
-            os.chmod(root_path, 0o700, follow_symlinks=False)
+            with suppress(FileNotFoundError):
+                os.chmod(root_path, 0o700, follow_symlinks=False)
         for name in (*directory_names, *file_names):
             candidate = root_path / name
-            metadata = candidate.lstat()
+            try:
+                metadata = candidate.lstat()
+            except FileNotFoundError:
+                continue
+            seen += 1
             if stat.S_ISLNK(metadata.st_mode):
                 raise RuntimeError(
                     f"Gunther's private data tree contains a symlink: {candidate.name}"
@@ -171,11 +187,13 @@ def _secure_data_tree(data_dir: Path) -> None:
                     f"Gunther's private data tree contains an unsupported entry: {candidate.name}"
                 )
             if os.name != "nt":
-                os.chmod(
-                    candidate,
-                    0o700 if is_directory else 0o600,
-                    follow_symlinks=False,
-                )
+                with suppress(FileNotFoundError):
+                    os.chmod(
+                        candidate,
+                        0o700 if is_directory else 0o600,
+                        follow_symlinks=False,
+                    )
+    return seen
 
 
 # Libraries live in the home folder by default: visible, easy to back up, and
@@ -294,6 +312,14 @@ def _bind_loopback_socket(port: int) -> socket.socket:
         raise ValueError("loopback port must be between 0 and 65535")
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
+        if os.name == "nt":
+            # Windows' SO_REUSEADDR would let another program take the port; this refuses it.
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            # Connections of the service that just quit linger in TIME_WAIT for up to a
+            # minute and would refuse the port to Gunther opened again right away. A
+            # program still listening on it is refused all the same.
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind(("127.0.0.1", port))
         # Queue connections before publishing readiness. Requests arriving in
         # the tiny gap before Server.run() are held by the kernel, not refused.
@@ -519,10 +545,12 @@ def _run_mobile_gateway(
             service_settings=service_settings,
         )
         config = uvicorn.Config(
-            gateway_app,
+            app_log.RequestLog(gateway_app),
             host=network_interface.ipv4_address,
             port=port,
-            log_level="warning",
+            # Lines go to the app's log files (see app_log), not uvicorn's own handlers.
+            log_config=None,
+            log_level="info",
             access_log=False,
             proxy_headers=False,
             server_header=False,
@@ -571,6 +599,7 @@ def _stop_when_stdin_closes(server: uvicorn.Server) -> None:
         with suppress(OSError):
             while os.read(0, 4096):
                 pass
+        logger.info("The app has closed; shutting down")
         server.should_exit = True
 
     threading.Thread(target=watch, name="gunther-parent-watch", daemon=True).start()
@@ -585,13 +614,49 @@ def main() -> None:
     parser.add_argument("--mobile-gateway-port", type=int, default=MOBILE_GATEWAY_PORT)
     parser.add_argument("--disable-mobile-gateway", action="store_true")
     parser.add_argument("--exit-when-stdin-closes", action="store_true")
+    # The app's log folder (see app_log); without one, lines go to stderr.
+    parser.add_argument("--log-dir", type=Path)
     args = parser.parse_args()
 
     # SQLite, uploaded originals, recordings, OCR output, PKI, and token files
     # all inherit private POSIX modes. Windows uses its native ACL model.
     if os.name != "nt":
         os.umask(0o077)
+    app_log.configure(args.log_dir)
+    try:
+        _serve(args)
+    except Exception as error:  # noqa: BLE001 - said once, plainly, for the app to show
+        # The app reads this line to tell the reader why the service stopped.
+        logger.critical(
+            "Gunther's knowledge service stopped: %s",
+            _stop_reason(error, args.port),
+            exc_info=True,
+        )
+        raise SystemExit(1) from None
+    logger.info("Gunther's knowledge service has shut down")
 
+
+def _stop_reason(error: Exception, port: int) -> str:
+    if isinstance(error, DesktopInstanceAlreadyRunningError):
+        return "another Gunther knowledge service is still running for this data folder"
+    if isinstance(error, OSError) and error.errno == errno.EADDRINUSE:
+        return f"port {port} is already in use by another program"
+    return f"{type(error).__name__}: {error}"
+
+
+def _serve(args: argparse.Namespace) -> None:
+    started = time.perf_counter()
+
+    def since_start() -> str:
+        return f"{(time.perf_counter() - started) * 1000:.0f} ms"
+
+    logger.info(
+        "Starting Gunther's knowledge service (process %s, Python %s, %s; frozen: %s)",
+        os.getpid(),
+        sys.version.split()[0],
+        sys.platform,
+        bool(getattr(sys, "frozen", False)),
+    )
     # Avoid constructing the development app while PyInstaller imports this
     # module. The desktop server owns its settings and creates exactly one app.
     os.environ["GUNTHER_DESKTOP_SIDECAR"] = "1"
@@ -601,31 +666,40 @@ def main() -> None:
     # Do not resolve the final path: doing so would follow a data-dir symlink.
     data_dir = args.data_dir.expanduser().absolute()
     _ensure_private_directory(data_dir)
+    logger.info("Data folder %s; port %s", data_dir, args.port)
     listener: socket.socket | None = None
     ready_token_path: Path | None = None
     gateway = None
-    try:
-        with _acquire_instance_lock(data_dir):
+    # The lock is let go last, after the port and the ready token: a service started
+    # while this one shuts down waits for the lock, instead of finding them still in use.
+    with _acquire_instance_lock(data_dir):
+        try:
             # A second instance or occupied port must fail before credentials
             # are published. The prebound socket is passed directly to Uvicorn.
             listener = _bind_loopback_socket(args.port)
-            _secure_data_tree(data_dir)
+            logger.info("Holding the data folder and port %s (%s)", args.port, since_start())
+            entries = _secure_data_tree(data_dir)
+            logger.info("Checked %s entries in the data folder (%s)", entries, since_start())
             for private_dir in (data_dir / "assets", data_dir / "recordings"):
                 _ensure_private_directory(private_dir)
 
             auth_token = secrets.token_urlsafe(32)
             settings = _desktop_settings(data_dir, auth_token)
+            logger.info("Library folder %s", settings.library_root)
             gateway_runtime = MobileGatewayRuntime(enabled=not args.disable_mobile_gateway)
             # One store for both apps, so a change saved in Settings reaches the phone too.
             service_settings = ServiceSettingsStore(settings.service_settings_file)
             sidecar_app = create_app(
                 settings, mobile_gateway=gateway_runtime, service_settings=service_settings
             )
+            logger.info("The service is set up (%s)", since_start())
             config = uvicorn.Config(
-                sidecar_app,
+                app_log.RequestLog(sidecar_app),
                 host="127.0.0.1",
                 port=args.port,
-                log_level="warning",
+                # Lines go to the app's log files (see app_log), not uvicorn's own handlers.
+                log_config=None,
+                log_level="info",
                 access_log=False,
                 proxy_headers=False,
                 server_header=False,
@@ -636,6 +710,7 @@ def main() -> None:
             # Publish only after the listener, app, and database initialize.
             _write_launch_token(data_dir, launch_nonce, auth_token)
             ready_token_path = _ready_token_path(data_dir, launch_nonce)
+            logger.info("Ready for the app (%s)", since_start())
             if not args.disable_mobile_gateway:
                 gateway = _start_mobile_gateway(
                     data_dir,
@@ -649,19 +724,19 @@ def main() -> None:
                 _stop_when_stdin_closes(server)
             with suppress(KeyboardInterrupt):
                 server.run(sockets=[listener])
-    finally:
-        if gateway is not None:
-            try:
-                gateway.stop()
-            except KeyboardInterrupt:
-                # The re-raised SIGINT can arrive while join() is waiting for
-                # the gateway thread. A non-blocking second stop still marks
-                # the runtime stopped and lets normal desktop shutdown finish.
-                gateway.stop(timeout=0)
-        if listener is not None:
-            listener.close()
-        if ready_token_path is not None:
-            ready_token_path.unlink(missing_ok=True)
+        finally:
+            if gateway is not None:
+                try:
+                    gateway.stop()
+                except KeyboardInterrupt:
+                    # The re-raised SIGINT can arrive while join() is waiting for
+                    # the gateway thread. A non-blocking second stop still marks
+                    # the runtime stopped and lets normal desktop shutdown finish.
+                    gateway.stop(timeout=0)
+            if listener is not None:
+                listener.close()
+            if ready_token_path is not None:
+                ready_token_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

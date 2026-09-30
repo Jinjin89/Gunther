@@ -1,13 +1,14 @@
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{Listener, Manager};
 
+mod app_log;
 mod application_menu;
 mod capture_shell;
 mod external_links;
@@ -18,6 +19,8 @@ mod tray_glyph;
 struct BackendRuntime {
     child: Option<Child>,
     launch_nonce: Option<String>,
+    /// Why the service of this launch stopped on its own, once it has.
+    exited: Option<String>,
 }
 
 struct BackendProcess(Mutex<BackendRuntime>);
@@ -30,6 +33,8 @@ const BACKEND_BASE_URL: &str = "http://127.0.0.1:8787";
 #[cfg(not(debug_assertions))]
 const BACKEND_BASE_URL: &str = "http://127.0.0.1:28787";
 const TOKEN_FILE_NAME: &str = "backend-auth-token";
+/// How long to wait for the service, in tenths of a second.
+const BACKEND_WAIT_TENTHS: u32 = 900;
 const READY_TOKEN_DIR_NAME: &str = "backend-ready";
 
 #[derive(Serialize)]
@@ -156,13 +161,6 @@ fn parse_ready_token(contents: &str, expected_nonce: &str) -> Option<String> {
     Some(token.to_owned())
 }
 
-fn log_backend_event(data_dir: &Path, message: &str) {
-    let log_path = data_dir.join("backend.log");
-    if let Ok(mut file) = secure_open(&log_path, true) {
-        let _ = writeln!(file, "{message}");
-    }
-}
-
 #[cfg(target_os = "macos")]
 fn backend_executable(_app: &tauri::AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let executable = std::env::current_exe()?;
@@ -198,11 +196,21 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
     create_private_dir(&data_dir)?;
     create_private_dir(&data_dir.join(READY_TOKEN_DIR_NAME))?;
     let launch_nonce = generate_launch_nonce()?;
-    log_backend_event(&data_dir, "Starting Gunther's bundled knowledge service");
-    let log_path = data_dir.join("backend.log");
-    let stdout = secure_open(&log_path, true)?;
+    let executable = backend_executable(app)?;
+    log::info!(
+        "Starting the knowledge service: {} on port {RELEASE_BACKEND_PORT}",
+        executable.display()
+    );
+    // Its output, a crash's traceback included, goes to today's backend log.
+    let stdout = app_log::open_backend_file().or_else(|error| {
+        log::warn!("The backend log file could not be opened ({error}); using backend.log");
+        secure_open(&data_dir.join("backend.log"), true)
+    })?;
     let stderr = stdout.try_clone()?;
-    let mut command = Command::new(backend_executable(app)?);
+    let mut command = Command::new(&executable);
+    if let Some(folder) = app_log::folder() {
+        command.arg("--log-dir").arg(folder);
+    }
     // The folder chosen in Settings; without one the backend uses ~/Gunther.
     if let Some(root) = library_location::chosen_root(&data_dir) {
         command.env("LIBRARY_ROOT", root);
@@ -227,12 +235,54 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr))
         .spawn()?;
+    log::info!("The knowledge service is process {}", child.id());
 
     let state = app.state::<BackendProcess>();
     let mut runtime = state.0.lock().expect("backend lock poisoned");
     runtime.child = Some(child);
-    runtime.launch_nonce = Some(launch_nonce);
+    runtime.launch_nonce = Some(launch_nonce.clone());
+    runtime.exited = None;
+    drop(runtime);
+    watch_backend(app.clone(), launch_nonce);
     Ok(())
+}
+
+/// Notice when the service of this launch stops on its own, and say why in the log.
+fn watch_backend(app: tauri::AppHandle, launch_nonce: String) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(500));
+        let state = app.state::<BackendProcess>();
+        let Ok(mut runtime) = state.0.lock() else {
+            return;
+        };
+        // Stopped by Gunther, or started again: this launch is no longer watched.
+        if runtime.launch_nonce.as_deref() != Some(launch_nonce.as_str()) {
+            return;
+        }
+        let Some(child) = runtime.child.as_mut() else {
+            return;
+        };
+        match child.try_wait() {
+            Ok(None) => {}
+            Ok(Some(status)) => {
+                let reason = app_log::backend_stop_reason();
+                let message = match reason {
+                    Some(reason) => {
+                        format!("Gunther's knowledge service stopped ({status}): {reason}")
+                    }
+                    None => format!("Gunther's knowledge service stopped ({status})"),
+                };
+                log::error!("{message}");
+                runtime.child = None;
+                runtime.exited = Some(message);
+                return;
+            }
+            Err(error) => {
+                log::warn!("Gunther could not check on its knowledge service: {error}");
+                return;
+            }
+        }
+    });
 }
 
 /// Stop the bundled backend and forget its launch, e.g. before moving the libraries.
@@ -243,6 +293,7 @@ fn stop_backend(app: &tauri::AppHandle) {
         (runtime.child.take(), runtime.launch_nonce.take())
     };
     if let Some(mut child) = child {
+        log::info!("Stopping the knowledge service (process {})", child.id());
         let _ = child.kill();
         let _ = child.wait();
     }
@@ -321,13 +372,10 @@ fn change_library_location(
     if capture_shell::blocks_exit(&app) {
         return Err("Finish or stop the recording first, then move your libraries.".into());
     }
-    log_backend_event(
-        &data_dir,
-        &format!(
-            "Moving the libraries from {} to {}",
-            from.display(),
-            to.display()
-        ),
+    log::info!(
+        "Moving the libraries from {} to {}",
+        from.display(),
+        to.display()
     );
     stop_backend(&app);
     let outcome = library_location::move_library(&from, &to).and_then(|()| {
@@ -337,8 +385,16 @@ fn change_library_location(
             error
         })
     });
+    match &outcome {
+        // The logs moved with the library; keep writing where they are now.
+        Ok(()) => {
+            app_log::set_folder(app_log::folder_in_library(&to));
+            log::info!("Moved the libraries to {}", to.display());
+        }
+        Err(error) => log::error!("The libraries were not moved: {error}"),
+    }
     if let Err(error) = start_backend(&app) {
-        log_backend_event(&data_dir, &format!("[launch error] {error}"));
+        log::error!("The knowledge service did not start again: {error}");
         return Err(format!(
             "Gunther's local service did not start again: {error}"
         ));
@@ -393,30 +449,77 @@ fn backend_connection(app: tauri::AppHandle) -> Result<BackendConnection, String
         .clone()
         .ok_or_else(|| "Gunther's local knowledge service did not launch".to_string())?;
     let token_path = ready_token_path(&data_dir, &launch_nonce);
-    // First launch can be slow while antivirus scans the freshly installed helper.
-    for _ in 0..300 {
+    let started = Instant::now();
+    // The first launch after installing can take a minute while macOS checks every
+    // file of the freshly installed helper; a helper that stopped is noticed at once.
+    for attempt in 1..=BACKEND_WAIT_TENTHS {
         if let Ok(contents) = secure_read(&token_path) {
             if let Some(token) = parse_ready_token(&contents, &launch_nonce) {
+                log::info!(
+                    "Connected to the knowledge service after {} ms",
+                    started.elapsed().as_millis()
+                );
                 return Ok(BackendConnection {
                     base_url: BACKEND_BASE_URL,
                     auth_token: token,
                 });
             }
         }
+        if let Some(exited) = backend_exit(&app) {
+            return Err(exited);
+        }
+        if attempt % 100 == 0 {
+            log::info!(
+                "Still waiting for the knowledge service ({} s)",
+                attempt / 10
+            );
+        }
         std::thread::sleep(Duration::from_millis(100));
     }
-    Err("Gunther's authenticated local knowledge service did not start".to_string())
+    log::error!(
+        "The knowledge service did not start within {} s",
+        BACKEND_WAIT_TENTHS / 10
+    );
+    Err(format!(
+        "Gunther's knowledge service did not start within {} seconds.",
+        BACKEND_WAIT_TENTHS / 10
+    ))
+}
+
+/// Why this launch's service stopped on its own, if it has.
+fn backend_exit(app: &tauri::AppHandle) -> Option<String> {
+    app.state::<BackendProcess>()
+        .0
+        .lock()
+        .ok()
+        .and_then(|runtime| runtime.exited.clone())
+}
+
+/// Start the service again after it stopped or did not start, from the startup screen.
+#[tauri::command(async)]
+fn restart_backend(app: tauri::AppHandle) -> Result<(), String> {
+    if cfg!(debug_assertions) {
+        return Ok(());
+    }
+    log::info!("Starting the knowledge service again, as asked");
+    stop_backend(&app);
+    start_backend(&app).map_err(|error| {
+        log::error!("The knowledge service could not start: {error}");
+        format!("Gunther's knowledge service could not start: {error}")
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(app_log::plugin())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(BackendProcess(Mutex::new(BackendRuntime::default())))
         .manage(capture_shell::CaptureShell::default())
         .menu(application_menu::build)
         .on_menu_event(|app, event| {
+            log::info!("Menu: {}", event.id().as_ref());
             capture_shell::handle_menu_event(app, event.id().as_ref());
         })
         .on_window_event(|window, event| {
@@ -428,11 +531,36 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            let data_dir = app.path().app_data_dir().ok();
+            // The library folder the backend will use: the one chosen in Settings, or ~/Gunther.
+            let library_root = data_dir
+                .as_deref()
+                .and_then(library_location::chosen_root)
+                .or_else(|| app.path().home_dir().ok().map(|home| home.join("Gunther")));
+            let logs = app_log::install(app.handle(), library_root.as_deref());
+            log::info!(
+                "Gunther {} starting on {} {} (process {})",
+                app.package_info().version,
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+                std::process::id()
+            );
+            log::info!(
+                "Data {}; library {}; logs {}",
+                data_dir
+                    .as_deref()
+                    .map(Path::display)
+                    .map(|path| path.to_string())
+                    .unwrap_or_default(),
+                library_root
+                    .as_deref()
+                    .map(Path::display)
+                    .map(|path| path.to_string())
+                    .unwrap_or_default(),
+                logs.display()
+            );
             if let Err(error) = start_backend(app.handle()) {
-                eprintln!("Gunther's local knowledge service could not start: {error}");
-                if let Ok(data_dir) = app.path().app_data_dir() {
-                    log_backend_event(&data_dir, &format!("[launch error] {error}"));
-                }
+                log::error!("Gunther's local knowledge service could not start: {error}");
             }
             create_capture_window(app)?;
             capture_shell::setup_tray(app)?;
@@ -448,6 +576,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             backend_connection,
+            restart_backend,
+            app_log::logs_folder,
+            app_log::show_logs_folder,
             library_location,
             library_destination,
             change_library_location,
@@ -465,6 +596,7 @@ pub fn run() {
 
     app.run(|app_handle, event| match event {
         tauri::RunEvent::ExitRequested { api, .. } if capture_shell::blocks_exit(app_handle) => {
+            log::info!("Quitting waits: a recording is in progress");
             api.prevent_exit();
             capture_shell::block_quit_and_show_capture(app_handle);
         }
@@ -472,7 +604,10 @@ pub fn run() {
         tauri::RunEvent::Reopen { .. } => {
             let _ = capture_shell::show_main_window(app_handle.clone());
         }
-        tauri::RunEvent::Exit => stop_backend(app_handle),
+        tauri::RunEvent::Exit => {
+            log::info!("Gunther is quitting");
+            stop_backend(app_handle);
+        }
         _ => {}
     });
 }

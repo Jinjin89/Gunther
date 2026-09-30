@@ -14,6 +14,7 @@ import json
 import logging
 import re
 import secrets
+import time
 from collections.abc import Awaitable
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +33,7 @@ from gunther.tts_providers import (
     ProviderConfig,
     TtsError,
     TtsProvider,
+    describe_wav,
     join_wav,
     split_for_listening,
     split_for_speech,
@@ -425,6 +427,24 @@ class Begun:
 MAX_JOBS = 6
 
 
+async def _made(resolved: Resolved, piece: str, label: str) -> bytes:
+    """One piece from the supplier, logged with how long it took and what came back."""
+
+    started = time.perf_counter()
+    audio = await resolved.provider.synthesize(resolved.config, piece)
+    described, sound = describe_wav(audio)
+    logger.log(
+        logging.INFO if sound else logging.WARNING,
+        "Speech %s: %d chars from %s in %.0f ms → %s",
+        label,
+        len(piece),
+        resolved.provider.kind,
+        (time.perf_counter() - started) * 1000,
+        described,
+    )
+    return audio
+
+
 class TtsService:
     def __init__(self, sessions: sessionmaker[Session], directory: Path) -> None:
         self.sessions = sessions
@@ -442,8 +462,8 @@ class TtsService:
             raise TtsError("There is nothing in this answer to read aloud.")
         parts: list[bytes] = []
         # In order and one at a time: suppliers rate-limit, and a failure stops early.
-        for piece in pieces:
-            parts.append(await resolved.provider.synthesize(resolved.config, piece))
+        for index, piece in enumerate(pieces):
+            parts.append(await _made(resolved, piece, f"part {index + 1}/{len(pieces)}"))
         return join_wav(parts)
 
     async def sample(self, resolved: Resolved) -> bytes:
@@ -511,6 +531,7 @@ class TtsService:
             self._forget(key)
         found = self._find(key)
         if found is not None:
+            logger.info("Speech for message %s: kept clip %s", message_id, found.id)
             return Begun(found, None)
         running = self._running.get(key)
         if running is not None:
@@ -525,6 +546,14 @@ class TtsService:
         if not pieces:
             raise TtsError("There is nothing in this answer to read aloud.")
         job = Job(f"job-{secrets.token_hex(8)}", pieces)
+        logger.info(
+            "Speech %s for message %s: %d part(s), %s %s",
+            job.id,
+            message_id,
+            len(pieces),
+            resolved.provider.kind,
+            resolved.config.model,
+        )
         self._running[key] = job
         self._jobs[job.id] = job
         while len(self._jobs) > MAX_JOBS:
@@ -541,8 +570,11 @@ class TtsService:
         try:
             for index, piece in enumerate(job.pieces):
                 if job.cancelled:
+                    logger.info("Speech %s was replaced before part %d", job.id, index + 1)
                     return
-                job.audio[index] = await resolved.provider.synthesize(resolved.config, piece)
+                job.audio[index] = await _made(
+                    resolved, piece, f"{job.id} part {index + 1}/{len(job.pieces)}"
+                )
                 job.publish()
             if not job.cancelled and self._find(key) is None:
                 audio = join_wav([part for part in job.audio if part is not None])
@@ -550,6 +582,7 @@ class TtsService:
                     self._store, message_id, key, resolved, script.text, script.model, audio
                 )
         except TtsError as error:
+            logger.warning("Speech %s failed: %s", job.id, error)
             job.error = error
             job.publish()
         except Exception:  # a broken join or disk must still end the wait

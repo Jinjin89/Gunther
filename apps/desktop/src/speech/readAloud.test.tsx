@@ -29,6 +29,7 @@ class FakeAudio {
   constructor(public src: string) { players.push(this); }
   play = vi.fn(async () => { this.paused = false; });
   pause = vi.fn(() => { this.paused = true; });
+  addEventListener = vi.fn();
 }
 
 const message = { id: "m1", sessionId: "s1" };

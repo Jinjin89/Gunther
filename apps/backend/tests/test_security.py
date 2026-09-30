@@ -1,3 +1,4 @@
+import logging
 import os
 import signal
 import socket
@@ -132,7 +133,7 @@ def test_private_data_tree_hardens_existing_history_and_rejects_symlinks(
 
 
 def test_main_does_not_publish_a_token_when_loopback_prebind_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.setattr(
         sys,
@@ -153,13 +154,21 @@ def test_main_does_not_publish_a_token_when_loopback_prebind_fails(
         "_bind_loopback_socket",
         lambda _port: (_ for _ in ()).throw(OSError("occupied")),
     )
+    # Logging stays as pytest set it up: no log folder, no process-wide hooks.
+    monkeypatch.setattr(desktop_server.app_log, "configure", lambda _folder: None)
     previous_umask = os.umask(0o077)
     os.umask(previous_umask)
     try:
-        with pytest.raises(OSError, match="occupied"):
+        with (
+            caplog.at_level(logging.CRITICAL, logger="gunther.desktop_server"),
+            pytest.raises(SystemExit) as stopped,
+        ):
             desktop_server.main()
     finally:
         os.umask(previous_umask)
+    assert stopped.value.code == 1
+    # The line the app reads to say why the service stopped.
+    assert "knowledge service stopped: OSError: occupied" in caplog.text
     assert not (tmp_path / READY_TOKEN_DIR_NAME).exists()
 
 
@@ -456,3 +465,24 @@ def test_tokenless_websocket_rejects_an_unexpected_token(tmp_path: Path) -> None
     ):
         pass
     assert rejected.value.code == 1008
+
+
+@pytest.mark.skipif(os.name == "nt", reason="TIME_WAIT reuse is a POSIX rule")
+def test_the_port_is_free_again_right_after_the_last_service_quit() -> None:
+    # A service that served a request and quit leaves that connection in TIME_WAIT.
+    first = _bind_loopback_socket(0)
+    port = first.getsockname()[1]
+    client = socket.create_connection(("127.0.0.1", port))
+    served, _ = first.accept()
+    served.close()  # the service closes first, so the waiting is on its side
+    client.recv(1)
+    client.close()
+    first.close()
+
+    reopened = _bind_loopback_socket(port)
+    try:
+        # Another program listening there is still refused.
+        with pytest.raises(OSError):
+            _bind_loopback_socket(port)
+    finally:
+        reopened.close()
