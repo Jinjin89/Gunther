@@ -6,7 +6,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from gunther import realtime
+from gunther import realtime, speech_registry
 from gunther.config import Settings
 from gunther.main import create_app
 
@@ -137,6 +137,48 @@ def test_a_provider_without_its_key_is_not_used(tmp_path: Path) -> None:
         ) as socket:
             event = socket.receive_json()
         assert event["code"] == "not_configured" and "OpenAI needs an API key" in event["message"]
+
+
+def test_a_qwen_key_saved_for_models_offers_qwen_transcription(tmp_path: Path) -> None:
+    intl = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    with TestClient(create_app(settings_for(tmp_path))) as client:
+        client.post(
+            "/api/settings/providers",
+            headers=SIDECAR,
+            json={"kind": "qwen", "apiKey": KEY, "baseUrl": intl, "models": ["qwen3-max"]},
+        )
+        qwen = next(item for item in overview(client)["providers"] if item["kind"] == "qwen")
+        # The key belongs to one region, so transcription follows its address.
+        assert qwen["baseUrl"] == intl
+        assert qwen["keyShared"] is True and qwen["keySet"] is False
+        assert qwen["status"]["state"] == "configured"
+        # Offered, not chosen: audio goes to the cloud only once a job picks it.
+        assert roles(client)["dictation"]["model"] == "sensevoice/sensevoice-small"
+
+        client.put(
+            "/api/settings/speech/roles", headers=SIDECAR, json={"roles": {"dictation": QWEN_JOB}}
+        )
+        assert roles(client)["dictation"]["problem"] is None
+        choice, _ = speech_registry.resolve(client.app.state.speech_registry, "dictation")
+        assert choice is not None and choice.api_key == KEY and choice.base_url == intl
+
+
+def test_a_qwen_transcription_provider_without_a_key_uses_the_models_key(tmp_path: Path) -> None:
+    with TestClient(create_app(settings_for(tmp_path))) as client:
+        client.post("/api/settings/speech/providers", headers=SIDECAR, json={"kind": "qwen"})
+        client.put(
+            "/api/settings/speech/roles", headers=SIDECAR, json={"roles": {"dictation": QWEN_JOB}}
+        )
+        assert roles(client)["dictation"]["problem"] == "Qwen needs an API key."
+
+        client.post(
+            "/api/settings/providers",
+            headers=SIDECAR,
+            json={"kind": "qwen", "apiKey": KEY, "models": ["qwen3-max"]},
+        )
+        assert roles(client)["dictation"]["problem"] is None
+        choice, _ = speech_registry.resolve(client.app.state.speech_registry, "dictation")
+        assert choice is not None and choice.api_key == KEY
 
 
 def test_ask_dictation_sends_the_whole_take_at_the_end(

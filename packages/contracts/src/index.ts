@@ -442,6 +442,8 @@ export interface SpeechProvider {
   keySet: boolean;
   keyHint: string | null;
   keySource: "saved" | "environment";
+  /** No key of its own: the one saved for the same company under Models is used. */
+  keyShared: boolean;
   keyOptional: boolean;
   note: string;
   models: SpeechModel[];

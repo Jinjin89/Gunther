@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import re
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -203,9 +203,25 @@ def clean_roles(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
 # What is in use ----------------------------------------------------------------
 
 
-def providers_from_environment(settings: Settings) -> list[dict[str, Any]]:
-    """The providers the older single transcription service describes."""
+@dataclass(frozen=True)
+class SharedKey:
+    """A key saved elsewhere for the same company (Qwen's, under Models or Read aloud)."""
 
+    api_key: str
+    # Where that key was set up; DashScope keys belong to one region's address.
+    base_url: str | None = None
+
+
+def providers_from_environment(
+    settings: Settings, shared: dict[str, SharedKey] | None = None
+) -> list[dict[str, Any]]:
+    """The providers the older single transcription service describes.
+
+    A Qwen key already saved for its language models also brings in Qwen
+    transcription, ready to be chosen for a job; nothing is sent there until it is.
+    """
+
+    shared_qwen = (shared or {}).get("qwen")
     providers = [
         {
             "id": "sensevoice",
@@ -224,6 +240,17 @@ def providers_from_environment(settings: Settings) -> list[dict[str, Any]]:
                 "kind": "qwen",
                 "baseUrl": settings.qwen_stt_base_url.rstrip("/"),
                 "apiKey": settings.qwen_stt_api_key,
+                "models": [clean_model(settings.qwen_stt_model)],
+            }
+        )
+    elif shared_qwen:
+        providers.append(
+            {
+                "id": "qwen",
+                "name": PRESETS["qwen"].name,
+                "kind": "qwen",
+                "baseUrl": (shared_qwen.base_url or settings.qwen_stt_base_url).rstrip("/"),
+                "apiKey": None,
                 "models": [clean_model(settings.qwen_stt_model)],
             }
         )
@@ -262,20 +289,28 @@ class Registry:
     roles: dict[str, dict[str, Any]]
     # Providers come from STT_* settings, not yet from the app.
     from_environment: bool
+    # By kind: keys saved elsewhere that a provider without its own key uses.
+    shared: dict[str, SharedKey] = field(default_factory=dict)
 
 
 def effective(
-    saved_providers: list | None, saved_roles: dict | None, settings: Settings
+    saved_providers: list | None,
+    saved_roles: dict | None,
+    settings: Settings,
+    shared: dict[str, SharedKey] | None = None,
 ) -> Registry:
     """What is in use: saved providers, or the environment's; saved jobs over defaults."""
 
+    shared = dict(shared or {})
     from_environment = saved_providers is None
-    providers = providers_from_environment(settings) if from_environment else saved_providers
+    providers = (
+        providers_from_environment(settings, shared) if from_environment else saved_providers
+    )
     roles = default_roles(providers, settings)
     for role_id, choice in (saved_roles or {}).items():
         if role_id in roles:
             roles[role_id] = dict(choice)
-    return Registry(providers, roles, from_environment)
+    return Registry(providers, roles, from_environment, shared)
 
 
 @dataclass(frozen=True)
@@ -296,8 +331,21 @@ def model_ref(provider: dict[str, Any], model: dict[str, Any]) -> str:
     return f"{provider['id']}/{model['id']}"
 
 
-def problem_with(provider: dict[str, Any]) -> str | None:
-    if provider.get("apiKey") or PRESETS[provider["kind"]].key_optional:
+def key_for(
+    provider: dict[str, Any], shared: dict[str, SharedKey] | None = None
+) -> tuple[str | None, bool]:
+    """The key a provider calls with, and whether it is one saved elsewhere."""
+
+    if provider.get("apiKey"):
+        return provider["apiKey"], False
+    found = (shared or {}).get(provider["kind"])
+    return (found.api_key, True) if found else (None, False)
+
+
+def problem_with(
+    provider: dict[str, Any], shared: dict[str, SharedKey] | None = None
+) -> str | None:
+    if key_for(provider, shared)[0] or PRESETS[provider["kind"]].key_optional:
         return None
     return f"{provider['name']} needs an API key."
 
@@ -313,7 +361,7 @@ def resolve(registry: Registry, role_id: str) -> tuple[Choice | None, str | None
         for model in provider["models"]:
             if model_ref(provider, model) != ref:
                 continue
-            problem = problem_with(provider)
+            problem = problem_with(provider, registry.shared)
             if problem:
                 return None, problem
             return (
@@ -321,7 +369,7 @@ def resolve(registry: Registry, role_id: str) -> tuple[Choice | None, str | None
                     kind=provider["kind"],
                     provider=provider["name"],
                     base_url=provider["baseUrl"],
-                    api_key=provider.get("apiKey"),
+                    api_key=key_for(provider, registry.shared)[0],
                     model=model["id"],
                     label=model["label"],
                     stream=bool(choice.get("stream", ROLE_BY_ID[role_id].stream)),

@@ -139,12 +139,27 @@ def _connect_models(
     worker.digest_writer = digest_writer
     application.state.models = models
     application.state.model_registry = registry
-    application.state.speech_registry = speech_registry.effective(*store.speech(), settings)
+    application.state.speech_registry = speech_registry.effective(
+        *store.speech(), settings, _shared_speech_keys(registry, store.tts())
+    )
     application.state.topic_writer = create_topic_writer(models)
     application.state.online_search = online_search
     application.state.lecture_summarizer = create_lecture_summarizer(models)
     # Transcription reads its settings per recording, from here.
     application.state.settings = settings
+
+
+def _shared_speech_keys(
+    models: model_registry.Registry, tts: dict | None
+) -> dict[str, speech_registry.SharedKey]:
+    """Qwen keys saved under Models or Read aloud, so transcription needs none of its own."""
+
+    for provider in models.providers:
+        if provider.get("kind") == "qwen" and provider.get("apiKey"):
+            return {"qwen": speech_registry.SharedKey(provider["apiKey"], provider.get("baseUrl"))}
+    key = (((tts or {}).get("providers") or {}).get("qwen") or {}).get("apiKey")
+    # Read aloud's address is DashScope's root, not the compatible-mode one.
+    return {"qwen": speech_registry.SharedKey(key)} if key else {}
 
 
 def create_app(

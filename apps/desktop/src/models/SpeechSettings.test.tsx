@@ -18,8 +18,8 @@ const overview = (patch: Partial<SpeechOverview> = {}): SpeechOverview => ({
   persisted: true,
   fromEnvironment: false,
   providers: [
-    { id: "sensevoice", name: "SenseVoice", kind: "sensevoice", baseUrl: "http://127.0.0.1:8765", keySet: false, keyHint: null, keySource: "saved", keyOptional: true, note: "", models: [{ id: "sensevoice-small", ref: "sensevoice/sensevoice-small", label: "sensevoice-small" }], status: { state: "configured", summary: "1 model", check: null } },
-    { id: "qwen", name: "Qwen", kind: "qwen", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", keySet: true, keyHint: "1234", keySource: "saved", keyOptional: false, note: "", models: [{ id: "qwen3-asr-flash", ref: "qwen/qwen3-asr-flash", label: "qwen3-asr-flash" }], status: { state: "configured", summary: "1 model", check: null } },
+    { id: "sensevoice", name: "SenseVoice", kind: "sensevoice", baseUrl: "http://127.0.0.1:8765", keySet: false, keyHint: null, keySource: "saved", keyShared: false, keyOptional: true, note: "", models: [{ id: "sensevoice-small", ref: "sensevoice/sensevoice-small", label: "sensevoice-small" }], status: { state: "configured", summary: "1 model", check: null } },
+    { id: "qwen", name: "Qwen", kind: "qwen", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", keySet: true, keyHint: "1234", keySource: "saved", keyShared: false, keyOptional: false, note: "", models: [{ id: "qwen3-asr-flash", ref: "qwen/qwen3-asr-flash", label: "qwen3-asr-flash" }], status: { state: "configured", summary: "1 model", check: null } },
   ],
   roles: [
     { id: "recording", label: "Recording", description: "Writes the words while you record.", model: "sensevoice/sensevoice-small", stream: true, language: "", problem: null },

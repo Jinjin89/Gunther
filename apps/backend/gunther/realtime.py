@@ -256,7 +256,8 @@ async def proxy_realtime_transcription(
             await _fail(
                 websocket,
                 "provider_unavailable",
-                f"SenseVoice is not running at {choice.base_url}.",
+                f"SenseVoice is not running at {choice.base_url}. Start it, or choose "
+                "another model, such as Qwen, in Settings → Transcription.",
             )
             return
         root = _sensevoice_root(choice.base_url)

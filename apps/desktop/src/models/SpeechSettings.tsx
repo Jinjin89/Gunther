@@ -52,7 +52,7 @@ function KeyField({ provider, value, onChange, inputId }: { provider: SpeechProv
     </div>;
   }
   return <div className="service-secret-input">
-    <input id={inputId} type={visible ? "text" : "password"} value={value ?? ""} placeholder={provider.keyOptional ? "Only if your server asks for one" : "Paste your key"} autoComplete="off" spellCheck={false} autoFocus={replacing} onChange={(event) => onChange(event.target.value === "" ? undefined : event.target.value)} />
+    <input id={inputId} type={visible ? "text" : "password"} value={value ?? ""} placeholder={provider.keyShared ? `Using your ${provider.name} key from Models` : provider.keyOptional ? "Only if your server asks for one" : "Paste your key"} autoComplete="off" spellCheck={false} autoFocus={replacing} onChange={(event) => onChange(event.target.value === "" ? undefined : event.target.value)} />
     <button type="button" className="gx-icon-button" aria-label={visible ? "Hide API key" : "Show API key"} title={visible ? "Hide" : "Show"} onClick={() => setVisible((current) => !current)}>
       {visible ? <EyeOff size={14} /> : <Eye size={14} />}
     </button>
@@ -164,7 +164,10 @@ function ProviderEditor({ provider, onOverview, onRemoved, onNotify }: {
       </div>
       {provider.kind !== "sensevoice" && <div className="service-field">
         <label htmlFor={`${baseId}-key`}>API key{provider.keySource === "environment" && draft.apiKey === undefined && <span className="service-source" title="Set in the backend's environment or .env file. A key saved here takes its place.">from .env</span>}</label>
-        <div className="service-control"><KeyField provider={provider} value={draft.apiKey} inputId={`${baseId}-key`} onChange={(apiKey) => setDraft((current) => { const next = { ...current }; if (apiKey === undefined) delete next.apiKey; else next.apiKey = apiKey; return next; })} /></div>
+        <div className="service-control">
+          <KeyField provider={provider} value={draft.apiKey} inputId={`${baseId}-key`} onChange={(apiKey) => setDraft((current) => { const next = { ...current }; if (apiKey === undefined) delete next.apiKey; else next.apiKey = apiKey; return next; })} />
+          {provider.keyShared && !provider.keySet && <small>No key needed here: the {provider.name} key you already saved is used.</small>}
+        </div>
       </div>}
       <div className="service-field">
         <label>Models</label>

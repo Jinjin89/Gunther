@@ -59,7 +59,7 @@ def _provider_out(provider: dict[str, Any], request: Request) -> dict[str, Any]:
     check = _store(request).speech_check(provider["id"])
     if check and check.get("fingerprint") != _fingerprint(provider):
         check = None
-    problem = speech_registry.problem_with(provider)
+    problem = speech_registry.problem_with(provider, registry.shared)
     if problem:
         status = {"state": "not_configured", "summary": "Needs an API key."}
     elif check and not check["ok"]:
@@ -80,6 +80,8 @@ def _provider_out(provider: dict[str, Any], request: Request) -> dict[str, Any]:
         "keySet": bool(key),
         "keyHint": secret_hint(key),
         "keySource": "environment" if registry.from_environment and key else "saved",
+        # No key of its own: the one saved for the same company under Models is used.
+        "keyShared": speech_registry.key_for(provider, registry.shared)[1],
         "keyOptional": preset.key_optional,
         "note": preset.note,
         "models": [
@@ -263,7 +265,7 @@ def save_roles(payload: RolesIn, request: Request) -> dict[str, Any]:
     return speech_overview(request)
 
 
-async def _test(provider: dict[str, Any]) -> dict[str, Any]:
+async def _test(provider: dict[str, Any], api_key: str | None) -> dict[str, Any]:
     if provider["kind"] == "sensevoice":
         status = await sensevoice_health(provider["baseUrl"], timeout=4.0)
         if status is None:
@@ -282,7 +284,7 @@ async def _test(provider: dict[str, Any]) -> dict[str, Any]:
         }
     optional = PRESETS[provider["kind"]].key_optional
     result, available = await list_models(
-        provider["baseUrl"], provider.get("apiKey"), provider["name"], key_optional=optional
+        provider["baseUrl"], api_key, provider["name"], key_optional=optional
     )
     chosen = [model["id"] for model in provider["models"]]
     missing = [model for model in chosen if available and model not in available]
@@ -309,7 +311,7 @@ async def test_provider(provider_id: str, payload: ProviderIn, request: Request)
         draft = speech_registry.clean_provider(draft)
     except SpeechError as error:
         raise HTTPException(422, str(error)) from error
-    outcome = await _test(draft)
+    outcome = await _test(draft, speech_registry.key_for(draft, _registry(request).shared)[0])
     entry = {k: outcome[k] for k in ("ok", "message", "warning")}
     _store(request).record_speech_check(
         provider_id, {**entry, "fingerprint": _fingerprint(draft)}
