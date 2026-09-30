@@ -174,6 +174,8 @@
 .provider-model-add { max-width: 640px; display: flex; align-items: center; gap: 6px; }
 .service-control .provider-model-add input { flex: 1; max-width: none; }
 .provider-offered { max-width: 640px; display: flex; flex-wrap: wrap; gap: 5px; }
+.provider-fetched { display: block; max-width: 640px; color: var(--gx-muted, inherit); }
+.provider-fetched.is-problem { color: var(--gx-danger, inherit); }
 .provider-offered .gx-chip { height: 26px; padding: 0 9px; font-family: var(--gx-font-mono); font-size: calc(11.5px * var(--gx-fs, 1)); }
 .provider-offered small { color: var(--gx-faint); font-size: var(--gx-text-2xs); align-self: center; }
 .provider-presets { padding: 12px 17px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }

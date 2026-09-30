@@ -16,6 +16,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +32,12 @@ from gunther.service_settings import ServiceSettingsStore
 TOKEN_FILE_NAME = "backend-auth-token"
 READY_TOKEN_DIR_NAME = "backend-ready"
 INSTANCE_LOCK_FILE_NAME = "backend-instance.lock"
+# Which process holds the lock, so the app can stop a service left over from a run
+# that ended badly (see src-tauri/src/lib.rs, reclaim_leftover_backend).
+OWNER_FILE_NAME = "backend-owner.json"
+# Once the app is gone, how long the service may take to finish politely, then at all.
+POLITE_STOP_SECONDS = 3
+FORCED_STOP_SECONDS = 5
 # API keys and service addresses set in the app's Settings; private like the database.
 SERVICE_SETTINGS_FILE_NAME = "service-settings.json"
 MOBILE_GATEWAY_PORT = 8788
@@ -272,8 +279,10 @@ def _ready_token_path(data_dir: Path, launch_nonce: str) -> Path:
     return data_dir / READY_TOKEN_DIR_NAME / filename
 
 
-def _write_launch_token(data_dir: Path, launch_nonce: str, token: str | None = None) -> str:
-    """Publish this launch's secret without sharing or replacing a path."""
+def _write_launch_token(
+    data_dir: Path, launch_nonce: str, token: str | None = None, port: int | None = None
+) -> str:
+    """Publish this launch's secret and port without sharing or replacing a path."""
 
     ready_dir = data_dir / READY_TOKEN_DIR_NAME
     _ensure_private_directory(ready_dir)
@@ -289,6 +298,8 @@ def _write_launch_token(data_dir: Path, launch_nonce: str, token: str | None = N
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             stream.write(f"{launch_nonce}\n{launch_token}\n")
+            if port is not None:
+                stream.write(f"{port}\n")
             stream.flush()
             os.fsync(stream.fileno())
         if os.name != "nt":
@@ -329,6 +340,37 @@ def _bind_loopback_socket(port: int) -> socket.socket:
         listener.close()
         raise
     return listener
+
+
+def _bind_loopback_socket_or_any(port: int) -> socket.socket:
+    """``port``, or any free port when another program uses it; that program is left alone."""
+
+    try:
+        return _bind_loopback_socket(port)
+    except OSError as error:
+        if error.errno != errno.EADDRINUSE:
+            raise
+        listener = _bind_loopback_socket(0)
+        logger.warning(
+            "Port %s is used by another program; listening on %s instead",
+            port,
+            listener.getsockname()[1],
+        )
+        return listener
+
+
+def _write_owner(data_dir: Path) -> Path:
+    """Say which process holds the data folder, for the app to find a leftover service."""
+
+    path = data_dir / OWNER_FILE_NAME
+    temporary = data_dir / f".{OWNER_FILE_NAME}.{os.getpid()}"
+    descriptor = os.open(
+        temporary, _private_open_flags(os.O_WRONLY | os.O_CREAT | os.O_TRUNC), 0o600
+    )
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write(f'{{"pid": {os.getpid()}}}\n')
+    os.replace(temporary, path)
+    return path
 
 
 def _local_mdns_hostname() -> str:
@@ -592,17 +634,62 @@ def _start_mobile_gateway(
     return handle
 
 
-def _stop_when_stdin_closes(server: uvicorn.Server) -> None:
-    """The desktop shell holds our stdin open; end of file means it exited, even by crashing."""
+def _stop_when_app_is_gone(
+    server: uvicorn.Server,
+    *,
+    parent_pid: int,
+    stdin_fd: int | None = 0,
+    poll_seconds: float = 2.0,
+    forced_after: float = FORCED_STOP_SECONDS,
+    exit_now: Callable[[int], None] = os._exit,
+) -> None:
+    """Stop once the app that started this service is gone, however it ended.
 
-    def watch() -> None:
-        with suppress(OSError):
-            while os.read(0, 4096):
-                pass
-        logger.info("The app has closed; shutting down")
+    The app holds our stdin open, so end of file means it exited, even by crashing or
+    being force-quit. Being handed to another parent says the same, should stdin ever
+    stay open. The service then gets a few seconds to finish politely; work still
+    running after ``forced_after`` (a long import, a model call) is cut off, since
+    every job is kept in the database and resumes on the next start.
+    """
+
+    gone = threading.Event()
+
+    def stop(reason: str) -> None:
+        if gone.is_set():
+            return
+        gone.set()
+        logger.info("%s; shutting down", reason)
         server.should_exit = True
 
-    threading.Thread(target=watch, name="gunther-parent-watch", daemon=True).start()
+        def deadline() -> None:
+            time.sleep(forced_after)
+            logger.warning(
+                "The service had not stopped %s s after the app closed; stopping it now",
+                forced_after,
+            )
+            logging.shutdown()
+            exit_now(0)
+
+        threading.Thread(target=deadline, name="gunther-forced-stop", daemon=True).start()
+
+    def watch_stdin(descriptor: int) -> None:
+        with suppress(OSError):
+            while os.read(descriptor, 4096):
+                pass
+        stop("The app has closed")
+
+    def watch_parent() -> None:
+        while not gone.wait(poll_seconds):
+            if os.getppid() != parent_pid:
+                stop("The app that started the service is gone")
+
+    if stdin_fd is not None:
+        threading.Thread(
+            target=watch_stdin, args=(stdin_fd,), name="gunther-parent-watch", daemon=True
+        ).start()
+    # On Windows a process keeps its parent's id after the parent exits; stdin tells.
+    if os.name != "nt":
+        threading.Thread(target=watch_parent, name="gunther-parent-poll", daemon=True).start()
 
 
 def main() -> None:
@@ -614,6 +701,8 @@ def main() -> None:
     parser.add_argument("--mobile-gateway-port", type=int, default=MOBILE_GATEWAY_PORT)
     parser.add_argument("--disable-mobile-gateway", action="store_true")
     parser.add_argument("--exit-when-stdin-closes", action="store_true")
+    # Use another free port when a program other than Gunther holds --port.
+    parser.add_argument("--any-port-if-taken", action="store_true")
     # The app's log folder (see app_log); without one, lines go to stderr.
     parser.add_argument("--log-dir", type=Path)
     args = parser.parse_args()
@@ -669,6 +758,7 @@ def _serve(args: argparse.Namespace) -> None:
     logger.info("Data folder %s; port %s", data_dir, args.port)
     listener: socket.socket | None = None
     ready_token_path: Path | None = None
+    owner_path: Path | None = None
     gateway = None
     # The lock is let go last, after the port and the ready token: a service started
     # while this one shuts down waits for the lock, instead of finding them still in use.
@@ -676,8 +766,14 @@ def _serve(args: argparse.Namespace) -> None:
         try:
             # A second instance or occupied port must fail before credentials
             # are published. The prebound socket is passed directly to Uvicorn.
-            listener = _bind_loopback_socket(args.port)
-            logger.info("Holding the data folder and port %s (%s)", args.port, since_start())
+            listener = (
+                _bind_loopback_socket_or_any(args.port)
+                if args.any_port_if_taken
+                else _bind_loopback_socket(args.port)
+            )
+            port = listener.getsockname()[1]
+            owner_path = _write_owner(data_dir)
+            logger.info("Holding the data folder and port %s (%s)", port, since_start())
             entries = _secure_data_tree(data_dir)
             logger.info("Checked %s entries in the data folder (%s)", entries, since_start())
             for private_dir in (data_dir / "assets", data_dir / "recordings"):
@@ -696,7 +792,8 @@ def _serve(args: argparse.Namespace) -> None:
             config = uvicorn.Config(
                 app_log.RequestLog(sidecar_app),
                 host="127.0.0.1",
-                port=args.port,
+                port=port,
+                timeout_graceful_shutdown=POLITE_STOP_SECONDS,
                 # Lines go to the app's log files (see app_log), not uvicorn's own handlers.
                 log_config=None,
                 log_level="info",
@@ -708,7 +805,7 @@ def _serve(args: argparse.Namespace) -> None:
             _secure_data_tree(data_dir)
 
             # Publish only after the listener, app, and database initialize.
-            _write_launch_token(data_dir, launch_nonce, auth_token)
+            _write_launch_token(data_dir, launch_nonce, auth_token, port)
             ready_token_path = _ready_token_path(data_dir, launch_nonce)
             logger.info("Ready for the app (%s)", since_start())
             if not args.disable_mobile_gateway:
@@ -721,7 +818,7 @@ def _serve(args: argparse.Namespace) -> None:
                 )
             server = uvicorn.Server(config)
             if args.exit_when_stdin_closes:
-                _stop_when_stdin_closes(server)
+                _stop_when_app_is_gone(server, parent_pid=os.getppid())
             with suppress(KeyboardInterrupt):
                 server.run(sockets=[listener])
         finally:
@@ -737,6 +834,8 @@ def _serve(args: argparse.Namespace) -> None:
                 listener.close()
             if ready_token_path is not None:
                 ready_token_path.unlink(missing_ok=True)
+            if owner_path is not None:
+                owner_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

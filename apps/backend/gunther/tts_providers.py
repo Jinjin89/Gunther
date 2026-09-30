@@ -73,6 +73,10 @@ class TtsProvider:
     reads_structure: bool = False
     note: str = ""
     sample: dict[str, str] = field(default_factory=dict)
+    # Where an OpenAI-style list of the key's models lives, for Fetch models; None: none.
+    models_url: Callable[[str], str] | None = None
+    # Which listed models speak through ``synthesize``.
+    speaks: Callable[[str], bool] = lambda _model: True
 
     def defaults(self) -> dict[str, str]:
         return {option.key: option.default for option in self.options}
@@ -120,6 +124,20 @@ def _qwen_endpoint(base_url: str) -> str:
     root = base_url.rstrip("/")
     root = root.removesuffix("/compatible-mode/v1").removesuffix("/api/v1")
     return f"{root}/api/v1/services/aigc/multimodal-generation/generation"
+
+
+def _qwen_models_url(base_url: str) -> str:
+    """DashScope lists a key's models on its OpenAI-compatible address."""
+
+    root = base_url.rstrip("/")
+    root = root.removesuffix("/compatible-mode/v1").removesuffix("/api/v1")
+    return f"{root}/compatible-mode/v1"
+
+
+def _qwen_speaks(model: str) -> bool:
+    # Real-time voices take a WebSocket, not the request synthesize() makes.
+    model = model.lower()
+    return "tts" in model and "realtime" not in model
 
 
 async def _qwen_synthesize(config: ProviderConfig, text: str) -> bytes:
@@ -193,6 +211,8 @@ PROVIDERS: dict[str, TtsProvider] = {
         ),
         synthesize=_qwen_synthesize,
         max_chars=500,
+        models_url=_qwen_models_url,
+        speaks=_qwen_speaks,
         note=(
             "Outside China use dashscope-intl.aliyuncs.com. "
             "The key is the same as Qwen's other services."
@@ -234,6 +254,44 @@ def wav_seconds(data: bytes) -> float:
             return reader.getnframes() / float(reader.getframerate() or 1)
     except (wave.Error, EOFError):
         return 0.0
+
+
+def _data_chunk(data: bytes) -> int | None:
+    """Where the audio of a WAV starts (just after its ``data`` chunk header), if it has one."""
+
+    offset = 12
+    while offset + 8 <= len(data):
+        chunk = data[offset : offset + 4]
+        size = int.from_bytes(data[offset + 4 : offset + 8], "little")
+        if chunk == b"data":
+            return offset + 8
+        offset += 8 + size + (size & 1)
+    return None
+
+
+def repair_wav(data: bytes) -> bytes:
+    """The same WAV with its sizes saying how much audio it really holds.
+
+    Qwen writes its files as a stream and leaves both sizes at their maximum
+    (about 2 GB). Chrome plays such a file anyway; WebKit, which the macOS app
+    uses, trusts the header and plays silence. Anything that is not a WAV, or
+    already agrees with itself, comes back unchanged.
+    """
+
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        return data
+    body = _data_chunk(data)
+    if body is None:
+        return data
+    audio = len(data) - body
+    riff = (len(data) - 8).to_bytes(4, "little")
+    size = audio.to_bytes(4, "little")
+    if data[4:8] == riff and data[body - 4 : body] == size:
+        return data
+    fixed = bytearray(data)
+    fixed[4:8] = riff
+    fixed[body - 4 : body] = size
+    return bytes(fixed)
 
 
 def describe_wav(data: bytes) -> tuple[str, bool]:

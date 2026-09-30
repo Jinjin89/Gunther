@@ -516,3 +516,54 @@ def test_a_long_answer_is_handed_over_in_parts_and_kept_whole(tmp_path: Path, sp
             client.get(f"/api/speech/jobs/{redo['jobId']}/parts/{index}", headers=SIDECAR)
         assert len(spoken) == 2 * count
         assert client.get("/api/settings/tts", headers=SIDECAR).json()["cache"]["clips"] == 1
+
+
+def test_fetch_models_offers_the_voices_the_key_can_use(tmp_path: Path, monkeypatch) -> None:
+    from gunther import tts_api
+    from gunther.service_settings import CheckResult
+
+    asked: list[tuple[str, str | None]] = []
+
+    async def listed(url, key, name, *, key_optional=False):
+        asked.append((url, key))
+        return CheckResult(True, "Connected"), [
+            "qwen-plus",
+            "qwen3-tts-flash",
+            "qwen3-tts-flash-realtime",
+            "qwen3-tts-instruct-flash",
+        ]
+
+    monkeypatch.setattr(tts_api, "list_models", listed)
+    with app_for(tmp_path) as client:
+        setup(client)
+        fetched = client.post(
+            "/api/settings/tts/providers/qwen/models",
+            headers=SIDECAR,
+            json={"apiKey": "sk-unsaved-9999"},
+        ).json()
+        missing = client.post("/api/settings/tts/providers/nobody/models", headers=SIDECAR, json={})
+    # Text models and real-time voices (a WebSocket) are not offered.
+    assert fetched == {
+        "ok": True,
+        "message": "2 voice models offered.",
+        "offered": ["qwen3-tts-flash", "qwen3-tts-instruct-flash"],
+    }
+    # DashScope lists models on its compatible address, asked with the unsaved key.
+    assert asked == [("https://dashscope.aliyuncs.com/compatible-mode/v1", "sk-unsaved-9999")]
+    assert missing.status_code == 404
+
+
+def test_fetch_models_says_when_the_key_is_refused(tmp_path: Path, monkeypatch) -> None:
+    from gunther import tts_api
+    from gunther.service_settings import CheckResult
+
+    async def refused(url, key, name, *, key_optional=False):
+        return CheckResult(False, "Qwen did not accept this API key."), []
+
+    monkeypatch.setattr(tts_api, "list_models", refused)
+    with app_for(tmp_path) as client:
+        setup(client)
+        fetched = client.post(
+            "/api/settings/tts/providers/qwen/models", headers=SIDECAR, json={}
+        ).json()
+    assert fetched == {"ok": False, "message": "Qwen did not accept this API key.", "offered": []}

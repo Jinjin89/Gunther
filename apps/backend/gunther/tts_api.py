@@ -9,13 +9,13 @@ import hashlib
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 
 from gunther import tts_providers
 from gunther.device_auth import AuthPrincipal
 from gunther.schemas import ApiModel
-from gunther.service_settings import ServiceSettingsStore, secret_hint
-from gunther.tts_providers import PROVIDERS, TtsError
+from gunther.service_settings import ServiceSettingsStore, list_models, secret_hint
+from gunther.tts_providers import PROVIDERS, TtsError, repair_wav
 from gunther.tts_service import (
     ROLES,
     Clip,
@@ -49,6 +49,13 @@ class ProviderIn(ApiModel):
 
 class RolesIn(ApiModel):
     roles: dict[str, dict[str, Any]]
+
+
+class ModelsIn(ApiModel):
+    """A provider's unsaved address and key, when asked before saving."""
+
+    base_url: str | None = None
+    api_key: str | None = None
 
 
 class SampleIn(ApiModel):
@@ -351,6 +358,52 @@ def save_roles(payload: RolesIn, request: Request) -> dict[str, Any]:
     return overview(request)
 
 
+@router.post("/settings/tts/providers/{provider_id}/models")
+async def fetch_models(provider_id: str, payload: ModelsIn, request: Request) -> dict[str, Any]:
+    """The voice models the supplier offers this key, for choosing one in Settings."""
+
+    _owner_only(request)
+    registries = _registries(request)
+    providers = providers_in_use(_config(request), *registries)
+    provider = next((p for p in providers if p["id"] == provider_id), None)
+    if provider is None:
+        raise HTTPException(404, "There is no such provider")
+    draft = {**provider}
+    if payload.base_url:
+        draft["baseUrl"] = payload.base_url
+    if payload.api_key:
+        draft["apiKey"] = payload.api_key
+    try:
+        provider = clean_provider(draft)
+    except TtsConfigError as error:
+        raise HTTPException(422, str(error)) from error
+    supplier = PROVIDERS[provider["kind"]]
+    if supplier.models_url is None:
+        return {
+            "ok": False,
+            "message": f"{supplier.name} has no list of models. Type the model's id.",
+            "offered": [],
+        }
+    key, _shared = key_for(provider, *registries)
+    result, listed = await list_models(
+        supplier.models_url(provider["baseUrl"]),
+        key,
+        supplier.name,
+        key_optional=supplier.key_optional,
+    )
+    if not result.ok:
+        return {"ok": False, "message": result.message, "offered": []}
+    offered = [model for model in listed if supplier.speaks(model)]
+    if not offered:
+        message = (
+            f"{supplier.name} lists {len(listed)} models for this key, none of them a voice. "
+            "Type the voice model's id from its console."
+        )
+    else:
+        message = f"{len(offered)} voice model{'s' if len(offered) != 1 else ''} offered."
+    return {"ok": True, "message": message, "offered": offered}
+
+
 @router.post("/settings/tts/sample")
 async def sample(payload: SampleIn, request: Request) -> Response:
     """Hear a voice before keeping it: a provider being edited, or the Answers job."""
@@ -476,13 +529,14 @@ def job_script(job_id: str, request: Request) -> dict[str, str]:
 
 
 @router.get("/speech/clips/{clip_id}/audio")
-def clip_audio(clip_id: str, request: Request) -> FileResponse:
+def clip_audio(clip_id: str, request: Request) -> Response:
     _owner_only(request)
     try:
         path = _service(request).audio_path(clip_id)
     except SpeechNotFound as error:
         raise HTTPException(404, str(error)) from error
-    return FileResponse(path, media_type="audio/wav")
+    # Clips kept before Gunther repaired Qwen's sizes are repaired as they are sent.
+    return Response(repair_wav(path.read_bytes()), media_type="audio/wav")
 
 
 @router.get("/speech/clips/{clip_id}/script")

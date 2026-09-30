@@ -35,6 +35,7 @@ from gunther.tts_providers import (
     TtsProvider,
     describe_wav,
     join_wav,
+    repair_wav,
     split_for_listening,
     split_for_speech,
     wav_seconds,
@@ -433,6 +434,11 @@ async def _made(resolved: Resolved, piece: str, label: str) -> bytes:
     started = time.perf_counter()
     audio = await resolved.provider.synthesize(resolved.config, piece)
     described, sound = describe_wav(audio)
+    if not sound:
+        # Qwen's sizes say 2 GB; WebKit would play that as silence.
+        audio = repair_wav(audio)
+        sound = describe_wav(audio)[1]
+        described += "; repaired" if sound else "; could not be repaired"
     logger.log(
         logging.INFO if sound else logging.WARNING,
         "Speech %s: %d chars from %s in %.0f ms → %s",

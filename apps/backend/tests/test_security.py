@@ -1,9 +1,11 @@
+import json
 import logging
 import os
 import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -486,3 +488,90 @@ def test_the_port_is_free_again_right_after_the_last_service_quit() -> None:
             _bind_loopback_socket(port)
     finally:
         reopened.close()
+
+
+def test_the_ready_file_names_the_port(tmp_path: Path) -> None:
+    nonce = "f" * 64
+    token = _write_launch_token(tmp_path, nonce, port=41234)
+    assert _ready_token_path(tmp_path, nonce).read_text(encoding="utf-8") == (
+        f"{nonce}\n{token}\n41234\n"
+    )
+
+
+def test_another_program_on_the_port_is_left_alone() -> None:
+    other = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    other.bind(("127.0.0.1", 0))
+    other.listen()
+    taken = other.getsockname()[1]
+    try:
+        listener = desktop_server._bind_loopback_socket_or_any(taken)
+        try:
+            assert listener.getsockname()[1] not in {0, taken}
+        finally:
+            listener.close()
+        # The other program still has its port.
+        assert other.getsockname()[1] == taken
+    finally:
+        other.close()
+
+
+def test_the_service_stops_when_its_app_is_gone_even_if_busy() -> None:
+    class Server:
+        should_exit = False
+
+    server = Server()
+    exited = threading.Event()
+    desktop_server._stop_when_app_is_gone(
+        server,  # type: ignore[arg-type]
+        parent_pid=-1,  # never our parent: the app is gone
+        stdin_fd=None,
+        poll_seconds=0.05,
+        forced_after=0.2,
+        exit_now=lambda _code: exited.set(),
+    )
+    deadline = time.monotonic() + 5
+    while not server.should_exit and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert server.should_exit
+    # Work still running after the grace period is cut off.
+    assert exited.wait(5)
+
+
+def test_a_launched_service_names_its_process_and_stops_when_the_app_closes(
+    tmp_path: Path,
+) -> None:
+    nonce = "3" * 64
+    helper = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "gunther.desktop_server",
+            "--data-dir",
+            str(tmp_path),
+            "--port",
+            "0",
+            "--disable-mobile-gateway",
+            "--launch-nonce",
+            nonce,
+            "--exit-when-stdin-closes",
+        ],
+        cwd=Path(desktop_server.__file__).resolve().parents[1],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        ready = _ready_token_path(tmp_path, nonce)
+        deadline = time.monotonic() + 60
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert ready.exists()
+        owner = json.loads((tmp_path / desktop_server.OWNER_FILE_NAME).read_text("utf-8"))
+        assert owner == {"pid": helper.pid}
+        assert helper.stdin is not None
+        helper.stdin.close()  # what the OS does when the app quits or is force-quit
+        assert helper.wait(timeout=desktop_server.FORCED_STOP_SECONDS + 5) == 0
+        assert not (tmp_path / desktop_server.OWNER_FILE_NAME).exists()
+    finally:
+        if helper.poll() is None:
+            helper.kill()

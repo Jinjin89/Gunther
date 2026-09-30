@@ -362,7 +362,9 @@ Gunther 健康响应应明确显示 `sensevoice_local`、在线回退或 `not_co
 
 ### Desktop sidecar
 
-- 安装版 Helper 固定使用 `127.0.0.1:28787`（开发后端为 8787）；端口被占用时，Helper 会在发布本次 token 前失败；
+- 安装版 Helper 优先使用 `127.0.0.1:28787`（开发后端为 8787）；28787 被别的程序占用时不会动那个程序，而是换一个空闲端口，并在 ready 文件里告诉 App；
+- 生命周期由 App 负责：打开 App 时启动 Helper；启动前若发现上次遗留的 Gunther Helper（`backend-owner.json` 记录的进程，且确认是 Gunther 的 Helper、启动它的 App 已不在），先停掉它（先 SIGTERM，3 秒后 SIGKILL），别的程序一律不碰；退出 App 时停止 Helper；App 崩溃或被强制退出时，Helper 从 stdin 管道关闭或父进程变化得知，最多 3 秒礼貌收尾、5 秒后强制退出（未完成的后台任务在下次启动时继续）；
+- 同一时间只运行一个 Gunther：再次打开会把已运行的窗口带到前面；
 - 查占用：macOS/Linux `lsof -nP -iTCP:28787 -sTCP:LISTEN`，Windows `netstat -ano | findstr 28787`；
 - 不要向占位进程发送数据，也不要关闭认证绕过；
 - 看资料库 `.gunther/logs/` 里当天的 `*.backend.log`：启动失败时最后有一行 `FATAL … knowledge service stopped: <原因>`，启动页也会直接显示这个原因；`*.app.log` 记录外壳与窗口一侧（见 [DEVELOPER.md](DEVELOPER.md#log-files)）；

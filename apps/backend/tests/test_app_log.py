@@ -137,3 +137,26 @@ def test_the_data_folder_check_survives_a_file_that_disappears(
 
     monkeypatch.setattr(Path, "lstat", lstat)
     assert desktop_server._secure_data_tree(tmp_path) == 1
+
+
+def test_qwens_two_gigabyte_header_is_repaired() -> None:
+    from gunther.tts_providers import repair_wav
+
+    sound = _wav(0.2)
+    # What Qwen sends: both sizes left at about 2 GB, as a stream writer leaves them.
+    qwen = (
+        sound[:4]
+        + (2147483591).to_bytes(4, "little")
+        + sound[8:40]
+        + (2147483547).to_bytes(4, "little")
+        + sound[44:]
+    )
+    assert not describe_wav(qwen)[1]
+    repaired = repair_wav(qwen)
+    assert repaired == sound
+    assert describe_wav(repaired)[1]
+    # A good file, or something that is not a WAV, is left as it is.
+    assert repair_wav(sound) is sound
+    assert repair_wav(b"<html>") == b"<html>"
+    with wave.open(io.BytesIO(repaired), "rb") as reader:
+        assert reader.getnframes() == 4800

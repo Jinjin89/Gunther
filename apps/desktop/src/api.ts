@@ -121,8 +121,12 @@ interface BackendConnection {
 }
 
 const tauriRuntime = "__TAURI_INTERNALS__" in window;
-// Development backend, then the installed app's own port (see src-tauri/src/lib.rs).
-const DESKTOP_BACKEND_URLS = ["http://127.0.0.1:8787", "http://127.0.0.1:28787"];
+// The installed app's service listens on this computer only, on 28787 unless another
+// program holds it (see src-tauri/src/lib.rs); development's backend is on 8787.
+const isLocalServiceAddress = (url: string) => {
+  const port = /^http:\/\/127\.0\.0\.1:(\d{1,5})$/.exec(url)?.[1];
+  return port !== undefined && Number(port) > 0 && Number(port) <= 65535;
+};
 let configuredBase = tauriRuntime ? undefined : (import.meta.env.VITE_API_URL as string | undefined);
 let apiBase = configuredBase ? `${configuredBase.replace(/\/$/, "")}/api` : "/api";
 let authToken = "";
@@ -143,7 +147,7 @@ async function initializeBackendConnection(): Promise<void> {
       log.error("startup", why);
       throw new Error(why);
     }
-    if (!DESKTOP_BACKEND_URLS.includes(connection.baseUrl)) {
+    if (!isLocalServiceAddress(connection.baseUrl)) {
       throw new Error("Gunther refused an unsafe local knowledge service address.");
     }
     configuredBase = connection.baseUrl;
@@ -648,6 +652,9 @@ export const knowledgeApi = {
   developerJobs: () => request<{ jobs: BackgroundJob[] }>("/developer/jobs").then((body) => body.jobs),
   /** A short line spoken with the settings on screen, saved or not. */
   ttsSample: (payload: TtsSampleInput) => requestBlob("/settings/tts/sample", { method: "POST", body: JSON.stringify(payload) }),
+  /** The voice models the supplier offers this key (the unsaved address and key when given). */
+  fetchTtsModels: (id: string, payload: { baseUrl?: string; apiKey?: string }) =>
+    request<{ ok: boolean; message: string; offered: string[] }>(`/settings/tts/providers/${encodeURIComponent(id)}/models`, { method: "POST", body: JSON.stringify(payload) }),
   /** Make (or find) the audio of an answer. */
   speakMessage: (sessionId: string, messageId: string) =>
     request<SpeechClip>(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/speech`, { method: "POST" }),

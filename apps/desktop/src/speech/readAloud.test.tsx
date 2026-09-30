@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   ttsSample: vi.fn(),
   clearTtsCache: vi.fn(),
   speechScript: vi.fn(),
+  fetchTtsModels: vi.fn(),
 }));
 vi.mock("../api", () => ({ knowledgeApi: api }));
 
@@ -192,6 +193,19 @@ describe("TtsSettings", () => {
     await user.click(screen.getByRole("button", { name: "Qwen" }));
     expect(api.addTtsProvider).toHaveBeenCalledWith({ kind: "qwen" });
     expect(await screen.findByText("Qwen 2")).toBeTruthy();
+  });
+
+  it("fetches the voice models the key can use and adds one", async () => {
+    const user = userEvent.setup();
+    api.fetchTtsModels.mockResolvedValue({ ok: true, message: "2 voice models offered.", offered: ["qwen3-tts-flash", "qwen3-tts-instruct-flash"] });
+    render(<TtsSettings onNotify={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: /Qwen\s+1 model/ }));
+    await user.click(screen.getByRole("button", { name: /Fetch models/ }));
+    expect(api.fetchTtsModels).toHaveBeenCalledWith("qwen", { baseUrl: "https://dashscope.aliyuncs.com" });
+    expect(await screen.findByText("2 voice models offered.")).toBeTruthy();
+    // The one already added is not offered again.
+    await user.click(screen.getByRole("button", { name: "qwen3-tts-instruct-flash" }));
+    expect(screen.getByRole("button", { name: "Remove qwen3-tts-instruct-flash" })).toBeTruthy();
   });
 
   it("clears the saved recordings and says tables are described first", async () => {

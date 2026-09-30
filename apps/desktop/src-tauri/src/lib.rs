@@ -12,6 +12,7 @@ mod app_log;
 mod application_menu;
 mod capture_shell;
 mod external_links;
+mod leftover;
 mod library_location;
 mod tray_glyph;
 
@@ -24,14 +25,12 @@ struct BackendRuntime {
 }
 
 struct BackendProcess(Mutex<BackendRuntime>);
-// Releases use their own uncommon port, so a development backend on 8787 never
+// Releases prefer their own uncommon port, so a development backend on 8787 never
 // blocks the installed app. It stays below 32768, the range systems hand out
-// for outgoing connections.
-const RELEASE_BACKEND_PORT: &str = "28787";
-#[cfg(debug_assertions)]
-const BACKEND_BASE_URL: &str = "http://127.0.0.1:8787";
-#[cfg(not(debug_assertions))]
-const BACKEND_BASE_URL: &str = "http://127.0.0.1:28787";
+// for outgoing connections. When another program holds it, the service takes any
+// free port and says which in its ready file.
+const RELEASE_BACKEND_PORT: u16 = 28787;
+const DEV_BACKEND_BASE_URL: &str = "http://127.0.0.1:8787";
 const TOKEN_FILE_NAME: &str = "backend-auth-token";
 /// How long to wait for the service, in tenths of a second.
 const BACKEND_WAIT_TENTHS: u32 = 900;
@@ -40,7 +39,7 @@ const READY_TOKEN_DIR_NAME: &str = "backend-ready";
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BackendConnection {
-    base_url: &'static str,
+    base_url: String,
     auth_token: String,
 }
 
@@ -144,12 +143,17 @@ fn ready_token_path(data_dir: &Path, launch_nonce: &str) -> PathBuf {
         .join(format!("{TOKEN_FILE_NAME}.{launch_nonce}"))
 }
 
-fn parse_ready_token(contents: &str, expected_nonce: &str) -> Option<String> {
+/// The launch's token and the port the service listens on (older services name none).
+fn parse_ready_token(contents: &str, expected_nonce: &str) -> Option<(String, u16)> {
     let mut lines = contents.lines();
     if lines.next()? != expected_nonce {
         return None;
     }
     let token = lines.next()?;
+    let port = match lines.next() {
+        Some(port) => port.parse::<u16>().ok().filter(|port| *port != 0)?,
+        None => RELEASE_BACKEND_PORT,
+    };
     if lines.next().is_some()
         || token.len() != 43
         || !token
@@ -158,7 +162,7 @@ fn parse_ready_token(contents: &str, expected_nonce: &str) -> Option<String> {
     {
         return None;
     }
-    Some(token.to_owned())
+    Some((token.to_owned(), port))
 }
 
 #[cfg(target_os = "macos")]
@@ -196,9 +200,11 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
     create_private_dir(&data_dir)?;
     create_private_dir(&data_dir.join(READY_TOKEN_DIR_NAME))?;
     let launch_nonce = generate_launch_nonce()?;
+    // A service a previous Gunther left running would hold the data folder.
+    leftover::reclaim(&data_dir);
     let executable = backend_executable(app)?;
     log::info!(
-        "Starting the knowledge service: {} on port {RELEASE_BACKEND_PORT}",
+        "Starting the knowledge service: {} (preferring port {RELEASE_BACKEND_PORT})",
         executable.display()
     );
     // Its output, a crash's traceback included, goes to today's backend log.
@@ -225,7 +231,9 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
         .arg("--data-dir")
         .arg(&data_dir)
         .arg("--port")
-        .arg(RELEASE_BACKEND_PORT)
+        .arg(RELEASE_BACKEND_PORT.to_string())
+        // Another program on that port is left alone: the service takes a free one.
+        .arg("--any-port-if-taken")
         .arg("--launch-nonce")
         .arg(&launch_nonce)
         // The helper exits when this pipe closes, so a crashed or force-quit
@@ -431,7 +439,7 @@ fn create_capture_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Err
 fn backend_connection(app: tauri::AppHandle) -> Result<BackendConnection, String> {
     if cfg!(debug_assertions) {
         return Ok(BackendConnection {
-            base_url: BACKEND_BASE_URL,
+            base_url: DEV_BACKEND_BASE_URL.into(),
             auth_token: String::new(),
         });
     }
@@ -454,13 +462,13 @@ fn backend_connection(app: tauri::AppHandle) -> Result<BackendConnection, String
     // file of the freshly installed helper; a helper that stopped is noticed at once.
     for attempt in 1..=BACKEND_WAIT_TENTHS {
         if let Ok(contents) = secure_read(&token_path) {
-            if let Some(token) = parse_ready_token(&contents, &launch_nonce) {
+            if let Some((token, port)) = parse_ready_token(&contents, &launch_nonce) {
                 log::info!(
-                    "Connected to the knowledge service after {} ms",
+                    "Connected to the knowledge service on port {port} after {} ms",
                     started.elapsed().as_millis()
                 );
                 return Ok(BackendConnection {
-                    base_url: BACKEND_BASE_URL,
+                    base_url: format!("http://127.0.0.1:{port}"),
                     auth_token: token,
                 });
             }
@@ -512,6 +520,14 @@ fn restart_backend(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        // Opening Gunther while it runs shows the running one, which already has
+        // the service; a second app would find the data folder taken.
+        .plugin(tauri_plugin_single_instance::init(
+            |app, _arguments, _folder| {
+                log::info!("Gunther was opened again; showing the running one");
+                let _ = capture_shell::show_main_window(app.clone());
+            },
+        ))
         .plugin(app_log::plugin())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -633,7 +649,20 @@ mod tests {
         let other = "b".repeat(64);
         let token = "A".repeat(43);
         let contents = format!("{nonce}\n{token}\n");
-        assert_eq!(parse_ready_token(&contents, &nonce), Some(token));
+        // A service that names no port listens on the usual one.
+        assert_eq!(
+            parse_ready_token(&contents, &nonce),
+            Some((token.clone(), 28787))
+        );
+        assert_eq!(
+            parse_ready_token(&format!("{contents}41234\n"), &nonce),
+            Some((token.clone(), 41234))
+        );
+        assert_eq!(parse_ready_token(&format!("{contents}0\n"), &nonce), None);
+        assert_eq!(
+            parse_ready_token(&format!("{contents}99999\n"), &nonce),
+            None
+        );
         assert_eq!(parse_ready_token(&contents, &other), None);
         assert_eq!(parse_ready_token("malformed", &nonce), None);
         assert_eq!(
