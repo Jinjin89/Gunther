@@ -309,7 +309,7 @@ export function SpeechSettings({ onNotify }: { onNotify: (message: string) => vo
             </div>}
         </li>
       </ul>
-      {overview.fromEnvironment && <p className="library-folder-note">These come from the backend’s .env (STT_*, SENSEVOICE_* or QWEN_STT_* settings). Anything you change here is saved in Gunther’s own settings and takes their place.</p>}
+      {overview.fromEnvironment && import.meta.env.DEV && <p className="library-folder-note">These come from the backend’s .env (STT_*, SENSEVOICE_* or QWEN_STT_* settings). Anything you change here is saved in Gunther’s own settings and takes their place.</p>}
       {!overview.persisted && <p className="library-folder-note">This backend has no settings file, so changes last until it restarts.</p>}
     </>}
   </section>;

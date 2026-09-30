@@ -195,3 +195,63 @@
   .service-field > label { min-height: 0; }
   .service-badge { display: none; }
 }
+
+/*
+ * Settings: a quiet list of topics on the left, one topic on the right.
+ * Neutral like the sidebar; the only colour is the dot on a topic that needs attention.
+ */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 188px minmax(0, 1fr);
+  align-items: start;
+  gap: 28px;
+}
+.settings-nav {
+  position: sticky;
+  top: 12px;
+  display: grid;
+  gap: 2px;
+}
+.settings-nav-item {
+  height: 34px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--gx-muted);
+  font-size: var(--gx-text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--gx-dur-fast) var(--gx-ease), color var(--gx-dur-fast) var(--gx-ease);
+}
+.settings-nav-item:hover { background: var(--gx-hover); color: var(--gx-ink); }
+.settings-nav-item[aria-current="page"] { background: var(--gx-hover); color: var(--gx-ink); font-weight: 600; }
+.settings-nav-item:focus-visible { outline: none; box-shadow: var(--gx-ring); }
+.settings-nav-icon { display: inline-flex; color: var(--gx-faint); }
+.settings-nav-item[aria-current="page"] .settings-nav-icon { color: var(--gx-ink); }
+.settings-nav-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-nav-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--gx-danger); }
+
+.settings-pane { min-width: 0; }
+.settings-pane-header { margin: 2px 0 14px; }
+.settings-pane-header h2 { margin: 0; font-size: var(--gx-text-lg); font-weight: 600; color: var(--gx-ink); }
+.settings-pane-header p { margin: 4px 0 0; color: var(--gx-faint); font-size: var(--gx-text-sm); }
+/* Every block of a topic is one card; the first sits right under the heading. */
+.settings-pane > section {
+  margin-top: 13px;
+  overflow: hidden;
+  border: 1px solid var(--gx-line-2);
+  border-radius: var(--gx-radius-lg);
+  background: var(--gx-surface);
+}
+.settings-pane > header + section { margin-top: 0; }
+.settings-pane > section > .setting-row:last-child { border-bottom: 0; }
+
+@media (max-width: 900px) {
+  .settings-layout { grid-template-columns: 1fr; gap: 14px; }
+  .settings-nav { position: static; display: flex; gap: 4px; overflow-x: auto; padding-bottom: 2px; }
+  .settings-nav-item { flex: none; }
+}

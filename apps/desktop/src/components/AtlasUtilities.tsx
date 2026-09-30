@@ -59,6 +59,7 @@ import { comboKeys, formatCombo, useEscape, useShortcut, withShortcut } from "..
 import { LibraryFolderSettings } from "./LibraryFolderSettings";
 import { SemanticSearchSetting } from "./SemanticSearchSetting";
 import { ServiceSettings } from "./ServiceSettings";
+import { SETTINGS_PANES, SettingsNav, useSettingsAttention, useSettingsPane } from "./SettingsLayout";
 import { TypographySettings } from "./TypographySettings";
 import { ModelSettings } from "../models/ModelSettings";
 import { SpeechSettings } from "../models/SpeechSettings";
@@ -879,6 +880,8 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
   const [revokingDeviceId, setRevokingDeviceId] = useState<string | null>(null);
   const [nowMilliseconds, setNowMilliseconds] = useState(() => Date.now());
   const [menuBarMode, setMenuBarModeState] = useState<MenuBarMode>("always");
+  const [pane, setPane] = useSettingsPane();
+  const attention = useSettingsAttention(pane);
   useEffect(() => {
     if (isTauriRuntime()) void getMenuBarMode().then(setMenuBarModeState).catch(() => undefined);
   }, []);
@@ -1025,35 +1028,47 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
     }
   };
 
+  const current = SETTINGS_PANES.find((item) => item.id === pane) ?? SETTINGS_PANES[0]!;
   return <div className="utility-page settings-v2 page-enter">
-    <header className="gx-page-header"><div><h1>Settings</h1><p>Local storage is the default. Online services stay visible and optional, and AI never silently rewrites accepted knowledge.</p></div></header>
-    <div className="settings-columns">
+    <header className="gx-page-header"><div><h1>Settings</h1><p>Everything stays on this computer unless you add an online service. Keys never leave it.</p></div></header>
+    <div className="settings-layout">
+    <SettingsNav pane={pane} attention={attention} onPane={setPane} />
+    <div className="settings-pane" role="region" aria-labelledby="settings-pane-title">
+    <header className="settings-pane-header"><h2 id="settings-pane-title">{current.label}</h2><p>{current.description}</p></header>
+
+    {pane === "general" && <section>
+      <label className="setting-row"><span><strong>Theme</strong><small>Applied immediately and remembered on this device.</small></span><select value={theme} aria-label="Theme" onChange={(event) => onTheme(event.target.value as ThemePreference)}><option value="light">Light</option><option value="dark">Dark</option><option value="system">Match system</option></select></label>
+      <TypographySettings />
+      {isTauriRuntime() && <label className="setting-row"><span><strong>Menu bar</strong><small>Gunther’s mark stays in the menu bar for quick capture. Recordings always show there, with their timer, while they run.</small></span><select value={menuBarMode} aria-label="Menu bar" onChange={(event) => changeMenuBarMode(event.target.value as MenuBarMode)}><option value="always">Always show</option><option value="whileCapturing">Only while capturing</option></select></label>}
+      <div className="setting-row"><span><strong>Keyboard shortcuts</strong><small>Capture, search and move through Inbox without the mouse. Press {formatCombo("mod+/")} any time.</small></span><button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => window.dispatchEvent(new CustomEvent("gunther:show-shortcuts"))}>Show all</button></div>
+    </section>}
+
+    {pane === "models" && <>
+      <ModelSettings onNotify={onNotify} />
+      <ServiceSettings onNotify={onNotify} only={["summaries"]} heading={{ title: "Summaries", description: "A short summary written for each source after it is read, by the Analysis model above." }} />
+    </>}
+
+    {pane === "voice" && <>
+      <SpeechSettings onNotify={onNotify} />
+      <TtsSettings onNotify={onNotify} />
+    </>}
+
+    {pane === "search" && <>
       <section>
-        <div className="setting-heading"><Settings2 size={16} /><span><strong>Appearance</strong><small>Default workspace presentation</small></span></div>
-        <label className="setting-row"><span><strong>Theme</strong><small>Applied immediately and remembered on this device.</small></span><select value={theme} aria-label="Theme" onChange={(event) => onTheme(event.target.value as ThemePreference)}><option value="light">Light</option><option value="dark">Dark</option><option value="system">Match system</option></select></label>
-        <TypographySettings />
-        <div className="setting-row"><span><strong>Home</strong><small>Gunther opens on search. Type @ to scope a search to a library, or press ⌘K from anywhere.</small></span><span className="setting-state">Search</span></div>
-        {isTauriRuntime() && <label className="setting-row"><span><strong>Menu bar</strong><small>Gunther’s mark stays in the menu bar for quick capture. Recordings always show there, with their timer, while they run.</small></span><select value={menuBarMode} aria-label="Menu bar" onChange={(event) => changeMenuBarMode(event.target.value as MenuBarMode)}><option value="always">Always show</option><option value="whileCapturing">Only while capturing</option></select></label>}
-        <div className="setting-row"><span><strong>Keyboard shortcuts</strong><small>Capture, search and move through Inbox without the mouse. Press {formatCombo("mod+/")} any time.</small></span><button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => window.dispatchEvent(new CustomEvent("gunther:show-shortcuts"))}>Show all</button></div>
-      </section>
-      <section>
-        <div className="setting-heading"><ShieldCheck size={16} /><span><strong>On this device</strong><small>Where your knowledge is kept and searched</small></span></div>
-        <div className="setting-row"><span><strong>Local workbook</strong><small>Sources, audio, and accepted revisions stay on this device.</small></span><span className={`setting-state ${online === false ? "is-muted" : ""}`}><i />{online === null ? "Checking" : online ? "Ready" : "Offline"}</span></div>
+        <div className="setting-heading"><ShieldCheck size={16} /><span><strong>In your libraries</strong><small>Searched on this computer; nothing is sent anywhere.</small></span></div>
         <SemanticSearchSetting />
       </section>
-    </div>
+      <ServiceSettings onNotify={onNotify} only={["web_search"]} heading={{ title: "On the web", description: "Used by Ask only when you turn Web on in the composer. The key stays on this computer." }} />
+    </>}
 
-    <ModelSettings onNotify={onNotify} />
+    {pane === "library" && <>
+      <section>
+        <div className="setting-row"><span><strong>Local workbook</strong><small>Sources, audio, and accepted revisions stay on this device.</small></span><span className={`setting-state ${online === false ? "is-muted" : ""}`}><i />{online === null ? "Checking" : online ? "Ready" : "Offline"}</span></div>
+      </section>
+      <LibraryFolderSettings onNotify={onNotify} onCopy={(label, value) => void copyValue(label, value)} />
+    </>}
 
-    <SpeechSettings onNotify={onNotify} />
-
-    <TtsSettings onNotify={onNotify} />
-
-    <ServiceSettings onNotify={onNotify} />
-
-    <LibraryFolderSettings onNotify={onNotify} onCopy={(label, value) => void copyValue(label, value)} />
-
-    <section className="mobile-connection-settings">
+    {pane === "devices" && <section className="mobile-connection-settings">
       <div className="setting-heading"><Smartphone size={16} /><span><strong>Mobile connection</strong><small>Pair a phone without exposing your desktop token</small></span></div>
       <div className="mobile-connection-overview">
         <div className={`mobile-address-boundary is-${connection.kind}`}>
@@ -1103,7 +1118,9 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
           {device.revokedAt ? <span className="revoked-at">{formatAbsoluteTime(device.revokedAt)}</span> : <button className="quiet-button is-danger" type="button" disabled={revokingDeviceId === device.id} onClick={() => void revokeDevice(device)}>{revokingDeviceId === device.id ? "Revoking…" : "Revoke"}</button>}
         </article>)}
       </div>}
-    </section>
+    </section>}
+    </div>
+    </div>
   </div>;
 }
 

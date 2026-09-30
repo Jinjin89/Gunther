@@ -285,7 +285,15 @@ function ServiceEditor({ service, persisted, onSaved, onNotify }: {
 }
 
 /** Keys, addresses and models for the outside services Gunther uses, drawn from what the service declares. */
-export function ServiceSettings({ onNotify }: { onNotify: (message: string) => void }) {
+/**
+ * Online services and their keys. `only` shows some of them, under their own heading, so each can
+ * sit in the Settings topic it belongs to (summaries with Models, web search with Search).
+ */
+export function ServiceSettings({ onNotify, only, heading }: {
+  onNotify: (message: string) => void;
+  only?: string[];
+  heading?: { title: string; description: string };
+}) {
   const [services, setServices] = useState<Service[] | null>(null);
   const [persisted, setPersisted] = useState(true);
   const [problem, setProblem] = useState<string | null>(null);
@@ -317,12 +325,12 @@ export function ServiceSettings({ onNotify }: { onNotify: (message: string) => v
   return <section className="service-settings" aria-labelledby="service-settings-heading">
     <div className="setting-heading">
       <Plug size={16} />
-      <span><strong id="service-settings-heading">Services</strong><small>Web search, transcription and summaries. Changes apply right away, and keys stay on this computer.</small></span>
+      <span><strong id="service-settings-heading">{heading?.title ?? "Services"}</strong><small>{heading?.description ?? "Web search and summaries. Changes apply right away, and keys stay on this computer."}</small></span>
     </div>
     {!services && !problem && <div className="setting-row"><span><strong>Loading…</strong><small>Asking the local service which services it uses.</small></span></div>}
     {problem && <div className="setting-row is-problem"><span><strong><CircleAlert size={13} />Unavailable</strong><small>{problem}</small></span></div>}
     {services && <ul className="service-list">
-      {services.map((service) => {
+      {services.filter((service) => !only || only.includes(service.id)).map((service) => {
         const expanded = open === service.id;
         const panelId = `service-panel-${service.id}`;
         return <li key={service.id} className={`service-item ${expanded ? "is-open" : ""}`}>
