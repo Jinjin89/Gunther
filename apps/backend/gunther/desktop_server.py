@@ -192,6 +192,8 @@ def _desktop_settings(data_dir: Path, auth_token: str) -> Settings:
         # Originals kept here by earlier versions move into the library root once.
         "previous_assets_dir": data_dir / "assets",
         "previous_recordings_dir": data_dir / "recordings",
+        # Spoken answers are a cache: kept with the app's data, not next to the bundled code.
+        "speech_dir": data_dir / "speech",
         "auth_token": auth_token,
         "seed_demo": False,
         "service_settings_file": data_dir / SERVICE_SETTINGS_FILE_NAME,
