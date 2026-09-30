@@ -91,12 +91,14 @@ const draftOf = (provider: TtsProvider): ProviderDraft => ({
   models: provider.models.map((model) => ({ id: model.id, label: model.label })),
 });
 
-function ProviderEditor({ provider, preset, onOverview, onRemoved, onNotify }: {
+function ProviderEditor({ provider, preset, onOverview, onRemoved, onNotify, onVerified }: {
   provider: TtsProvider;
   preset: TtsPreset | undefined;
   onOverview: (next: TtsOverview) => void;
   onRemoved: () => void;
   onNotify: (message: string) => void;
+  /** A sample played (true) or failed (false): the badge follows. */
+  onVerified: (working: boolean) => void;
 }) {
   const baseId = useId();
   const initial = draftOf(provider);
@@ -105,7 +107,7 @@ function ProviderEditor({ provider, preset, onOverview, onRemoved, onNotify }: {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"saving" | "sample" | "removing" | null>(null);
   const mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; }, []);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const changed = JSON.stringify(draft) !== JSON.stringify(initial);
   const urlProblem = validUrl(draft.baseUrl) ? null : "Use a full address starting with http:// or https://.";
 
@@ -125,7 +127,9 @@ function ProviderEditor({ provider, preset, onOverview, onRemoved, onNotify }: {
     setError(null);
     try {
       await playSample({ providerId: provider.id, baseUrl: draft.baseUrl.trim(), ...(draft.apiKey ? { apiKey: draft.apiKey } : {}), ...(draft.models[0] ? { model: draft.models[0].id } : {}) });
+      onVerified(true);
     } catch (reason) {
+      onVerified(false);
       if (mounted.current) setError(message(reason, "The sample could not be played."));
     } finally {
       if (mounted.current) setBusy(null);
@@ -230,6 +234,13 @@ export function TtsSettings({ onNotify }: { onNotify: (message: string) => void 
   const [open, setOpen] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [clearing, setClearing] = useState(false);
+  /** Providers whose sample played this session: shown as Connected. */
+  const [verified, setVerified] = useState<ReadonlySet<string>>(new Set());
+  const verify = (id: string, working: boolean) => setVerified((current) => {
+    const next = new Set(current);
+    if (working) next.add(id); else next.delete(id);
+    return next;
+  });
 
   useEffect(() => {
     let active = true;
@@ -299,11 +310,13 @@ export function TtsSettings({ onNotify }: { onNotify: (message: string) => void 
             <button type="button" className="service-summary" aria-expanded={expanded} aria-controls={panelId} onClick={() => setOpen(expanded ? null : provider.id)}>
               <span className="service-icon" aria-hidden="true"><span className="provider-initial">{provider.name.slice(0, 1)}</span></span>
               <span className="service-heading"><strong>{provider.name}</strong><small>{provider.status.summary}{provider.models.length > 0 && provider.status.state === "configured" ? ` · ${provider.models.map((model) => model.label).join(", ")}` : ""}</small></span>
-              <StatusBadge provider={provider} />
+              {verified.has(provider.id) && provider.status.state === "configured"
+                ? <span className="service-badge is-configured"><i aria-hidden="true" />Connected</span>
+                : <StatusBadge provider={provider} />}
               <ChevronRight size={15} className="service-chevron" aria-hidden="true" />
             </button>
             {expanded && <div id={panelId} className="service-panel">
-              <ProviderEditor key={provider.id} provider={provider} preset={overview.presets.find((preset) => preset.kind === provider.kind)} onOverview={setOverview} onRemoved={() => setOpen(null)} onNotify={onNotify} />
+              <ProviderEditor key={provider.id} provider={provider} preset={overview.presets.find((preset) => preset.kind === provider.kind)} onOverview={setOverview} onRemoved={() => setOpen(null)} onNotify={onNotify} onVerified={(working) => verify(provider.id, working)} />
             </div>}
           </li>;
         })}
