@@ -65,8 +65,11 @@ import type {
   SpeechRole,
   SpeechTestResult,
   SpeechClip,
-  TtsInput,
+  TtsProviderInput,
+  TtsRoleInput,
+  TtsSampleInput,
   TtsOverview,
+  TtsRole,
   ServiceSettingValue,
   ServiceTestResult,
   TrashItem,
@@ -569,10 +572,17 @@ export const knowledgeApi = {
   testSpeechProvider: (id: string, payload: SpeechProviderInput) =>
     request<SpeechTestResult>(`/settings/speech/providers/${encodeURIComponent(id)}/test`, { method: "POST", body: JSON.stringify(payload) }),
   ttsOverview: () => request<TtsOverview>("/settings/tts"),
-  saveTts: (payload: TtsInput) => request<TtsOverview>("/settings/tts", { method: "PUT", body: JSON.stringify(payload) }),
+  addTtsProvider: (payload: TtsProviderInput) =>
+    request<TtsOverview>("/settings/tts/providers", { method: "POST", body: JSON.stringify(payload) }),
+  updateTtsProvider: (id: string, payload: TtsProviderInput) =>
+    request<TtsOverview>(`/settings/tts/providers/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(payload) }),
+  removeTtsProvider: (id: string) =>
+    request<TtsOverview>(`/settings/tts/providers/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  saveTtsRoles: (roles: Partial<Record<TtsRole["id"], TtsRoleInput>>) =>
+    request<TtsOverview>("/settings/tts/roles", { method: "PUT", body: JSON.stringify({ roles }) }),
   clearTtsCache: () => request<TtsOverview>("/settings/tts/cache", { method: "DELETE" }),
   /** A short line spoken with the settings on screen, saved or not. */
-  ttsSample: (payload: TtsInput) => requestBlob("/settings/tts/sample", { method: "POST", body: JSON.stringify(payload) }),
+  ttsSample: (payload: TtsSampleInput) => requestBlob("/settings/tts/sample", { method: "POST", body: JSON.stringify(payload) }),
   /** Make (or find) the audio of an answer. */
   speakMessage: (sessionId: string, messageId: string) =>
     request<SpeechClip>(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/speech`, { method: "POST" }),

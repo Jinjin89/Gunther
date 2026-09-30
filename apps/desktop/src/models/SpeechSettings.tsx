@@ -29,13 +29,16 @@ const validUrl = (value: string) => {
   }
 };
 
-function StatusBadge({ provider }: { provider: SpeechProvider }) {
+/** The parts of a provider its status and key fields need, shared by Transcription and Read aloud. */
+type KeyedProvider = Pick<SpeechProvider, "name" | "keySet" | "keyHint" | "keyShared" | "keyOptional" | "status">;
+
+export function StatusBadge({ provider }: { provider: Pick<KeyedProvider, "status"> }) {
   const { state, check } = provider.status;
   const label = state === "configured" && check?.ok ? "Connected" : STATE_LABELS[state];
   return <span className={`service-badge is-${state}`}><i aria-hidden="true" />{label}</span>;
 }
 
-function KeyField({ provider, value, onChange, inputId }: { provider: SpeechProvider; value: string | undefined; onChange: (value: string | undefined) => void; inputId: string }) {
+export function KeyField({ provider, value, onChange, inputId }: { provider: KeyedProvider; value: string | undefined; onChange: (value: string | undefined) => void; inputId: string }) {
   const [visible, setVisible] = useState(false);
   const [replacing, setReplacing] = useState(false);
   useEffect(() => setReplacing(false), [provider.keyHint, provider.keySet]);

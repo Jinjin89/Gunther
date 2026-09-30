@@ -46,10 +46,33 @@ class TtsConfigError(ValueError):
 
 
 # Settings ---------------------------------------------------------------------------
+#
+# Shaped like transcription (see speech_registry): *providers* are connections you
+# set up (a supplier, an address, a key, the models chosen from it), and *jobs*
+# pick one model and the voice it speaks with. Reading answers is the only job
+# today; a new one is a new entry in ROLES.
+
+
+@dataclass(frozen=True)
+class Role:
+    id: str
+    label: str
+    description: str
+
+
+ROLES: tuple[Role, ...] = (
+    Role(
+        "answers",
+        "Answers",
+        "Speaks an answer when you press Listen, or by itself if you turn that on.",
+    ),
+)
+ROLE_BY_ID = {role.id: role for role in ROLES}
 
 
 def default_config() -> dict[str, Any]:
-    return {"active": None, "autoRead": False, "providers": {}}
+    # No providers saved yet: one of each supplier is offered (see providers_in_use).
+    return {"providers": None, "roles": {}}
 
 
 def _clean_url(value: Any) -> str:
@@ -69,15 +92,61 @@ def _clean_key(value: Any) -> str | None:
     return text
 
 
-def clean_provider_entry(provider: TtsProvider, raw: dict[str, Any]) -> dict[str, Any]:
-    model = str(raw.get("model") or provider.models[0]).strip()
-    if not model or len(model) > 200 or re.search(r"\s", model):
+def _clean_model(item: Any) -> dict[str, str]:
+    if isinstance(item, str):
+        item = {"id": item}
+    if not isinstance(item, dict):
+        raise TtsConfigError("Each model needs an id.")
+    model_id = str(item.get("id") or "").strip()
+    if not model_id or len(model_id) > 200 or re.search(r"\s", model_id):
         raise TtsConfigError("Model: use the model's id, without spaces.")
-    options: dict[str, str] = {}
-    given = raw.get("options") or {}
+    label = str(item.get("label") or "").strip()[:60] or model_id
+    return {"id": model_id, "label": label}
+
+
+def new_provider_id(kind: str, taken: set[str]) -> str:
+    if kind not in taken:
+        return kind
+    while True:
+        candidate = f"{kind}-{secrets.token_hex(2)}"
+        if candidate not in taken:
+            return candidate
+
+
+def clean_provider(raw: dict[str, Any], existing_ids: set[str] = frozenset()) -> dict[str, Any]:
+    kind = raw.get("kind")
+    if kind not in PROVIDERS:
+        raise TtsConfigError("Choose a kind of provider.")
+    supplier = PROVIDERS[kind]
+    provider_id = str(raw.get("id") or "").strip() or new_provider_id(kind, set(existing_ids))
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", provider_id):
+        raise TtsConfigError("A provider's id must be short, lowercase letters and digits.")
+    given = raw.get("models")
+    models = [_clean_model(item) for item in (supplier.models if given is None else given)]
+    ids = [model["id"] for model in models]
+    if len(set(ids)) != len(ids):
+        raise TtsConfigError("A model is listed twice.")
+    if len(models) > 50:
+        raise TtsConfigError("Choose at most 50 models per provider.")
+    return {
+        "id": provider_id,
+        "name": str(raw.get("name") or "").strip()[:60] or supplier.name,
+        "kind": kind,
+        "baseUrl": _clean_url(raw.get("baseUrl") or supplier.base_url),
+        "apiKey": _clean_key(raw.get("apiKey")),
+        "models": models,
+    }
+
+
+def clean_options(supplier: TtsProvider, given: Any) -> dict[str, str]:
+    """A supplier's options (voice, language...), each checked against its choices."""
+
+    if given is None:
+        given = {}
     if not isinstance(given, dict):
         raise TtsConfigError("Options are not in a shape Gunther understands.")
-    for option in provider.options:
+    options: dict[str, str] = {}
+    for option in supplier.options:
         value = str(given.get(option.key) or option.default).strip()
         allowed = {choice.value for choice in option.choices}
         if not value or len(value) > 80:
@@ -85,36 +154,151 @@ def clean_provider_entry(provider: TtsProvider, raw: dict[str, Any]) -> dict[str
         if allowed and value not in allowed and not option.allow_custom:
             raise TtsConfigError(f"{option.label}: {value} is not one of this supplier's choices.")
         options[option.key] = value
-    return {
-        "apiKey": _clean_key(raw.get("apiKey")),
-        "baseUrl": _clean_url(raw.get("baseUrl") or provider.base_url),
-        "model": model,
-        "options": options,
-    }
+    return options
 
 
-def clean_config(raw: dict[str, Any]) -> dict[str, Any]:
-    active = raw.get("active")
-    if active is not None and active not in PROVIDERS:
-        raise TtsConfigError("Choose a supplier from the list.")
-    if not isinstance(raw.get("autoRead", False), bool):
+def model_ref(provider: dict[str, Any], model: dict[str, Any]) -> str:
+    return f"{provider['id']}/{model['id']}"
+
+
+def find_model(
+    providers: list[dict[str, Any]], ref: str | None
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    for provider in providers:
+        for model in provider["models"]:
+            if model_ref(provider, model) == ref:
+                return provider, model
+    return None
+
+
+def clean_role(role_id: str, raw: Any, providers: list[dict[str, Any]]) -> dict[str, Any]:
+    role = ROLE_BY_ID.get(role_id)
+    if role is None:
+        raise TtsConfigError(f"Unknown job: {role_id}")
+    if not isinstance(raw, dict):
+        raise TtsConfigError(f"{role.label}: choose a model.")
+    ref = raw.get("model")
+    if ref is not None and not isinstance(ref, str):
+        raise TtsConfigError(f"{role.label}: choose a model.")
+    found = find_model(providers, ref) if ref else None
+    if ref and found is None:
+        raise TtsConfigError(f"{role.label}: that model is not set up.")
+    auto_read = raw.get("autoRead", False)
+    if not isinstance(auto_read, bool):
         raise TtsConfigError("Reading automatically must be on or off.")
-    providers = {}
-    for kind, entry in (raw.get("providers") or {}).items():
+    options = clean_options(PROVIDERS[found[0]["kind"]], raw.get("options")) if found else {}
+    return {"model": ref or None, "options": options, "autoRead": auto_read}
+
+
+def upgrade_config(raw: dict[str, Any] | None) -> dict[str, Any]:
+    """Bring settings saved before providers to the current shape.
+
+    ``{"active", "autoRead", "providers": {kind: {apiKey, baseUrl, model, options}}}``
+    becomes a provider per saved supplier and the Answers job on the active one.
+    """
+
+    if not raw:
+        return default_config()
+    if "roles" in raw or not isinstance(raw.get("providers"), dict):
+        return {"providers": raw.get("providers"), "roles": dict(raw.get("roles") or {})}
+    providers: list[dict[str, Any]] = []
+    roles: dict[str, Any] = {}
+    active = raw.get("active")
+    for kind, entry in raw["providers"].items():
         if kind not in PROVIDERS or not isinstance(entry, dict):
-            raise TtsConfigError(f"Unknown supplier: {kind}")
-        providers[kind] = clean_provider_entry(PROVIDERS[kind], entry)
-    return {"active": active, "autoRead": bool(raw.get("autoRead", False)), "providers": providers}
+            continue
+        model = str(entry.get("model") or PROVIDERS[kind].models[0])
+        providers.append(
+            {
+                "id": kind,
+                "kind": kind,
+                "baseUrl": entry.get("baseUrl"),
+                "apiKey": entry.get("apiKey"),
+                "models": list(dict.fromkeys([*PROVIDERS[kind].models, model])),
+            }
+        )
+        if kind == active:
+            roles["answers"] = {
+                "model": f"{kind}/{model}",
+                "options": entry.get("options") or {},
+                "autoRead": bool(raw.get("autoRead")),
+            }
+    if active in PROVIDERS and active not in raw["providers"]:
+        # Chosen but never edited: the supplier as it comes.
+        providers.append({"id": active, "kind": active})
+        roles["answers"] = {
+            "model": f"{active}/{PROVIDERS[active].models[0]}",
+            "autoRead": bool(raw.get("autoRead")),
+        }
+    return {"providers": providers or None, "roles": roles}
 
 
-def shared_key(kind: str, *registries: Any) -> str | None:
-    """A key already saved for the same company elsewhere (Qwen's, for its models)."""
+def clean_config(raw: dict[str, Any] | None) -> dict[str, Any]:
+    config = upgrade_config(raw)
+    providers: list[dict[str, Any]] | None = None
+    if config["providers"] is not None:
+        providers = []
+        for item in config["providers"]:
+            if not isinstance(item, dict):
+                raise TtsConfigError("A provider is not in a shape Gunther understands.")
+            if item.get("id") in {provider["id"] for provider in providers}:
+                raise TtsConfigError("Two providers have the same id.")
+            providers.append(clean_provider(item, {provider["id"] for provider in providers}))
+    roles = {
+        role_id: clean_role(role_id, choice, providers or [])
+        for role_id, choice in (config["roles"] or {}).items()
+    }
+    return {"providers": providers, "roles": roles}
+
+
+def shared_key(kind: str, *registries: Any) -> tuple[str, str | None] | None:
+    """A key already saved for the same company elsewhere (Qwen's, for its models).
+
+    Returned with the address it was saved with: DashScope keys belong to one region.
+    """
 
     for registry in registries:
         for provider in getattr(registry, "providers", []) or []:
             if provider.get("kind") == kind and provider.get("apiKey"):
-                return provider["apiKey"]
+                return provider["apiKey"], provider.get("baseUrl")
     return None
+
+
+def _region_root(supplier: TtsProvider, base_url: str | None) -> str:
+    """Where a supplier lives in the region a shared key was set up for."""
+
+    host = urlsplit(base_url or "").hostname or ""
+    if supplier.kind == "qwen" and host.startswith("dashscope-intl."):
+        return "https://dashscope-intl.aliyuncs.com"
+    return supplier.base_url
+
+
+def providers_in_use(config: dict[str, Any], *registries: Any) -> list[dict[str, Any]]:
+    """Saved providers, or, before any are saved, one of each supplier to start from."""
+
+    if config.get("providers") is not None:
+        return config["providers"]
+    providers = []
+    for kind, supplier in PROVIDERS.items():
+        shared = shared_key(kind, *registries)
+        base_url = _region_root(supplier, shared[1] if shared else None)
+        providers.append(clean_provider({"id": kind, "kind": kind, "baseUrl": base_url}))
+    return providers
+
+
+def key_for(provider: dict[str, Any], *registries: Any) -> tuple[str | None, bool]:
+    """The key a provider calls with, and whether it is one saved elsewhere."""
+
+    if provider.get("apiKey"):
+        return provider["apiKey"], False
+    shared = shared_key(provider["kind"], *registries)
+    return (shared[0], True) if shared else (None, False)
+
+
+def problem_with(provider: dict[str, Any], *registries: Any) -> str | None:
+    if key_for(provider, *registries)[0] or PROVIDERS[provider["kind"]].key_optional:
+        return None
+    return f"{provider['name']} needs an API key."
 
 
 @dataclass(frozen=True)
@@ -124,34 +308,36 @@ class Resolved:
     key_shared: bool
 
 
-def resolve(
-    saved: dict[str, Any] | None, *registries: Any, kind: str | None = None
+def resolve_model(
+    provider: dict[str, Any], model_id: str, options: dict[str, str] | None, *registries: Any
 ) -> tuple[Resolved | None, str | None]:
-    """The supplier in use and how to call it, or why there is none."""
+    """How to call one provider's model, or why it cannot be called."""
 
-    config = saved or default_config()
-    kind = kind or config.get("active")
-    if not kind:
-        return None, "Choose a voice supplier in Settings → Read aloud."
-    provider = PROVIDERS.get(kind)
-    if provider is None:
+    supplier = PROVIDERS.get(provider["kind"])
+    if supplier is None:
         return None, "That supplier is no longer available."
-    entry = (config.get("providers") or {}).get(kind) or clean_provider_entry(provider, {})
-    key = entry.get("apiKey")
-    shared = False
-    if not key:
-        key = shared_key(kind, *registries)
-        shared = bool(key)
-    if not key and not provider.key_optional:
-        return None, f"{provider.name} needs an API key."
-    return (
-        Resolved(
-            provider,
-            ProviderConfig(entry["baseUrl"], key, entry["model"], dict(entry["options"])),
-            shared,
-        ),
-        None,
-    )
+    problem = problem_with(provider, *registries)
+    if problem:
+        return None, problem
+    key, shared = key_for(provider, *registries)
+    config = ProviderConfig(provider["baseUrl"], key, model_id, clean_options(supplier, options))
+    return Resolved(supplier, config, shared), None
+
+
+def resolve(
+    saved: dict[str, Any] | None, *registries: Any, role: str = "answers"
+) -> tuple[Resolved | None, str | None]:
+    """The model a job speaks with and how to call it, or why there is none."""
+
+    config = clean_config(saved)
+    choice = config["roles"].get(role) or {}
+    if not choice.get("model"):
+        return None, "Choose a voice in Settings → Read aloud."
+    found = find_model(providers_in_use(config, *registries), choice["model"])
+    if found is None:
+        return None, "Its model was removed. Choose another in Settings → Read aloud."
+    provider, model = found
+    return resolve_model(provider, model["id"], choice.get("options"), *registries)
 
 
 # Clips ---------------------------------------------------------------------------------

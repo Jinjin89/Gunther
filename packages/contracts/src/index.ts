@@ -509,48 +509,87 @@ export interface TtsOption {
   choices: { value: string; label: string }[];
 }
 
-export interface TtsProvider {
+/** A voice supplier Gunther can add: its models and the options only it has. */
+export interface TtsPreset {
   kind: string;
   name: string;
   baseUrl: string;
-  model: string;
   models: string[];
   keyOptional: boolean;
   /** Its voice model speaks tables and pictures itself, so nothing is described first. */
   readsStructure: boolean;
   note: string;
   options: TtsOption[];
-  /** The option values in use. */
-  values: Record<string, string>;
+}
+
+/** A voice provider that has been set up, shaped like a transcription provider. */
+export interface TtsProvider {
+  id: string;
+  name: string;
+  kind: string;
+  baseUrl: string;
   keySet: boolean;
   keyHint: string | null;
-  /** The key comes from the same company's language or transcription models. */
+  /** No key of its own: the one saved for the same company under Models is used. */
   keyShared: boolean;
+  keyOptional: boolean;
+  readsStructure: boolean;
+  note: string;
+  models: SpeechModel[];
+  status: {
+    state: ServiceState;
+    summary: string;
+    check: (ServiceCheck & { checkedAt: string }) | null;
+  };
+}
+
+/** A job: which voice model speaks it, with which voice. */
+export interface TtsRole {
+  id: "answers";
+  label: string;
+  description: string;
+  model: string | null;
+  /** The supplier of the chosen model, whose options apply. */
+  kind: string | null;
+  options: Record<string, string>;
+  autoRead: boolean;
   problem: string | null;
 }
 
 export interface TtsOverview {
   persisted: boolean;
-  active: string | null;
+  /** The Answers job reads new answers by itself. */
   autoRead: boolean;
-  /** Why reading aloud is not ready, or null when it is. */
+  /** Why answers cannot be read aloud, or null when they can. */
   problem: string | null;
   providers: TtsProvider[];
+  roles: TtsRole[];
+  presets: TtsPreset[];
   cache: { clips: number; bytes: number };
 }
 
-export interface TtsInput {
-  active?: string | null;
-  autoRead?: boolean;
-  /** Which supplier `provider` edits; the active one when left out. */
+export interface TtsProviderInput {
   kind?: string;
-  provider?: {
-    /** Left out: keep the saved key. Empty: remove it. */
-    apiKey?: string;
-    baseUrl?: string;
-    model?: string;
-    options?: Record<string, string>;
-  };
+  name?: string;
+  baseUrl?: string;
+  /** Left out: keep the saved key. Empty: remove it. */
+  apiKey?: string;
+  models?: (string | { id: string; label?: string })[];
+}
+
+export interface TtsRoleInput {
+  model?: string | null;
+  options?: Record<string, string>;
+  autoRead?: boolean;
+}
+
+/** A short line spoken with the values on screen: a provider being edited, or the Answers job. */
+export interface TtsSampleInput {
+  providerId?: string;
+  baseUrl?: string;
+  apiKey?: string;
+  model?: string;
+  options?: Record<string, string>;
 }
 
 /** An answer read aloud and kept on this computer. */

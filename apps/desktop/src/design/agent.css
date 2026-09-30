@@ -209,11 +209,19 @@
 .gx-home-answer footer { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .gx-home-answer footer .speak-answer { margin-left: -6px; }
 
-.tts-panel { padding: 4px 0 8px; }
-.tts-editor { display: grid; gap: 12px; }
-.tts-field { display: grid; gap: 4px; }
-.tts-field > label { font-size: calc(12px * var(--gx-fs, 1)); font-weight: 600; }
-.tts-field > small { color: var(--atlas-faint); font-size: calc(12px * var(--gx-fs, 1)); }
-.tts-advanced summary { cursor: pointer; font-size: calc(12px * var(--gx-fs, 1)); color: var(--atlas-faint); }
-.tts-actions { display: flex; gap: 8px; justify-content: flex-end; }
-.tts-problem { margin: 0 0 6px; }
+/* Settings → Read aloud: the voice of a job sits under its model, like transcription's language. */
+.tts-role-options { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding-top: 4px; }
+.tts-option { display: inline-flex; align-items: center; gap: 6px; color: var(--gx-muted); font-size: var(--gx-text-xs); }
+.tts-option select,
+.tts-option input {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--gx-line-2);
+  border-radius: 7px;
+  background: var(--gx-surface);
+  color: var(--gx-ink);
+  font-size: var(--gx-text-xs);
+}
+.tts-option input { width: 120px; }
+.tts-option select:focus-visible,
+.tts-option input:focus-visible { outline: none; box-shadow: var(--gx-ring); }

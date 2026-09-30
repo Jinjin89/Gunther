@@ -10,7 +10,10 @@ const api = vi.hoisted(() => ({
   speakMessage: vi.fn(),
   speechAudio: vi.fn(),
   ttsOverview: vi.fn(),
-  saveTts: vi.fn(),
+  saveTtsRoles: vi.fn(),
+  addTtsProvider: vi.fn(),
+  updateTtsProvider: vi.fn(),
+  removeTtsProvider: vi.fn(),
   ttsSample: vi.fn(),
   clearTtsCache: vi.fn(),
 }));
@@ -27,20 +30,22 @@ class FakeAudio {
 }
 
 const message = { id: "m1", sessionId: "s1" };
-const overview = (patch: Partial<TtsOverview> = {}): TtsOverview => ({
+const QWEN_OPTIONS = [
+  { key: "voice", label: "Voice", default: "Cherry", allowCustom: true, help: "", choices: [{ value: "Cherry", label: "Cherry" }, { value: "Ethan", label: "Ethan" }] },
+  { key: "language", label: "Language", default: "Auto", allowCustom: false, help: "", choices: [{ value: "Auto", label: "Detect it" }, { value: "English", label: "English" }] },
+];
+const overview = (patch: Partial<TtsOverview> = {}, job: Partial<TtsOverview["roles"][number]> = {}): TtsOverview => ({
   persisted: true,
-  active: "qwen",
   autoRead: false,
   problem: null,
   cache: { clips: 2, bytes: 3 * 1024 * 1024 },
   providers: [{
-    kind: "qwen", name: "Qwen", baseUrl: "https://dashscope.aliyuncs.com", model: "qwen3-tts-flash", models: ["qwen3-tts-flash"],
-    keyOptional: false, readsStructure: false, note: "", values: { voice: "Cherry", language: "Auto" }, keySet: true, keyHint: "1234", keyShared: false, problem: null,
-    options: [
-      { key: "voice", label: "Voice", default: "Cherry", allowCustom: true, help: "", choices: [{ value: "Cherry", label: "Cherry" }, { value: "Ethan", label: "Ethan" }] },
-      { key: "language", label: "Language", default: "Auto", allowCustom: false, help: "", choices: [{ value: "Auto", label: "Detect it" }, { value: "English", label: "English" }] },
-    ],
+    id: "qwen", name: "Qwen", kind: "qwen", baseUrl: "https://dashscope.aliyuncs.com", keySet: true, keyHint: "1234", keyShared: false, keyOptional: false, readsStructure: false, note: "",
+    models: [{ id: "qwen3-tts-flash", ref: "qwen/qwen3-tts-flash", label: "qwen3-tts-flash" }],
+    status: { state: "configured", summary: "1 model", check: null },
   }],
+  roles: [{ id: "answers", label: "Answers", description: "Speaks an answer.", model: "qwen/qwen3-tts-flash", kind: "qwen", options: { voice: "Cherry", language: "Auto" }, autoRead: false, problem: null, ...job }],
+  presets: [{ kind: "qwen", name: "Qwen", baseUrl: "https://dashscope.aliyuncs.com", models: ["qwen3-tts-flash"], keyOptional: false, readsStructure: false, note: "", options: QWEN_OPTIONS }],
   ...patch,
 });
 
@@ -110,29 +115,55 @@ describe("TtsSettings", () => {
     URL.createObjectURL = vi.fn(() => "blob:sample");
   });
 
-  it("saves a supplier-specific option and can play a sample before saving", async () => {
+  it("chooses the voice on the Answers job and hears it", async () => {
     const user = userEvent.setup();
-    api.saveTts.mockResolvedValue(overview({ providers: [{ ...overview().providers[0]!, values: { voice: "Ethan", language: "Auto" } }] }));
+    api.saveTtsRoles.mockResolvedValue(overview({}, { options: { voice: "Ethan", language: "Auto" } }));
     api.ttsSample.mockResolvedValue(new Blob(["x"]));
     render(<TtsSettings onNotify={() => undefined} />);
     await user.selectOptions(await screen.findByLabelText("Voice"), "Ethan");
-    await user.click(screen.getByRole("button", { name: /hear a sample/i }));
-    expect(api.ttsSample).toHaveBeenCalledWith(expect.objectContaining({ kind: "qwen", provider: expect.objectContaining({ options: { voice: "Ethan", language: "Auto" } }) }));
-    expect(api.ttsSample.mock.calls[0]?.[0].provider).not.toHaveProperty("apiKey");
-    await user.click(screen.getByRole("button", { name: "Save" }));
-    expect(api.saveTts).toHaveBeenCalledTimes(1);
+    expect(api.saveTtsRoles).toHaveBeenCalledWith({ answers: { options: { voice: "Ethan", language: "Auto" } } });
+    await user.click(screen.getByRole("button", { name: "Hear" }));
+    expect(api.ttsSample).toHaveBeenCalledWith({ options: { voice: "Ethan", language: "Auto" } });
   });
 
-  it("turns automatic reading on and clears the saved recordings", async () => {
+  it("turns reading off by choosing Off, and automatic reading on", async () => {
     const user = userEvent.setup();
-    api.saveTts.mockResolvedValue(overview({ autoRead: true }));
-    api.clearTtsCache.mockResolvedValue(overview({ cache: { clips: 0, bytes: 0 } }));
+    api.saveTtsRoles.mockResolvedValue(overview({ autoRead: true }, { autoRead: true }));
     render(<TtsSettings onNotify={() => undefined} />);
     await user.click(await screen.findByRole("switch", { name: "Read new answers automatically" }));
-    expect(api.saveTts).toHaveBeenCalledWith({ autoRead: true });
+    expect(api.saveTtsRoles).toHaveBeenCalledWith({ answers: { autoRead: true } });
+    await user.selectOptions(screen.getByLabelText("Answers"), "");
+    expect(api.saveTtsRoles).toHaveBeenLastCalledWith({ answers: { model: null } });
+  });
+
+  it("lists providers like Transcription: edit one, hear it with its unsaved key, add another", async () => {
+    const user = userEvent.setup();
+    api.ttsSample.mockResolvedValue(new Blob(["x"]));
+    api.updateTtsProvider.mockResolvedValue(overview());
+    const two = overview();
+    two.providers.push({ ...two.providers[0]!, id: "qwen-1a2b", name: "Qwen 2", keySet: false, keyHint: null, status: { state: "not_configured", summary: "Needs an API key.", check: null } });
+    api.addTtsProvider.mockResolvedValue(two);
+    render(<TtsSettings onNotify={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: /Qwen\s+1 model/ }));
+    await user.click(screen.getByRole("button", { name: "Replace" }));
+    await user.type(screen.getByPlaceholderText("Paste your key"), "sk-new-5678");
+    await user.click(screen.getByRole("button", { name: /hear a sample/i }));
+    expect(api.ttsSample).toHaveBeenCalledWith({ providerId: "qwen", baseUrl: "https://dashscope.aliyuncs.com", apiKey: "sk-new-5678", model: "qwen3-tts-flash" });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(api.updateTtsProvider).toHaveBeenCalledWith("qwen", expect.objectContaining({ apiKey: "sk-new-5678" }));
+    await user.click(screen.getByRole("button", { name: /Add provider/ }));
+    await user.click(screen.getByRole("button", { name: "Qwen" }));
+    expect(api.addTtsProvider).toHaveBeenCalledWith({ kind: "qwen" });
+    expect(await screen.findByText("Qwen 2")).toBeTruthy();
+  });
+
+  it("clears the saved recordings and says tables are described first", async () => {
+    const user = userEvent.setup();
+    api.clearTtsCache.mockResolvedValue(overview({ cache: { clips: 0, bytes: 0 } }));
+    render(<TtsSettings onNotify={() => undefined} />);
+    expect(await screen.findByText(/described in words by your language model/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Delete" }));
     expect(api.clearTtsCache).toHaveBeenCalled();
     expect(await screen.findByText("None yet.")).toBeTruthy();
-    expect(screen.getByText(/described in words by your language model/)).toBeTruthy();
   });
 });

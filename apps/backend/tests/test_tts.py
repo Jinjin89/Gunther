@@ -1,5 +1,6 @@
 import dataclasses
 import io
+import json
 import wave
 from pathlib import Path
 
@@ -84,62 +85,167 @@ def answer(client: TestClient, content: str) -> tuple[str, str]:
     return session_id, message_id
 
 
-def setup(client: TestClient, **extra) -> dict:
-    body = {"active": "qwen", "provider": {"apiKey": KEY}, **extra}
-    response = client.put("/api/settings/tts", headers=SIDECAR, json=body)
+QWEN_TTS = "qwen/qwen3-tts-flash"
+
+
+def setup(client: TestClient, voice: str | None = None, auto_read: bool = False) -> dict:
+    """Qwen with a key, and the Answers job on its voice model."""
+
+    response = client.put(
+        "/api/settings/tts/providers/qwen", headers=SIDECAR, json={"apiKey": KEY}
+    )
+    assert response.status_code == 200, response.text
+    return choose(client, voice=voice, auto_read=auto_read)
+
+
+def choose(
+    client: TestClient, model: str = QWEN_TTS, voice: str | None = None, auto_read: bool = False
+) -> dict:
+    job: dict = {"model": model, "autoRead": auto_read}
+    if voice:
+        job["options"] = {"voice": voice}
+    response = client.put(
+        "/api/settings/tts/roles", headers=SIDECAR, json={"roles": {"answers": job}}
+    )
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def answers_job(found: dict) -> dict:
+    return next(role for role in found["roles"] if role["id"] == "answers")
 
 
 # Settings ---------------------------------------------------------------------------
 
 
-def test_it_starts_unset_and_says_what_is_missing(tmp_path: Path) -> None:
+def test_it_starts_off_with_qwen_offered(tmp_path: Path) -> None:
     with app_for(tmp_path) as client:
         found = client.get("/api/settings/tts", headers=SIDECAR).json()
-    assert found["active"] is None and found["autoRead"] is False
-    assert "Choose a voice supplier" in found["problem"]
+    assert found["autoRead"] is False and "Choose a voice" in found["problem"]
+    assert answers_job(found)["model"] is None
     [qwen] = found["providers"]
-    assert qwen["kind"] == "qwen" and qwen["readsStructure"] is False
-    voice = next(option for option in qwen["options"] if option["key"] == "voice")
+    assert qwen["kind"] == "qwen" and qwen["status"]["summary"] == "Needs an API key."
+    assert [model["ref"] for model in qwen["models"]] == [QWEN_TTS]
+    [preset] = found["presets"]
+    voice = next(option for option in preset["options"] if option["key"] == "voice")
     assert voice["default"] == "Cherry" and voice["allowCustom"] is True
 
 
-def test_saved_key_is_never_sent_back_and_options_are_kept(tmp_path: Path) -> None:
+def test_saved_key_is_never_sent_back_and_the_voice_is_kept(tmp_path: Path) -> None:
     with app_for(tmp_path) as client:
-        found = setup(
-            client, autoRead=True, provider={"apiKey": KEY, "options": {"voice": "Ethan"}}
-        )
+        found = setup(client, voice="Ethan", auto_read=True)
         [qwen] = found["providers"]
-        assert found["active"] == "qwen" and found["autoRead"] is True and found["problem"] is None
+        job = answers_job(found)
+        assert found["autoRead"] is True and found["problem"] is None
         assert qwen["keySet"] and qwen["keyHint"] == "1234" and KEY not in str(found)
-        assert qwen["values"] == {"voice": "Ethan", "language": "Auto"}
+        assert job["model"] == QWEN_TTS and job["kind"] == "qwen"
+        assert job["options"] == {"voice": "Ethan", "language": "Auto"}
     # A restart reads it back from the file.
     with app_for(tmp_path) as client:
         again = client.get("/api/settings/tts", headers=SIDECAR).json()
-        assert again["active"] == "qwen" and again["providers"][0]["values"]["voice"] == "Ethan"
+        assert answers_job(again)["options"]["voice"] == "Ethan" and again["autoRead"] is True
+
+
+def test_settings_saved_before_providers_are_carried_over(tmp_path: Path) -> None:
+    old = {
+        "active": "qwen",
+        "autoRead": True,
+        "providers": {
+            "qwen": {
+                "apiKey": KEY,
+                "baseUrl": "https://dashscope-intl.aliyuncs.com",
+                "model": "qwen3-tts-flash",
+                "options": {"voice": "Kai", "language": "Chinese"},
+            }
+        },
+    }
+    (tmp_path / "service-settings.json").write_text(json.dumps({"tts": old}))
+    with app_for(tmp_path) as client:
+        found = client.get("/api/settings/tts", headers=SIDECAR).json()
+    [qwen] = found["providers"]
+    assert qwen["baseUrl"] == "https://dashscope-intl.aliyuncs.com" and qwen["keySet"]
+    job = answers_job(found)
+    assert job["model"] == QWEN_TTS and job["options"] == {"voice": "Kai", "language": "Chinese"}
+    assert found["autoRead"] is True and found["problem"] is None
 
 
 def test_a_key_saved_for_qwen_models_is_shared(tmp_path: Path) -> None:
+    intl = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
     with app_for(tmp_path) as client:
         client.post(
             "/api/settings/providers",
             headers=SIDECAR,
-            json={"kind": "qwen", "apiKey": KEY, "models": ["qwen3-max"]},
+            json={"kind": "qwen", "apiKey": KEY, "baseUrl": intl, "models": ["qwen3-max"]},
         )
-        found = setup(client, provider={})
-        assert found["problem"] is None and found["providers"][0]["keyShared"] is True
+        found = choose(client)
+        [qwen] = found["providers"]
+        assert found["problem"] is None and qwen["keyShared"] is True and qwen["keySet"] is False
+        # The key belongs to one region, so the voice follows its address.
+        assert qwen["baseUrl"] == "https://dashscope-intl.aliyuncs.com"
+
+
+def test_providers_are_added_edited_and_removed_like_transcription(tmp_path: Path) -> None:
+    with app_for(tmp_path) as client:
+        setup(client, voice="Ethan")
+        added = client.post(
+            "/api/settings/tts/providers",
+            headers=SIDECAR,
+            json={"kind": "qwen", "baseUrl": "https://dashscope-intl.aliyuncs.com"},
+        )
+        assert added.status_code == 201
+        names = [provider["name"] for provider in added.json()["providers"]]
+        second = next(p for p in added.json()["providers"] if p["id"] != "qwen")
+        assert names == ["Qwen", "Qwen 2"] and second["status"]["state"] == "not_configured"
+
+        renamed = client.put(
+            f"/api/settings/tts/providers/{second['id']}",
+            headers=SIDECAR,
+            json={"name": "Qwen (international)", "apiKey": "sk-intl-5678"},
+        ).json()
+        second = next(p for p in renamed["providers"] if p["id"] == second["id"])
+        assert second["name"] == "Qwen (international)" and second["keyHint"] == "5678"
+
+        # Removing the provider in use moves the job to the one left, keeping its voice.
+        moved = client.delete("/api/settings/tts/providers/qwen", headers=SIDECAR).json()
+        job = answers_job(moved)
+        assert job["model"] == f"{second['id']}/qwen3-tts-flash"
+        assert job["options"]["voice"] == "Ethan" and moved["problem"] is None
+        # Removing the last one turns reading off rather than failing.
+        off = client.delete(f"/api/settings/tts/providers/{second['id']}", headers=SIDECAR)
+        assert answers_job(off.json())["model"] is None
+        assert "Choose a voice" in off.json()["problem"]
 
 
 def test_bad_settings_are_refused(tmp_path: Path) -> None:
     with app_for(tmp_path) as client:
-        for body in (
-            {"active": "nobody"},
-            {"active": "qwen", "provider": {"baseUrl": "ftp://x"}},
-            {"active": "qwen", "provider": {"options": {"language": "Klingon"}}},
-            {"active": "qwen", "provider": {"apiKey": "has space"}},
-        ):
-            assert client.put("/api/settings/tts", headers=SIDECAR, json=body).status_code == 422
+        setup(client)
+        refused = [
+            client.post("/api/settings/tts/providers", headers=SIDECAR, json={"kind": "nobody"}),
+            client.put(
+                "/api/settings/tts/providers/qwen", headers=SIDECAR, json={"baseUrl": "ftp://x"}
+            ),
+            client.put(
+                "/api/settings/tts/providers/qwen", headers=SIDECAR, json={"apiKey": "has space"}
+            ),
+            client.put(
+                "/api/settings/tts/roles",
+                headers=SIDECAR,
+                json={"roles": {"answers": {"model": "nobody/model"}}},
+            ),
+            client.put(
+                "/api/settings/tts/roles",
+                headers=SIDECAR,
+                json={"roles": {"answers": {"options": {"language": "Klingon"}}}},
+            ),
+            client.put(
+                "/api/settings/tts/roles",
+                headers=SIDECAR,
+                json={"roles": {"summaries": {"model": QWEN_TTS}}},
+            ),
+        ]
+        assert [response.status_code for response in refused] == [422] * 6
+        missing = client.put("/api/settings/tts/providers/nope", headers=SIDECAR, json={})
+        assert missing.status_code == 404
 
 
 def test_paired_phones_cannot_read_or_change_it(tmp_path: Path) -> None:
@@ -150,13 +256,13 @@ def test_paired_phones_cannot_read_or_change_it(tmp_path: Path) -> None:
 # Reading an answer -----------------------------------------------------------------------
 
 
-def test_reading_needs_a_supplier_first(tmp_path: Path, spoken) -> None:
+def test_reading_needs_a_voice_first(tmp_path: Path, spoken) -> None:
     with app_for(tmp_path) as client:
         session_id, message_id = answer(client, "Hello.")
         response = client.post(
             f"/api/sessions/{session_id}/messages/{message_id}/speech", headers=SIDECAR
         )
-    assert response.status_code == 409 and "supplier" in response.json()["detail"]
+    assert response.status_code == 409 and "Choose a voice" in response.json()["detail"]
     assert spoken == []
 
 
@@ -174,7 +280,7 @@ def test_the_second_listen_is_played_from_disk_not_made_again(tmp_path: Path, sp
         assert audio.status_code == 200 and audio.headers["content-type"] == "audio/wav"
         assert wav_seconds(audio.content) == pytest.approx(0.1, abs=0.01)
         # A different voice is a different clip.
-        setup(client, provider={"options": {"voice": "Ethan"}})
+        choose(client, voice="Ethan")
         third = client.post(url, headers=SIDECAR).json()
         assert third["id"] != first["id"] and third["voice"] == "Ethan" and len(spoken) == 2
         stats = client.get("/api/settings/tts", headers=SIDECAR).json()["cache"]
@@ -264,13 +370,19 @@ def test_a_sample_can_be_heard_before_saving(tmp_path: Path, spoken) -> None:
     with app_for(tmp_path) as client:
         setup(client)
         sample = client.post(
+            "/api/settings/tts/sample", headers=SIDECAR, json={"options": {"voice": "Kai"}}
+        )
+        # A provider being edited is heard with its unsaved key.
+        edited = client.post(
             "/api/settings/tts/sample",
             headers=SIDECAR,
-            json={"provider": {"options": {"voice": "Kai"}}},
+            json={"providerId": "qwen", "apiKey": "sk-unsaved-9999"},
         )
         saved = client.get("/api/settings/tts", headers=SIDECAR).json()
     assert sample.status_code == 200 and spoken[0][0]["voice"] == "Kai"
-    assert saved["providers"][0]["values"]["voice"] == "Cherry"
+    assert edited.status_code == 200 and spoken[1][0]["voice"] == "Cherry"
+    assert answers_job(saved)["options"]["voice"] == "Cherry"
+    assert saved["providers"][0]["keyHint"] == "1234"
 
 
 def test_only_answers_of_this_session_can_be_read(tmp_path: Path, spoken) -> None:

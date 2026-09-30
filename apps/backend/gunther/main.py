@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import event, select
 from sqlalchemy.orm import ORMExecuteState, Session, sessionmaker
 
-from gunther import model_registry, speech_registry, vector_index
+from gunther import model_registry, speech_registry, tts_service, vector_index
 from gunther.api import router
 from gunther.asset_service import AssetService
 from gunther.config import PROJECT_ROOT, Settings, get_settings
@@ -157,9 +157,15 @@ def _shared_speech_keys(
     for provider in models.providers:
         if provider.get("kind") == "qwen" and provider.get("apiKey"):
             return {"qwen": speech_registry.SharedKey(provider["apiKey"], provider.get("baseUrl"))}
-    key = (((tts or {}).get("providers") or {}).get("qwen") or {}).get("apiKey")
-    # Read aloud's address is DashScope's root, not the compatible-mode one.
-    return {"qwen": speech_registry.SharedKey(key)} if key else {}
+    try:
+        saved = tts_service.clean_config(tts).get("providers") or []
+    except tts_service.TtsConfigError:
+        saved = []
+    for provider in saved:
+        if provider["kind"] == "qwen" and provider.get("apiKey"):
+            # Read aloud's address is DashScope's root, not the compatible-mode one.
+            return {"qwen": speech_registry.SharedKey(provider["apiKey"])}
+    return {}
 
 
 def create_app(
