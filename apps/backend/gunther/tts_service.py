@@ -534,7 +534,9 @@ class TtsService:
         task.add_done_callback(self._tasks.discard)
         return Begun(None, job)
 
-    async def _make(self, job: Job, key: str, message_id: str, resolved: Resolved, script: Any) -> None:
+    async def _make(
+        self, job: Job, key: str, message_id: str, resolved: Resolved, script: Any
+    ) -> None:
         # In order and one at a time, like synthesize(): suppliers rate-limit.
         try:
             for index, piece in enumerate(job.pieces):
@@ -563,6 +565,12 @@ class TtsService:
         if job is None or not 0 <= index < len(job.pieces):
             raise SpeechNotFound("This recording is gone. Read the answer again to make it.")
         return job.part(index)
+
+    def job_script(self, job_id: str) -> str:
+        job = self._jobs.get(job_id)
+        if job is None:
+            raise SpeechNotFound("This recording is gone. Read the answer again to make it.")
+        return "\n\n".join(job.pieces)
 
     def _forget(self, key: str) -> None:
         """Drop the kept recording for a key, and stop one still being made."""

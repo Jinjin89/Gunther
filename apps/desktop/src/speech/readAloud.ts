@@ -6,14 +6,29 @@ import { knowledgeApi } from "../api";
  * Reading answers aloud, one at a time for the whole app.
  *
  * The service makes the audio the first time and keeps it on disk; asking again
- * only fetches it. Here we keep the few most recent files in memory so pausing,
- * resuming and replaying are instant.
+ * only fetches it. A long answer being made arrives in parts that play one after
+ * another. Here we keep the few most recent files in memory so pausing, resuming
+ * and replaying are instant.
  */
 
 export type ReadStatus = "making" | "playing" | "paused" | "error";
-interface State { messageId: string | null; status: ReadStatus | null; error: string | null }
+/** Where the audio comes from: a kept clip, or a job still making parts. Used to show what was spoken. */
+export type ReadSource = { clipId: string } | { jobId: string };
+interface State {
+  messageId: string | null;
+  status: ReadStatus | null;
+  error: string | null;
+  /** The part playing (0-based) and how many there are; 1 for a kept clip. */
+  part: number;
+  parts: number;
+  /** How far through the whole answer, 0 to 1. */
+  progress: number;
+  /** Seconds into a kept clip (0 while parts are being made: their lengths are not known yet). */
+  elapsed: number;
+  source: ReadSource | null;
+}
 
-const IDLE: State = { messageId: null, status: null, error: null };
+const IDLE: State = { messageId: null, status: null, error: null, part: 0, parts: 0, progress: 0, elapsed: 0, source: null };
 const MEMORY_CLIPS = 6;
 
 let state: State = IDLE;
@@ -27,6 +42,7 @@ const set = (next: State) => {
   state = next;
   listeners.forEach((listener) => listener());
 };
+const patch = (change: Partial<State>) => set({ ...state, ...change });
 
 async function clipUrl(clipId: string): Promise<string> {
   const known = urls.get(clipId);
@@ -45,6 +61,7 @@ function release() {
   if (audio) {
     audio.onended = null;
     audio.onerror = null;
+    audio.ontimeupdate = null;
     audio.pause();
     audio = null;
   }
@@ -54,12 +71,12 @@ function release() {
  * Play the parts of an answer one after another, fetching the next while one plays.
  * `temporary` parts are freed once played; a kept clip's address is reused for replays.
  */
-async function playParts(mine: number, message: Pick<SessionMessage, "id">, count: number, part: (index: number) => Promise<string>, temporary: boolean, onStart: () => void) {
+async function playParts(mine: number, count: number, part: (index: number) => Promise<string>, temporary: boolean, onStart: () => void) {
   const free = (url: string) => { if (temporary) URL.revokeObjectURL(url); };
   let next = part(0);
   next.catch(() => undefined);
   for (let index = 0; index < count; index += 1) {
-    if (index > 0) set({ messageId: message.id, status: "making", error: null });
+    if (index > 0) patch({ status: "making", part: index, progress: index / count });
     const url = await next;
     if (mine !== turn) { free(url); return; }
     if (index + 1 < count) { next = part(index + 1); next.catch(() => undefined); }
@@ -68,7 +85,11 @@ async function playParts(mine: number, message: Pick<SessionMessage, "id">, coun
       audio = player;
       player.onended = () => { free(url); resolve(); };
       player.onerror = () => reject(new Error("This audio could not be played."));
-      player.play().then(() => { if (mine === turn) set({ messageId: message.id, status: "playing", error: null }); onStart(); }, reject);
+      player.ontimeupdate = () => {
+        if (mine !== turn || !player.duration || !Number.isFinite(player.duration)) return;
+        patch({ progress: (index + player.currentTime / player.duration) / count, elapsed: count === 1 ? player.currentTime : 0 });
+      };
+      player.play().then(() => { if (mine === turn) patch({ status: "playing", part: index, error: null }); onStart(); }, reject);
     });
     if (mine !== turn) return;
   }
@@ -87,16 +108,19 @@ export const readAloud = {
     release();
     set(IDLE);
   },
-  /** Start reading an answer, pause or resume it if it is the one being read. */
+  /**
+   * Start reading an answer, pause or resume it if it is the one being read.
+   * `again` throws away the kept recording and makes it anew.
+   */
   async toggle(message: Pick<SessionMessage, "id" | "sessionId">, again = false) {
     if (!again && state.messageId === message.id) {
-      if (state.status === "playing") { audio?.pause(); set({ ...state, status: "paused" }); return; }
-      if (state.status === "paused" && audio) { void audio.play(); set({ ...state, status: "playing" }); return; }
+      if (state.status === "playing") { audio?.pause(); patch({ status: "paused" }); return; }
+      if (state.status === "paused" && audio) { void audio.play(); patch({ status: "playing" }); return; }
       if (state.status === "making") { readAloud.stop(); return; }
     }
     readAloud.stop();
     const mine = turn;
-    set({ messageId: message.id, status: "making", error: null });
+    set({ ...IDLE, messageId: message.id, status: "making" });
     // Resolves once the first part plays (or it failed); the rest carries on by itself.
     await new Promise<void>((started) => {
       void (async () => {
@@ -104,17 +128,20 @@ export const readAloud = {
           const begun = await knowledgeApi.beginSpeech(message.sessionId, message.id, again);
           if (mine !== turn) return;
           if (begun.clip) {
-            const url = await clipUrl(begun.clip.id);
+            const clipId = begun.clip.id;
+            patch({ parts: 1, source: { clipId } });
+            const url = await clipUrl(clipId);
             if (mine !== turn) return;
-            await playParts(mine, message, 1, async () => url, false, started);
+            await playParts(mine, 1, async () => url, false, started);
           } else if (begun.jobId) {
-            const job = begun.jobId;
-            await playParts(mine, message, begun.parts, async (index) => URL.createObjectURL(await knowledgeApi.speechPart(job, index)), true, started);
+            const jobId = begun.jobId;
+            patch({ parts: begun.parts, source: { jobId } });
+            await playParts(mine, begun.parts, async (index) => URL.createObjectURL(await knowledgeApi.speechPart(jobId, index)), true, started);
           }
         } catch (reason) {
           if (mine !== turn) return;
           release();
-          set({ messageId: message.id, status: "error", error: reason instanceof Error ? reason.message : "The answer could not be read aloud." });
+          set({ ...IDLE, messageId: message.id, status: "error", error: reason instanceof Error ? reason.message : "The answer could not be read aloud." });
         } finally {
           started();
         }
@@ -132,8 +159,11 @@ export const readAloud = {
   },
 };
 
+const NOTHING = { status: null, error: null, part: 0, parts: 0, progress: 0, elapsed: 0, source: null } as const;
+
 export function useReadAloud(messageId: string) {
   const current = useSyncExternalStore(readAloud.subscribe, () => state);
-  const mine = current.messageId === messageId;
-  return { status: mine ? current.status : null, error: mine ? current.error : null };
+  if (current.messageId !== messageId) return NOTHING;
+  const { status, error, part, parts, progress, elapsed, source } = current;
+  return { status, error, part, parts, progress, elapsed, source };
 }

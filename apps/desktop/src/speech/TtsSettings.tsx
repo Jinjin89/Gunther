@@ -41,7 +41,7 @@ function OptionField({ option, value, onChange }: { option: TtsOption; value: st
   </span>;
 }
 
-function RoleRow({ role, overview, onSave, onNotify }: { role: TtsRole; overview: TtsOverview; onSave: (role: TtsRole["id"], change: TtsRoleInput) => void; onNotify: (message: string) => void }) {
+function RoleRow({ role, overview, onSave, onNotify, onChecked }: { role: TtsRole; overview: TtsOverview; onSave: (role: TtsRole["id"], change: TtsRoleInput) => void; onNotify: (message: string) => void; onChecked: () => void }) {
   const id = useId();
   const [hearing, setHearing] = useState(false);
   const preset: TtsPreset | undefined = overview.presets.find((item) => item.kind === role.kind);
@@ -53,6 +53,7 @@ function RoleRow({ role, overview, onSave, onNotify }: { role: TtsRole; overview
       onNotify(message(reason, "The sample could not be played."));
     } finally {
       setHearing(false);
+      onChecked();
     }
   };
   return <div className={`model-role tts-role ${role.problem ? "has-problem" : ""}`}>
@@ -91,14 +92,14 @@ const draftOf = (provider: TtsProvider): ProviderDraft => ({
   models: provider.models.map((model) => ({ id: model.id, label: model.label })),
 });
 
-function ProviderEditor({ provider, preset, onOverview, onRemoved, onNotify, onVerified }: {
+function ProviderEditor({ provider, preset, onOverview, onRemoved, onNotify, onChecked }: {
   provider: TtsProvider;
   preset: TtsPreset | undefined;
   onOverview: (next: TtsOverview) => void;
   onRemoved: () => void;
   onNotify: (message: string) => void;
-  /** A sample played (true) or failed (false): the badge follows. */
-  onVerified: (working: boolean) => void;
+  /** A sample was tried: the service remembers the outcome, so the badge can say Connected. */
+  onChecked: () => void;
 }) {
   const baseId = useId();
   const initial = draftOf(provider);
@@ -127,12 +128,11 @@ function ProviderEditor({ provider, preset, onOverview, onRemoved, onNotify, onV
     setError(null);
     try {
       await playSample({ providerId: provider.id, baseUrl: draft.baseUrl.trim(), ...(draft.apiKey ? { apiKey: draft.apiKey } : {}), ...(draft.models[0] ? { model: draft.models[0].id } : {}) });
-      onVerified(true);
     } catch (reason) {
-      onVerified(false);
       if (mounted.current) setError(message(reason, "The sample could not be played."));
     } finally {
       if (mounted.current) setBusy(null);
+      onChecked();
     }
   };
 
@@ -234,13 +234,8 @@ export function TtsSettings({ onNotify }: { onNotify: (message: string) => void 
   const [open, setOpen] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [clearing, setClearing] = useState(false);
-  /** Providers whose sample played this session: shown as Connected. */
-  const [verified, setVerified] = useState<ReadonlySet<string>>(new Set());
-  const verify = (id: string, working: boolean) => setVerified((current) => {
-    const next = new Set(current);
-    if (working) next.add(id); else next.delete(id);
-    return next;
-  });
+  /** After a sample: the service kept its outcome, so the badges (Connected, or the error) follow. */
+  const refresh = () => { void knowledgeApi.ttsOverview().then(setOverview).catch(() => undefined); };
 
   useEffect(() => {
     let active = true;
@@ -296,7 +291,7 @@ export function TtsSettings({ onNotify }: { onNotify: (message: string) => void 
     {overview && <>
       <div className="model-roles" role="group" aria-label="Used for">
         <div className="gx-menu-label">Used for</div>
-        {overview.roles.map((role) => <RoleRow key={role.id} role={role} overview={overview} onSave={(id, change) => void saveRole(id, change)} onNotify={onNotify} />)}
+        {overview.roles.map((role) => <RoleRow key={role.id} role={role} overview={overview} onSave={(id, change) => void saveRole(id, change)} onNotify={onNotify} onChecked={refresh} />)}
         {answers?.model && speaking && <p className="model-roles-note">{speaking.readsStructure
           ? `${speaking.name}'s voice model reads tables and pictures itself.`
           : "Tables, pictures, code and formulas are described in words by your language model before they are spoken, instead of being read cell by cell."}</p>}
@@ -310,13 +305,11 @@ export function TtsSettings({ onNotify }: { onNotify: (message: string) => void 
             <button type="button" className="service-summary" aria-expanded={expanded} aria-controls={panelId} onClick={() => setOpen(expanded ? null : provider.id)}>
               <span className="service-icon" aria-hidden="true"><span className="provider-initial">{provider.name.slice(0, 1)}</span></span>
               <span className="service-heading"><strong>{provider.name}</strong><small>{provider.status.summary}{provider.models.length > 0 && provider.status.state === "configured" ? ` · ${provider.models.map((model) => model.label).join(", ")}` : ""}</small></span>
-              {verified.has(provider.id) && provider.status.state === "configured"
-                ? <span className="service-badge is-configured"><i aria-hidden="true" />Connected</span>
-                : <StatusBadge provider={provider} />}
+              <StatusBadge provider={provider} />
               <ChevronRight size={15} className="service-chevron" aria-hidden="true" />
             </button>
             {expanded && <div id={panelId} className="service-panel">
-              <ProviderEditor key={provider.id} provider={provider} preset={overview.presets.find((preset) => preset.kind === provider.kind)} onOverview={setOverview} onRemoved={() => setOpen(null)} onNotify={onNotify} onVerified={(working) => verify(provider.id, working)} />
+              <ProviderEditor key={provider.id} provider={provider} preset={overview.presets.find((preset) => preset.kind === provider.kind)} onOverview={setOverview} onRemoved={() => setOpen(null)} onNotify={onNotify} onChecked={refresh} />
             </div>}
           </li>;
         })}

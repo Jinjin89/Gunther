@@ -204,6 +204,21 @@
 /* Reading answers aloud ------------------------------------------------------- */
 .speak-answer.is-playing, .speak-answer.is-paused { color: var(--gx-ink) !important; border-color: var(--atlas-line); }
 .speak-answer.is-error { color: var(--gx-ink) !important; }
+.speak-player { display: inline-flex; align-items: center; gap: 4px; height: 29px; padding: 0 4px; border: 1px solid var(--atlas-line); border-radius: 7px; background: var(--atlas-paper-soft); color: var(--gx-ink); font-size: calc(12px * var(--gx-fs, 1)); }
+.speak-control { display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--atlas-faint); cursor: pointer; }
+.speak-control:hover:not(:disabled) { background: var(--gx-hover); color: var(--gx-ink); }
+.speak-control:disabled { opacity: 0.4; cursor: default; }
+.speak-control[aria-pressed="true"] { color: var(--gx-ink); background: var(--gx-hover); }
+.speak-player .speak-control:first-child { color: var(--gx-ink); }
+.speak-progress { position: relative; width: 72px; height: 3px; overflow: hidden; border-radius: 2px; background: var(--atlas-line); }
+.speak-progress i { position: absolute; inset: 0 auto 0 0; background: var(--gx-ink); transition: width 0.25s linear; }
+.speak-player.is-making .speak-progress i { opacity: 0.45; }
+.speak-where { min-width: 3ch; color: var(--atlas-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.speak-script { flex-basis: 100%; max-height: 220px; overflow: auto; padding: 8px 10px; border: 1px solid var(--atlas-line); border-radius: 7px; background: var(--atlas-paper-soft); font-size: calc(12px * var(--gx-fs, 1)); color: var(--gx-muted); }
+.speak-script header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; color: var(--gx-ink); }
+.speak-script p { margin: 0; white-space: pre-wrap; }
+.speak-script .is-problem { color: var(--gx-ink); }
+@media (prefers-reduced-motion: reduce) { .speak-progress i { transition: none; } }
 .speak-error { flex-basis: 100%; font-size: calc(12px * var(--gx-fs, 1)); color: var(--atlas-faint); }
 .is-spinning { animation: gx-spin 0.9s linear infinite; }
 .gx-home-answer footer { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

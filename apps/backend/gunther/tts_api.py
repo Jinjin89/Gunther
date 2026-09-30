@@ -5,6 +5,7 @@ removed on their own, and each job picks a model and its voice. Keys never
 leave the backend.
 """
 
+import hashlib
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -105,13 +106,35 @@ def _clip_out(clip: Clip) -> dict[str, Any]:
     }
 
 
-def _provider_out(provider: dict[str, Any], registries: tuple[Any, Any]) -> dict[str, Any]:
+def _fingerprint(provider: dict[str, Any], registries: tuple[Any, Any]) -> str:
+    """Address and key a check was made with: changing either makes the result stale."""
+
+    key = key_for(provider, *registries)[0] or ""
+    return hashlib.sha256(f"{provider['baseUrl']}\n{key}".encode()).hexdigest()
+
+
+def _record(request: Request, provider: dict[str, Any], error: TtsError | None) -> None:
+    """Remember that a provider spoke (or why it did not), so Settings can say Connected."""
+
+    entry = {"ok": error is None, "message": str(error) if error else "It spoke.", "warning": None}
+    _store(request).record_tts_check(
+        provider["id"], {**entry, "fingerprint": _fingerprint(provider, _registries(request))}
+    )
+
+
+def _provider_out(
+    provider: dict[str, Any], registries: tuple[Any, Any], check: dict[str, Any] | None
+) -> dict[str, Any]:
     supplier = PROVIDERS[provider["kind"]]
     key, shared = key_for(provider, *registries)
     problem = problem_with(provider, *registries)
     count = len(provider["models"])
+    if check and check.get("fingerprint") != _fingerprint(provider, registries):
+        check = None
     if problem:
         status = {"state": "not_configured", "summary": "Needs an API key."}
+    elif check and not check["ok"]:
+        status = {"state": "error", "summary": check["message"]}
     elif count == 0:
         status = {"state": "not_configured", "summary": "Add a model to use it."}
     else:
@@ -132,7 +155,10 @@ def _provider_out(provider: dict[str, Any], registries: tuple[Any, Any]) -> dict
             {"id": model["id"], "ref": model_ref(provider, model), "label": model["label"]}
             for model in provider["models"]
         ],
-        "status": {**status, "check": None},
+        "status": {
+            **status,
+            "check": check and {k: check[k] for k in ("ok", "message", "warning", "checkedAt")},
+        },
     }
 
 
@@ -165,7 +191,10 @@ def overview(request: Request) -> dict[str, Any]:
         # For the Listen button: read by itself, and why it cannot read (null when it can).
         "autoRead": answers["autoRead"],
         "problem": answers_problem,
-        "providers": [_provider_out(provider, registries) for provider in providers],
+        "providers": [
+            _provider_out(provider, registries, _store(request).tts_check(provider["id"]))
+            for provider in providers
+        ],
         "roles": roles,
         "presets": [tts_providers.describe(supplier) for supplier in PROVIDERS.values()],
         "cache": _service(request).stats(),
@@ -365,7 +394,9 @@ async def sample(payload: SampleIn, request: Request) -> Response:
     try:
         audio = await _service(request).sample(resolved)
     except TtsError as error:
+        _record(request, provider, error)
         raise HTTPException(502, str(error)) from error
+    _record(request, provider, None)
     return Response(audio, media_type="audio/wav")
 
 
@@ -431,6 +462,17 @@ async def job_part(job_id: str, index: int, request: Request) -> Response:
     except TtsError as error:
         raise HTTPException(502, str(error)) from error
     return Response(audio, media_type="audio/wav")
+
+
+@router.get("/speech/jobs/{job_id}/script")
+def job_script(job_id: str, request: Request) -> dict[str, str]:
+    """What is being spoken, while the answer is still being made."""
+
+    _owner_only(request)
+    try:
+        return {"script": _service(request).job_script(job_id)}
+    except SpeechNotFound as error:
+        raise HTTPException(404, str(error)) from error
 
 
 @router.get("/speech/clips/{clip_id}/audio")

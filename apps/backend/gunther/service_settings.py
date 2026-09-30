@@ -556,6 +556,19 @@ class ServiceSettingsStore:
             entry = self._checks.get(f"speech:{provider_id}")
             return dict(entry) if entry else None
 
+    def record_tts_check(self, provider_id: str, entry: dict[str, Any]) -> None:
+        with self._lock:
+            self._checks[f"tts:{provider_id}"] = {**entry, "checkedAt": _now()}
+            try:
+                self._write()
+            except OSError:
+                logger.warning("The result of a voice sample could not be saved", exc_info=True)
+
+    def tts_check(self, provider_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            entry = self._checks.get(f"tts:{provider_id}")
+            return dict(entry) if entry else None
+
     def record_model_check(self, provider_id: str, entry: dict[str, Any]) -> None:
         with self._lock:
             self._checks[f"provider:{provider_id}"] = {**entry, "checkedAt": _now()}

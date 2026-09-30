@@ -460,6 +460,29 @@ def test_joining_wav_files_adds_their_lengths() -> None:
         join_wav([wav(0.1), b"not audio"])
 
 
+def test_a_sample_that_speaks_marks_the_provider_connected_until_its_key_changes(
+    tmp_path: Path, spoken
+) -> None:
+    with app_for(tmp_path) as client:
+        setup(client)
+        before = client.get("/api/settings/tts", headers=SIDECAR).json()["providers"][0]
+        assert before["status"]["check"] is None
+        sample = client.post(
+            "/api/settings/tts/sample", json={"providerId": before["id"]}, headers=SIDECAR
+        )
+        assert sample.status_code == 200
+        after = client.get("/api/settings/tts", headers=SIDECAR).json()["providers"][0]
+        assert after["status"]["state"] == "configured" and after["status"]["check"]["ok"] is True
+        # A new key has not been heard yet.
+        client.put(
+            f"/api/settings/tts/providers/{before['id']}",
+            json={"apiKey": "sk-qwen-other-9999"},
+            headers=SIDECAR,
+        )
+        changed = client.get("/api/settings/tts", headers=SIDECAR).json()["providers"][0]
+        assert changed["status"]["check"] is None
+
+
 def test_split_for_listening_starts_with_the_first_paragraph() -> None:
     first = ("First paragraph, long enough to stand alone. " * 4).strip()
     parts = split_for_listening(f"{first}\n\nShort.\n\nAlso short.", 500)

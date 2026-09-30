@@ -17,6 +17,7 @@ const api = vi.hoisted(() => ({
   removeTtsProvider: vi.fn(),
   ttsSample: vi.fn(),
   clearTtsCache: vi.fn(),
+  speechScript: vi.fn(),
 }));
 vi.mock("../api", () => ({ knowledgeApi: api }));
 
@@ -78,12 +79,21 @@ describe("reading an answer aloud", () => {
     expect(api.speechAudio).toHaveBeenCalledTimes(1);
   });
 
-  it("Read again asks the service to drop the kept recording and make a new one", async () => {
+  it("opens into a player whose controls are about the audio: record again, what is spoken, stop", async () => {
+    api.speechScript.mockResolvedValue({ script: "Two drugs were compared." });
     const user = userEvent.setup();
     render(<SpeakerButton message={message} />);
-    await user.click(screen.getByRole("button", { name: "Read again" }));
-    expect(await screen.findByRole("button", { name: "Pause" })).toBeTruthy();
-    expect(api.beginSpeech).toHaveBeenCalledWith("s1", "m1", true);
+    expect(screen.queryByRole("button", { name: "Record again" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Read aloud" }));
+    await screen.findByRole("button", { name: "Pause" });
+    await user.click(screen.getByRole("button", { name: "What is spoken" }));
+    expect(await screen.findByText("Two drugs were compared.")).toBeTruthy();
+    expect(api.speechScript).toHaveBeenCalledWith({ clipId: "c1" });
+    await user.click(screen.getByRole("button", { name: "Record again" }));
+    await waitFor(() => expect(api.beginSpeech).toHaveBeenLastCalledWith("s1", "m1", true));
+    await screen.findByRole("button", { name: "Pause" });
+    await user.click(screen.getByRole("button", { name: "Stop" }));
+    expect(await screen.findByRole("button", { name: "Read aloud" })).toBeTruthy();
   });
 
   it("plays a long answer part by part, fetching the next while one plays", async () => {

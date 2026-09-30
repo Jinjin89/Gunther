@@ -13,6 +13,13 @@ message text → **narrator** (`tts_narration.py`) → pieces ≤ the supplier's
   the app fetches `GET /speech/jobs/{id}/parts/{n}` in order, playing part 1 while part 2 is made.
   When the last part is done the parts are joined and kept as the clip, so later listens are one file.
   Jobs live in memory only (the last few).
+- **The player.** Idle, an answer shows one *Listen* button. While reading it opens into a small player:
+  pause/resume, progress (by part for long answers, time for a kept clip), *Record again*
+  (`…/speech/begin?fresh=true`: drops this voice's kept clip and makes it anew), *What is spoken*
+  (`/speech/clips/{id}/script`, or `/speech/jobs/{id}/script` while it is being made) and *Stop*.
+- **Connected.** A sample that speaks is remembered in the settings file (`checks["tts:<provider>"]`) with
+  a fingerprint of the address and key, so Settings shows *Connected* until either changes; a failed
+  sample shows *Needs attention* with the supplier's message.
 - **Cache key** = narration version + supplier + model + options (voice, language…) + message text.
   The second listen only plays the file. A new voice makes a new clip; *Delete* in Settings clears all.
 - **Tables, pictures, code, formulas** are not read as written. A language model (Analysis, else Ask;

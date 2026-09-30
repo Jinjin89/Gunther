@@ -634,6 +634,9 @@ export const knowledgeApi = {
   beginSpeech: (sessionId: string, messageId: string, fresh = false) =>
     request<SpeechStart>(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/speech/begin${fresh ? "?fresh=true" : ""}`, { method: "POST" }),
   speechPart: (jobId: string, index: number) => requestBlob(`/speech/jobs/${encodeURIComponent(jobId)}/parts/${index}`),
+  /** What was (or is being) spoken for an answer: tables and pictures as the narrator put them. */
+  speechScript: (source: { clipId: string } | { jobId: string }) =>
+    request<{ script: string }>("clipId" in source ? `/speech/clips/${encodeURIComponent(source.clipId)}/script` : `/speech/jobs/${encodeURIComponent(source.jobId)}/script`),
   speechAudio: (clipId: string) => requestBlob(`/speech/clips/${encodeURIComponent(clipId)}/audio`),
   saveSpeechRoles: (roles: Partial<Record<SpeechRole["id"], { model: string | null; stream: boolean; language: string }>>) =>
     request<SpeechOverview>("/settings/speech/roles", { method: "PUT", body: JSON.stringify({ roles }) }),
