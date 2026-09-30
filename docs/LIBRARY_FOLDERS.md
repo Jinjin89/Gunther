@@ -6,12 +6,18 @@ format 1.
 
 ## Where it lives
 
-The backend setting `LIBRARY_ROOT` chooses the folder.
+The backend reads the folder from `LIBRARY_ROOT` in its environment and nowhere
+else. Who sets it depends on how Gunther runs:
 
-| How Gunther runs | Default | Set it in |
+| How Gunther runs | Default | Chosen in |
 |---|---|---|
-| Desktop app | `~/Gunther` | `.env` in the app's data folder (`~/Library/Application Support/com.gunther.knowledge/.env`) |
-| Development (`npm run dev`) | off | the repository's `.env` |
+| Desktop app | `~/Gunther` | **Settings → Library & storage → Change…** The app remembers the choice (`library-location.json` in its data folder) and starts its bundled backend with `LIBRARY_ROOT` set. |
+| Development (`npm run dev`) | off | the repository's `.env`; restart the backend after changing it |
+
+Change… moves the folder while the app's backend is stopped: a rename on one
+disk, otherwise a full copy before the original is removed. A folder that
+already has files in it gets a `Gunther` folder inside it, so nothing of yours
+is mixed in, and moving is refused while a recording is running.
 
 `~/Gunther` sits outside Documents on purpose: macOS asks no permission for it,
 and iCloud does not sync recordings while they are still growing.
@@ -106,8 +112,9 @@ opens them, one file at a time: a rename on the same volume, otherwise a copy
 verified byte for byte before the old file goes. A file already in the root with
 different content is left where it was. Interrupted uploads (`.incoming/`) stay
 behind. On the same disk this is instant; a root on another disk means copying
-everything once, so that first start takes longer. Changing `LIBRARY_ROOT` later is a manual move: quit Gunther, move the
-folder, set the new path, start Gunther.
+everything once, so that first start takes longer. In the desktop app the folder
+is moved later with Settings → Library & storage → Change…; in development,
+stop the backend, move the folder, set the new `LIBRARY_ROOT` and start it again.
 
 ## Backups
 

@@ -11,6 +11,7 @@ use tauri::{Listener, Manager};
 mod application_menu;
 mod capture_shell;
 mod external_links;
+mod library_location;
 mod tray_glyph;
 
 #[derive(Default)]
@@ -163,7 +164,7 @@ fn log_backend_event(data_dir: &Path, message: &str) {
 }
 
 #[cfg(target_os = "macos")]
-fn backend_executable(_app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> {
+fn backend_executable(_app: &tauri::AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let executable = std::env::current_exe()?;
     let contents_dir = executable
         .parent()
@@ -179,7 +180,7 @@ fn backend_executable(_app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::
 }
 
 #[cfg(not(target_os = "macos"))]
-fn backend_executable(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> {
+fn backend_executable(app: &tauri::AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
     Ok(app
         .path()
         .resource_dir()?
@@ -187,7 +188,7 @@ fn backend_executable(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::E
         .join(format!("gunther-backend{}", std::env::consts::EXE_SUFFIX)))
 }
 
-fn start_backend(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+fn start_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     if cfg!(debug_assertions) {
         return Ok(());
     }
@@ -202,6 +203,10 @@ fn start_backend(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let stdout = secure_open(&log_path, true)?;
     let stderr = stdout.try_clone()?;
     let mut command = Command::new(backend_executable(app)?);
+    // The folder chosen in Settings; without one the backend uses ~/Gunther.
+    if let Some(root) = library_location::chosen_root(&data_dir) {
+        command.env("LIBRARY_ROOT", root);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -228,6 +233,117 @@ fn start_backend(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     runtime.child = Some(child);
     runtime.launch_nonce = Some(launch_nonce);
     Ok(())
+}
+
+/// Stop the bundled backend and forget its launch, e.g. before moving the libraries.
+fn stop_backend(app: &tauri::AppHandle) {
+    let state = app.state::<BackendProcess>();
+    let (child, launch_nonce) = {
+        let mut runtime = state.0.lock().expect("backend lock poisoned");
+        (runtime.child.take(), runtime.launch_nonce.take())
+    };
+    if let Some(mut child) = child {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    if let (Ok(data_dir), Some(launch_nonce)) = (app.path().app_data_dir(), launch_nonce) {
+        let _ = std::fs::remove_file(ready_token_path(&data_dir, &launch_nonce));
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LibraryLocation {
+    /// The folder chosen in Settings, or None for the default.
+    chosen: Option<String>,
+    /// Only the installed app starts its own backend; in development it runs on its own.
+    can_change: bool,
+}
+
+#[tauri::command]
+fn library_location(app: tauri::AppHandle) -> Result<LibraryLocation, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "Gunther could not locate its private data directory".to_string())?;
+    Ok(LibraryLocation {
+        chosen: library_location::chosen_root(&data_dir).map(|path| path.display().to_string()),
+        can_change: !cfg!(debug_assertions),
+    })
+}
+
+/// Where the libraries would go if `picked` were chosen, or why they cannot go there.
+#[tauri::command]
+fn library_destination(
+    app: tauri::AppHandle,
+    from: String,
+    picked: String,
+) -> Result<String, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "Gunther could not locate its private data directory".to_string())?;
+    let from = PathBuf::from(from);
+    let to = library_location::destination(&from, Path::new(&picked));
+    match library_location::problem_with(&from, &to, &data_dir) {
+        Some(problem) => Err(problem),
+        None => Ok(to.display().to_string()),
+    }
+}
+
+/// Move the libraries from where the backend keeps them now to `to`, then start the
+/// backend there. The backend is stopped meanwhile, so no file changes under the move.
+#[tauri::command(async)]
+fn change_library_location(
+    app: tauri::AppHandle,
+    from: String,
+    to: String,
+) -> Result<String, String> {
+    if cfg!(debug_assertions) {
+        return Err(
+            "In development the backend runs on its own: set LIBRARY_ROOT for it and restart it."
+                .into(),
+        );
+    }
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "Gunther could not locate its private data directory".to_string())?;
+    let from = PathBuf::from(from);
+    let to = PathBuf::from(to);
+    if !from.is_absolute() {
+        return Err("Gunther could not tell where your libraries are now.".into());
+    }
+    if let Some(problem) = library_location::problem_with(&from, &to, &data_dir) {
+        return Err(problem);
+    }
+    // Same rule as quitting: a recording in progress keeps the service running.
+    if capture_shell::blocks_exit(&app) {
+        return Err("Finish or stop the recording first, then move your libraries.".into());
+    }
+    log_backend_event(
+        &data_dir,
+        &format!(
+            "Moving the libraries from {} to {}",
+            from.display(),
+            to.display()
+        ),
+    );
+    stop_backend(&app);
+    let outcome = library_location::move_library(&from, &to).and_then(|()| {
+        library_location::save_choice(&data_dir, &to).map_err(|error| {
+            // Not remembered: put the folder back so the backend finds it where it looks.
+            let _ = library_location::move_library(&to, &from);
+            error
+        })
+    });
+    if let Err(error) = start_backend(&app) {
+        log_backend_event(&data_dir, &format!("[launch error] {error}"));
+        return Err(format!(
+            "Gunther's local service did not start again: {error}"
+        ));
+    }
+    outcome.map(|()| to.display().to_string())
 }
 
 fn create_capture_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -312,7 +428,7 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            if let Err(error) = start_backend(app) {
+            if let Err(error) = start_backend(app.handle()) {
                 eprintln!("Gunther's local knowledge service could not start: {error}");
                 if let Ok(data_dir) = app.path().app_data_dir() {
                     log_backend_event(&data_dir, &format!("[launch error] {error}"));
@@ -332,6 +448,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             backend_connection,
+            library_location,
+            library_destination,
+            change_library_location,
             capture_shell::open_capture_window,
             capture_shell::hide_capture_window,
             capture_shell::show_main_window,
@@ -353,22 +472,7 @@ pub fn run() {
         tauri::RunEvent::Reopen { .. } => {
             let _ = capture_shell::show_main_window(app_handle.clone());
         }
-        tauri::RunEvent::Exit => {
-            let state = app_handle.state::<BackendProcess>();
-            let (child, launch_nonce) = {
-                let mut runtime = state.0.lock().expect("backend lock poisoned");
-                (runtime.child.take(), runtime.launch_nonce.take())
-            };
-            if let Some(mut child) = child {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
-            if let (Ok(data_dir), Some(launch_nonce)) =
-                (app_handle.path().app_data_dir(), launch_nonce)
-            {
-                let _ = std::fs::remove_file(ready_token_path(&data_dir, &launch_nonce));
-            }
-        }
+        tauri::RunEvent::Exit => stop_backend(app_handle),
         _ => {}
     });
 }

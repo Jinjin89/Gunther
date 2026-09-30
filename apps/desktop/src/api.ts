@@ -189,6 +189,13 @@ async function waitForDesktopBackend(): Promise<void> {
 
 export const ensureBackendReady = (): Promise<void> => waitForDesktopBackend();
 
+/** Connect again after the app restarted its local service, e.g. to move the libraries. */
+export async function reconnectBackend(): Promise<void> {
+  connectionInitialization = null;
+  desktopBackendReady = null;
+  await waitForDesktopBackend();
+}
+
 async function backendFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   await waitForDesktopBackend();
   return authenticatedFetch(input, init);
