@@ -60,6 +60,7 @@ import { LibraryFolderSettings } from "./LibraryFolderSettings";
 import { SemanticSearchSetting } from "./SemanticSearchSetting";
 import { ServiceSettings } from "./ServiceSettings";
 import { SETTINGS_PANES, SettingsNav, useSettingsAttention, useSettingsPane } from "./SettingsLayout";
+import { DeveloperSettings } from "../developer/DeveloperSettings";
 import { TypographySettings } from "./TypographySettings";
 import { ModelSettings } from "../models/ModelSettings";
 import { SpeechSettings } from "../models/SpeechSettings";
@@ -1067,6 +1068,8 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
       </section>
       <LibraryFolderSettings onNotify={onNotify} onCopy={(label, value) => void copyValue(label, value)} />
     </>}
+
+    {pane === "developer" && <DeveloperSettings onNotify={onNotify} />}
 
     {pane === "devices" && <section className="mobile-connection-settings">
       <div className="setting-heading"><Smartphone size={16} /><span><strong>Mobile connection</strong><small>Pair a phone without exposing your desktop token</small></span></div>

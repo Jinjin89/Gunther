@@ -1,10 +1,10 @@
-import { AudioLines, Brain, HardDrive, Search, Settings2, Smartphone } from "lucide-react";
+import { AudioLines, Brain, HardDrive, Search, Settings2, Smartphone, SquareTerminal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { knowledgeApi } from "../api";
 import { MODELS_CHANGED_EVENT, OPEN_SETTINGS_EVENT } from "../models/askModel";
 
-export type SettingsPaneId = "general" | "models" | "voice" | "search" | "library" | "devices";
+export type SettingsPaneId = "general" | "models" | "voice" | "search" | "library" | "devices" | "developer";
 
 export interface SettingsPane {
   id: SettingsPaneId;
@@ -21,6 +21,7 @@ export const SETTINGS_PANES: SettingsPane[] = [
   { id: "search", label: "Search", description: "Finding things by meaning in your libraries, and on the web.", icon: <Search size={15} /> },
   { id: "library", label: "Library & storage", description: "Where your libraries and their files live on this computer.", icon: <HardDrive size={15} /> },
   { id: "devices", label: "Devices", description: "Phones paired with this computer.", icon: <Smartphone size={15} /> },
+  { id: "developer", label: "Developer", description: "How answers are made, the local service's recent lines, and background jobs.", icon: <SquareTerminal size={15} /> },
 ];
 
 const PANE_KEY = "gunther:settings-pane";

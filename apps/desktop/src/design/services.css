@@ -255,3 +255,36 @@
   .settings-nav { position: static; display: flex; gap: 4px; overflow-x: auto; padding-bottom: 2px; }
   .settings-nav-item { flex: none; }
 }
+
+/* Settings → Developer: recent log lines and background jobs, dense and neutral. */
+.developer-heading .setting-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.developer-heading select { height: 28px; padding: 0 6px; border: 1px solid var(--gx-line-2); border-radius: 7px; background: var(--gx-surface); color: var(--gx-ink); font-size: var(--gx-text-xs); }
+.developer-log, .developer-jobs { margin: 0; padding: 0; list-style: none; max-height: 360px; overflow: auto; }
+.developer-log li {
+  display: grid;
+  grid-template-columns: auto auto auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 17px;
+  border-bottom: 1px solid var(--gx-line);
+  font-size: var(--gx-text-2xs);
+}
+.developer-log time, .developer-jobs time { color: var(--gx-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.developer-log em { font-style: normal; color: var(--gx-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+.developer-log li.is-warning em, .developer-log li.is-error em, .developer-log li.is-critical em { color: var(--gx-danger); }
+.developer-log code { color: var(--gx-muted); font-family: var(--gx-font-mono); }
+.developer-log p { margin: 0; color: var(--gx-ink); white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--gx-font-mono); }
+.developer-jobs li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 17px;
+  border-bottom: 1px solid var(--gx-line);
+  font-size: var(--gx-text-xs);
+}
+.developer-jobs li > span:first-child { display: grid; gap: 2px; min-width: 0; }
+.developer-jobs small { color: var(--gx-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.developer-jobs p { margin: 0; color: var(--gx-danger); font-size: var(--gx-text-2xs); }
+.developer-job-state { color: var(--gx-muted); font-size: var(--gx-text-2xs); text-transform: capitalize; }
+.developer-job-state.is-failed { color: var(--gx-danger); }

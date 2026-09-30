@@ -592,6 +592,52 @@ export interface TtsSampleInput {
   options?: Record<string, string>;
 }
 
+/** Settings → Developer. */
+export interface DeveloperSettings {
+  /** Each answer keeps how it was made, shown in a conversation's Trace tab. */
+  traces: boolean;
+}
+
+/**
+ * One step of how an answer was made: plan, search, grade, write, audit, check, cite,
+ * or a model call inside one of them. Details depend on the kind.
+ */
+export interface TraceStep {
+  kind: "plan" | "search" | "grade" | "write" | "audit" | "check" | "cite" | "model" | string;
+  label: string;
+  /** When it started, from the start of the answer. */
+  atMs: number;
+  ms?: number;
+  error?: string;
+  children?: TraceStep[];
+  [detail: string]: unknown;
+}
+
+export interface AnswerTrace {
+  version: 1;
+  totalMs: number;
+  steps: TraceStep[];
+}
+
+export interface LogLine {
+  at: string;
+  level: "info" | "warning" | "error" | "critical" | string;
+  logger: string;
+  message: string;
+}
+
+export interface BackgroundJob {
+  id: string;
+  kind: string;
+  state: "queued" | "running" | "completed" | "failed" | "cancelled" | string;
+  attempts: number;
+  error: string | null;
+  sourceId: string;
+  sourceTitle: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** An answer read aloud and kept on this computer. */
 export interface SpeechClip {
   id: string;

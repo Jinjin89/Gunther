@@ -70,6 +70,10 @@ import type {
   TtsSampleInput,
   TtsOverview,
   TtsRole,
+  AnswerTrace,
+  BackgroundJob,
+  DeveloperSettings,
+  LogLine,
   ServiceSettingValue,
   ServiceTestResult,
   TrashItem,
@@ -611,6 +615,15 @@ export const knowledgeApi = {
   saveTtsRoles: (roles: Partial<Record<TtsRole["id"], TtsRoleInput>>) =>
     request<TtsOverview>("/settings/tts/roles", { method: "PUT", body: JSON.stringify({ roles }) }),
   clearTtsCache: () => request<TtsOverview>("/settings/tts/cache", { method: "DELETE" }),
+  developerSettings: () => request<DeveloperSettings>("/settings/developer"),
+  saveDeveloperSettings: (settings: DeveloperSettings) =>
+    request<DeveloperSettings>("/settings/developer", { method: "PUT", body: JSON.stringify(settings) }),
+  /** How an answer was made; fails with a reason when it was not kept. */
+  messageTrace: (sessionId: string, messageId: string) =>
+    request<AnswerTrace>(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/trace`),
+  developerLogs: (level: "info" | "warning" | "error" = "info") =>
+    request<{ lines: LogLine[] }>(`/developer/logs?level=${level}`).then((body) => body.lines),
+  developerJobs: () => request<{ jobs: BackgroundJob[] }>("/developer/jobs").then((body) => body.jobs),
   /** A short line spoken with the settings on screen, saved or not. */
   ttsSample: (payload: TtsSampleInput) => requestBlob("/settings/tts/sample", { method: "POST", body: JSON.stringify(payload) }),
   /** Make (or find) the audio of an answer. */

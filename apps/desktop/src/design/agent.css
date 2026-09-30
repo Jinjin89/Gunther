@@ -225,3 +225,56 @@
 .tts-option input { width: 120px; }
 .tts-option select:focus-visible,
 .tts-option input:focus-visible { outline: none; box-shadow: var(--gx-ring); }
+
+/* Conversation → Trace: how an answer was made. A quiet timeline; open a step for its exact text. */
+.answer-trace { display: grid; gap: 10px; padding: 12px 14px 20px; }
+.trace-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.trace-heading > span { display: grid; gap: 2px; }
+.trace-heading strong { font-size: var(--gx-text-sm); }
+.trace-heading small { color: var(--gx-faint); font-size: var(--gx-text-2xs); }
+.trace-steps, .trace-children { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.trace-children { margin: 2px 0 4px 22px; padding-left: 8px; border-left: 1px solid var(--gx-line-2); }
+.trace-step > details > summary {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  padding: 6px 6px;
+  border-radius: 7px;
+  cursor: pointer;
+  list-style: none;
+}
+.trace-step > details > summary::-webkit-details-marker { display: none; }
+.trace-step > details > summary:hover { background: var(--gx-hover); }
+.trace-step > details > summary:focus-visible { outline: none; box-shadow: var(--gx-ring); }
+.trace-icon { display: inline-flex; padding-top: 2px; color: var(--gx-faint); }
+.trace-step.has-error .trace-icon { color: var(--gx-danger); }
+.trace-label { display: grid; gap: 1px; min-width: 0; }
+.trace-label strong { font-size: var(--gx-text-xs); font-weight: 600; color: var(--gx-ink); overflow-wrap: anywhere; }
+.trace-label small { color: var(--gx-faint); font-size: var(--gx-text-2xs); overflow-wrap: anywhere; }
+.trace-step.has-error .trace-label small { color: var(--gx-danger); }
+.trace-time { color: var(--gx-faint); font-size: var(--gx-text-2xs); font-variant-numeric: tabular-nums; padding-top: 2px; }
+.trace-details { display: grid; gap: 8px; margin: 2px 0 8px 26px; }
+.trace-block { display: grid; gap: 3px; }
+.trace-block-title { color: var(--gx-muted); font-size: var(--gx-text-2xs); font-weight: 600; text-transform: capitalize; }
+.trace-block pre {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--gx-line-2);
+  border-radius: 7px;
+  background: var(--gx-surface-2);
+  color: var(--gx-ink);
+  font-family: var(--gx-font-mono);
+  font-size: calc(11px * var(--gx-fs, 1));
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.trace-results { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+.trace-results li { font-size: var(--gx-text-2xs); }
+.trace-results strong { display: block; color: var(--gx-ink); }
+.trace-results small { display: block; color: var(--gx-faint); overflow-wrap: anywhere; }
+.trace-results p { margin: 2px 0 0; color: var(--gx-muted); }
+.trace-empty { display: grid; justify-items: center; gap: 8px; padding: 32px 18px; color: var(--gx-muted); text-align: center; font-size: var(--gx-text-xs); }

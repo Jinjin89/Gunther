@@ -54,6 +54,8 @@ import { withShortcut } from "../shortcuts/shortcuts";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { KnowledgeBase, KnowledgeSource } from "../atlas";
 import { AnswerStoppedError, knowledgeApi } from "../api";
+import { AnswerTrace } from "../developer/AnswerTrace";
+import { useTraces } from "../developer/useTraces";
 import { lastAnswerChoice, readAnswerStyle, usableChoice, useDeviceChoice, useModelMenu, useWebSearch, type AskChoice } from "../models/askModel";
 import { StylePicker } from "../models/StylePicker";
 import { SpeakerButton } from "../speech/SpeakerButton";
@@ -76,7 +78,7 @@ interface SessionWorkspaceProps {
   onOpenSource?: (sourceId: string) => void;
 }
 
-type InspectorTab = "context" | "sources";
+type InspectorTab = "context" | "sources" | "trace";
 type ScopedKnowledgeSource = KnowledgeSource & { indexed: boolean };
 
 const emptyContext: ConversationContext = {
@@ -390,6 +392,8 @@ function ContextInspector({
   onOpenUnit,
   onCollapse,
   readOnly,
+  traceOn,
+  onCopy,
 }: {
   /** The panel's width and the handle on its left edge that drags it. */
   resize: ReturnType<typeof useDragWidth>;
@@ -410,6 +414,9 @@ function ContextInspector({
   onOpenUnit: (unit: KnowledgeUnit) => void;
   onCollapse: () => void;
   readOnly: boolean;
+  /** Settings → Developer keeps how answers are made: a Trace tab shows it. */
+  traceOn: boolean;
+  onCopy: (label: string, value: string) => void;
 }) {
   if (collapsed) return <button className="inspector-reopen" onClick={onCollapse} aria-label="Open context panel"><PanelRightOpen size={16} /></button>;
   const selectedIds = session?.selectedSourceIds ?? [];
@@ -421,9 +428,11 @@ function ContextInspector({
   return (
     <aside className="context-inspector" aria-label="Session evidence and sources">
       <div className="gx-panel-resize" role="separator" aria-orientation="vertical" aria-label="Resize panel" aria-valuenow={resize.width} aria-valuemin={INSPECTOR_MIN} aria-valuemax={inspectorMax()} tabIndex={0} title="Drag to resize · double-click to reset" {...resize.handle} />
-      <header className="inspector-heading"><span><small>Session intelligence</small><strong>{tab === "context" ? "Evidence context" : "Source scope"}</strong></span><button onClick={onCollapse} aria-label="Close context panel"><PanelRightClose size={15} /></button></header>
-      <nav className="inspector-tabs"><button className={tab === "context" ? "is-active" : ""} onClick={() => onTab("context")}>Context</button><button className={tab === "sources" ? "is-active" : ""} onClick={() => onTab("sources")}>Sources <span>{selectedIds.length || indexedCount}</span></button></nav>
-      {tab === "context" ? <div className="inspector-scroll">
+      <header className="inspector-heading"><span><small>Session intelligence</small><strong>{tab === "context" ? "Evidence context" : tab === "trace" ? "How it was made" : "Source scope"}</strong></span><button onClick={onCollapse} aria-label="Close context panel"><PanelRightClose size={15} /></button></header>
+      <nav className="inspector-tabs"><button className={tab === "context" ? "is-active" : ""} onClick={() => onTab("context")}>Context</button><button className={tab === "sources" ? "is-active" : ""} onClick={() => onTab("sources")}>Sources <span>{selectedIds.length || indexedCount}</span></button>{traceOn && selectedMessage && session && <button className={tab === "trace" ? "is-active" : ""} onClick={() => onTab("trace")}>Trace</button>}</nav>
+      {tab === "trace" && selectedMessage && session ? <div className="inspector-scroll">
+        <AnswerTrace sessionId={session.id} messageId={selectedMessage.id} onCopy={onCopy} />
+      </div> : tab === "context" || tab === "trace" ? <div className="inspector-scroll">
         {selectedMessage ? <>
           <section className="answer-scope"><span className="section-label">Answer scope</span><div className="scope-metrics"><span><strong>{context.assertionsConsidered}</strong><small>claims scanned</small></span><span><strong>{context.sourcesConsidered}</strong><small>sources searched</small></span><span><strong>{context.verifiedAssertions}</strong><small>trusted scanned</small></span></div><p><Info size={12} />This is the retrieval snapshot for the selected answer—not the current library state.</p></section>
           <section className="citation-section"><header><span className="section-label">Sources cited</span><small>{selectedMessage.citations.length} {selectedMessage.citations.length === 1 ? "source" : "sources"}</small></header>{selectedMessage.citations.length ? selectedMessage.citations.map((citation, index) => <CitationCard key={citation.id} citation={citation} index={index} onOpen={() => onOpenSource(citation.sourceId, citation)} />) : <div className="empty-citations"><CircleAlert size={20} /><strong>{noSourcesNeeded(context) ? "No sources needed" : "Nothing cited"}</strong><span>{noSourcesNeeded(context) ? "This reply came from the conversation itself." : "Nothing in the searches supported a citation, so this answer is not grounded."}</span></div>}</section>
@@ -492,6 +501,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
   const [online, setOnline] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("context");
+  const traces = useTraces();
   // Open by default so the sources behind an answer are in view; the reader's choice is kept.
   const [inspectorCollapsed, setInspectorCollapsed] = useState(() => {
     if (window.innerWidth <= 980) return true;
@@ -1088,13 +1098,13 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
         <div className="conversation-scroll" ref={scrollPane} onScroll={(event) => { const pane = event.currentTarget; followTail.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 80; }}>
           {error && <div className="conversation-error" role="alert"><CircleAlert size={14} /><span>{error}</span><button onClick={() => setError(null)}><X size={12} /></button></div>}
           {!loading && activeSession?.messages.length === 0 ? <WelcomePanel base={base} onPrompt={setDraft} /> : <h1 className="gx-sr-only">Ask {base.title}</h1>}
-          {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} retryDisabled={sending || Boolean(activeSession?.archived)} onRetry={() => void send(message.content)} onEdit={() => setDraft(message.content)} onCite={(citation, index) => setEvidence({ citation, index })} selected={selectedMessageId === message.id} promoting={promotingMessageId === message.id} promoted={proposalMessageIds.has(message.id)} branching={branchingMessageId === message.id} onSelect={() => { setSelectedMessageId(message.id); setInspectorTab("context"); setInspectorCollapsed(false); }} onCopy={() => void copyMessage(message)} onPromote={() => void promoteMessage(message)} onBranch={() => void branchFromMessage(message)} />)}
+          {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} retryDisabled={sending || Boolean(activeSession?.archived)} onRetry={() => void send(message.content)} onEdit={() => setDraft(message.content)} onCite={(citation, index) => setEvidence({ citation, index })} selected={selectedMessageId === message.id} promoting={promotingMessageId === message.id} promoted={proposalMessageIds.has(message.id)} branching={branchingMessageId === message.id} onSelect={() => { setSelectedMessageId(message.id); setInspectorTab((current) => current === "trace" ? "trace" : "context"); setInspectorCollapsed(false); }} onCopy={() => void copyMessage(message)} onPromote={() => void promoteMessage(message)} onBranch={() => void branchFromMessage(message)} />)}
           {sending && asking && <article className="conversation-message role-user"><div className="message-author"><span className="user-mark"><UserRound size={13} /></span><span>You</span></div><div className="message-body"><MessageContent content={asking} /></div></article>}
           {sending && (liveAnswer.live ? <LiveAnswer state={liveAnswer.live} /> : <div className="thinking-row"><span className="assistant-mark"><BrandMark size={14} busy /></span><span><i /><i /><i /></span><small>Working out what to look up…</small></div>)}
         </div>
         <Composer picker={<><ModelPicker menu={modelMenu} choice={askChoice} onChange={chooseModel} disabled={sending || Boolean(activeSession?.archived)} /><StylePicker disabled={sending || Boolean(activeSession?.archived)} /></>} web={{ available: webSearch.available, enabled: webSearch.enabled, onChange: webSearch.setEnabled }} value={draft} sending={sending} sourceCount={activeSession?.selectedSourceIds.length ?? 0} chapterTitle={focusedChapter?.title} readOnly={Boolean(activeSession?.archived)} ready={!loading && activeSession !== null} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={() => { setInspectorTab("sources"); setInspectorCollapsed(false); }} />
       </section>
-      <ContextInspector resize={inspectorWidth} base={base} sources={scopeSources} session={activeSession} knowledgeUnits={knowledgeUnits} selectedMessage={selectedMessage} tab={inspectorTab} sourceQuery={sourceQuery} collapsed={inspectorCollapsed} readOnly={Boolean(activeSession?.archived)} onTab={setInspectorTab} onSourceQuery={setSourceQuery} onToggleSource={(id) => void toggleSource(id)} onUseAll={() => { if (activeSession) void patchSession(activeSession.id, { selectedSourceIds: [] }); }} onAdd={onAdd} onOpenSource={(id, citation) => void openSourceDetail(id, citation)} onOpenUnit={(unit) => void openKnowledgeUnitOrigin(unit)} onCollapse={() => setInspectorCollapsed((value) => !value)} />
+      <ContextInspector resize={inspectorWidth} base={base} sources={scopeSources} session={activeSession} knowledgeUnits={knowledgeUnits} selectedMessage={selectedMessage} tab={inspectorTab} sourceQuery={sourceQuery} collapsed={inspectorCollapsed} readOnly={Boolean(activeSession?.archived)} onTab={setInspectorTab} onSourceQuery={setSourceQuery} onToggleSource={(id) => void toggleSource(id)} onUseAll={() => { if (activeSession) void patchSession(activeSession.id, { selectedSourceIds: [] }); }} onAdd={onAdd} onOpenSource={(id, citation) => void openSourceDetail(id, citation)} onOpenUnit={(unit) => void openKnowledgeUnitOrigin(unit)} onCollapse={() => setInspectorCollapsed((value) => !value)} traceOn={traces.on} onCopy={(label, value) => void navigator.clipboard.writeText(value).then(() => onNotify(`${label} copied.`)).catch(() => onNotify(`${label} could not be copied.`))} />
       {evidence && <EvidencePanel citation={evidence.citation} index={evidence.index} onClose={() => setEvidence(null)} onOpenSource={onOpenSource ? (id) => { setEvidence(null); onOpenSource(id); } : undefined} />}
       {mobileSessionsOpen && <div className="mobile-session-drawer" role="dialog" aria-modal="true" aria-label="Session history"><button className="mobile-session-scrim" onClick={() => setMobileSessionsOpen(false)} aria-label="Close session history" /><div className="mobile-session-sheet"><button className="mobile-session-close" autoFocus onClick={() => setMobileSessionsOpen(false)} aria-label="Close session history"><X size={15} /></button><SessionsSidebar base={base} indexedCount={scopeSources.filter((source) => source.indexed).length} referenceCount={scopeSources.filter((source) => !source.indexed).length} sessions={sessions} archivedSessions={archivedSessions} showArchived={showArchived} activeId={activeId} loading={loading} query={sessionQuery} onQuery={setSessionQuery} onNew={() => { setMobileSessionsOpen(false); void createSession(); }} onOpen={(id) => { setMobileSessionsOpen(false); void loadSession(id); }} onPin={(session) => void patchSession(session.id, { pinned: !session.pinned })} onArchive={(session) => void archiveSession(session)} onToggleArchived={() => void toggleArchived()} onRestore={(session) => void restoreSession(session)} /></div></div>}
     </div>
