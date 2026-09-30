@@ -88,8 +88,8 @@ export const readAloud = {
     set(IDLE);
   },
   /** Start reading an answer, pause or resume it if it is the one being read. */
-  async toggle(message: Pick<SessionMessage, "id" | "sessionId">) {
-    if (state.messageId === message.id) {
+  async toggle(message: Pick<SessionMessage, "id" | "sessionId">, again = false) {
+    if (!again && state.messageId === message.id) {
       if (state.status === "playing") { audio?.pause(); set({ ...state, status: "paused" }); return; }
       if (state.status === "paused" && audio) { void audio.play(); set({ ...state, status: "playing" }); return; }
       if (state.status === "making") { readAloud.stop(); return; }
@@ -101,7 +101,7 @@ export const readAloud = {
     await new Promise<void>((started) => {
       void (async () => {
         try {
-          const begun = await knowledgeApi.beginSpeech(message.sessionId, message.id);
+          const begun = await knowledgeApi.beginSpeech(message.sessionId, message.id, again);
           if (mine !== turn) return;
           if (begun.clip) {
             const url = await clipUrl(begun.clip.id);

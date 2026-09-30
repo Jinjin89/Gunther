@@ -486,3 +486,10 @@ def test_a_long_answer_is_handed_over_in_parts_and_kept_whole(tmp_path: Path, sp
         # Afterwards the whole answer is on disk and later listens just play it.
         again = client.post(url, headers=SIDECAR).json()
         assert again["clip"]["cached"] is True and again["parts"] == 1 and len(spoken) == count
+        # Read again: the kept recording is dropped and made anew.
+        redo = client.post(f"{url}?fresh=true", headers=SIDECAR).json()
+        assert redo["clip"] is None and redo["jobId"] != begun["jobId"]
+        for index in range(redo["parts"]):
+            client.get(f"/api/speech/jobs/{redo['jobId']}/parts/{index}", headers=SIDECAR)
+        assert len(spoken) == 2 * count
+        assert client.get("/api/settings/tts", headers=SIDECAR).json()["cache"]["clips"] == 1

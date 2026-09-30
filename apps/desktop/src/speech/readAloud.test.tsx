@@ -78,6 +78,14 @@ describe("reading an answer aloud", () => {
     expect(api.speechAudio).toHaveBeenCalledTimes(1);
   });
 
+  it("Read again asks the service to drop the kept recording and make a new one", async () => {
+    const user = userEvent.setup();
+    render(<SpeakerButton message={message} />);
+    await user.click(screen.getByRole("button", { name: "Read again" }));
+    expect(await screen.findByRole("button", { name: "Pause" })).toBeTruthy();
+    expect(api.beginSpeech).toHaveBeenCalledWith("s1", "m1", true);
+  });
+
   it("plays a long answer part by part, fetching the next while one plays", async () => {
     api.beginSpeech.mockResolvedValue({ clip: null, jobId: "j1", parts: 2 });
     api.speechPart.mockResolvedValue(new Blob(["x"]));

@@ -398,6 +398,7 @@ class Job:
         self.audio: list[bytes | None] = [None] * len(pieces)
         self.error: TtsError | None = None
         self.changed = asyncio.Event()
+        self.cancelled = False
 
     def publish(self) -> None:
         self.changed.set()
@@ -482,9 +483,17 @@ class TtsService:
             )
 
     async def begin(
-        self, session_id: str, message_id: str, resolved: Resolved, gateway: ModelGateway | None
+        self,
+        session_id: str,
+        message_id: str,
+        resolved: Resolved,
+        gateway: ModelGateway | None,
+        fresh: bool = False,
     ) -> Begun:
-        """Start an answer: found on disk, or made in parts that can be played as they arrive."""
+        """Start an answer: found on disk, or made in parts that can be played as they arrive.
+
+        ``fresh`` drops the kept recording (and any being made) for this voice and makes it again.
+        """
 
         with session_scope(self.sessions) as session:
             message = session.scalar(
@@ -498,6 +507,8 @@ class TtsService:
                 raise TtsError("Only answers are read aloud.")
             content = message.content
         key = cache_key(content, resolved)
+        if fresh:
+            self._forget(key)
         found = self._find(key)
         if found is not None:
             return Begun(found, None)
@@ -527,9 +538,11 @@ class TtsService:
         # In order and one at a time, like synthesize(): suppliers rate-limit.
         try:
             for index, piece in enumerate(job.pieces):
+                if job.cancelled:
+                    return
                 job.audio[index] = await resolved.provider.synthesize(resolved.config, piece)
                 job.publish()
-            if self._find(key) is None:
+            if not job.cancelled and self._find(key) is None:
                 audio = join_wav([part for part in job.audio if part is not None])
                 await asyncio.to_thread(
                     self._store, message_id, key, resolved, script.text, script.model, audio
@@ -542,13 +555,30 @@ class TtsService:
             job.error = TtsError("The answer could not be turned into speech.")
             job.publish()
         finally:
-            self._running.pop(key, None)
+            if self._running.get(key) is job:
+                del self._running[key]
 
     def job_part(self, job_id: str, index: int) -> Awaitable[bytes]:
         job = self._jobs.get(job_id)
         if job is None or not 0 <= index < len(job.pieces):
             raise SpeechNotFound("This recording is gone. Read the answer again to make it.")
         return job.part(index)
+
+    def _forget(self, key: str) -> None:
+        """Drop the kept recording for a key, and stop one still being made."""
+
+        running = self._running.pop(key, None)
+        if running is not None:
+            running.cancelled = True
+            running.error = TtsError("This reading was replaced by a new one.")
+            running.publish()
+        with session_scope(self.sessions) as session:
+            row = session.scalar(select(SpeechClip).where(SpeechClip.cache_key == key))
+            name = row.audio_file if row else None
+            if row is not None:
+                session.delete(row)
+        if name:
+            (self.directory / name).unlink(missing_ok=True)
 
     def _find(self, key: str) -> Clip | None:
         with session_scope(self.sessions) as session:

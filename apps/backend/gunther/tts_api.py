@@ -396,7 +396,9 @@ async def speak_message(session_id: str, message_id: str, request: Request) -> d
 
 
 @router.post("/sessions/{session_id}/messages/{message_id}/speech/begin")
-async def begin_speech(session_id: str, message_id: str, request: Request) -> dict[str, Any]:
+async def begin_speech(
+    session_id: str, message_id: str, request: Request, fresh: bool = False
+) -> dict[str, Any]:
     """Like speak_message, but a first reading is handed over in parts to play as they arrive."""
 
     _owner_only(request)
@@ -405,7 +407,7 @@ async def begin_speech(session_id: str, message_id: str, request: Request) -> di
         raise HTTPException(409, problem)
     try:
         begun = await _service(request).begin(
-            session_id, message_id, resolved, request.app.state.models
+            session_id, message_id, resolved, request.app.state.models, fresh
         )
     except SpeechNotFound as error:
         raise HTTPException(404, str(error)) from error
