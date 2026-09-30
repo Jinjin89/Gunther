@@ -344,8 +344,8 @@ function CitationCard({ citation, index, onOpen }: { citation: ConversationCitat
 
 const INSPECTOR_MIN = 280;
 const INSPECTOR_DEFAULT = 326;
-/** The right panel may take up to 45% of the window, so the conversation keeps its room. */
-const inspectorMax = () => Math.min(640, Math.max(INSPECTOR_MIN, Math.round(window.innerWidth * 0.45)));
+/** The right panel may grow until the list (252px) and the conversation (at least 460px) would be squeezed. */
+const inspectorMax = () => Math.min(640, Math.max(INSPECTOR_MIN, window.innerWidth - 252 - 460));
 
 /** The sources a conversation has cited so far, each once (by the id it keeps in the conversation, not the number an answer shows). */
 export function conversationSources(session: KnowledgeSession | null): ConversationCitation[] {

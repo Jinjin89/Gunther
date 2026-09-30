@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "dev": "concurrently --kill-others -n backend,desktop -c blue,green \"npm run dev:backend\" \"npm run dev:desktop\"",
-    "dev:backend": "env UV_CACHE_DIR=.uv-cache uv run --project apps/backend uvicorn --app-dir apps/backend gunther.main:app --reload --port 8787",
+    "dev:backend": "env UV_CACHE_DIR=.uv-cache uv run --project apps/backend uvicorn --app-dir apps/backend gunther.main:app --reload --reload-dir apps/backend/gunther --port 8787",
     "dev:desktop": "npm run tauri:dev -w @gunther/desktop",
     "dev:desktop:web": "npm run dev -w @gunther/desktop",
     "build": "npm run build:desktop:web",

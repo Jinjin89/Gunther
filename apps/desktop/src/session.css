@@ -430,7 +430,7 @@
 .source-detail-layer .source-detail-content pre { font-size: calc(13px * var(--gx-fs, 1)); line-height: 1.7; }
 
 /* The conversation list docked beside the chat (see historyDocked). */
-.session-workspace.history-is-docked { grid-template-columns: 252px minmax(420px, 1fr) 326px; }
+.session-workspace.history-is-docked { grid-template-columns: 252px minmax(420px, 1fr) var(--inspector-w, 326px); }
 .session-workspace.history-is-docked.inspector-is-collapsed { grid-template-columns: 252px minmax(420px, 1fr) 40px; }
 .history-is-docked .mobile-session-toggle { display: grid; }
 @media (max-width: 1099px) {

@@ -29,6 +29,20 @@ describe("EvidencePanel", () => {
     expect(screen.getByRole("link", { name: /Open example\.org/ })).toHaveAttribute("href", "https://www.example.org/post");
   });
 
+  it("closes when the page outside it is pressed, but not for its own content or for something that opens a source", async () => {
+    const onClose = vi.fn();
+    render(<>
+      <main>Conversation</main>
+      <button type="button" aria-label="Inspect citation 2">[2]</button>
+      <EvidencePanel citation={web} index={0} onClose={onClose} />
+    </>);
+    await userEvent.click(screen.getByText("CD3D marks T cells."));
+    await userEvent.click(screen.getByRole("button", { name: "Inspect citation 2" }));
+    expect(onClose).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByText("Conversation"));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   it("shows a library passage among its neighbours and opens the source", async () => {
     vi.mocked(knowledgeApi.source).mockResolvedValue(source(null));
     const onOpenSource = vi.fn();

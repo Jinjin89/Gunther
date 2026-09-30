@@ -16,6 +16,9 @@ const WIDTH_KEY = "gunther:evidence-width";
 const MIN_WIDTH = 340;
 const DEFAULT_WIDTH = 460;
 
+/** What opens or switches the panel: a press on these must not also close it. */
+const OPENS_EVIDENCE = 'button[aria-label^="Inspect citation"], button[aria-label^="Show evidence"], .conversation-sources button';
+
 const maxWidth = () => Math.max(MIN_WIDTH, Math.min(960, Math.round(window.innerWidth * 0.8)));
 
 /** The quote marked inside the block that holds it, when it is a piece of it. */
@@ -134,11 +137,24 @@ export function EvidencePanel({ citation, index, onClose, onOpenSource }: {
 }) {
   const close = useRef<HTMLButtonElement>(null);
   const { width, handle } = useDragWidth({ storageKey: WIDTH_KEY, min: MIN_WIDTH, max: maxWidth, fallback: DEFAULT_WIDTH });
+  const panel = useRef<HTMLElement>(null);
   useEscape(onClose);
+  // Pressing anywhere outside the panel closes it, like Esc, except on something that opens a source.
+  const latestClose = useRef(onClose);
+  latestClose.current = onClose;
+  useEffect(() => {
+    const away = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target || panel.current?.contains(target) || target.closest(OPENS_EVIDENCE)) return;
+      latestClose.current();
+    };
+    document.addEventListener("pointerdown", away);
+    return () => document.removeEventListener("pointerdown", away);
+  }, []);
   useEffect(() => { close.current?.focus(); }, [citation.id]);
   const web = citation.kind === "web";
   return createPortal(
-    <aside className="gx-evidence" role="complementary" aria-label="Evidence" style={{ width: `min(${width}px, 100vw)` }}>
+    <aside ref={panel} className="gx-evidence" role="complementary" aria-label="Evidence" style={{ width: `min(${width}px, 100vw)` }}>
       <div className="gx-evidence-resize" role="separator" aria-orientation="vertical" aria-label="Resize evidence" aria-valuenow={width} aria-valuemin={MIN_WIDTH} aria-valuemax={maxWidth()} tabIndex={0} title="Drag to resize · double-click to reset" {...handle} />
       <header>
         {index !== undefined && <i>{index + 1}</i>}
