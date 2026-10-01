@@ -44,12 +44,12 @@ const overview = (patch: Partial<TtsOverview> = {}, job: Partial<TtsOverview["ro
   problem: null,
   cache: { clips: 2, bytes: 3 * 1024 * 1024 },
   providers: [{
-    id: "qwen", name: "Qwen", kind: "qwen", baseUrl: "https://dashscope.aliyuncs.com", keySet: true, keyHint: "1234", keyShared: false, keyOptional: false, readsStructure: false, note: "",
+    id: "qwen", name: "Qwen", kind: "qwen", baseUrl: "https://maas.qianwenaiapi.com", keySet: true, keyHint: "1234", keyShared: false, keyOptional: false, readsStructure: false, note: "",
     models: [{ id: "qwen3-tts-flash", ref: "qwen/qwen3-tts-flash", label: "qwen3-tts-flash" }],
     status: { state: "configured", summary: "1 model", check: null },
   }],
   roles: [{ id: "answers", label: "Answers", description: "Speaks an answer.", model: "qwen/qwen3-tts-flash", kind: "qwen", options: { voice: "Cherry", language: "Auto" }, autoRead: false, problem: null, ...job }],
-  presets: [{ kind: "qwen", name: "Qwen", baseUrl: "https://dashscope.aliyuncs.com", models: ["qwen3-tts-flash"], keyOptional: false, readsStructure: false, note: "", options: QWEN_OPTIONS }],
+  presets: [{ kind: "qwen", name: "Qwen", baseUrl: "https://maas.qianwenaiapi.com", models: ["qwen3-tts-flash"], keyOptional: false, readsStructure: false, note: "", options: QWEN_OPTIONS }],
   ...patch,
 });
 
@@ -186,7 +186,7 @@ describe("TtsSettings", () => {
     await user.click(screen.getByRole("button", { name: "Replace" }));
     await user.type(screen.getByPlaceholderText("Paste your key"), "sk-new-5678");
     await user.click(screen.getByRole("button", { name: /hear a sample/i }));
-    expect(api.ttsSample).toHaveBeenCalledWith({ providerId: "qwen", baseUrl: "https://dashscope.aliyuncs.com", apiKey: "sk-new-5678", model: "qwen3-tts-flash" });
+    expect(api.ttsSample).toHaveBeenCalledWith({ providerId: "qwen", baseUrl: "https://maas.qianwenaiapi.com", apiKey: "sk-new-5678", model: "qwen3-tts-flash" });
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(api.updateTtsProvider).toHaveBeenCalledWith("qwen", expect.objectContaining({ apiKey: "sk-new-5678" }));
     await user.click(screen.getByRole("button", { name: /Add provider/ }));
@@ -201,7 +201,7 @@ describe("TtsSettings", () => {
     render(<TtsSettings onNotify={() => undefined} />);
     await user.click(await screen.findByRole("button", { name: /Qwen\s+1 model/ }));
     await user.click(screen.getByRole("button", { name: /Fetch models/ }));
-    expect(api.fetchTtsModels).toHaveBeenCalledWith("qwen", { baseUrl: "https://dashscope.aliyuncs.com" });
+    expect(api.fetchTtsModels).toHaveBeenCalledWith("qwen", { baseUrl: "https://maas.qianwenaiapi.com" });
     expect(await screen.findByText("2 voice models offered.")).toBeTruthy();
     // The one already added is not offered again.
     await user.click(screen.getByRole("button", { name: "qwen3-tts-instruct-flash" }));

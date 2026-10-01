@@ -19,7 +19,7 @@ const overview = (patch: Partial<SpeechOverview> = {}): SpeechOverview => ({
   fromEnvironment: false,
   providers: [
     { id: "sensevoice", name: "SenseVoice", kind: "sensevoice", baseUrl: "http://127.0.0.1:8765", keySet: false, keyHint: null, keySource: "saved", keyShared: false, keyOptional: true, note: "", models: [{ id: "sensevoice-small", ref: "sensevoice/sensevoice-small", label: "sensevoice-small" }], status: { state: "configured", summary: "1 model", check: null } },
-    { id: "qwen", name: "Qwen", kind: "qwen", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", keySet: true, keyHint: "1234", keySource: "saved", keyShared: false, keyOptional: false, note: "", models: [{ id: "qwen3-asr-flash", ref: "qwen/qwen3-asr-flash", label: "qwen3-asr-flash" }], status: { state: "configured", summary: "1 model", check: null } },
+    { id: "qwen", name: "Qwen", kind: "qwen", baseUrl: "https://maas.qianwenaiapi.com/compatible-mode/v1", keySet: true, keyHint: "1234", keySource: "saved", keyShared: false, keyOptional: false, note: "", models: [{ id: "qwen3-asr-flash", ref: "qwen/qwen3-asr-flash", label: "qwen3-asr-flash" }], status: { state: "configured", summary: "1 model", check: null } },
   ],
   roles: [
     { id: "recording", label: "Recording", description: "Writes the words while you record.", model: "sensevoice/sensevoice-small", stream: true, language: "", problem: null },
@@ -35,12 +35,10 @@ describe("SpeechSettings", () => {
     api.speechOverview.mockResolvedValue(overview());
   });
 
-  it("shows each job with its model and whether it works live", async () => {
+  it("shows each job with its model and no live switch", async () => {
     render(<SpeechSettings onNotify={() => undefined} />);
     const jobs = await screen.findByRole("group", { name: "Used for" });
-    expect(within(jobs).getAllByRole("switch", { name: "Live" })).toBeTruthy();
-    const switches = within(jobs).getAllByRole("switch");
-    expect(switches.map((item) => (item as HTMLInputElement).checked)).toEqual([true, false]);
+    expect(within(jobs).queryAllByRole("switch")).toEqual([]);
     expect(screen.getByText("Qwen")).toBeTruthy();
   });
 
@@ -50,13 +48,5 @@ describe("SpeechSettings", () => {
     const select = await screen.findByLabelText("Ask dictation", { selector: "select" });
     await userEvent.selectOptions(select, "qwen/qwen3-asr-flash");
     expect(api.saveSpeechRoles).toHaveBeenCalledWith({ dictation: { model: "qwen/qwen3-asr-flash", stream: false, language: "" } });
-  });
-
-  it("turns live on for Ask dictation", async () => {
-    api.saveSpeechRoles.mockResolvedValue(overview());
-    render(<SpeechSettings onNotify={() => undefined} />);
-    const jobs = await screen.findByRole("group", { name: "Used for" });
-    await userEvent.click(within(jobs).getAllByRole("switch")[1]!);
-    expect(api.saveSpeechRoles).toHaveBeenCalledWith({ dictation: { model: "sensevoice/sensevoice-small", stream: true, language: "" } });
   });
 });

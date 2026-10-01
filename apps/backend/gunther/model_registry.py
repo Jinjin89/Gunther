@@ -49,8 +49,8 @@ PRESETS: dict[str, Preset] = {
     "glm": Preset("GLM", "https://open.bigmodel.cn/api/paas/v4", ("glm-5.3-flash",)),
     "qwen": Preset(
         "Qwen",
-        "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        note="Use your Model Studio workspace address if it gives you one.",
+        "https://maas.qianwenaiapi.com/compatible-mode/v1",
+        note="The address the Qwen AI platform shows for your key.",
     ),
     "openai": Preset("OpenAI", "https://api.openai.com/v1"),
     "compatible": Preset(

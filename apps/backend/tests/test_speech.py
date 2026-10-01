@@ -64,7 +64,7 @@ def test_each_job_picks_its_own_model_and_live_setting(tmp_path: Path) -> None:
         added = client.post(
             "/api/settings/speech/providers",
             headers=SIDECAR,
-            json={"kind": "qwen", "apiKey": KEY},
+            json={"kind": "qwen", "apiKey": KEY, "models": ["qwen3-asr-flash"]},
         )
         assert added.status_code == 201
         qwen = next(item for item in added.json()["providers"] if item["kind"] == "qwen")
@@ -165,7 +165,11 @@ def test_a_qwen_key_saved_for_models_offers_qwen_transcription(tmp_path: Path) -
 
 def test_a_qwen_transcription_provider_without_a_key_uses_the_models_key(tmp_path: Path) -> None:
     with TestClient(create_app(settings_for(tmp_path))) as client:
-        client.post("/api/settings/speech/providers", headers=SIDECAR, json={"kind": "qwen"})
+        client.post(
+            "/api/settings/speech/providers",
+            headers=SIDECAR,
+            json={"kind": "qwen", "models": ["qwen3-asr-flash"]},
+        )
         client.put(
             "/api/settings/speech/roles", headers=SIDECAR, json={"roles": {"dictation": QWEN_JOB}}
         )
@@ -225,7 +229,7 @@ def test_fetch_models_offers_the_qwen_recognisers_that_answer_here(
     from gunther.service_settings import CheckResult
 
     async def listed(url, key, name, *, key_optional=False):
-        # DashScope's list is of chat models, with a recogniser or two among them.
+        # The supplier's list is of chat models, with a recogniser or two among them.
         return CheckResult(True, "Connected, and the key works."), [
             "qwen-plus",
             "qwen3-asr-flash",
@@ -247,14 +251,12 @@ def test_fetch_models_offers_the_qwen_recognisers_that_answer_here(
             json={"apiKey": KEY},
         ).json()
     assert tested["ok"] is True
-    # Every model named asr the list has, then documented ones it leaves out.
+    # Exactly what the supplier's list names, chat models included; nothing added or dropped.
     assert tested["available"] == [
+        "qwen-plus",
         "qwen3-asr-flash",
         "qwen3-asr-flash-2027-01-01",
         "qwen3-asr-flash-filetrans",
         "qwen3-asr-flash-realtime",
-        "qwen3-asr-flash-2026-02-10",
-        "qwen3-asr-flash-2025-09-08",
+        "qwen3-tts-flash",
     ]
-    # The chosen model is documented, so no "not in this account's list" warning.
-    assert tested["warning"] is None

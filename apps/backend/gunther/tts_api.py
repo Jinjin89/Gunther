@@ -394,15 +394,12 @@ async def fetch_models(provider_id: str, payload: ModelsIn, request: Request) ->
     )
     if not result.ok:
         return {"ok": False, "message": result.message, "offered": []}
-    # Every voice model the key's list names, then documented ones it leaves out.
-    named = [m for m in listed if supplier.speaks(m)]
-    documented = [m for m in supplier.documented(provider["baseUrl"]) if m not in named]
-    offered = [*named, *documented]
-    count = f"{len(offered)} voice model{'s' if len(offered) != 1 else ''}"
+    # Exactly what the supplier's list names: nothing is filtered or added from this side.
+    offered = listed
     if not offered:
-        message = f"{supplier.name} names no voice models for this key. Type the model's id."
+        message = f"{supplier.name} returned no model list for this key. Type the model's id."
     else:
-        message = f"Key works. {count} offered."
+        message = f"Key works. {len(offered)} model{'s' if len(offered) != 1 else ''} listed."
     return {"ok": True, "message": message, "offered": offered}
 
 

@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import re
 import secrets
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
@@ -35,14 +34,6 @@ class Preset:
     models: tuple[str, ...] = ()
     key_optional: bool = False
     note: str = ""
-    # For Fetch models: the supplier's documented transcription models, offered first,
-    # and which models of its list transcribe the way Gunther asks (None: all of them).
-    documented: tuple[str, ...] = ()
-    transcribes: Callable[[str], bool] | None = None
-
-
-def _qwen_transcribes(model: str) -> bool:
-    return "asr" in model.lower()
 
 
 PRESETS: dict[str, Preset] = {
@@ -55,12 +46,11 @@ PRESETS: dict[str, Preset] = {
     ),
     "qwen": Preset(
         "Qwen",
-        "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        ("qwen3-asr-flash",),
-        note="Strong on Chinese. Outside China use dashscope-intl.aliyuncs.com.",
-        # Model Studio, "Speech recognition", Beijing and Singapore, 2026-09.
-        documented=("qwen3-asr-flash", "qwen3-asr-flash-2026-02-10", "qwen3-asr-flash-2025-09-08"),
-        transcribes=_qwen_transcribes,
+        "https://maas.qianwenaiapi.com/compatible-mode/v1",
+        note=(
+            "Strong on Chinese. The address is the one the Qwen AI platform shows; "
+            "use Fetch models to list the models your key can call."
+        ),
     ),
     "openai": Preset(
         "OpenAI",

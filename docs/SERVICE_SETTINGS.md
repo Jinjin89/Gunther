@@ -17,21 +17,16 @@ Set up like Models: **providers** first, then **jobs** that pick a model.
 (Qwen3-ASR on Alibaba Cloud), OpenAI, or any server with an OpenAI-style
 `/audio/transcriptions` (Groq, a Whisper you host). Each has an address, a key
 (SenseVoice needs none) and its models; **Fetch models** lists what it offers.
-For Qwen it offers every model whose name contains `asr` (DashScope's list is mostly chat
-models), then the documented `qwen3-asr-flash`, `-2026-02-10` and `-2025-09-08` if the list
-leaves them out. Only Qwen3-ASR-Flash answers on `compatible-mode/v1/chat/completions`, which
-Gunther uses; `-filetrans` and real-time recognisers are offered but need other addresses.
+Fetch models returns exactly what the supplier's own list names (`GET <address>/models`): Gunther
+keeps no built-in model lists and adds or hides nothing. If the supplier returns no list, it says
+so and the model's id is typed. Qwen's address is the Qwen AI platform's
+`https://maas.qianwenaiapi.com/compatible-mode/v1`; only Qwen3-ASR-Flash answers on its
+`chat/completions`, which Gunther uses, so `-filetrans` and real-time recognisers may be listed
+but need other addresses.
 
-**Jobs** pick one model each, whether it works **live**, and a language:
-
-| Job | Does | Live |
-| --- | --- | --- |
-| Recording | Writes the words while you record | On: segments are written as you speak |
-| Ask dictation | Writes the words when you speak into Ask | Off: the whole take is sent when you stop, which reads better |
-
-Live off sends the take in one request (cut only past about two and a half
-minutes). Words then appear when you stop speaking rather than as you go. Audio
-is always saved on this computer first.
+**Jobs** pick one model each and a language. Recording writes the words in short segments as you
+speak; Ask dictation sends the whole take when you stop (cut only past about two and a half
+minutes). There is no Live switch. Audio is always saved on this computer first.
 
 Until providers are saved, they are made from the older `STT_*`, `SENSEVOICE_*`
 and `QWEN_STT_*` settings, and both jobs use the one they chose. Code:

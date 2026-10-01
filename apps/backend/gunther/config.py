@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     stt_language: str = ""
     # Qwen3-ASR on Alibaba Cloud Model Studio (DashScope): audio goes in a
     # chat-completions request rather than /audio/transcriptions.
-    qwen_stt_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    qwen_stt_base_url: str = "https://maas.qianwenaiapi.com/compatible-mode/v1"
     qwen_stt_api_key: str | None = None
     qwen_stt_model: str = "qwen3-asr-flash"
     ocr_provider: Literal["auto", "vision", "tesseract", "disabled"] = "auto"

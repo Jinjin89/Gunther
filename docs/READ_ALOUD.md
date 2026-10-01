@@ -50,7 +50,7 @@ an `active` one) are converted when read (`tts_service.upgrade_config`).
 
 Add a `TtsProvider` to `PROVIDERS` in `tts_providers.py`: models, its own `options` (voice, tone…;
 the Settings form draws them), `max_chars`, and an async `synthesize(config, text) -> wav bytes`;
-for Fetch models, `models_url` (an OpenAI-style list) and `speaks` (which listed models are voices).
+for Fetch models, `models_url` (an OpenAI-style list, shown as it comes: no filter, no built-in models).
 No UI or API change is needed. Keys live in `service-settings.json` (0600) and are never sent back;
 an unset Qwen key falls back to the key saved for Qwen models or transcription, and a new Qwen
 provider starts in that key's region.

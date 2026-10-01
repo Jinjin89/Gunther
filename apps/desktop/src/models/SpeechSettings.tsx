@@ -223,10 +223,6 @@ function RoleRow({ role, overview, onSave }: { role: SpeechRole; overview: Speec
           {provider.models.map((model) => <option key={model.ref} value={model.ref}>{model.label}{provider.keySet || provider.keyOptional ? "" : " (needs a key)"}</option>)}
         </optgroup>)}
       </select>
-      <label className="speech-live" title="Live writes the words as you speak. Off waits until you finish, then sends the whole take, which is usually more accurate.">
-        <input type="checkbox" role="switch" checked={role.stream} onChange={(event) => onSave(role.id, choice({ stream: event.target.checked }))} />
-        <span>Live</span>
-      </label>
       <input className="speech-language" type="text" value={language} maxLength={12} placeholder="Language" aria-label={`${role.label} language`} title="A code like en or zh. Empty lets the model detect it." spellCheck={false} onChange={(event) => setLanguage(event.target.value)} onBlur={commitLanguage} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitLanguage(); } }} />
     </div>
     {role.problem && <small className="model-role-problem"><CircleAlert size={12} />{role.problem}</small>}

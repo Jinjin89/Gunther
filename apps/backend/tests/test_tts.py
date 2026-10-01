@@ -98,7 +98,7 @@ def setup(client: TestClient, voice: str | None = None, auto_read: bool = False)
     """Qwen with a key, and the Answers job on its voice model."""
 
     response = client.put(
-        "/api/settings/tts/providers/qwen", headers=SIDECAR, json={"apiKey": KEY}
+        "/api/settings/tts/providers/qwen", headers=SIDECAR, json={"apiKey": KEY, "models": ["qwen3-tts-flash"]}
     )
     assert response.status_code == 200, response.text
     return choose(client, voice=voice, auto_read=auto_read)
@@ -131,7 +131,8 @@ def test_it_starts_off_with_qwen_offered(tmp_path: Path) -> None:
     assert answers_job(found)["model"] is None
     [qwen] = found["providers"]
     assert qwen["kind"] == "qwen" and qwen["status"]["summary"] == "Needs an API key."
-    assert [model["ref"] for model in qwen["models"]] == [QWEN_TTS]
+    # No model is built in: the list comes from Fetch models, or is typed.
+    assert qwen["models"] == []
     [preset] = found["presets"]
     voice = next(option for option in preset["options"] if option["key"] == "voice")
     assert voice["default"] == "Cherry" and voice["allowCustom"] is True
@@ -183,6 +184,11 @@ def test_a_key_saved_for_qwen_models_is_shared(tmp_path: Path) -> None:
             headers=SIDECAR,
             json={"kind": "qwen", "apiKey": KEY, "baseUrl": intl, "models": ["qwen3-max"]},
         )
+        client.put(
+            "/api/settings/tts/providers/qwen",
+            headers=SIDECAR,
+            json={"models": ["qwen3-tts-flash"]},
+        )
         found = choose(client)
         [qwen] = found["providers"]
         assert found["problem"] is None and qwen["keyShared"] is True and qwen["keySet"] is False
@@ -196,7 +202,11 @@ def test_providers_are_added_edited_and_removed_like_transcription(tmp_path: Pat
         added = client.post(
             "/api/settings/tts/providers",
             headers=SIDECAR,
-            json={"kind": "qwen", "baseUrl": "https://dashscope-intl.aliyuncs.com"},
+            json={
+                "kind": "qwen",
+                "baseUrl": "https://dashscope-intl.aliyuncs.com",
+                "models": ["qwen3-tts-flash"],
+            },
         )
         assert added.status_code == 201
         names = [provider["name"] for provider in added.json()["providers"]]
@@ -542,18 +552,17 @@ def test_fetch_models_offers_the_voices_the_key_can_use(tmp_path: Path, monkeypa
             json={"apiKey": "sk-unsaved-9999"},
         ).json()
         missing = client.post("/api/settings/tts/providers/nobody/models", headers=SIDECAR, json={})
-    # Every model named tts the list has, then documented ones it leaves out; no text models.
+    # Exactly what the list names, text models included; nothing filtered or added.
     assert fetched["ok"] is True
-    assert fetched["offered"][:3] == [
+    assert fetched["offered"] == [
+        "qwen-plus",
         "qwen3-tts-flash",
         "qwen3-tts-flash-realtime",
         "qwen3-tts-instruct-flash",
     ]
-    assert {"qwen-tts", "qwen3-tts-flash-2025-11-27"} <= set(fetched["offered"])
-    assert "qwen-plus" not in fetched["offered"]
-    assert fetched["message"] == "Key works. 10 voice models offered."
+    assert fetched["message"] == "Key works. 4 models listed."
     # DashScope lists models on its compatible address, asked with the unsaved key.
-    assert asked == [("https://dashscope.aliyuncs.com/compatible-mode/v1", "sk-unsaved-9999")]
+    assert asked == [("https://maas.qianwenaiapi.com/compatible-mode/v1", "sk-unsaved-9999")]
     assert missing.status_code == 404
 
 
@@ -573,8 +582,17 @@ def test_fetch_models_says_when_the_key_is_refused(tmp_path: Path, monkeypatch) 
     assert fetched == {"ok": False, "message": "Qwen did not accept this API key.", "offered": []}
 
 
-def test_international_addresses_offer_only_the_voices_there() -> None:
-    qwen = tts_providers.PROVIDERS["qwen"]
-    international = qwen.documented("https://dashscope-intl.aliyuncs.com")
-    assert "qwen3-tts-flash" in international and "qwen-tts" not in international
-    assert "qwen-tts" in qwen.documented("https://dashscope.aliyuncs.com/compatible-mode/v1")
+def test_fetch_models_gives_nothing_when_the_list_is_empty(tmp_path: Path, monkeypatch) -> None:
+    from gunther import tts_api
+    from gunther.service_settings import CheckResult
+
+    async def empty(url, key, name, *, key_optional=False):
+        return CheckResult(True, "Connected"), []
+
+    monkeypatch.setattr(tts_api, "list_models", empty)
+    with app_for(tmp_path) as client:
+        setup(client)
+        fetched = client.post(
+            "/api/settings/tts/providers/qwen/models", headers=SIDECAR, json={}
+        ).json()
+    assert fetched["offered"] == [] and "Type the model's id" in fetched["message"]
