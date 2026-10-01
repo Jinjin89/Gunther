@@ -743,8 +743,8 @@ async function run() {
     try {
       await waitForEvaluation(
         cdp,
-        "document.querySelector('.conversation-message.role-assistant') !== null && [...document.querySelectorAll('button.promote-answer')].some((button) => !button.disabled && button.textContent.includes('Propose as knowledge'))",
-        "grounded answer with a reviewable proposal action",
+        "document.querySelector('.conversation-message.role-assistant') !== null && [...document.querySelectorAll('button.promote-answer')].some((button) => !button.disabled && button.textContent.includes('Save as knowledge'))",
+        "grounded answer with a Save as knowledge action",
         20_000,
       );
     } catch (error) {
@@ -755,35 +755,23 @@ async function run() {
       }))()`);
       throw new SmokeFailure(`${error instanceof Error ? error.message : String(error)}; diagnostics=${JSON.stringify(diagnostics)}`);
     }
-    if (!await cdp.evaluate(clickExpression("button", "Propose as knowledge"))) {
-      throw new SmokeFailure("Grounded answer could not be proposed as knowledge");
+    if (!await cdp.evaluate(clickExpression("button", "Save as knowledge"))) {
+      throw new SmokeFailure("Grounded answer could not be saved as knowledge");
     }
     await waitForEvaluation(
       cdp,
-      "[...document.querySelectorAll('button.promote-answer')].some((button) => button.textContent.includes('Proposal created'))",
-      "durable proposal creation",
+      "[...document.querySelectorAll('button.promote-answer')].some((button) => button.textContent.includes('Saved as knowledge'))",
+      "answer saved as knowledge",
     );
 
-    if (!await cdp.evaluate(clickExpression("button", "Inbox"))) {
-      throw new SmokeFailure("Inbox navigation was not clickable for proposal review");
-    }
-    await waitForEvaluation(cdp, "[...document.querySelectorAll('button')].some((button) => button.textContent.includes('Accept suggestion'))", "knowledge suggestion in Inbox");
-    if (!await cdp.evaluate(clickExpression("button", "Accept suggestion"))) {
-      throw new SmokeFailure("Knowledge suggestion could not be accepted");
-    }
-    await waitForEvaluation(
-      cdp,
-      "![...document.querySelectorAll('button')].some((button) => button.textContent.includes('Accept suggestion'))",
-      "accepted suggestion removed from Inbox",
-    );
-
+    // Saving is the only review step: the answer is trusted knowledge at once, with nothing waiting in Inbox.
     const proposals = await jsonFrom(`${backendOrigin}/api/knowledge-bases/${encodeURIComponent(knowledgeBase.id)}/proposals`);
     if (!proposals.some((item) => item.status === "accepted")) {
-      throw new SmokeFailure("Accepted proposal was not persisted");
+      throw new SmokeFailure("The saved answer was not accepted at once");
     }
     const units = await jsonFrom(`${backendOrigin}/api/knowledge-bases/${encodeURIComponent(knowledgeBase.id)}/units`);
     const trustedUnit = units.find((item) => item.status === "trusted" && item.evidenceCount > 0);
-    if (!trustedUnit) throw new SmokeFailure("Accepted proposal did not create a trusted, evidenced knowledge unit");
+    if (!trustedUnit) throw new SmokeFailure("The saved answer did not create a trusted, evidenced knowledge unit");
 
     if (!await cdp.evaluate(clickExpression("button", "Libraries"))) {
       throw new SmokeFailure("Library navigation was not clickable before output generation");
@@ -796,14 +784,19 @@ async function run() {
     if (!await cdp.evaluate(clickExpression("button", "Outputs"))) {
       throw new SmokeFailure("Outputs view was not clickable");
     }
-    await waitForEvaluation(cdp, "document.body.innerText.includes('Turn reviewed knowledge into something useful.') && [...document.querySelectorAll('button')].some((button) => button.textContent.includes('Build and save output') && !button.disabled)", "reviewed knowledge available to Outputs");
-    if (!await cdp.evaluate(clickExpression("button", "Build and save output"))) {
-      throw new SmokeFailure("Output could not be built from accepted knowledge");
-    }
+    // Outputs read the whole library: the filed source and the saved answer.
+    const trustedCount = units.filter((item) => item.status === "trusted").length;
+    const scopeWords = `${sources.length} ${sources.length === 1 ? "source" : "sources"} · ${trustedCount} saved`;
     await waitForEvaluation(
       cdp,
-      "document.querySelector('.studio-document.is-generated') !== null && document.body.innerText.includes('evidence link') && document.body.innerText.includes('revision')",
-      "generated output with evidence and revision provenance",
+      `document.body.innerText.includes('Turn what you’ve gathered into a report or slides.') && document.querySelector('.outputs-controls .outputs-hint')?.textContent.trim() === ${JSON.stringify(scopeWords)}`,
+      "Outputs counting the library's sources and saved knowledge",
+    );
+    // The smoke has no model, so Outputs says so instead of building one from a stand-in.
+    await waitForEvaluation(
+      cdp,
+      "document.querySelector('.outputs-empty h2')?.textContent.trim() === 'Outputs need a model' && document.querySelector('button.outputs-build')?.disabled === true && document.body.innerText.includes('Nothing built yet.')",
+      "Outputs asking for a model instead of building one",
     );
 
     // Trash: move a capture there from Inbox, undo, restore from the Trash page, delete forever.
@@ -862,7 +855,7 @@ async function run() {
 
     result = {
       status: "passed",
-      checks: 47,
+      checks: 42,
       browser: path.basename(chromeBinary),
       knowledgeBaseId: knowledgeBase.id,
       noteId: filedNote.id,
@@ -880,9 +873,9 @@ async function run() {
         "successful local retry copy cleared",
         "source reopened and reviewed from its preserved original",
         "grounded Ask answer persisted with citations",
-        "answer promoted through the durable review Inbox",
-        "accepted proposal became a trusted evidenced unit",
-        "Output generated only from accepted knowledge with revision provenance",
+        "answer saved as knowledge with no Inbox review",
+        "saved answer became a trusted evidenced unit",
+        "Outputs counted the library's sources and saved knowledge, and asked for a model instead of building without one",
         "capture moved to Trash from Inbox and brought back with Undo",
         "capture restored from the Trash page",
         "capture deleted forever from Trash",
