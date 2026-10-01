@@ -129,11 +129,18 @@ them: they have no citations or scope to edit.
 
 - Reports show on the page, section by section, with each section's findings. A number opens
   the evidence panel at its passage.
-- Slides open in a reveal.js 6 deck (`@revealjs/react`): arrows and progress inside the page,
-  thumbnails to jump by, the presenter's notes under the deck, and **Present** (the window
-  goes full screen through Tauri, or the page does in a browser). Reveal's pop-up notes window
-  is not used. Only the core `reveal.css` is imported; the look is Gunther's (white paper and
-  black ink, also in the dark theme).
+- Slides open in a reveal.js 6 deck (`@revealjs/react`): arrows at the two edges and progress
+  inside the page, thumbnails to jump by, the presenter's notes under the deck, and **Present**,
+  which fills the app's window with the deck (a layer of the page; the screen and the window's
+  size are left alone, and Esc or ✕ leaves). Reveal's pop-up notes window is not used. Only the
+  core `reveal.css` is imported; the look is Gunther's (white paper and black ink, also in the
+  dark theme).
+- A deck gets the whole width of the page (a report keeps its reading column), and its stage is
+  never taller than the window.
+- A slide is drawn on a 1280 × 720 canvas. When its text is too long for it, the type and
+  spacing are scaled down together (`slideFit.ts`, down to 55%) instead of running off the
+  slide. The scale depends only on the slide's text, so the deck, its thumbnails and the printed
+  page agree.
 - **Export PDF** prints a layout made for paper (`PrintRoot.tsx`): a report on A4 with
   superscript numbers and a list of sources; a deck as one 13⅓ × 7½ in page per slide, no
   notes, with a final page of sources. macOS's web view ignores `window.print()`, so the app

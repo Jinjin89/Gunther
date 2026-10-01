@@ -40,7 +40,7 @@ export function EditPane({ artifact, saving, onSave, onCancel, onCite }: {
       </div>
       <div className="outputs-edit-preview" aria-label="Preview">
         {artifact.kind === "slides"
-          ? <LazySlidesView artifact={preview} onCite={onCite} />
+          ? <LazySlidesView artifact={preview} onCite={onCite} compact />
           : <ReportView artifact={preview} onCite={onCite} />}
       </div>
     </div>

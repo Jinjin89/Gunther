@@ -8,6 +8,11 @@
 .outputs-intro p { max-width: 640px; margin: 0; color: var(--gx-muted); font-size: var(--gx-text-sm); line-height: 1.6; }
 
 .outputs-layout { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 28px; align-items: start; }
+/* A report reads best in a narrow column. A deck needs room: its page and document take the whole width. */
+.outputs-page.is-deck { padding-inline: clamp(20px, 2.4vw, 40px); }
+.outputs-page.is-deck .outputs-intro, .outputs-page.is-deck .outputs-layout { max-width: none; }
+.outputs-page.is-deck .outputs-layout { gap: 22px; }
+.outputs-page.is-deck .outputs-document { padding: 26px clamp(18px, 2.2vw, 32px) 28px; }
 
 /* The controls */
 .outputs-controls { display: grid; gap: 16px; }
@@ -75,7 +80,9 @@
 .outputs-section .answer-markdown h2 { margin: 1.1em 0 0.45em; font-size: 1.35em; font-weight: 520; letter-spacing: -0.012em; line-height: 1.28; }
 .outputs-section .answer-markdown h3 { font-size: 1.08em; font-weight: 600; }
 .outputs-section .answer-markdown p + p { margin-top: 0.9em; }
-.outputs-section .answer-markdown sup button { cursor: pointer; }
+/* A number is a quiet superscript, as in Ask, not a boxed button. */
+.outputs-section .answer-markdown sup button { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.outputs-section .answer-markdown sup button:hover { text-decoration: underline; }
 .outputs-status { margin-top: 8px; display: grid; gap: 6px; font-size: var(--gx-text-xs); }
 .outputs-flag { width: fit-content; padding: 2px 8px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-pill); color: var(--gx-muted); font-weight: 560; }
 .outputs-issues { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
@@ -107,18 +114,24 @@
   background: var(--outputs-slide-paper); color: var(--outputs-slide-ink);
 }
 .outputs-stage .reveal { width: 100%; height: 100%; }
+/* Never taller than the window, so a whole slide is in view; as wide as the document allows. */
+.outputs-stage:not(.is-presenting) { width: min(100%, max(480px, calc((100vh - 240px) * 16 / 9))); margin-inline: auto; }
+/* Present fills the app's window, not the screen. It sits on the document body (see SlidesView), so fixed means the window. */
 .outputs-stage.is-presenting { position: fixed; inset: 0; z-index: 400; width: 100vw; height: 100vh; aspect-ratio: auto; border: 0; border-radius: 0; }
+.outputs-stage.is-presenting:focus { outline: none; }
 .outputs-leave { position: absolute; top: 12px; right: 12px; z-index: 5; color: var(--outputs-slide-muted) !important; }
+/* The face is drawn on a 1280 × 720 canvas. --outputs-fit (set by SlideFace, 1 unless the text is
+   too long for the slide) scales its type and spacing together, so a long slide shrinks, not clips. */
 .outputs-slide-face {
-  width: 100%; height: 100%; padding: 72px 96px; box-sizing: border-box;
-  display: flex; flex-direction: column; gap: 28px; text-align: left;
-  color: var(--outputs-slide-ink); font-family: var(--gx-font-sans); font-size: 38px; line-height: 1.38;
+  width: 1280px; height: 720px; padding: 56px 96px 64px; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: calc(26px * var(--outputs-fit, 1)); text-align: left;
+  color: var(--outputs-slide-ink); font-family: var(--gx-font-sans); font-size: calc(34px * var(--outputs-fit, 1)); line-height: 1.36;
 }
 .outputs-slide-face.is-title { justify-content: center; }
 .outputs-slide-face .answer-markdown { font-size: inherit; line-height: inherit; }
-.outputs-slide-face .answer-markdown h1 { margin: 0 0 22px; font-family: var(--gx-font-display); font-size: 88px; font-weight: 450; letter-spacing: -0.022em; line-height: 1.06; }
-.outputs-slide-face .answer-markdown h2 { margin: 0 0 30px; font-family: var(--gx-font-display); font-size: 58px; font-weight: 450; letter-spacing: -0.015em; line-height: 1.12; }
-.outputs-slide-face .answer-markdown h3 { margin: 0 0 14px; font-size: 1em; font-weight: 600; }
+.outputs-slide-face .answer-markdown h1 { margin: 0 0 calc(20px * var(--outputs-fit, 1)); font-family: var(--gx-font-display); font-size: calc(80px * var(--outputs-fit, 1)); font-weight: 450; letter-spacing: -0.022em; line-height: 1.06; }
+.outputs-slide-face .answer-markdown h2 { margin: 0 0 calc(26px * var(--outputs-fit, 1)); font-family: var(--gx-font-display); font-size: calc(52px * var(--outputs-fit, 1)); font-weight: 450; letter-spacing: -0.015em; line-height: 1.12; }
+.outputs-slide-face .answer-markdown h3 { margin: 0 0 0.4em; font-size: 1em; font-weight: 600; }
 .outputs-slide-face .answer-markdown p { margin: 0; color: var(--outputs-slide-muted); }
 .outputs-slide-face .answer-markdown ul, .outputs-slide-face .answer-markdown ol { margin: 0; padding-left: 1.05em; display: grid; gap: 0.6em; text-align: left; }
 .outputs-slide-face .answer-markdown li + li { margin-top: 0; }

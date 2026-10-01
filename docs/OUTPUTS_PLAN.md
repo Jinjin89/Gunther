@@ -27,7 +27,7 @@ Agreed with the user on 2026-10-01. Written by Claude Opus for the agent that im
 3. Two kinds: **report** and **slides**. Report styles: Overview (default), Field guide, Teaching path, Decision brief. Audience: Scientist, Student, Collaborator.
 4. The agents are Planner → Researcher → Writer → Checker. Slides use a slide-writing mode of the Writer (the "Slide designer").
 5. A build runs straight through, with no pause for outline approval. The outline is shown, and the user can edit it and rebuild.
-6. Outputs are read in Gunther. Reports show on the page; slides show in a reveal.js viewer with thumbnails, speaker notes and full-screen Present.
+6. Outputs are read in Gunther. Reports show on the page; slides show in a reveal.js viewer with thumbnails, speaker notes and Present (fills the app's window; changed from the screen's full screen after the first trial).
 7. Editing in Gunther works two ways: type directly (CodeMirror beside a live preview), or tell the agents what to change. Every save is a new version. Typed text is marked "Not re-checked" until the Checker runs again.
 8. Export is PDF only, plus the existing Markdown copy and download. No Word or PPTX in v1.
 9. Slides library: reveal.js 6 with `@revealjs/react` (both MIT). Rejected: PPTist (Vue app, AGPL), open-slide (slides are compiled code), DiceUI PPTX (too young), Marp React (inactive).
@@ -499,6 +499,12 @@ Checks run
 Not verified
 - None of it was seen in a real WebKit window: the deck's scaling inside the page, the arrow and progress controls, the thumbnails' look, and the type sizes (38 px body on a 1280 px canvas, 88/58 px headings) are my reasoning, not a screenshot.
 - Full screen through Tauri on macOS (and whether Esc reaches the page while the window is full screen) is untested. If Present does not fill the screen, the permission or the window call is the first thing to look at.
+
+**Changed after the first Mac trial (2026-10-01).** The user found Present (the whole window went full screen) and the slide size wrong. Now: Present fills the app's window and no longer calls Tauri's `setFullscreen`, so `core:window:allow-set-fullscreen` is gone from `capabilities/default.json` (and the browser's `requestFullscreen` is no longer used). Looking at it in real Chrome (a seeded demo library, headless Chrome over DevTools) found three things the jsdom tests could not:
+- The page's entrance animation (`.page-enter`, fill mode `both`) leaves `transform: matrix(1, 0, 0, 1, 0, 0)` on the page, and a `position: fixed` layer inside a transformed element fills that element, not the window. Present began under the sidebar and ran off the right and bottom. It is now a portal on `document.body`, with its own deck that starts at the slide in view and keeps the page's slide in step.
+- Reveal takes Esc for its overview and cancels the event, so `useEscape` (a window listener) never ran and Esc did not leave Present. Esc is taken in the capture phase while presenting.
+- Slide text ran off the bottom of the slide (and under Reveal's arrows). The slide's type is a little smaller, the arrows sit at the two edges, and a slide whose text is too long is scaled down to fit (`slideFit.ts`, down to 55%), the same in the deck, the thumbnails and the printed page.
+The deck's page now uses the whole width (`.outputs-page.is-deck`; reports keep their reading column), and its stage is never taller than the window. The small preview beside the editor has no arrows. Report citation numbers had default button chrome and are now quiet superscripts, as in Ask.
 
 ### Phase 5: built 2026-10-01, uncommitted, awaiting review
 

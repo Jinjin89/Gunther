@@ -376,7 +376,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource }
     ? "Building…"
     : open ? (openIsLatest ? "Rebuild" : `Open latest version ${head?.versionNumber ?? ""}`.trim()) : "Build";
 
-  return <div className="outputs-page page-enter">
+  return <div className={`outputs-page page-enter ${open?.kind === "slides" ? "is-deck" : ""}`}>
     <header className="outputs-intro">
       <span className="atlas-eyebrow">Outputs</span>
       <h1>Turn what you’ve gathered into a report or slides.</h1>

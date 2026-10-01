@@ -1,5 +1,5 @@
 import type { Artifact, ConversationCitation } from "@gunther/contracts";
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SlidesView } from "./SlidesView";
@@ -80,34 +80,73 @@ describe("the slide viewer", () => {
     expect(screen.getByText("Slide 1 of 3")).toBeVisible();
   });
 
-  it("presents full screen in a browser, and Esc leaves it", async () => {
+  it("presents in a layer on the document body, from the slide in view, and Esc leaves it", async () => {
     const user = userEvent.setup();
+    // Present fills the window the page is in; it never takes the whole screen.
     const request = vi.fn(async () => undefined);
     Object.defineProperty(document.documentElement, "requestFullscreen", { configurable: true, value: request });
     await show(deck());
+    await user.click(screen.getByRole("button", { name: "Go to slide 2" }));
 
     await user.click(screen.getByRole("button", { name: "Present" }));
-    expect(document.querySelector(".outputs-stage")).toHaveClass("is-presenting");
-    expect(request).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("button", { name: "Leave full screen" })).toBeVisible();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+    const layer = screen.getByRole("dialog", { name: "Presenting" });
+    // Not inside the page: the page's entrance animation leaves a transform on it, and a fixed layer
+    // inside a transformed element fills that element, not the window.
+    expect(layer.parentElement).toBe(document.body);
+    expect(layer).toHaveClass("is-presenting");
+    // It starts where the page was, with its own deck.
+    expect(within(layer).getByRole("heading", { name: "T cells" })).toBeVisible();
+    expect(within(layer).queryByRole("heading", { name: "Takeaways" })).not.toBeInTheDocument();
+    // A number is not a button while presenting.
+    expect(within(layer).queryByRole("button", { name: "Inspect citation 1" })).not.toBeInTheDocument();
 
     await user.keyboard("{Escape}");
-    expect(document.querySelector(".outputs-stage")).not.toHaveClass("is-presenting");
-    expect(screen.queryByRole("button", { name: "Leave full screen" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Presenting" })).not.toBeInTheDocument();
+    expect(request).not.toHaveBeenCalled();
   });
 
-  it("presents through the app's window, and gives the screen back", async () => {
+  it("leaves on Esc although Reveal cancels that key for its own overview", async () => {
+    const user = userEvent.setup();
+    await show(deck());
+    // What Reveal does with Esc: it takes it for its overview and cancels the event.
+    const reveal = vi.fn((event: KeyboardEvent) => { if (event.key === "Escape") event.preventDefault(); });
+    document.addEventListener("keydown", reveal);
+    try {
+      await user.click(screen.getByRole("button", { name: "Present" }));
+      await act(async () => undefined);
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("dialog", { name: "Presenting" })).not.toBeInTheDocument();
+      expect(reveal).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener("keydown", reveal);
+    }
+  });
+
+  it("keeps the page at the slide the presentation ended on", async () => {
+    const user = userEvent.setup();
+    await show(deck());
+
+    await user.click(screen.getByRole("button", { name: "Present" }));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+    fireEvent.keyDown(document.body, { key: "ArrowRight", keyCode: 39 });
+    await user.click(screen.getByRole("button", { name: "Leave Present" }));
+    await act(async () => undefined);
+    expect(screen.getByText("Slide 2 of 3")).toBeVisible();
+  });
+
+  it("presents inside the app's window without making the window full screen", async () => {
     const user = userEvent.setup();
     (window as unknown as Record<string, unknown>)["__TAURI_INTERNALS__"] = {};
     await show(deck());
 
     await user.click(screen.getByRole("button", { name: "Present" }));
     await act(async () => undefined);
-    expect(setFullscreen).toHaveBeenLastCalledWith(true);
-    await user.click(screen.getByRole("button", { name: "Leave full screen" }));
+    expect(screen.getByRole("dialog", { name: "Presenting" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Leave Present" }));
     await act(async () => undefined);
-    expect(setFullscreen).toHaveBeenLastCalledWith(false);
-    expect(document.querySelector(".outputs-stage")).not.toHaveClass("is-presenting");
+    expect(screen.queryByRole("dialog", { name: "Presenting" })).not.toBeInTheDocument();
+    expect(setFullscreen).not.toHaveBeenCalled();
   });
 
   it("says so when a deck has no slides", async () => {
