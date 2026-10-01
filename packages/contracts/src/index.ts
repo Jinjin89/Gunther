@@ -251,9 +251,9 @@ export interface SourceDigestState {
   digest: SourceDigest | null;
 }
 
-export const inboxItemTypes = ["source", "quick_note", "knowledge_suggestion"] as const;
+export const inboxItemTypes = ["source", "quick_note"] as const;
 export type InboxItemType = typeof inboxItemTypes[number];
-export const inboxItemStates = ["unfiled", "needs_review", "held"] as const;
+export const inboxItemStates = ["unfiled", "needs_review"] as const;
 export type InboxItemState = typeof inboxItemStates[number];
 
 export interface InboxKnowledgeBaseRef {
@@ -271,8 +271,6 @@ export interface InboxItem {
   knowledgeBases: InboxKnowledgeBaseRef[];
   sourceId: string | null;
   noteId: string | null;
-  proposalId: string | null;
-  proposalStatus: "pending" | "accepted" | "held" | "rejected" | null;
   /** Number of provisional claims that still need review. */
   assertionCount: number;
   createdAt: string;
@@ -382,7 +380,7 @@ export interface ModelProvider {
 }
 
 export interface ModelRole {
-  id: "analysis" | "ask" | "photos";
+  id: "analysis" | "ask" | "outputs" | "photos";
   label: string;
   description: string;
   needsVision: boolean;
@@ -864,7 +862,6 @@ export interface KnowledgeBaseMetadata {
   status: "Living" | "Growing" | "Outline";
   sourceCount: number;
   sessionCount: number;
-  pendingProposalCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -1032,21 +1029,10 @@ export interface KnowledgeUnit {
   updatedAt: string;
 }
 
-export const artifactFormats = ["field_guide", "teaching_path", "decision_brief"] as const;
-export type ArtifactFormat = typeof artifactFormats[number];
+/** What the old builder made (versions from before agents keep it); new versions are a "report" or "slides". */
+export type ArtifactFormat = "field_guide" | "teaching_path" | "decision_brief" | OutputKind;
 export const artifactAudiences = ["scientist", "student", "collaborator"] as const;
 export type ArtifactAudience = typeof artifactAudiences[number];
-
-export const createArtifactSchema = z.object({
-  clientRequestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/),
-  format: z.enum(artifactFormats),
-  audience: z.enum(artifactAudiences),
-  title: z.string().trim().min(1).max(160).optional(),
-  acceptedUnitIds: z.array(z.string().trim().min(1).max(80)).min(1).max(100)
-    .refine((items) => new Set(items).size === items.length, "Unit IDs must be unique"),
-  supersedesArtifactId: z.string().trim().min(1).max(80).optional(),
-});
-export type CreateArtifactInput = z.infer<typeof createArtifactSchema>;
 
 export interface ArtifactUnitSnapshot {
   unitId: string;
@@ -1061,6 +1047,21 @@ export interface ArtifactUnitSnapshot {
   evidenceCount: number;
 }
 
+/** A report is read on the page; slides are shown in a viewer. */
+export const outputKinds = ["report", "slides"] as const;
+export type OutputKind = (typeof outputKinds)[number];
+/** A report's style; slides have none. */
+export const outputStyles = ["overview", "field_guide", "teaching_path", "decision_brief"] as const;
+export type OutputStyle = (typeof outputStyles)[number];
+/** How a version came about. "legacy" is a version from before agents wrote them. */
+export type OutputOrigin = "legacy" | "build" | "rebuild" | "edit" | "revise";
+
+export interface OutputModel {
+  ref: string;
+  label: string;
+  effort: string | null;
+}
+
 export interface ArtifactProvenance {
   schemaVersion: number;
   generator: string;
@@ -1070,6 +1071,42 @@ export interface ArtifactProvenance {
   acceptedOnly: boolean;
   acceptedUnitIds: string[];
   revisionIds: string[];
+  /** Version 2 (agents) only: what was asked, and which model wrote it (none for typed edits). */
+  kind?: OutputKind;
+  style?: string | null;
+  audience?: ArtifactAudience;
+  brief?: string;
+  origin?: OutputOrigin;
+  model?: OutputModel | null;
+}
+
+/** What an output is built from: the whole library, or a hand-picked mix. */
+export interface OutputScope {
+  mode: "library" | "selection";
+  sourceIds: string[];
+  unitIds: string[];
+  sessionIds: string[];
+}
+
+export interface OutlineItem {
+  heading: string;
+  goal: string;
+}
+
+/** What the Checker found in a sentence. */
+export interface OutputIssue {
+  claim: string;
+  /** "unsupported": its passages do not state it. "unverified": from the model's own knowledge, no source found. "unsourced": no source cited. "contradicted": left out because sources disagree. */
+  verdict: "unsupported" | "unverified" | "unsourced" | "contradicted";
+  note: string;
+}
+
+export interface OutputSection {
+  index: number;
+  heading: string;
+  /** The Checker has looked at the section as it reads now. */
+  checked: boolean;
+  issues: OutputIssue[];
 }
 
 export interface ArtifactSummary {
@@ -1087,12 +1124,53 @@ export interface ArtifactSummary {
   acceptedUnitIds: string[];
   unitCount: number;
   createdAt: string;
+  kind: OutputKind;
+  /** A report's style (a legacy version's old format); none for slides. */
+  style: string | null;
+  origin: OutputOrigin;
 }
 
 export interface Artifact extends ArtifactSummary {
+  /** Markdown. A deck's slides are separated by lines that are only "---". */
   content: string;
   unitSnapshots: ArtifactUnitSnapshot[];
   provenance: ArtifactProvenance;
+  brief: string;
+  outline: OutlineItem[];
+  /** The sources the text cites, numbered 1, 2, 3 in the order it first cites them. */
+  citations: ConversationCitation[];
+  /** What it was built from, as asked; none for a version from the old builder. */
+  scope: OutputScope | null;
+  inputs: { sources: number; units: number; sessions: number };
+  modelLabel: string | null;
+  sections: OutputSection[];
+}
+
+export interface BuildOutputRequest {
+  clientRequestId: string;
+  kind: OutputKind;
+  /** Reports only; an overview when left out. */
+  style?: OutputStyle;
+  audience: ArtifactAudience;
+  brief?: string;
+  title?: string;
+  scope: OutputScope;
+  /** A rebuild with the outline as the person edited it: the planner is skipped. */
+  outline?: OutlineItem[];
+  /** Makes it the next version of an existing output. */
+  supersedesArtifactId?: string;
+}
+
+export interface ReviseOutputRequest {
+  clientRequestId: string;
+  instruction: string;
+  /** The section or slide to change, counted from 0; the whole output when left out. */
+  sectionIndex?: number;
+}
+
+export interface EditOutputRequest {
+  clientRequestId: string;
+  content: string;
 }
 
 export interface KnowledgeSearchResult {

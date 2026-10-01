@@ -242,6 +242,12 @@ def _create_artifact_history(connection: Connection, metadata: MetaData) -> None
 # Output request identity arrived after the first Output tables; a table created
 # before it is repaired in place rather than set aside.
 ARTIFACT_REQUEST_IDENTITY_COLUMNS = frozenset({"client_request_id", "request_fingerprint"})
+# Columns migration 20 adds. Migration 12 compares a stored table with the current models,
+# so these are not drift in a table that is older than they are.
+AGENT_OUTPUT_COLUMNS = frozenset(
+    {"kind", "style", "brief", "origin", "scope_json", "inputs_json", "outline_json",
+     "citations_json"}
+)
 
 
 def _stored_column_drift(connection: Connection, table: Table) -> tuple[set[str], set[str]]:
@@ -297,6 +303,7 @@ def _repair_legacy_artifact_tables(connection: Connection, metadata: MetaData) -
     if artifacts is None or bindings is None:
         return
     artifact_missing, artifact_blocking = _stored_column_drift(connection, artifacts)
+    artifact_missing -= AGENT_OUTPUT_COLUMNS
     binding_missing, binding_blocking = _stored_column_drift(connection, bindings)
 
     if artifact_missing and not (
@@ -428,6 +435,57 @@ def _create_message_traces(connection: Connection, metadata: MetaData) -> None:
         metadata.tables["message_traces"].create(bind=connection, checkfirst=True)
 
 
+def _save_knowledge_without_review(connection: Connection, _metadata: MetaData) -> None:
+    """Saving an answer as knowledge is the only review step, so suggestions count as saved.
+
+    Their knowledge units are made on the next start (``ensure_saved_knowledge_units``).
+    A unit that was held back with its suggestion becomes trusted again.
+    """
+
+    inspector = inspect(connection)
+    if not inspector.has_table("knowledge_proposals") or not inspector.has_table(
+        "knowledge_units"
+    ):
+        return
+    waiting = "status IN ('pending', 'held')"
+    connection.execute(
+        text(
+            "UPDATE knowledge_units SET status = 'trusted' "
+            "WHERE status = 'provisional' AND id IN ("
+            "SELECT unit_id FROM knowledge_unit_revisions WHERE source_proposal_id IN ("
+            f"SELECT id FROM knowledge_proposals WHERE {waiting}))"
+        )
+    )
+    connection.execute(
+        text(f"UPDATE knowledge_proposals SET status = 'accepted' WHERE {waiting}")
+    )
+
+
+def _create_agent_outputs(connection: Connection, metadata: MetaData) -> None:
+    """Outputs built by agents: kind, style, brief, scope, outline and citations on each
+    version, and a table for what the Checker found. Versions made before keep working:
+    they are reports, their old format is their style, and they have no citations."""
+
+    inspector = inspect(connection)
+    if inspector.has_table("artifacts"):
+        for column, definition in (
+            ("kind", "VARCHAR(16) NOT NULL DEFAULT 'report'"),
+            ("style", "VARCHAR(40)"),
+            ("brief", "TEXT NOT NULL DEFAULT ''"),
+            ("origin", "VARCHAR(16) NOT NULL DEFAULT 'legacy'"),
+            ("scope_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("inputs_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("outline_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("citations_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ):
+            add_column_if_missing(connection, "artifacts", column, definition)
+        connection.execute(
+            text("UPDATE artifacts SET style = format WHERE style IS NULL AND origin = 'legacy'")
+        )
+    if "artifact_checks" in metadata.tables:
+        metadata.tables["artifact_checks"].create(bind=connection, checkfirst=True)
+
+
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
 MIGRATIONS: tuple[Migration, ...] = (
@@ -449,6 +507,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(16, "source_digests", _create_source_digests),
     Migration(17, "speech_clips", _create_speech_clips),
     Migration(18, "message_traces", _create_message_traces),
+    Migration(19, "knowledge_saved_without_review", _save_knowledge_without_review),
+    Migration(20, "agent_outputs", _create_agent_outputs),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

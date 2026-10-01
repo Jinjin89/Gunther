@@ -271,6 +271,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        knowledge_service.ensure_saved_knowledge_units()
         if active_settings.seed_demo:
             knowledge_service.seed_if_empty()
         # In-memory SQLite uses a single shared connection: tests drive run_once

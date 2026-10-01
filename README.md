@@ -10,7 +10,7 @@ Capture first → Inbox → Libraries → 有依据地问答与审核 → Output
 - **Inbox** 是待整理与待确认的工作队列，不是另一个知识库。
 - **Library** 是一个长期主题空间，例如“生物信息学”，容纳课程录音、论文、书籍、网页和会议材料。
 - **Notebook / Note** 是快速记录和编辑随手想法的界面；笔记可以先留在 Inbox，也可以提升为 Library 中的 Source。它不是临时数据库。
-- **Outputs** 是从用户已经接受的知识生成并持久保存的成果版本，不是浏览器里的临时 Markdown。
+- **Outputs** 是智能体从用户选定的材料（整个 Library，或手选的来源、已保存的知识和 Ask 讨论）写成的**报告或幻灯片**，并持久保存为可重新打开的版本，不是浏览器里的临时 Markdown；设计见 [Outputs](./docs/OUTPUTS.md)。
 
 ## 当前能力基线
 
@@ -53,33 +53,32 @@ macOS 应用中的 Capture 不再是主页面里的临时弹窗。所有入口�
 
 ### Inbox、证据与用户确认
 
-AI 抽取或对话产生的内容不会直接变成可信知识：
+AI 抽取或对话产生的内容不会自己变成可信知识：只有用户在 Ask 中明确点击 **Save as knowledge**，一条有引用的回答才成为知识；这是唯一的复核步骤，不再有 Inbox 里的二次确认，也可以随时 **Remove**。
 
 ```text
 Asset / Source
-  → 带引用快照的回答或候选 Proposal
-  → 用户接受 / 暂存 / 拒绝
-  → accepted KnowledgeUnit + immutable revision
+  → 带引用快照的回答
+  → 用户 Save as knowledge（可 Remove）
+  → trusted KnowledgeUnit + immutable revision
 ```
 
 - Source 保留原件关系与采集 provenance。
 - 回答只在所选 Library / Source / Topic 范围内检索，并保存当时的 citation snapshot。Ask 同时检索结构化 Assertion 与原始证据块，避免已有结论遮蔽相反证据；原文引用包含 source revision、block ID 和定位信息；没有足够相关证据时仍返回证据缺口。
-- Proposal 由用户明确接受后，才物化为 `trusted` KnowledgeUnit revision。
+- 保存时即物化为 `trusted` KnowledgeUnit revision；Remove 会把它标记为 `deprecated`，再次保存可恢复。早期留在待处理或暂存状态的建议，在 migration 19 中按“已保存”处理。
 - 证据不足时应保留缺口，不把模型推测伪装成来源事实。
 
 ### 持久 Outputs / Artifact history
 
-当前数据库 schema 为 **v11**；migration 11 是 `structured_knowledge_and_durable_processing`。原有 migration 10 的不可变 Outputs 历史保持兼容：
+当前数据库 schema 为 **v20**；migration 20 是 `agent_outputs`。Outputs 是**报告**或**幻灯片**，由智能体（Planner → Researcher → Writer → Checker）从用户选定的范围写成：整个 Library，或手选的来源、已保存的知识与 Ask 讨论。详见 [Outputs](./docs/OUTPUTS.md)。
 
-- 按 workspace 与 knowledge base 隔离；
-- 保存 `format`、`audience`、`title`、`content` 与创建时间；
-- 固定 accepted unit IDs、每个 KnowledgeUnit 的 revision snapshot、Proposal / Session / Message provenance 与 evidence count；
-- 保存 content hash 与 manifest hash，读取时执行完整性校验；
-- 同一 lineage 只能从当前 head 生成下一版；并发或旧 head 返回冲突，界面可刷新后继续；
-- `clientRequestId` 支持结果丢失后的幂等重放；
-- 桌面可浏览历史、重新打开、生成新版本，并从持久 Artifact 复制或下载 Markdown；workbook 导出也包含 Artifact 历史。
+- 每个版本不可变，按 workspace 与 knowledge base 隔离，保存 kind、style、audience、brief、scope、outline、所用模型，以及按阅读顺序编号的 citations（保存引用快照，来源日后被删除也不影响打开）；
+- 每一句话要么带段落编号，要么明确标为“无来源”；Checker 把不被其所引段落支持的句子改为“无来源”，并把发现保存在版本旁边（不改变版本）；
+- 保存 content hash 与 manifest hash，读取时执行完整性校验；旧版本（schema 1，只用已接受知识）仍按原方式校验，`scripts/backup_gunther.py verify` 同样校验；
+- 同一 lineage 只能从当前 head 生成下一版；`clientRequestId` 支持结果丢失后的幂等重放；
+- 桌面端在 Gunther 内阅读（报告按节显示，幻灯片用 reveal.js 查看器、缩略图与演讲者备注），可以直接键入修改或让智能体按指令修改（每次保存都是新版本，键入的内容在重新检查前标为“未重新检查”），并导出 PDF；Markdown 仍可复制或下载；
+- 没有模型、模型失败或被停止时不保存任何内容，也不会用模板文字顶替。
 
-Artifact 当前没有删除、覆盖或归档接口，也未加入全局 Search；它可在对应 Library 的 Outputs 中发现。Markdown 只是编辑、交换和导出格式，**不是主数据库**。
+Artifact 没有删除、覆盖或归档接口（版本随 Library 一并删除），也未加入全局 Search；它可在对应 Library 的 Outputs 中发现。Markdown 只是编辑、交换和导出格式，**不是主数据库**。
 
 ### 移动可靠采集
 

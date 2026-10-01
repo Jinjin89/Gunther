@@ -623,6 +623,36 @@ class Artifact(Base):
     accepted_unit_ids_json: Mapped[str] = mapped_column(Text)
     revision_snapshot_json: Mapped[str] = mapped_column(Text)
     provenance_json: Mapped[str] = mapped_column(Text)
+    # Outputs built by agents (schema version 2). Versions from the old builder keep
+    # the defaults: a report, with its old format as the style, and no citations.
+    kind: Mapped[str] = mapped_column(String(16), default="report", server_default="report")
+    style: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    brief: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # How this version came about: build, rebuild, edit or revise ("legacy" before agents).
+    origin: Mapped[str] = mapped_column(String(16), default="legacy", server_default="legacy")
+    scope_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    inputs_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    outline_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    citations_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    created_at: Mapped[datetime] = mapped_column(default=utc_now, index=True)
+
+
+class ArtifactCheck(Base):
+    """What the Checker found in one Output version. The latest row of a version wins.
+
+    Kept beside the version, never inside it, so checking again changes no version.
+    """
+
+    __tablename__ = "artifact_checks"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    artifact_id: Mapped[str] = mapped_column(
+        ForeignKey("artifacts.id", ondelete="CASCADE"), index=True
+    )
+    # The version's content when this was written.
+    content_hash: Mapped[str] = mapped_column(String(64))
+    # {"sections": [{"hash": ..., "issues": [{"claim", "verdict", "note"}]}]}
+    checks_json: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(default=utc_now, index=True)
 
 

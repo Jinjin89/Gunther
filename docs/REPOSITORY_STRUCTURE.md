@@ -19,9 +19,11 @@ Dependencies point inward. A client may depend on the HTTP contract, but the bac
 - `apps/backend/gunther/api.py` owns HTTP transport only.
 - `apps/backend/gunther/service.py` owns knowledge lifecycle rules.
 - `apps/backend/gunther/web_capture.py` owns public-Web URL policy, pinned-IP fetching, capture limits, immutable snapshot preservation, and WebSnapshot provenance.
+- `apps/backend/gunther/outputs.py` owns the agents that write reports and slides (see `docs/OUTPUTS.md`); `service.py` reads the library for them and saves the versions.
 - `apps/backend/gunther/extraction.py` owns model-provider adapters.
 - `apps/backend/gunther/models.py` owns persistence entities.
 - `apps/desktop/src/pages/` owns page composition.
+- `apps/desktop/src/outputs/` owns the Outputs page: scope picker, live build, report and slide viewers, editing and the print layout.
 - `apps/desktop/src/components/` owns reusable desktop presentation.
 - `apps/desktop/src-tauri/` owns native desktop configuration and capabilities.
 - `apps/mobile/lib/features/<feature>/` owns each mobile view and view model.

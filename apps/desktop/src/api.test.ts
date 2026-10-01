@@ -1,5 +1,6 @@
+import type { BuildOutputRequest } from "@gunther/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { knowledgeApi, recordingAssetUrl, recordingSocketUrl, ServiceUnavailableError, sourceAssetUrl } from "./api";
+import { knowledgeApi, OutputStoppedError, recordingAssetUrl, recordingSocketUrl, ServiceUnavailableError, sourceAssetUrl } from "./api";
 
 const response = (data: unknown, status = 200): Response => ({
   ok: status >= 200 && status < 300,
@@ -22,11 +23,11 @@ describe("desktop knowledge API contract", () => {
   it("encodes Inbox filters and keeps credentials out of web URLs", async () => {
     fetchMock.mockResolvedValueOnce(response([]));
 
-    await knowledgeApi.inbox({ state: "needs_review", itemType: "knowledge_suggestion" });
+    await knowledgeApi.inbox({ state: "needs_review", itemType: "quick_note" });
 
     expect(fetchMock).toHaveBeenCalledOnce();
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("/api/inbox?state=needs_review&itemType=knowledge_suggestion");
+    expect(url).toBe("/api/inbox?state=needs_review&itemType=quick_note");
     expect(url).not.toContain("token=");
     expect(init.method).toBeUndefined();
     expect(new Headers(init.headers).get("Content-Type")).toBe("application/json");
@@ -161,38 +162,92 @@ describe("desktop knowledge API contract", () => {
     expect(new Headers(init.headers).get("X-Gunther-Workspace-Id")).toBe("wsp_primary");
   });
 
-  it("keeps artifact history routes inside both workspace and knowledge-base boundaries", async () => {
-    fetchMock
-      .mockResolvedValueOnce(response([]))
-      .mockResolvedValueOnce(response({ id: "art_1" }, 201))
-      .mockResolvedValueOnce(response({ id: "art_1" }));
+  it("keeps output routes inside both workspace and library boundaries", async () => {
+    fetchMock.mockResolvedValue(response({ id: "art_1" }));
+    const workspace = (call: number) => new Headers((fetchMock.mock.calls[call]?.[1] as RequestInit).headers).get("X-Gunther-Workspace-Id");
 
     await knowledgeApi.artifacts("biology/team", "wsp_primary");
-    await knowledgeApi.createArtifact("biology/team", {
-      clientRequestId: "artifact_request_1",
-      format: "field_guide",
-      audience: "scientist",
-      acceptedUnitIds: ["unt_1"],
-    }, "wsp_primary");
     await knowledgeApi.artifact("biology/team", "art/1", "wsp_primary");
+    await knowledgeApi.editOutput("biology/team", "art/1", { clientRequestId: "edit_request_1", content: "# Typed" }, "wsp_primary");
+    await knowledgeApi.checkOutput("biology/team", "art/1", "wsp_primary");
+    await knowledgeApi.stopOutputBuild("biology/team", "wsp_primary");
 
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
       "/api/knowledge-bases/biology%2Fteam/artifacts",
-    );
-    const createInit = fetchMock.mock.calls[1]?.[1] as RequestInit;
-    expect(createInit.method).toBe("POST");
-    expect(new Headers(createInit.headers).get("X-Gunther-Workspace-Id")).toBe("wsp_primary");
-    expect(JSON.parse(createInit.body as string)).toEqual({
-      clientRequestId: "artifact_request_1",
-      format: "field_guide",
-      audience: "scientist",
-      acceptedUnitIds: ["unt_1"],
-    });
-    expect(fetchMock.mock.calls[2]?.[0]).toBe(
       "/api/knowledge-bases/biology%2Fteam/artifacts/art%2F1",
-    );
-    expect(new Headers((fetchMock.mock.calls[2]?.[1] as RequestInit).headers)
-      .get("X-Gunther-Workspace-Id")).toBe("wsp_primary");
+      "/api/knowledge-bases/biology%2Fteam/artifacts/art%2F1/edits",
+      "/api/knowledge-bases/biology%2Fteam/artifacts/art%2F1/check",
+      "/api/knowledge-bases/biology%2Fteam/outputs/build/stop",
+    ]);
+    for (const call of [0, 1, 2, 3, 4]) expect(workspace(call)).toBe("wsp_primary");
+    const edit = fetchMock.mock.calls[2]?.[1] as RequestInit;
+    expect(edit.method).toBe("POST");
+    expect(JSON.parse(edit.body as string)).toEqual({ clientRequestId: "edit_request_1", content: "# Typed" });
+  });
+
+  describe("an output being built", () => {
+    const events = (...blocks: Array<[string, unknown]>) => new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        for (const [name, data] of blocks) controller.enqueue(encoder.encode(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`));
+        controller.close();
+      },
+    });
+    const stream = (body: ReadableStream<Uint8Array>, status = 200) => ({ ok: status < 300, status, body, json: vi.fn().mockResolvedValue({}) }) as unknown as Response;
+    const request: BuildOutputRequest = { clientRequestId: "build_request_1", kind: "report", audience: "scientist", scope: { mode: "library", sourceIds: [], unitIds: [], sessionIds: [] } };
+
+    it("hands over each event, then the saved version, to a workspace-bound request", async () => {
+      fetchMock.mockResolvedValueOnce(stream(events(
+        ["outline", { type: "outline", title: "Markers", sections: [{ heading: "T cells", goal: "" }] }],
+        ["text", { type: "text", section: 0, text: "Hello" }],
+        ["done", { id: "art_1", title: "Markers" }],
+      )));
+      const heard: unknown[] = [];
+
+      const saved = await knowledgeApi.buildOutputStream("biology/team", request, "wsp_primary", (event) => heard.push(event));
+
+      expect(saved).toEqual({ id: "art_1", title: "Markers" });
+      expect(heard).toEqual([
+        { type: "outline", title: "Markers", sections: [{ heading: "T cells", goal: "" }] },
+        { type: "text", section: 0, text: "Hello" },
+      ]);
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("/api/knowledge-bases/biology%2Fteam/outputs/build/stream");
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body as string)).toEqual(request);
+      expect(new Headers(init.headers).get("X-Gunther-Workspace-Id")).toBe("wsp_primary");
+    });
+
+    it("revises a version by its own address", async () => {
+      fetchMock.mockResolvedValueOnce(stream(events(["done", { id: "art_2" }])));
+      await knowledgeApi.reviseOutputStream("biology", "art/1", { clientRequestId: "revise_request_1", instruction: "Shorter", sectionIndex: 1 }, "wsp_primary", () => undefined);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/knowledge-bases/biology/artifacts/art%2F1/revise/stream");
+    });
+
+    it("says why nothing was saved, and tells a stop from a failure", async () => {
+      fetchMock.mockResolvedValueOnce(stream(events(["error", { status: 502, detail: "DeepSeek did not accept the API key." }])));
+      await expect(knowledgeApi.buildOutputStream("biology", request, "wsp_primary", () => undefined)).rejects.toThrow("DeepSeek did not accept the API key.");
+
+      fetchMock.mockResolvedValueOnce(stream(events(["stopped", { type: "stopped" }])));
+      await expect(knowledgeApi.buildOutputStream("biology", request, "wsp_primary", () => undefined)).rejects.toBeInstanceOf(OutputStoppedError);
+
+      fetchMock.mockResolvedValueOnce(stream(events(["text", { type: "text", section: 0, text: "Half" }])));
+      await expect(knowledgeApi.buildOutputStream("biology", request, "wsp_primary", () => undefined)).rejects.toThrow("The connection closed before the output was finished.");
+
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 409, body: null, json: vi.fn().mockResolvedValue({ detail: "Gunther is still building an output here." }) } as unknown as Response);
+      await expect(knowledgeApi.buildOutputStream("biology", request, "wsp_primary", () => undefined)).rejects.toThrow("Gunther is still building an output here.");
+    });
+
+    it("follows a build that is running, and gets nothing when none is", async () => {
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 204, body: null, json: vi.fn() } as unknown as Response);
+      expect(await knowledgeApi.followOutputBuild("biology", "wsp_primary", () => undefined)).toBeNull();
+      expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe("GET");
+
+      fetchMock.mockResolvedValueOnce(stream(events(["resumed", { type: "resumed", question: "Cover B cells", startedAt: 1 }], ["done", { id: "art_1" }])));
+      const heard: unknown[] = [];
+      expect(await knowledgeApi.followOutputBuild("biology", "wsp_primary", (event) => heard.push(event))).toEqual({ id: "art_1" });
+      expect(heard).toEqual([{ type: "resumed", question: "Cover B cells", startedAt: 1 }]);
+    });
   });
 
   it("preserves backend error detail and provides a status fallback", async () => {

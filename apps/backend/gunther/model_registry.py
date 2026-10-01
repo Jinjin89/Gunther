@@ -6,6 +6,7 @@ A *role* is a job, with the model and effort it uses:
 
 - analysis: reading captures, their summaries, papers, and topic overviews;
 - ask: answering in Ask (each conversation can pick another model);
+- outputs: building reports and slides (follows Ask until a model is chosen for it);
 - photos: looking at photos, which needs a model that can see images.
 
 This lives in the service settings file (see service_settings) beside the
@@ -77,6 +78,8 @@ class Role:
     description: str
     effort: Effort
     needs_vision: bool = False
+    # Until a model is chosen for it, this job uses the model of the job named here.
+    follows: str | None = None
 
 
 ROLES: tuple[Role, ...] = (
@@ -87,6 +90,13 @@ ROLES: tuple[Role, ...] = (
         "low",
     ),
     Role("ask", "Ask", "Answers questions. Each conversation can switch model.", "high"),
+    Role(
+        "outputs",
+        "Outputs",
+        "Builds reports and slides from what you choose.",
+        "high",
+        follows="ask",
+    ),
     Role("photos", "Photos", "Looks at photos you capture.", "low", needs_vision=True),
 )
 ROLE_BY_ID = {role.id: role for role in ROLES}
@@ -244,9 +254,13 @@ def effective(
     from_environment = saved_providers is None
     providers = providers_from_environment(settings) if from_environment else saved_providers
     roles = default_roles(providers)
-    for role_id, choice in (saved_roles or {}).items():
+    saved = saved_roles or {}
+    for role_id, choice in saved.items():
         if role_id in roles:
             roles[role_id] = dict(choice)
+    for role in ROLES:
+        if role.follows and role.id not in saved:
+            roles[role.id] = {**roles[role.id], "model": roles[role.follows]["model"]}
     return Registry(providers, roles, from_environment)
 
 

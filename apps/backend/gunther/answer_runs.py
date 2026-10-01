@@ -4,6 +4,9 @@ Leaving a conversation must not stop its answer: the page only stops listening.
 Each answer runs on its own thread and keeps what it has reported (steps and
 text so far), so a page that comes back is given everything it missed and then
 follows along live. Only an explicit stop ends an answer early.
+
+Outputs being built use the same runs, one per library, under the key
+``outputs:<library id>``.
 """
 
 from __future__ import annotations
@@ -54,7 +57,13 @@ class AnswerRun:
 
         out: list[tuple[str, dict[str, Any]]] = []
         for name, data in self.events:
-            if name == "text" and out and out[-1][0] == "text":
+            # Text joins only within one section (an output's sections are written in turn).
+            if (
+                name == "text"
+                and out
+                and out[-1][0] == "text"
+                and out[-1][1].get("section") == data.get("section")
+            ):
                 out[-1] = ("text", {**data, "text": out[-1][1]["text"] + data["text"]})
             else:
                 out.append((name, data))

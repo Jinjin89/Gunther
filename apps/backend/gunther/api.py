@@ -32,6 +32,7 @@ from gunther.device_auth import (
     parse_bearer_authorization,
 )
 from gunther.lecture import LectureSummaryError
+from gunther.llm import ModelError
 from gunther.pairing_exchange_guard import PairingExchangeRejected
 from gunther.realtime import proxy_realtime_transcription, sensevoice_health
 from gunther.recording_service import (
@@ -49,8 +50,8 @@ from gunther.schemas import (
     ArtifactSummaryOut,
     AssertionOut,
     AssetCaptureOut,
+    BuildOutputInput,
     ConversationTurnOut,
-    CreateArtifactInput,
     CreateDevicePairingInput,
     CreateKnowledgeBaseInput,
     CreateKnowledgeProposalInput,
@@ -61,6 +62,7 @@ from gunther.schemas import (
     CreateSourceInput,
     DeviceCredentialOut,
     DevicePairingSessionOut,
+    EditOutputInput,
     ExchangeDevicePairingInput,
     FileNotebookNoteInput,
     FileNotebookNoteOut,
@@ -84,6 +86,7 @@ from gunther.schemas import (
     PairedDeviceOut,
     RecordingCheckpointInput,
     RecordingSessionOut,
+    ReviseOutputInput,
     SourceDetailOut,
     SourceKind,
     SourceSummaryOut,
@@ -895,11 +898,11 @@ def graph(request: Request) -> KnowledgeGraphOut:
 def inbox(
     request: Request,
     inbox_state: Annotated[
-        str | None, Query(alias="state", pattern="^(unfiled|needs_review|held)$")
+        str | None, Query(alias="state", pattern="^(unfiled|needs_review)$")
     ] = None,
     item_type: Annotated[
         str | None,
-        Query(alias="itemType", pattern="^(source|quick_note|knowledge_suggestion)$"),
+        Query(alias="itemType", pattern="^(source|quick_note)$"),
     ] = None,
 ) -> list[InboxItemOut]:
     return _service(request).list_inbox(state=inbox_state, item_type=item_type)
@@ -1255,36 +1258,164 @@ def artifact(
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
+WorkspaceHeader = Annotated[
+    str, Header(alias="X-Gunther-Workspace-Id", min_length=1, max_length=40)
+]
+
+
+def _outputs_key(knowledge_base_id: str) -> str:
+    """One output at a time is built in a library."""
+
+    return f"outputs:{knowledge_base_id}"
+
+
+def _output_run(request: Request, knowledge_base_id: str, label: str, call) -> StreamingResponse:
+    """Start building (or revising) an output and stream how it goes.
+
+    ``call`` does the work, given the function that hears each step. The events are the
+    agents' progress (``outline``, ``section``, ``step``, ``text``), then ``done`` with
+    the saved version, ``error`` saying why there is none, or ``stopped``. Closing the
+    connection only stops listening; ``POST .../outputs/build/stop`` ends the work, and
+    then nothing is saved.
+    """
+
+    def work(run: AnswerRun) -> None:
+        def hear(event: dict) -> None:
+            if run.stop_requested.is_set():
+                raise Stopped
+            if event["type"] != "saving":
+                run.publish(event["type"], event)
+
+        try:
+            artifact = call(hear)
+            run.publish("done", artifact.model_dump(mode="json", by_alias=True))
+        except Stopped:
+            run.publish("stopped", {"type": "stopped"})
+        except (ArtifactConflictError, ArtifactIntegrityError) as error:
+            run.publish("error", {"status": 409, "detail": str(error)})
+        except LookupError as error:
+            run.publish("error", {"status": 404, "detail": str(error)})
+        except ModelError as error:
+            run.publish("error", {"status": 502, "detail": str(error)})
+        except ValueError as error:
+            run.publish("error", {"status": 400, "detail": str(error)})
+        except Exception:
+            logger.exception("Building an output failed")
+            run.publish("error", {"status": 500, "detail": "The output could not be built."})
+
+    run = _answer_runs(request).start(_outputs_key(knowledge_base_id), label, work)
+    if run is None:
+        raise HTTPException(
+            status_code=409, detail="Gunther is still building an output here."
+        )
+    return _sse(run)
+
+
+@router.post("/knowledge-bases/{knowledge_base_id}/outputs/build/stream")
+async def build_output_stream(
+    knowledge_base_id: str,
+    payload: BuildOutputInput,
+    request: Request,
+    workspace_id: WorkspaceHeader,
+) -> StreamingResponse:
+    """Build a report or slides by agents from the library or what was picked."""
+
+    service = _service(request)
+    return _output_run(
+        request,
+        knowledge_base_id,
+        payload.brief,
+        lambda hear: service.build_output(knowledge_base_id, workspace_id, payload, hear),
+    )
+
+
+@router.post("/knowledge-bases/{knowledge_base_id}/artifacts/{artifact_id}/revise/stream")
+async def revise_output_stream(
+    knowledge_base_id: str,
+    artifact_id: str,
+    payload: ReviseOutputInput,
+    request: Request,
+    workspace_id: WorkspaceHeader,
+) -> StreamingResponse:
+    """Change a section (or all) of the latest version as instructed: the next version."""
+
+    service = _service(request)
+    return _output_run(
+        request,
+        knowledge_base_id,
+        payload.instruction,
+        lambda hear: service.revise_output(
+            knowledge_base_id, workspace_id, artifact_id, payload, hear
+        ),
+    )
+
+
+@router.get("/knowledge-bases/{knowledge_base_id}/outputs/build/stream", response_model=None)
+async def follow_output_build(
+    knowledge_base_id: str, request: Request, workspace_id: WorkspaceHeader
+) -> Response:
+    """Follow an output being built: what it did so far, then live. 204 when none is."""
+
+    run = _answer_runs(request).get(_outputs_key(knowledge_base_id))
+    if run is None or run.finished:
+        return Response(status_code=204)
+    return _sse(run, resumed=True)
+
+
+@router.post("/knowledge-bases/{knowledge_base_id}/outputs/build/stop", status_code=204)
+def stop_output_build(
+    knowledge_base_id: str, request: Request, workspace_id: WorkspaceHeader
+) -> Response:
+    """Stop the output being built. Nothing is saved."""
+
+    _answer_runs(request).stop(_outputs_key(knowledge_base_id))
+    return Response(status_code=204)
+
+
 @router.post(
-    "/knowledge-bases/{knowledge_base_id}/artifacts",
+    "/knowledge-bases/{knowledge_base_id}/artifacts/{artifact_id}/edits",
     response_model=ArtifactOut,
     status_code=status.HTTP_201_CREATED,
 )
-def create_artifact(
+def edit_output(
     knowledge_base_id: str,
-    payload: CreateArtifactInput,
+    artifact_id: str,
+    payload: EditOutputInput,
     request: Request,
-    workspace_id: Annotated[
-        str,
-        Header(
-            alias="X-Gunther-Workspace-Id",
-            min_length=1,
-            max_length=40,
-        ),
-    ],
+    workspace_id: WorkspaceHeader,
 ) -> ArtifactOut:
+    """Save typed text as the next version, exactly as typed."""
+
     try:
-        return _service(request).create_artifact(
-            knowledge_base_id,
-            workspace_id,
-            payload,
-        )
+        return _service(request).edit_output(knowledge_base_id, workspace_id, artifact_id, payload)
     except LookupError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    except ArtifactConflictError as error:
+    except (ArtifactConflictError, ArtifactIntegrityError) as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    except ArtifactIntegrityError as error:
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.post(
+    "/knowledge-bases/{knowledge_base_id}/artifacts/{artifact_id}/check",
+    response_model=ArtifactOut,
+)
+def check_output(
+    knowledge_base_id: str,
+    artifact_id: str,
+    request: Request,
+    workspace_id: WorkspaceHeader,
+) -> ArtifactOut:
+    """Have the Checker look at the sections it has not checked as they read now."""
+
+    try:
+        return _service(request).check_output(knowledge_base_id, workspace_id, artifact_id)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (ArtifactConflictError, ArtifactIntegrityError) as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    except ModelError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 

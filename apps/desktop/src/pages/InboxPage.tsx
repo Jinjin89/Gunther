@@ -1,6 +1,5 @@
 import type { InboxItem, TrashItem } from "@gunther/contracts";
 import {
-  Archive,
   AudioLines,
   Camera,
   Check,
@@ -13,8 +12,6 @@ import {
   LoaderCircle,
   NotebookPen,
   Plus,
-  RotateCcw,
-  Sparkles,
   Table2,
   Trash2,
 } from "lucide-react";
@@ -28,7 +25,7 @@ import { inboxPreview } from "../items/sourceContent";
 import { comboKeys, useShortcut, withShortcut } from "../shortcuts/shortcuts";
 import { moveToTrash } from "../trash/trash";
 
-type InboxFilter = "all" | "unfiled" | "needs_review" | "held";
+type InboxFilter = "all" | "unfiled" | "needs_review";
 
 interface InboxPageProps {
   bases: KnowledgeBase[];
@@ -59,15 +56,12 @@ const KIND = {
 
 const itemKind = (item: InboxItem) => {
   if (item.itemType === "quick_note") return { icon: NotebookPen, tone: "clay", label: "Quick note" };
-  if (item.itemType === "knowledge_suggestion") return { icon: Sparkles, tone: "brand", label: "Suggested knowledge" };
   return KIND[item.sourceKind ?? "file"];
 };
 
 const stateCopy = (item: InboxItem) => item.state === "unfiled"
   ? { label: "Choose a home", description: "The original is preserved until you decide where it belongs." }
-  : item.state === "needs_review"
-    ? { label: item.itemType === "knowledge_suggestion" ? "Review suggestion" : `${item.assertionCount} ${item.assertionCount === 1 ? "claim" : "claims"} to review`, description: item.itemType === "knowledge_suggestion" ? "From a grounded conversation. Accept it, or hold it for later." : "Nothing becomes trusted knowledge until you accept it." }
-    : { label: "Held for later", description: "Preserved without becoming trusted knowledge." };
+  : { label: `${item.assertionCount} ${item.assertionCount === 1 ? "claim" : "claims"} to review`, description: "Nothing becomes trusted knowledge until you accept it." };
 
 const formatDay = (value: string) => {
   const date = new Date(value);
@@ -92,7 +86,7 @@ export function InboxPageV3({ bases, onOpenBase, onOpenNote, onOpenItem, focusIt
       const next = await knowledgeApi.inbox();
       setItems(next);
       setError(null);
-      onCountChange?.(next.filter((item) => item.state !== "held").length);
+      onCountChange?.(next.length);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Inbox could not be opened.");
     } finally {
@@ -108,12 +102,11 @@ export function InboxPageV3({ bases, onOpenBase, onOpenNote, onOpenItem, focusIt
   }, [refresh]);
 
   const counts = useMemo(() => ({
-    all: items.filter((item) => item.state !== "held").length,
+    all: items.length,
     unfiled: items.filter((item) => item.state === "unfiled").length,
     needs_review: items.filter((item) => item.state === "needs_review").length,
-    held: items.filter((item) => item.state === "held").length,
   }), [items]);
-  const visible = useMemo(() => items.filter((item) => filter === "all" ? item.state !== "held" : item.state === filter), [filter, items]);
+  const visible = useMemo(() => items.filter((item) => filter === "all" || item.state === filter), [filter, items]);
   const queue = useMemo(() => visible.map(refFromInbox), [visible]);
 
   const openButtons = () => Array.from(list.current?.querySelectorAll<HTMLButtonElement>(".gx-inbox-open") ?? []);
@@ -222,28 +215,10 @@ export function InboxPageV3({ bases, onOpenBase, onOpenNote, onOpenItem, focusIt
     }
   };
 
-  const reviewProposal = async (item: InboxItem, status: "accepted" | "held" | "pending") => {
-    if (!item.proposalId) return;
-    setWorkingId(item.id);
-    try {
-      await knowledgeApi.updateProposal(item.proposalId, {
-        status,
-        reason: status === "accepted" ? "Accepted from unified Inbox" : status === "held" ? "Held for later from unified Inbox" : "Returned to unified Inbox",
-      });
-      await refresh();
-      onNotify(status === "accepted" ? "Suggestion added to trusted knowledge." : status === "held" ? "Suggestion held for later." : "Suggestion returned for review.");
-    } catch (reason) {
-      onNotify(reason instanceof Error ? reason.message : "The review decision could not be saved.");
-    } finally {
-      setWorkingId(null);
-    }
-  };
-
   const tabs: Array<{ id: InboxFilter; label: string }> = [
     { id: "all", label: "Needs attention" },
     { id: "unfiled", label: "To organize" },
     { id: "needs_review", label: "To review" },
-    { id: "held", label: "Held" },
   ];
 
   return <div className="gx-inbox page-enter">
@@ -300,12 +275,6 @@ export function InboxPageV3({ bases, onOpenBase, onOpenNote, onOpenItem, focusIt
               <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={isWorking} onClick={() => void reviewSource(item, "disputed")}>Dispute</button>
               <button type="button" className="gx-btn gx-btn-primary gx-btn-sm" disabled={isWorking || item.assertionCount === 0} onClick={() => void reviewSource(item, "verified")}><Check size={13} />Accept {item.assertionCount || "claims"}</button>
             </>}
-            {item.state === "needs_review" && item.itemType === "knowledge_suggestion" && <>
-              <span className="gx-footer-spacer" />
-              <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={isWorking} onClick={() => void reviewProposal(item, "held")}><Archive size={13} />Hold</button>
-              <button type="button" className="gx-btn gx-btn-primary gx-btn-sm" disabled={isWorking} onClick={() => void reviewProposal(item, "accepted")}><Check size={13} />Accept suggestion</button>
-            </>}
-            {item.state === "held" && <><span className="gx-footer-spacer" /><button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={isWorking} onClick={() => void reviewProposal(item, "pending")}><RotateCcw size={13} />Return to review</button></>}
           </footer>
         </article>;
       })}</div>
@@ -319,8 +288,8 @@ export function InboxPageV3({ bases, onOpenBase, onOpenNote, onOpenItem, focusIt
 
     {!loading && !error && visible.length === 0 && <div className="gx-empty-state">
       <span className="gx-empty-icon"><Inbox size={20} /></span>
-      <h2>{filter === "held" ? "Nothing is held aside." : "You’re all caught up."}</h2>
-      <p>{filter === "held" ? "Items you deliberately postpone will stay here." : "New sources can wait here without being forced into a library."}</p>
+      <h2>You’re all caught up.</h2>
+      <p>New sources can wait here without being forced into a library.</p>
       <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={onCapture}><Plus size={13} />Capture something</button>
     </div>}
   </div>;

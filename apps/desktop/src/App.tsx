@@ -386,7 +386,7 @@ export default function App() {
     return () => window.removeEventListener(OPEN_SETTINGS_EVENT, openSettings);
   }, [navigate]);
   useEffect(() => {
-    const refreshInboxCount = () => void knowledgeApi.inbox().then((items) => setInboxCount(items.filter((item) => item.state !== "held").length)).catch(() => undefined);
+    const refreshInboxCount = () => void knowledgeApi.inbox().then((items) => setInboxCount(items.length)).catch(() => undefined);
     refreshInboxCount();
     window.addEventListener("gunther:inbox-updated", refreshInboxCount);
     return () => window.removeEventListener("gunther:inbox-updated", refreshInboxCount);
@@ -431,11 +431,6 @@ export default function App() {
     window.localStorage.setItem(THEME_STORAGE_KEY, themePreference);
   }, [theme, themePreference]);
   useEffect(() => themePreference === "system" ? watchSystemTheme(() => setSystemThemeVersion((current) => current + 1)) : undefined, [themePreference]);
-  useEffect(() => {
-    const onProposal = () => window.dispatchEvent(new CustomEvent("gunther:inbox-updated"));
-    window.addEventListener("gunther:proposal-created", onProposal);
-    return () => window.removeEventListener("gunther:proposal-created", onProposal);
-  }, []);
   useEffect(() => {
     if (!isTauriRuntime()) return undefined;
     let disposed = false;
@@ -548,11 +543,6 @@ export default function App() {
             onNext={itemIndex >= 0 && itemIndex < openItemState.queue.length - 1 ? () => stepItem(1) : null}
             onResolved={resolveItem}
             onOpenBase={(id) => openBase(id)}
-            onOpenSession={(baseId, sessionId, messageId) => {
-              window.localStorage.setItem(`gunther:active-session:${baseId}`, sessionId);
-              if (messageId) window.localStorage.setItem(`gunther:selected-message:${baseId}`, messageId);
-              openBase(baseId, undefined, "ask");
-            }}
             onOpenNotebook={(id) => { setFocusNoteId(id); navigate("notebook"); }}
             onCreateBase={() => setCreateBaseOpen(true)}
             onNotify={notify}

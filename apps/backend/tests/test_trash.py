@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from legacy_artifacts import insert_legacy_version
 from sqlalchemy import func, select, text
 
 from gunther.config import Settings
@@ -301,29 +302,22 @@ def test_deleting_a_library_forever_clears_everything_it_owned(storage: Path) ->
             f"/api/proposals/{proposal['id']}", json={"status": "accepted", "reason": "Reviewed"}
         ).json()["knowledgeUnitId"]
         workspace_id = client.get("/api/workspace/bootstrap").json()["workspaceId"]
-        headers = {"X-Gunther-Workspace-Id": workspace_id}
-        first = client.post(
-            f"/api/knowledge-bases/{base_id}/artifacts",
-            headers=headers,
-            json={
-                "clientRequestId": "trash_request_0001",
-                "format": "field_guide",
-                "audience": "scientist",
-                "acceptedUnitIds": [unit_id],
-            },
-        ).json()
-        second = client.post(
-            f"/api/knowledge-bases/{base_id}/artifacts",
-            headers=headers,
-            json={
-                "clientRequestId": "trash_request_0002",
-                "format": "field_guide",
-                "audience": "scientist",
-                "acceptedUnitIds": [unit_id],
-                "supersedesArtifactId": first["id"],
-            },
+        # Two versions of one output, from the old builder: each restricts the one it supersedes.
+        first = insert_legacy_version(
+            sessions_of(client),
+            workspace_id=workspace_id,
+            base_id=base_id,
+            unit_id=unit_id,
+            request_id="trash_request_0001",
         )
-        assert second.status_code == 201
+        insert_legacy_version(
+            sessions_of(client),
+            workspace_id=workspace_id,
+            base_id=base_id,
+            unit_id=unit_id,
+            request_id="trash_request_0002",
+            supersedes=first,
+        )
 
         client.post(f"/api/knowledge-bases/{base_id}/trash")
         assert client.delete(f"/api/trash/library/{base_id}").status_code == 200

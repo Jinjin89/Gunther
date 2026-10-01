@@ -6,13 +6,13 @@ import httpx
 import openai
 from fake_models import FakeProvider, api_error, gateway, model
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from legacy_artifacts import insert_legacy_version
 
 from gunther.config import Settings
 from gunther.database import create_database_engine
 from gunther.extraction import ModelExtractor
 from gunther.main import create_app
-from gunther.models import Artifact, ArtifactUnitBinding
+from gunther.models import Artifact
 from gunther.realtime import _pcm16_wav, qwen_endpoint, qwen_request, qwen_text
 
 
@@ -74,6 +74,27 @@ def create_base(client: TestClient, title: str) -> str:
     )
     assert created.status_code == 201
     return created.json()["id"]
+
+
+def answered_session(client: TestClient, title: str) -> tuple[str, str, str]:
+    """A library with one source and one cited answer: (library, session, answer) ids."""
+
+    base_id = create_base(client, title)
+    client.post(
+        "/api/sources",
+        json={
+            "title": "Learning evidence",
+            "kind": "note",
+            "content": "Retrieval practice improves retention.",
+            "knowledgeBaseId": base_id,
+        },
+    )
+    session_id = client.post(f"/api/knowledge-bases/{base_id}/sessions", json={}).json()["id"]
+    turn = client.post(
+        f"/api/sessions/{session_id}/messages",
+        json={"content": "What improves retention?"},
+    ).json()
+    return base_id, session_id, turn["assistantMessage"]["id"]
 
 
 def test_import_builds_evidence_backed_graph() -> None:
@@ -234,8 +255,6 @@ def test_unified_inbox_files_an_unassigned_source_idempotently() -> None:
                 "knowledgeBases": [],
                 "sourceId": source_id,
                 "noteId": None,
-                "proposalId": None,
-                "proposalStatus": None,
                 "assertionCount": 1,
                 "createdAt": imported["source"]["createdAt"],
                 "updatedAt": imported["source"]["createdAt"],
@@ -318,9 +337,9 @@ def test_inbox_previews_a_pasted_table_by_its_shape() -> None:
         assert previews["Markdown rows"] == "1 row · Columns: gene, count"
 
 
-def test_unified_inbox_aggregates_quick_notes_and_knowledge_suggestions() -> None:
+def test_unified_inbox_lists_quick_notes_but_never_saved_answers() -> None:
     with make_client() as client:
-        base_id = create_base(client, "Learning Queue")
+        base_id, session_id, message_id = answered_session(client, "Learning Queue")
         note = client.post(
             "/api/notes",
             json={
@@ -328,28 +347,11 @@ def test_unified_inbox_aggregates_quick_notes_and_knowledge_suggestions() -> Non
                 "content": "Compare retrieval practice with rereading.",
             },
         ).json()
-        client.post(
-            "/api/sources",
-            json={
-                "title": "Learning evidence",
-                "kind": "note",
-                "content": "Retrieval practice improves retention.",
-                "knowledgeBaseId": base_id,
-            },
-        )
-        knowledge_session = client.post(
-            f"/api/knowledge-bases/{base_id}/sessions",
-            json={"title": "Practice review"},
-        ).json()
-        turn = client.post(
-            f"/api/sessions/{knowledge_session['id']}/messages",
-            json={"content": "What improves retention?"},
-        ).json()
-        proposal = client.post(
-            f"/api/sessions/{knowledge_session['id']}/messages/"
-            f"{turn['assistantMessage']['id']}/proposal",
+        saved = client.post(
+            f"/api/sessions/{session_id}/messages/{message_id}/proposal",
             json={"title": "Retention finding"},
         ).json()
+        assert saved["status"] == "accepted"
 
         inbox = client.get("/api/inbox").json()
         quick_note = next(item for item in inbox if item["noteId"] == note["id"])
@@ -358,28 +360,13 @@ def test_unified_inbox_aggregates_quick_notes_and_knowledge_suggestions() -> Non
         assert quick_note["sourceKind"] == "note"
         assert quick_note["preview"] == "Compare retrieval practice with rereading."
 
-        suggestion = next(item for item in inbox if item["proposalId"] == proposal["id"])
-        assert suggestion["itemType"] == "knowledge_suggestion"
-        assert suggestion["state"] == "needs_review"
-        assert suggestion["proposalStatus"] == "pending"
-        assert suggestion["knowledgeBases"] == [{"id": base_id, "title": "Learning Queue"}]
-
-        held = client.patch(
-            f"/api/proposals/{proposal['id']}",
-            json={"status": "held", "reason": "Needs another source"},
-        )
-        assert held.status_code == 200
-        held_items = client.get("/api/inbox?state=held&itemType=knowledge_suggestion").json()
-        assert [item["proposalId"] for item in held_items] == [proposal["id"]]
-        assert held_items[0]["proposalStatus"] == "held"
-
-        accepted = client.patch(
-            f"/api/proposals/{proposal['id']}",
-            json={"status": "accepted", "reason": "Reviewed"},
-        )
-        assert accepted.status_code == 200
-        suggestions = client.get("/api/inbox?itemType=knowledge_suggestion").json()
-        assert all(item["proposalId"] != proposal["id"] for item in suggestions)
+        # Saving an answer is the only review step, so it never waits in the Inbox.
+        assert {item["itemType"] for item in inbox} <= {"source", "quick_note"}
+        assert {item["state"] for item in inbox} <= {"unfiled", "needs_review"}
+        assert all(saved["id"] not in (item["id"], item.get("proposalId")) for item in inbox)
+        assert client.get("/api/inbox?itemType=knowledge_suggestion").status_code == 422
+        assert client.get("/api/inbox?state=held").status_code == 422
+        assert base_id == saved["knowledgeBaseId"]
 
 
 def test_notebook_note_stays_lightweight_until_it_is_filed() -> None:
@@ -824,7 +811,77 @@ def test_sessions_can_be_pinned_and_archived_without_deleting_history() -> None:
         assert "changing its retrieval context" in context_change.json()["detail"]
 
 
-def test_assistant_answer_can_become_a_reviewable_knowledge_proposal() -> None:
+def test_a_removed_answer_is_saved_again_with_the_same_unit() -> None:
+    with make_client() as client:
+        base_id, session_id, message_id = answered_session(client, "Removable")
+        proposal_url = f"/api/sessions/{session_id}/messages/{message_id}/proposal"
+        units_url = f"/api/knowledge-bases/{base_id}/units"
+
+        saved = client.post(proposal_url, json={}).json()
+        unit_id = saved["knowledgeUnitId"]
+        assert saved["status"] == "accepted"
+        [unit] = client.get(units_url).json()
+        assert (unit["id"], unit["status"]) == (unit_id, "trusted")
+
+        removed = client.patch(
+            f"/api/proposals/{saved['id']}",
+            json={"status": "rejected", "reason": "Removed from knowledge"},
+        ).json()
+        assert removed["status"] == "rejected"
+        assert removed["knowledgeUnitId"] == unit_id
+        [unit] = client.get(units_url).json()
+        assert unit["status"] == "deprecated"
+
+        again = client.post(proposal_url, json={}).json()
+        assert (again["id"], again["status"], again["knowledgeUnitId"]) == (
+            saved["id"],
+            "accepted",
+            unit_id,
+        )
+        [unit] = client.get(units_url).json()
+        assert (unit["id"], unit["status"], unit["revisionCount"]) == (unit_id, "trusted", 1)
+
+        # Saving something that is already saved changes nothing.
+        unchanged = client.post(proposal_url, json={}).json()
+        assert unchanged == again
+
+
+def test_saved_answers_without_a_unit_get_one_when_the_app_starts(tmp_path: Path) -> None:
+    url = f"sqlite+pysqlite:///{tmp_path / 'gunther.sqlite'}"
+
+    def start() -> TestClient:
+        return TestClient(
+            create_app(
+                Settings(
+                    database_url=url,
+                    seed_demo=False,
+                    deepseek_api_key=None,
+                    stt_provider="compatible",
+                    processing_worker_enabled=False,
+                )
+            )
+        )
+
+    with start() as client:
+        base_id, session_id, message_id = answered_session(client, "Older data")
+        saved = client.post(
+            f"/api/sessions/{session_id}/messages/{message_id}/proposal", json={}
+        ).json()
+    # Databases from before saving made the unit hold saved answers without one.
+    engine = create_database_engine(url)
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql("DELETE FROM knowledge_units")
+    finally:
+        engine.dispose()
+
+    with start() as client:
+        [unit] = client.get(f"/api/knowledge-bases/{base_id}/units").json()
+        assert unit["sourceProposalId"] == saved["id"]
+        assert unit["status"] == "trusted"
+
+
+def test_assistant_answer_can_be_saved_as_knowledge() -> None:
     with make_client() as client:
         create_base(client, "Learning")
         client.post(
@@ -852,7 +909,8 @@ def test_assistant_answer_can_become_a_reviewable_knowledge_proposal() -> None:
         )
         assert created.status_code == 201
         proposal = created.json()
-        assert proposal["status"] == "pending"
+        assert proposal["status"] == "accepted"
+        assert proposal["knowledgeUnitId"].startswith("unt_")
         assert proposal["targetChapterId"] == "practice"
         assert proposal["content"] == turn["assistantMessage"]["content"]
 
@@ -862,7 +920,7 @@ def test_assistant_answer_can_become_a_reviewable_knowledge_proposal() -> None:
         ).json()
         assert duplicate["id"] == proposal["id"]
         pending = client.get("/api/knowledge-bases/learning/proposals?status=pending").json()
-        assert [item["id"] for item in pending] == [proposal["id"]]
+        assert pending == []
 
         accepted = client.patch(
             f"/api/proposals/{proposal['id']}",
@@ -906,7 +964,7 @@ def test_assistant_answer_can_become_a_reviewable_knowledge_proposal() -> None:
         assert any(item["knowledgeBaseId"] == "learning" for item in phrase_search)
 
 
-def test_artifact_history_is_immutable_versioned_and_bound_to_workspace_and_base() -> None:
+def test_a_version_from_the_old_builder_stays_readable_sealed_and_bound_to_its_library() -> None:
     with make_client() as client:
         base_id = create_base(client, "Artifact Biology")
         other_base_id = create_base(client, "Other Field")
@@ -932,27 +990,31 @@ def test_artifact_history_is_immutable_versioned_and_bound_to_workspace_and_base
             f"{turn['assistantMessage']['id']}/proposal",
             json={"title": "T-cell identity"},
         ).json()
-        accepted = client.patch(
-            f"/api/proposals/{proposal['id']}",
-            json={"status": "accepted", "reason": "Reviewed"},
-        ).json()
-        unit_id = accepted["knowledgeUnitId"]
+        unit_id = proposal["knowledgeUnitId"]
         workspace_id = client.get("/api/workspace/bootstrap").json()["workspaceId"]
         headers = {"X-Gunther-Workspace-Id": workspace_id}
-        payload = {
-            "clientRequestId": "artifact_request_0001",
-            "format": "field_guide",
-            "audience": "scientist",
-            "acceptedUnitIds": [unit_id],
-        }
-
-        created = client.post(
-            f"/api/knowledge-bases/{base_id}/artifacts",
-            headers=headers,
-            json=payload,
+        sessions = client.app.state.knowledge_service.sessions
+        first_id = insert_legacy_version(
+            sessions,
+            workspace_id=workspace_id,
+            base_id=base_id,
+            unit_id=unit_id,
+            request_id="artifact_request_0001",
+            title="Field guide",
         )
-        assert created.status_code == 201
-        first = created.json()
+        second_id = insert_legacy_version(
+            sessions,
+            workspace_id=workspace_id,
+            base_id=base_id,
+            unit_id=unit_id,
+            request_id="artifact_request_0002",
+            supersedes=first_id,
+            title="Field guide",
+        )
+
+        detail = client.get(f"/api/knowledge-bases/{base_id}/artifacts/{first_id}", headers=headers)
+        assert detail.status_code == 200
+        first = detail.json()
         assert first["knowledgeBaseId"] == base_id
         assert first["workspaceId"] == workspace_id
         assert first["versionNumber"] == 1
@@ -961,8 +1023,22 @@ def test_artifact_history_is_immutable_versioned_and_bound_to_workspace_and_base
         assert first["acceptedUnitIds"] == [unit_id]
         assert first["unitSnapshots"][0]["unitId"] == unit_id
         assert first["unitSnapshots"][0]["revisionNumber"] == 1
-        assert first["unitSnapshots"][0]["content"]
         assert len(first["unitSnapshots"][0]["contentHash"]) == 64
+        assert f"accepted knowledge unit `{unit_id}`" in first["content"]
+        # It reads as a report from before agents: its format is its style, with no citations.
+        assert (first["format"], first["kind"], first["style"], first["origin"]) == (
+            "field_guide",
+            "report",
+            "field_guide",
+            "legacy",
+        )
+        assert (first["citations"], first["sections"], first["scope"], first["modelLabel"]) == (
+            [],
+            [],
+            None,
+            None,
+        )
+        # Its provenance is the version 1 shape, exactly.
         assert first["provenance"] == {
             "schemaVersion": 1,
             "generator": "gunther.local-template.v1",
@@ -973,115 +1049,37 @@ def test_artifact_history_is_immutable_versioned_and_bound_to_workspace_and_base
             "acceptedUnitIds": [unit_id],
             "revisionIds": [first["unitSnapshots"][0]["revisionId"]],
         }
-        assert f"accepted knowledge unit `{unit_id}`" in first["content"]
 
-        listed = client.get(
-            f"/api/knowledge-bases/{base_id}/artifacts",
-            headers=headers,
-        )
+        listed = client.get(f"/api/knowledge-bases/{base_id}/artifacts", headers=headers)
         assert listed.status_code == 200
-        assert listed.json()[0]["id"] == first["id"]
+        assert [item["id"] for item in listed.json()] == [second_id, first_id]
+        assert [(item["kind"], item["style"], item["origin"]) for item in listed.json()] == [
+            ("report", "field_guide", "legacy")
+        ] * 2
         assert "content" not in listed.json()[0]
-        detail = client.get(
-            f"/api/knowledge-bases/{base_id}/artifacts/{first['id']}",
-            headers=headers,
-        )
-        assert detail.json() == first
-
-        idempotent_retry = client.post(
-            f"/api/knowledge-bases/{base_id}/artifacts",
-            headers=headers,
-            json=payload,
-        )
-        assert idempotent_retry.status_code == 201
-        assert idempotent_retry.json() == first
-        assert (
-            len(
-                client.get(
-                    f"/api/knowledge-bases/{base_id}/artifacts",
-                    headers=headers,
-                ).json()
-            )
-            == 1
-        )
-        conflicting_retry = client.post(
-            f"/api/knowledge-bases/{base_id}/artifacts",
-            headers=headers,
-            json={**payload, "audience": "student"},
-        )
-        assert conflicting_retry.status_code == 409
-        assert "already used" in conflicting_retry.json()["detail"]
-        with client.app.state.knowledge_service.sessions() as database_session:
-            bindings = database_session.scalars(
-                select(ArtifactUnitBinding).where(ArtifactUnitBinding.artifact_id == first["id"])
-            ).all()
-        assert [
-            (
-                binding.position,
-                binding.unit_id,
-                binding.revision_id,
-                binding.content_hash,
-            )
-            for binding in bindings
-        ] == [
-            (
-                0,
-                unit_id,
-                first["unitSnapshots"][0]["revisionId"],
-                first["unitSnapshots"][0]["contentHash"],
-            )
-        ]
-
-        regenerated = client.post(
-            f"/api/knowledge-bases/{base_id}/artifacts",
-            headers=headers,
-            json={
-                **payload,
-                "clientRequestId": "artifact_request_0002",
-                "supersedesArtifactId": first["id"],
-            },
-        )
-        assert regenerated.status_code == 201
-        second = regenerated.json()
+        second = client.get(
+            f"/api/knowledge-bases/{base_id}/artifacts/{second_id}", headers=headers
+        ).json()
         assert second["lineageId"] == first["lineageId"]
         assert second["versionNumber"] == 2
-        assert second["supersedesArtifactId"] == first["id"]
-        assert second["id"] != first["id"]
+        assert second["supersedesArtifactId"] == first_id
+
+        # Changing one needs an output built by agents: this one has no citations or scope.
         assert (
-            client.get(
-                f"/api/knowledge-bases/{base_id}/artifacts/{first['id']}",
+            client.post(
+                f"/api/knowledge-bases/{base_id}/artifacts/{second_id}/edits",
                 headers=headers,
-            ).json()
-            == first
+                json={"clientRequestId": "edit_request_0001", "content": "# Typed"},
+            ).status_code
+            == 400
         )
-        stale_parent = client.post(
-            f"/api/knowledge-bases/{base_id}/artifacts",
-            headers=headers,
-            json={
-                **payload,
-                "clientRequestId": "artifact_request_0003",
-                "supersedesArtifactId": first["id"],
-            },
-        )
-        assert stale_parent.status_code == 409
-        assert "current Artifact lineage head" in stale_parent.json()["detail"]
 
         assert (
             client.get(
-                f"/api/knowledge-bases/{other_base_id}/artifacts/{first['id']}",
+                f"/api/knowledge-bases/{other_base_id}/artifacts/{first_id}",
                 headers=headers,
             ).status_code
             == 404
-        )
-        rejected_cross_base = client.post(
-            f"/api/knowledge-bases/{other_base_id}/artifacts",
-            headers=headers,
-            json={**payload, "clientRequestId": "artifact_request_0004"},
-        )
-        assert rejected_cross_base.status_code == 400
-        assert (
-            "trusted Knowledge Units from this Knowledge Base"
-            in (rejected_cross_base.json()["detail"])
         )
         assert (
             client.get(
@@ -1093,12 +1091,12 @@ def test_artifact_history_is_immutable_versioned_and_bound_to_workspace_and_base
         assert client.get(f"/api/knowledge-bases/{base_id}/artifacts").status_code == 422
 
         with client.app.state.knowledge_service.sessions() as database_session:
-            artifact = database_session.get(Artifact, first["id"])
+            artifact = database_session.get(Artifact, first_id)
             assert artifact is not None
             artifact.content = "X" + artifact.content[1:]
             database_session.commit()
         corrupted_detail = client.get(
-            f"/api/knowledge-bases/{base_id}/artifacts/{first['id']}",
+            f"/api/knowledge-bases/{base_id}/artifacts/{first_id}",
             headers=headers,
         )
         assert corrupted_detail.status_code == 409

@@ -106,7 +106,6 @@ describe("source content envelopes", () => {
       .toEqual({ detail: "42 min", text: "Markers identify cell types." });
     expect(inboxPreview({ itemType: "quick_note", sourceKind: "note", preview: "## Idea - [ ] call **Ana**" })).toEqual({ detail: null, text: "Idea call Ana" });
     expect(inboxPreview({ itemType: "source", sourceKind: "table", preview: "9 rows · Columns: cluster, cells, top marker" })).toEqual({ detail: "9 rows · 3 columns", text: "cluster, cells, top marker" });
-    expect(inboxPreview({ itemType: "knowledge_suggestion", sourceKind: null, preview: "1. **Markers** need context. [1] 2. Validate them. [2]" }).text).toBe("Markers need context. 2. Validate them.");
   });
 
   it("parses pasted tables and detects numeric columns", () => {

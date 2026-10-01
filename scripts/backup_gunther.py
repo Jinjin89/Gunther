@@ -308,6 +308,8 @@ def _verify_database_payload_integrity(
                     ) from error
                 if not isinstance(accepted_unit_ids, list) or not isinstance(snapshots, list):
                     raise BackupError(f"Artifact {artifact['id']} snapshot is invalid")
+                # Version 2 is an output built by agents; version 1 is the old builder's.
+                agents = isinstance(provenance, dict) and provenance.get("schema_version") == 2
                 content_hash = hashlib.sha256(
                     str(artifact["content"]).encode("utf-8")
                 ).hexdigest()
@@ -335,9 +337,20 @@ def _verify_database_payload_integrity(
                     or not isinstance(provenance, dict)
                     or provenance.get("workspace_id") != artifact["workspace_id"]
                     or provenance.get("knowledge_base_id") != artifact["knowledge_base_id"]
-                    or provenance.get("accepted_only") is not True
+                    # The old builder used accepted knowledge only; agents read sources too.
+                    or provenance.get("accepted_only") is not (not agents)
                     or provenance.get("accepted_unit_ids") != accepted_unit_ids
                     or provenance.get("revision_ids") != revision_ids
+                    or (
+                        agents
+                        and (
+                            artifact["format"] != artifact["kind"]
+                            or any(
+                                provenance.get(name) != artifact[name]
+                                for name in ("kind", "style", "audience", "brief", "origin")
+                            )
+                        )
+                    )
                 ):
                     raise BackupError(
                         f"Artifact {artifact['id']} differs from its immutable provenance"
@@ -381,17 +394,35 @@ def _verify_database_payload_integrity(
                         raise BackupError(
                             f"Artifact {artifact['id']} pinned revision differs"
                         )
+                sealed = {
+                    "audience": artifact["audience"],
+                    "title": artifact["title"],
+                    "contentHash": artifact["content_hash"],
+                    "acceptedUnitIds": accepted_unit_ids,
+                    "revisionSnapshot": snapshots,
+                    "provenance": provenance,
+                }
+                if agents:
+                    try:
+                        sealed.update(
+                            kind=artifact["kind"],
+                            style=artifact["style"],
+                            brief=artifact["brief"],
+                            origin=artifact["origin"],
+                            citations=json.loads(artifact["citations_json"]),
+                            outline=json.loads(artifact["outline_json"]),
+                            scope=json.loads(artifact["scope_json"]),
+                            inputs=json.loads(artifact["inputs_json"]),
+                        )
+                    except (TypeError, json.JSONDecodeError) as error:
+                        raise BackupError(
+                            f"Artifact {artifact['id']} contains invalid JSON"
+                        ) from error
+                else:
+                    sealed["format"] = artifact["format"]
                 manifest_hash = hashlib.sha256(
                     json.dumps(
-                        {
-                            "format": artifact["format"],
-                            "audience": artifact["audience"],
-                            "title": artifact["title"],
-                            "contentHash": artifact["content_hash"],
-                            "acceptedUnitIds": accepted_unit_ids,
-                            "revisionSnapshot": snapshots,
-                            "provenance": provenance,
-                        },
+                        sealed,
                         ensure_ascii=False,
                         sort_keys=True,
                         separators=(",", ":"),

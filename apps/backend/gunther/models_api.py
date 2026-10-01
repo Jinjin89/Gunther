@@ -5,6 +5,7 @@ are ready, to pick one in Ask. Keys never leave the backend.
 """
 
 import hashlib
+from collections.abc import Iterable
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -256,18 +257,38 @@ def _unique_name(name: str, providers: list[dict[str, Any]]) -> str:
     return f"{name} {number}"
 
 
+def _still_following(request: Request, roles: dict[str, Any], chosen: Iterable[str] = ()) -> dict:
+    """The jobs to save. One that follows another (Outputs follows Ask) and was never
+    given a model of its own is left out, so it keeps following."""
+
+    saved = _store(request).models()[1] or {}
+    return {
+        role_id: choice
+        for role_id, choice in roles.items()
+        if not model_registry.ROLE_BY_ID[role_id].follows
+        or role_id in saved
+        or role_id in chosen
+    }
+
+
 def _roles_after(request: Request, providers: list[dict[str, Any]]) -> dict[str, Any]:
     """Keep every job's choice; a job without a usable model takes the first one."""
 
     current = _registry(request).roles
     fallback = model_registry.default_roles(providers)
     refs = {f"{p['id']}/{m['id']}" for p in providers for m in p["models"]}
-    return {
-        role.id: current.get(role.id)
-        if (current.get(role.id) or {}).get("model") in refs
-        else {**fallback[role.id], "effort": (current.get(role.id) or fallback[role.id])["effort"]}
-        for role in ROLES
-    }
+    return _still_following(
+        request,
+        {
+            role.id: current.get(role.id)
+            if (current.get(role.id) or {}).get("model") in refs
+            else {
+                **fallback[role.id],
+                "effort": (current.get(role.id) or fallback[role.id])["effort"],
+            }
+            for role in ROLES
+        },
+    )
 
 
 @router.put("/settings/providers/{provider_id}")
@@ -314,7 +335,7 @@ def save_roles(payload: RolesIn, request: Request) -> dict[str, Any]:
             raise HTTPException(
                 422, f"{model_registry.ROLE_BY_ID[role_id].label}: that model is not set up."
             )
-    roles = {**registry.roles, **changes}
+    roles = _still_following(request, {**registry.roles, **changes}, changes)
     # Saving jobs keeps the providers in use, even ones that came from the environment.
     _save(request, providers=[dict(p) for p in registry.providers], roles=roles)
     return models_overview(request)

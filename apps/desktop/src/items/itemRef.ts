@@ -3,8 +3,7 @@ import type { InboxItem, KnowledgeSearchResult, SourceKind } from "@gunther/cont
 /** Anything that can be opened into its own detail page. */
 export type ItemRef =
   | { type: "source"; id: string }
-  | { type: "note"; id: string }
-  | { type: "suggestion"; id: string; baseId: string | null };
+  | { type: "note"; id: string };
 
 /** Where the detail page was opened from, so Back returns there. */
 export type ItemOrigin = "home" | "library" | "base" | "notebook" | "inbox" | "settings" | "account" | "trash";
@@ -16,7 +15,6 @@ export const sameItem = (left: ItemRef | null | undefined, right: ItemRef | null
 
 export function refFromInbox(item: InboxItem): ItemRef {
   if (item.itemType === "quick_note") return { type: "note", id: item.noteId ?? item.id };
-  if (item.itemType === "knowledge_suggestion") return { type: "suggestion", id: item.proposalId ?? item.id, baseId: item.knowledgeBases[0]?.id ?? null };
   return { type: "source", id: item.sourceId ?? item.id };
 }
 

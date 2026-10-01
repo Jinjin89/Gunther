@@ -3,10 +3,13 @@ import type {
   ConversationContext,
   Artifact,
   ArtifactSummary,
+  BuildOutputRequest,
+  EditOutputRequest,
+  OutlineItem,
+  ReviseOutputRequest,
   Assertion,
   AssetCaptureResult,
   ConversationTurn,
-  CreateArtifactInput,
   CreateKnowledgeBaseInput,
   CreateKnowledgeProposalInput,
   CreateKnowledgeSessionInput,
@@ -81,7 +84,7 @@ import type {
   TrashItemKind,
 } from "@gunther/contracts";
 import { readServerEvents } from "./sse";
-import { createArtifactSchema, webCaptureSchema } from "@gunther/contracts";
+import { webCaptureSchema } from "@gunther/contracts";
 import { invoke } from "@tauri-apps/api/core";
 import { log } from "./log";
 import type {
@@ -97,6 +100,15 @@ export type AnswerEvent =
   | { type: "step"; state: "running" | "done"; tool: AgentStep["tool"]; label: string; query?: string; found?: number; error?: string | null }
   | { type: "text"; text: string }
   /** Following an answer again after leaving: the question it answers. */
+  | { type: "resumed"; question: string; startedAt: number };
+
+/** What the agents report while an output is built, revised or followed again. */
+export type OutputEvent =
+  | { type: "outline"; title: string; sections: OutlineItem[] }
+  | { type: "section"; index: number; state: "researching" | "writing" | "checking" | "done" }
+  | { type: "step"; state: "running" | "done"; tool: AgentStep["tool"]; label: string; query?: string; found?: number; error?: string | null; section: number | null }
+  | { type: "text"; section: number; text: string }
+  /** Following a build again after leaving: what it was asked. */
   | { type: "resumed"; question: string; startedAt: number };
 
 interface Health {
@@ -419,6 +431,50 @@ async function readAnswer(body: ReadableStream<Uint8Array>, onEvent: (event: Ans
   }
   throw new Error("The connection closed before the answer was finished.");
 }
+
+/** Someone pressed Stop; nothing was saved. */
+export class OutputStoppedError extends Error {
+  constructor() {
+    super("Stopped. Nothing was saved.");
+    this.name = "OutputStoppedError";
+  }
+}
+
+/** The events of an output until it is saved, fails or is stopped. */
+async function readOutput(body: ReadableStream<Uint8Array>, onEvent: (event: OutputEvent) => void): Promise<Artifact> {
+  for await (const message of readServerEvents(body)) {
+    const data = JSON.parse(message.data) as Record<string, unknown>;
+    if (message.event === "done") return data as unknown as Artifact;
+    if (message.event === "stopped") throw new OutputStoppedError();
+    if (message.event === "error") throw new Error(typeof data.detail === "string" ? data.detail : "The output could not be built.");
+    onEvent(data as unknown as OutputEvent);
+  }
+  throw new Error("The connection closed before the output was finished.");
+}
+
+/** Start a build or a revision (a POST), or follow one (a GET), and hear it until it ends. */
+async function streamOutput(path: string, init: RequestInit, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal): Promise<Artifact | null> {
+  await waitForDesktopBackend();
+  let response: Response;
+  try {
+    response = await backendFetch(`${apiBase}${path}`, {
+      ...init,
+      headers: { "Content-Type": "application/json", "X-Gunther-Workspace-Id": workspaceId },
+      ...(signal ? { signal } : {}),
+    });
+  } catch (reason) {
+    if (reason instanceof TypeError) throw new ServiceUnavailableError();
+    throw reason;
+  }
+  if (response.status === 204) return null;
+  if (!response.ok || !response.body) {
+    const body = (await response.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail ?? `Request failed with status ${response.status}`);
+  }
+  return readOutput(response.body, onEvent);
+}
+
+const outputsPath = (baseId: string) => `/knowledge-bases/${encodeURIComponent(baseId)}`;
 
 /** A failed call, in the log: method, path without its query, and what the service said. */
 function logFailure(init: RequestInit | undefined, path: string, what: string) {
@@ -774,18 +830,24 @@ export const knowledgeApi = {
       undefined,
       expectedWorkspaceId,
     ),
-  createArtifact: (
-    knowledgeBaseId: string,
-    payload: CreateArtifactInput,
-    expectedWorkspaceId: string,
-  ) => request<Artifact>(
-    `/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/artifacts`,
-    {
-      method: "POST",
-      body: JSON.stringify(createArtifactSchema.parse(payload)),
-    },
-    expectedWorkspaceId,
-  ),
+  /** Build a report or slides and hear the agents at work; resolves with the saved version. */
+  buildOutputStream: async (baseId: string, payload: BuildOutputRequest, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal): Promise<Artifact> =>
+    (await streamOutput(`${outputsPath(baseId)}/outputs/build/stream`, { method: "POST", body: JSON.stringify(payload) }, workspaceId, onEvent, signal)) as Artifact,
+  /** Change one section (or all) of the latest version as instructed: the next version. */
+  reviseOutputStream: async (baseId: string, artifactId: string, payload: ReviseOutputRequest, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal): Promise<Artifact> =>
+    (await streamOutput(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/revise/stream`, { method: "POST", body: JSON.stringify(payload) }, workspaceId, onEvent, signal)) as Artifact,
+  /** Follow a build or revision still running in this library; null when there is none. Aborting only stops listening. */
+  followOutputBuild: (baseId: string, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal) =>
+    streamOutput(`${outputsPath(baseId)}/outputs/build/stream`, { method: "GET" }, workspaceId, onEvent, signal),
+  /** Stop the build or revision; nothing is saved, and its stream ends with OutputStoppedError. */
+  stopOutputBuild: (baseId: string, workspaceId: string) =>
+    request<void>(`${outputsPath(baseId)}/outputs/build/stop`, { method: "POST" }, workspaceId),
+  /** Save typed text as the next version, exactly as typed. */
+  editOutput: (baseId: string, artifactId: string, payload: EditOutputRequest, workspaceId: string) =>
+    request<Artifact>(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/edits`, { method: "POST", body: JSON.stringify(payload) }, workspaceId),
+  /** Have the Checker look at the sections it has not checked as they read now. */
+  checkOutput: (baseId: string, artifactId: string, workspaceId: string) =>
+    request<Artifact>(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/check`, { method: "POST" }, workspaceId),
   updateProposal: (id: string, payload: UpdateKnowledgeProposalInput) =>
     request<KnowledgeProposal>(`/proposals/${encodeURIComponent(id)}`, {
       method: "PATCH",

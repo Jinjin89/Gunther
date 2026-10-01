@@ -18,7 +18,16 @@ from gunther.migrations import (
     get_schema_version,
     run_migrations,
 )
-from gunther.models import Artifact, Base, Source
+from gunther.models import (
+    Artifact,
+    Base,
+    KnowledgeProposal,
+    KnowledgeSession,
+    KnowledgeUnit,
+    KnowledgeUnitRevision,
+    SessionMessage,
+    Source,
+)
 from gunther.source_identity import source_fingerprint
 
 
@@ -63,6 +72,8 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (16, "source_digests"),
             (17, "speech_clips"),
             (18, "message_traces"),
+            (19, "knowledge_saved_without_review"),
+            (20, "agent_outputs"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
@@ -715,6 +726,14 @@ def test_v9_database_adds_immutable_artifact_history_without_touching_library(
             "accepted_unit_ids_json",
             "revision_snapshot_json",
             "provenance_json",
+            "kind",
+            "style",
+            "brief",
+            "origin",
+            "scope_json",
+            "inputs_json",
+            "outline_json",
+            "citations_json",
             "created_at",
         } == {column["name"] for column in inspector.get_columns("artifacts")}
         assert inspector.has_table("artifact_unit_bindings")
@@ -956,6 +975,154 @@ def test_v16_database_gains_speech_clips(tmp_path: Path) -> None:
             assert connection.exec_driver_sql(
                 "SELECT COUNT(id), COALESCE(SUM(audio_bytes), 0) FROM speech_clips"
             ).one() == (0, 0)
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
+    finally:
+        engine.dispose()
+
+
+def test_v18_database_counts_waiting_suggestions_as_saved_knowledge(tmp_path: Path) -> None:
+    """Saving an answer is the only review step now, so suggestions still waiting are saved."""
+
+    engine = make_engine(tmp_path)
+    try:
+        run_migrations(engine, Base.metadata, MIGRATIONS[:18])
+        assert get_schema_version(engine) == 18
+        sessions = create_session_factory(engine)
+        statuses = ("pending", "held", "accepted", "rejected")
+        with session_scope(sessions) as session:
+            session.add(KnowledgeSession(id="ses_1", knowledge_base_id="base"))
+            session.flush()
+            for status in statuses:
+                session.add(
+                    SessionMessage(
+                        id=f"msg_{status}",
+                        session_id="ses_1",
+                        role="assistant",
+                        content=f"The {status} answer",
+                    )
+                )
+            session.flush()
+            for status in statuses:
+                session.add(
+                    KnowledgeProposal(
+                        id=f"prp_{status}",
+                        knowledge_base_id="base",
+                        session_id="ses_1",
+                        message_id=f"msg_{status}",
+                        title=status,
+                        content=f"The {status} answer",
+                        status=status,
+                    )
+                )
+            session.flush()
+            # Held back after it was accepted, and removed after it was accepted.
+            for status, unit_status in (("held", "provisional"), ("rejected", "deprecated")):
+                session.add(
+                    KnowledgeUnit(
+                        id=f"unt_{status}",
+                        knowledge_base_id="base",
+                        title=status,
+                        status=unit_status,
+                    )
+                )
+                session.flush()
+                session.add(
+                    KnowledgeUnitRevision(
+                        id=f"urv_{status}",
+                        unit_id=f"unt_{status}",
+                        revision_number=1,
+                        content=f"The {status} answer",
+                        source_proposal_id=f"prp_{status}",
+                    )
+                )
+
+        history = run_migrations(engine, Base.metadata)
+        assert run_migrations(engine, Base.metadata) == history
+
+        with session_scope(sessions) as session:
+            assert dict(
+                session.execute(select(KnowledgeProposal.id, KnowledgeProposal.status)).all()
+            ) == {
+                "prp_pending": "accepted",
+                "prp_held": "accepted",
+                "prp_accepted": "accepted",
+                "prp_rejected": "rejected",
+            }
+            # The held answer's unit is trusted again; the removed one stays removed.
+            assert dict(session.execute(select(KnowledgeUnit.id, KnowledgeUnit.status)).all()) == {
+                "unt_held": "trusted",
+                "unt_rejected": "deprecated",
+            }
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
+    finally:
+        engine.dispose()
+
+
+def test_v19_outputs_gain_agent_columns_and_a_checks_table_without_losing_versions(
+    tmp_path: Path,
+) -> None:
+    """A version from the old builder stays a readable report; its format becomes its style."""
+
+    engine = make_engine(tmp_path)
+    agent_columns = {
+        "kind", "style", "brief", "origin", "scope_json", "inputs_json", "outline_json",
+        "citations_json",
+    }
+    try:
+        workspace_id = _prepare_pre_release_outputs(engine)
+        with engine.begin() as connection:
+            # An Outputs table as a v11 to v19 app had it: request identity, no agent columns.
+            current = [
+                column.name for column in Artifact.__table__.columns
+                if column.name not in agent_columns
+            ]
+            assert "client_request_id" in current
+            connection.exec_driver_sql(
+                "CREATE TABLE artifacts ("
+                "id VARCHAR(40) PRIMARY KEY, "
+                "workspace_id VARCHAR(40) NOT NULL REFERENCES workspace_identity(workspace_id), "
+                "knowledge_base_id VARCHAR(160) NOT NULL REFERENCES knowledge_bases(id), "
+                "client_request_id VARCHAR(128) NOT NULL, "
+                "request_fingerprint VARCHAR(64) NOT NULL, "
+                "lineage_id VARCHAR(40) NOT NULL, version_number INTEGER NOT NULL, "
+                "supersedes_artifact_id VARCHAR(40) REFERENCES artifacts(id), "
+                "format VARCHAR(40) NOT NULL, audience VARCHAR(40) NOT NULL, "
+                "title VARCHAR(160) NOT NULL, content TEXT NOT NULL, "
+                "content_hash VARCHAR(64) NOT NULL, manifest_hash VARCHAR(64) NOT NULL, "
+                "accepted_unit_ids_json TEXT NOT NULL, revision_snapshot_json TEXT NOT NULL, "
+                "provenance_json TEXT NOT NULL, created_at DATETIME NOT NULL, "
+                "UNIQUE (lineage_id, version_number), "
+                "UNIQUE (workspace_id, client_request_id))"
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO artifacts VALUES ('art_old', :workspace, 'cells', 'req_1', "
+                    ":hash, 'lin_1', 1, NULL, 'teaching_path', 'student', 'Markers', "
+                    "'# Markers', :hash, :hash, '[]', '[]', '{}', CURRENT_TIMESTAMP)"
+                ),
+                {"workspace": workspace_id, "hash": "a" * 64},
+            )
+
+        history = run_migrations(engine, Base.metadata)
+        assert run_migrations(engine, Base.metadata) == history
+
+        inspector = inspect(engine)
+        assert not inspector.has_table("artifacts_legacy")
+        assert {column["name"] for column in inspector.get_columns("artifacts")} == {
+            column.name for column in Artifact.__table__.columns
+        }
+        assert inspector.has_table("artifact_checks")
+        assert [
+            foreign_key["referred_table"]
+            for foreign_key in inspector.get_foreign_keys("artifact_checks")
+        ] == ["artifacts"]
+        sessions = create_session_factory(engine)
+        with session_scope(sessions) as session:
+            kept = session.scalars(select(Artifact)).one()
+            assert (kept.id, kept.format, kept.title) == ("art_old", "teaching_path", "Markers")
+            assert (kept.kind, kept.style, kept.origin) == ("report", "teaching_path", "legacy")
+            assert (kept.brief, kept.scope_json, kept.inputs_json) == ("", "{}", "{}")
+            assert (kept.outline_json, kept.citations_json) == ("[]", "[]")
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()

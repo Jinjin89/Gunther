@@ -335,6 +335,21 @@ def renumber_citations(text: str, used: Sequence[int]) -> str:
     return re.sub(r"\[(\d+)\]", lambda m: f"[{place.get(int(m.group(1)), m.group(1))}]", text)
 
 
+def place_marks(text: str, claims: Sequence[str]) -> str:
+    """Put ``[?]`` after each of these sentences (copied from the text), unless it has one."""
+
+    spots: list[int] = []
+    for claim in claims:
+        stripped = claim.strip().rstrip(".!?。！？")
+        at = text.find(stripped) if stripped else -1
+        end = at + len(stripped)
+        if at >= 0 and not text.startswith(UNSOURCED, end) and end not in spots:
+            spots.append(end)
+    for end in sorted(spots, reverse=True):
+        text = f"{text[:end]} {UNSOURCED}{text[end:]}"
+    return text
+
+
 def leads_in(text: str, limit: int) -> list[tuple[int, int, str]]:
     """The first ``limit`` claims marked as the model's own: (start, end, claim).
 
@@ -362,7 +377,7 @@ class AskAgent:
     planner_effort: Effort = "off"
     limits: Limits = field(default_factory=Limits)
 
-    def _relevant(
+    def relevant(
         self, model: ModelInfo, question: str, query: str, found: list[Evidence]
     ) -> list[Evidence]:
         """The results that are about the question. A grader that cannot answer keeps them all."""
@@ -475,7 +490,7 @@ class AskAgent:
             trace.note("search", label, tool=tool.name, query=query, results=_traced(found))
             if tool.grade:
                 with trace.step("grade", "Keeping the results about the question") as grading:
-                    found = self._relevant(model, question, query, found)
+                    found = self.relevant(model, question, query, found)
                     trace.update(grading, kept=[item.title for item in found])
             fresh = repeated = 0
             for item in found:
@@ -523,8 +538,8 @@ class AskAgent:
                 error=str(error),
             )
         text = completion.text
-        text = self._mark_unsourced(model, text)
-        text = self._check_leads(model, text, toolbox, adopt, steps, notes, emit)
+        text = self.mark_unsourced(model, text)
+        text = self.check_leads(model, text, toolbox, adopt, steps, notes, emit)
         by_ref = {item.ref: item for item in held}
         text, used = check_citations(text, set(by_ref))
         # Only sources the text cites are kept, numbered in the order it cites them.
@@ -545,12 +560,14 @@ class AskAgent:
             notes=(*notes, *completion.notes),
         )
 
-    def _mark_unsourced(self, model: ModelInfo, text: str) -> str:
-        """Mark claims the writer left with no source and no marker, so they are checked
-        like the others. The model finds them (in any language); this only places the mark."""
+    def unsourced_claims(self, model: ModelInfo, text: str) -> list[str]:
+        """The sentences that state a fact with neither a source number nor the marker.
+
+        The model finds them (in any language). A model that cannot answer finds none.
+        """
 
         if len(text) < 40:
-            return text
+            return []
         try:
             with trace.step("audit", "Marking claims that have no source") as auditing:
                 verdict, _ = self.gateway.complete_json(
@@ -563,19 +580,16 @@ class AskAgent:
                 trace.update(auditing, claims=list(verdict.claims))
         except ModelError as error:
             logger.info("The audit step failed: %s", error)
-            return text
-        spots: list[int] = []
-        for claim in verdict.claims:
-            stripped = claim.strip().rstrip(".!?。！？")
-            at = text.find(stripped) if stripped else -1
-            end = at + len(stripped)
-            if at >= 0 and not text.startswith(UNSOURCED, end) and end not in spots:
-                spots.append(end)
-        for end in sorted(spots, reverse=True):
-            text = f"{text[:end]} {UNSOURCED}{text[end:]}"
-        return text
+            return []
+        return list(verdict.claims)
 
-    def _check_leads(
+    def mark_unsourced(self, model: ModelInfo, text: str) -> str:
+        """Mark claims the writer left with no source and no marker, so they are checked
+        like the others. The model finds them; this only places the mark."""
+
+        return place_marks(text, self.unsourced_claims(model, text))
+
+    def check_leads(
         self,
         model: ModelInfo,
         text: str,
@@ -584,11 +598,13 @@ class AskAgent:
         steps: list[Step],
         notes: list[str],
         emit: Events,
+        dropped: list[tuple[str, str]] | None = None,
     ) -> str:
         """Look for a source for each claim the model made from its own knowledge.
 
         Supported: the marker becomes the source's number. Contradicted: the claim is
-        left out and a note says why. Neither: it stays marked as unverified.
+        left out and a note says why (``dropped``, when given, also hears the claim and
+        the titles of the sources that disagree). Neither: it stays marked as unverified.
         """
 
         edits: list[tuple[int, int, str]] = []
@@ -656,6 +672,8 @@ class AskAgent:
                     f"Left out a statement from the model's own knowledge, because "
                     f"the sources disagree with it ({titles}): “{claim[:120]}”"
                 )
+                if dropped is not None:
+                    dropped.append((claim, titles))
         for start, end, replacement in sorted(edits, reverse=True):
             text = text[:start] + replacement + text[end:]
         return text

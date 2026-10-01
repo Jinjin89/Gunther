@@ -1,15 +1,10 @@
 import type {
-  Artifact,
-  ArtifactAudience,
-  ArtifactFormat,
-  ArtifactSummary,
-  KnowledgeUnit,
   SourceDetail,
   SourceKind,
   SourceSummary,
   KnowledgeTopic,
 } from "@gunther/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   AudioLines,
@@ -19,20 +14,16 @@ import {
   Check,
   ChevronRight,
   CircleHelp,
-  Copy,
   Download,
   FilePlus2,
   FileText,
-  History,
   Layers3,
   Link2,
   LoaderCircle,
   MessageSquareText,
   Mic2,
   NotebookText,
-  Plus,
   Settings2,
-  ShieldCheck,
   Sparkles,
   X,
 } from "lucide-react";
@@ -44,6 +35,7 @@ import { TopicManager } from "../components/TopicManager";
 import { BulkImport } from "../components/BulkImport";
 import { LibraryGlyph } from "../design/LibraryGlyph";
 import "../knowledge.css";
+import { OutputsPage } from "../outputs/OutputsPage";
 import { SessionWorkspace } from "./SessionWorkspace";
 
 interface KnowledgeBaseWorkspaceProps {
@@ -294,243 +286,6 @@ function MaterialsView({ base, onAdd, onOpenSource }: Pick<KnowledgeBaseWorkspac
   );
 }
 
-const studioAudiences: Array<{ value: ArtifactAudience; label: string }> = [
-  { value: "scientist", label: "Scientist" },
-  { value: "student", label: "Student" },
-  { value: "collaborator", label: "Collaborator" },
-];
-const studioFormats: Array<{ value: ArtifactFormat; label: string }> = [
-  { value: "field_guide", label: "Field guide" },
-  { value: "teaching_path", label: "Teaching path" },
-  { value: "decision_brief", label: "Decision brief" },
-];
-const studioFormatLabel = (value: ArtifactFormat) => (
-  studioFormats.find((item) => item.value === value)?.label ?? value
-);
-const studioAudienceLabel = (value: ArtifactAudience) => (
-  studioAudiences.find((item) => item.value === value)?.label ?? value
-);
-const artifactRequestId = () => globalThis.crypto?.randomUUID?.()
-  ?? `artifact_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-type ArtifactGenerationAttempt = { key: string; requestId: string };
-const artifactAttemptStorageKey = (workspaceId: string, baseId: string) =>
-  `gunther:artifact-attempt:${workspaceId}:${baseId}`;
-const loadArtifactGenerationAttempt = (workspaceId: string, baseId: string): ArtifactGenerationAttempt | null => {
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(artifactAttemptStorageKey(workspaceId, baseId)) ?? "null") as Partial<ArtifactGenerationAttempt> | null;
-    if (!parsed || typeof parsed.key !== "string" || typeof parsed.requestId !== "string" || !/^[A-Za-z0-9_-]{8,128}$/.test(parsed.requestId)) return null;
-    return { key: parsed.key, requestId: parsed.requestId };
-  } catch {
-    return null;
-  }
-};
-const saveArtifactGenerationAttempt = (workspaceId: string, baseId: string, attempt: ArtifactGenerationAttempt) => {
-  try {
-    window.localStorage.setItem(artifactAttemptStorageKey(workspaceId, baseId), JSON.stringify(attempt));
-  } catch {
-    // The in-memory key still protects retries for the current app session.
-  }
-};
-const clearArtifactGenerationAttempt = (workspaceId: string, baseId: string) => {
-  try {
-    window.localStorage.removeItem(artifactAttemptStorageKey(workspaceId, baseId));
-  } catch {
-    // A failed cleanup is harmless: a different request shape replaces it.
-  }
-};
-
-export function StudioView({ base, workspaceId, onNotify, onMode }: Pick<KnowledgeBaseWorkspaceProps, "base" | "workspaceId" | "onNotify" | "onMode">) {
-  const [audience, setAudience] = useState<ArtifactAudience>("scientist");
-  const [format, setFormat] = useState<ArtifactFormat>("field_guide");
-  const [units, setUnits] = useState<KnowledgeUnit[]>([]);
-  const [artifacts, setArtifacts] = useState<ArtifactSummary[]>([]);
-  const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
-  const [openingArtifactId, setOpeningArtifactId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const generationAttemptRef = useRef<ArtifactGenerationAttempt | null>(null);
-
-  const openArtifact = useCallback(async (summary: ArtifactSummary) => {
-    if (!workspaceId) {
-      setError("The local workspace identity has not been verified yet.");
-      return;
-    }
-    setOpeningArtifactId(summary.id);
-    try {
-      const detail = await knowledgeApi.artifact(base.id, summary.id, workspaceId);
-      setSelectedArtifact(detail);
-      setAudience(detail.audience);
-      setFormat(detail.format);
-      setError(null);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The saved Output could not be reopened.");
-    } finally {
-      setOpeningArtifactId(null);
-    }
-  }, [base.id, workspaceId]);
-
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    setSelectedArtifact(null);
-    setArtifacts([]);
-    generationAttemptRef.current = workspaceId ? loadArtifactGenerationAttempt(workspaceId, base.id) : null;
-    if (!workspaceId) {
-      setUnits([]);
-      setError("The local workspace identity has not been verified yet.");
-      setLoading(false);
-      return () => { active = false; };
-    }
-    void (async () => {
-      try {
-        const [unitItems, history] = await Promise.all([
-          knowledgeApi.knowledgeUnits(base.id),
-          knowledgeApi.artifacts(base.id, workspaceId),
-        ]);
-        if (!active) return;
-        setUnits(unitItems.filter((item) => item.status === "trusted"));
-        setArtifacts(history);
-        setError(null);
-        if (history[0]) {
-          const detail = await knowledgeApi.artifact(base.id, history[0].id, workspaceId);
-          if (!active) return;
-          setSelectedArtifact(detail);
-          setAudience(detail.audience);
-          setFormat(detail.format);
-        }
-      } catch (reason) {
-        if (active) setError(reason instanceof Error ? reason.message : "Output history could not be loaded.");
-      } finally {
-        if (active) setLoading(false);
-      }
-    })();
-    return () => { active = false; };
-  }, [base.id, workspaceId]);
-
-  const selectedLineageHead = useMemo(() => {
-    if (!selectedArtifact) return null;
-    return artifacts
-      .filter((item) => item.lineageId === selectedArtifact.lineageId)
-      .sort((left, right) => right.versionNumber - left.versionNumber)[0] ?? null;
-  }, [artifacts, selectedArtifact]);
-  const selectedIsHead = !selectedArtifact
-    || !selectedLineageHead
-    || selectedLineageHead.id === selectedArtifact.id;
-
-  const generateArtifact = async () => {
-    if (!workspaceId) {
-      setError("The local workspace identity must be verified before creating an Output.");
-      return;
-    }
-    if (selectedArtifact && !selectedIsHead && selectedLineageHead) {
-      await openArtifact(selectedLineageHead);
-      onNotify(`Opened the current lineage head, version ${selectedLineageHead.versionNumber}. Review it before generating another version.`);
-      return;
-    }
-    const requestKey = JSON.stringify({
-      baseId: base.id,
-      audience,
-      format,
-      acceptedUnitIds: units.map((unit) => unit.id),
-      supersedesArtifactId: selectedArtifact?.id ?? null,
-    });
-    const pending = generationAttemptRef.current ?? loadArtifactGenerationAttempt(workspaceId, base.id);
-    const requestId = pending?.key === requestKey ? pending.requestId : artifactRequestId();
-    generationAttemptRef.current = { key: requestKey, requestId };
-    saveArtifactGenerationAttempt(workspaceId, base.id, generationAttemptRef.current);
-    setGenerating(true);
-    setError(null);
-    try {
-      const created = await knowledgeApi.createArtifact(base.id, {
-        clientRequestId: requestId,
-        format,
-        audience,
-        acceptedUnitIds: units.map((unit) => unit.id),
-        ...(selectedArtifact ? { supersedesArtifactId: selectedArtifact.id } : {}),
-      }, workspaceId);
-      generationAttemptRef.current = null;
-      clearArtifactGenerationAttempt(workspaceId, base.id);
-      setSelectedArtifact(created);
-      const history = await knowledgeApi.artifacts(base.id, workspaceId);
-      setArtifacts(history);
-      onNotify(`${studioFormatLabel(created.format)} version ${created.versionNumber} saved to Output history.`);
-    } catch (reason) {
-      const message = reason instanceof Error ? reason.message : "The Output could not be saved.";
-      setError(message);
-      if (/current Artifact lineage head|conflicted with another writer/i.test(message)) {
-        try {
-          const history = await knowledgeApi.artifacts(base.id, workspaceId);
-          setArtifacts(history);
-          const latest = selectedArtifact
-            ? history.find((item) => item.lineageId === selectedArtifact.lineageId)
-            : history[0];
-          if (latest) await openArtifact(latest);
-          onNotify("Output history changed in another request. Gunther refreshed the latest saved version.");
-        } catch {
-          // Keep the original conflict visible if the refresh is also unavailable.
-        }
-      }
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  const downloadMarkdown = () => {
-    if (!selectedArtifact) return;
-    const url = URL.createObjectURL(new Blob([selectedArtifact.content], { type: "text/markdown;charset=utf-8" }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${base.id}-${selectedArtifact.format.replaceAll("_", "-")}-v${selectedArtifact.versionNumber}.md`;
-    anchor.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
-    onNotify(`Exported saved Output version ${selectedArtifact.versionNumber} with pinned provenance.`);
-  };
-
-  const copyMarkdown = async () => {
-    if (!selectedArtifact) return;
-    try {
-      await navigator.clipboard.writeText(selectedArtifact.content);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1_500);
-      onNotify(`Saved Output version ${selectedArtifact.versionNumber} copied as Markdown.`);
-    } catch {
-      onNotify("Clipboard access was unavailable. Download the saved Markdown file instead.");
-    }
-  };
-
-  return (
-    <div className="studio-view page-enter">
-      <header className="studio-intro"><span className="atlas-eyebrow">Outputs</span><h1>Turn reviewed knowledge into something useful.</h1><p>Every build is saved as an immutable version with pinned Knowledge Unit revisions. Reopen or export the exact result later.</p></header>
-      <div className="studio-layout">
-        <section className="studio-controls">
-          <div className="studio-control-group"><label>Audience</label><div>{studioAudiences.map((item) => <button key={item.value} className={audience === item.value ? "is-active" : ""} onClick={() => setAudience(item.value)}>{item.label}</button>)}</div></div>
-          <div className="studio-control-group"><label>Output</label><div>{studioFormats.map((item) => <button key={item.value} className={format === item.value ? "is-active" : ""} onClick={() => setFormat(item.value)}>{item.label}</button>)}</div></div>
-          <div className="studio-source-summary"><Layers3 size={16} /><span><strong>{loading ? "Loading accepted knowledge…" : `${units.length} accepted unit${units.length === 1 ? "" : "s"}`}</strong><small>{units.reduce((sum, unit) => sum + unit.evidenceCount, 0)} evidence links · current trusted revisions</small></span>{loading ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}</div>
-          <button className="studio-generate" disabled={loading || generating || units.length === 0 || !workspaceId} onClick={() => void generateArtifact()}>{generating ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />}{selectedArtifact ? selectedIsHead ? `Generate version ${selectedArtifact.versionNumber + 1}` : `Open latest version ${selectedLineageHead?.versionNumber ?? ""}` : "Build and save output"}</button>
-          {selectedArtifact && <div className="studio-export-actions"><button type="button" onClick={() => void copyMarkdown()}>{copied ? <Check size={13} /> : <Copy size={13} />}{copied ? "Copied" : "Copy saved Markdown"}</button><button type="button" onClick={downloadMarkdown}><Download size={13} />Download .md</button></div>}
-          <section className="studio-history">
-            <header><span><History size={13} /><strong>Output history</strong></span><button type="button" onClick={() => { setSelectedArtifact(null); generationAttemptRef.current = null; if (workspaceId) clearArtifactGenerationAttempt(workspaceId, base.id); setError(null); }}><Plus size={12} />New</button></header>
-            {artifacts.length === 0 && !loading ? <p>No saved Outputs yet.</p> : <div>{artifacts.map((item) => <button type="button" key={item.id} className={selectedArtifact?.id === item.id ? "is-active" : ""} disabled={openingArtifactId === item.id} onClick={() => void openArtifact(item)}><span><strong>{item.title}</strong><small>{studioFormatLabel(item.format)} · {studioAudienceLabel(item.audience)} · {item.unitCount} pinned units</small></span><em>{openingArtifactId === item.id ? "Opening…" : `v${item.versionNumber}`}</em></button>)}</div>}
-          </section>
-          {error && <p className="studio-control-error" role="status"><CircleHelp size={13} />{error}</p>}
-        </section>
-        <article className={`studio-document ${selectedArtifact ? "is-generated" : ""}`}>
-          <header><span>Gunther · {selectedArtifact ? `${studioFormatLabel(selectedArtifact.format)} · v${selectedArtifact.versionNumber}` : studioFormatLabel(format)}</span><small>{selectedArtifact ? `Saved ${new Date(selectedArtifact.createdAt).toLocaleString()}` : `For a ${audience}`}</small></header>
-          <h2>{selectedArtifact?.title ?? base.title}</h2>
-          <p className="studio-deck">{selectedArtifact?.provenance.knowledgeBaseQuestion ?? base.question}</p>
-          {!selectedArtifact && error && <div className="studio-output-empty is-error"><CircleHelp size={20} /><strong>Output history is unavailable</strong><p>{error}</p></div>}
-          {!selectedArtifact && !loading && !error && units.length === 0 && <div className="studio-output-empty"><ShieldCheck size={21} /><strong>No accepted knowledge yet</strong><p>Ask a grounded question, turn a useful answer into a suggestion, then accept it in Inbox. Outputs never fabricate a finished library from raw sources.</p><button type="button" className="quiet-button" onClick={() => onMode("ask")}>Go to Ask <ArrowRight size={12} /></button></div>}
-          {selectedArtifact?.unitSnapshots.map((snapshot, index) => <section key={snapshot.unitId}><span>{String(index + 1).padStart(2, "0")}</span><div><h3>{snapshot.title}</h3><p>{snapshot.content}</p><small>Pinned revision {snapshot.revisionNumber} · {snapshot.evidenceCount} evidence link{snapshot.evidenceCount === 1 ? "" : "s"} · revision ID {snapshot.revisionId} · source message {snapshot.sourceMessageId}</small></div></section>)}
-          {!selectedArtifact && !loading && !error && units.length > 0 && <div className="studio-output-empty"><Sparkles size={21} /><strong>Ready to create a saved Output</strong><p>Choose the audience and shape on the left. Building creates version 1; later regeneration appends a new immutable version.</p></div>}
-          <footer><ShieldCheck size={14} />{selectedArtifact ? `Accepted-only snapshot · manifest ${selectedArtifact.manifestHash.slice(0, 12)}… · ${selectedArtifact.acceptedUnitIds.length} pinned revisions` : "Every saved section pins an accepted unit revision and its evidence provenance."}</footer>
-        </article>
-      </div>
-    </div>
-  );
-}
-
 export function KnowledgeBaseWorkspace(props: KnowledgeBaseWorkspaceProps) {
   const [topics, setTopics] = useState<KnowledgeTopic[]>([]);
   const [topicError, setTopicError] = useState("");
@@ -566,7 +321,7 @@ export function KnowledgeBaseWorkspace(props: KnowledgeBaseWorkspaceProps) {
         {props.mode === "overview" && <>{topicError && <p role="alert">{topicError}</p>}<TopicManager key={props.base.id} baseId={props.base.id} topics={topics} onChange={() => setTopicReload((value) => value + 1)} onAsk={(id) => void askTopic(id)} {...(props.onOpenSource ? { onOpenSource: (id: string) => props.onOpenSource?.(id, [id]) } : {})} /></>}
         {props.mode === "sources" && <MaterialsView {...props} />}
         {props.mode === "ask" && <SessionWorkspace base={topicBase} selectedChapterId={props.selectedChapterId} onAdd={props.onAdd} onNotify={props.onNotify} onOpenSource={(id) => props.onOpenSource?.(id, [id])} />}
-        {props.mode === "outputs" && <StudioView {...props} />}
+        {props.mode === "outputs" && <OutputsPage base={props.base} workspaceId={props.workspaceId} onNotify={props.onNotify} onAdd={props.onAdd} onOpenSource={props.onOpenSource} />}
       </div>
     </div>
   );

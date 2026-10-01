@@ -62,6 +62,7 @@ import { SpeakerButton } from "../speech/SpeakerButton";
 import { readAloud } from "../speech/readAloud";
 import { AgentSteps, AnswerBody, LiveAnswer, citationNumbers } from "./AnswerBody";
 import { useLiveAnswer } from "./liveAnswer";
+import { useSavedAnswers } from "./savedAnswers";
 import { ModelPicker } from "../models/ModelPicker";
 import { BrandMark } from "../design/BrandMark";
 import { LibraryGlyph } from "../design/LibraryGlyph";
@@ -265,7 +266,7 @@ function AnswerModel({ context }: { context: ConversationContext }) {
   </span>;
 }
 
-function ConversationMessage({ message, retryDisabled, onRetry, onEdit, onCite, selected, promoting, promoted, branching, onSelect, onCopy, onPromote, onBranch }: { message: SessionMessage; retryDisabled: boolean; onRetry: () => void; onEdit: () => void; onCite: (citation: ConversationCitation, index: number) => void; selected: boolean; promoting: boolean; promoted: boolean; branching: boolean; onSelect: () => void; onCopy: () => void; onPromote: () => void; onBranch: () => void }) {
+export function ConversationMessage({ message, retryDisabled, onRetry, onEdit, onCite, selected, promoting, promoted, branching, onSelect, onCopy, onPromote, onRemove, onBranch }: { message: SessionMessage; retryDisabled: boolean; onRetry: () => void; onEdit: () => void; onCite: (citation: ConversationCitation, index: number) => void; selected: boolean; promoting: boolean; promoted: boolean; branching: boolean; onSelect: () => void; onCopy: () => void; onPromote: () => void; onRemove: () => void; onBranch: () => void }) {
   const isAssistant = message.role === "assistant";
   // Small talk and follow-ups on the conversation itself need no sources.
   const conversational = noSourcesNeeded(message.context);
@@ -278,7 +279,7 @@ function ConversationMessage({ message, retryDisabled, onRetry, onEdit, onCite, 
       {isAssistant && message.context.modelError && <p className="message-model-error" role="note"><CircleAlert size={13} /><span>{message.context.modelError}{message.citations.length > 0 && " The quotes stand in for its answer."}</span></p>}
       {isAssistant && message.context.reasoning && <details className="message-thinking" onClick={(event) => event.stopPropagation()}><summary><ChevronRight size={12} />Thinking</summary><pre>{message.context.reasoning}</pre></details>}
       {isAssistant && <footer className="message-footer">
-        <div className="message-actions">{message.citations.length > 0 ? <button className="citation-count" onClick={(event) => { event.stopPropagation(); onSelect(); }}><Quote size={12} />{message.citations.length} {message.citations.length === 1 ? "source" : "sources"}</button> : conversational ? null : <span className="no-citation-state"><CircleAlert size={12} />Not from your sources</span>}<button className="copy-answer" onClick={(event) => { event.stopPropagation(); onCopy(); }}><Copy size={12} />Copy</button><SpeakerButton message={message} /><button className="branch-answer" disabled={branching} onClick={(event) => { event.stopPropagation(); onBranch(); }}><GitBranch size={12} />{branching ? "Branching…" : "Branch"}</button>{!(conversational && message.citations.length === 0) && <button className={`promote-answer ${promoted ? "is-promoted" : ""}`} disabled={promoting || promoted || message.citations.length === 0} title={message.citations.length === 0 ? "Add or retrieve supporting evidence before proposing this answer as knowledge." : undefined} onClick={(event) => { event.stopPropagation(); onPromote(); }}><Sparkles size={12} />{promoting ? "Creating proposal…" : promoted ? "Proposal created" : message.citations.length === 0 ? "Needs evidence" : "Propose as knowledge"}</button>}</div>
+        <div className="message-actions">{message.citations.length > 0 ? <button className="citation-count" onClick={(event) => { event.stopPropagation(); onSelect(); }}><Quote size={12} />{message.citations.length} {message.citations.length === 1 ? "source" : "sources"}</button> : conversational ? null : <span className="no-citation-state"><CircleAlert size={12} />Not from your sources</span>}<button className="copy-answer" onClick={(event) => { event.stopPropagation(); onCopy(); }}><Copy size={12} />Copy</button><SpeakerButton message={message} /><button className="branch-answer" disabled={branching} onClick={(event) => { event.stopPropagation(); onBranch(); }}><GitBranch size={12} />{branching ? "Branching…" : "Branch"}</button>{!(conversational && message.citations.length === 0) && <><button className={`promote-answer ${promoted ? "is-promoted" : ""}`} disabled={promoting || promoted || message.citations.length === 0} title={message.citations.length === 0 ? "Add or retrieve supporting evidence before saving this answer as knowledge." : undefined} onClick={(event) => { event.stopPropagation(); onPromote(); }}><Sparkles size={12} />{promoting && !promoted ? "Saving…" : promoted ? "Saved as knowledge" : message.citations.length === 0 ? "Needs evidence" : "Save as knowledge"}</button>{promoted && <button className="remove-answer" disabled={promoting} title="Take this answer out of your knowledge." onClick={(event) => { event.stopPropagation(); onRemove(); }}>{promoting ? "Removing…" : "Remove"}</button>}</>}</div>
         <AnswerModel context={message.context} />
       </footer>}
     </article>
@@ -488,18 +489,16 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeSession, setActiveSession] = useState<KnowledgeSession | null>(null);
   const [indexedSources, setIndexedSources] = useState<SourceSummary[]>([]);
-  const [knowledgeUnits, setKnowledgeUnits] = useState<KnowledgeUnit[]>([]);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [sessionQuery, setSessionQuery] = useState("");
   const [sourceQuery, setSourceQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
-  const [promotingMessageId, setPromotingMessageId] = useState<string | null>(null);
   const [branchingMessageId, setBranchingMessageId] = useState<string | null>(null);
-  const [proposalMessageIds, setProposalMessageIds] = useState<Set<string>>(new Set());
   const [online, setOnline] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const answers = useSavedAnswers(base.id, onNotify, setError);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("context");
   const traces = useTraces();
   // Open by default so the sources behind an answer are in view; the reader's choice is kept.
@@ -635,17 +634,6 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
     loadSources();
     window.addEventListener("gunther:sources-updated", loadSources);
     return () => { cancelled = true; window.removeEventListener("gunther:sources-updated", loadSources); };
-  }, [base.id]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void Promise.all([knowledgeApi.proposals(base.id), knowledgeApi.knowledgeUnits(base.id)]).then(([proposals, units]) => {
-      if (!cancelled) {
-        setProposalMessageIds(new Set(proposals.map((item) => item.messageId)));
-        setKnowledgeUnits(units);
-      }
-    }).catch(() => undefined);
-    return () => { cancelled = true; };
   }, [base.id]);
 
   useEffect(() => {
@@ -921,29 +909,6 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
     try { await patchSession(activeSession.id, { selectedSourceIds: next }); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not update source scope"); }
   };
 
-  const promoteMessage = async (message: SessionMessage) => {
-    if (!activeSession || activeSession.id.startsWith("local-")) {
-      onNotify("Reconnect the knowledge service to create a durable proposal.");
-      return;
-    }
-    setPromotingMessageId(message.id);
-    setError(null);
-    try {
-      const proposal = await knowledgeApi.createProposal(activeSession.id, message.id, { targetChapterId: activeSession.focusChapterId });
-      setProposalMessageIds((current) => new Set(current).add(message.id));
-      if (proposal.status === "pending") {
-        window.dispatchEvent(new CustomEvent("gunther:proposal-created", { detail: proposal }));
-        onNotify("Answer added to Inbox as a reviewable knowledge proposal.");
-      } else {
-        onNotify(`This answer already has a ${proposal.status} knowledge proposal.`);
-      }
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not create the proposal");
-    } finally {
-      setPromotingMessageId(null);
-    }
-  };
-
   const branchFromMessage = async (message: SessionMessage) => {
     if (!activeSession || activeSession.id.startsWith("local-")) {
       onNotify("Reconnect the knowledge service to create a durable branch.");
@@ -1098,13 +1063,13 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
         <div className="conversation-scroll" ref={scrollPane} onScroll={(event) => { const pane = event.currentTarget; followTail.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 80; }}>
           {error && <div className="conversation-error" role="alert"><CircleAlert size={14} /><span>{error}</span><button onClick={() => setError(null)}><X size={12} /></button></div>}
           {!loading && activeSession?.messages.length === 0 ? <WelcomePanel base={base} onPrompt={setDraft} /> : <h1 className="gx-sr-only">Ask {base.title}</h1>}
-          {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} retryDisabled={sending || Boolean(activeSession?.archived)} onRetry={() => void send(message.content)} onEdit={() => setDraft(message.content)} onCite={(citation, index) => setEvidence({ citation, index })} selected={selectedMessageId === message.id} promoting={promotingMessageId === message.id} promoted={proposalMessageIds.has(message.id)} branching={branchingMessageId === message.id} onSelect={() => { setSelectedMessageId(message.id); setInspectorTab((current) => current === "trace" ? "trace" : "context"); setInspectorCollapsed(false); }} onCopy={() => void copyMessage(message)} onPromote={() => void promoteMessage(message)} onBranch={() => void branchFromMessage(message)} />)}
+          {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} retryDisabled={sending || Boolean(activeSession?.archived)} onRetry={() => void send(message.content)} onEdit={() => setDraft(message.content)} onCite={(citation, index) => setEvidence({ citation, index })} selected={selectedMessageId === message.id} promoting={answers.busyId === message.id} promoted={answers.isSaved(message.id)} branching={branchingMessageId === message.id} onSelect={() => { setSelectedMessageId(message.id); setInspectorTab((current) => current === "trace" ? "trace" : "context"); setInspectorCollapsed(false); }} onCopy={() => void copyMessage(message)} onPromote={() => void answers.save(activeSession, message)} onRemove={() => void answers.remove(message)} onBranch={() => void branchFromMessage(message)} />)}
           {sending && asking && <article className="conversation-message role-user"><div className="message-author"><span className="user-mark"><UserRound size={13} /></span><span>You</span></div><div className="message-body"><MessageContent content={asking} /></div></article>}
           {sending && (liveAnswer.live ? <LiveAnswer state={liveAnswer.live} /> : <div className="thinking-row"><span className="assistant-mark"><BrandMark size={14} busy /></span><span><i /><i /><i /></span><small>Working out what to look up…</small></div>)}
         </div>
         <Composer picker={<><ModelPicker menu={modelMenu} choice={askChoice} onChange={chooseModel} disabled={sending || Boolean(activeSession?.archived)} /><StylePicker disabled={sending || Boolean(activeSession?.archived)} /></>} web={{ available: webSearch.available, enabled: webSearch.enabled, onChange: webSearch.setEnabled }} value={draft} sending={sending} sourceCount={activeSession?.selectedSourceIds.length ?? 0} chapterTitle={focusedChapter?.title} readOnly={Boolean(activeSession?.archived)} ready={!loading && activeSession !== null} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={() => { setInspectorTab("sources"); setInspectorCollapsed(false); }} />
       </section>
-      <ContextInspector resize={inspectorWidth} base={base} sources={scopeSources} session={activeSession} knowledgeUnits={knowledgeUnits} selectedMessage={selectedMessage} tab={inspectorTab} sourceQuery={sourceQuery} collapsed={inspectorCollapsed} readOnly={Boolean(activeSession?.archived)} onTab={setInspectorTab} onSourceQuery={setSourceQuery} onToggleSource={(id) => void toggleSource(id)} onUseAll={() => { if (activeSession) void patchSession(activeSession.id, { selectedSourceIds: [] }); }} onAdd={onAdd} onOpenSource={(id, citation) => void openSourceDetail(id, citation)} onOpenUnit={(unit) => void openKnowledgeUnitOrigin(unit)} onCollapse={() => setInspectorCollapsed((value) => !value)} traceOn={traces.on} onCopy={(label, value) => void navigator.clipboard.writeText(value).then(() => onNotify(`${label} copied.`)).catch(() => onNotify(`${label} could not be copied.`))} />
+      <ContextInspector resize={inspectorWidth} base={base} sources={scopeSources} session={activeSession} knowledgeUnits={answers.units} selectedMessage={selectedMessage} tab={inspectorTab} sourceQuery={sourceQuery} collapsed={inspectorCollapsed} readOnly={Boolean(activeSession?.archived)} onTab={setInspectorTab} onSourceQuery={setSourceQuery} onToggleSource={(id) => void toggleSource(id)} onUseAll={() => { if (activeSession) void patchSession(activeSession.id, { selectedSourceIds: [] }); }} onAdd={onAdd} onOpenSource={(id, citation) => void openSourceDetail(id, citation)} onOpenUnit={(unit) => void openKnowledgeUnitOrigin(unit)} onCollapse={() => setInspectorCollapsed((value) => !value)} traceOn={traces.on} onCopy={(label, value) => void navigator.clipboard.writeText(value).then(() => onNotify(`${label} copied.`)).catch(() => onNotify(`${label} could not be copied.`))} />
       {evidence && <EvidencePanel citation={evidence.citation} index={evidence.index} onClose={() => setEvidence(null)} onOpenSource={onOpenSource ? (id) => { setEvidence(null); onOpenSource(id); } : undefined} />}
       {mobileSessionsOpen && <div className="mobile-session-drawer" role="dialog" aria-modal="true" aria-label="Session history"><button className="mobile-session-scrim" onClick={() => setMobileSessionsOpen(false)} aria-label="Close session history" /><div className="mobile-session-sheet"><button className="mobile-session-close" autoFocus onClick={() => setMobileSessionsOpen(false)} aria-label="Close session history"><X size={15} /></button><SessionsSidebar base={base} indexedCount={scopeSources.filter((source) => source.indexed).length} referenceCount={scopeSources.filter((source) => !source.indexed).length} sessions={sessions} archivedSessions={archivedSessions} showArchived={showArchived} activeId={activeId} loading={loading} query={sessionQuery} onQuery={setSessionQuery} onNew={() => { setMobileSessionsOpen(false); void createSession(); }} onOpen={(id) => { setMobileSessionsOpen(false); void loadSession(id); }} onPin={(session) => void patchSession(session.id, { pinned: !session.pinned })} onArchive={(session) => void archiveSession(session)} onToggleArchived={() => void toggleArchived()} onRestore={(session) => void restoreSession(session)} /></div></div>}
     </div>

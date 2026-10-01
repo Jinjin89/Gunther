@@ -319,6 +319,16 @@ struct LibraryLocation {
     can_change: bool,
 }
 
+/// Opens the print sheet for what the window shows (an output laid out for paper); the
+/// sheet's PDF button saves the file.
+///
+/// `window.print()` does nothing in macOS's WKWebView, so the web layer asks the shell,
+/// which uses Tauri's own call (macOS 11 and later). Other systems print from the web layer.
+#[tauri::command]
+fn print_output(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.print().map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 fn library_location(app: tauri::AppHandle) -> Result<LibraryLocation, String> {
     let data_dir = app
@@ -606,6 +616,7 @@ pub fn run() {
             capture_shell::menu_bar_mode,
             capture_shell::set_menu_bar_mode,
             external_links::open_external_url,
+            print_output,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Gunther desktop");

@@ -1,4 +1,4 @@
-import type { KnowledgeProposal, NotebookNote, SourceDetail, TrashItem } from "@gunther/contracts";
+import type { NotebookNote, SourceDetail, TrashItem } from "@gunther/contracts";
 import { CircleAlert, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { knowledgeApi } from "../api";
@@ -9,12 +9,10 @@ import { ItemLayout, ItemSkeleton, type ItemNavigation } from "./ItemLayout";
 import { itemKey, type ItemRef } from "./itemRef";
 import { NoteItem } from "./NoteItem";
 import { SourceItem } from "./SourceItem";
-import { SuggestionItem } from "./SuggestionItem";
 
 type Loaded =
   | { key: string; type: "source"; source: SourceDetail }
-  | { key: string; type: "note"; note: NotebookNote }
-  | { key: string; type: "suggestion"; proposal: KnowledgeProposal };
+  | { key: string; type: "note"; note: NotebookNote };
 
 export interface ItemPageProps {
   item: ItemRef;
@@ -27,7 +25,6 @@ export interface ItemPageProps {
   /** A decision was made; the host shows `message` and moves on. */
   onResolved: (message: string) => void;
   onOpenBase: (id: string) => void;
-  onOpenSession: (baseId: string, sessionId: string, messageId: string | null) => void;
   onOpenNotebook: (noteId: string) => void;
   onCreateBase: () => void;
   onNotify: (message: string) => void;
@@ -39,17 +36,9 @@ export interface ItemPageProps {
 async function loadItem(item: ItemRef): Promise<Loaded> {
   const key = itemKey(item);
   if (item.type === "source") return { key, type: "source", source: await knowledgeApi.source(item.id) };
-  if (item.type === "note") {
-    const note = (await knowledgeApi.notes()).find((candidate) => candidate.id === item.id);
-    if (!note) throw new Error("This note no longer exists.");
-    return { key, type: "note", note };
-  }
-  const baseIds = item.baseId ? [item.baseId] : (await knowledgeApi.knowledgeBases()).map((base) => base.id);
-  for (const baseId of baseIds) {
-    const proposal = (await knowledgeApi.proposals(baseId)).find((candidate) => candidate.id === item.id);
-    if (proposal) return { key, type: "suggestion", proposal };
-  }
-  throw new Error("This suggestion no longer exists.");
+  const note = (await knowledgeApi.notes()).find((candidate) => candidate.id === item.id);
+  if (!note) throw new Error("This note no longer exists.");
+  return { key, type: "note", note };
 }
 
 export function ItemPage(props: ItemPageProps) {
@@ -76,7 +65,7 @@ export function ItemPage(props: ItemPageProps) {
   const inTrash = current?.type === "source" && Boolean(current.source.trashedAt);
   const canTrash = Boolean(props.onTrashed) && (current?.type === "source" || current?.type === "note") && !inTrash;
   const trash = async () => {
-    if (!current || current.type === "suggestion" || trashing.current) return;
+    if (!current || trashing.current) return;
     trashing.current = true;
     try {
       const entry = await moveToTrash(current.type === "note" ? { kind: "note", id: current.note.id } : { kind: "source", id: current.source.id });
@@ -132,6 +121,5 @@ export function ItemPage(props: ItemPageProps) {
 
   const shared = { bases: props.bases, nav, onResolved: props.onResolved, onOpenBase: props.onOpenBase, onNotify: props.onNotify, onTitle: props.onTitle };
   if (current.type === "note") return <NoteItem key={current.key} note={current.note} {...shared} onOpenNotebook={props.onOpenNotebook} onCreateBase={props.onCreateBase} />;
-  if (current.type === "suggestion") return <SuggestionItem key={current.key} proposal={current.proposal} {...shared} onOpenSession={props.onOpenSession} />;
   return <SourceItem key={current.key} source={current.source} {...shared} onCreateBase={props.onCreateBase} />;
 }

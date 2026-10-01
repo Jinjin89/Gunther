@@ -40,8 +40,6 @@ export const makeInboxItem = (overrides: Partial<InboxItem> = {}): InboxItem => 
   knowledgeBases: [],
   sourceId: "source-1",
   noteId: null,
-  proposalId: null,
-  proposalStatus: null,
   assertionCount: 0,
   createdAt: "2026-08-29T08:00:00.000Z",
   updatedAt: "2026-08-29T09:00:00.000Z",

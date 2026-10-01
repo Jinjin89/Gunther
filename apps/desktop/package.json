@@ -23,6 +23,7 @@
     "@codemirror/view": "^6.43.13",
     "@gunther/contracts": "0.1.0",
     "@lezer/highlight": "^1.2.4",
+    "@revealjs/react": "^0.2.2",
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-dialog": "^2.8.0",
     "@tauri-apps/plugin-fs": "^2.6.0",
@@ -33,7 +34,8 @@
     "react-markdown": "^10.1.0",
     "react-pdf": "^10.5.0",
     "remark-breaks": "^4.0.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "reveal.js": "^6.0.2"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.8.0",

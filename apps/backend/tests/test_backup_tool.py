@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from legacy_artifacts import insert_legacy_version
 
 from gunther.config import Settings
 from gunther.main import create_app
@@ -381,19 +382,22 @@ def test_nonempty_asset_and_completed_recording_survive_full_restore(
         ).json()
         unit_id = accepted["knowledgeUnitId"]
         workspace_id = client.get("/api/workspace/bootstrap").json()["workspaceId"]
-        artifact_response = client.post(
-            f"/api/knowledge-bases/{knowledge_base_id}/artifacts",
-            headers={"X-Gunther-Workspace-Id": workspace_id},
-            json={
-                "clientRequestId": "restore_artifact_request_0001",
-                "format": "decision_brief",
-                "audience": "collaborator",
-                "acceptedUnitIds": [unit_id],
-            },
+        # A version from the old builder (it is gone, its versions are still verified).
+        artifact_id = insert_legacy_version(
+            client.app.state.knowledge_service.sessions,
+            workspace_id=workspace_id,
+            base_id=knowledge_base_id,
+            unit_id=unit_id,
+            request_id="restore_artifact_request_0001",
+            format="decision_brief",
+            audience="collaborator",
         )
-        assert artifact_response.status_code == 201
+        artifact_response = client.get(
+            f"/api/knowledge-bases/{knowledge_base_id}/artifacts/{artifact_id}",
+            headers={"X-Gunther-Workspace-Id": workspace_id},
+        )
+        assert artifact_response.status_code == 200
         artifact = artifact_response.json()
-        artifact_id = artifact["id"]
 
         started_response = client.post(
             "/api/recordings/sessions",
@@ -757,3 +761,92 @@ def test_backup_reads_originals_from_the_library_root(tmp_path: Path) -> None:
         path.is_file() and path.read_bytes() == asset_bytes
         for path in (backup / "assets").rglob("*")
     )
+
+
+def test_outputs_built_by_agents_are_verified_in_a_backup(tmp_path: Path) -> None:
+    """Version 2 outputs cover their kind, citations, scope and inputs; the tool checks them."""
+
+    from fake_models import FakeProvider, output_replies
+
+    data = tmp_path / "data"
+    data.mkdir(mode=0o700)
+    outline = {
+        "title": "Markers",
+        "sections": [
+            {"heading": "T cells", "goal": "The T-cell marker", "queries": ["CD3D T cells"]}
+        ],
+    }
+    fake = FakeProvider(output_replies(outline, ["## T cells\n\nCD3D marks T cells [1]."]))
+    settings = Settings(
+        database_url=f"sqlite+pysqlite:///{data / 'gunther.sqlite'}",
+        assets_dir=data / "assets",
+        recordings_dir=data / "recordings",
+        seed_demo=False,
+        deepseek_api_key="sk-test-0000000000001234",
+        stt_provider="compatible",
+        processing_worker_enabled=False,
+        service_settings_file=tmp_path / "service-settings.json",
+    )
+    with TestClient(create_app(settings, model_client_factory=fake.factory)) as client:
+        base_id = client.post(
+            "/api/knowledge-bases",
+            json={"title": "Cells", "question": "What marks cells?", "description": "Markers."},
+        ).json()["id"]
+        client.post(
+            "/api/sources",
+            json={
+                "title": "Markers",
+                "kind": "note",
+                "knowledgeBaseId": base_id,
+                "content": "CD3D is a marker of T cells.",
+            },
+        )
+        workspace_id = client.get("/api/workspace/bootstrap").json()["workspaceId"]
+        with client.stream(
+            "POST",
+            f"/api/knowledge-bases/{base_id}/outputs/build/stream",
+            headers={"X-Gunther-Workspace-Id": workspace_id},
+            json={"clientRequestId": "backup_output_0001", "kind": "report", "audience": "student"},
+        ) as response:
+            body = response.read().decode()
+        assert "event: done" in body, body
+        artifact_id = json.loads(body.rsplit("data: ", 1)[1])["id"]
+
+    created = _run("backup", "--data-dir", str(data), "--output-dir", str(tmp_path / "backups"))
+    assert created.returncode == 0, created.stderr
+    backup = Path(json.loads(created.stdout)["backup"])
+    assert _run("verify", str(backup)).returncode == 0
+
+    # Each of these keeps the outer manifest consistent and changes only the output.
+    for field, damaged in (
+        ("content", "X"),
+        ("citations_json", "[]"),
+        ("scope_json", '{"mode":"library"}'),
+        ("inputs_json", "{}"),
+        ("outline_json", "[]"),
+        ("brief", "changed"),
+        ("style", "decision_brief"),
+        ("origin", "edit"),
+        ("kind", "slides"),
+    ):
+        copy = tmp_path / f"tampered-{field}"
+        shutil.copytree(backup, copy)
+        connection = sqlite3.connect(copy / "gunther.sqlite")
+        try:
+            value = (
+                "X" + connection.execute(
+                    "SELECT content FROM artifacts WHERE id = ?", (artifact_id,)
+                ).fetchone()[0][1:]
+                if field == "content"
+                else damaged
+            )
+            connection.execute(
+                f"UPDATE artifacts SET {field} = ? WHERE id = ?", (value, artifact_id)
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        _reseal_manifest(copy)
+        rejected = _run("verify", str(copy))
+        assert rejected.returncode == 2, field
+        assert "Artifact" in rejected.stderr, (field, rejected.stderr)

@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, model_validator
 
 from gunther.model_profiles import Effort
 
@@ -14,11 +14,17 @@ KnowledgeBaseColor = Literal["green", "blue", "clay"]
 NotebookNoteStatus = Literal["inbox", "filed", "archived"]
 RecordingStatus = Literal["capturing", "completed", "failed"]
 RecordingContext = Literal["lecture", "meeting", "memo"]
-InboxItemType = Literal["source", "quick_note", "knowledge_suggestion"]
-InboxItemState = Literal["unfiled", "needs_review", "held"]
+InboxItemType = Literal["source", "quick_note"]
+InboxItemState = Literal["unfiled", "needs_review"]
 DeviceScope = Literal["api:access", "transcription:stream"]
-ArtifactFormat = Literal["field_guide", "teaching_path", "decision_brief"]
+# The first three are what the old builder made (versions from before agents keep them);
+# new versions say "report" or "slides".
+ArtifactFormat = Literal["field_guide", "teaching_path", "decision_brief", "report", "slides"]
 ArtifactAudience = Literal["scientist", "student", "collaborator"]
+OutputKind = Literal["report", "slides"]
+OutputStyle = Literal["overview", "field_guide", "teaching_path", "decision_brief"]
+# How a version came about; "legacy" is a version from before agents wrote them.
+OutputOrigin = Literal["legacy", "build", "rebuild", "edit", "revise"]
 
 
 def to_camel(value: str) -> str:
@@ -219,8 +225,6 @@ class InboxItemOut(ApiModel):
     knowledge_bases: list[InboxKnowledgeBaseRefOut] = Field(default_factory=list)
     source_id: str | None = None
     note_id: str | None = None
-    proposal_id: str | None = None
-    proposal_status: ProposalStatus | None = None
     assertion_count: int = 0
     created_at: str
     updated_at: str
@@ -503,7 +507,6 @@ class KnowledgeBaseOut(ApiModel):
     status: Literal["Living", "Growing", "Outline"]
     source_count: int
     session_count: int
-    pending_proposal_count: int
     created_at: str
     updated_at: str
 
@@ -667,37 +670,6 @@ class KnowledgeUnitOut(ApiModel):
     updated_at: str
 
 
-class CreateArtifactInput(ApiModel):
-    client_request_id: str = Field(
-        min_length=8,
-        max_length=128,
-        pattern=r"^[A-Za-z0-9_-]+$",
-    )
-    format: ArtifactFormat
-    audience: ArtifactAudience
-    title: str | None = Field(default=None, min_length=1, max_length=160)
-    accepted_unit_ids: list[str] = Field(min_length=1, max_length=100)
-    supersedes_artifact_id: str | None = Field(default=None, max_length=80)
-
-    @model_validator(mode="after")
-    def normalize_and_validate_units(self) -> "CreateArtifactInput":
-        normalized = [unit_id.strip() for unit_id in self.accepted_unit_ids]
-        if any(not unit_id or len(unit_id) > 80 for unit_id in normalized):
-            raise ValueError("acceptedUnitIds must contain valid unit identifiers")
-        if len(set(normalized)) != len(normalized):
-            raise ValueError("acceptedUnitIds must not contain duplicates")
-        self.accepted_unit_ids = normalized
-        if self.title is not None:
-            self.title = self.title.strip()
-            if not self.title:
-                raise ValueError("title must not be blank")
-        if self.supersedes_artifact_id is not None:
-            self.supersedes_artifact_id = self.supersedes_artifact_id.strip()
-            if not self.supersedes_artifact_id:
-                raise ValueError("supersedesArtifactId must not be blank")
-        return self
-
-
 class ArtifactUnitSnapshotOut(ApiModel):
     unit_id: str
     revision_id: str
@@ -722,6 +694,121 @@ class ArtifactProvenanceOut(ApiModel):
     revision_ids: list[str]
 
 
+class OutputModelOut(ApiModel):
+    ref: str
+    label: str
+    effort: str | None = None
+
+
+class OutputProvenanceOut(ArtifactProvenanceOut):
+    """Version 2: what the agents were asked, and which model wrote it."""
+
+    kind: OutputKind
+    style: str | None = None
+    audience: ArtifactAudience
+    brief: str = ""
+    origin: OutputOrigin
+    model: OutputModelOut | None = None
+
+
+class OutputScope(ApiModel):
+    """What an output is built from: the whole library, or a hand-picked mix."""
+
+    mode: Literal["library", "selection"] = "library"
+    source_ids: list[str] = Field(default_factory=list, max_length=500)
+    unit_ids: list[str] = Field(default_factory=list, max_length=200)
+    session_ids: list[str] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def tidy_ids(self) -> "OutputScope":
+        for name in ("source_ids", "unit_ids", "session_ids"):
+            ids = [item.strip() for item in getattr(self, name)]
+            if any(not item or len(item) > 80 for item in ids):
+                raise ValueError("Ids must be short and not blank")
+            setattr(self, name, list(dict.fromkeys(ids)))
+        if self.mode == "library":
+            # The whole library has nothing to pick.
+            self.source_ids, self.unit_ids, self.session_ids = [], [], []
+        elif not (self.source_ids or self.unit_ids or self.session_ids):
+            raise ValueError("Choose at least one source, saved answer or discussion")
+        return self
+
+
+class OutlineItem(ApiModel):
+    heading: str = Field(min_length=1, max_length=160)
+    goal: str = Field(default="", max_length=400)
+
+
+class OutputIssueOut(ApiModel):
+    claim: str
+    verdict: Literal["unsupported", "unverified", "unsourced", "contradicted"]
+    note: str = ""
+
+
+class OutputSectionOut(ApiModel):
+    index: int
+    heading: str
+    # A check exists for the section's current text.
+    checked: bool
+    issues: list[OutputIssueOut] = Field(default_factory=list)
+
+
+class OutputInputsOut(ApiModel):
+    sources: int = 0
+    units: int = 0
+    sessions: int = 0
+
+
+REQUEST_ID = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+class BuildOutputInput(ApiModel):
+    client_request_id: str = REQUEST_ID
+    kind: OutputKind
+    # Reports only; slides have none. A report without one is an overview.
+    style: OutputStyle | None = None
+    audience: ArtifactAudience
+    brief: str = Field(default="", max_length=2_000)
+    title: str | None = Field(default=None, min_length=1, max_length=160)
+    scope: OutputScope = Field(default_factory=OutputScope)
+    # A rebuild with the outline as the person edited it: the planner is skipped.
+    outline: list[OutlineItem] | None = Field(default=None, min_length=1, max_length=14)
+    supersedes_artifact_id: str | None = Field(default=None, min_length=1, max_length=80)
+
+    @model_validator(mode="after")
+    def tidy(self) -> "BuildOutputInput":
+        self.style = (self.style or "overview") if self.kind == "report" else None
+        self.brief = self.brief.strip()
+        if self.title is not None:
+            self.title = self.title.strip()
+            if not self.title:
+                raise ValueError("title must not be blank")
+        if self.outline is not None:
+            limit = 8 if self.kind == "report" else 14
+            if len(self.outline) > limit:
+                raise ValueError(f"A {self.kind} has at most {limit} sections")
+        return self
+
+
+class ReviseOutputInput(ApiModel):
+    client_request_id: str = REQUEST_ID
+    instruction: str = Field(min_length=1, max_length=2_000)
+    # The section or slide to change (counted from 0); the whole output when left out.
+    section_index: int | None = Field(default=None, ge=0, le=50)
+
+    @model_validator(mode="after")
+    def tidy(self) -> "ReviseOutputInput":
+        self.instruction = self.instruction.strip()
+        if not self.instruction:
+            raise ValueError("instruction must not be blank")
+        return self
+
+
+class EditOutputInput(ApiModel):
+    client_request_id: str = REQUEST_ID
+    content: str = Field(min_length=1, max_length=2_500_000)
+
+
 class ArtifactSummaryOut(ApiModel):
     id: str
     workspace_id: str
@@ -737,12 +824,24 @@ class ArtifactSummaryOut(ApiModel):
     accepted_unit_ids: list[str]
     unit_count: int
     created_at: str
+    kind: OutputKind = "report"
+    style: str | None = None
+    origin: OutputOrigin = "legacy"
 
 
 class ArtifactOut(ArtifactSummaryOut):
     content: str
     unit_snapshots: list[ArtifactUnitSnapshotOut]
-    provenance: ArtifactProvenanceOut
+    provenance: SerializeAsAny[ArtifactProvenanceOut]
+    brief: str = ""
+    outline: list[OutlineItem] = Field(default_factory=list)
+    # The sources the text cites, numbered 1, 2, 3 in the order it first cites them.
+    citations: list[ConversationCitationOut] = Field(default_factory=list)
+    # What it was built from, as asked; none for a version from the old builder.
+    scope: OutputScope | None = None
+    inputs: OutputInputsOut = Field(default_factory=OutputInputsOut)
+    model_label: str | None = None
+    sections: list[OutputSectionOut] = Field(default_factory=list)
 
 
 class KnowledgeSearchResultOut(ApiModel):

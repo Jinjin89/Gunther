@@ -9,7 +9,6 @@ const api = vi.hoisted(() => ({
   fileSource: vi.fn(),
   fileNote: vi.fn(),
   updateSourceAssertionStatuses: vi.fn(),
-  updateProposal: vi.fn(),
   trashSource: vi.fn(),
   trashNote: vi.fn(),
 }));
@@ -32,17 +31,6 @@ const sourceReview = makeInboxItem({
   assertionCount: 2,
   knowledgeBases: [{ id: "biology", title: "Biology" }],
 });
-const heldProposal = makeInboxItem({
-  id: "proposal-held",
-  itemType: "knowledge_suggestion",
-  state: "held",
-  title: "Reusable explanation",
-  sourceKind: null,
-  sourceId: null,
-  proposalId: "proposal-1",
-  proposalStatus: "held",
-  knowledgeBases: [{ id: "computing", title: "Computing" }],
-});
 
 const renderInbox = (overrides: Partial<React.ComponentProps<typeof InboxPageV3>> = {}) => {
   const props: React.ComponentProps<typeof InboxPageV3> = {
@@ -59,29 +47,28 @@ const renderInbox = (overrides: Partial<React.ComponentProps<typeof InboxPageV3>
 
 describe("InboxPageV3", () => {
   beforeEach(() => {
-    api.inbox.mockResolvedValue([unfiled, sourceReview, heldProposal]);
+    api.inbox.mockResolvedValue([unfiled, sourceReview]);
     api.fileSource.mockResolvedValue({});
     api.fileNote.mockResolvedValue({});
     api.updateSourceAssertionStatuses.mockResolvedValue([]);
-    api.updateProposal.mockResolvedValue({});
   });
 
-  it("separates organize, review, and held states while excluding held items from attention count", async () => {
+  it("separates what needs organizing from what needs review", async () => {
     const user = userEvent.setup();
     const { props } = renderInbox();
 
     expect(await screen.findByText("Unsorted lecture")).toBeVisible();
     expect(screen.getByText("Candidate findings")).toBeVisible();
-    expect(screen.queryByText("Reusable explanation")).not.toBeInTheDocument();
     expect(props.onCountChange).toHaveBeenLastCalledWith(2);
 
     expect(screen.getByRole("button", { name: /Needs attention\s*2/i })).toBeVisible();
     expect(screen.getByRole("button", { name: /To organize\s*1/i })).toBeVisible();
     expect(screen.getByRole("button", { name: /To review\s*1/i })).toBeVisible();
-    expect(screen.getByRole("button", { name: /Held\s*1/i })).toBeVisible();
+    // Saved answers are not reviewed here, so there is nothing to hold aside.
+    expect(screen.queryByRole("button", { name: /Held/i })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /Held\s*1/i }));
-    expect(screen.getByText("Reusable explanation")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /To review\s*1/i }));
+    expect(screen.getByText("Candidate findings")).toBeVisible();
     expect(screen.queryByText("Unsorted lecture")).not.toBeInTheDocument();
   });
 
@@ -121,22 +108,6 @@ describe("InboxPageV3", () => {
     expect(onNotify).toHaveBeenCalledWith("Claims accepted as trusted knowledge.");
   });
 
-  it("can return a held knowledge suggestion to review without silently accepting it", async () => {
-    const user = userEvent.setup();
-    const onNotify = vi.fn();
-    renderInbox({ onNotify });
-
-    await screen.findByText("Unsorted lecture");
-    await user.click(screen.getByRole("button", { name: /Held\s*1/i }));
-    await user.click(screen.getByRole("button", { name: /Return to review/i }));
-
-    await waitFor(() => expect(api.updateProposal).toHaveBeenCalledWith("proposal-1", {
-      status: "pending",
-      reason: "Returned to unified Inbox",
-    }));
-    expect(onNotify).toHaveBeenCalledWith("Suggestion returned for review.");
-  });
-
   it("opens any row as its own page, with the visible list as the J / K queue", async () => {
     const user = userEvent.setup();
     const onOpenItem = vi.fn();
@@ -170,7 +141,7 @@ describe("InboxPageV3", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Candidate findings" })).toHaveFocus());
   });
 
-  it("moves a capture to Trash from its row, and leaves suggestions to their own decisions", async () => {
+  it("moves a capture to Trash from its row", async () => {
     api.trashSource.mockResolvedValue(makeTrashItem({ id: unfiled.sourceId!, title: unfiled.title }));
     const onTrashed = vi.fn();
     renderInbox({ onTrashed });
@@ -178,7 +149,6 @@ describe("InboxPageV3", () => {
     expect(api.trashSource).toHaveBeenCalledWith(unfiled.sourceId);
     await waitFor(() => expect(onTrashed).toHaveBeenCalledWith(expect.objectContaining({ title: unfiled.title })));
     await waitFor(() => expect(api.inbox).toHaveBeenCalledTimes(2));
-    expect(screen.queryByRole("button", { name: `Move “${heldProposal.title}” to Trash` })).not.toBeInTheDocument();
   });
 
   it("moves the focused row to Trash with ⌘⌫", async () => {

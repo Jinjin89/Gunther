@@ -1,4 +1,4 @@
-import type { Assertion, KnowledgeProposal, NotebookNote, SourceDetail, SourceStructure } from "@gunther/contracts";
+import type { Assertion, NotebookNote, SourceDetail, SourceStructure } from "@gunther/contracts";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,9 +14,6 @@ const api = vi.hoisted(() => ({
   fileSource: vi.fn(),
   updateSourceAssertionStatuses: vi.fn(),
   updateAssertionStatus: vi.fn(),
-  proposals: vi.fn(),
-  updateProposal: vi.fn(),
-  knowledgeBases: vi.fn(),
   reprocessSource: vi.fn(),
   sourcePaper: vi.fn(),
   trashSource: vi.fn(),
@@ -79,7 +76,6 @@ const renderPage = (overrides: Partial<ItemPageProps> = {}) => {
     onNext: vi.fn(),
     onResolved: vi.fn(),
     onOpenBase: vi.fn(),
-    onOpenSession: vi.fn(),
     onOpenNotebook: vi.fn(),
     onCreateBase: vi.fn(),
     onNotify: vi.fn(),
@@ -95,7 +91,6 @@ beforeEach(() => {
   api.sourcePaper.mockRejectedValue(new Error("This source has not been read yet"));
   api.fileSource.mockResolvedValue({});
   api.updateSourceAssertionStatuses.mockResolvedValue([]);
-  api.updateProposal.mockResolvedValue({});
 });
 
 describe("ItemPage navigation", () => {
@@ -327,37 +322,5 @@ describe("note pages", () => {
     await user.click(screen.getByRole("button", { name: /File to library$/ }));
     await waitFor(() => expect(api.fileNote).toHaveBeenCalledWith("note_1", "biology"));
     expect(props.onResolved).toHaveBeenCalledWith("Filed “Reading plan” into Biology.");
-  });
-});
-
-describe("suggestion pages", () => {
-  const proposal = (overrides: Partial<KnowledgeProposal> = {}): KnowledgeProposal => ({
-    id: "prop_1",
-    knowledgeBaseId: "biology",
-    sessionId: "ses_1",
-    messageId: "msg_1",
-    targetChapterId: null,
-    kind: "knowledge_unit",
-    title: "Markers need context",
-    content: "Marker genes are **context dependent**.",
-    status: "pending",
-    decisionReason: null,
-    knowledgeUnitId: null,
-    sourceSessionTitle: "Marker questions",
-    createdAt: "2026-09-20T10:00:00.000Z",
-    updatedAt: "2026-09-20T10:00:00.000Z",
-    ...overrides,
-  });
-
-  it("renders the proposed unit, links to its conversation and accepts it", async () => {
-    api.proposals.mockResolvedValue([proposal()]);
-    const user = userEvent.setup();
-    const { props } = renderPage({ item: { type: "suggestion", id: "prop_1", baseId: "biology" } });
-    expect(await screen.findByText("context dependent")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: /Marker questions/ }));
-    expect(props.onOpenSession).toHaveBeenCalledWith("biology", "ses_1", "msg_1");
-    await user.click(screen.getByRole("button", { name: /^Accept/ }));
-    await waitFor(() => expect(api.updateProposal).toHaveBeenCalledWith("prop_1", { status: "accepted", reason: "Accepted from the suggestion page" }));
-    expect(props.onResolved).toHaveBeenCalledWith("“Markers need context” is now trusted knowledge.");
   });
 });

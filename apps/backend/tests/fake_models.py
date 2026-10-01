@@ -183,3 +183,69 @@ def agent_replies(
         return answer(request) if callable(answer) else answer
 
     return reply
+
+
+OUTLINER_MARK = "You are the outline step"
+
+
+def is_outlining(request: dict[str, Any]) -> bool:
+    return OUTLINER_MARK in str(request["messages"][0]["content"])
+
+
+WRITER_MARK = "You are Gunther's writer"
+
+
+def is_writing(request: dict[str, Any]) -> bool:
+    return WRITER_MARK in str(request["messages"][0]["content"])
+
+
+SUPPORT_MARK = "You are the support-check step"
+
+
+def is_support_checking(request: dict[str, Any]) -> bool:
+    return SUPPORT_MARK in str(request["messages"][0]["content"])
+
+
+def output_replies(
+    outline: dict[str, Any],
+    written: Any,
+    *,
+    relevant: list[int] | None = None,
+    unmarked: list[str] | None = None,
+    verdict: dict[str, list[int]] | None = None,
+    unsupported: Any = None,
+) -> Callable[[dict[str, Any]], Any]:
+    """Replies for building an output: the outline, then each section as the writer is
+    asked for it, and quiet checks (nothing unmarked, nothing unsupported) unless given.
+
+    ``written`` is the sections' texts in order, or a function of (section index, prompt)
+    that returns a reply (an exception is raised, as ``FakeProvider`` does).
+    ``unsupported`` is a list of sentence numbers, or a function of the request.
+    """
+
+    import json
+    import re
+
+    def reply(request: dict[str, Any]) -> Any:
+        if is_outlining(request):
+            return json.dumps(outline)
+        if is_grading(request):
+            return json.dumps(
+                {"relevant": relevant if relevant is not None else list(range(1, 41))}
+            )
+        if is_auditing(request):
+            return json.dumps({"claims": unmarked or []})
+        if is_checking(request):
+            return json.dumps(verdict or {"supports": [], "contradicts": []})
+        if is_support_checking(request):
+            flagged = unsupported(request) if callable(unsupported) else unsupported
+            return json.dumps({"unsupported": flagged or []})
+        prompt = str(request["messages"][-1]["content"])
+        asked = re.search(r"Write section (\d+) of", prompt)
+        if asked is None:
+            # Anything else a model is asked while a library is set up (reading a source).
+            return "{}"
+        index = int(asked.group(1)) - 1
+        return written(index, prompt) if callable(written) else written[index]
+
+    return reply

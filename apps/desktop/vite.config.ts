@@ -51,6 +51,8 @@ export default defineConfig({
           if (/[\\/](@codemirror|@lezer|crelt|style-mod|w3c-keyname)[\\/]/.test(id)) return "editor";
           // The PDF viewer also loads on first use; left in "vendor", pdf.js would load at every start.
           if (/[\\/](pdfjs-dist|react-pdf|make-cancellable-promise|make-event-props|merge-refs)[\\/]/.test(id)) return "pdf";
+          // The slide viewer loads when a deck is opened.
+          if (/[\\/](reveal\.js|@revealjs)[\\/]/.test(id)) return "reveal";
           return "vendor";
         },
       },
