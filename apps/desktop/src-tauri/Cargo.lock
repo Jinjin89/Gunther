@@ -1475,10 +1475,13 @@ dependencies = [
 name = "gunther-desktop"
 version = "0.1.3"
 dependencies = [
+ "block2",
  "chrono",
  "getrandom 0.2.17",
  "libc",
  "log",
+ "objc2",
+ "objc2-foundation",
  "serde",
  "serde_json",
  "tauri",

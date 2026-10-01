@@ -25,6 +25,11 @@ tauri-plugin-fs = "2.2"
 tauri-plugin-log = "2"
 tauri-plugin-single-instance = "2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString"] }
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

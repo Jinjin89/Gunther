@@ -2,6 +2,7 @@ import type { SessionMessage } from "@gunther/contracts";
 import { useSyncExternalStore } from "react";
 import { knowledgeApi } from "../api";
 import { describeError, log } from "../log";
+import { allowSpeakerSound, SPEAKER_HINT } from "./speakerAccess";
 
 /**
  * Reading answers aloud, one at a time for the whole app.
@@ -17,6 +18,8 @@ export type ReadStatus = "making" | "playing" | "paused" | "error";
 export type ReadSource = { clipId: string } | { jobId: string };
 interface State {
   messageId: string | null;
+  /** The conversation of the answer being read: opening another one stops the reading. */
+  sessionId: string | null;
   status: ReadStatus | null;
   error: string | null;
   /** The part playing (0-based) and how many there are; 1 for a kept clip. */
@@ -27,9 +30,11 @@ interface State {
   /** Seconds into a kept clip (0 while parts are being made: their lengths are not known yet). */
   elapsed: number;
   source: ReadSource | null;
+  /** A note beside the player, e.g. why the Mac's speakers may stay silent. */
+  notice: string | null;
 }
 
-const IDLE: State = { messageId: null, status: null, error: null, part: 0, parts: 0, progress: 0, elapsed: 0, source: null };
+const IDLE: State = { messageId: null, sessionId: null, status: null, error: null, part: 0, parts: 0, progress: 0, elapsed: 0, source: null, notice: null };
 const MEMORY_CLIPS = 6;
 
 let state: State = IDLE;
@@ -56,27 +61,12 @@ async function fetched(label: string, load: () => Promise<Blob>): Promise<Blob> 
 
 const MEDIA_ERRORS: Record<number, string> = { 1: "aborted", 2: "network", 3: "decode", 4: "format not supported" };
 
-/** Which output devices the webview sees and which one this player is on, so silence on one speaker can be traced. */
-async function logOutputs(player: HTMLAudioElement, label: string) {
-  try {
-    const sink = (player as HTMLAudioElement & { sinkId?: string }).sinkId;
-    const devices = (await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === "audiooutput");
-    const names = devices.map((device) => `${device.label || "unnamed"} (${device.deviceId.slice(0, 8) || "no id"})`).join("; ");
-    say(`${label}: output ${sink === undefined ? "choice not reported" : sink || "default"}; ${devices.length} output device(s): ${names || "none listed"}`);
-  } catch (reason) {
-    say(`${label}: output devices could not be listed: ${describeError(reason)}`);
-  }
-}
-
 /** What the audio element reports while playing: enough to tell silence from a stall or a bad file. */
 function watch(player: HTMLAudioElement, label: string) {
   const started = performance.now();
   const at = () => `${Math.round(performance.now() - started)} ms`;
   player.addEventListener("loadedmetadata", () => say(`${label}: ${Number.isFinite(player.duration) ? `${player.duration.toFixed(1)} s long` : `length ${player.duration}`}, ${at()}`));
-  player.addEventListener("playing", () => {
-    say(`${label}: playing at ${player.currentTime.toFixed(1)} s, volume ${player.volume}${player.muted ? ", muted" : ""}, ${at()}`);
-    void logOutputs(player, label);
-  });
+  player.addEventListener("playing", () => say(`${label}: playing at ${player.currentTime.toFixed(1)} s, volume ${player.volume}${player.muted ? ", muted" : ""}, ${at()}`));
   for (const kind of ["waiting", "stalled", "suspend", "emptied"] as const) {
     player.addEventListener(kind, () => say(`${label}: ${kind} at ${player.currentTime.toFixed(1)} s, ready state ${player.readyState}, ${at()}`));
   }
@@ -169,13 +159,18 @@ export const readAloud = {
     readAloud.stop();
     const mine = turn;
     say(`${message.id}: start${again ? ", recording again" : ""}`);
-    set({ ...IDLE, messageId: message.id, status: "making" });
+    set({ ...IDLE, messageId: message.id, sessionId: message.sessionId, status: "making" });
+    // On a Mac, ask for what the built-in speakers need while the speech is made.
+    const access = allowSpeakerSound();
     // Resolves once the first part plays (or it failed); the rest carries on by itself.
     await new Promise<void>((started) => {
       void (async () => {
         try {
           const begun = await knowledgeApi.beginSpeech(message.sessionId, message.id, again);
           if (mine !== turn) return;
+          const allowed = await access;
+          if (mine !== turn) return;
+          if (allowed === "denied" || allowed === "restricted") patch({ notice: SPEAKER_HINT });
           if (begun.clip) {
             const clipId = begun.clip.id;
             say(`${message.id}: kept clip ${clipId}`);
@@ -201,6 +196,12 @@ export const readAloud = {
       })();
     });
   },
+  /** A conversation came on screen: reading goes on in its own, and stops for another one's answer. */
+  focusSession(sessionId: string) {
+    if (!state.status || state.sessionId === sessionId) return;
+    say(`another conversation opened (${sessionId})`);
+    readAloud.stop();
+  },
   /** Read a fresh answer if the reader asked for that in Settings → Read aloud. */
   async auto(message: Pick<SessionMessage, "id" | "sessionId">) {
     try {
@@ -212,11 +213,11 @@ export const readAloud = {
   },
 };
 
-const NOTHING = { status: null, error: null, part: 0, parts: 0, progress: 0, elapsed: 0, source: null } as const;
+const NOTHING = { status: null, error: null, part: 0, parts: 0, progress: 0, elapsed: 0, source: null, notice: null } as const;
 
 export function useReadAloud(messageId: string) {
   const current = useSyncExternalStore(readAloud.subscribe, () => state);
   if (current.messageId !== messageId) return NOTHING;
-  const { status, error, part, parts, progress, elapsed, source } = current;
-  return { status, error, part, parts, progress, elapsed, source };
+  const { status, error, part, parts, progress, elapsed, source, notice } = current;
+  return { status, error, part, parts, progress, elapsed, source, notice };
 }

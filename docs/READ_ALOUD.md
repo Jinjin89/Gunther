@@ -32,6 +32,13 @@ message text → **narrator** (`tts_narration.py`) → pieces ≤ the supplier's
   `data` sizes at about 2 GB. Chrome plays them; WebKit (the macOS app) trusts the header and plays
   silence. Every piece is checked and repaired as it arrives (`repair_wav`), and clips kept before
   the repair are repaired as they are sent. The log line `Speech … header disagrees … repaired` shows it.
+- **On a Mac the built-in speakers need the microphone permission.** Gunther is entitled to record,
+  and for such an app macOS keeps its sound off the built-in speakers until it may use the
+  microphone; earphones play either way. The web view's player cannot ask, so it plays silence
+  there, never asking. Listen (and a voice sample in Settings) first asks through the app
+  (`ask_microphone_access`, `speech/speakerAccess.ts`); asking turns no microphone on. Told no, the
+  player says where to allow it. Ad-hoc signed builds look new to macOS, which asks again after
+  each rebuild.
 
 ## Settings: providers and jobs
 

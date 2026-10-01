@@ -20,6 +20,8 @@ const api = vi.hoisted(() => ({
   speechScript: vi.fn(),
 }));
 vi.mock("../api", () => ({ knowledgeApi: api }));
+const speaker = vi.hoisted(() => ({ allow: vi.fn() }));
+vi.mock("./speakerAccess", () => ({ allowSpeakerSound: speaker.allow, SPEAKER_HINT: "Allow the microphone for the Mac's speakers." }));
 
 const players: FakeAudio[] = [];
 class FakeAudio {
@@ -54,6 +56,7 @@ const overview = (patch: Partial<TtsOverview> = {}, job: Partial<TtsOverview["ro
 describe("reading an answer aloud", () => {
   beforeEach(() => {
     Object.values(api).forEach((mock) => mock.mockReset());
+    speaker.allow.mockReset().mockResolvedValue("granted");
     players.length = 0;
     readAloud.stop();
     vi.stubGlobal("Audio", FakeAudio);
@@ -113,6 +116,22 @@ describe("reading an answer aloud", () => {
     expect(api.speechPart).toHaveBeenNthCalledWith(2, "j1", 1);
   });
 
+  it("asks for what a Mac's speakers need, and says why they may stay silent when told no", async () => {
+    const user = userEvent.setup();
+    render(<SpeakerButton message={message} />);
+    await user.click(screen.getByRole("button", { name: "Read aloud" }));
+    await screen.findByRole("button", { name: "Pause" });
+    expect(speaker.allow).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("status")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Stop" }));
+    speaker.allow.mockResolvedValue("denied");
+    await user.click(await screen.findByRole("button", { name: "Read aloud" }));
+    await screen.findByRole("button", { name: "Pause" });
+    expect((await screen.findByRole("status")).textContent).toContain("Allow the microphone");
+    // Earphones play either way, so the answer is still read.
+    expect(players.at(-1)?.play).toHaveBeenCalled();
+  });
+
   it("shows why it failed and lets you retry", async () => {
     const user = userEvent.setup();
     api.beginSpeech.mockRejectedValueOnce(new Error("Qwen did not accept this API key."));
@@ -121,6 +140,16 @@ describe("reading an answer aloud", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("did not accept");
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("button", { name: "Pause" })).toBeTruthy();
+  });
+
+  it("keeps reading while its conversation is open, and stops when another one is opened", async () => {
+    await act(async () => { await readAloud.toggle(message); });
+    readAloud.focusSession("s1");
+    expect(readAloud.state.status).toBe("playing");
+    expect(players[0]?.pause).not.toHaveBeenCalled();
+    readAloud.focusSession("s2");
+    expect(readAloud.state.status).toBeNull();
+    expect(players[0]?.pause).toHaveBeenCalled();
   });
 
   it("reads one answer at a time", async () => {

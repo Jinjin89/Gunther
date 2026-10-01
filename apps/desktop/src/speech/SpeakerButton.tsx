@@ -12,7 +12,7 @@ const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.fl
  * about the audio and never mistaken for answering again.
  */
 export function SpeakerButton({ message }: { message: Pick<SessionMessage, "id" | "sessionId"> }) {
-  const { status, error, part, parts, progress, elapsed, source } = useReadAloud(message.id);
+  const { status, error, part, parts, progress, elapsed, source, notice } = useReadAloud(message.id);
   const [script, setScript] = useState<{ text: string | null; problem: string | null } | null>(null);
   const toggle = (again = false) => (event: React.MouseEvent) => { event.stopPropagation(); void readAloud.toggle(message, again); };
 
@@ -60,6 +60,7 @@ export function SpeakerButton({ message }: { message: Pick<SessionMessage, "id" 
       <button type="button" className="speak-control" aria-label="What is spoken" aria-pressed={Boolean(script)} title="Show what is spoken, e.g. how a table was put into words" disabled={!source} onClick={(event) => void showScript(event)}><FileText size={12} /></button>
       <button type="button" className="speak-control" aria-label="Stop" title="Stop" onClick={(event) => { event.stopPropagation(); readAloud.stop(); }}><X size={12} /></button>
     </span>
+    {notice && <span className="speak-error" role="status">{notice}</span>}
     {scriptPanel}
   </>;
 }

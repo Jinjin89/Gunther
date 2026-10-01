@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Gunther uses the microphone only when you start a recording, so it can preserve the original audio and create an optional live transcript.</string>
+  <string>Gunther uses the microphone when you record or dictate. macOS also needs this permission before Gunther can read aloud through your Mac's built-in speakers; reading aloud never turns the microphone on.</string>
   <key>NSLocalNetworkUsageDescription</key>
   <string>Gunther uses your local network only when you choose to pair a nearby phone with this desktop workspace.</string>
 </dict>

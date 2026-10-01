@@ -14,6 +14,7 @@ mod capture_shell;
 mod external_links;
 mod leftover;
 mod library_location;
+mod microphone_access;
 mod tray_glyph;
 
 #[derive(Default)]
@@ -616,6 +617,7 @@ pub fn run() {
             capture_shell::menu_bar_mode,
             capture_shell::set_menu_bar_mode,
             external_links::open_external_url,
+            microphone_access::ask_microphone_access,
             print_output,
         ])
         .build(tauri::generate_context!())

@@ -217,6 +217,10 @@ export function useHomeAsk() {
     }
   }, [reloadRecent, session]);
 
+  // Reading aloud goes on while its conversation is open, and stops when another one is.
+  const shownId = shown ? session?.id : undefined;
+  useEffect(() => { if (shownId) readAloud.focusSession(shownId); }, [shownId]);
+
   const messages: SessionMessage[] = session?.messages ?? [];
   return { session, messages, recent, pending, live, error, shown, ask, cancel, close, fresh, open, file };
 }

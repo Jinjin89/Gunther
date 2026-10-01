@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { knowledgeApi } from "../api";
 import { KeyField, StatusBadge } from "../models/SpeechSettings";
 import { readAloud } from "./readAloud";
+import { allowSpeakerSound } from "./speakerAccess";
 
 const message = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
 const megabytes = (bytes: number) => bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -13,7 +14,10 @@ const validUrl = (value: string) => { try { return /^https?:$/.test(new URL(valu
 let preview: HTMLAudioElement | null = null;
 async function playSample(payload: TtsSampleInput) {
   readAloud.stop();
+  // On a Mac, ask for what the built-in speakers need while the sample is made.
+  const access = allowSpeakerSound();
   const blob = await knowledgeApi.ttsSample(payload);
+  await access;
   preview?.pause();
   const url = URL.createObjectURL(blob);
   const player = new Audio(url);

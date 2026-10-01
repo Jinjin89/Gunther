@@ -13,7 +13,8 @@ const api = vi.hoisted(() => ({
   stopAnswer: vi.fn(),
 }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), knowledgeApi: api }));
-vi.mock("../speech/readAloud", () => ({ readAloud: { auto: vi.fn() } }));
+const reading = vi.hoisted(() => ({ auto: vi.fn(), focusSession: vi.fn() }));
+vi.mock("../speech/readAloud", () => ({ readAloud: reading }));
 
 const { AnswerStoppedError } = await import("../api");
 
@@ -36,6 +37,7 @@ function held() {
 describe("asking from Home", () => {
   beforeEach(() => {
     Object.values(api).forEach((mock) => mock.mockReset());
+    Object.values(reading).forEach((mock) => mock.mockClear());
     window.localStorage.clear();
     api.sessions.mockResolvedValue([]);
     api.createSession.mockResolvedValue(home());
@@ -89,5 +91,15 @@ describe("asking from Home", () => {
     await act(async () => { finish({ assistantMessage: { id: "a1" } }); });
     await waitFor(() => expect(result.current.pending).toBeNull());
     expect(result.current.session?.messageCount).toBe(2);
+  });
+
+  it("stops reading another conversation's answer when one is opened, not when it is only remembered", async () => {
+    window.localStorage.setItem("gunther:home-session", "ses_home");
+    const { result } = renderHook(() => useHomeAsk());
+    await waitFor(() => expect(result.current.session?.id).toBe("ses_home"));
+    expect(reading.focusSession).not.toHaveBeenCalled();
+    api.session.mockResolvedValue(home({ id: "ses_other" }));
+    await act(async () => { await result.current.open("ses_other"); });
+    expect(reading.focusSession).toHaveBeenCalledWith("ses_other");
   });
 });

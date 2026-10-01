@@ -842,6 +842,9 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
     await watchAnswer(session.id, question, controller, () => knowledgeApi.sendMessageStream(session.id, { content: question, selectedSourceIds: session.selectedSourceIds, focusChapterId: session.focusChapterId, ...chosen, style: readAnswerStyle(), ...(webSearch.enabled ? { web: true } : {}) }, liveAnswer.hear, controller.signal));
   };
 
+  // Reading aloud goes on while its conversation is open, and stops when another one is.
+  useEffect(() => { if (activeId) readAloud.focusSession(activeId); }, [activeId]);
+
   // Opening a conversation that is still being answered follows the answer again, from the start.
   useEffect(() => {
     shownId.current = activeId;
