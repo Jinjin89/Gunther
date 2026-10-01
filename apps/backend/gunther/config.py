@@ -70,11 +70,11 @@ class Settings(BaseSettings):
     stt_model: str = "whisper-1"
     # Empty lets the model detect the language.
     stt_language: str = ""
-    # Qwen3-ASR on Alibaba Cloud Model Studio (DashScope): audio goes in a
-    # chat-completions request rather than /audio/transcriptions.
-    qwen_stt_base_url: str = "https://maas.qianwenaiapi.com/compatible-mode/v1"
+    # Qwen-Audio on the Qwen AI platform: audio goes in a multimodal-generation request
+    # rather than /audio/transcriptions.
+    qwen_stt_base_url: str = "https://maas.qianwenaiapi.com"
     qwen_stt_api_key: str | None = None
-    qwen_stt_model: str = "qwen3-asr-flash"
+    qwen_stt_model: str = "qwen-audio-3.1-asr-flash"
     ocr_provider: Literal["auto", "vision", "tesseract", "disabled"] = "auto"
     ocr_tesseract_command: str = "tesseract"
     ocr_pdftoppm_command: str = "pdftoppm"

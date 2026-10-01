@@ -129,7 +129,10 @@ async def _qwen_synthesize(config: ProviderConfig, text: str) -> bytes:
             if response.status_code in (401, 403):
                 raise TtsError("Qwen did not accept this API key.")
             if response.status_code >= 400:
-                raise TtsError(f"Qwen could not make speech: {_detail(response)}")
+                raise TtsError(
+                    f"Qwen could not make speech: {_detail(response)} "
+                    f"(asked {config.model} at {response.request.url})"
+                )
             try:
                 url = response.json()["output"]["audio"]["url"]
             except (ValueError, KeyError, TypeError) as error:

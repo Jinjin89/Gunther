@@ -13,7 +13,7 @@ from gunther.database import create_database_engine
 from gunther.extraction import ModelExtractor
 from gunther.main import create_app
 from gunther.models import Artifact, ArtifactUnitBinding
-from gunther.realtime import _pcm16_wav, qwen_request, qwen_text
+from gunther.realtime import _pcm16_wav, qwen_endpoint, qwen_request, qwen_text
 
 
 def make_client() -> TestClient:
@@ -37,16 +37,18 @@ def test_sensevoice_pcm_segments_are_wrapped_as_24khz_wav() -> None:
         assert audio.readframes(2) == b"\x00\x00\xff\x7f"
 
 
-def test_qwen_asr_takes_a_wav_data_uri_and_answers_in_either_shape() -> None:
-    body = qwen_request("qwen3-asr-flash", b"RIFFwav", "zh")
-    [message] = body["messages"]
-    audio = message["content"][0]["input_audio"]["data"]
-    assert audio == "data:audio/wav;base64,UklGRndhdg=="
-    assert body["asr_options"] == {"enable_itn": False, "language": "zh"}
-    assert "language" not in qwen_request("m", b"", "")["asr_options"]
-    assert qwen_text({"choices": [{"message": {"content": " 你好 "}}]}) == "你好"
-    assert qwen_text({"output": {"text": "hello"}}) == "hello"
-    assert qwen_text({"choices": []}) == "" and qwen_text("nope") == ""
+def test_qwen_audio_takes_a_wav_data_uri_and_answers_with_output_text() -> None:
+    body = qwen_request("qwen-audio-3.1-asr-flash", b"RIFFwav")
+    [message] = body["input"]["messages"]
+    audio = message["content"][0]["input_audio"]
+    assert audio == {"data": "data:audio/wav;base64,UklGRndhdg==", "format": "wav"}
+    assert body["parameters"] == {"format": "wav", "sample_rate": "24000"}
+    assert qwen_text({"output": {"text": " 你好 "}}) == "你好"
+    assert qwen_text({"output": {}}) == "" and qwen_text("nope") == ""
+    # The saved address may still be the compatible-mode one.
+    expected = "https://maas.qianwenaiapi.com/api/v1/services/aigc/multimodal-generation/generation"
+    assert qwen_endpoint("https://maas.qianwenaiapi.com/compatible-mode/v1") == expected
+    assert qwen_endpoint("https://maas.qianwenaiapi.com/") == expected
 
 
 def test_file_backed_sqlite_uses_desktop_safe_pragmas(tmp_path: Path) -> None:

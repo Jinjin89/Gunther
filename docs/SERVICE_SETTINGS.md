@@ -14,13 +14,15 @@ than in environment variables:
 Set up like Models: **providers** first, then **jobs** that pick a model.
 
 **Providers** are SenseVoice (private, on this computer or your network), Qwen
-(Qwen3-ASR on Alibaba Cloud), OpenAI, or any server with an OpenAI-style
+(Qwen-Audio on the Qwen AI platform), OpenAI, or any server with an OpenAI-style
 `/audio/transcriptions` (Groq, a Whisper you host). Each has an address, a key
 (SenseVoice needs none) and its models, typed by id (nothing is built in).
-Qwen's address is the Qwen AI platform's `https://maas.qianwenaiapi.com/compatible-mode/v1`; only
-Qwen3-ASR-Flash answers on its `chat/completions`, which Gunther uses, so `-filetrans` and
-real-time recognisers need other addresses and will not work here. **Test connection** checks the
-address and key.
+Qwen's address is the Qwen AI platform's `https://maas.qianwenaiapi.com` (a saved `…/compatible-mode/v1`
+works too). Gunther sends each segment to `POST <address>/api/v1/services/aigc/multimodal-generation/generation`
+as an `input_audio` message (a base64 WAV data URI plus `format: "wav"`), and reads the words from
+`output.text`. That fits the short-audio models such as `qwen-audio-3.1-asr-flash`; `-filetrans`,
+`-streaming`/real-time (WebSocket) and the older `qwen3-asr-flash` use other requests and will not
+work here. **Test connection** checks the address and key (on `<address>/compatible-mode/v1/models`).
 
 **Jobs** pick one model each and a language. Recording writes the words in short segments as you
 speak; Ask dictation sends the whole take when you stop (cut only past about two and a half

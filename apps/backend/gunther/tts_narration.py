@@ -211,8 +211,9 @@ def _describe(gateway: ModelGateway, model: ModelInfo, part: Part, context: str)
             system=_SYSTEM.format(task=_INSTRUCTIONS[part.kind]),
             messages=prompt,
             images=images,
-            effort="low",
-            max_tokens=600,
+            # A short description needs no thinking; models that cannot turn it off get room for it.
+            effort="off",
+            max_tokens=1500,
         )
     except ModelError as error:
         raise TtsError(f"Describing a {part.kind} for reading aloud failed: {error}") from error

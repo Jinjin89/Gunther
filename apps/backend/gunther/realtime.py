@@ -59,58 +59,58 @@ def _form_transcriber(endpoint: str, headers: dict[str, str], form: dict[str, st
     return transcribe
 
 
+def qwen_root(base_url: str) -> str:
+    """Qwen's address without a path: the saved one may still end in /compatible-mode/v1."""
+
+    root = base_url.rstrip("/")
+    return root.removesuffix("/compatible-mode/v1").removesuffix("/api/v1")
+
+
 def qwen_endpoint(base_url: str) -> str:
-    return f"{base_url.rstrip('/')}/chat/completions"
+    return f"{qwen_root(base_url)}/api/v1/services/aigc/multimodal-generation/generation"
 
 
-def qwen_request(model: str, wav: bytes, language: str = "") -> dict[str, object]:
-    """Qwen3-ASR takes the audio as a data URI inside a chat message."""
+def qwen_request(model: str, wav: bytes, sample_rate: int = 24_000) -> dict[str, object]:
+    """Qwen-Audio takes the audio as a data URI inside a message."""
 
     encoded = base64.b64encode(wav).decode("ascii")
-    body: dict[str, object] = {
+    return {
         "model": model,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_audio",
-                        "input_audio": {"data": f"data:audio/wav;base64,{encoded}"},
-                    }
-                ],
-            }
-        ],
-        "stream": False,
-        "asr_options": {"enable_itn": False, **({"language": language} if language else {})},
+        "input": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": f"data:audio/wav;base64,{encoded}",
+                                "format": "wav",
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+        "parameters": {"format": "wav", "sample_rate": str(sample_rate)},
     }
-    return body
 
 
 def qwen_text(payload: object) -> str:
-    """The words in a Qwen reply, whichever of its two shapes it came in."""
+    """The words in a Qwen-Audio reply: ``output.text``."""
 
-    if not isinstance(payload, dict):
-        return ""
-    choices = payload.get("choices")
-    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
-        content = (choices[0].get("message") or {}).get("content")
-        if isinstance(content, str):
-            return content.strip()
-        if isinstance(content, list):
-            parts = (str(part.get("text", "")) for part in content if isinstance(part, dict))
-            return "".join(parts).strip()
-    output = payload.get("output")
+    output = payload.get("output") if isinstance(payload, dict) else None
     if isinstance(output, dict) and isinstance(output.get("text"), str):
         return output["text"].strip()
     return ""
 
 
-def _qwen_transcriber(base_url: str, api_key: str, model: str, language: str) -> Transcriber:
+def _qwen_transcriber(base_url: str, api_key: str, model: str) -> Transcriber:
     async def transcribe(client: httpx.AsyncClient, pcm: bytes) -> str:
         response = await client.post(
             qwen_endpoint(base_url),
             headers={"Authorization": f"Bearer {api_key}"},
-            json=qwen_request(model, _pcm16_wav(pcm), language),
+            json=qwen_request(model, _pcm16_wav(pcm)),
         )
         response.raise_for_status()
         return qwen_text(response.json())
@@ -269,9 +269,7 @@ async def proxy_realtime_transcription(
         ready = {**ready, "local": True, "diarize": bool(status.get("diarize"))}
         reset_url = f"{root}/reset"
     elif choice.kind == "qwen":
-        transcriber = _qwen_transcriber(
-            choice.base_url, choice.api_key or "", choice.model, choice.language
-        )
+        transcriber = _qwen_transcriber(choice.base_url, choice.api_key or "", choice.model)
     else:
         form = {"model": choice.model, "response_format": "json"}
         if choice.language:

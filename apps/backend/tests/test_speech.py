@@ -13,7 +13,7 @@ from gunther.main import create_app
 SIDECAR_TOKEN = "sidecar-token-for-tests"
 SIDECAR = {"X-Gunther-Token": SIDECAR_TOKEN}
 KEY = "sk-test-key-1234"
-QWEN_JOB = {"model": "qwen/qwen3-asr-flash", "stream": False}
+QWEN_JOB = {"model": "qwen/qwen-audio-3.1-asr-flash", "stream": False}
 
 
 def settings_for(tmp_path: Path, **overrides: object) -> Settings:
@@ -64,11 +64,11 @@ def test_each_job_picks_its_own_model_and_live_setting(tmp_path: Path) -> None:
         added = client.post(
             "/api/settings/speech/providers",
             headers=SIDECAR,
-            json={"kind": "qwen", "apiKey": KEY, "models": ["qwen3-asr-flash"]},
+            json={"kind": "qwen", "apiKey": KEY, "models": ["qwen-audio-3.1-asr-flash"]},
         )
         assert added.status_code == 201
         qwen = next(item for item in added.json()["providers"] if item["kind"] == "qwen")
-        assert [model["id"] for model in qwen["models"]] == ["qwen3-asr-flash"]
+        assert [model["id"] for model in qwen["models"]] == ["qwen-audio-3.1-asr-flash"]
         assert KEY not in added.text and qwen["keyHint"] == "1234"
 
         saved = client.put(
@@ -78,10 +78,10 @@ def test_each_job_picks_its_own_model_and_live_setting(tmp_path: Path) -> None:
         )
         assert saved.status_code == 200
         by_id = roles(client)
-        assert by_id["dictation"]["model"] == "qwen/qwen3-asr-flash"
+        assert by_id["dictation"]["model"] == "qwen/qwen-audio-3.1-asr-flash"
         assert by_id["dictation"]["language"] == "zh"
         # The recording job did not move.
-        assert by_id["recording"]["model"] != "qwen/qwen3-asr-flash"
+        assert by_id["recording"]["model"] != "qwen/qwen-audio-3.1-asr-flash"
 
         refused = client.put(
             "/api/settings/speech/roles",
@@ -103,7 +103,7 @@ def test_each_job_picks_its_own_model_and_live_setting(tmp_path: Path) -> None:
     saved_file = json.loads((tmp_path / "service-settings.json").read_text())
     assert saved_file["speechRoles"]["dictation"]["language"] == "zh"
     with TestClient(create_app(settings_for(tmp_path))) as client:
-        assert roles(client)["dictation"]["model"] == "qwen/qwen3-asr-flash"
+        assert roles(client)["dictation"]["model"] == "qwen/qwen-audio-3.1-asr-flash"
 
 
 def test_removing_a_provider_moves_its_jobs_to_another_model(tmp_path: Path) -> None:
@@ -168,7 +168,7 @@ def test_a_qwen_transcription_provider_without_a_key_uses_the_models_key(tmp_pat
         client.post(
             "/api/settings/speech/providers",
             headers=SIDECAR,
-            json={"kind": "qwen", "models": ["qwen3-asr-flash"]},
+            json={"kind": "qwen", "models": ["qwen-audio-3.1-asr-flash"]},
         )
         client.put(
             "/api/settings/speech/roles", headers=SIDECAR, json={"roles": {"dictation": QWEN_JOB}}
@@ -232,10 +232,10 @@ def test_testing_a_qwen_connection_checks_the_key_and_the_chosen_model(
         # The supplier's list is of chat models, with a recogniser or two among them.
         return CheckResult(True, "Connected, and the key works."), [
             "qwen-plus",
-            "qwen3-asr-flash",
-            "qwen3-asr-flash-2027-01-01",
-            "qwen3-asr-flash-filetrans",
-            "qwen3-asr-flash-realtime",
+            "qwen-audio-3.1-asr-flash",
+            "qwen-audio-3.1-asr-flash-2027-01-01",
+            "qwen-audio-3.1-asr-flash-filetrans",
+            "qwen-audio-3.1-asr-flash-realtime",
             "qwen3-tts-flash",
         ]
 

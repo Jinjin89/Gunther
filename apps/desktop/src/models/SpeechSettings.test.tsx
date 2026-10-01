@@ -19,7 +19,7 @@ const overview = (patch: Partial<SpeechOverview> = {}): SpeechOverview => ({
   fromEnvironment: false,
   providers: [
     { id: "sensevoice", name: "SenseVoice", kind: "sensevoice", baseUrl: "http://127.0.0.1:8765", keySet: false, keyHint: null, keySource: "saved", keyShared: false, keyOptional: true, note: "", models: [{ id: "sensevoice-small", ref: "sensevoice/sensevoice-small", label: "sensevoice-small" }], status: { state: "configured", summary: "1 model", check: null } },
-    { id: "qwen", name: "Qwen", kind: "qwen", baseUrl: "https://maas.qianwenaiapi.com/compatible-mode/v1", keySet: true, keyHint: "1234", keySource: "saved", keyShared: false, keyOptional: false, note: "", models: [{ id: "qwen3-asr-flash", ref: "qwen/qwen3-asr-flash", label: "qwen3-asr-flash" }], status: { state: "configured", summary: "1 model", check: null } },
+    { id: "qwen", name: "Qwen", kind: "qwen", baseUrl: "https://maas.qianwenaiapi.com", keySet: true, keyHint: "1234", keySource: "saved", keyShared: false, keyOptional: false, note: "", models: [{ id: "qwen-audio-3.1-asr-flash", ref: "qwen/qwen-audio-3.1-asr-flash", label: "qwen-audio-3.1-asr-flash" }], status: { state: "configured", summary: "1 model", check: null } },
   ],
   roles: [
     { id: "recording", label: "Recording", description: "Writes the words while you record.", model: "sensevoice/sensevoice-small", stream: true, language: "", problem: null },
@@ -46,7 +46,7 @@ describe("SpeechSettings", () => {
     api.saveSpeechRoles.mockResolvedValue(overview());
     render(<SpeechSettings onNotify={() => undefined} />);
     const select = await screen.findByLabelText("Ask dictation", { selector: "select" });
-    await userEvent.selectOptions(select, "qwen/qwen3-asr-flash");
-    expect(api.saveSpeechRoles).toHaveBeenCalledWith({ dictation: { model: "qwen/qwen3-asr-flash", stream: false, language: "" } });
+    await userEvent.selectOptions(select, "qwen/qwen-audio-3.1-asr-flash");
+    expect(api.saveSpeechRoles).toHaveBeenCalledWith({ dictation: { model: "qwen/qwen-audio-3.1-asr-flash", stream: false, language: "" } });
   });
 });

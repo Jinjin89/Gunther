@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from gunther import speech_registry
 from gunther.device_auth import AuthPrincipal
-from gunther.realtime import sensevoice_health
+from gunther.realtime import qwen_root, sensevoice_health
 from gunther.schemas import ApiModel
 from gunther.service_settings import ServiceSettingsStore, list_models, secret_hint
 from gunther.speech_registry import PRESETS, ROLES, Registry, SpeechError
@@ -281,8 +281,14 @@ async def _test(provider: dict[str, Any], api_key: str | None) -> dict[str, Any]
             "warning": None,
         }
     preset = PRESETS[provider["kind"]]
+    # Qwen lists a key's models on its OpenAI-compatible address, apart from where it transcribes.
+    address = (
+        f"{qwen_root(provider['baseUrl'])}/compatible-mode/v1"
+        if provider["kind"] == "qwen"
+        else provider["baseUrl"]
+    )
     result, listed = await list_models(
-        provider["baseUrl"], api_key, provider["name"], key_optional=preset.key_optional
+        address, api_key, provider["name"], key_optional=preset.key_optional
     )
     chosen = [model["id"] for model in provider["models"]]
     missing = [model for model in chosen if listed and model not in listed]
