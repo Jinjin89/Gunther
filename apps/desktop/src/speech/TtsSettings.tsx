@@ -1,5 +1,5 @@
 import type { TtsOption, TtsOverview, TtsPreset, TtsProvider, TtsRole, TtsRoleInput, TtsSampleInput } from "@gunther/contracts";
-import { ChevronRight, CircleAlert, Loader2, Play, Plus, RefreshCw, Trash2, Volume2, X } from "lucide-react";
+import { ChevronRight, CircleAlert, Loader2, Play, Plus, Trash2, Volume2, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { knowledgeApi } from "../api";
 import { KeyField, StatusBadge } from "../models/SpeechSettings";
@@ -92,9 +92,8 @@ const draftOf = (provider: TtsProvider): ProviderDraft => ({
   models: provider.models.map((model) => ({ id: model.id, label: model.label })),
 });
 
-function ProviderEditor({ provider, preset, onOverview, onRemoved, onNotify, onChecked }: {
+function ProviderEditor({ provider, onOverview, onRemoved, onNotify, onChecked }: {
   provider: TtsProvider;
-  preset: TtsPreset | undefined;
   onOverview: (next: TtsOverview) => void;
   onRemoved: () => void;
   onNotify: (message: string) => void;
@@ -106,9 +105,7 @@ function ProviderEditor({ provider, preset, onOverview, onRemoved, onNotify, onC
   const [draft, setDraft] = useState<ProviderDraft>(initial);
   const [newModel, setNewModel] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"saving" | "sample" | "removing" | "fetching" | null>(null);
-  /** What Fetch models found: the voices the supplier offers this key, or why not. */
-  const [fetched, setFetched] = useState<{ ok: boolean; message: string; offered: string[] } | null>(null);
+  const [busy, setBusy] = useState<"saving" | "sample" | "removing" | null>(null);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const changed = JSON.stringify(draft) !== JSON.stringify(initial);
@@ -123,19 +120,6 @@ function ProviderEditor({ provider, preset, onOverview, onRemoved, onNotify, onC
     if (!clean || /\s/.test(clean) || draft.models.some((model) => model.id === clean)) return;
     edit({ models: [...draft.models, { id: clean, label: "" }] });
     setNewModel("");
-  };
-
-  const fetchModels = async () => {
-    setBusy("fetching");
-    setError(null);
-    try {
-      const found = await knowledgeApi.fetchTtsModels(provider.id, { baseUrl: draft.baseUrl.trim(), ...(draft.apiKey ? { apiKey: draft.apiKey } : {}) });
-      if (mounted.current) setFetched(found);
-    } catch (reason) {
-      if (mounted.current) setFetched({ ok: false, message: message(reason, "The models could not be fetched."), offered: [] });
-    } finally {
-      if (mounted.current) setBusy(null);
-    }
   };
 
   const hear = async () => {
@@ -185,9 +169,6 @@ function ProviderEditor({ provider, preset, onOverview, onRemoved, onNotify, onC
     }
   };
 
-  // What the supplier offers this key once fetched; before that, the models Gunther knows.
-  const suggested = fetched?.ok && fetched.offered.length > 0 ? fetched.offered : preset?.models ?? [];
-  const offered = suggested.filter((id) => !draft.models.some((model) => model.id === id));
   return <form className="service-editor" noValidate onSubmit={(event) => { event.preventDefault(); void save(); }}>
     {provider.note && <p className="service-editor-lead">{provider.note}</p>}
     <div className="service-fields">
@@ -218,17 +199,12 @@ function ProviderEditor({ provider, preset, onOverview, onRemoved, onNotify, onC
               <code title={model.id}>{model.id}</code>
               <button type="button" className="gx-icon-button" aria-label={`Remove ${model.id}`} title="Remove" onClick={() => edit({ models: draft.models.filter((item) => item.id !== model.id) })}><X size={13} /></button>
             </div>)}
-            {draft.models.length === 0 && <p className="provider-models-empty">No models yet. Add one of the supplier's, or type a model's id.</p>}
+            {draft.models.length === 0 && <p className="provider-models-empty">No models yet. Type the id of a model your supplier offers.</p>}
           </div>
           <div className="provider-model-add">
-            <input type="text" className="is-mono" value={newModel} placeholder="Model id, e.g. qwen3-tts-flash" spellCheck={false} aria-label="Model id to add" onChange={(event) => setNewModel(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addModel(newModel); } }} />
+            <input type="text" className="is-mono" value={newModel} placeholder="Model id, e.g. qwen-audio-3.1-tts-flash" spellCheck={false} aria-label="Model id to add" onChange={(event) => setNewModel(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addModel(newModel); } }} />
             <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={!newModel.trim()} onClick={() => addModel(newModel)}><Plus size={13} />Add</button>
-            <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={busy !== null || Boolean(urlProblem)} onClick={() => void fetchModels()}>{busy === "fetching" ? <Loader2 size={13} className="is-spinning" /> : <RefreshCw size={13} />}Fetch models</button>
           </div>
-          {fetched && <small className={fetched.ok ? "provider-fetched" : "provider-fetched is-problem"} role="status">{fetched.message}</small>}
-          {offered.length > 0 && <div className="provider-offered" aria-label="Models this supplier offers">
-            {offered.map((id) => <button type="button" key={id} className="gx-chip" onClick={() => addModel(id)}><Plus size={12} /><span>{id}</span></button>)}
-          </div>}
         </div>
       </div>
     </div>
@@ -328,7 +304,7 @@ export function TtsSettings({ onNotify }: { onNotify: (message: string) => void 
               <ChevronRight size={15} className="service-chevron" aria-hidden="true" />
             </button>
             {expanded && <div id={panelId} className="service-panel">
-              <ProviderEditor key={provider.id} provider={provider} preset={overview.presets.find((preset) => preset.kind === provider.kind)} onOverview={setOverview} onRemoved={() => setOpen(null)} onNotify={onNotify} onChecked={refresh} />
+              <ProviderEditor key={provider.id} provider={provider} onOverview={setOverview} onRemoved={() => setOpen(null)} onNotify={onNotify} onChecked={refresh} />
             </div>}
           </li>;
         })}

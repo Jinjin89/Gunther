@@ -273,27 +273,23 @@ async def _test(provider: dict[str, Any], api_key: str | None) -> dict[str, Any]
                 "ok": False,
                 "message": f"SenseVoice is not answering at {provider['baseUrl']}. Is it running?",
                 "warning": None,
-                "available": [],
             }
         model = str(status.get("model", "sensevoice-small"))
         return {
             "ok": True,
             "message": f"SenseVoice is running ({model}).",
             "warning": None,
-            "available": [model],
         }
     preset = PRESETS[provider["kind"]]
     result, listed = await list_models(
         provider["baseUrl"], api_key, provider["name"], key_optional=preset.key_optional
     )
-    # Only what the supplier's own list names: nothing is added from this side.
-    available = listed
     chosen = [model["id"] for model in provider["models"]]
-    missing = [model for model in chosen if available and model not in available]
+    missing = [model for model in chosen if listed and model not in listed]
     warning = result.warning
     if result.ok and missing:
         warning = f"{', '.join(missing)} is not in this account's model list."
-    return {"ok": result.ok, "message": result.message, "warning": warning, "available": available}
+    return {"ok": result.ok, "message": result.message, "warning": warning}
 
 
 @router.post("/settings/speech/providers/{provider_id}/test")

@@ -18,7 +18,6 @@ const api = vi.hoisted(() => ({
   ttsSample: vi.fn(),
   clearTtsCache: vi.fn(),
   speechScript: vi.fn(),
-  fetchTtsModels: vi.fn(),
 }));
 vi.mock("../api", () => ({ knowledgeApi: api }));
 
@@ -35,9 +34,8 @@ class FakeAudio {
 
 const message = { id: "m1", sessionId: "s1" };
 const QWEN_OPTIONS = [
-  { key: "voice", label: "Voice", default: "Cherry", allowCustom: true, help: "", choices: [{ value: "Cherry", label: "Cherry" }, { value: "Ethan", label: "Ethan" }] },
-  { key: "language", label: "Language", default: "Auto", allowCustom: false, help: "", choices: [{ value: "Auto", label: "Detect it" }, { value: "English", label: "English" }] },
-];
+  { key: "voice", label: "Voice", default: "longanhuan_v3.6", allowCustom: true, help: "", choices: [{ value: "longanhuan_v3.6", label: "longanhuan_v3.6" }, { value: "Ethan", label: "Ethan" }] },
+  ];
 const overview = (patch: Partial<TtsOverview> = {}, job: Partial<TtsOverview["roles"][number]> = {}): TtsOverview => ({
   persisted: true,
   autoRead: false,
@@ -45,11 +43,11 @@ const overview = (patch: Partial<TtsOverview> = {}, job: Partial<TtsOverview["ro
   cache: { clips: 2, bytes: 3 * 1024 * 1024 },
   providers: [{
     id: "qwen", name: "Qwen", kind: "qwen", baseUrl: "https://maas.qianwenaiapi.com", keySet: true, keyHint: "1234", keyShared: false, keyOptional: false, readsStructure: false, note: "",
-    models: [{ id: "qwen3-tts-flash", ref: "qwen/qwen3-tts-flash", label: "qwen3-tts-flash" }],
+    models: [{ id: "qwen-audio-3.1-tts-flash", ref: "qwen/qwen-audio-3.1-tts-flash", label: "qwen-audio-3.1-tts-flash" }],
     status: { state: "configured", summary: "1 model", check: null },
   }],
-  roles: [{ id: "answers", label: "Answers", description: "Speaks an answer.", model: "qwen/qwen3-tts-flash", kind: "qwen", options: { voice: "Cherry", language: "Auto" }, autoRead: false, problem: null, ...job }],
-  presets: [{ kind: "qwen", name: "Qwen", baseUrl: "https://maas.qianwenaiapi.com", models: ["qwen3-tts-flash"], keyOptional: false, readsStructure: false, note: "", options: QWEN_OPTIONS }],
+  roles: [{ id: "answers", label: "Answers", description: "Speaks an answer.", model: "qwen/qwen-audio-3.1-tts-flash", kind: "qwen", options: { voice: "longanhuan_v3.6" }, autoRead: false, problem: null, ...job }],
+  presets: [{ kind: "qwen", name: "Qwen", baseUrl: "https://maas.qianwenaiapi.com", models: ["qwen-audio-3.1-tts-flash"], keyOptional: false, readsStructure: false, note: "", options: QWEN_OPTIONS }],
   ...patch,
 });
 
@@ -155,13 +153,13 @@ describe("TtsSettings", () => {
 
   it("chooses the voice on the Answers job and hears it", async () => {
     const user = userEvent.setup();
-    api.saveTtsRoles.mockResolvedValue(overview({}, { options: { voice: "Ethan", language: "Auto" } }));
+    api.saveTtsRoles.mockResolvedValue(overview({}, { options: { voice: "Ethan" } }));
     api.ttsSample.mockResolvedValue(new Blob(["x"]));
     render(<TtsSettings onNotify={() => undefined} />);
     await user.selectOptions(await screen.findByLabelText("Voice"), "Ethan");
-    expect(api.saveTtsRoles).toHaveBeenCalledWith({ answers: { options: { voice: "Ethan", language: "Auto" } } });
+    expect(api.saveTtsRoles).toHaveBeenCalledWith({ answers: { options: { voice: "Ethan" } } });
     await user.click(screen.getByRole("button", { name: "Hear" }));
-    expect(api.ttsSample).toHaveBeenCalledWith({ options: { voice: "Ethan", language: "Auto" } });
+    expect(api.ttsSample).toHaveBeenCalledWith({ options: { voice: "Ethan" } });
   });
 
   it("turns reading off by choosing Off, and automatic reading on", async () => {
@@ -186,26 +184,13 @@ describe("TtsSettings", () => {
     await user.click(screen.getByRole("button", { name: "Replace" }));
     await user.type(screen.getByPlaceholderText("Paste your key"), "sk-new-5678");
     await user.click(screen.getByRole("button", { name: /hear a sample/i }));
-    expect(api.ttsSample).toHaveBeenCalledWith({ providerId: "qwen", baseUrl: "https://maas.qianwenaiapi.com", apiKey: "sk-new-5678", model: "qwen3-tts-flash" });
+    expect(api.ttsSample).toHaveBeenCalledWith({ providerId: "qwen", baseUrl: "https://maas.qianwenaiapi.com", apiKey: "sk-new-5678", model: "qwen-audio-3.1-tts-flash" });
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(api.updateTtsProvider).toHaveBeenCalledWith("qwen", expect.objectContaining({ apiKey: "sk-new-5678" }));
     await user.click(screen.getByRole("button", { name: /Add provider/ }));
     await user.click(screen.getByRole("button", { name: "Qwen" }));
     expect(api.addTtsProvider).toHaveBeenCalledWith({ kind: "qwen" });
     expect(await screen.findByText("Qwen 2")).toBeTruthy();
-  });
-
-  it("fetches the voice models the key can use and adds one", async () => {
-    const user = userEvent.setup();
-    api.fetchTtsModels.mockResolvedValue({ ok: true, message: "2 voice models offered.", offered: ["qwen3-tts-flash", "qwen3-tts-instruct-flash"] });
-    render(<TtsSettings onNotify={() => undefined} />);
-    await user.click(await screen.findByRole("button", { name: /Qwen\s+1 model/ }));
-    await user.click(screen.getByRole("button", { name: /Fetch models/ }));
-    expect(api.fetchTtsModels).toHaveBeenCalledWith("qwen", { baseUrl: "https://maas.qianwenaiapi.com" });
-    expect(await screen.findByText("2 voice models offered.")).toBeTruthy();
-    // The one already added is not offered again.
-    await user.click(screen.getByRole("button", { name: "qwen3-tts-instruct-flash" }));
-    expect(screen.getByRole("button", { name: "Remove qwen3-tts-instruct-flash" })).toBeTruthy();
   });
 
   it("clears the saved recordings and says tables are described first", async () => {

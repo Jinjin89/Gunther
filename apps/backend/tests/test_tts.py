@@ -91,14 +91,14 @@ def answer(client: TestClient, content: str) -> tuple[str, str]:
     return session_id, message_id
 
 
-QWEN_TTS = "qwen/qwen3-tts-flash"
+QWEN_TTS = "qwen/qwen-audio-3.1-tts-flash"
 
 
 def setup(client: TestClient, voice: str | None = None, auto_read: bool = False) -> dict:
     """Qwen with a key, and the Answers job on its voice model."""
 
     response = client.put(
-        "/api/settings/tts/providers/qwen", headers=SIDECAR, json={"apiKey": KEY, "models": ["qwen3-tts-flash"]}
+        "/api/settings/tts/providers/qwen", headers=SIDECAR, json={"apiKey": KEY, "models": ["qwen-audio-3.1-tts-flash"]}
     )
     assert response.status_code == 200, response.text
     return choose(client, voice=voice, auto_read=auto_read)
@@ -131,11 +131,11 @@ def test_it_starts_off_with_qwen_offered(tmp_path: Path) -> None:
     assert answers_job(found)["model"] is None
     [qwen] = found["providers"]
     assert qwen["kind"] == "qwen" and qwen["status"]["summary"] == "Needs an API key."
-    # No model is built in: the list comes from Fetch models, or is typed.
+    # No model is built in: models are typed by id.
     assert qwen["models"] == []
     [preset] = found["presets"]
     voice = next(option for option in preset["options"] if option["key"] == "voice")
-    assert voice["default"] == "Cherry" and voice["allowCustom"] is True
+    assert voice["default"] == "longanhuan_v3.6" and voice["allowCustom"] is True
 
 
 def test_saved_key_is_never_sent_back_and_the_voice_is_kept(tmp_path: Path) -> None:
@@ -146,7 +146,7 @@ def test_saved_key_is_never_sent_back_and_the_voice_is_kept(tmp_path: Path) -> N
         assert found["autoRead"] is True and found["problem"] is None
         assert qwen["keySet"] and qwen["keyHint"] == "1234" and KEY not in str(found)
         assert job["model"] == QWEN_TTS and job["kind"] == "qwen"
-        assert job["options"] == {"voice": "Ethan", "language": "Auto"}
+        assert job["options"] == {"voice": "Ethan"}
     # A restart reads it back from the file.
     with app_for(tmp_path) as client:
         again = client.get("/api/settings/tts", headers=SIDECAR).json()
@@ -161,7 +161,7 @@ def test_settings_saved_before_providers_are_carried_over(tmp_path: Path) -> Non
             "qwen": {
                 "apiKey": KEY,
                 "baseUrl": "https://dashscope-intl.aliyuncs.com",
-                "model": "qwen3-tts-flash",
+                "model": "qwen-audio-3.1-tts-flash",
                 "options": {"voice": "Kai", "language": "Chinese"},
             }
         },
@@ -172,7 +172,7 @@ def test_settings_saved_before_providers_are_carried_over(tmp_path: Path) -> Non
     [qwen] = found["providers"]
     assert qwen["baseUrl"] == "https://dashscope-intl.aliyuncs.com" and qwen["keySet"]
     job = answers_job(found)
-    assert job["model"] == QWEN_TTS and job["options"] == {"voice": "Kai", "language": "Chinese"}
+    assert job["model"] == QWEN_TTS and job["options"] == {"voice": "Kai"}
     assert found["autoRead"] is True and found["problem"] is None
 
 
@@ -187,7 +187,7 @@ def test_a_key_saved_for_qwen_models_is_shared(tmp_path: Path) -> None:
         client.put(
             "/api/settings/tts/providers/qwen",
             headers=SIDECAR,
-            json={"models": ["qwen3-tts-flash"]},
+            json={"models": ["qwen-audio-3.1-tts-flash"]},
         )
         found = choose(client)
         [qwen] = found["providers"]
@@ -205,7 +205,7 @@ def test_providers_are_added_edited_and_removed_like_transcription(tmp_path: Pat
             json={
                 "kind": "qwen",
                 "baseUrl": "https://dashscope-intl.aliyuncs.com",
-                "models": ["qwen3-tts-flash"],
+                "models": ["qwen-audio-3.1-tts-flash"],
             },
         )
         assert added.status_code == 201
@@ -224,7 +224,7 @@ def test_providers_are_added_edited_and_removed_like_transcription(tmp_path: Pat
         # Removing the provider in use moves the job to the one left, keeping its voice.
         moved = client.delete("/api/settings/tts/providers/qwen", headers=SIDECAR).json()
         job = answers_job(moved)
-        assert job["model"] == f"{second['id']}/qwen3-tts-flash"
+        assert job["model"] == f"{second['id']}/qwen-audio-3.1-tts-flash"
         assert job["options"]["voice"] == "Ethan" and moved["problem"] is None
         # Removing the last one turns reading off rather than failing.
         off = client.delete(f"/api/settings/tts/providers/{second['id']}", headers=SIDECAR)
@@ -251,15 +251,10 @@ def test_bad_settings_are_refused(tmp_path: Path) -> None:
             client.put(
                 "/api/settings/tts/roles",
                 headers=SIDECAR,
-                json={"roles": {"answers": {"options": {"language": "Klingon"}}}},
-            ),
-            client.put(
-                "/api/settings/tts/roles",
-                headers=SIDECAR,
                 json={"roles": {"summaries": {"model": QWEN_TTS}}},
             ),
         ]
-        assert [response.status_code for response in refused] == [422] * 6
+        assert [response.status_code for response in refused] == [422] * 5
         missing = client.put("/api/settings/tts/providers/nope", headers=SIDECAR, json={})
         assert missing.status_code == 404
 
@@ -396,8 +391,8 @@ def test_a_sample_can_be_heard_before_saving(tmp_path: Path, spoken) -> None:
         )
         saved = client.get("/api/settings/tts", headers=SIDECAR).json()
     assert sample.status_code == 200 and spoken[0][0]["voice"] == "Kai"
-    assert edited.status_code == 200 and spoken[1][0]["voice"] == "Cherry"
-    assert answers_job(saved)["options"]["voice"] == "Cherry"
+    assert edited.status_code == 200 and spoken[1][0]["voice"] == "longanhuan_v3.6"
+    assert answers_job(saved)["options"]["voice"] == "longanhuan_v3.6"
     assert saved["providers"][0]["keyHint"] == "1234"
 
 
@@ -528,71 +523,39 @@ def test_a_long_answer_is_handed_over_in_parts_and_kept_whole(tmp_path: Path, sp
         assert client.get("/api/settings/tts", headers=SIDECAR).json()["cache"]["clips"] == 1
 
 
-def test_fetch_models_offers_the_voices_the_key_can_use(tmp_path: Path, monkeypatch) -> None:
-    from gunther import tts_api
-    from gunther.service_settings import CheckResult
+def test_qwen_speaks_through_the_synthesizer_address_with_the_documented_body(
+    monkeypatch,
+) -> None:
+    import asyncio
 
-    asked: list[tuple[str, str | None]] = []
+    import httpx
 
-    async def listed(url, key, name, *, key_optional=False):
-        asked.append((url, key))
-        return CheckResult(True, "Connected"), [
-            "qwen-plus",
-            "qwen3-tts-flash",
-            "qwen3-tts-flash-realtime",
-            "qwen3-tts-instruct-flash",
-        ]
+    seen: list[httpx.Request] = []
 
-    monkeypatch.setattr(tts_api, "list_models", listed)
-    with app_for(tmp_path) as client:
-        setup(client)
-        fetched = client.post(
-            "/api/settings/tts/providers/qwen/models",
-            headers=SIDECAR,
-            json={"apiKey": "sk-unsaved-9999"},
-        ).json()
-        missing = client.post("/api/settings/tts/providers/nobody/models", headers=SIDECAR, json={})
-    # Exactly what the list names, text models included; nothing filtered or added.
-    assert fetched["ok"] is True
-    assert fetched["offered"] == [
-        "qwen-plus",
-        "qwen3-tts-flash",
-        "qwen3-tts-flash-realtime",
-        "qwen3-tts-instruct-flash",
-    ]
-    assert fetched["message"] == "Key works. 4 models listed."
-    # DashScope lists models on its compatible address, asked with the unsaved key.
-    assert asked == [("https://maas.qianwenaiapi.com/compatible-mode/v1", "sk-unsaved-9999")]
-    assert missing.status_code == 404
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.method == "POST":
+            return httpx.Response(200, json={"output": {"audio": {"url": "https://audio.example/a.wav"}}})
+        return httpx.Response(200, content=b"RIFF-wav")
 
-
-def test_fetch_models_says_when_the_key_is_refused(tmp_path: Path, monkeypatch) -> None:
-    from gunther import tts_api
-    from gunther.service_settings import CheckResult
-
-    async def refused(url, key, name, *, key_optional=False):
-        return CheckResult(False, "Qwen did not accept this API key."), []
-
-    monkeypatch.setattr(tts_api, "list_models", refused)
-    with app_for(tmp_path) as client:
-        setup(client)
-        fetched = client.post(
-            "/api/settings/tts/providers/qwen/models", headers=SIDECAR, json={}
-        ).json()
-    assert fetched == {"ok": False, "message": "Qwen did not accept this API key.", "offered": []}
-
-
-def test_fetch_models_gives_nothing_when_the_list_is_empty(tmp_path: Path, monkeypatch) -> None:
-    from gunther import tts_api
-    from gunther.service_settings import CheckResult
-
-    async def empty(url, key, name, *, key_optional=False):
-        return CheckResult(True, "Connected"), []
-
-    monkeypatch.setattr(tts_api, "list_models", empty)
-    with app_for(tmp_path) as client:
-        setup(client)
-        fetched = client.post(
-            "/api/settings/tts/providers/qwen/models", headers=SIDECAR, json={}
-        ).json()
-    assert fetched["offered"] == [] and "Type the model's id" in fetched["message"]
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        tts_providers.httpx,
+        "AsyncClient",
+        lambda **kwargs: real(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    config = tts_providers.ProviderConfig(
+        base_url="https://maas.qianwenaiapi.com/compatible-mode/v1",
+        api_key=KEY,
+        model="qwen-audio-3.1-tts-flash",
+        options={"voice": "longanhuan_v3.6"},
+    )
+    audio = asyncio.run(tts_providers._qwen_synthesize(config, "你好"))
+    assert audio == b"RIFF-wav"
+    post = seen[0]
+    assert str(post.url) == "https://maas.qianwenaiapi.com/api/v1/services/audio/tts/SpeechSynthesizer"
+    assert post.headers["authorization"] == f"Bearer {KEY}"
+    assert json.loads(post.content) == {
+        "model": "qwen-audio-3.1-tts-flash",
+        "input": {"text": "你好", "voice": "longanhuan_v3.6", "format": "wav", "sample_rate": 24000},
+    }

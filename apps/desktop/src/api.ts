@@ -652,9 +652,6 @@ export const knowledgeApi = {
   developerJobs: () => request<{ jobs: BackgroundJob[] }>("/developer/jobs").then((body) => body.jobs),
   /** A short line spoken with the settings on screen, saved or not. */
   ttsSample: (payload: TtsSampleInput) => requestBlob("/settings/tts/sample", { method: "POST", body: JSON.stringify(payload) }),
-  /** The voice models the supplier offers this key (the unsaved address and key when given). */
-  fetchTtsModels: (id: string, payload: { baseUrl?: string; apiKey?: string }) =>
-    request<{ ok: boolean; message: string; offered: string[] }>(`/settings/tts/providers/${encodeURIComponent(id)}/models`, { method: "POST", body: JSON.stringify(payload) }),
   /** Make (or find) the audio of an answer. */
   speakMessage: (sessionId: string, messageId: string) =>
     request<SpeechClip>(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/speech`, { method: "POST" }),

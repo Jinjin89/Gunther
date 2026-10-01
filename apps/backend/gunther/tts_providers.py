@@ -73,8 +73,6 @@ class TtsProvider:
     reads_structure: bool = False
     note: str = ""
     sample: dict[str, str] = field(default_factory=dict)
-    # Where an OpenAI-style list of the key's models lives, for Fetch models; None: none.
-    models_url: Callable[[str], str] | None = None
 
     def defaults(self) -> dict[str, str]:
         return {option.key: option.default for option in self.options}
@@ -82,54 +80,33 @@ class TtsProvider:
 
 # Qwen ---------------------------------------------------------------------------
 
+# Voices of the Qwen-Audio models (the platform's "Qwen-Audio-TTS" voice list). Others, such as
+# cloned or designed voices, are typed by their id.
 QWEN_VOICES = (
-    ("Cherry", "Cherry · warm, female"),
-    ("Serena", "Serena · gentle, female"),
-    ("Chelsie", "Chelsie · soft, female"),
-    ("Momo", "Momo · playful, female"),
-    ("Vivian", "Vivian · crisp, female"),
-    ("Maia", "Maia · calm, female"),
-    ("Bella", "Bella · bright, female"),
-    ("Ethan", "Ethan · steady, male"),
-    ("Kai", "Kai · relaxed, male"),
-    ("Aiden", "Aiden · young, male"),
-    ("Ryan", "Ryan · dramatic, male"),
-    ("Eldric Sage", "Eldric Sage · elder, male"),
-    ("Neil", "Neil · newsreader, male"),
-    ("Dylan", "Dylan · Beijing accent"),
-    ("Jada", "Jada · Shanghai accent"),
-    ("Sunny", "Sunny · Sichuan accent"),
-    ("Rocky", "Rocky · Cantonese"),
+    ("longanhuan_v3.6", "龙安欢 · female"),
+    ("longanfengyue", "龙安风悦 · natural, female"),
+    ("longanyuanfei", "龙安元妃 · imperial, female"),
+    ("longanlingxi", "龙安灵希 · cute, female"),
+    ("longanxiaoxin", "龙安小昕 · lively, female"),
+    ("longanlingxin", "龙安灵心 · warm, female"),
+    ("longanlufeng", "龙安鲁风 · bright, male"),
+    ("longchuanshu_v3.6", "龙川叔 · Sichuan uncle, male"),
+    ("longjielidou_v3.6", "龙杰力豆 · boy"),
+    ("longpaopao_v3.6", "龙泡泡 · girl"),
+    ("longhuohuo_v3.6", "龙火火 · boy"),
+    ("loongmary", "loongmary · British, female"),
+    ("loongeva_v3.6", "loongeva · English, female"),
+    ("loongjohn", "loongJohn · American, male"),
 )
-QWEN_LANGUAGES = (
-    "Auto",
-    "Chinese",
-    "English",
-    "Japanese",
-    "Korean",
-    "French",
-    "German",
-    "Spanish",
-    "Italian",
-    "Portuguese",
-    "Russian",
-)
+QWEN_DEFAULT_VOICE = QWEN_VOICES[0][0]
 
 
 def _qwen_endpoint(base_url: str) -> str:
-    """DashScope's speech address. The saved address may be the compatible-mode one."""
+    """The speech address. The saved address may be the compatible-mode one."""
 
     root = base_url.rstrip("/")
     root = root.removesuffix("/compatible-mode/v1").removesuffix("/api/v1")
-    return f"{root}/api/v1/services/aigc/multimodal-generation/generation"
-
-
-def _qwen_models_url(base_url: str) -> str:
-    """DashScope lists a key's models on its OpenAI-compatible address."""
-
-    root = base_url.rstrip("/")
-    root = root.removesuffix("/compatible-mode/v1").removesuffix("/api/v1")
-    return f"{root}/compatible-mode/v1"
+    return f"{root}/api/v1/services/audio/tts/SpeechSynthesizer"
 
 
 async def _qwen_synthesize(config: ProviderConfig, text: str) -> bytes:
@@ -137,8 +114,9 @@ async def _qwen_synthesize(config: ProviderConfig, text: str) -> bytes:
         "model": config.model,
         "input": {
             "text": text,
-            "voice": config.options.get("voice") or "Cherry",
-            "language_type": config.options.get("language") or "Auto",
+            "voice": config.options.get("voice") or QWEN_DEFAULT_VOICE,
+            "format": "wav",
+            "sample_rate": 24000,
         },
     }
     try:
@@ -185,25 +163,14 @@ PROVIDERS: dict[str, TtsProvider] = {
             TtsOption(
                 "voice",
                 "Voice",
-                "Cherry",
+                QWEN_DEFAULT_VOICE,
                 tuple(Choice(value, label) for value, label in QWEN_VOICES),
                 allow_custom=True,
-                help="Each voice speaks every language; some carry a regional accent.",
-            ),
-            TtsOption(
-                "language",
-                "Language",
-                "Auto",
-                tuple(
-                    Choice(value, "Detect it" if value == "Auto" else value)
-                    for value in QWEN_LANGUAGES
-                ),
-                help="Auto follows the text, and suits answers that mix Chinese and English.",
+                help="Each voice speaks Chinese and English. Type the id of a cloned or designed voice.",
             ),
         ),
         synthesize=_qwen_synthesize,
         max_chars=500,
-        models_url=_qwen_models_url,
         note=(
             "The address is the one the Qwen AI platform shows. "
             "The key is the same as Qwen's other services."

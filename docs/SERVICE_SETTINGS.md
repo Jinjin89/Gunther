@@ -16,13 +16,11 @@ Set up like Models: **providers** first, then **jobs** that pick a model.
 **Providers** are SenseVoice (private, on this computer or your network), Qwen
 (Qwen3-ASR on Alibaba Cloud), OpenAI, or any server with an OpenAI-style
 `/audio/transcriptions` (Groq, a Whisper you host). Each has an address, a key
-(SenseVoice needs none) and its models; **Fetch models** lists what it offers.
-Fetch models returns exactly what the supplier's own list names (`GET <address>/models`): Gunther
-keeps no built-in model lists and adds or hides nothing. If the supplier returns no list, it says
-so and the model's id is typed. Qwen's address is the Qwen AI platform's
-`https://maas.qianwenaiapi.com/compatible-mode/v1`; only Qwen3-ASR-Flash answers on its
-`chat/completions`, which Gunther uses, so `-filetrans` and real-time recognisers may be listed
-but need other addresses.
+(SenseVoice needs none) and its models, typed by id (nothing is built in).
+Qwen's address is the Qwen AI platform's `https://maas.qianwenaiapi.com/compatible-mode/v1`; only
+Qwen3-ASR-Flash answers on its `chat/completions`, which Gunther uses, so `-filetrans` and
+real-time recognisers need other addresses and will not work here. **Test connection** checks the
+address and key.
 
 **Jobs** pick one model each and a language. Recording writes the words in short segments as you
 speak; Ask dictation sends the whole take when you stop (cut only past about two and a half

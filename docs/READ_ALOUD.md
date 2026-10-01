@@ -38,19 +38,19 @@ message text → **narrator** (`tts_narration.py`) → pieces ≤ the supplier's
 Laid out like Transcription. **Providers** are connections you add (a supplier, its address, a key,
 the models chosen from it); two of one kind are fine, e.g. Beijing and international Qwen accounts.
 **Used for** lists the jobs; *Answers* (Listen and automatic reading) picks a model, or Off, and the
-voice options of that model's supplier. **Fetch models** checks the key against the supplier's
-model list (DashScope's `compatible-mode/v1/models`, unsaved address and key included) and offers
-every model whose name contains `tts`, then the voice models Qwen documents for that address's
-region that the list leaves out (Beijing adds the first-generation `qwen-tts`). DashScope has no
-OpenAI-style `/audio/speech`: speech goes to `api/v1/services/aigc/multimodal-generation/generation`
-as its documentation says, so real-time voices (a WebSocket) are offered but will not speak here. Settings saved before this shape (one entry per supplier and
+voice options of that model's supplier. Models are typed by id; there is no Fetch models, and no
+model is built in. Qwen speaks through the platform's Qwen-Audio address,
+`POST <address>/api/v1/services/audio/tts/SpeechSynthesizer` with `{model, input: {text, voice,
+format: "wav", sample_rate: 24000}}`, and takes the WAV from the `output.audio.url` it answers
+with. That fits the Qwen-Audio models (`qwen-audio-3.x-tts-*`); the older `qwen3-tts-*` models
+answer on a different address and are not used here, nor are real-time voices (a WebSocket).
+Settings saved before this shape (one entry per supplier and
 an `active` one) are converted when read (`tts_service.upgrade_config`).
 
 ## Adding a supplier
 
 Add a `TtsProvider` to `PROVIDERS` in `tts_providers.py`: models, its own `options` (voice, tone…;
 the Settings form draws them), `max_chars`, and an async `synthesize(config, text) -> wav bytes`;
-for Fetch models, `models_url` (an OpenAI-style list, shown as it comes: no filter, no built-in models).
 No UI or API change is needed. Keys live in `service-settings.json` (0600) and are never sent back;
 an unset Qwen key falls back to the key saved for Qwen models or transcription, and a new Qwen
 provider starts in that key's region.
@@ -59,5 +59,5 @@ provider starts in that key's region.
 
 `GET /settings/tts` · `POST|PUT|DELETE /settings/tts/providers[/{id}]` · `PUT /settings/tts/roles`
 · `POST /settings/tts/sample` (a provider being edited, or the Answers job)
-· `POST /settings/tts/providers/{id}/models` (Fetch models) · `DELETE /settings/tts/cache`
+· `DELETE /settings/tts/cache`
 · `POST /sessions/{sid}/messages/{mid}/speech` → clip · `GET /speech/clips/{id}/audio|script`

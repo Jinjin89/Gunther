@@ -14,7 +14,7 @@ from fastapi.responses import Response
 from gunther import tts_providers
 from gunther.device_auth import AuthPrincipal
 from gunther.schemas import ApiModel
-from gunther.service_settings import ServiceSettingsStore, list_models, secret_hint
+from gunther.service_settings import ServiceSettingsStore, secret_hint
 from gunther.tts_providers import PROVIDERS, TtsError, repair_wav
 from gunther.tts_service import (
     ROLES,
@@ -49,13 +49,6 @@ class ProviderIn(ApiModel):
 
 class RolesIn(ApiModel):
     roles: dict[str, dict[str, Any]]
-
-
-class ModelsIn(ApiModel):
-    """A provider's unsaved address and key, when asked before saving."""
-
-    base_url: str | None = None
-    api_key: str | None = None
 
 
 class SampleIn(ApiModel):
@@ -356,51 +349,6 @@ def save_roles(payload: RolesIn, request: Request) -> dict[str, Any]:
     # Saving a job also keeps the providers it was chosen from.
     _save(request, providers, roles)
     return overview(request)
-
-
-@router.post("/settings/tts/providers/{provider_id}/models")
-async def fetch_models(provider_id: str, payload: ModelsIn, request: Request) -> dict[str, Any]:
-    """The voice models the supplier offers this key, for choosing one in Settings."""
-
-    _owner_only(request)
-    registries = _registries(request)
-    providers = providers_in_use(_config(request), *registries)
-    provider = next((p for p in providers if p["id"] == provider_id), None)
-    if provider is None:
-        raise HTTPException(404, "There is no such provider")
-    draft = {**provider}
-    if payload.base_url:
-        draft["baseUrl"] = payload.base_url
-    if payload.api_key:
-        draft["apiKey"] = payload.api_key
-    try:
-        provider = clean_provider(draft)
-    except TtsConfigError as error:
-        raise HTTPException(422, str(error)) from error
-    supplier = PROVIDERS[provider["kind"]]
-    if supplier.models_url is None:
-        return {
-            "ok": False,
-            "message": f"{supplier.name} has no list of models. Type the model's id.",
-            "offered": [],
-        }
-    key, _shared = key_for(provider, *registries)
-    # Asking the list also proves the address and the key.
-    result, listed = await list_models(
-        supplier.models_url(provider["baseUrl"]),
-        key,
-        supplier.name,
-        key_optional=supplier.key_optional,
-    )
-    if not result.ok:
-        return {"ok": False, "message": result.message, "offered": []}
-    # Exactly what the supplier's list names: nothing is filtered or added from this side.
-    offered = listed
-    if not offered:
-        message = f"{supplier.name} returned no model list for this key. Type the model's id."
-    else:
-        message = f"Key works. {len(offered)} model{'s' if len(offered) != 1 else ''} listed."
-    return {"ok": True, "message": message, "offered": offered}
 
 
 @router.post("/settings/tts/sample")

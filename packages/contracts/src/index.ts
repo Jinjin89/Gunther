@@ -494,7 +494,6 @@ export interface SpeechProviderInput {
 }
 
 export interface SpeechTestResult extends ServiceCheck {
-  available: string[];
   overview?: SpeechOverview;
 }
 

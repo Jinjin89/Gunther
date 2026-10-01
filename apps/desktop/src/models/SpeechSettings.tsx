@@ -1,5 +1,5 @@
 import type { SpeechOverview, SpeechProvider, SpeechRole, SpeechKind, SpeechTestResult } from "@gunther/contracts";
-import { AudioLines, Check, ChevronRight, CircleAlert, Eye, EyeOff, KeyRound, Plug, Plus, RefreshCw, Server, Trash2, TriangleAlert, X } from "lucide-react";
+import { AudioLines, Check, ChevronRight, CircleAlert, Eye, EyeOff, KeyRound, Plug, Plus, Server, Trash2, TriangleAlert, X } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { knowledgeApi } from "../api";
 
@@ -73,7 +73,6 @@ function ProviderEditor({ provider, onOverview, onRemoved, onNotify }: {
   const initial = draftOf(provider);
   const [draft, setDraft] = useState<ProviderDraft>(initial);
   const [newModel, setNewModel] = useState("");
-  const [available, setAvailable] = useState<string[] | null>(null);
   const [result, setResult] = useState<SpeechTestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"saving" | "testing" | "removing" | null>(null);
@@ -98,7 +97,6 @@ function ProviderEditor({ provider, onOverview, onRemoved, onNotify }: {
     try {
       const tested = await knowledgeApi.testSpeechProvider(provider.id, { baseUrl: draft.baseUrl, ...(draft.apiKey ? { apiKey: draft.apiKey } : {}) });
       setResult(tested);
-      setAvailable(tested.ok ? tested.available : null);
       if (tested.overview) onOverview(tested.overview);
     } catch (reason) {
       setError(message(reason, "The connection could not be tested."));
@@ -141,7 +139,6 @@ function ProviderEditor({ provider, onOverview, onRemoved, onNotify }: {
     }
   };
 
-  const offered = available?.filter((id) => !draft.models.some((model) => model.id === id)) ?? [];
   const outcome = error
     ? <p className="service-outcome is-error" role="alert"><CircleAlert size={14} />{error}</p>
     : result
@@ -181,16 +178,12 @@ function ProviderEditor({ provider, onOverview, onRemoved, onNotify }: {
               <code title={model.id}>{model.id}</code>
               <button type="button" className="gx-icon-button" aria-label={`Remove ${model.id}`} title="Remove" onClick={() => edit({ models: draft.models.filter((item) => item.id !== model.id) })}><X size={13} /></button>
             </div>)}
-            {draft.models.length === 0 && <p className="provider-models-empty">No models yet. Fetch the ones it offers, or type a model's id.</p>}
+            {draft.models.length === 0 && <p className="provider-models-empty">No models yet. Type the id of a model your provider offers.</p>}
           </div>
           <div className="provider-model-add">
             <input type="text" className="is-mono" value={newModel} placeholder="Model id, e.g. whisper-1" spellCheck={false} aria-label="Model id to add" onChange={(event) => setNewModel(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addModel(newModel); } }} />
             <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={!newModel.trim()} onClick={() => addModel(newModel)}><Plus size={13} />Add</button>
-            <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={busy !== null || Boolean(urlProblem)} onClick={() => void test()}><RefreshCw size={13} />Fetch models</button>
           </div>
-          {available && <div className="provider-offered" aria-label="Models this provider offers">
-            {offered.length === 0 ? <small>Every model it offers is already added.</small> : offered.slice(0, 60).map((id) => <button type="button" key={id} className="gx-chip" onClick={() => addModel(id)}><Plus size={12} /><span>{id}</span></button>)}
-          </div>}
         </div>
       </div>
     </div>

@@ -47,10 +47,7 @@ PRESETS: dict[str, Preset] = {
     "qwen": Preset(
         "Qwen",
         "https://maas.qianwenaiapi.com/compatible-mode/v1",
-        note=(
-            "Strong on Chinese. The address is the one the Qwen AI platform shows; "
-            "use Fetch models to list the models your key can call."
-        ),
+        note="Strong on Chinese. The address is the one the Qwen AI platform shows.",
     ),
     "openai": Preset(
         "OpenAI",

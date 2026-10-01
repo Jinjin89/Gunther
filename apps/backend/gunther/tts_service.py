@@ -269,13 +269,12 @@ def shared_key(kind: str, *registries: Any) -> tuple[str, str | None] | None:
     return None
 
 
-def _region_root(supplier: TtsProvider, base_url: str | None) -> str:
-    """Where a supplier lives in the region a shared key was set up for."""
+def _speech_root(supplier: TtsProvider, base_url: str | None) -> str:
+    """The address a shared key was set up for, as a speech address (no /compatible-mode/v1)."""
 
-    host = urlsplit(base_url or "").hostname or ""
-    if supplier.kind == "qwen" and host.startswith("dashscope-intl."):
-        return "https://dashscope-intl.aliyuncs.com"
-    return supplier.base_url
+    if not base_url:
+        return supplier.base_url
+    return base_url.rstrip("/").removesuffix("/compatible-mode/v1").removesuffix("/api/v1")
 
 
 def providers_in_use(config: dict[str, Any], *registries: Any) -> list[dict[str, Any]]:
@@ -286,7 +285,7 @@ def providers_in_use(config: dict[str, Any], *registries: Any) -> list[dict[str,
     providers = []
     for kind, supplier in PROVIDERS.items():
         shared = shared_key(kind, *registries)
-        base_url = _region_root(supplier, shared[1] if shared else None)
+        base_url = _speech_root(supplier, shared[1] if shared else None)
         providers.append(clean_provider({"id": kind, "kind": kind, "baseUrl": base_url}))
     return providers
 

@@ -222,7 +222,7 @@ def test_ask_dictation_sends_the_whole_take_at_the_end(
         assert str(posted[0].url) == "https://asr.example/v1/audio/transcriptions"
 
 
-def test_fetch_models_offers_the_qwen_recognisers_that_answer_here(
+def test_testing_a_qwen_connection_checks_the_key_and_the_chosen_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from gunther import speech_api
@@ -251,12 +251,5 @@ def test_fetch_models_offers_the_qwen_recognisers_that_answer_here(
             json={"apiKey": KEY},
         ).json()
     assert tested["ok"] is True
-    # Exactly what the supplier's list names, chat models included; nothing added or dropped.
-    assert tested["available"] == [
-        "qwen-plus",
-        "qwen3-asr-flash",
-        "qwen3-asr-flash-2027-01-01",
-        "qwen3-asr-flash-filetrans",
-        "qwen3-asr-flash-realtime",
-        "qwen3-tts-flash",
-    ]
+    # Testing only checks the address and key (and warns about a chosen model the list lacks).
+    assert "available" not in tested and tested["warning"] is None
