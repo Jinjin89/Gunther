@@ -169,7 +169,10 @@ PROVIDERS: dict[str, TtsProvider] = {
                 QWEN_DEFAULT_VOICE,
                 tuple(Choice(value, label) for value, label in QWEN_VOICES),
                 allow_custom=True,
-                help="Each voice speaks Chinese and English. Type the id of a cloned or designed voice.",
+                help=(
+                    "Each voice speaks Chinese and English. "
+                    "Type the id of a cloned or designed voice."
+                ),
             ),
         ),
         synthesize=_qwen_synthesize,

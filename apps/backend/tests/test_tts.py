@@ -98,7 +98,9 @@ def setup(client: TestClient, voice: str | None = None, auto_read: bool = False)
     """Qwen with a key, and the Answers job on its voice model."""
 
     response = client.put(
-        "/api/settings/tts/providers/qwen", headers=SIDECAR, json={"apiKey": KEY, "models": ["qwen-audio-3.1-tts-flash"]}
+        "/api/settings/tts/providers/qwen",
+        headers=SIDECAR,
+        json={"apiKey": KEY, "models": ["qwen-audio-3.1-tts-flash"]},
     )
     assert response.status_code == 200, response.text
     return choose(client, voice=voice, auto_read=auto_read)
@@ -557,5 +559,10 @@ def test_qwen_speaks_through_the_synthesizer_address_with_the_documented_body(
     assert post.headers["authorization"] == f"Bearer {KEY}"
     assert json.loads(post.content) == {
         "model": "qwen-audio-3.1-tts-flash",
-        "input": {"text": "你好", "voice": "longanhuan_v3.6", "format": "wav", "sample_rate": 24000},
+        "input": {
+            "text": "你好",
+            "voice": "longanhuan_v3.6",
+            "format": "wav",
+            "sample_rate": 24000,
+        },
     }
