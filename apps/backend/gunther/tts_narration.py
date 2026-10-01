@@ -21,7 +21,7 @@ from gunther.llm import Image, ModelError, ModelGateway, ModelInfo
 from gunther.tts_providers import TtsError
 
 # Bump when the rules below change what a message is read as, so old clips are remade.
-NARRATION_VERSION = 1
+NARRATION_VERSION = 2
 MAX_DESCRIBED_PARTS = 12
 
 PartKind = Literal["table", "image", "code", "math"]
@@ -68,7 +68,7 @@ _INSTRUCTIONS = {
 }
 _SYSTEM = (
     "You write a passage that will be read aloud by a voice. {task} Reply with the spoken "
-    "passage only: one or two short paragraphs of plain sentences, no markdown, no lists, no "
+    "passage only: short and to the point, two to four plain sentences, no markdown, no lists, no "
     "brackets, and no mention of 'the table above' or of being an AI. Use the language the "
     "text around it is written in."
 )
@@ -211,9 +211,9 @@ def _describe(gateway: ModelGateway, model: ModelInfo, part: Part, context: str)
             system=_SYSTEM.format(task=_INSTRUCTIONS[part.kind]),
             messages=prompt,
             images=images,
-            # A short description needs no thinking; models that cannot turn it off get room for it.
-            effort="off",
-            max_tokens=1500,
+            # The description is short, but a thinking model spends tokens before writing it.
+            effort="low",
+            max_tokens=4000,
         )
     except ModelError as error:
         raise TtsError(f"Describing a {part.kind} for reading aloud failed: {error}") from error
