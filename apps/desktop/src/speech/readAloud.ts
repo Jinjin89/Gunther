@@ -56,12 +56,27 @@ async function fetched(label: string, load: () => Promise<Blob>): Promise<Blob> 
 
 const MEDIA_ERRORS: Record<number, string> = { 1: "aborted", 2: "network", 3: "decode", 4: "format not supported" };
 
+/** Which output devices the webview sees and which one this player is on, so silence on one speaker can be traced. */
+async function logOutputs(player: HTMLAudioElement, label: string) {
+  try {
+    const sink = (player as HTMLAudioElement & { sinkId?: string }).sinkId;
+    const devices = (await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === "audiooutput");
+    const names = devices.map((device) => `${device.label || "unnamed"} (${device.deviceId.slice(0, 8) || "no id"})`).join("; ");
+    say(`${label}: output ${sink === undefined ? "choice not reported" : sink || "default"}; ${devices.length} output device(s): ${names || "none listed"}`);
+  } catch (reason) {
+    say(`${label}: output devices could not be listed: ${describeError(reason)}`);
+  }
+}
+
 /** What the audio element reports while playing: enough to tell silence from a stall or a bad file. */
 function watch(player: HTMLAudioElement, label: string) {
   const started = performance.now();
   const at = () => `${Math.round(performance.now() - started)} ms`;
   player.addEventListener("loadedmetadata", () => say(`${label}: ${Number.isFinite(player.duration) ? `${player.duration.toFixed(1)} s long` : `length ${player.duration}`}, ${at()}`));
-  player.addEventListener("playing", () => say(`${label}: playing at ${player.currentTime.toFixed(1)} s, volume ${player.volume}${player.muted ? ", muted" : ""}, ${at()}`));
+  player.addEventListener("playing", () => {
+    say(`${label}: playing at ${player.currentTime.toFixed(1)} s, volume ${player.volume}${player.muted ? ", muted" : ""}, ${at()}`);
+    void logOutputs(player, label);
+  });
   for (const kind of ["waiting", "stalled", "suspend", "emptied"] as const) {
     player.addEventListener(kind, () => say(`${label}: ${kind} at ${player.currentTime.toFixed(1)} s, ready state ${player.readyState}, ${at()}`));
   }
