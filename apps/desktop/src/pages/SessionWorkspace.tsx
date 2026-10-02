@@ -1,4 +1,6 @@
 import type {
+  ConversationBrief,
+  ConversationBriefInput,
   ConversationCitation,
   ConversationContext,
   ConversationTurn,
@@ -46,12 +48,15 @@ import {
   X,
 } from "lucide-react";
 import { useAutosize } from "../services/useAutosize";
+import { BriefPanel } from "./ConversationBrief";
+import { SkillChip, useAskSkills, useSkillMenu, type SkillBudget } from "../components/search/skills";
+import { withoutTrigger } from "../components/search/TriggerMenu";
 import { InterruptedNote, endsWithInterrupted, isInterrupted } from "./interrupted";
 import { DictationStatus, MicGlyph } from "../components/Dictation";
 import { useDragWidth } from "../hooks/useDragWidth";
 import { useDictatedField } from "../services/useDictatedField";
 import { withShortcut } from "../shortcuts/shortcuts";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import type { KnowledgeBase, KnowledgeSource } from "../atlas";
 import { AnswerStoppedError, knowledgeApi } from "../api";
 import { AnswerTrace } from "../developer/AnswerTrace";
@@ -60,7 +65,7 @@ import { lastAnswerChoice, readAnswerStyle, usableChoice, useDeviceChoice, useMo
 import { StylePicker } from "../models/StylePicker";
 import { SpeakerButton } from "../speech/SpeakerButton";
 import { readAloud } from "../speech/readAloud";
-import { AgentSteps, AnswerBody, LiveAnswer, citationNumbers } from "./AnswerBody";
+import { AgentSteps, AnswerBody, LiveAnswer, ResearchPlan, citationNumbers, usedSkill } from "./AnswerBody";
 import { useLiveAnswer } from "./liveAnswer";
 import { useSavedAnswers } from "./savedAnswers";
 import { ModelPicker } from "../models/ModelPicker";
@@ -77,6 +82,8 @@ interface SessionWorkspaceProps {
   onNotify: (message: string) => void;
   /** Open a source on its own page. */
   onOpenSource?: (sourceId: string) => void;
+  /** Open Outputs with a conversation chosen as material (from a research answer). */
+  onMakeReport?: (sessionId: string) => void;
 }
 
 type InspectorTab = "context" | "sources" | "trace";
@@ -133,6 +140,8 @@ function renderInline(value: string, onCitation?: () => void) {
 
 /** A reply that searched nothing and cited nothing needed none: small talk, or a request about an earlier answer. */
 function noSourcesNeeded(context: ConversationContext): boolean {
+  // Research asking the reader something first has searched nothing yet.
+  if (context.research?.state === "asking") return true;
   if (context.intent) return context.intent === "chat" || context.intent === "followup" || context.intent === "clarify";
   return !(context.steps?.length);
 }
@@ -262,24 +271,26 @@ function AnswerModel({ context }: { context: ConversationContext }) {
   const notes = context.notes ?? [];
   return <span className="message-method message-model">
     <i className={byModel ? "is-ai" : ""} />{label}
+    {context.skill && <small className="message-model-note">· {usedSkill(context.skill)}</small>}
     {notes.length > 0 && <small className="message-model-note">· {notes.join(" ")}</small>}
   </span>;
 }
 
-export function ConversationMessage({ message, retryDisabled, onRetry, onEdit, onCite, selected, promoting, promoted, branching, onSelect, onCopy, onPromote, onRemove, onBranch }: { message: SessionMessage; retryDisabled: boolean; onRetry: () => void; onEdit: () => void; onCite: (citation: ConversationCitation, index: number) => void; selected: boolean; promoting: boolean; promoted: boolean; branching: boolean; onSelect: () => void; onCopy: () => void; onPromote: () => void; onRemove: () => void; onBranch: () => void }) {
+export function ConversationMessage({ message, retryDisabled, onRetry, onEdit, onCite, selected, promoting, promoted, branching, onSelect, onCopy, onPromote, onRemove, onBranch, onMakeReport }: { message: SessionMessage; retryDisabled: boolean; onRetry: () => void; onEdit: () => void; onCite: (citation: ConversationCitation, index: number) => void; selected: boolean; promoting: boolean; promoted: boolean; branching: boolean; onSelect: () => void; onCopy: () => void; onPromote: () => void; onRemove: () => void; onBranch: () => void; /** Open Outputs with this conversation chosen as material; offered under a research answer. */ onMakeReport?: (() => void) | undefined }) {
   const isAssistant = message.role === "assistant";
   // Small talk and follow-ups on the conversation itself need no sources.
   const conversational = noSourcesNeeded(message.context);
   return (
     <article className={`conversation-message role-${message.role} ${selected ? "is-selected" : ""} ${isInterrupted(message) ? "is-interrupted" : ""}`} onClick={isAssistant ? onSelect : undefined}>
       <div className="message-author">{isAssistant ? <span className="assistant-mark"><BrandMark size={14} /></span> : <span className="user-mark"><UserRound size={13} /></span>}<span>{isAssistant ? "Gunther" : "You"}</span><time>{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(message.createdAt))}</time></div>
+      {isAssistant && <ResearchPlan context={message.context} />}
       {isAssistant && <AgentSteps steps={message.context.steps ?? []} />}
-      <div className="message-body">{isAssistant ? <AnswerBody content={message.content} numbers={citationNumbers(message.citations)} onCitation={(index) => { onSelect(); const citation = message.citations[index]; if (citation) onCite(citation, index); }} /> : <MessageContent content={message.content} />}</div>
+      <div className="message-body">{isAssistant ? <AnswerBody content={message.content} numbers={citationNumbers(message.citations)} onCitation={(index) => { onSelect(); const citation = message.citations[index]; if (citation) onCite(citation, index); }} supportNotes={message.context.supportNotes} /> : <MessageContent content={message.content} />}</div>
       {message.context.interrupted && <InterruptedNote reason={message.context.interrupted} disabled={retryDisabled} onRetry={onRetry} onEdit={onEdit} />}
       {isAssistant && message.context.modelError && <p className="message-model-error" role="note"><CircleAlert size={13} /><span>{message.context.modelError}{message.citations.length > 0 && " The quotes stand in for its answer."}</span></p>}
       {isAssistant && message.context.reasoning && <details className="message-thinking" onClick={(event) => event.stopPropagation()}><summary><ChevronRight size={12} />Thinking</summary><pre>{message.context.reasoning}</pre></details>}
       {isAssistant && <footer className="message-footer">
-        <div className="message-actions">{message.citations.length > 0 ? <button className="citation-count" onClick={(event) => { event.stopPropagation(); onSelect(); }}><Quote size={12} />{message.citations.length} {message.citations.length === 1 ? "source" : "sources"}</button> : conversational ? null : <span className="no-citation-state"><CircleAlert size={12} />Not from your sources</span>}<button className="copy-answer" onClick={(event) => { event.stopPropagation(); onCopy(); }}><Copy size={12} />Copy</button><SpeakerButton message={message} /><button className="branch-answer" disabled={branching} onClick={(event) => { event.stopPropagation(); onBranch(); }}><GitBranch size={12} />{branching ? "Branching…" : "Branch"}</button>{!(conversational && message.citations.length === 0) && <><button className={`promote-answer ${promoted ? "is-promoted" : ""}`} disabled={promoting || promoted || message.citations.length === 0} title={message.citations.length === 0 ? "Add or retrieve supporting evidence before saving this answer as knowledge." : undefined} onClick={(event) => { event.stopPropagation(); onPromote(); }}><Sparkles size={12} />{promoting && !promoted ? "Saving…" : promoted ? "Saved as knowledge" : message.citations.length === 0 ? "Needs evidence" : "Save as knowledge"}</button>{promoted && <button className="remove-answer" disabled={promoting} title="Take this answer out of your knowledge." onClick={(event) => { event.stopPropagation(); onRemove(); }}>{promoting ? "Removing…" : "Remove"}</button>}</>}</div>
+        <div className="message-actions">{message.citations.length > 0 ? <button className="citation-count" onClick={(event) => { event.stopPropagation(); onSelect(); }}><Quote size={12} />{message.citations.length} {message.citations.length === 1 ? "source" : "sources"}</button> : conversational ? null : <span className="no-citation-state"><CircleAlert size={12} />Not from your sources</span>}<button className="copy-answer" onClick={(event) => { event.stopPropagation(); onCopy(); }}><Copy size={12} />Copy</button><SpeakerButton message={message} /><button className="branch-answer" disabled={branching} onClick={(event) => { event.stopPropagation(); onBranch(); }}><GitBranch size={12} />{branching ? "Branching…" : "Branch"}</button>{onMakeReport && message.context.research && message.context.research.state !== "asking" && message.content && <button className="make-report" onClick={(event) => { event.stopPropagation(); onMakeReport(); }}><FileText size={12} />Make a report from this</button>}{!(conversational && message.citations.length === 0) && <><button className={`promote-answer ${promoted ? "is-promoted" : ""}`} disabled={promoting || promoted || message.citations.length === 0} title={message.citations.length === 0 ? "Add or retrieve supporting evidence before saving this answer as knowledge." : undefined} onClick={(event) => { event.stopPropagation(); onPromote(); }}><Sparkles size={12} />{promoting && !promoted ? "Saving…" : promoted ? "Saved as knowledge" : message.citations.length === 0 ? "Needs evidence" : "Save as knowledge"}</button>{promoted && <button className="remove-answer" disabled={promoting} title="Take this answer out of your knowledge." onClick={(event) => { event.stopPropagation(); onRemove(); }}>{promoting ? "Removing…" : "Remove"}</button>}</>}</div>
         <AnswerModel context={message.context} />
       </footer>}
     </article>
@@ -299,7 +310,20 @@ export function Composer({
   onSources,
   readOnly,
   ready,
+  skill = null,
+  onSkillChange,
+  budget,
+  onBudgetChange,
+  stopLabel = "Stop",
 }: {
+  /** The skill chosen with `/` (its command); it applies to the next message. */
+  skill?: string | null;
+  onSkillChange?: (command: string | null) => void;
+  /** The depth chosen for a skill that has budgets (research). */
+  budget?: SkillBudget;
+  onBudgetChange?: (budget: SkillBudget) => void;
+  /** What Stop does while an answer is worked out: "Stop and write" for research that is still gathering. */
+  stopLabel?: string;
   /** The model and effort chips. */
   picker?: ReactNode;
   /** The Web switch: whether web search is set up, and whether it is on for questions. */
@@ -320,14 +344,46 @@ export function Composer({
   const field = useRef<HTMLTextAreaElement>(null);
   useAutosize(field, value, 220);
   const submit = () => { dictation.discard(); onSend(); };
+  const [caret, setCaret] = useState(0);
+  const pendingCaret = useRef<number | null>(null);
+  const skills = useAskSkills();
+  const slash = useSkillMenu(value, caret, skills, (chosen, at) => pick(chosen.command, at), Boolean(onSkillChange) && !skill && !composerDisabled);
+  const pick = (command: string, at: { start: number; query: string }) => {
+    onChange(withoutTrigger(value, at, field.current?.selectionStart ?? caret));
+    onSkillChange?.(command);
+    slash.reset();
+    pendingCaret.current = at.start;
+    field.current?.focus();
+  };
+  // Put the caret back once React has written the edited text into the field.
+  useLayoutEffect(() => {
+    const element = field.current;
+    if (!element || pendingCaret.current === null) return;
+    const position = Math.min(pendingCaret.current, element.value.length);
+    pendingCaret.current = null;
+    element.setSelectionRange(position, position);
+    setCaret(position);
+  }, [value]);
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.nativeEvent.isComposing) return;
+    if (slash.keyDown(event)) return;
+    if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); return; }
+    // Backspace at the very start takes the skill off.
+    if (event.key === "Backspace" && skill && event.currentTarget.selectionStart === 0 && event.currentTarget.selectionEnd === 0) {
+      event.preventDefault();
+      onSkillChange?.(null);
+    }
+  };
   return (
     <div className="composer-wrap">
       <div className={`composer ${dictation.dictating ? "is-dictating" : ""}`}>
-        <textarea ref={field} value={value} rows={1} disabled={composerDisabled} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } }} placeholder={!ready ? "Opening a durable session…" : readOnly ? "Restore this session to continue the conversation." : "Ask, compare, challenge, or trace a claim…"} aria-label="Message Gunther" onFocus={dictation.claim} />
+        {skill && <div className="composer-skill"><SkillChip command={skill} {...(budget ? { budget } : {})} {...(onBudgetChange ? { onBudgetChange } : {})} onRemove={() => { onSkillChange?.(null); field.current?.focus(); }} /></div>}
+        <textarea ref={field} value={value} rows={1} disabled={composerDisabled} onChange={(event) => { onChange(event.target.value); setCaret(event.target.selectionStart ?? event.target.value.length); }} onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? 0)} onKeyDown={onKeyDown} onBlur={slash.dismiss} aria-autocomplete="list" aria-controls={slash.open ? slash.listId : undefined} aria-activedescendant={slash.activeId} placeholder={!ready ? "Opening a durable session…" : readOnly ? "Restore this session to continue the conversation." : "Ask, compare, challenge, or trace a claim…"} aria-label="Message Gunther" onFocus={() => { dictation.claim(); slash.reset(); }} />
         <div className="composer-toolbar">
           <div><button className="scope-chip" onClick={onSources}><FolderOpen size={13} /><span>{sourceCount ? `${sourceCount} selected` : "All sources"}</span><ChevronDown size={11} /></button>{chapterTitle && <span className="chapter-chip"><BookOpen size={12} />{chapterTitle}</span>}{picker}{web && <button type="button" className={`web-toggle ${web.enabled ? "is-on" : ""}`} disabled={!web.available} aria-pressed={web.enabled} onClick={() => web.onChange(!web.enabled)} title={web.available ? (web.enabled ? "Ask may search the web. Click to keep it to your library." : "Ask is limited to your library. Click to let it search the web.") : "Web search is not set up. Add a Tavily key in Settings."}><Globe2 size={13} /><span>Web</span></button>}</div>
-          <div className="composer-actions"><button type="button" className={`mic-button ${dictation.dictating ? "is-on" : ""} is-${dictation.state}`} disabled={composerDisabled || sending} onClick={dictation.toggle} aria-pressed={dictation.listening} aria-label={dictation.listening ? "Stop voice input" : "Voice input"} title={dictation.error ?? withShortcut(dictation.listening ? "Stop voice input" : "Speak instead of typing", "dictate")}><MicGlyph state={dictation.state} /></button><button className={`send-button ${sending ? "is-stop" : ""}`} disabled={composerDisabled || (!sending && !value.trim())} onClick={sending ? onStop : submit} aria-label={sending ? "Stop waiting for response" : "Send message"}>{sending ? <Square size={12} fill="currentColor" /> : <ArrowUp size={16} />}</button></div>
+          <div className="composer-actions"><button type="button" className={`mic-button ${dictation.dictating ? "is-on" : ""} is-${dictation.state}`} disabled={composerDisabled || sending} onClick={dictation.toggle} aria-pressed={dictation.listening} aria-label={dictation.listening ? "Stop voice input" : "Voice input"} title={dictation.error ?? withShortcut(dictation.listening ? "Stop voice input" : "Speak instead of typing", "dictate")}><MicGlyph state={dictation.state} /></button><button className={`send-button ${sending ? "is-stop" : ""} ${sending && stopLabel !== "Stop" ? "has-label" : ""}`} disabled={composerDisabled || (!sending && !value.trim())} onClick={sending ? onStop : submit} aria-label={sending ? (stopLabel === "Stop" ? "Stop waiting for response" : stopLabel) : "Send message"}>{sending ? <><Square size={12} fill="currentColor" />{stopLabel !== "Stop" && <span>{stopLabel}</span>}</> : <ArrowUp size={16} />}</button></div>
         </div>
+        {slash.menu}
       </div>
       <p className="composer-note" role={dictation.error ? "alert" : undefined}>{dictation.error ? dictation.error : dictation.dictating ? <DictationStatus state={dictation.state} level={dictation.level} /> : !ready ? "Preparing a durable conversation before accepting questions…" : readOnly ? "Archived sessions are read-only. Restore this session from its options to continue." : "Gunther can be wrong. Verify important conclusions in the cited source."}</p>
     </div>
@@ -394,6 +450,9 @@ function ContextInspector({
   onCollapse,
   readOnly,
   traceOn,
+  briefUpdating,
+  onBriefSave,
+  onBriefRetry,
   onCopy,
 }: {
   /** The panel's width and the handle on its left edge that drags it. */
@@ -417,6 +476,10 @@ function ContextInspector({
   readOnly: boolean;
   /** Settings → Developer keeps how answers are made: a Trace tab shows it. */
   traceOn: boolean;
+  /** The conversation's brief is being brought up to date. */
+  briefUpdating: boolean;
+  onBriefSave: (brief: ConversationBriefInput) => void;
+  onBriefRetry: () => void;
   onCopy: (label: string, value: string) => void;
 }) {
   if (collapsed) return <button className="inspector-reopen" onClick={onCollapse} aria-label="Open context panel"><PanelRightOpen size={16} /></button>;
@@ -434,6 +497,7 @@ function ContextInspector({
       {tab === "trace" && selectedMessage && session ? <div className="inspector-scroll">
         <AnswerTrace sessionId={session.id} messageId={selectedMessage.id} onCopy={onCopy} />
       </div> : tab === "context" || tab === "trace" ? <div className="inspector-scroll">
+        {session && !session.id.startsWith("local-") && <BriefPanel brief={session.brief} updating={briefUpdating} readOnly={readOnly} hasMessages={session.messages.length > 0} citations={selectedMessage?.citations ?? []} onSave={onBriefSave} onRetry={onBriefRetry} onOpenCitation={(citation) => onOpenSource(citation.sourceId, citation)} />}
         {selectedMessage ? <>
           <section className="answer-scope"><span className="section-label">Answer scope</span><div className="scope-metrics"><span><strong>{context.assertionsConsidered}</strong><small>claims scanned</small></span><span><strong>{context.sourcesConsidered}</strong><small>sources searched</small></span><span><strong>{context.verifiedAssertions}</strong><small>trusted scanned</small></span></div><p><Info size={12} />This is the retrieval snapshot for the selected answer—not the current library state.</p></section>
           <section className="citation-section"><header><span className="section-label">Sources cited</span><small>{selectedMessage.citations.length} {selectedMessage.citations.length === 1 ? "source" : "sources"}</small></header>{selectedMessage.citations.length ? selectedMessage.citations.map((citation, index) => <CitationCard key={citation.id} citation={citation} index={index} onOpen={() => onOpenSource(citation.sourceId, citation)} />) : <div className="empty-citations"><CircleAlert size={20} /><strong>{noSourcesNeeded(context) ? "No sources needed" : "Nothing cited"}</strong><span>{noSourcesNeeded(context) ? "This reply came from the conversation itself." : "Nothing in the searches supported a citation, so this answer is not grounded."}</span></div>}</section>
@@ -482,7 +546,7 @@ function useMediaQuery(query: string): boolean {
   return matches;
 }
 
-export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onOpenSource }: SessionWorkspaceProps) {
+export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onOpenSource, onMakeReport }: SessionWorkspaceProps) {
   const [sessions, setSessions] = useState<KnowledgeSessionSummary[]>([]);
   const [archivedSessions, setArchivedSessions] = useState<KnowledgeSessionSummary[]>([]);
   const [showArchived, setShowArchived] = useState(false);
@@ -491,6 +555,13 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
   const [indexedSources, setIndexedSources] = useState<SourceSummary[]>([]);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  // The skill chosen with `/`; it applies to the next message only.
+  const [skill, setSkill] = useState<string | null>(null);
+  // How deep a skill that has budgets (research) goes; Standard unless the reader says Deep.
+  const [budget, setBudget] = useState<SkillBudget>("standard");
+  // The skill of the question being answered: research is stopped differently.
+  const [answeringSkill, setAnsweringSkill] = useState<string | null>(null);
+  const askSkills = useAskSkills();
   const [sessionQuery, setSessionQuery] = useState("");
   const [sourceQuery, setSourceQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -512,6 +583,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
   }, [inspectorCollapsed]);
   // The question just sent, shown in the conversation while it is being answered.
   const [asking, setAsking] = useState<string | null>(null);
+  const [briefBusy, setBriefBusy] = useState<string | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [sessionOptionsOpen, setSessionOptionsOpen] = useState(false);
@@ -769,6 +841,30 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
     }
   };
 
+  const keepBrief = (sessionId: string, brief: ConversationBrief) => setActiveSession((current) => current && current.id === sessionId ? { ...current, brief } : current);
+
+  /** Ask the service to fold the last answer into the brief, without waiting for it: the panel says "Updating…" meanwhile. */
+  const refreshBrief = async (sessionId: string) => {
+    setBriefBusy(sessionId);
+    try {
+      keepBrief(sessionId, await knowledgeApi.refreshBrief(sessionId));
+    } catch (reason) {
+      setActiveSession((current) => current && current.id === sessionId ? { ...current, brief: { goal: "", constraints: [], settled: [], open: [], edited: [], ...current.brief, error: reason instanceof Error ? reason.message : "The brief could not be updated" } } : current);
+    } finally {
+      setBriefBusy((current) => current === sessionId ? null : current);
+    }
+  };
+
+  const saveBrief = async (brief: ConversationBriefInput) => {
+    if (!activeSession) return;
+    const sessionId = activeSession.id;
+    try {
+      keepBrief(sessionId, await knowledgeApi.editBrief(sessionId, brief));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The brief could not be saved");
+    }
+  };
+
   /** Show a finished answer, but only if its conversation is still the one on screen. */
   const showTurn = (sessionId: string, turn: ConversationTurn) => {
     setSessions((current) => sortSessions(current.map((item) => item.id === sessionId ? turn.session : item)));
@@ -783,7 +879,10 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
   const watchAnswer = async (sessionId: string, question: string, controller: AbortController, listen: () => Promise<ConversationTurn | null>) => {
     try {
       const turn = await listen();
-      if (turn) showTurn(sessionId, turn);
+      if (turn) {
+        showTurn(sessionId, turn);
+        void refreshBrief(sessionId);
+      }
       pendingQuestion.current = "";
     } catch (reason) {
       if (controller.signal.aborted) return;
@@ -813,7 +912,10 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
   const send = async (again?: string) => {
     const question = (again ?? draft).trim();
     if (!question || !activeSession || sending) return;
-    if (again === undefined) setDraft("");
+    const skillUsed = again === undefined ? skill : null;
+    const budgeted = skillUsed !== null && (askSkills.find((item) => item.command === skillUsed)?.budgets.length ?? 0) > 1;
+    if (again === undefined) { setDraft(""); setSkill(null); setBudget("standard"); }
+    setAnsweringSkill(skillUsed);
     setSending(true);
     setAsking(question);
     followTail.current = true;
@@ -839,7 +941,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
     const session = activeSession;
     const chosen = askChoice.model && modelMenu?.models.length ? { model: askChoice.model, effort: askChoice.effort } : {};
     liveAnswer.start();
-    await watchAnswer(session.id, question, controller, () => knowledgeApi.sendMessageStream(session.id, { content: question, selectedSourceIds: session.selectedSourceIds, focusChapterId: session.focusChapterId, ...chosen, style: readAnswerStyle(), ...(webSearch.enabled ? { web: true } : {}) }, liveAnswer.hear, controller.signal));
+    await watchAnswer(session.id, question, controller, () => knowledgeApi.sendMessageStream(session.id, { content: question, selectedSourceIds: session.selectedSourceIds, focusChapterId: session.focusChapterId, ...chosen, style: readAnswerStyle(), ...(webSearch.enabled ? { web: true } : {}), ...(skillUsed ? { skill: skillUsed } : {}), ...(budgeted ? { budget } : {}) }, liveAnswer.hear, controller.signal));
   };
 
   // Reading aloud goes on while its conversation is open, and stops when another one is.
@@ -884,6 +986,19 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
     };
     // Only a different conversation on screen changes what is followed.
   }, [activeId]);
+
+  // Research that asked the reader something first: the next message goes back to it, at the same depth.
+  const lastMessage = activeSession?.messages.at(-1);
+  useEffect(() => {
+    const research = lastMessage?.role === "assistant" ? lastMessage.context.research : null;
+    if (research?.state !== "asking") return;
+    setSkill(lastMessage?.context.skill?.name ?? "research");
+    if (research.budget) setBudget(research.budget);
+  }, [lastMessage?.id]);
+
+  // While research is still gathering, Stop writes the answer from what it found; once writing, it stops.
+  const researching = sending && (answeringSkill === "research" || Boolean(liveAnswer.live?.research));
+  const stopLabel = researching && !liveAnswer.live?.text ? "Stop and write" : "Stop";
 
   const stopResponse = () => {
     if (localResponseTimer.current) {
@@ -1066,13 +1181,13 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
         <div className="conversation-scroll" ref={scrollPane} onScroll={(event) => { const pane = event.currentTarget; followTail.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 80; }}>
           {error && <div className="conversation-error" role="alert"><CircleAlert size={14} /><span>{error}</span><button onClick={() => setError(null)}><X size={12} /></button></div>}
           {!loading && activeSession?.messages.length === 0 ? <WelcomePanel base={base} onPrompt={setDraft} /> : <h1 className="gx-sr-only">Ask {base.title}</h1>}
-          {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} retryDisabled={sending || Boolean(activeSession?.archived)} onRetry={() => void send(message.content)} onEdit={() => setDraft(message.content)} onCite={(citation, index) => setEvidence({ citation, index })} selected={selectedMessageId === message.id} promoting={answers.busyId === message.id} promoted={answers.isSaved(message.id)} branching={branchingMessageId === message.id} onSelect={() => { setSelectedMessageId(message.id); setInspectorTab((current) => current === "trace" ? "trace" : "context"); setInspectorCollapsed(false); }} onCopy={() => void copyMessage(message)} onPromote={() => void answers.save(activeSession, message)} onRemove={() => void answers.remove(message)} onBranch={() => void branchFromMessage(message)} />)}
+          {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} retryDisabled={sending || Boolean(activeSession?.archived)} onRetry={() => void send(message.content)} onEdit={() => setDraft(message.content)} onCite={(citation, index) => setEvidence({ citation, index })} selected={selectedMessageId === message.id} promoting={answers.busyId === message.id} promoted={answers.isSaved(message.id)} branching={branchingMessageId === message.id} onSelect={() => { setSelectedMessageId(message.id); setInspectorTab((current) => current === "trace" ? "trace" : "context"); setInspectorCollapsed(false); }} onCopy={() => void copyMessage(message)} onPromote={() => void answers.save(activeSession, message)} onRemove={() => void answers.remove(message)} onBranch={() => void branchFromMessage(message)} onMakeReport={onMakeReport ? () => onMakeReport(activeSession.id) : undefined} />)}
           {sending && asking && <article className="conversation-message role-user"><div className="message-author"><span className="user-mark"><UserRound size={13} /></span><span>You</span></div><div className="message-body"><MessageContent content={asking} /></div></article>}
           {sending && (liveAnswer.live ? <LiveAnswer state={liveAnswer.live} /> : <div className="thinking-row"><span className="assistant-mark"><BrandMark size={14} busy /></span><span><i /><i /><i /></span><small>Working out what to look up…</small></div>)}
         </div>
-        <Composer picker={<><ModelPicker menu={modelMenu} choice={askChoice} onChange={chooseModel} disabled={sending || Boolean(activeSession?.archived)} /><StylePicker disabled={sending || Boolean(activeSession?.archived)} /></>} web={{ available: webSearch.available, enabled: webSearch.enabled, onChange: webSearch.setEnabled }} value={draft} sending={sending} sourceCount={activeSession?.selectedSourceIds.length ?? 0} chapterTitle={focusedChapter?.title} readOnly={Boolean(activeSession?.archived)} ready={!loading && activeSession !== null} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={() => { setInspectorTab("sources"); setInspectorCollapsed(false); }} />
+        <Composer picker={<><ModelPicker menu={modelMenu} choice={askChoice} onChange={chooseModel} disabled={sending || Boolean(activeSession?.archived)} /><StylePicker disabled={sending || Boolean(activeSession?.archived)} /></>} web={{ available: webSearch.available, enabled: webSearch.enabled, onChange: webSearch.setEnabled }} value={draft} sending={sending} sourceCount={activeSession?.selectedSourceIds.length ?? 0} chapterTitle={focusedChapter?.title} readOnly={Boolean(activeSession?.archived)} ready={!loading && activeSession !== null} skill={skill} onSkillChange={setSkill} budget={budget} onBudgetChange={setBudget} stopLabel={stopLabel} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={() => { setInspectorTab("sources"); setInspectorCollapsed(false); }} />
       </section>
-      <ContextInspector resize={inspectorWidth} base={base} sources={scopeSources} session={activeSession} knowledgeUnits={answers.units} selectedMessage={selectedMessage} tab={inspectorTab} sourceQuery={sourceQuery} collapsed={inspectorCollapsed} readOnly={Boolean(activeSession?.archived)} onTab={setInspectorTab} onSourceQuery={setSourceQuery} onToggleSource={(id) => void toggleSource(id)} onUseAll={() => { if (activeSession) void patchSession(activeSession.id, { selectedSourceIds: [] }); }} onAdd={onAdd} onOpenSource={(id, citation) => void openSourceDetail(id, citation)} onOpenUnit={(unit) => void openKnowledgeUnitOrigin(unit)} onCollapse={() => setInspectorCollapsed((value) => !value)} traceOn={traces.on} onCopy={(label, value) => void navigator.clipboard.writeText(value).then(() => onNotify(`${label} copied.`)).catch(() => onNotify(`${label} could not be copied.`))} />
+      <ContextInspector resize={inspectorWidth} base={base} sources={scopeSources} session={activeSession} knowledgeUnits={answers.units} selectedMessage={selectedMessage} tab={inspectorTab} sourceQuery={sourceQuery} collapsed={inspectorCollapsed} readOnly={Boolean(activeSession?.archived)} onTab={setInspectorTab} onSourceQuery={setSourceQuery} onToggleSource={(id) => void toggleSource(id)} onUseAll={() => { if (activeSession) void patchSession(activeSession.id, { selectedSourceIds: [] }); }} onAdd={onAdd} onOpenSource={(id, citation) => void openSourceDetail(id, citation)} onOpenUnit={(unit) => void openKnowledgeUnitOrigin(unit)} onCollapse={() => setInspectorCollapsed((value) => !value)} traceOn={traces.on} briefUpdating={briefBusy === activeSession?.id} onBriefSave={(brief) => void saveBrief(brief)} onBriefRetry={() => { if (activeSession) void refreshBrief(activeSession.id); }} onCopy={(label, value) => void navigator.clipboard.writeText(value).then(() => onNotify(`${label} copied.`)).catch(() => onNotify(`${label} could not be copied.`))} />
       {evidence && <EvidencePanel citation={evidence.citation} index={evidence.index} onClose={() => setEvidence(null)} onOpenSource={onOpenSource ? (id) => { setEvidence(null); onOpenSource(id); } : undefined} />}
       {mobileSessionsOpen && <div className="mobile-session-drawer" role="dialog" aria-modal="true" aria-label="Session history"><button className="mobile-session-scrim" onClick={() => setMobileSessionsOpen(false)} aria-label="Close session history" /><div className="mobile-session-sheet"><button className="mobile-session-close" autoFocus onClick={() => setMobileSessionsOpen(false)} aria-label="Close session history"><X size={15} /></button><SessionsSidebar base={base} indexedCount={scopeSources.filter((source) => source.indexed).length} referenceCount={scopeSources.filter((source) => !source.indexed).length} sessions={sessions} archivedSessions={archivedSessions} showArchived={showArchived} activeId={activeId} loading={loading} query={sessionQuery} onQuery={setSessionQuery} onNew={() => { setMobileSessionsOpen(false); void createSession(); }} onOpen={(id) => { setMobileSessionsOpen(false); void loadSession(id); }} onPin={(session) => void patchSession(session.id, { pinned: !session.pinned })} onArchive={(session) => void archiveSession(session)} onToggleArchived={() => void toggleArchived()} onRestore={(session) => void restoreSession(session)} /></div></div>}
     </div>

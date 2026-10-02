@@ -33,3 +33,6 @@ apps/backend/models/
 coverage/
 .coverage
 *.log
+
+# Cool-roof exam: results from every run stay local.
+apps/backend/evals/results/

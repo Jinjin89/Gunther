@@ -16,6 +16,10 @@ export interface AskOptions {
   style?: string;
   /** The libraries pointed at with @; none means all of them. */
   libraryIds?: string[];
+  /** A skill's command, chosen with `/`. */
+  skill?: string;
+  /** The depth of a skill that has budgets (research). */
+  budget?: string;
 }
 
 const remembered = () => {
@@ -139,6 +143,8 @@ export function useHomeAsk() {
         ...(options.web ? { web: true } : {}),
         ...(options.style ? { style: options.style } : {}),
         ...(options.libraryIds?.length ? { knowledgeBaseIds: options.libraryIds } : {}),
+        ...(options.skill ? { skill: options.skill } : {}),
+        ...(options.skill && options.budget ? { budget: options.budget as "standard" | "deep" } : {}),
       }, hear, abort.signal);
       setSession({ ...current, ...turn.session, messages: [...current.messages, turn.userMessage, turn.assistantMessage] });
       reloadRecent();

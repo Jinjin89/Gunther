@@ -1,6 +1,8 @@
 import type {
+  AskSkill,
   AgentStep,
   ConversationContext,
+  ResearchUsed,
   Artifact,
   ArtifactSummary,
   BuildOutputRequest,
@@ -14,6 +16,8 @@ import type {
   ConversationTurn,
   CreateKnowledgeBaseInput,
   CreateKnowledgeProposalInput,
+  ConversationBrief,
+  ConversationBriefInput,
   CreateKnowledgeSessionInput,
   CreateNotebookNoteInput,
   CreateSessionMessageInput,
@@ -99,8 +103,10 @@ import type {
 
 /** What the agent reports while answering (see the service's message stream). */
 export type AnswerEvent =
-  | { type: "step"; state: "running" | "done"; tool: AgentStep["tool"]; label: string; query?: string; found?: number; error?: string | null }
+  | { type: "step"; state: "running" | "done"; tool: AgentStep["tool"]; label: string; query?: string; found?: number; error?: string | null; used?: ResearchUsed }
   | { type: "text"; text: string }
+  /** Deep research: what it set out to find, before it searches. */
+  | { type: "research_plan"; coreQuestion: string; subQuestions: Array<{ id: string; text: string }>; doneWhen: string; budget: string; limits: { searches: number; reads: number } }
   /** Following an answer again after leaving: the question it answers. */
   | { type: "resumed"; question: string; startedAt: number };
 
@@ -760,6 +766,8 @@ export const knowledgeApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  /** The skills the composer's `/` menu offers. */
+  askSkills: () => request<AskSkill[]>("/ask/skills"),
   session: (id: string) => request<KnowledgeSession>(`/sessions/${encodeURIComponent(id)}`),
   branchSession: (sessionId: string, messageId: string) =>
     request<KnowledgeSession>(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/branch`, {
@@ -809,6 +817,14 @@ export const knowledgeApi = {
     return readAnswer(response.body, onEvent);
   },
   /** Stop the answer being written; its stream then ends with AnswerStoppedError. */
+  /** Fold the last answer into the conversation's brief; a failure comes back as `error`. */
+  refreshBrief: (id: string) =>
+    request<ConversationBrief>(`/sessions/${encodeURIComponent(id)}/brief/refresh`, { method: "POST" }),
+  editBrief: (id: string, brief: ConversationBriefInput) =>
+    request<ConversationBrief>(`/sessions/${encodeURIComponent(id)}/brief`, {
+      method: "PATCH",
+      body: JSON.stringify(brief),
+    }),
   stopAnswer: (id: string) => request<void>(`/sessions/${encodeURIComponent(id)}/answer/stop`, { method: "POST" }),
   fileSession: (id: string, knowledgeBaseId: string) =>
     request<KnowledgeSessionSummary>(`/sessions/${encodeURIComponent(id)}/file`, {

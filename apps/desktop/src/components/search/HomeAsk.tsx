@@ -3,7 +3,7 @@ import { ArrowUp, FolderInput, Globe2, MessageSquareText, Plus, Search, Sparkles
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { KnowledgeBase } from "../../atlas";
 import { SpeakerButton } from "../../speech/SpeakerButton";
-import { AgentSteps, AnswerBody, LiveAnswer, citationNumbers } from "../../pages/AnswerBody";
+import { AgentSteps, AnswerBody, LiveAnswer, ResearchPlan, citationNumbers, usedSkill } from "../../pages/AnswerBody";
 import { EvidencePanel } from "../evidence/EvidencePanel";
 import type { LiveAnswerState } from "../../pages/liveAnswer";
 import type { ItemRef } from "../../items/itemRef";
@@ -61,6 +61,8 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
   const [followUp, setFollowUp] = useState("");
   const [evidence, setEvidence] = useState<{ citation: ConversationCitation; index: number } | null>(null);
   const busy = pending !== null;
+  // Research still gathering is stopped to write from what it found; once writing, Stop stops.
+  const stopLabel = live?.research && !live.text ? "Stop and write" : null;
   const dictation = useDictatedField(followUp, setFollowUp, { enabled: active });
   const field = useRef<HTMLTextAreaElement>(null);
   useAutosize(field, followUp, 200);
@@ -118,11 +120,12 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
             {message.context.interrupted && <InterruptedNote reason={message.context.interrupted} disabled={busy} onRetry={() => onAsk(message.content)} onEdit={() => { setFollowUp(message.content); field.current?.focus(); }} />}
           </article>
         : <article key={message.id} className="gx-home-answer">
+            <ResearchPlan context={message.context} />
             <AgentSteps steps={message.context.steps ?? []} />
-            <AnswerBody content={message.content} numbers={citationNumbers(message.citations)} onCitation={(index) => { const citation = message.citations[index]; if (citation) setEvidence({ citation, index }); }} />
+            <AnswerBody content={message.content} numbers={citationNumbers(message.citations)} onCitation={(index) => { const citation = message.citations[index]; if (citation) setEvidence({ citation, index }); }} supportNotes={message.context.supportNotes} />
             {message.context.modelError && <p className="message-model-error" role="note">{message.context.modelError}{message.citations.length > 0 && " The quotes stand in for its answer."}</p>}
             <Sources citations={message.citations} onOpen={(citation, index) => setEvidence({ citation, index })} />
-            <footer><SpeakerButton message={message} /><small>{[message.context.modelLabel, message.context.effortLabel].filter(Boolean).join(" · ")}</small></footer>
+            <footer><SpeakerButton message={message} /><small>{[message.context.modelLabel, message.context.effortLabel, message.context.skill ? usedSkill(message.context.skill) : null].filter(Boolean).join(" · ")}</small></footer>
           </article>)}
       {pending !== null && <>
         <article className="gx-home-question"><p>{pending}</p></article>
@@ -136,7 +139,7 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
       <textarea ref={field} rows={1} value={followUp} onChange={(event) => setFollowUp(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={messages.length ? "Ask a follow-up…" : "Ask a question…"} aria-label="Ask a follow-up" disabled={busy} onFocus={dictation.claim} />
       <button type="button" className={`gx-tool gx-tool-icon gx-mic ${dictation.dictating ? "is-on" : ""} is-${dictation.state}`} onClick={dictation.toggle} disabled={busy} aria-pressed={dictation.listening} aria-label={dictation.listening ? "Stop voice input" : "Voice input"} title={dictation.error ?? withShortcut(dictation.listening ? "Stop voice input" : "Speak instead of typing", "dictate")}><MicGlyph state={dictation.state} /></button>
       {busy
-        ? <button type="button" className="gx-send is-stop" onClick={onCancel} aria-label="Stop"><Square size={12} fill="currentColor" /></button>
+        ? <button type="button" className={`gx-send is-stop ${stopLabel ? "has-label" : ""}`} onClick={onCancel} aria-label={stopLabel ?? "Stop"}><Square size={12} fill="currentColor" />{stopLabel && <span>{stopLabel}</span>}</button>
         : <button type="submit" className="gx-send" disabled={!followUp.trim()} aria-label="Send"><ArrowUp size={16} /></button>}
     </form>
     {evidence && <EvidencePanel citation={evidence.citation} index={evidence.index} onClose={() => setEvidence(null)} onOpenSource={(id) => { setEvidence(null); onOpenSource({ type: "source", id }); }} />}

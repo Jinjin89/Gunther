@@ -290,6 +290,8 @@ export function KnowledgeBaseWorkspace(props: KnowledgeBaseWorkspaceProps) {
   const [topics, setTopics] = useState<KnowledgeTopic[]>([]);
   const [topicError, setTopicError] = useState("");
   const [topicReload, setTopicReload] = useState(0);
+  // A conversation chosen as the material of a new report (from a research answer), used once.
+  const [reportFrom, setReportFrom] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     setTopics([]);
@@ -320,8 +322,8 @@ export function KnowledgeBaseWorkspace(props: KnowledgeBaseWorkspaceProps) {
         {props.mode === "overview" && <OverviewView {...props} />}
         {props.mode === "overview" && <>{topicError && <p role="alert">{topicError}</p>}<TopicManager key={props.base.id} baseId={props.base.id} topics={topics} onChange={() => setTopicReload((value) => value + 1)} onAsk={(id) => void askTopic(id)} {...(props.onOpenSource ? { onOpenSource: (id: string) => props.onOpenSource?.(id, [id]) } : {})} /></>}
         {props.mode === "sources" && <MaterialsView {...props} />}
-        {props.mode === "ask" && <SessionWorkspace base={topicBase} selectedChapterId={props.selectedChapterId} onAdd={props.onAdd} onNotify={props.onNotify} onOpenSource={(id) => props.onOpenSource?.(id, [id])} />}
-        {props.mode === "outputs" && <OutputsPage base={props.base} workspaceId={props.workspaceId} onNotify={props.onNotify} onAdd={props.onAdd} onOpenSource={props.onOpenSource} />}
+        {props.mode === "ask" && <SessionWorkspace base={topicBase} selectedChapterId={props.selectedChapterId} onAdd={props.onAdd} onNotify={props.onNotify} onOpenSource={(id) => props.onOpenSource?.(id, [id])} onMakeReport={(sessionId) => { setReportFrom(sessionId); props.onMode("outputs"); }} />}
+        {props.mode === "outputs" && <OutputsPage base={props.base} workspaceId={props.workspaceId} onNotify={props.onNotify} onAdd={props.onAdd} onOpenSource={props.onOpenSource} fromDiscussion={reportFrom} onFromDiscussion={() => setReportFrom(null)} />}
       </div>
     </div>
   );

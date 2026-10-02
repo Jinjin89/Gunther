@@ -522,6 +522,78 @@ def _readable_page(data: bytes, content_type: str) -> tuple[str, str | None]:
     return readable_parser.text().strip(), title_parser.title() or None
 
 
+def _redirect_url(
+    target: ResolvedWebTarget, response: WebFetchResponse, redirect_count: int
+) -> str | None:
+    """Where a redirect response points, or None when the response is not a redirect."""
+
+    if response.status not in REDIRECT_STATUSES:
+        return None
+    if redirect_count == MAX_REDIRECTS:
+        raise WebCaptureValidationError("The web page redirected too many times")
+    location = (response.header("location") or "").strip()
+    if not location:
+        raise WebCaptureFetchError("The redirect response has no Location header")
+    redirected_url = urljoin(target.url, location)
+    if len(redirected_url) > MAX_WEB_URL_LENGTH:
+        raise WebCaptureValidationError("The redirect URL is too long")
+    return redirected_url
+
+
+def _page_content_type(response: WebFetchResponse) -> str:
+    """The content type of a page that may be read, after the status and size checks."""
+
+    if not 200 <= response.status < 300:
+        raise WebCaptureFetchError(f"The web page returned HTTP status {response.status}")
+    content_type = (response.header("content-type") or "").strip()
+    if len(content_type) > 160:
+        raise WebCaptureValidationError("The response Content-Type is too long")
+    if any(ord(character) < 32 for character in content_type):
+        raise WebCaptureValidationError("The response Content-Type is invalid")
+    media_type = content_type.split(";", 1)[0].strip().casefold()
+    if media_type not in ALLOWED_CONTENT_TYPES:
+        raise WebCaptureValidationError("Only HTML, XHTML, and plain-text pages can be captured")
+    if not response.body:
+        raise WebCaptureValidationError("The web response is empty")
+    if len(response.body) > MAX_RESPONSE_BYTES:
+        raise WebCaptureTooLargeError("The expanded web response is too large")
+    return content_type
+
+
+def fetch_public_page(
+    url: str,
+    policy: PublicWebUrlPolicy,
+    fetcher: WebFetcher,
+    *,
+    timeout: float = TOTAL_TIMEOUT_SECONDS,
+) -> tuple[str, str | None]:
+    """The readable text and title of one public page, for reading a source further.
+
+    The same rules as a capture: the public-address policy for the URL and every
+    redirect, the redirect and size limits, and only HTML or plain text.
+    """
+
+    deadline = time.monotonic() + timeout
+    target = policy.resolve(url)
+    for redirect_count in range(MAX_REDIRECTS + 1):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise WebCaptureTimeoutError("The web page timed out")
+        try:
+            response = fetcher.fetch(target, timeout_seconds=remaining)
+        except WebCaptureError:
+            raise
+        except TimeoutError as error:
+            raise WebCaptureTimeoutError("The web page timed out") from error
+        except Exception as error:
+            raise WebCaptureFetchError("The web page could not be fetched") from error
+        redirected = _redirect_url(target, response, redirect_count)
+        if redirected is None:
+            return _readable_page(response.body, _page_content_type(response))
+        target = policy.resolve(redirected)
+    raise WebCaptureValidationError("The web page redirected too many times")
+
+
 def _asset_file_name(final_url: str, media_type: str) -> str:
     candidate = Path(unquote(urlsplit(final_url).path)).name.strip() or "snapshot"
     desired_suffix = ".txt" if media_type == "text/plain" else ".html"
@@ -674,16 +746,9 @@ class WebCaptureService:
                 raise WebCaptureTimeoutError("The web capture timed out") from error
             except Exception as error:
                 raise WebCaptureFetchError("The web page could not be fetched") from error
-            if response.status not in REDIRECT_STATUSES:
+            redirected_url = _redirect_url(target, response, redirect_count)
+            if redirected_url is None:
                 return target, response
-            if redirect_count == MAX_REDIRECTS:
-                raise WebCaptureValidationError("The web page redirected too many times")
-            location = (response.header("location") or "").strip()
-            if not location:
-                raise WebCaptureFetchError("The redirect response has no Location header")
-            redirected_url = urljoin(target.url, location)
-            if len(redirected_url) > MAX_WEB_URL_LENGTH:
-                raise WebCaptureValidationError("The redirect URL is too long")
             target = await self._resolve_with_deadline(redirected_url, deadline)
         raise WebCaptureValidationError("The web page redirected too many times")
 
@@ -734,24 +799,8 @@ class WebCaptureService:
                     )
 
         target, response = await self._fetch(requested_url)
-        if not 200 <= response.status < 300:
-            raise WebCaptureFetchError(
-                f"The web page returned HTTP status {response.status}"
-            )
-        content_type = (response.header("content-type") or "").strip()
-        if len(content_type) > 160:
-            raise WebCaptureValidationError("The response Content-Type is too long")
-        if any(ord(character) < 32 for character in content_type):
-            raise WebCaptureValidationError("The response Content-Type is invalid")
+        content_type = _page_content_type(response)
         media_type = content_type.split(";", 1)[0].strip().casefold()
-        if media_type not in ALLOWED_CONTENT_TYPES:
-            raise WebCaptureValidationError(
-                "Only HTML, XHTML, and plain-text pages can be captured"
-            )
-        if not response.body:
-            raise WebCaptureValidationError("The web response is empty")
-        if len(response.body) > MAX_RESPONSE_BYTES:
-            raise WebCaptureTooLargeError("The expanded web response is too large")
 
         readable, page_title = await asyncio.to_thread(
             _readable_page,

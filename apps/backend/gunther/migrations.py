@@ -486,6 +486,16 @@ def _create_agent_outputs(connection: Connection, metadata: MetaData) -> None:
         metadata.tables["artifact_checks"].create(bind=connection, checkfirst=True)
 
 
+def _add_session_briefs(connection: Connection, _metadata: MetaData) -> None:
+    """Each conversation keeps a short brief of what the user wants (goal, constraints,
+    settled, open). Older conversations start with an empty one."""
+
+    if inspect(connection).has_table("knowledge_sessions"):
+        add_column_if_missing(
+            connection, "knowledge_sessions", "brief_json", "TEXT NOT NULL DEFAULT '{}'"
+        )
+
+
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
 MIGRATIONS: tuple[Migration, ...] = (
@@ -509,6 +519,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(18, "message_traces", _create_message_traces),
     Migration(19, "knowledge_saved_without_review", _save_knowledge_without_review),
     Migration(20, "agent_outputs", _create_agent_outputs),
+    Migration(21, "session_briefs", _add_session_briefs),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

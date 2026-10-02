@@ -1,0 +1,29 @@
+# An Ask skill: settings for Ask's one loop, chosen with "/research". The instructions are in
+# SKILL.md. "frame = true" makes Ask split the question into sub-questions (or ask the user
+# one or two things) before it searches. Each budget caps the searches and reads of one
+# question; the first is the default. Gunther's own rules (citations, language, marking what
+# is not from the sources) come first and win.
+
+name = "research"
+kind = "ask"
+version = 1
+command = "research"
+title = "Deep research"
+description = "Research a question in depth: split it into sub-questions, gather and read sources (selected material first), compare the evidence, fill gaps, and answer with every claim checked."
+frame = true
+
+[budgets.standard]
+searches = 8
+reads = 4
+calls = 30
+check_sentences = 40
+leads = 6
+sub_questions = [3, 5]
+
+[budgets.deep]
+searches = 16
+reads = 8
+calls = 50
+check_sentences = 40
+leads = 6
+sub_questions = [4, 8]

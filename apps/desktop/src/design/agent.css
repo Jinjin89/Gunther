@@ -116,6 +116,10 @@
   background: var(--gx-surface);
   box-shadow: 0 1px 2px rgba(20, 20, 18, 0.03), 0 10px 28px -18px rgba(20, 20, 18, 0.16);
 }
+.composer { position: relative; }
+/* The skill chosen with /, before the text; its menu opens above the box. */
+.composer-skill { padding: 10px 14px 0; display: flex; }
+.composer .gx-mention-menu { top: auto; bottom: calc(100% + 8px); transform-origin: bottom left; }
 .composer:hover { border-color: var(--gx-line-3); }
 .composer:focus-within {
   border-color: color-mix(in srgb, var(--gx-ink) 32%, transparent);
@@ -293,3 +297,44 @@
 .trace-results small { display: block; color: var(--gx-faint); overflow-wrap: anywhere; }
 .trace-results p { margin: 2px 0 0; color: var(--gx-muted); }
 .trace-empty { display: grid; justify-items: center; gap: 8px; padding: 32px 18px; color: var(--gx-muted); text-align: center; font-size: var(--gx-text-xs); }
+
+/* The conversation brief at the top of the context panel: plain lines, edited in place. */
+.brief-section { display: grid; gap: 8px; padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--gx-line); }
+.brief-section header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.brief-section header small { color: var(--gx-faint); font-size: var(--gx-text-xs); }
+.brief-part { display: grid; gap: 2px; }
+.brief-part > small { color: var(--gx-faint); font-size: var(--gx-text-xs); }
+.brief-part ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.brief-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: var(--gx-text-sm); color: var(--gx-ink); }
+.brief-text { flex: 0 1 auto; min-width: 0; padding: 1px 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: text; }
+.brief-text:disabled { cursor: default; }
+.brief-ref { padding: 0; border: 0; background: transparent; color: var(--gx-muted); font: inherit; font-size: var(--gx-text-xs); }
+button.brief-ref { cursor: pointer; text-decoration: underline; }
+.brief-remove { margin-left: auto; padding: 2px; border: 0; background: transparent; color: var(--gx-faint); opacity: 0; cursor: pointer; }
+.brief-line:hover .brief-remove, .brief-remove:focus-visible { opacity: 1; }
+.brief-input, .brief-add input, .brief-add select { min-width: 0; padding: 4px 6px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-xs); background: var(--gx-surface); color: var(--gx-ink); font: inherit; font-size: var(--gx-text-sm); }
+.brief-input:focus-visible, .brief-add input:focus-visible { outline: 0; border-color: color-mix(in srgb, var(--gx-ink) 32%, transparent); }
+.brief-add { display: flex; gap: 6px; }
+.brief-add input { flex: 1; }
+.brief-error { margin: 0; font-size: var(--gx-text-sm); color: var(--gx-danger); }
+.brief-error button { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
+
+/* Deep research: the plan above the steps while it runs, and folded under a saved answer. */
+.research-plan { margin: 8px 0 0 30px; color: var(--gx-muted); font-size: var(--gx-text-xs); }
+.research-plan summary { width: fit-content; display: inline-flex; align-items: center; gap: 5px; color: var(--gx-faint); cursor: pointer; list-style: none; }
+.research-plan summary::-webkit-details-marker { display: none; }
+.research-plan summary svg { transition: transform var(--gx-dur) var(--gx-ease); }
+.research-plan[open] summary svg { transform: rotate(90deg); }
+.research-plan summary:hover { color: var(--gx-ink); }
+.research-plan .research-core { margin: 6px 0 0; color: var(--gx-ink); font-weight: 560; }
+.research-plan ol { margin: 6px 0 0; padding-left: 1.4em; display: grid; gap: 2px; }
+.research-plan li small { margin-left: 6px; color: var(--gx-faint); }
+.research-plan > small { display: block; margin-top: 6px; color: var(--gx-faint); }
+.research-plan.is-live { padding: 8px 12px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-sm); background: var(--gx-surface-2); }
+.gx-home-answer .research-plan, .gx-home-live .research-plan { margin-left: 0; }
+
+.budget-toggle { display: inline-flex; padding: 1px; border-radius: 6px; background: var(--gx-active); }
+.budget-toggle button { width: auto !important; height: 20px !important; padding: 0 7px; border-radius: 5px; font-size: var(--gx-text-xs); font-weight: 560; }
+.budget-toggle button[aria-pressed="true"] { background: var(--gx-surface); color: var(--gx-ink) !important; box-shadow: var(--gx-shadow-xs); }
+.send-button.has-label { width: auto; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; font-size: var(--gx-text-xs); font-weight: 600; }
+.gx-send.has-label { width: auto; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; font-size: var(--gx-text-xs); font-weight: 600; }

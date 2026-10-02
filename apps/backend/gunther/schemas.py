@@ -10,6 +10,7 @@ from pydantic import (
     model_validator,
 )
 
+from gunther.brief import SettledItem
 from gunther.model_profiles import Effort
 
 SourceKind = Literal[
@@ -576,6 +577,20 @@ class ConversationContextOut(ApiModel):
     intent: Literal["chat", "followup", "library", "web", "both", "clarify"] | None = None
     steps: list[dict[str, object]] = Field(default_factory=list)
     web_searched: bool = False
+    # The checker ran on this answer; one note per [p:n] in the text, in order, on what
+    # that source does not cover.
+    checked: bool = False
+    support_notes: list[str] = Field(default_factory=list)
+    # What this question found, for the context panel: {"subQuestions": [{id, text, query}],
+    # "findings": [{ref | title, serves, says}]}. `ref` is the number in the answer's text.
+    work: dict[str, object] | None = None
+    # The skill the answer followed: {"name", "version", "title", "auto"}; auto when Ask
+    # picked it from the message instead of the person choosing it.
+    skill: dict[str, object] | None = None
+    # Deep research: {"state": "asking" | "done" | "stopped_early", "budget", "used": {"searches",
+    # "reads"}, "limits": {"searches", "reads"}, "coreQuestion", "doneWhen"}. "asking": the answer
+    # is questions for the user, and nothing was searched.
+    research: dict[str, object] | None = None
     # On a question that got no answer: "stopped" by the reader, or "failed".
     interrupted: Literal["stopped", "failed"] | None = None
 
@@ -606,8 +621,21 @@ class KnowledgeSessionSummaryOut(ApiModel):
     updated_at: str
 
 
+class BriefOut(ApiModel):
+    """What the conversation is for: see brief.py. `edited` lines were written by the
+    user; `error` is why the last update failed, when it did."""
+
+    goal: str = ""
+    constraints: list[str] = Field(default_factory=list)
+    settled: list[SettledItem] = Field(default_factory=list)
+    open: list[str] = Field(default_factory=list)
+    edited: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
 class KnowledgeSessionOut(KnowledgeSessionSummaryOut):
     messages: list[SessionMessageOut]
+    brief: BriefOut = Field(default_factory=BriefOut)
 
 
 class CreateSessionMessageInput(ApiModel):
@@ -623,6 +651,17 @@ class CreateSessionMessageInput(ApiModel):
     style: str | None = Field(default=None, max_length=40)
     # Home only: read just these libraries (the ones picked with @); none means all.
     knowledge_base_ids: list[str] | None = Field(default=None, max_length=20)
+    # A skill's command, e.g. "compare" (what follows "/" in the composer).
+    skill: str | None = Field(default=None, max_length=40)
+    # Which of the skill's budgets to use; its first when left out.
+    budget: Literal["standard", "deep"] | None = None
+
+
+class AskSkillOut(ApiModel):
+    command: str
+    title: str
+    description: str
+    budgets: list[str] = Field(default_factory=list)
 
 
 class FileSessionInput(ApiModel):

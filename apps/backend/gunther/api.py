@@ -19,6 +19,7 @@ from gunther.asset_service import (
     AssetTooLargeError,
     AssetValidationError,
 )
+from gunther.brief import Brief
 from gunther.device_auth import (
     WORKSPACE_PROTOCOL_VERSION,
     AuthPrincipal,
@@ -48,8 +49,10 @@ from gunther.recording_service import (
 from gunther.schemas import (
     ArtifactOut,
     ArtifactSummaryOut,
+    AskSkillOut,
     AssertionOut,
     AssetCaptureOut,
+    BriefOut,
     BuildOutputInput,
     ConversationTurnOut,
     CreateDevicePairingInput,
@@ -105,6 +108,7 @@ from gunther.service import (
     ArtifactIntegrityError,
     KnowledgeService,
 )
+from gunther.skillbook import ask_skills
 from gunther.storage_budget import StorageBudgetError, StorageReservation
 from gunther.web_capture import (
     WebCaptureConflictError,
@@ -1070,6 +1074,39 @@ def create_session_message(
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
+@router.get("/ask/skills", response_model=list[AskSkillOut])
+def list_ask_skills() -> list[AskSkillOut]:
+    """The skills the composer's / menu offers."""
+
+    return [
+        AskSkillOut(
+            command=skill.command,
+            title=skill.title,
+            description=skill.description,
+            budgets=list(skill.budgets),
+        )
+        for skill in ask_skills().values()
+    ]
+
+
+@router.post("/sessions/{session_id}/brief/refresh", response_model=BriefOut)
+def refresh_session_brief(session_id: str, request: Request) -> BriefOut:
+    """Bring the conversation's brief up to date with its last answer."""
+
+    try:
+        return _service(request).refresh_brief(session_id)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.patch("/sessions/{session_id}/brief", response_model=BriefOut)
+def edit_session_brief(session_id: str, payload: Brief, request: Request) -> BriefOut:
+    try:
+        return _service(request).edit_brief(session_id, payload)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
 @router.post("/sessions/{session_id}/file", response_model=KnowledgeSessionSummaryOut)
 def file_home_session(
     session_id: str, payload: FileSessionInput, request: Request
@@ -1114,16 +1151,40 @@ async def stream_session_message(
     """
 
     service = _service(request)
+    researching = (payload.skill or "").strip().lstrip("/") == "research"
 
     def work(run: AnswerRun) -> None:
+        writing = False
+
         def hear(event: dict) -> None:
+            nonlocal writing
+            # Research keeps what it found when stopped before it writes (see ``stopping``);
+            # every other answer is dropped.
             if run.stop_requested.is_set():
-                raise Stopped
+                if writing or not researching:
+                    raise Stopped
+                if event["type"] == "text":
+                    # Too late to end gathering: the answer is already being written.
+                    run.stop_requested.clear()
+            if event["type"] == "text":
+                writing = True
             if event["type"] != "saving":
                 run.publish(event["type"], event)
 
+        def stopping() -> bool:
+            """Research: the first Stop ends gathering. It is used up, so a second Stop,
+            while the answer is being written, drops the answer as for any other."""
+            if writing or not run.stop_requested.is_set():
+                return False
+            run.stop_requested.clear()
+            return True
+
         try:
-            turn = service.create_session_turn(session_id, payload, hear)
+            turn = (
+                service.create_session_turn(session_id, payload, hear, stopping)
+                if researching
+                else service.create_session_turn(session_id, payload, hear)
+            )
             run.publish("done", turn.model_dump(mode="json", by_alias=True))
         except Stopped:
             service.record_interrupted_question(session_id, payload.content, "stopped")

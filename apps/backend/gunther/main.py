@@ -61,9 +61,11 @@ from gunther.tts_api import router as tts_router
 from gunther.tts_service import TtsService
 from gunther.web_capture import (
     PinnedHttpFetcher,
+    PublicWebUrlPolicy,
     SystemWebResolver,
     WebFetcher,
     WebResolver,
+    fetch_public_page,
 )
 
 
@@ -134,6 +136,7 @@ def _connect_models(
     knowledge_service.web_search = online_search
     # Settings → Developer: keep how each answer is made.
     knowledge_service.tracing = bool(store.developer().get("traces"))
+    knowledge_service.auto_skills = settings.ask_auto_skills
     knowledge_service.output_skills = bool(store.developer().get("output_skills", True))
     index = knowledge_service.index
     index.digest_method = digest_writer.method if digest_writer else None
@@ -328,6 +331,10 @@ def create_app(
     application.state.pairing_exchange_guard = PairingExchangeGuard()
     application.state.web_capture_fetcher = web_capture_fetcher or PinnedHttpFetcher()
     application.state.web_capture_resolver = web_capture_resolver or SystemWebResolver()
+    # Ask reads a web page it found further through the same rules as a capture.
+    page_policy = PublicWebUrlPolicy(application.state.web_capture_resolver)
+    page_fetcher = application.state.web_capture_fetcher
+    knowledge_service.page_reader = lambda url: fetch_public_page(url, page_policy, page_fetcher)
     application.state.ocr_provider = local_ocr
     application.state.storage_budget = storage_budget
     application.add_middleware(RequestBodyLimitMiddleware)

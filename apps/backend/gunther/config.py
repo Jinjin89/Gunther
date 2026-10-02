@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     tavily_api_key: str | None = None
     web_search_depth: Literal["basic", "advanced"] = "basic"
     web_search_max_results: int = Field(default=6, ge=1, le=10)
+    # Let Ask pick a skill (the / menu's methods) itself when the message clearly asks for
+    # one. Off until the exam shows it picks well; there is no switch in the app.
+    ask_auto_skills: bool = False
     # Summaries of every capture, written after it is read (see digest) by the
     # Analysis model. Without a model there are none.
     ai_summaries: Literal["auto", "off"] = "auto"

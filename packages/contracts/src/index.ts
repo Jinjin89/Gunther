@@ -912,8 +912,44 @@ export interface ConversationContext {
   /** What it did to answer: the searches it ran, in order. */
   steps?: AgentStep[];
   webSearched?: boolean;
+  /** The checker ran on this answer. */
+  checked?: boolean;
+  /** One note per `[p:n]` (partly supported) in the text, in order: what that source does not cover. */
+  supportNotes?: string[];
+  /** What the question found: its sub-questions and what each source said. `ref` is the number in the answer's text; a source the answer does not cite has its `title` instead. */
+  work?: {
+    subQuestions: Array<{ id: string; text: string; query: string }>;
+    findings: Array<{ ref?: number; title?: string; serves: string; says: string }>;
+  } | null;
+  /** The skill the answer followed; `auto` when Ask picked it from the message. */
+  skill?: { name: string; version: number; title: string; auto: boolean } | null;
+  /** Deep research. `asking`: the answer is questions for the user and nothing was searched. `stoppedEarly`: written from what was found when the reader pressed Stop. */
+  research?: ResearchRun | null;
   /** On a question that got no answer: stopped by the reader, or failed. */
   interrupted?: "stopped" | "failed" | null;
+}
+
+/** How much of a research budget a step has used so far: [used, allowed]. */
+export interface ResearchUsed {
+  searches: [number, number];
+  reads: [number, number];
+}
+
+export interface ResearchRun {
+  state: "asking" | "done" | "stopped_early";
+  budget: "standard" | "deep" | "";
+  used: { searches: number; reads: number };
+  limits: { searches: number; reads: number };
+  coreQuestion: string;
+  doneWhen: string;
+}
+
+/** A method Ask can follow, chosen with `/` in the composer. */
+export interface AskSkill {
+  command: string;
+  title: string;
+  description: string;
+  budgets: string[];
 }
 
 export interface AgentStep {
@@ -950,8 +986,29 @@ export interface KnowledgeSessionSummary {
   updatedAt: string;
 }
 
+/** One settled conclusion: by the user's word (`because` quotes it) or by sources (`refs`). */
+export interface BriefSettled {
+  text: string;
+  refs: number[];
+  by: "you" | "sources";
+  because: string;
+}
+
+/** What the conversation is for. `edited` names lines the user wrote ("goal", "open:<text>"…); `error` is why the last update failed. */
+export interface ConversationBrief {
+  goal: string;
+  constraints: string[];
+  settled: BriefSettled[];
+  open: string[];
+  edited: string[];
+  error: string | null;
+}
+
+export type ConversationBriefInput = Pick<ConversationBrief, "goal" | "constraints" | "settled" | "open">;
+
 export interface KnowledgeSession extends KnowledgeSessionSummary {
   messages: SessionMessage[];
+  brief?: ConversationBrief;
 }
 
 export const createKnowledgeSessionSchema = z.object({
@@ -986,6 +1043,10 @@ export const createSessionMessageSchema = z.object({
   /** Home only: read just these libraries; none means all of them. */
   knowledgeBaseIds: z.array(z.string()).max(20).optional(),
   style: z.string().max(40).optional(),
+  /** A skill's command, e.g. "compare". */
+  skill: z.string().max(40).optional(),
+  /** Which of the skill's budgets to use; its first when left out. */
+  budget: z.enum(["standard", "deep"]).optional(),
 });
 export type CreateSessionMessageInput = z.infer<typeof createSessionMessageSchema>;
 

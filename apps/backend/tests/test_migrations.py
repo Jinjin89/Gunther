@@ -74,6 +74,7 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (18, "message_traces"),
             (19, "knowledge_saved_without_review"),
             (20, "agent_outputs"),
+            (21, "session_briefs"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
@@ -1124,5 +1125,35 @@ def test_v19_outputs_gain_agent_columns_and_a_checks_table_without_losing_versio
             assert (kept.brief, kept.scope_json, kept.inputs_json) == ("", "{}", "{}")
             assert (kept.outline_json, kept.citations_json) == ("[]", "[]")
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
+    finally:
+        engine.dispose()
+
+
+def test_v20_database_gains_session_briefs_without_losing_conversations(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path)
+    try:
+        run_migrations(engine, Base.metadata, MIGRATIONS[:20])
+        with engine.begin() as connection:
+            # Baseline adopts current metadata; remove what a v20 app never had.
+            connection.exec_driver_sql("ALTER TABLE knowledge_sessions DROP COLUMN brief_json")
+            connection.execute(
+                text(
+                    "INSERT INTO knowledge_sessions (id, knowledge_base_id, title, summary, "
+                    "selected_source_ids_json, pinned, archived, created_at, updated_at) "
+                    "VALUES ('ses_old', 'kb', 'Kept', '', '[]', 0, 0, "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+        assert "brief_json" not in {
+            c["name"] for c in inspect(engine).get_columns("knowledge_sessions")
+        }
+
+        history = run_migrations(engine, Base.metadata)
+        assert run_migrations(engine, Base.metadata) == history
+        with engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT title, brief_json FROM knowledge_sessions WHERE id = 'ses_old'")
+            ).one() == ("Kept", "{}")
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 21
     finally:
         engine.dispose()

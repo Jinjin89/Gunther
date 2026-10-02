@@ -774,6 +774,11 @@ def test_session_keeps_messages_context_and_citations() -> None:
             "style": "balanced",
             "steps": [],
             "webSearched": False,
+            "checked": False,
+            "supportNotes": [],
+            "work": None,
+            "skill": None,
+            "research": None,
             "interrupted": None,
         }
 
@@ -1293,6 +1298,11 @@ def test_session_grounds_an_answer_in_raw_source_text_without_extracted_claims()
             "style": "balanced",
             "steps": [],
             "webSearched": False,
+            "checked": False,
+            "supportNotes": [],
+            "work": None,
+            "skill": None,
+            "research": None,
             "interrupted": None,
         }
         assert "Clustering lecture" in turn["assistantMessage"]["content"]

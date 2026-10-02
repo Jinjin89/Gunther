@@ -435,6 +435,7 @@ class KnowledgeSession(Base):
     summary: Mapped[str] = mapped_column(String(300), default="")
     focus_chapter_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
     selected_source_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    brief_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
     pinned: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     archived: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(default=utc_now)

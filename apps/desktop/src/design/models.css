@@ -228,3 +228,23 @@
   font-weight: 550;
   letter-spacing: 0.01em;
 }
+
+/* A sentence that follows from its sources without being stated by them. */
+.inference-mark {
+  margin-left: 2px;
+  color: var(--gx-muted);
+  font-size: 0.75em;
+  font-weight: 550;
+}
+
+/* A claim from the model's own knowledge that the sources contradict: kept, and flagged. */
+.inference-mark.disputed-mark { color: var(--gx-warning); }
+
+/* Partly supported: a hollow number. */
+.answer-markdown sup button.is-partly,
+.answer-markdown sup span.is-partly {
+  padding: 0 3px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  background: transparent;
+}

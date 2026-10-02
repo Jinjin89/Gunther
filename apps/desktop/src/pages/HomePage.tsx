@@ -16,6 +16,7 @@ import type { AtlasMode, KnowledgeBase } from "../atlas";
 import { knowledgeApi } from "../api";
 import { HomeAsk, RecentQuestions } from "../components/search/HomeAsk";
 import { SearchComposer, type SearchComposerHandle } from "../components/search/SearchComposer";
+import { useAskSkills, type SkillBudget } from "../components/search/skills";
 import { SearchResults } from "../components/search/SearchResults";
 import { useKnowledgeSearch } from "../components/search/useKnowledgeSearch";
 import { BrandMark } from "../design/BrandMark";
@@ -127,6 +128,11 @@ export function HomePage({
   const [sourcesReady, setSourcesReady] = useState(false);
   const [query, setQuery] = useState("");
   const [mentionIds, setMentionIds] = useState<string[]>([]);
+  // The skill chosen with `/`; it applies to the next question asked, then goes.
+  const [skill, setSkill] = useState<string | null>(null);
+  // How deep a skill with budgets (research) goes.
+  const [budget, setBudget] = useState<SkillBudget>("standard");
+  const askSkills = useAskSkills();
   const [web, setWeb] = useState(() => window.localStorage.getItem(WEB_PREFERENCE_KEY) === "on");
   const [savingResearch, setSavingResearch] = useState(false);
   const [savedResearchQuery, setSavedResearchQuery] = useState<string | null>(null);
@@ -206,8 +212,21 @@ export function HomePage({
       web,
       style: readAnswerStyle(),
       libraryIds: mentionIds,
+      ...(skill ? { skill } : {}),
+      ...(skill && (askSkills.find((item) => item.command === skill)?.budgets.length ?? 0) > 1 ? { budget } : {}),
     });
+    setSkill(null);
+    setBudget("standard");
   };
+
+  // Research that asked something first: the next question goes back to it, at the same depth.
+  const lastMessage = homeAsk.messages.at(-1);
+  useEffect(() => {
+    const research = lastMessage?.role === "assistant" ? lastMessage.context.research : null;
+    if (research?.state !== "asking") return;
+    setSkill(lastMessage?.context.skill?.name ?? "research");
+    if (research.budget) setBudget(research.budget);
+  }, [lastMessage?.id]);
 
   const fileConversation = async (libraryId: string) => {
     const sessionId = await homeAsk.file(libraryId);
@@ -221,6 +240,7 @@ export function HomePage({
     homeAsk.close();
     setQuery("");
     setMentionIds([]);
+    setSkill(null);
     rememberedSearch = null;
     reset();
   };
@@ -326,6 +346,10 @@ export function HomePage({
           onWebChange={changeWeb}
           onSubmit={submit}
           onAsk={() => askNow()}
+          skill={skill}
+          onSkillChange={setSkill}
+          budget={budget}
+          onBudgetChange={setBudget}
           onClear={clear}
           onArrowDown={submitted ? focusFirstResult : undefined}
           picker={<><ModelPicker menu={modelMenu} choice={usableChoice(modelMenu, deviceChoice)} onChange={setDeviceChoice} placement="down" /><StylePicker /></>}

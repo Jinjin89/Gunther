@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import secrets
 from collections import Counter
@@ -18,6 +19,7 @@ from sqlalchemy import and_, delete, func, or_, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
+from gunther import brief as briefs
 from gunther import trace
 from gunther.agent import (
     DEFAULT_STYLE,
@@ -28,6 +30,7 @@ from gunther.agent import (
     Toolbox,
     ToolFailure,
 )
+from gunther.agent import Notes as Work
 from gunther.conversation import GroundingClaim, KnowledgeResponder
 from gunther.database import session_scope
 from gunther.extraction import CandidateAssertion, ExtractionResult, Extractor
@@ -84,6 +87,7 @@ from gunther.schemas import (
     ArtifactUnitSnapshotOut,
     AssertionOut,
     AssetOut,
+    BriefOut,
     BuildOutputInput,
     ConversationCitationOut,
     ConversationContextOut,
@@ -136,10 +140,15 @@ from gunther.schemas import (
     WebSnapshotOut,
 )
 from gunther.skill_runner import Approach, SkillAgents
-from gunther.skillbook import skill_for
+from gunther.skillbook import AskSkill, ask_skills, skill_for
 from gunther.source_identity import source_fingerprint
 from gunther.topics import topic_block_ids, topic_source_ids
 from gunther.trash import live_membership_source_ids, trashed_library_ids
+
+logger = logging.getLogger(__name__)
+
+# (plan, check) effort for Ask's own steps; see AskAgent. The exam may override them.
+ASK_EFFORTS: tuple[Effort, Effort] = ("low", "off")
 
 # Sources found by meaning, added after the exact matches of a search.
 MEANING_RESULTS = 6
@@ -158,6 +167,9 @@ HOME_SCOPE = "@home"
 # Libraries at least this large also get paper-level answers (abstracts).
 PAPER_OVERVIEW_MIN_SOURCES = 12
 PAPER_OVERVIEWS = 4
+# How much of a source Ask reads when it reads further: a library section, a web page.
+READ_SECTION_CHARS = 6000
+READ_PAGE_CHARS = 8000
 
 
 def _id(prefix: str) -> str:
@@ -274,6 +286,12 @@ class _Answer:
     reasoning: str | None = None
     error: str | None = None
     steps: list = field(default_factory=list)
+    checked: bool = False
+    support_notes: tuple[str, ...] = ()
+    work: Work | None = None
+    skill: AskSkill | None = None
+    skill_auto: bool = False
+    research: dict | None = None
 
 
 # Reasoning is kept for the model that wrote it; past this it is cut.
@@ -311,13 +329,54 @@ def _in_pool_numbers(message: SessionMessage) -> str:
 
     def replace(match: re.Match[str]) -> str:
         found = []
-        for part in re.split(r"[,，、]", match.group(2)):
+        for part in re.split(r"[,，、]", match.group(3)):
             at = int(part) - 1
             if 0 <= at < len(refs) and refs[at] is not None:
                 found.append(f"[{refs[at]}]")
-        return f"{match.group(1)}{''.join(found)}" if found else ""
+        if not found:
+            return ""
+        if match.group(2) == "d":
+            return f"{match.group(1) or ' '}(disputed by {''.join(found)})"
+        return f"{match.group(1)}{''.join(found)}"
 
-    return re.sub(r"(\s?)\[(\d+(?:\s*[,，、]\s*\d+)*)\]", replace, message.content)
+    # [i:2] (an inference) and [p:2] (partly supported) are read as plain pool numbers;
+    # [d:2] says the claim was disputed by that source.
+    return re.sub(
+        r"(\s?)\[(?:(i|p|d):)?(\d+(?:\s*[,，、]\s*\d+)*)\]", replace, message.content
+    )
+
+
+def _work_out(work: Work | None, cited: list[Evidence]) -> dict[str, object] | None:
+    """What a question found, for the saved answer: a finding about a source the answer
+    cites says its reading number (the one in the text); any other keeps its title."""
+
+    if work is None:
+        return None
+    reading = {item.ref: number for number, item in enumerate(cited, start=1)}
+    return {
+        "subQuestions": [
+            {"id": sub.id, "text": sub.text, "query": sub.query} for sub in work.sub_questions
+        ],
+        "findings": [
+            {
+                **({"ref": reading[f.ref]} if f.ref in reading else {"title": f.title}),
+                "serves": f.serves,
+                "says": f.says,
+            }
+            for f in work.findings
+        ],
+    }
+
+
+def _around(text: str, snippet: str, limit: int = READ_PAGE_CHARS) -> str:
+    """At most ``limit`` characters of a page, centred on where the search result's
+    snippet is when it can be found, else from the start."""
+
+    if len(text) <= limit:
+        return text
+    at = text.find(snippet[:60]) if snippet[:60].strip() else -1
+    start = 0 if at < 0 else max(0, min(at - limit // 2, len(text) - limit))
+    return text[start : start + limit]
 
 
 def evidence_from_citation(citation: ConversationCitationOut) -> Evidence:
@@ -370,6 +429,13 @@ class KnowledgeService:
         # Settings → Developer: outputs are made by following a skill (see skill_runner);
         # off, by the agents in outputs alone.
         self.output_skills = True
+        # Let Ask pick a skill itself from the message (settings.ask_auto_skills).
+        self.auto_skills = False
+        # (plan effort, check effort) for Ask's own steps; the exam sets it, nothing else.
+        self.agent_efforts: tuple[Effort, Effort] | None = None
+        # Reads a public web page for the agent: URL -> (text, title). Set by the app; it
+        # applies the same public-address rules as capturing a page.
+        self.page_reader: Callable[[str], tuple[str, str | None]] | None = None
         self.index = KnowledgeIndex(sessions)
         self._source_import_locks_guard = Lock()
         self._source_import_locks: dict[str, tuple[Lock, int]] = {}
@@ -1504,7 +1570,133 @@ class KnowledgeService:
             return KnowledgeSessionOut(
                 **self._session_summary(knowledge_session).model_dump(),
                 messages=[self._message_out(message) for message in knowledge_session.messages],
+                brief=self._brief_out(briefs.load(knowledge_session.brief_json)),
             )
+
+    @staticmethod
+    def _brief_out(stored: briefs.Stored) -> BriefOut:
+        return BriefOut(
+            goal=stored.brief.goal,
+            constraints=stored.brief.constraints,
+            settled=stored.brief.settled,
+            open=stored.brief.open,
+            edited=stored.edited,
+            error=stored.error,
+        )
+
+    def _brief_session(self, session: Session, session_id: str) -> KnowledgeSession:
+        knowledge_session = session.scalar(
+            self._session_query().where(KnowledgeSession.id == session_id)
+        )
+        if knowledge_session is None:
+            raise LookupError(f"Session {session_id} was not found")
+        return knowledge_session
+
+    def brief(self, session_id: str) -> BriefOut:
+        with session_scope(self.sessions) as session:
+            knowledge_session = self._brief_session(session, session_id)
+            return self._brief_out(briefs.load(knowledge_session.brief_json))
+
+    @staticmethod
+    def _last_exchange(
+        messages: list[SessionMessage],
+    ) -> tuple[SessionMessage, SessionMessage] | None:
+        """The latest answer and the question it answers."""
+
+        for at in range(len(messages) - 1, 0, -1):
+            if messages[at].role == "assistant" and messages[at - 1].role == "user":
+                return messages[at - 1], messages[at]
+        return None
+
+    def _catch_up_brief(self, session_id: str) -> None:
+        """Fold the last answer into the brief before the next question, when the page
+        never asked for it (closed too soon, or the update failed)."""
+
+        try:
+            with session_scope(self.sessions) as session:
+                knowledge_session = self._brief_session(session, session_id)
+                last = self._last_exchange(knowledge_session.messages)
+                behind = (
+                    last is not None
+                    and briefs.load(knowledge_session.brief_json).through != last[1].id
+                )
+            if behind:
+                self.refresh_brief(session_id)
+        except LookupError:
+            return  # the turn itself reports a session that is not there
+        except Exception:
+            # The brief is a help, never a reason a question cannot be answered.
+            logger.exception("Catching up the brief of %s failed", session_id)
+
+    def refresh_brief(self, session_id: str) -> BriefOut:
+        """Bring the brief up to date with the conversation's last answer. A failed
+        update keeps the old brief and records why."""
+
+        with session_scope(self.sessions) as session:
+            knowledge_session = self._brief_session(session, session_id)
+            stored = briefs.load(knowledge_session.brief_json)
+            last = self._last_exchange(knowledge_session.messages)
+            if last is None or stored.through == last[1].id:
+                return self._brief_out(stored)
+            question, answered = last[0].content, last[1]
+            answer = _in_pool_numbers(answered)
+            answered_id = answered.id
+            used = json.loads(answered.context_json or "{}").get("model")
+            pool_refs = {
+                item.ref for item in conversation_pool(knowledge_session.messages) if item.ref
+            }
+        chosen = self.models.for_role("ask") if self.models else None
+        model = chosen[0] if chosen else (self.models.get(used) if self.models else None)
+        if model is None or self.models is None:
+            stored.error = "Set up a model under Settings → Models to keep a brief."
+            return self._save_brief(session_id, stored, expect=stored.brief)
+        _, check_effort = self.agent_efforts or ASK_EFFORTS
+        updated = briefs.BriefKeeper(self.models, check_effort).update(
+            model, stored, question, answer, pool_refs
+        )
+        if updated.error is None:
+            updated.through = answered_id
+        return self._save_brief(session_id, updated, expect=stored.brief, was=stored.edited)
+
+    def _save_brief(
+        self,
+        session_id: str,
+        stored: briefs.Stored,
+        expect: briefs.Brief,
+        was: list[str] | None = None,
+    ) -> BriefOut:
+        """Keep a brief, unless the user edited it while a model was working on it: then
+        theirs stays and the next question catches up."""
+
+        with session_scope(self.sessions) as session:
+            knowledge_session = self._brief_session(session, session_id)
+            current = briefs.load(knowledge_session.brief_json)
+            if current.brief != expect or (was is not None and current.edited != was):
+                return self._brief_out(current)
+            knowledge_session.brief_json = briefs.dump(stored)
+            return self._brief_out(stored)
+
+    def edit_brief(self, session_id: str, brief: briefs.Brief) -> BriefOut:
+        """Save the user's edit; the lines they changed are theirs from now on."""
+
+        with session_scope(self.sessions) as session:
+            knowledge_session = self._brief_session(session, session_id)
+            before = briefs.load(knowledge_session.brief_json)
+            tidy = briefs.Brief(
+                goal=" ".join(brief.goal.split()),
+                constraints=briefs.unique(brief.constraints),
+                settled=[
+                    item.model_copy(update={"text": " ".join(item.text.split())})
+                    for item in brief.settled
+                    if item.text.strip()
+                ],
+                open=briefs.unique(brief.open),
+            )
+            stored = briefs.Stored(
+                tidy, briefs.edited_paths(before, tidy), before.through, before.error
+            )
+            knowledge_session.brief_json = briefs.dump(stored)
+            return self._brief_out(stored)
 
     def branch_knowledge_session(self, session_id: str, message_id: str) -> KnowledgeSessionOut:
         with session_scope(self.sessions) as session:
@@ -1826,6 +2018,10 @@ class KnowledgeService:
         pool: list[Evidence] | None = None,
         style: str | None = None,
         numbered: int = 0,
+        brief: str = "",
+        skill: AskSkill | None = None,
+        budget: str | None = None,
+        stopping: Callable[[], bool] | None = None,
     ) -> _Answer:
         """Run the agent with the chosen model (or the Ask default) and describe the outcome."""
 
@@ -1849,8 +2045,23 @@ class KnowledgeService:
                 evidence=found,
                 error="Ask needs a language model. Set one up under Settings → Models.",
             )
-        result = AskAgent(self.models).run(
-            question, history, toolbox, model, effort, events, pool or (), style, numbered
+        plan_effort, check_effort = self.agent_efforts or ASK_EFFORTS
+        agent = AskAgent(self.models, plan_effort=plan_effort, check_effort=check_effort)
+        result = agent.run(
+            question,
+            history,
+            toolbox,
+            model,
+            effort,
+            events,
+            pool or (),
+            style,
+            numbered,
+            brief=brief,
+            skill=skill,
+            budget_name=budget,
+            skills=ask_skills() if self.auto_skills and skill is None else None,
+            stopping=stopping,
         )
         about = {
             "model_ref": model.ref,
@@ -1858,6 +2069,9 @@ class KnowledgeService:
             "effort": effort,
             "steps": result.steps,
             "notes": result.notes,
+            "skill": result.skill,
+            "skill_auto": result.skill_auto,
+            "research": result.research,
         }
         if result.error is not None:
             # The chosen model could not write the answer: say so; gathered quotes stand in.
@@ -1877,6 +2091,9 @@ class KnowledgeService:
             content=result.content,
             mode="model",
             evidence=result.evidence,
+            checked=result.checked,
+            support_notes=result.support_notes,
+            work=result.work,
             **{**about, "effort_label": completion.effort_label if completion else None},
             reasoning=completion.reasoning if completion else None,
         )
@@ -2074,7 +2291,15 @@ class KnowledgeService:
         session_id: str,
         payload: CreateSessionMessageInput,
         events: Callable[[dict], None] | None = None,
+        stopping: Callable[[], bool] | None = None,
     ) -> ConversationTurnOut:
+        # Refused before anything runs.
+        skill = None
+        if payload.skill:
+            skill = ask_skills().get(payload.skill.strip().lstrip("/"))
+            if skill is None:
+                raise ValueError(f"Unknown skill: /{payload.skill.strip().lstrip('/')}")
+        self._catch_up_brief(session_id)
         with session_scope(self.sessions) as session:
             knowledge_session = session.scalar(
                 self._session_query().where(KnowledgeSession.id == session_id)
@@ -2184,8 +2409,13 @@ class KnowledgeService:
                 offered.append(web_tool)
             else:
                 notes.append(f"the web was not searched: {web_off_reason}")
-            toolbox = Toolbox(tuple(offered), tuple(notes))
+            toolbox = Toolbox(
+                tuple(offered),
+                tuple(notes),
+                reader=self._ask_reader(session, web_tool is not None),
+            )
             history = conversation_history(knowledge_session.messages)
+            stored = briefs.load(knowledge_session.brief_json)
             question = payload.content.strip()
             everything = conversation_pool(knowledge_session.messages)
             # Only what this question may read: a library source that is out of scope now
@@ -2209,6 +2439,10 @@ class KnowledgeService:
                     pool,
                     payload.style,
                     max((item.ref or 0 for item in everything), default=0),
+                    brief=briefs.render(stored.brief, stored.edited),
+                    skill=skill,
+                    budget=payload.budget,
+                    stopping=stopping,
                 )
             citations = [
                 item.payload[0].model_copy(update={"ref": item.ref}) for item in response.evidence
@@ -2229,6 +2463,20 @@ class KnowledgeService:
                 style=payload.style if payload.style in STYLES else DEFAULT_STYLE,
                 steps=[step.out() for step in response.steps],
                 web_searched=any(step.tool == "search_web" for step in response.steps),
+                checked=response.checked,
+                support_notes=list(response.support_notes),
+                work=_work_out(response.work, response.evidence),
+                skill=(
+                    {
+                        "name": response.skill.name,
+                        "version": response.skill.version,
+                        "title": response.skill.title,
+                        "auto": response.skill_auto,
+                    }
+                    if response.skill
+                    else None
+                ),
+                research=response.research,
             )
             if events:
                 events({"type": "saving"})  # a reader who left by now gets nothing saved
@@ -3378,6 +3626,94 @@ class KnowledgeService:
             "use": provenance.get("use"),
         }
 
+    @staticmethod
+    def _passage_block(session: Session, citation: ConversationCitationOut) -> ContentBlock | None:
+        """The block a library citation quotes, in the revision it was taken from."""
+
+        revision_id = citation.source_revision_id or session.scalar(
+            select(SourceIndexHead.revision_id).where(
+                SourceIndexHead.source_id == citation.source_id
+            )
+        )
+        if not revision_id:
+            return None
+        return session.scalar(
+            select(ContentBlock)
+            .where(
+                ContentBlock.revision_id == revision_id,
+                ContentBlock.content == citation.quote,
+            )
+            .limit(1)
+        )
+
+    @staticmethod
+    def _read_section(session: Session, block: ContentBlock) -> str:
+        """The section a passage sits in: the blocks under the same heading, or the three
+        on each side when it has none. It grows outward from the passage, one block each
+        way in turn, until it is as long as a source is read."""
+
+        query = select(ContentBlock).where(ContentBlock.revision_id == block.revision_id)
+        if block.heading_path_json and block.heading_path_json != "[]":
+            query = query.where(ContentBlock.heading_path_json == block.heading_path_json)
+        else:
+            query = query.where(
+                ContentBlock.ordinal.between(block.ordinal - 3, block.ordinal + 3)
+            )
+        blocks = list(session.scalars(query.order_by(ContentBlock.ordinal)))
+        at = next((i for i, item in enumerate(blocks) if item.id == block.id), 0)
+        low = high = at
+        size = len(blocks[at].content) if blocks else 0
+        turn = 0
+        while size < READ_SECTION_CHARS:
+            if turn % 2 == 0 and high + 1 < len(blocks):
+                step, edge = 1, high + 1
+            elif low > 0:
+                step, edge = -1, low - 1
+            elif high + 1 < len(blocks):
+                step, edge = 1, high + 1
+            else:
+                break
+            if size + len(blocks[edge].content) > READ_SECTION_CHARS:
+                break
+            size += len(blocks[edge].content)
+            if step > 0:
+                high = edge
+            else:
+                low = edge
+            turn += 1
+        return "\n\n".join(item.content for item in blocks[low : high + 1])[:READ_SECTION_CHARS]
+
+    def _ask_reader(self, session: Session, web_on: bool) -> Callable[[Evidence], str]:
+        """Reading more of a source in Ask's pool (read_source): the section around a library
+        passage, or the whole web page. Only a source already in the pool is read, and a web
+        page only with the Web switch on, through the same rules as capturing a page; the
+        address is the one the search result gave, never one the model wrote."""
+
+        def read(item: Evidence) -> str:
+            citation = item.payload[0] if isinstance(item.payload, tuple) else None
+            if item.kind == "library" and citation is not None and citation.source_id:
+                block = self._passage_block(session, citation)
+                if block is None:
+                    raise ToolFailure("That passage is no longer in its source.")
+                return self._read_section(session, block)
+            if item.kind == "web" and item.url:
+                if not web_on:
+                    raise ToolFailure("The web is off for this message")
+                if self.page_reader is None:
+                    raise ToolFailure("This source cannot be read further")
+                from gunther.web_capture import WebCaptureError
+
+                try:
+                    text, _ = self.page_reader(item.url)
+                except WebCaptureError as error:
+                    raise ToolFailure(str(error)) from error
+                if not text.strip():
+                    raise ToolFailure("The page has no readable text")
+                return _around(text, item.text)
+            raise ToolFailure("This source cannot be read further")
+
+        return read
+
     def _source_reader(self, session: Session):
         """Reading more of a library source around one of its passages (a skill's
         read_source): the passage and the two blocks on each side, as a new passage."""
@@ -3386,19 +3722,7 @@ class KnowledgeService:
             citation = item.payload[0] if isinstance(item.payload, tuple) else None
             if item.kind != "library" or citation is None or not citation.source_id:
                 raise ToolFailure("Only a passage from the library can be read further.")
-            revision_id = citation.source_revision_id or session.scalar(
-                select(SourceIndexHead.revision_id).where(
-                    SourceIndexHead.source_id == citation.source_id
-                )
-            )
-            block = session.scalar(
-                select(ContentBlock)
-                .where(
-                    ContentBlock.revision_id == revision_id,
-                    ContentBlock.content == citation.quote,
-                )
-                .limit(1)
-            ) if revision_id else None
+            block = self._passage_block(session, citation)
             if block is None:
                 raise ToolFailure("That passage is no longer in its source.")
             around = session.scalars(

@@ -56,7 +56,7 @@ const summary = (value: Artifact): ArtifactSummary => ({
   manifestHash: value.manifestHash, acceptedUnitIds: value.acceptedUnitIds, unitCount: value.unitCount, createdAt: value.createdAt, kind: value.kind, style: value.style, origin: value.origin,
 });
 
-function setup(options: { history?: Artifact[]; menu?: ModelMenu; sources?: number; units?: KnowledgeUnit[]; follow?: typeof knowledgeApi.followOutputBuild } = {}) {
+function setup(options: { from?: string; history?: Artifact[]; menu?: ModelMenu; sources?: number; units?: KnowledgeUnit[]; follow?: typeof knowledgeApi.followOutputBuild } = {}) {
   const history = options.history ?? [];
   vi.spyOn(knowledgeApi, "modelMenu").mockResolvedValue(options.menu ?? menu);
   vi.spyOn(knowledgeApi, "sources").mockResolvedValue(Array.from({ length: options.sources ?? 2 }, (_, index) => makeSource({ id: `src_${index + 1}`, title: index === 0 ? "Markers" : `Source ${index + 1}`, kind: "note" })));
@@ -68,8 +68,9 @@ function setup(options: { history?: Artifact[]; menu?: ModelMenu; sources?: numb
   vi.spyOn(knowledgeApi, "health").mockRejectedValue(new Error("No web search in these tests."));
   const onNotify = vi.fn();
   const onAdd = vi.fn();
-  render(<OutputsPage base={makeBase({ id: "biology", title: "Biology", question: "What marks cells?" })} workspaceId="wsp_primary" onNotify={onNotify} onAdd={onAdd} />);
-  return { onNotify, onAdd };
+  const onFromDiscussion = vi.fn();
+  render(<OutputsPage base={makeBase({ id: "biology", title: "Biology", question: "What marks cells?" })} workspaceId="wsp_primary" onNotify={onNotify} onAdd={onAdd} fromDiscussion={options.from ?? null} onFromDiscussion={onFromDiscussion} />);
+  return { onNotify, onAdd, onFromDiscussion };
 }
 
 /** A promise settled from the test, to hold a build part-way. */
@@ -277,6 +278,17 @@ describe("what an output is built from", () => {
 
     await user.click(screen.getByRole("button", { name: "Whole library" }));
     expect(screen.getByText("2 sources · 1 saved")).toBeVisible();
+  });
+
+  it("starts a new output from a conversation, even when an earlier version is the one that opens", async () => {
+    const user = userEvent.setup();
+    const build = vi.spyOn(knowledgeApi, "buildOutputStream").mockResolvedValue(version(2));
+    const { onFromDiscussion } = setup({ history: [version(1)], from: "ses_1" });
+
+    expect(await screen.findByText("1 discussion")).toBeVisible();
+    expect(onFromDiscussion).toHaveBeenCalledOnce();
+    await user.click(await screen.findByRole("button", { name: "Build" }));
+    expect(build.mock.calls[0]?.[1].scope).toEqual({ mode: "selection", sourceIds: [], unitIds: [], sessionIds: ["ses_1"] });
   });
 
   it("filters the choices and selects all of a group", async () => {

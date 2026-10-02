@@ -39,6 +39,9 @@ export interface OutputsPageProps {
   onAdd: () => void;
   /** Open a source in its own page; `queue` lists the sources to step through. */
   onOpenSource?: ((id: string, queue: string[]) => void) | undefined;
+  /** An Ask conversation to start a new output from: chosen as its material once the page has loaded. */
+  fromDiscussion?: string | null | undefined;
+  onFromDiscussion?: (() => void) | undefined;
 }
 
 const WHOLE_LIBRARY: OutputScope = { mode: "library", sourceIds: [], unitIds: [], sessionIds: [] };
@@ -80,7 +83,7 @@ const describeVersion = (item: Pick<ArtifactSummary, "kind" | "style" | "audienc
  * change it by typing or by asking, and reopen any version. The agents' work is shown as it
  * happens; nothing is saved when a build fails or is stopped.
  */
-export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource }: OutputsPageProps) {
+export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, fromDiscussion, onFromDiscussion }: OutputsPageProps) {
   const [kind, setKind] = useState<OutputKind>("report");
   const [style, setStyle] = useState<OutputStyle>("auto");
   const [use, setUse] = useState<DeckChoice>("auto");
@@ -338,6 +341,15 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource }
     setAsking(false);
     retry.current = null;
   };
+
+  // Coming from a research answer: a new output, with that conversation as its material.
+  useEffect(() => {
+    if (!fromDiscussion || loading) return;
+    startNew();
+    setScope({ mode: "selection", sourceIds: [], unitIds: [], sessionIds: [fromDiscussion] });
+    onFromDiscussion?.();
+    // Once per hand-off, when the page has loaded and would otherwise show the latest version.
+  }, [fromDiscussion, loading]);
 
   const downloadMarkdown = () => {
     if (!open) return;

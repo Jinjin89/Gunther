@@ -1,0 +1,12 @@
+# An Ask skill: settings for Ask's one loop, chosen with "/compare". The instructions are in
+# SKILL.md: its text before the first "## " heading is the preamble, and each of
+# "## plan", "## write" and "## check" belongs to that step. Gunther's own rules
+# (citations, language, marking what is not from the sources) come first and win.
+
+name = "compare"
+kind = "ask"
+version = 1
+command = "compare"
+title = "Compare sources"
+description = "Set two or more sources or positions side by side: what each claims, where they agree, where they conflict and why."
+frame = false

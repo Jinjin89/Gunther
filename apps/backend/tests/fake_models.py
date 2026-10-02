@@ -146,18 +146,72 @@ def is_auditing(request: dict[str, Any]) -> bool:
     return AUDITOR_MARK in str(request["messages"][0]["content"])
 
 
+GRADE_NOTES_MARK = "You are the grading step"
+
+
+def is_grading_notes(request: dict[str, Any]) -> bool:
+    return GRADE_NOTES_MARK in str(request["messages"][0]["content"])
+
+
+BRIEF_KEEPER_MARK = "You are the memory step"
+
+
+def is_keeping_brief(request: dict[str, Any]) -> bool:
+    return BRIEF_KEEPER_MARK in str(request["messages"][0]["content"])
+
+
+SENTENCE_CHECKER_MARK = "You are the sentence-checking step"
+
+
+def is_sentence_checking(request: dict[str, Any]) -> bool:
+    return SENTENCE_CHECKER_MARK in str(request["messages"][0]["content"])
+
+
+REVISER_MARK = "You are the revising step"
+
+
+def is_revising(request: dict[str, Any]) -> bool:
+    return REVISER_MARK in str(request["messages"][0]["content"])
+
+
+LOOKUP_MARK = "You are the look-up step"
+
+
+def is_looking_up(request: dict[str, Any]) -> bool:
+    return LOOKUP_MARK in str(request["messages"][0]["content"])
+
+
+FRAMER_MARK = "You are the framing step"
+
+
+def is_framing(request: dict[str, Any]) -> bool:
+    return FRAMER_MARK in str(request["messages"][0]["content"])
+
+
 def agent_replies(
     answer: Reply,
     *plans: dict[str, Any],
     relevant: list[int] | None = None,
     verdict: dict[str, list[int]] | None = None,
     unmarked: list[str] | None = None,
+    checked: dict[str, Any] | Callable[[dict[str, Any]], Any] | None = None,
+    lookups: dict[str, Any] | Callable[[dict[str, Any]], Any] | None = None,
+    kept: list[dict[str, Any]] | Callable[[dict[str, Any]], Any] | None = None,
+    brief: dict[str, Any] | Callable[[dict[str, Any]], Any] | None = None,
+    revised: Reply | None = None,
+    framed: dict[str, Any] | Callable[[dict[str, Any]], Any] | None = None,
 ) -> Callable[[dict[str, Any]], Any]:
     """Replies for Ask: each planning call gets the next plan, every other call the answer.
 
     With no plans the agent is told to search the library with the question, then to
     answer, and a relevance check keeps ``relevant`` (all results by default).
-    ``answer`` is a reply as FakeProvider takes them (text or a callable).
+    ``answer`` is a reply as FakeProvider takes them (text or a callable). The sentence
+    checker finds nothing to change unless ``checked`` (a Check as a dict, or a function
+    of the request) says so, and the look-up judges nothing unless ``lookups`` does.
+    The grading step keeps every result unless ``kept`` (a list of {"n", "serves", "says"},
+    or a function of the request) says otherwise; ``relevant`` still names the numbers to keep.
+    The memory step returns an empty brief unless ``brief`` (a Brief as a dict, or a
+    function of the request, returning a dict or text) says otherwise.
     """
 
     import json
@@ -176,10 +230,30 @@ def agent_replies(
             return json.dumps(
                 {"relevant": relevant if relevant is not None else list(range(1, 25))}
             )
+        if is_grading_notes(request):
+            if callable(kept):
+                return kept(request)
+            if kept is None:
+                numbers = relevant if relevant is not None else list(range(1, 25))
+                return json.dumps({"keep": [{"n": n} for n in numbers]})
+            return json.dumps({"keep": kept})
         if is_auditing(request):
             return json.dumps({"claims": unmarked or []})
         if is_checking(request):
             return json.dumps(verdict or {"supports": [], "contradicts": []})
+        if is_keeping_brief(request):
+            held = brief(request) if callable(brief) else brief
+            return json.dumps(held or {})
+        if is_sentence_checking(request):
+            found = checked(request) if callable(checked) else checked
+            return json.dumps(found or {"sentences": []})
+        if is_looking_up(request):
+            found = lookups(request) if callable(lookups) else lookups
+            return json.dumps(found or {"claims": []})
+        if is_framing(request):
+            return framed(request) if callable(framed) else json.dumps(framed or {})
+        if is_revising(request) and revised is not None:
+            return revised(request) if callable(revised) else revised
         return answer(request) if callable(answer) else answer
 
     return reply
