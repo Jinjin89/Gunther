@@ -6,6 +6,8 @@ import type {
   BuildOutputRequest,
   EditOutputRequest,
   OutlineItem,
+  OutputApproach,
+  DeckUse,
   ReviseOutputRequest,
   Assertion,
   AssetCaptureResult,
@@ -105,7 +107,11 @@ export type AnswerEvent =
 /** What the agents report while an output is built, revised or followed again. */
 export type OutputEvent =
   | { type: "outline"; title: string; sections: OutlineItem[] }
-  | { type: "section"; index: number; state: "researching" | "writing" | "checking" | "done" }
+  | { type: "section"; index: number; state: "researching" | "writing" | "checking" | "revising" | "done" }
+  /** A step of the skill the output follows: understand, structure, write, edit_review, reader_test, revise. */
+  | { type: "stage"; id: string; label: string; state: "running" | "done" | "failed"; detail?: string }
+  /** What the skill decided before planning. */
+  | { type: "approach"; approach: OutputApproach & { use?: DeckUse | null } }
   | { type: "step"; state: "running" | "done"; tool: AgentStep["tool"]; label: string; query?: string; found?: number; error?: string | null; section: number | null }
   | { type: "text"; section: number; text: string }
   /** Following a build again after leaving: what it was asked. */

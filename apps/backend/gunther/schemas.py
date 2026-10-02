@@ -1,6 +1,14 @@
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializeAsAny,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 from gunther.model_profiles import Effort
 
@@ -22,7 +30,8 @@ DeviceScope = Literal["api:access", "transcription:stream"]
 ArtifactFormat = Literal["field_guide", "teaching_path", "decision_brief", "report", "slides"]
 ArtifactAudience = Literal["scientist", "student", "collaborator"]
 OutputKind = Literal["report", "slides"]
-OutputStyle = Literal["overview", "field_guide", "teaching_path", "decision_brief"]
+# "auto": the skill chooses how the report unfolds (see skill_runner).
+OutputStyle = Literal["auto", "overview", "field_guide", "teaching_path", "decision_brief"]
 # How a version came about; "legacy" is a version from before agents wrote them.
 OutputOrigin = Literal["legacy", "build", "rebuild", "edit", "revise"]
 
@@ -700,6 +709,42 @@ class OutputModelOut(ApiModel):
     effort: str | None = None
 
 
+class OutputSupplementOut(ApiModel):
+    """A web result a skill added to the chosen material, and what for."""
+
+    title: str
+    url: str = ""
+    role: str = "background"  # background | comparison | update | third_party
+    why: str = ""
+
+
+class OutputApproachOut(ApiModel):
+    """What a skill decided before planning: shown above the outline, and editable."""
+
+    question: str = ""
+    answer: str = ""
+    purpose: str = ""
+    structure: str = ""
+    structure_reason: str = ""
+    pages: int | None = None
+    supplements: list[OutputSupplementOut] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
+
+
+class SkippedStepOut(ApiModel):
+    step: str
+    label: str = ""
+    reason: str = ""
+
+
+class SkillRunOut(ApiModel):
+    """The skill a version was made by, and the steps that failed and were skipped."""
+
+    name: str
+    version: int
+    skipped: list[SkippedStepOut] = Field(default_factory=list)
+
+
 class OutputProvenanceOut(ArtifactProvenanceOut):
     """Version 2: what the agents were asked, and which model wrote it."""
 
@@ -709,6 +754,10 @@ class OutputProvenanceOut(ArtifactProvenanceOut):
     brief: str = ""
     origin: OutputOrigin
     model: OutputModelOut | None = None
+    # Made by a skill (see skillbook): which, the approach it followed, and a deck's use.
+    skill: SkillRunOut | None = None
+    approach: OutputApproachOut | None = None
+    use: Literal["talk", "read"] | None = None
 
 
 class OutputScope(ApiModel):
@@ -737,6 +786,24 @@ class OutputScope(ApiModel):
 class OutlineItem(ApiModel):
     heading: str = Field(min_length=1, max_length=160)
     goal: str = Field(default="", max_length=400)
+    # A slide's layout, when a skill planned it (see skills/slides/references/layouts.md).
+    layout: str | None = Field(default=None, max_length=40)
+
+    @model_serializer(mode="wrap")
+    def _without_empty_layout(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        # An outline planned without a skill reads as it always did.
+        data = handler(self)
+        if data.get("layout") is None:
+            data.pop("layout", None)
+        return data
+
+
+class ApproachInput(ApiModel):
+    """The approach as the person edited it; a rebuild keeps these words as they are."""
+
+    question: str = Field(default="", max_length=600)
+    answer: str = Field(default="", max_length=600)
+    purpose: str = Field(default="", max_length=600)
 
 
 class OutputIssueOut(ApiModel):
@@ -774,10 +841,18 @@ class BuildOutputInput(ApiModel):
     # A rebuild with the outline as the person edited it: the planner is skipped.
     outline: list[OutlineItem] | None = Field(default=None, min_length=1, max_length=14)
     supersedes_artifact_id: str | None = Field(default=None, min_length=1, max_length=80)
+    # A rebuild with the approach as the person edited it (skills only).
+    approach: ApproachInput | None = None
+    # A deck's use: for a talk, or to be read; "auto" lets the skill tell from the brief.
+    use: Literal["auto", "talk", "read"] = "auto"
+    # Whether the web may be searched to add to the chosen material (when it is set up).
+    web: bool = False
 
     @model_validator(mode="after")
     def tidy(self) -> "BuildOutputInput":
-        self.style = (self.style or "overview") if self.kind == "report" else None
+        self.style = (self.style or "auto") if self.kind == "report" else None
+        if self.kind == "report":
+            self.use = "auto"
         self.brief = self.brief.strip()
         if self.title is not None:
             self.title = self.title.strip()

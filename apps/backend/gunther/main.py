@@ -134,6 +134,7 @@ def _connect_models(
     knowledge_service.web_search = online_search
     # Settings → Developer: keep how each answer is made.
     knowledge_service.tracing = bool(store.developer().get("traces"))
+    knowledge_service.output_skills = bool(store.developer().get("output_skills", True))
     index = knowledge_service.index
     index.digest_method = digest_writer.method if digest_writer else None
     index.digest_vision = bool(digest_writer and digest_writer.vision)

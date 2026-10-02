@@ -78,4 +78,18 @@ describe("Settings → Developer", () => {
     await user.selectOptions(screen.getByLabelText("Which lines"), "info");
     await waitFor(() => expect(api.developerLogs).toHaveBeenLastCalledWith("info"));
   });
+
+  it("turns making outputs with skills off, keeping the traces switch as it is", async () => {
+    const user = userEvent.setup();
+    const onNotify = vi.fn();
+    api.developerSettings.mockResolvedValue({ traces: false, outputSkills: true });
+    api.saveDeveloperSettings.mockResolvedValue({ traces: false, outputSkills: false });
+    render(<DeveloperSettings onNotify={onNotify} />);
+    const skills = await screen.findByRole("switch", { name: "Make outputs with skills" });
+    await waitFor(() => expect((skills as HTMLInputElement).checked).toBe(true));
+    await user.click(skills);
+    expect(api.saveDeveloperSettings).toHaveBeenCalledWith({ traces: false, outputSkills: false });
+    await waitFor(() => expect((skills as HTMLInputElement).checked).toBe(false));
+    expect(onNotify).toHaveBeenCalledWith(expect.stringMatching(/without a skill/));
+  });
 });

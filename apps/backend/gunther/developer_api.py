@@ -21,6 +21,8 @@ router = APIRouter()
 
 class DeveloperIn(ApiModel):
     traces: bool
+    # Left out, it stays as it is.
+    output_skills: bool | None = None
 
 
 def _owner_only(request: Request) -> None:
@@ -37,20 +39,25 @@ def _service(request: Request) -> KnowledgeService:
     return request.app.state.knowledge_service
 
 
+def _developer(request: Request) -> dict[str, Any]:
+    saved = _store(request).developer()
+    return {"traces": saved["traces"], "outputSkills": saved.get("output_skills", True)}
+
+
 @router.get("/settings/developer")
 def get_developer(request: Request) -> dict[str, Any]:
     _owner_only(request)
-    return _store(request).developer()
+    return _developer(request)
 
 
 @router.put("/settings/developer")
 def save_developer(payload: DeveloperIn, request: Request) -> dict[str, Any]:
     _owner_only(request)
     try:
-        _store(request).save_developer(traces=payload.traces)
+        _store(request).save_developer(traces=payload.traces, output_skills=payload.output_skills)
     except OSError as error:
         raise HTTPException(503, "The settings could not be saved to disk") from error
-    return _store(request).developer()
+    return _developer(request)
 
 
 @router.get("/sessions/{session_id}/messages/{message_id}/trace")

@@ -1,0 +1,98 @@
+# How Gunther runs the Slides skill. The instructions are in SKILL.md: its text before the
+# first step heading is the preamble, and each step's section starts at "## <id>".
+# Gunther's own rules (citations, language, the JSON each step returns) always come first
+# and win over anything here. See docs/OUTPUTS.md (Skills).
+
+name = "slides"
+kind = "slides"
+version = 1
+title = "Slides"
+description = "Plan and write a deck, for a talk or for reading, from the chosen material."
+
+# Story shapes (ids in references/story.md), chosen by the understand step.
+structures = ["what", "why", "how", "guide", "which", "change", "learn"]
+# Page layouts (ids in references/layouts.md). The first page is "title", the last "takeaways".
+layouts = [
+  "title", "big_number", "compare", "two_column", "flow", "timeline",
+  "bar_chart", "line_chart", "cards", "quote", "text", "takeaways",
+]
+# What the deck is for. "auto": the understand step reads the brief; with no hint, "talk".
+uses = ["talk", "read"]
+
+[limits]
+pages_min = 6
+pages_max = 14
+revise_max = 4  # pages the revise step may rewrite
+
+[[steps]]
+id = "understand"
+does = "understand"
+label = "Understanding the material"
+effort = "low"
+tools = ["search_library", "search_web", "read_source"]
+tool_calls = 6
+references = ["story.md"]
+
+[[steps]]
+id = "structure"
+does = "structure"
+label = "Planning the story"
+effort = "medium"
+references = ["story.md", "layouts.md"]
+checks = ["page_count", "first_and_last", "layout_run"]
+
+[[steps]]
+id = "write"
+does = "write"
+label = "Writing"
+effort = "job"  # the Outputs job's effort from Settings → Models
+tools = ["search_library", "read_source"]
+tool_calls = 2
+# "{layout}": only this page's layout section is loaded.
+references = ["layouts.md#{layout}", "writing.md"]
+
+[[steps]]
+id = "edit_review"
+does = "edit_review"
+label = "Reading it through as an editor"
+effort = "low"
+references = ["writing.md"]
+checks = ["heading_length", "density", "table_size", "chart_numbers_cited", "layout_run"]
+
+[[steps]]
+id = "reader_test"
+does = "reader_test"
+label = "Reading it as the audience"
+effort = "low"
+preamble = false  # a fresh reader: no method, no approach, only the pages
+
+[[steps]]
+id = "revise"
+does = "revise"
+label = "Revising"
+effort = "job"
+references = ["layouts.md#{layout}", "writing.md"]
+
+[checks.layout_run]
+max_run = 2  # the same layout at most twice in a row ("title" and "takeaways" excepted)
+
+[checks.heading_length]
+# A page title is one complete claim, at most two lines. The title page is exempt.
+min_units = 6
+max_units = 40
+
+[checks.density]
+# Layouts made of items (bullets or list lines): text, cards, flow, timeline, takeaways.
+talk_items = 3
+talk_item_units = 24
+read_items = 5
+read_item_units = 60
+cards_items = 6
+flow_items = 6
+timeline_items = 7
+takeaways_items = 3
+
+[checks.table_size]
+# compare, two_column, bar_chart, line_chart
+max_columns = 5  # including the first, the row labels
+max_rows = 6     # not counting the header

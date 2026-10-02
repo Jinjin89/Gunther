@@ -232,6 +232,11 @@ class Planned:
     heading: str
     goal: str = ""
     queries: tuple[str, ...] = ()
+    # Set by a skill (see skill_runner): a slide's layout, how a section follows the one
+    # before it, and the pool numbers of the material planned for it.
+    layout: str = ""
+    link: str = ""
+    refs: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -246,6 +251,9 @@ class BuiltOutput:
     model: ModelInfo
     effort: Effort | None
     notes: tuple[str, ...] = ()
+    # Made by a skill: the approach it followed and the run ({name, version, skipped}).
+    approach: dict[str, Any] | None = None
+    skill: dict[str, Any] | None = None
 
 
 class PlannedSection(BaseModel):
@@ -836,7 +844,11 @@ class OutputAgents:
         return BuiltOutput(
             title=title_of(content) or title,
             content=content,
-            outline=[{"heading": item.heading, "goal": item.goal} for item in outline],
+            outline=[
+                {"heading": item.heading, "goal": item.goal}
+                | ({"layout": item.layout} if item.layout else {})
+                for item in outline
+            ],
             citations=citations,
             checks=checks,
             model=model,
@@ -941,7 +953,9 @@ class OutputAgents:
         if not sections:
             raise ValueError("This output has no sections to change.")
         planned = [
-            Planned(heading_of(text), outline[i].goal if i < len(outline) else "")
+            replace(outline[i], heading=heading_of(text), queries=())
+            if i < len(outline)
+            else Planned(heading_of(text))
             for i, text in enumerate(sections)
         ]
         asked = (

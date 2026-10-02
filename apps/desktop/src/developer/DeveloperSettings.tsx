@@ -1,5 +1,5 @@
 import type { BackgroundJob, LogLine } from "@gunther/contracts";
-import { Activity, FolderOpen, Route, ScrollText, RefreshCw } from "lucide-react";
+import { Activity, FolderOpen, Route, ScrollText, RefreshCw, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { knowledgeApi } from "../api";
 import { logsFolder, showLogsFolder } from "../log";
@@ -17,7 +17,13 @@ export function DeveloperSettings({ onNotify }: { onNotify: (message: string) =>
   const [jobs, setJobs] = useState<BackgroundJob[] | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [folder, setFolder] = useState<string | null>(null);
+  const [skills, setSkills] = useState(true);
   useEffect(() => { void logsFolder().then(setFolder); }, []);
+  useEffect(() => {
+    let active = true;
+    void knowledgeApi.developerSettings().then((settings) => { if (active) setSkills(settings.outputSkills ?? true); }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
 
   const load = useCallback(async (chosen: Level) => {
     setProblem(null);
@@ -40,7 +46,25 @@ export function DeveloperSettings({ onNotify }: { onNotify: (message: string) =>
     }
   };
 
+  const toggleSkills = async (on: boolean) => {
+    try {
+      const saved = await knowledgeApi.saveDeveloperSettings({ traces: traces.on, outputSkills: on });
+      setSkills(saved.outputSkills ?? on);
+      onNotify(on ? "Outputs follow their skill again." : "Outputs are made the earlier way, without a skill.");
+    } catch (reason) {
+      onNotify(reason instanceof Error ? reason.message : "That could not be saved.");
+    }
+  };
+
   return <>
+    <section>
+      <div className="setting-heading"><Sparkles size={16} /><span><strong>How outputs are made</strong><small>For comparing reports and slides made two ways from the same material.</small></span></div>
+      <label className="setting-row">
+        <span><strong>Make outputs with skills</strong><small>Reports and slides follow their skill: an approach first, then the outline, writing, a read-through as the audience, and revisions. Off, they are made the earlier way: plan, look up, write, check. Versions keep how they were made.</small></span>
+        <input type="checkbox" role="switch" aria-label="Make outputs with skills" checked={skills} onChange={(event) => void toggleSkills(event.target.checked)} />
+      </label>
+    </section>
+
     <section>
       <div className="setting-heading"><Route size={16} /><span><strong>How answers are made</strong><small>For checking why an answer came out the way it did.</small></span></div>
       <label className="setting-row">

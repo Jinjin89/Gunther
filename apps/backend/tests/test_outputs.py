@@ -85,8 +85,14 @@ def body(**fields) -> dict:
     }
 
 
-def app_for(tmp_path: Path, fake: FakeProvider, **overrides) -> TestClient:
+def app_for(tmp_path: Path, fake: FakeProvider, *, skills: bool = False, **overrides) -> TestClient:
+    """An app whose model is ``fake``. These tests are for the agents alone, so outputs are
+    made without a skill unless ``skills`` (see test_output_skills)."""
+
     tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "service-settings.json").write_text(
+        json.dumps({"developer": {"traces": False, "output_skills": skills}}), encoding="utf-8"
+    )
     settings = Settings(
         database_url=f"sqlite+pysqlite:///{tmp_path / 'gunther.sqlite'}",
         assets_dir=tmp_path / "assets",

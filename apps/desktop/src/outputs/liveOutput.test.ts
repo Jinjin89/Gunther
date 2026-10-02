@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { OutputEvent } from "../api";
 import { applyOutputEvent, type LiveOutputState } from "./liveOutput";
 
-const empty: LiveOutputState = { question: null, title: null, sections: [], steps: [] };
+const empty: LiveOutputState = { question: null, title: null, sections: [], steps: [], stages: [], approach: null };
 const feed = (...events: OutputEvent[]) => events.reduce(applyOutputEvent, empty);
 
 const outline: OutputEvent = {
@@ -62,5 +62,23 @@ describe("an output being built", () => {
 
   it("remembers what a build that is followed again was asked", () => {
     expect(feed({ type: "resumed", question: "Cover B cells", startedAt: 1 }).question).toBe("Cover B cells");
+  });
+
+  it("follows the skill's steps, each updated in place, and keeps the approach it settled on", () => {
+    const approach = {
+      question: "How are T and B cells told apart?", answer: "By CD3D and CD19.", purpose: "A panel.",
+      structure: "what", structureReason: "", pages: null, supplements: [], gaps: [],
+    };
+    const state = feed(
+      { type: "stage", id: "understand", label: "Understanding the material", state: "running" },
+      { type: "approach", approach },
+      { type: "stage", id: "understand", label: "Understanding the material", state: "done" },
+      { type: "stage", id: "reader_test", label: "Reading it as the audience", state: "failed", detail: "The reader is down" },
+    );
+    expect(state.stages.map((stage) => [stage.id, stage.state, stage.detail])).toEqual([
+      ["understand", "done", null],
+      ["reader_test", "failed", "The reader is down"],
+    ]);
+    expect(state.approach?.question).toBe("How are T and B cells told apart?");
   });
 });

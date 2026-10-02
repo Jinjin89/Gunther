@@ -114,6 +114,8 @@ const result = spawnSync("uv", [
   "--collect-all", "tokenizers",
   "--collect-all", "sqlite_vec",
   "--add-data", `${modelDir}:models/multilingual-e5-small`,
+  // Skills are files the backend reads at run time (gunther/skillbook.py).
+  "--add-data", `${join(backendRoot, "gunther", "skills")}:gunther/skills`,
   ...(isMac ? ["--add-binary", `${visionBinary}:.`] : []),
   join(backendRoot, "gunther", "desktop_server.py"),
 ], {

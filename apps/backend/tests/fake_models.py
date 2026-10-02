@@ -249,3 +249,85 @@ def output_replies(
         return written(index, prompt) if callable(written) else written[index]
 
     return reply
+
+
+SKILL_MARK = "Gunther skill step: "
+
+
+def skill_step(request: dict[str, Any]) -> str | None:
+    """Which step of a skill a request is from (see skill_runner), if any."""
+
+    system = str(request["messages"][0]["content"])
+    if not system.startswith(SKILL_MARK):
+        return None
+    return system[len(SKILL_MARK) :].split("\n", 1)[0].strip()
+
+
+def skill_replies(
+    approach: dict[str, Any],
+    outline: dict[str, Any],
+    written: Any,
+    *,
+    gather: list[dict[str, Any]] | None = None,
+    editor: Reply | None = None,
+    reader: Reply | None = None,
+    revision: dict[str, Any] | None = None,
+    rewrite: Any = None,
+    relevant: list[int] | None = None,
+) -> Callable[[dict[str, Any]], Any]:
+    """Replies for an output made by a skill.
+
+    ``gather`` is what the understand step chooses to do, in turn (then "done"); the
+    approach and the outline come next. ``written`` is the sections' texts in order, or a
+    function of (section index, prompt). The editor and the reader find nothing unless
+    given; ``revision`` is the revise step's plan ({"sections": [...]}) and ``rewrite``
+    a function of (section index, prompt) for what it rewrites. The Checker's calls are
+    quiet, as in ``output_replies``.
+    """
+
+    import json
+    import re
+
+    actions = list(gather or [])
+
+    def answer(reply: Any, request: dict[str, Any]) -> Any:
+        if isinstance(reply, Exception):
+            raise reply
+        return reply(request) if callable(reply) else json.dumps(reply)
+
+    def reply(request: dict[str, Any]) -> Any:
+        system = str(request["messages"][0]["content"])
+        prompt = str(request["messages"][-1]["content"])
+        step = skill_step(request)
+        if step is None:
+            if is_grading(request):
+                return json.dumps(
+                    {"relevant": relevant if relevant is not None else list(range(1, 41))}
+                )
+            if is_auditing(request):
+                return json.dumps({"claims": []})
+            if is_checking(request):
+                return json.dumps({"supports": [], "contradicts": []})
+            if is_support_checking(request):
+                return json.dumps({"unsupported": []})
+            return "{}"
+        if "Choose the next action" in system:
+            return json.dumps(actions.pop(0) if actions else {"action": "done"})
+        if step == "understand":
+            return json.dumps(approach)
+        if step == "structure":
+            return json.dumps(outline)
+        if step == "edit_review":
+            return answer(editor if editor is not None else {"issues": []}, request)
+        if step == "reader_test":
+            return answer(
+                reader if reader is not None else {"core": approach.get("answer", "")}, request
+            )
+        if step == "revise" and "This section now:" not in prompt:
+            return json.dumps(revision or {"sections": []})
+        index = int(re.search(r"Write section (\d+) of", prompt).group(1)) - 1
+        if step == "revise":
+            return rewrite(index, prompt) if rewrite else "UNCHANGED"
+        return written(index, prompt) if callable(written) else written[index]
+
+    return reply

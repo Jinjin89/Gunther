@@ -593,6 +593,8 @@ export interface TtsSampleInput {
 export interface DeveloperSettings {
   /** Each answer keeps how it was made, shown in a conversation's Trace tab. */
   traces: boolean;
+  /** Outputs are made by following a skill; off, by the agents alone. Left out when saving, it stays as it is. */
+  outputSkills?: boolean;
 }
 
 /**
@@ -1050,8 +1052,8 @@ export interface ArtifactUnitSnapshot {
 /** A report is read on the page; slides are shown in a viewer. */
 export const outputKinds = ["report", "slides"] as const;
 export type OutputKind = (typeof outputKinds)[number];
-/** A report's style; slides have none. */
-export const outputStyles = ["overview", "field_guide", "teaching_path", "decision_brief"] as const;
+/** A report's style; slides have none. "auto": the skill chooses how the report unfolds. */
+export const outputStyles = ["auto", "overview", "field_guide", "teaching_path", "decision_brief"] as const;
 export type OutputStyle = (typeof outputStyles)[number];
 /** How a version came about. "legacy" is a version from before agents wrote them. */
 export type OutputOrigin = "legacy" | "build" | "rebuild" | "edit" | "revise";
@@ -1078,6 +1080,45 @@ export interface ArtifactProvenance {
   brief?: string;
   origin?: OutputOrigin;
   model?: OutputModel | null;
+  /** Made by a skill: which, the approach it followed, and a deck's use. */
+  skill?: SkillRun | null;
+  approach?: OutputApproach | null;
+  use?: DeckUse | null;
+}
+
+/** What a deck is for: a talk (few words, speaker notes) or reading on its own. */
+export type DeckUse = "talk" | "read";
+
+/** A web result a skill added to the chosen material, and what for. */
+export interface OutputSupplement {
+  title: string;
+  url: string;
+  /** background, comparison, update or third_party. */
+  role: string;
+  why: string;
+}
+
+/** What a skill decided before planning: shown above the outline, and editable. */
+export interface OutputApproach {
+  question: string;
+  answer: string;
+  /** Who it is for, and what they should be able to do after. */
+  purpose: string;
+  /** How it unfolds (what, why, how, guide, which, change, learn). */
+  structure: string;
+  structureReason: string;
+  /** A deck's number of slides. */
+  pages: number | null;
+  supplements: OutputSupplement[];
+  /** What the material cannot answer. */
+  gaps: string[];
+}
+
+/** The skill a version was made by, and the steps that failed and were skipped. */
+export interface SkillRun {
+  name: string;
+  version: number;
+  skipped: Array<{ step: string; label: string; reason: string }>;
 }
 
 /** What an output is built from: the whole library, or a hand-picked mix. */
@@ -1091,6 +1132,8 @@ export interface OutputScope {
 export interface OutlineItem {
   heading: string;
   goal: string;
+  /** A slide's layout, when a skill planned it (compare, flow, bar_chart, …). */
+  layout?: string | null;
 }
 
 /** What the Checker found in a sentence. */
@@ -1159,6 +1202,12 @@ export interface BuildOutputRequest {
   outline?: OutlineItem[];
   /** Makes it the next version of an existing output. */
   supersedesArtifactId?: string;
+  /** A rebuild with the approach as the person edited it: these words are kept as they are. */
+  approach?: { question?: string; answer?: string; purpose?: string };
+  /** A deck's use; the skill tells from the brief when left out. */
+  use?: "auto" | DeckUse;
+  /** The web may be searched to add to the chosen material (when it is set up). */
+  web?: boolean;
 }
 
 export interface ReviseOutputRequest {

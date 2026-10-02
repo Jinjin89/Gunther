@@ -1,0 +1,80 @@
+# How Gunther runs the Report skill. The instructions are in SKILL.md: its text before the
+# first step heading is the preamble, and each step's section starts at "## <id>".
+# Gunther's own rules (citations, language, the JSON each step returns) always come first
+# and win over anything here. See docs/OUTPUTS.md (Skills).
+
+name = "report"
+kind = "report"
+version = 1
+title = "Report"
+description = "Plan and write a report that answers one core question from the chosen material."
+
+# Ways a report can unfold (ids in references/structures.md). A style the person picks
+# fixes the structure; "auto" lets the understand step choose.
+structures = ["what", "why", "how", "guide", "which", "change", "learn"]
+styles = { overview = "what", field_guide = "guide", teaching_path = "learn", decision_brief = "which" }
+
+[limits]
+sections_min = 3
+sections_max = 8
+revise_max = 4  # sections the revise step may rewrite
+
+[[steps]]
+id = "understand"
+does = "understand"
+label = "Understanding the material"
+effort = "low"
+tools = ["search_library", "search_web", "read_source"]
+tool_calls = 6
+references = ["structures.md"]
+
+[[steps]]
+id = "structure"
+does = "structure"
+label = "Planning the structure"
+effort = "medium"
+references = ["structures.md"]
+checks = ["section_count"]
+
+[[steps]]
+id = "write"
+does = "write"
+label = "Writing"
+effort = "job"  # the Outputs job's effort from Settings → Models
+tools = ["search_library", "read_source"]
+tool_calls = 2
+references = ["writing.md"]
+
+[[steps]]
+id = "edit_review"
+does = "edit_review"
+label = "Reading it through as an editor"
+effort = "low"
+references = ["writing.md"]
+checks = ["filler_phrases", "heading_length"]
+
+[[steps]]
+id = "reader_test"
+does = "reader_test"
+label = "Reading it as the audience"
+effort = "low"
+preamble = false  # a fresh reader: no method, no approach, only the text
+
+[[steps]]
+id = "revise"
+does = "revise"
+label = "Revising"
+effort = "job"
+references = ["writing.md"]
+
+[checks.heading_length]
+# A section heading is one claim, not a topic word and not a paragraph.
+min_units = 6
+max_units = 40
+
+[checks.filler_phrases]
+phrases = [
+  "具有重要意义", "值得关注", "综上所述", "不难看出", "众所周知",
+  "it is worth noting", "plays a crucial role", "in today's world", "it goes without saying",
+  "in conclusion,",
+]

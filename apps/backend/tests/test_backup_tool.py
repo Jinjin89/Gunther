@@ -777,6 +777,10 @@ def test_outputs_built_by_agents_are_verified_in_a_backup(tmp_path: Path) -> Non
         ],
     }
     fake = FakeProvider(output_replies(outline, ["## T cells\n\nCD3D marks T cells [1]."]))
+    # Made by the agents alone; a version made by a skill is checked in test_output_skills.
+    (tmp_path / "service-settings.json").write_text(
+        json.dumps({"developer": {"output_skills": False}}), encoding="utf-8"
+    )
     settings = Settings(
         database_url=f"sqlite+pysqlite:///{data / 'gunther.sqlite'}",
         assets_dir=data / "assets",

@@ -65,6 +65,7 @@ function setup(options: { history?: Artifact[]; menu?: ModelMenu; sources?: numb
   vi.spyOn(knowledgeApi, "artifacts").mockResolvedValue(history.map(summary));
   vi.spyOn(knowledgeApi, "artifact").mockImplementation(async (_base, id) => history.find((item) => item.id === id) ?? version(1));
   vi.spyOn(knowledgeApi, "followOutputBuild").mockImplementation(options.follow ?? (async () => null));
+  vi.spyOn(knowledgeApi, "health").mockRejectedValue(new Error("No web search in these tests."));
   const onNotify = vi.fn();
   const onAdd = vi.fn();
   render(<OutputsPage base={makeBase({ id: "biology", title: "Biology", question: "What marks cells?" })} workspaceId="wsp_primary" onNotify={onNotify} onAdd={onAdd} />);
@@ -115,7 +116,7 @@ describe("building an output", () => {
     expect(build.mock.calls[0]?.[0]).toBe("biology");
     expect(build.mock.calls[0]?.[1]).toEqual({
       clientRequestId: expect.stringMatching(/^[A-Za-z0-9_-]{8,128}$/),
-      kind: "report", style: "overview", audience: "scientist", brief: "For the lab",
+      kind: "report", style: "auto", audience: "scientist", brief: "For the lab",
       scope: { mode: "library", sourceIds: [], unitIds: [], sessionIds: [] },
     });
     expect(build.mock.calls[0]?.[2]).toBe("wsp_primary");
@@ -140,6 +141,56 @@ describe("building an output", () => {
     expect(screen.getByRole("region", { name: "Speaker notes" })).toHaveTextContent("Say a.");
     await user.click(screen.getByRole("button", { name: "Rebuild" }));
     expect(build.mock.calls[1]?.[1]).toEqual(expect.objectContaining({ supersedesArtifactId: "art_1" }));
+  });
+
+  it("shows the approach a skill took, and rebuilds with the question as the person rewrote it", async () => {
+    const user = userEvent.setup();
+    const skilled = version(1, {
+      style: "auto",
+      provenance: {
+        ...version(1).provenance,
+        generator: "gunther.output-skills.v1",
+        skill: { name: "report", version: 1, skipped: [{ step: "reader_test", label: "Reading it as the audience", reason: "The reader is down" }] },
+        approach: {
+          question: "How are T and B cells told apart?", answer: "By CD3D and CD19.", purpose: "Scientists choosing a panel.",
+          structure: "which", structureReason: "Two options are compared.", pages: null,
+          supplements: [{ title: "Marker review", url: "https://www.example.org/markers", role: "update", why: "Newer than the library." }],
+          gaps: ["How stable the markers are in culture"],
+        },
+      },
+    });
+    const build = vi.spyOn(knowledgeApi, "buildOutputStream").mockResolvedValue(version(2));
+    setup({ history: [skilled] });
+
+    await user.click(await screen.findByRole("button", { name: /Approach/ }));
+    const panel = screen.getByRole("region", { name: "Approach" });
+    expect(panel).toHaveTextContent("By CD3D and CD19.");
+    expect(panel).toHaveTextContent("Options compared, then a recommendation");
+    expect(panel).toHaveTextContent("Marker review · Latest");
+    expect(panel).toHaveTextContent("How stable the markers are in culture");
+    expect(panel).toHaveTextContent("Reading it as the audienceThe reader is down");
+
+    await user.click(screen.getByRole("button", { name: "Edit approach" }));
+    const question = screen.getByLabelText("Question");
+    await user.clear(question);
+    await user.type(question, "Which marker should a panel use?");
+    await user.click(screen.getByRole("button", { name: "Rebuild with this approach" }));
+    expect(build.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+      style: "auto",
+      supersedesArtifactId: "art_1",
+      approach: { question: "Which marker should a panel use?", answer: "By CD3D and CD19.", purpose: "Scientists choosing a panel." },
+    }));
+  });
+
+  it("asks for a deck to be read when Reading is chosen", async () => {
+    const user = userEvent.setup();
+    const build = vi.spyOn(knowledgeApi, "buildOutputStream").mockResolvedValue(version(1, { kind: "slides", format: "slides", style: null, content: "# Deck\n\nsub" }));
+    setup();
+
+    await user.click(await screen.findByRole("button", { name: "Slides" }));
+    await user.click(screen.getByRole("button", { name: "Reading" }));
+    await user.click(await buildButton());
+    expect(build.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ kind: "slides", use: "read" }));
   });
 
   it("says why nothing was saved and sends the same request again on Retry", async () => {

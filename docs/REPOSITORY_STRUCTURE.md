@@ -20,6 +20,7 @@ Dependencies point inward. A client may depend on the HTTP contract, but the bac
 - `apps/backend/gunther/service.py` owns knowledge lifecycle rules.
 - `apps/backend/gunther/web_capture.py` owns public-Web URL policy, pinned-IP fetching, capture limits, immutable snapshot preservation, and WebSnapshot provenance.
 - `apps/backend/gunther/outputs.py` owns the agents that write reports and slides (see `docs/OUTPUTS.md`); `service.py` reads the library for them and saves the versions.
+- `apps/backend/gunther/skills/<name>/` holds a skill as files (`skill.toml`, `SKILL.md`, `references/`): the method an output follows. `skillbook.py` loads and checks them, `skill_runner.py` runs their steps, `skill_checks.py` holds the checks code can make (see `docs/OUTPUTS.md`, Skills).
 - `apps/backend/gunther/extraction.py` owns model-provider adapters.
 - `apps/backend/gunther/models.py` owns persistence entities.
 - `apps/desktop/src/pages/` owns page composition.

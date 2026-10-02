@@ -135,6 +135,8 @@ from gunther.schemas import (
     UpdateNotebookNoteInput,
     WebSnapshotOut,
 )
+from gunther.skill_runner import Approach, SkillAgents
+from gunther.skillbook import skill_for
 from gunther.source_identity import source_fingerprint
 from gunther.topics import topic_block_ids, topic_source_ids
 from gunther.trash import live_membership_source_ids, trashed_library_ids
@@ -365,6 +367,9 @@ class KnowledgeService:
         self.web_search: OnlineSearchProvider = DisabledOnlineSearch()
         # Settings → Developer: keep how each answer is made (see trace).
         self.tracing = False
+        # Settings → Developer: outputs are made by following a skill (see skill_runner);
+        # off, by the agents in outputs alone.
+        self.output_skills = True
         self.index = KnowledgeIndex(sessions)
         self._source_import_locks_guard = Lock()
         self._source_import_locks: dict[str, tuple[Lock, int]] = {}
@@ -3117,8 +3122,12 @@ class KnowledgeService:
         snapshots: list[ArtifactUnitSnapshotOut],
         model: OutputModelOut | None,
         checks: list[dict[str, object]],
+        made_by: dict[str, object] | None = None,
     ) -> ArtifactOut:
-        """Write a new version of an output, sealed with its hashes, and what the Checker found."""
+        """Write a new version of an output, sealed with its hashes, and what the Checker found.
+
+        ``made_by`` is for a version made by a skill: its generator, skill, approach and use.
+        """
 
         try:
             with session_scope(self.sessions) as session:
@@ -3134,9 +3143,10 @@ class KnowledgeService:
                     raise ValueError(
                         f"The output is larger than the {MAX_OUTPUT_BYTES:,}-byte limit"
                     )
+                skilled = made_by or {}
                 provenance = OutputProvenanceOut(
                     schema_version=2,
-                    generator="gunther.output-agents.v1",
+                    generator=str(skilled.get("generator") or "gunther.output-agents.v1"),
                     workspace_id=workspace_id,
                     knowledge_base_id=base_id,
                     knowledge_base_question=library.question,
@@ -3149,7 +3159,15 @@ class KnowledgeService:
                     brief=brief,
                     origin=origin,
                     model=model,
+                    skill=skilled.get("skill"),
+                    approach=skilled.get("approach"),
+                    use=skilled.get("use"),
                 )
+                sealed = provenance.model_dump()
+                for key in ("skill", "approach", "use"):
+                    # A version made without a skill keeps the provenance it always had.
+                    if sealed.get(key) is None:
+                        sealed.pop(key, None)
                 artifact = Artifact(
                     id=_id("art"),
                     workspace_id=workspace_id,
@@ -3174,8 +3192,7 @@ class KnowledgeService:
                         sort_keys=True, separators=(",", ":"),
                     ),
                     provenance_json=json.dumps(
-                        provenance.model_dump(), ensure_ascii=False, sort_keys=True,
-                        separators=(",", ":"),
+                        sealed, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
                     ),
                     kind=kind,
                     style=style,
@@ -3247,7 +3264,10 @@ class KnowledgeService:
         if earlier is not None:
             return earlier
         model, effort = self._output_model()
-        spec = Spec(payload.kind, payload.audience, payload.style, payload.brief, payload.title)
+        skilled = self.output_skills
+        # Without a skill there is nothing to choose a structure: "auto" is an overview.
+        style = "overview" if not skilled and payload.style == "auto" else payload.style
+        spec = Spec(payload.kind, payload.audience, style, payload.brief, payload.title)
         with session_scope(self.sessions) as session:
             library = self._output_library(session, workspace_id, base_id)
             parent = (
@@ -3268,21 +3288,55 @@ class KnowledgeService:
                 self._library_scope(session, resolved.source_ids),
                 f"{library.title}: {library.question}",
             )
-            built = OutputAgents(self.models, limits).build(
-                model,
-                effort,
-                spec,
-                tool,
-                pool,
-                notes,
-                events,
-                outline=(
-                    [Planned(item.heading, item.goal) for item in payload.outline]
-                    if payload.outline
-                    else None
-                ),
-                fallback_title=parent.title if parent else library.title,
+            outline = (
+                [
+                    Planned(item.heading, item.goal, layout=item.layout or "")
+                    for item in payload.outline
+                ]
+                if payload.outline
+                else None
             )
+            fallback_title = parent.title if parent else library.title
+            made_by = None
+            if skilled:
+                web, _ = self._web_tool(payload.web)
+                agents = SkillAgents(
+                    self.models,
+                    skill_for(payload.kind),
+                    limits,
+                    tools=[tool, *([web] if web else [])],
+                    reader=self._source_reader(session),
+                    use=None if payload.use == "auto" else payload.use,
+                )
+                built = agents.make(
+                    model,
+                    effort,
+                    spec,
+                    pool,
+                    notes,
+                    events,
+                    fixed=payload.approach.model_dump() if payload.approach else None,
+                    outline=outline,
+                    fallback_title=fallback_title,
+                )
+                made_by = {
+                    "generator": "gunther.output-skills.v1",
+                    "skill": built.skill,
+                    "approach": built.approach,
+                    "use": agents.use,
+                }
+            else:
+                built = OutputAgents(self.models, limits).build(
+                    model,
+                    effort,
+                    spec,
+                    tool,
+                    pool,
+                    notes,
+                    events,
+                    outline=outline,
+                    fallback_title=fallback_title,
+                )
             parent_id = parent.id if parent else None
         if events:
             events({"type": "saving"})  # a reader who pressed Stop by now gets nothing saved
@@ -3293,7 +3347,7 @@ class KnowledgeService:
             fingerprint=fingerprint,
             parent_id=parent_id,
             kind=payload.kind,
-            style=payload.style,
+            style=style,
             audience=payload.audience,
             title=built.title,
             brief=payload.brief,
@@ -3306,7 +3360,73 @@ class KnowledgeService:
             snapshots=snapshots,
             model=OutputModelOut(ref=model.ref, label=model.display, effort=effort),
             checks=built.checks,
+            made_by=made_by,
         )
+
+    @staticmethod
+    def _made_by(artifact: Artifact) -> dict[str, object] | None:
+        """How a version was made by a skill, for the versions that follow it."""
+
+        provenance = json.loads(artifact.provenance_json)
+        skill = provenance.get("skill")
+        if not isinstance(skill, dict):
+            return None
+        return {
+            "generator": provenance.get("generator"),
+            "skill": {"name": skill.get("name"), "version": skill.get("version"), "skipped": []},
+            "approach": provenance.get("approach"),
+            "use": provenance.get("use"),
+        }
+
+    def _source_reader(self, session: Session):
+        """Reading more of a library source around one of its passages (a skill's
+        read_source): the passage and the two blocks on each side, as a new passage."""
+
+        def read(item: Evidence) -> Evidence | None:
+            citation = item.payload[0] if isinstance(item.payload, tuple) else None
+            if item.kind != "library" or citation is None or not citation.source_id:
+                raise ToolFailure("Only a passage from the library can be read further.")
+            revision_id = citation.source_revision_id or session.scalar(
+                select(SourceIndexHead.revision_id).where(
+                    SourceIndexHead.source_id == citation.source_id
+                )
+            )
+            block = session.scalar(
+                select(ContentBlock)
+                .where(
+                    ContentBlock.revision_id == revision_id,
+                    ContentBlock.content == citation.quote,
+                )
+                .limit(1)
+            ) if revision_id else None
+            if block is None:
+                raise ToolFailure("That passage is no longer in its source.")
+            around = session.scalars(
+                select(ContentBlock)
+                .where(
+                    ContentBlock.revision_id == block.revision_id,
+                    ContentBlock.ordinal.between(block.ordinal - 2, block.ordinal + 2),
+                )
+                .order_by(ContentBlock.ordinal)
+            )
+            text = "\n\n".join(part.content for part in around)[:4000]
+            if text.strip() == citation.quote.strip():
+                return None
+            locator = f"{citation.locator} (with context)" if citation.locator else "with context"
+            fresh = citation.model_copy(
+                update={"id": _id("cit"), "quote": text, "locator": locator, "ref": None}
+            )
+            return Evidence(
+                kind="library",
+                title=item.title,
+                text=text,
+                locator=locator,
+                status=item.status,
+                confidence=item.confidence,
+                payload=(fresh, None),
+            )
+
+        return read
 
     def revise_output(
         self,
@@ -3364,13 +3484,31 @@ class KnowledgeService:
                 self._library_scope(session, resolved.source_ids),
                 f"{library.title}: {library.question}",
             )
-            built = OutputAgents(self.models, limits).revise(
+            made_by = self._made_by(parent)
+            if made_by is not None:
+                saved = made_by.get("approach")
+                use = made_by.get("use")
+                agents: OutputAgents = SkillAgents(
+                    self.models,
+                    skill_for(parent.kind),
+                    limits,
+                    tools=[tool],
+                    use=use if isinstance(use, str) else None,
+                    approach=Approach.saved_as(saved, use if isinstance(use, str) else None)
+                    if isinstance(saved, dict)
+                    else None,
+                )
+            else:
+                agents = OutputAgents(self.models, limits)
+            built = agents.revise(
                 model,
                 effort,
                 Spec(parent.kind, parent.audience, parent.style, parent.brief),
                 parent.content,
                 [
-                    Planned(item["heading"], item.get("goal", ""))
+                    Planned(
+                        item["heading"], item.get("goal", ""), layout=item.get("layout") or ""
+                    )
                     for item in json.loads(parent.outline_json)
                 ],
                 carried,
@@ -3405,6 +3543,7 @@ class KnowledgeService:
             snapshots=snapshots,
             model=OutputModelOut(ref=model.ref, label=model.display, effort=effort),
             checks=built.checks,
+            made_by=made_by,
             **fields,
         )
 
@@ -3462,6 +3601,7 @@ class KnowledgeService:
                     for item in json.loads(parent.revision_snapshot_json)
                 ],
                 "title": title_of(payload.content) or parent.title,
+                "made_by": self._made_by(parent),
             }
         return self._save_output(
             workspace_id=workspace_id,

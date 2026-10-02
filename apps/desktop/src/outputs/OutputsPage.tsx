@@ -18,7 +18,8 @@ import type { KnowledgeBase } from "../atlas";
 import { knowledgeApi, OutputStoppedError } from "../api";
 import { EvidencePanel } from "../components/evidence/EvidencePanel";
 import { openSettings } from "../components/SettingsLayout";
-import { useModelMenu } from "../models/askModel";
+import { useModelMenu, useWebSearch } from "../models/askModel";
+import { ApproachPanel } from "./ApproachPanel";
 import { EditPane } from "./EditPane";
 import { LazySlidesView } from "./LazySlides";
 import { LiveSections } from "./LiveSections";
@@ -43,6 +44,7 @@ export interface OutputsPageProps {
 const WHOLE_LIBRARY: OutputScope = { mode: "library", sourceIds: [], unitIds: [], sessionIds: [] };
 const KIND_LABEL: Record<OutputKind, string> = { report: "Report", slides: "Slides" };
 const STYLE_LABEL: Record<OutputStyle, string> = {
+  auto: "Auto",
   overview: "Overview",
   field_guide: "Field guide",
   teaching_path: "Teaching path",
@@ -52,6 +54,13 @@ const AUDIENCES: Array<{ value: ArtifactAudience; label: string }> = [
   { value: "scientist", label: "Scientist" },
   { value: "student", label: "Student" },
   { value: "collaborator", label: "Collaborator" },
+];
+/** What a deck is for; with Auto the skill tells from the brief, and makes a talk when it can't. */
+type DeckChoice = "auto" | "talk" | "read";
+const USES: Array<{ value: DeckChoice; label: string }> = [
+  { value: "auto", label: "Auto" },
+  { value: "talk", label: "A talk" },
+  { value: "read", label: "Reading" },
 ];
 const ORIGIN_TAG: Partial<Record<Artifact["origin"], string>> = { edit: "Edited", revise: "Revised" };
 
@@ -73,7 +82,8 @@ const describeVersion = (item: Pick<ArtifactSummary, "kind" | "style" | "audienc
  */
 export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource }: OutputsPageProps) {
   const [kind, setKind] = useState<OutputKind>("report");
-  const [style, setStyle] = useState<OutputStyle>("overview");
+  const [style, setStyle] = useState<OutputStyle>("auto");
+  const [use, setUse] = useState<DeckChoice>("auto");
   const [audience, setAudience] = useState<ArtifactAudience>("scientist");
   const [brief, setBrief] = useState("");
   const [scope, setScope] = useState<OutputScope>(WHOLE_LIBRARY);
@@ -96,6 +106,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource }
   const [evidence, setEvidence] = useState<{ citation: ConversationCitation; index: number } | null>(null);
   const live = useLiveOutput();
   const { menu } = useModelMenu();
+  const webSearch = useWebSearch();
   const retry = useRef<(() => Promise<void>) | null>(null);
   const listening = useRef<AbortController | null>(null);
   /** Say what went wrong, under a title that says what it was. */
@@ -263,10 +274,12 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource }
     clientRequestId: newRequestId(),
     kind,
     ...(kind === "report" ? { style } : {}),
+    ...(kind === "slides" && use !== "auto" ? { use } : {}),
     audience,
     ...(brief.trim() ? { brief: brief.trim() } : {}),
     scope,
     ...(open ? { supersedesArtifactId: open.id } : {}),
+    ...(webSearch.enabled ? { web: true } : {}),
     ...extra,
   });
 
@@ -408,12 +421,23 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource }
             {outputStyles.map((item) => <button key={item} type="button" className={style === item ? "is-active" : ""} aria-pressed={style === item} disabled={busy} onClick={() => setStyle(item)}>{STYLE_LABEL[item]}</button>)}
           </div>
         </div>}
+        {kind === "slides" && <div className="outputs-field">
+          <span className="outputs-label">For</span>
+          <div className="outputs-segment" role="group" aria-label="For">
+            {USES.map((item) => <button key={item.value} type="button" className={use === item.value ? "is-active" : ""} aria-pressed={use === item.value} disabled={busy} onClick={() => setUse(item.value)}>{item.label}</button>)}
+          </div>
+          <small className="outputs-hint">{use === "read" ? "Each slide reads on its own." : use === "talk" ? "Few words on the slides; the rest in the speaker notes." : "Told from the brief; a talk when it doesn’t say."}</small>
+        </div>}
         <div className="outputs-field">
           <span className="outputs-label">Audience</span>
           <div className="outputs-segment" role="group" aria-label="Audience">
             {AUDIENCES.map((item) => <button key={item.value} type="button" className={audience === item.value ? "is-active" : ""} aria-pressed={audience === item.value} disabled={busy} onClick={() => setAudience(item.value)}>{item.label}</button>)}
           </div>
         </div>
+        {webSearch.available && <label className="outputs-field outputs-web">
+          <span><span className="outputs-label">Search the web too</span><small className="outputs-hint">Only to fill gaps: background, comparisons, the latest. Shown as added.</small></span>
+          <input type="checkbox" role="switch" aria-label="Search the web too" checked={webSearch.preferred} disabled={busy} onChange={(event) => webSearch.setEnabled(event.target.checked)} />
+        </label>}
         <button type="button" className="gx-btn gx-btn-primary outputs-build" disabled={loading || busy || !workspaceId || noModel || emptyLibrary} onClick={() => void build()}>
           {building ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />}{buildLabel}
         </button>
@@ -461,6 +485,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource }
           {editing
             ? <EditPane key={open.id} artifact={open} saving={saving} onSave={(content) => void saveEdit(content)} onCancel={() => { setEditing(false); setError(null); }} onCite={cite} />
             : <>
+              <ApproachPanel artifact={open} busy={busy || !openIsLatest || !changeable} onRebuild={(approach) => void run(requestFor({ approach }))} />
               <OutlineEditor outline={open.outline} label={open.kind === "slides" ? "slides" : "sections"} max={SECTION_LIMIT[open.kind]} busy={busy || !openIsLatest || !changeable} onRebuild={(outline: OutlineItem[]) => void run(requestFor({ outline }))} />
               {open.kind === "slides" ? <LazySlidesView artifact={open} onCite={cite} /> : <ReportView artifact={open} onCite={cite} />}
             </>}
@@ -478,7 +503,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource }
         </div>}
         {!building && !open && !error && !loading && !noModel && !emptyLibrary && <div className="gx-empty-state outputs-empty">
           <h2>Ready when you are</h2>
-          <p>Choose what to use and what it is for, then press Build. You will see the plan first, then each part as it is written.</p>
+          <p>Choose what to use and what it is for, then press Build. You will see the approach and the plan first, then each part as it is written, read through and revised.</p>
         </div>}
       </article>
     </div>
