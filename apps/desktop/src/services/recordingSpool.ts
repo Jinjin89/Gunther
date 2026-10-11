@@ -1,3 +1,7 @@
+import { invoke } from "@tauri-apps/api/core";
+import { flushPersistentStorage } from "../persistentStorage";
+
+const native = () => "__TAURI_INTERNALS__" in window;
 const DATABASE_NAME = "gunther-recording-spool";
 const DATABASE_VERSION = 2;
 const CHUNK_STORE = "chunks";
@@ -28,6 +32,31 @@ interface StoredRecordingSpoolChunk extends Partial<RecordingSpoolChunk> {
 }
 
 let databasePromise: Promise<IDBDatabase> | null = null;
+
+type NativeChunk = Omit<RecordingSpoolChunk, "key" | "blob" | "sizeBytes"> & { bytes: number[] };
+
+async function putNativeChunk(chunk: RecordingSpoolChunk): Promise<void> {
+  await flushPersistentStorage();
+  const { key: _key, blob, sizeBytes: _size, ...metadata } = chunk;
+  await invoke("recording_spool_put", { chunk: { ...metadata, bytes: Array.from(await blobBytes(blob)) } });
+}
+
+async function migrateNativeSession(sessionId: string): Promise<void> {
+  if (!window.indexedDB) return;
+  const database = await openDatabase();
+  const transaction = database.transaction(CHUNK_STORE, "readonly");
+  const previous = await requestResult(transaction.objectStore(CHUNK_STORE).index(SESSION_INDEX)
+    .getAll(IDBKeyRange.only(sessionId)) as IDBRequest<StoredRecordingSpoolChunk[]>);
+  await transactionFinished(transaction);
+  for (const stored of previous) {
+    const chunk = await verifyStoredChunk(normalizedStoredChunk(stored));
+    if (!chunk.workspaceId) continue; // Legacy unbound bytes require the existing server verification.
+    await putNativeChunk(chunk);
+    const removal = database.transaction(CHUNK_STORE, "readwrite");
+    removal.objectStore(CHUNK_STORE).delete(chunk.key);
+    await transactionFinished(removal);
+  }
+}
 
 function chunkKey(sessionId: string, sequence: number) {
   return `${sessionId}:${sequence.toString().padStart(12, "0")}`;
@@ -164,6 +193,11 @@ function openDatabase(): Promise<IDBDatabase> {
 
 /** Verify that this web view can durably transact before microphone capture starts. */
 export async function assertRecordingSpoolAvailable(): Promise<void> {
+  if (native()) {
+    await flushPersistentStorage();
+    await invoke("recording_spool_probe");
+    return;
+  }
   const database = await openDatabase();
   const probeKey = `__probe__:${Date.now()}:${Math.random().toString(36).slice(2)}`;
   const transaction = database.transaction(CHUNK_STORE, "readwrite");
@@ -196,6 +230,14 @@ export async function spoolRecordingChunk(
     throw new Error("A durable recording chunk requires a session, workspace, and sequence.");
   }
   if (!blob.size) throw new Error("An empty recording chunk cannot be preserved.");
+  if (native()) {
+    await migrateNativeSession(sessionId);
+    await putNativeChunk({ key: chunkKey(sessionId, sequence), sessionId, sequence, blob,
+      mimeType: blob.type || "audio/webm", sizeBytes: blob.size,
+      checksum: await recordingBlobChecksum(blob), workspaceId, source,
+      createdAt: new Date().toISOString() });
+    return;
+  }
   const database = await openDatabase();
   const key = chunkKey(sessionId, sequence);
   const readTransaction = database.transaction(CHUNK_STORE, "readonly");
@@ -264,6 +306,35 @@ export async function listRecordingSpool(
   sessionId: string,
   expectedWorkspaceId?: string,
 ): Promise<RecordingSpoolChunk[]> {
+  if (native()) {
+    await migrateNativeSession(sessionId);
+    const saved = await invoke<NativeChunk[]>("recording_spool_list", { sessionId });
+    const chunks: RecordingSpoolChunk[] = [];
+    for (const { bytes, ...metadata } of saved) {
+      const blob = new Blob([Uint8Array.from(bytes)], { type: metadata.mimeType });
+      const chunk = await verifyStoredChunk({ ...metadata, key: chunkKey(sessionId, metadata.sequence), blob, sizeBytes: blob.size });
+      if (expectedWorkspaceId && chunk.workspaceId !== expectedWorkspaceId) {
+        throw new Error(`Durable recording chunk ${chunk.sequence} belongs to another workspace.`);
+      }
+      chunks.push(chunk);
+    }
+    // Do not hide unbound legacy audio when checking whether a draft can be recovered.
+    if (window.indexedDB) {
+      const database = await openDatabase();
+      const transaction = database.transaction(CHUNK_STORE, "readonly");
+      const remaining = await requestResult(transaction.objectStore(CHUNK_STORE).index(SESSION_INDEX)
+        .getAll(IDBKeyRange.only(sessionId)) as IDBRequest<StoredRecordingSpoolChunk[]>);
+      await transactionFinished(transaction);
+      for (const stored of remaining) {
+        const chunk = await verifyStoredChunk(normalizedStoredChunk(stored));
+        if (expectedWorkspaceId && chunk.workspaceId !== expectedWorkspaceId) {
+          throw new Error(`Durable recording chunk ${chunk.sequence} predates workspace binding. Verify its server session before migrating it.`);
+        }
+        chunks.push(chunk);
+      }
+    }
+    return chunks.sort((left, right) => left.sequence - right.sequence);
+  }
   const database = await openDatabase();
   const transaction = database.transaction(CHUNK_STORE, "readonly");
   const index = transaction.objectStore(CHUNK_STORE).index(SESSION_INDEX);
@@ -295,6 +366,13 @@ export async function bindRecordingSpoolWorkspace(
   verifiedWorkspaceId: string,
 ): Promise<void> {
   if (!verifiedWorkspaceId) throw new Error("A verified workspace is required.");
+  if (native()) {
+    const saved = await invoke<NativeChunk[]>("recording_spool_list", { sessionId });
+    if (saved.some((chunk) => chunk.workspaceId !== verifiedWorkspaceId)) {
+      throw new Error("Recording chunks belong to another workspace.");
+    }
+    if (!window.indexedDB) return;
+  }
   const database = await openDatabase();
   const readTransaction = database.transaction(CHUNK_STORE, "readonly");
   const stored = await requestResult(
@@ -317,12 +395,18 @@ export async function bindRecordingSpoolWorkspace(
   const store = writeTransaction.objectStore(CHUNK_STORE);
   for (const chunk of migrated) store.put(chunk);
   await transactionFinished(writeTransaction);
+  if (native()) await migrateNativeSession(sessionId);
 }
 
 export async function deleteRecordingSpoolChunk(
   sessionId: string,
   sequence: number,
 ): Promise<void> {
+  if (native()) {
+    await migrateNativeSession(sessionId);
+    await invoke("recording_spool_delete", { sessionId, sequence });
+    return;
+  }
   const database = await openDatabase();
   const transaction = database.transaction(CHUNK_STORE, "readwrite");
   transaction.objectStore(CHUNK_STORE).delete(chunkKey(sessionId, sequence));
@@ -338,10 +422,13 @@ export async function deleteAcknowledgedRecordingSpool(
   const chunks = await listRecordingSpool(sessionId, expectedWorkspaceId);
   const acknowledged = chunks.filter((chunk) => chunk.sequence < nextExpectedSequence);
   if (!acknowledged.length) return;
+  if (native()) {
+    for (const chunk of acknowledged) await deleteRecordingSpoolChunk(sessionId, chunk.sequence);
+    return;
+  }
   const database = await openDatabase();
   const transaction = database.transaction(CHUNK_STORE, "readwrite");
   const store = transaction.objectStore(CHUNK_STORE);
   for (const chunk of acknowledged) store.delete(chunk.key);
   await transactionFinished(transaction);
 }
-

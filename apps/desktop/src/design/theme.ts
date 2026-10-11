@@ -1,3 +1,4 @@
+import { persistentStorage } from "../persistentStorage";
 export type ThemePreference = "light" | "dark" | "system";
 export type ResolvedTheme = "light" | "dark";
 
@@ -6,7 +7,7 @@ export const THEME_STORAGE_KEY = "gunther:v3-theme";
 const DARK_QUERY = "(prefers-color-scheme: dark)";
 
 export const readThemePreference = (): ThemePreference => {
-  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+  const stored = persistentStorage.getItem(THEME_STORAGE_KEY);
   return stored === "dark" || stored === "system" ? stored : "light";
 };
 

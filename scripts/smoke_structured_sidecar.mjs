@@ -19,16 +19,22 @@ await new Promise((resolve) => probe.close(resolve));
 // macOS /var and /tmp are aliases. Use a physical path, as the helper correctly
 // rejects managed storage beneath symlink components.
 const data = await mkdtemp(path.join(await realpath(os.tmpdir()), "gunther-structured-smoke-"));
-const nonce = randomBytes(32).toString("hex");
-const tokenFile = path.join(data, "backend-ready", `backend-auth-token.${nonce}`);
+const libraryRoot = path.join(data, "library");
+const workspaceData = path.join(libraryRoot, ".gunther");
+const configDirectory = path.join(data, "config");
+let nonce = randomBytes(32).toString("hex");
+let tokenFile = path.join(workspaceData, "backend-ready", `backend-auth-token.${nonce}`);
 const environment = { ...process.env, DEEPSEEK_API_KEY: "", LLM_API_KEY: "", STT_PROVIDER: "auto", STT_BASE_URL: "", OCR_PROVIDER: "disabled" };
 for (const name of ["EMBEDDING_MODEL_PATH", "DOCLING_PYTHON", "DOCLING_ARTIFACTS_PATH"]) delete environment[name];
-const helper = spawn(executable, ["--data-dir", data, "--port", String(port), "--launch-nonce", nonce, "--disable-mobile-gateway"], { env: environment, stdio: "ignore" });
+const launch = () => spawn(executable, ["--data-dir", workspaceData, "--config-dir", configDirectory,
+  "--library-root", libraryRoot, "--port", String(port), "--launch-nonce", nonce,
+  "--disable-mobile-gateway"], { env: environment, stdio: "ignore" });
+let helper = launch();
 let startupError;
 helper.once("error", (error) => { startupError = error; });
-try {
+const awaitReady = async () => {
   let token;
-  for (let attempt = 0; attempt < 100; attempt++) {
+  for (let attempt = 0; attempt < 900; attempt++) {
     if (startupError) throw startupError;
     if (helper.exitCode !== null) throw new Error(`Helper exited with ${helper.exitCode}`);
     const ready = await readFile(tokenFile, "utf8").catch(() => null);
@@ -41,6 +47,10 @@ try {
     await delay(100);
   }
   assert.ok(token, "Helper did not publish its readiness token");
+  return token;
+};
+try {
+  let token = await awaitReady();
   const origin = `http://127.0.0.1:${port}/api`;
   const request = async (route, options = {}) => {
     const response = await fetch(origin + route, {
@@ -51,6 +61,8 @@ try {
     return response.json();
   };
   const post = (route, value) => request(route, { method: "POST", body: JSON.stringify(value) });
+  const workspaceId = (await request("/workspace/bootstrap")).workspaceId;
+  assert.equal((await request("/storage")).foldersEnabled, true);
   assert.equal((await fetch(origin + "/retrieval/status")).status, 401);
   const library = await post("/knowledge-bases", { title: "Packaged smoke", question: "What supports this claim?", description: "Disposable verification data" });
   const captured = await request(`/captures/assets?title=Methods&fileName=methods.md&kind=file&knowledgeBaseId=${library.id}&deferProcessing=true`, {
@@ -88,7 +100,22 @@ try {
   const open = await post(`/knowledge-bases/${library.id}/sessions`, {});
   const semantic = await post(`/sessions/${open.id}/messages`, { content: "如何保证基因组的质量？" });
   assert.equal(semantic.assistantMessage.citations[0]?.blockId, block.id, "Semantic search missed the passage");
-  console.log("Packaged helper passed: authentication, durable upload, worker, document tree, topics, scoped FTS, pinned citations and bundled semantic search.");
+  helper.kill("SIGINT");
+  for (let attempt = 0; attempt < 100 && helper.exitCode === null && helper.signalCode === null; attempt++) await delay(100);
+  assert.ok(helper.exitCode !== null || helper.signalCode !== null, "Helper did not stop for reinstall verification");
+  // Losing all configuration must still reopen the existing default data folder.
+  await rm(configDirectory, { recursive: true, force: true });
+  nonce = randomBytes(32).toString("hex");
+  tokenFile = path.join(workspaceData, "backend-ready", `backend-auth-token.${nonce}`);
+  startupError = undefined;
+  helper = launch();
+  helper.once("error", (error) => { startupError = error; });
+  token = await awaitReady();
+  assert.equal((await request("/workspace/bootstrap")).workspaceId, workspaceId);
+  const retained = await request(`/sources/${source.id}/structure?revision_id=${structure.revisionId}&block_id=${block.id}`);
+  assert.equal(retained.blocks[0].content, block.content);
+  assert.equal((await request("/storage")).foldersEnabled, true);
+  console.log("Packaged helper passed: authentication, durable upload, document tree, citations, semantic search, and reopening the same workspace after configuration loss.");
 } finally {
   helper.kill("SIGINT");
   for (let attempt = 0; attempt < 50 && helper.exitCode === null && helper.signalCode === null; attempt++) await delay(100);

@@ -1,3 +1,4 @@
+import { persistentStorage } from "../persistentStorage";
 import type { Effort, EffortLevel, ModelMenu, SessionMessage } from "@gunther/contracts";
 import { EFFORTS } from "@gunther/contracts";
 import { useCallback, useEffect, useState } from "react";
@@ -37,7 +38,7 @@ export function resolveEffort(effort: Effort, levels: EffortLevel[]): EffortLeve
 
 function readDeviceChoice(): AskChoice | null {
   try {
-    const stored = JSON.parse(window.localStorage.getItem(ASK_CHOICE_STORAGE_KEY) ?? "null") as Partial<AskChoice> | null;
+    const stored = JSON.parse(persistentStorage.getItem(ASK_CHOICE_STORAGE_KEY) ?? "null") as Partial<AskChoice> | null;
     if (!stored || !EFFORTS.includes(stored.effort as Effort)) return null;
     return { model: typeof stored.model === "string" ? stored.model : null, effort: stored.effort as Effort };
   } catch {
@@ -47,7 +48,7 @@ function readDeviceChoice(): AskChoice | null {
 
 function writeDeviceChoice(choice: AskChoice) {
   try {
-    window.localStorage.setItem(ASK_CHOICE_STORAGE_KEY, JSON.stringify(choice));
+    persistentStorage.setItem(ASK_CHOICE_STORAGE_KEY, JSON.stringify(choice));
   } catch {
     // Private windows may refuse storage; the choice still holds for this conversation.
   }
@@ -118,13 +119,13 @@ const WEB_PREFERENCE_EVENT = "gunther:search-web-changed";
  */
 export function useWebSearch() {
   const [available, setAvailable] = useState(false);
-  const [preferred, setPreferred] = useState(() => window.localStorage.getItem(WEB_PREFERENCE_KEY) === "on");
+  const [preferred, setPreferred] = useState(() => persistentStorage.getItem(WEB_PREFERENCE_KEY) === "on");
   const load = useCallback(() => {
     void Promise.resolve().then(() => knowledgeApi.health()).then((health) => setAvailable(health.webSearchMode === "tavily")).catch(() => setAvailable(false));
   }, []);
   useEffect(() => {
     load();
-    const sync = () => setPreferred(window.localStorage.getItem(WEB_PREFERENCE_KEY) === "on");
+    const sync = () => setPreferred(persistentStorage.getItem(WEB_PREFERENCE_KEY) === "on");
     window.addEventListener(MODELS_CHANGED_EVENT, load);
     window.addEventListener(WEB_PREFERENCE_EVENT, sync);
     window.addEventListener("storage", sync);
@@ -136,7 +137,7 @@ export function useWebSearch() {
   }, [load]);
   const setEnabled = useCallback((next: boolean) => {
     try {
-      window.localStorage.setItem(WEB_PREFERENCE_KEY, next ? "on" : "off");
+      persistentStorage.setItem(WEB_PREFERENCE_KEY, next ? "on" : "off");
     } catch {
       // The choice still holds for this session of the app.
     }
@@ -158,7 +159,7 @@ const ANSWER_STYLE_EVENT = "gunther:answer-style-changed";
 
 /** The style this device last chose; balanced until then. */
 export function readAnswerStyle(): string {
-  const stored = window.localStorage.getItem(ANSWER_STYLE_KEY);
+  const stored = persistentStorage.getItem(ANSWER_STYLE_KEY);
   return ANSWER_STYLES.some((style) => style.id === stored) ? stored! : "balanced";
 }
 
@@ -175,7 +176,7 @@ export function useAnswerStyle(): [string, (style: string) => void] {
   }, []);
   const choose = useCallback((next: string) => {
     try {
-      window.localStorage.setItem(ANSWER_STYLE_KEY, next);
+      persistentStorage.setItem(ANSWER_STYLE_KEY, next);
     } catch {
       // The choice still holds for this session of the app.
     }

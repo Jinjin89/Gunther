@@ -26,6 +26,7 @@ from gunther.agent import (
     STYLES,
     AskAgent,
     Evidence,
+    ReadResult,
     Tool,
     Toolbox,
     ToolFailure,
@@ -39,11 +40,15 @@ from gunther.llm import ModelGateway, ModelInfo, Turn
 from gunther.model_profiles import Effort
 from gunther.models import (
     Artifact,
+    ArtifactAsset,
     ArtifactCheck,
     ArtifactUnitBinding,
     Assertion,
     Asset,
+    BlockElementMap,
     ContentBlock,
+    DocumentElement,
+    ElementAsset,
     Entity,
     EvidenceLink,
     Fragment,
@@ -61,6 +66,7 @@ from gunther.models import (
     Source,
     SourceDigest,
     SourceIndexHead,
+    SourcePaper,
     SourceRevision,
     WebSnapshot,
     WorkspaceIdentity,
@@ -288,6 +294,8 @@ class _Answer:
     steps: list = field(default_factory=list)
     checked: bool = False
     support_notes: tuple[str, ...] = ()
+    coverage: dict | None = None
+    budget_usage: dict | None = None
     work: Work | None = None
     skill: AskSkill | None = None
     skill_auto: bool = False
@@ -392,6 +400,7 @@ def evidence_from_citation(citation: ConversationCitationOut) -> Evidence:
         url=citation.url,
         ref=citation.ref,
         payload=(citation, None),
+        context=citation.support_text or "",
     )
 
 
@@ -871,8 +880,11 @@ class KnowledgeService:
                     payload.knowledge_base_id,
                 )
 
-        extraction = (ExtractionResult(assertions=[], mode=self.extractor.mode)
-                      if defer_processing else self.extractor.extract(payload.title, content))
+        extraction = (
+            ExtractionResult(assertions=[], mode=self.extractor.mode)
+            if defer_processing
+            else self.extractor.extract(payload.title, content)
+        )
 
         try:
             with session_scope(self.sessions) as session:
@@ -889,11 +901,9 @@ class KnowledgeService:
                     initialize_source(session, source)
                     session.flush()
                 if payload.knowledge_base_id:
-                    self._ensure_source_memberships(
-                        session, payload.knowledge_base_id, [source.id]
-                    )
+                    self._ensure_source_memberships(session, payload.knowledge_base_id, [source.id])
 
-                if not defer_processing:
+                if not defer_processing and session.get(SourceIndexHead, source.id) is None:
                     self.index.add_source(session, source)
 
                 created_entities = 0
@@ -954,9 +964,7 @@ class KnowledgeService:
             # Another process or service instance may have inserted the same hash after
             # our initial lookup. The database remains the final idempotency boundary.
             with session_scope(self.sessions) as session:
-                existing = session.scalar(
-                    select(Source).where(Source.content_hash == content_hash)
-                )
+                existing = session.scalar(select(Source).where(Source.content_hash == content_hash))
                 if existing is None:
                     raise
                 return self._duplicate_import_result(
@@ -1645,6 +1653,23 @@ class KnowledgeService:
             pool_refs = {
                 item.ref for item in conversation_pool(knowledge_session.messages) if item.ref
             }
+            supported: list[str] = []
+            verified_refs: set[int] = set()
+            for message in knowledge_session.messages:
+                context = json.loads(message.context_json or "{}")
+                coverage = context.get("coverage") or {}
+                if (
+                    coverage.get("answerHash")
+                    != hashlib.sha256(message.content.encode()).hexdigest()
+                ):
+                    continue
+                for claim in coverage.get("claims", []):
+                    if claim.get("verdict") == "supported" and not re.search(
+                        r"\[(?:[ipd]:|\?)", claim.get("text", "")
+                    ):
+                        supported.append(claim["text"])
+                        verified_refs.update(claim.get("refs", []))
+            pool_refs &= verified_refs
         chosen = self.models.for_role("ask") if self.models else None
         model = chosen[0] if chosen else (self.models.get(used) if self.models else None)
         if model is None or self.models is None:
@@ -1652,7 +1677,7 @@ class KnowledgeService:
             return self._save_brief(session_id, stored, expect=stored.brief)
         _, check_effort = self.agent_efforts or ASK_EFFORTS
         updated = briefs.BriefKeeper(self.models, check_effort).update(
-            model, stored, question, answer, pool_refs
+            model, stored, question, answer, pool_refs, supported_claims=supported
         )
         if updated.error is None:
             updated.through = answered_id
@@ -2093,6 +2118,8 @@ class KnowledgeService:
             evidence=result.evidence,
             checked=result.checked,
             support_notes=result.support_notes,
+            coverage=result.coverage,
+            budget_usage=result.budget_usage,
             work=result.work,
             **{**about, "effort_label": completion.effort_label if completion else None},
             reasoning=completion.reasoning if completion else None,
@@ -2169,13 +2196,18 @@ class KnowledgeService:
             citations: list[ConversationCitationOut] = []
             claims: list[GroundingClaim] = []
             for assertion in ranked_assertions:
-                evidence = next((
-                    item for item in assertion.evidence_links
-                    if item.fragment.source_id == assertion.source_id
-                    and (scope.block_scope is None or (
-                        assertion.source_id, item.fragment.content
-                    ) in scope.topic_evidence)
-                ), None)
+                evidence = next(
+                    (
+                        item
+                        for item in assertion.evidence_links
+                        if item.fragment.source_id == assertion.source_id
+                        and (
+                            scope.block_scope is None
+                            or (assertion.source_id, item.fragment.content) in scope.topic_evidence
+                        )
+                    ),
+                    None,
+                )
                 if evidence is None:
                     continue
                 if scope.block_scope is not None:
@@ -2183,12 +2215,17 @@ class KnowledgeService:
                         (assertion.source_id, evidence.fragment.content)
                     ]
                 else:
-                    evidence_block = session.scalar(select(ContentBlock).join(
-                        SourceIndexHead, SourceIndexHead.revision_id == ContentBlock.revision_id
-                    ).where(
-                        SourceIndexHead.source_id == assertion.source.id,
-                        ContentBlock.content == evidence.fragment.content,
-                    ).limit(1))
+                    evidence_block = session.scalar(
+                        select(ContentBlock)
+                        .join(
+                            SourceIndexHead, SourceIndexHead.revision_id == ContentBlock.revision_id
+                        )
+                        .where(
+                            SourceIndexHead.source_id == assertion.source.id,
+                            ContentBlock.content == evidence.fragment.content,
+                        )
+                        .limit(1)
+                    )
                 citation = ConversationCitationOut(
                     id=_id("cit"),
                     source_id=assertion.source.id,
@@ -2220,23 +2257,40 @@ class KnowledgeService:
             # Competing evidence must not disappear behind an assertion-only fallback.
             seen_quotes = {(c.source_id, c.quote) for c in citations}
             for hit in self.index.retrieve(
-                session, scope.source_ids, query, block_ids=scope.block_scope,
+                session,
+                scope.source_ids,
+                query,
+                block_ids=scope.block_scope,
             ):
                 if (hit.source.id, hit.block.content) in seen_quotes:
                     continue
                 seen_quotes.add((hit.source.id, hit.block.content))
-                citations.append(ConversationCitationOut(
-                    id=_id("cit"), source_id=hit.source.id, source_title=hit.source.title,
-                    quote=hit.block.content, locator=hit.block.locator,
-                    status="provisional", confidence=0.0,
-                    source_revision_id=hit.block.revision_id, block_id=hit.block.id,
-                    anchor=json.loads(hit.block.anchor_json),
-                ))
-                claims.append(GroundingClaim(
-                    subject=hit.source.title, predicate="states", object=hit.block.content,
-                    source_title=hit.source.title, quote=hit.block.content,
-                    locator=hit.block.locator, status="provisional", confidence=0.0,
-                ))
+                citations.append(
+                    ConversationCitationOut(
+                        id=_id("cit"),
+                        source_id=hit.source.id,
+                        source_title=hit.source.title,
+                        quote=hit.block.content,
+                        locator=hit.block.locator,
+                        status="provisional",
+                        confidence=0.0,
+                        source_revision_id=hit.block.revision_id,
+                        block_id=hit.block.id,
+                        anchor=json.loads(hit.block.anchor_json),
+                    )
+                )
+                claims.append(
+                    GroundingClaim(
+                        subject=hit.source.title,
+                        predicate="states",
+                        object=hit.block.content,
+                        source_title=hit.source.title,
+                        quote=hit.block.content,
+                        locator=hit.block.locator,
+                        status="provisional",
+                        confidence=0.0,
+                    )
+                )
 
             # In a large library a broad question needs the papers, not only the few
             # passages that match best: add the abstracts of the closest papers.
@@ -2249,22 +2303,40 @@ class KnowledgeService:
                     exclude={c.source_id for c in citations},
                 ):
                     source = session.get(Source, paper.source_id)
-                    citations.append(ConversationCitationOut(
-                        id=_id("cit"), source_id=source.id, source_title=source.title,
-                        quote=paper.abstract[:900], locator="Abstract",
-                        status="provisional", confidence=0.0,
-                        source_revision_id=paper.revision_id,
-                        block_id=block.id if block else None,
-                        anchor=json.loads(block.anchor_json) if block else {},
-                    ))
-                    claims.append(GroundingClaim(
-                        subject=paper.title, predicate="is summarized as",
-                        object=paper.abstract[:900], source_title=source.title,
-                        quote=paper.abstract[:900], locator="Abstract",
-                        status="provisional", confidence=0.0,
-                    ))
+                    citations.append(
+                        ConversationCitationOut(
+                            id=_id("cit"),
+                            source_id=source.id,
+                            source_title=source.title,
+                            quote=paper.abstract[:900],
+                            locator="Abstract",
+                            status="provisional",
+                            confidence=0.0,
+                            source_revision_id=paper.revision_id,
+                            block_id=block.id if block else None,
+                            anchor=json.loads(block.anchor_json) if block else {},
+                        )
+                    )
+                    claims.append(
+                        GroundingClaim(
+                            subject=paper.title,
+                            predicate="is summarized as",
+                            object=paper.abstract[:900],
+                            source_title=source.title,
+                            quote=paper.abstract[:900],
+                            locator="Abstract",
+                            status="provisional",
+                            confidence=0.0,
+                        )
+                    )
 
             for citation, claim in zip(citations, claims, strict=True):
+                paper = session.get(SourcePaper, citation.source_id)
+                if paper and (paper.doi or paper.arxiv_id):
+                    citation.work_identifier = (
+                        f"doi:{paper.doi.casefold()}" if paper.doi else f"arxiv:{paper.arxiv_id}"
+                    )
+                citation.figures = self._nearby_figures(session, citation)
                 found.append(
                     Evidence(
                         kind="library",
@@ -2285,6 +2357,81 @@ class KnowledgeService:
             "your library",
             grade=True,
         )
+
+    def _output_search_tool(
+        self, session: Session, base_id: str, primary: list[str], supplements: bool, about: str
+    ) -> Tool:
+        allowed = (
+            self._resolve_output_scope(session, base_id, OutputScope()).source_ids
+            if supplements
+            else primary
+        )
+        tool = self._library_tool(session, self._library_scope(session, allowed), about)
+        primary_ids = set(primary)
+
+        def search(query: str) -> list[Evidence]:
+            found = []
+            for item in tool.run(query):
+                citation, claim = item.payload
+                origin = "selected" if citation.source_id in primary_ids else "library_supplement"
+                found.append(
+                    replace(
+                        item, payload=(citation.model_copy(update={"source_origin": origin}), claim)
+                    )
+                )
+            return sorted(found, key=lambda item: item.payload[0].source_id not in primary_ids)
+
+        return replace(
+            tool,
+            run=search,
+            about=tool.about + "; selected materials are primary; additions are labeled",
+        )
+
+    @staticmethod
+    def _nearby_figures(session: Session, citation: ConversationCitationOut) -> list[dict]:
+        if not citation.block_id or not citation.source_revision_id:
+            return []
+        element = session.scalar(
+            select(DocumentElement)
+            .join(BlockElementMap)
+            .where(
+                BlockElementMap.block_id == citation.block_id,
+                DocumentElement.revision_id == citation.source_revision_id,
+            )
+        )
+        if element is None:
+            return []
+        figures = []
+        for figure in session.scalars(
+            select(DocumentElement)
+            .where(
+                DocumentElement.revision_id == element.revision_id,
+                DocumentElement.kind == "figure",
+                DocumentElement.ordinal.between(element.ordinal - 4, element.ordinal + 4),
+            )
+            .order_by(DocumentElement.ordinal)
+            .limit(4)
+        ):
+            payload, anchor = json.loads(figure.payload_json), json.loads(figure.anchor_json)
+            asset_id = payload.get("imageAssetId")
+            if not asset_id or session.get(Asset, asset_id) is None:
+                continue
+            if (
+                anchor.get("page")
+                and citation.anchor.get("page")
+                and anchor["page"] != citation.anchor["page"]
+            ):
+                continue
+            figures.append(
+                {
+                    "assetId": asset_id,
+                    "elementId": figure.id,
+                    "caption": payload.get("caption") or figure.content,
+                    "page": anchor.get("page"),
+                    "revisionId": element.revision_id,
+                }
+            )
+        return figures
 
     def create_session_turn(
         self,
@@ -2465,6 +2612,8 @@ class KnowledgeService:
                 web_searched=any(step.tool == "search_web" for step in response.steps),
                 checked=response.checked,
                 support_notes=list(response.support_notes),
+                coverage=response.coverage,
+                budget_usage=response.budget_usage,
                 work=_work_out(response.work, response.evidence),
                 skill=(
                     {
@@ -2984,6 +3133,13 @@ class KnowledgeService:
     def _latest_checks(session: Session, artifact_id: str) -> dict[str, list[Issue]]:
         """What the Checker found in each section of a version, by the section's hash."""
 
+        return {
+            digest: [Issue(**issue) for issue in item["issues"]]
+            for digest, item in KnowledgeService._latest_check_records(session, artifact_id).items()
+        }
+
+    @staticmethod
+    def _latest_check_records(session: Session, artifact_id: str) -> dict[str, dict]:
         row = session.scalar(
             select(ArtifactCheck)
             .where(ArtifactCheck.artifact_id == artifact_id)
@@ -2992,10 +3148,7 @@ class KnowledgeService:
         )
         if row is None:
             return {}
-        return {
-            item["hash"]: [Issue(**issue) for issue in item["issues"]]
-            for item in json.loads(row.checks_json).get("sections", [])
-        }
+        return {item["hash"]: item for item in json.loads(row.checks_json).get("sections", [])}
 
     @classmethod
     def _output_sections(cls, session: Session, artifact: Artifact) -> list[OutputSectionOut]:
@@ -3004,15 +3157,19 @@ class KnowledgeService:
         if artifact.origin == "legacy":
             return []
         known = cls._latest_checks(session, artifact.id)
+        records = cls._latest_check_records(session, artifact.id)
         sections = []
         for index, text in enumerate(split_document(artifact.content, artifact.kind)[1]):
             issues = known.get(section_hash(text))
+            coverage = records.get(section_hash(text), {}).get("coverage")
             sections.append(
                 OutputSectionOut(
                     index=index,
                     heading=heading_of(text),
-                    checked=issues is not None,
+                    checked=issues is not None
+                    and (coverage is None or coverage.get("status") == "complete"),
                     issues=[OutputIssueOut(**issue.out()) for issue in issues or []],
+                    coverage=coverage,
                 )
             )
         return sections
@@ -3410,6 +3567,7 @@ class KnowledgeService:
                     skill=skilled.get("skill"),
                     approach=skilled.get("approach"),
                     use=skilled.get("use"),
+                    library_supplements=bool(skilled.get("library_supplements", False)),
                 )
                 sealed = provenance.model_dump()
                 for key in ("skill", "approach", "use"):
@@ -3432,15 +3590,21 @@ class KnowledgeService:
                     content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
                     manifest_hash="",
                     accepted_unit_ids_json=json.dumps(
-                        [item.unit_id for item in snapshots], ensure_ascii=False,
+                        [item.unit_id for item in snapshots],
+                        ensure_ascii=False,
                         separators=(",", ":"),
                     ),
                     revision_snapshot_json=json.dumps(
-                        [item.model_dump() for item in snapshots], ensure_ascii=False,
-                        sort_keys=True, separators=(",", ":"),
+                        [item.model_dump() for item in snapshots],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
                     ),
                     provenance_json=json.dumps(
-                        sealed, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                        sealed,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
                     ),
                     kind=kind,
                     style=style,
@@ -3449,13 +3613,26 @@ class KnowledgeService:
                     scope_json=json.dumps(scope, ensure_ascii=False, separators=(",", ":")),
                     inputs_json=json.dumps(inputs, ensure_ascii=False, separators=(",", ":")),
                     outline_json=json.dumps(outline, ensure_ascii=False, separators=(",", ":")),
-                    citations_json=json.dumps(
-                        citations, ensure_ascii=False, separators=(",", ":")
-                    ),
+                    citations_json=json.dumps(citations, ensure_ascii=False, separators=(",", ":")),
                 )
                 artifact.manifest_hash = manifest_hash_of(artifact)
                 session.add(artifact)
                 session.flush()
+                cited_revisions = [
+                    c.get("source_revision_id") or c.get("sourceRevisionId") for c in citations
+                ]
+                retained_images = set(
+                    session.scalars(
+                        select(ElementAsset.asset_id)
+                        .join(DocumentElement)
+                        .where(DocumentElement.revision_id.in_([r for r in cited_revisions if r]))
+                    )
+                )
+                requested_images = set(re.findall(r"gunther-asset:([A-Za-z0-9_-]+)", content))
+                if requested_images - retained_images:
+                    raise ValueError("An output figure must belong to its cited materials.")
+                for asset_id in retained_images:
+                    session.add(ArtifactAsset(artifact_id=artifact.id, asset_id=asset_id))
                 for position, item in enumerate(snapshots):
                     session.add(
                         ArtifactUnitBinding(
@@ -3531,9 +3708,11 @@ class KnowledgeService:
             notes, seeds, inputs = self._output_material(session, resolved, limits)
             snapshots = self._unit_snapshots(session, resolved.units)
             pool = self._output_pool(seeds, limits)
-            tool = self._library_tool(
+            tool = self._output_search_tool(
                 session,
-                self._library_scope(session, resolved.source_ids),
+                base_id,
+                resolved.source_ids,
+                payload.library_supplements,
                 f"{library.title}: {library.question}",
             )
             outline = (
@@ -3585,6 +3764,7 @@ class KnowledgeService:
                     outline=outline,
                     fallback_title=fallback_title,
                 )
+            made_by = {**(made_by or {}), "library_supplements": payload.library_supplements}
             parent_id = parent.id if parent else None
         if events:
             events({"type": "saving"})  # a reader who pressed Stop by now gets nothing saved
@@ -3624,6 +3804,7 @@ class KnowledgeService:
             "skill": {"name": skill.get("name"), "version": skill.get("version"), "skipped": []},
             "approach": provenance.get("approach"),
             "use": provenance.get("use"),
+            "library_supplements": provenance.get("library_supplements", False),
         }
 
     @staticmethod
@@ -3637,6 +3818,17 @@ class KnowledgeService:
         )
         if not revision_id:
             return None
+        if citation.block_id:
+            block = session.get(ContentBlock, citation.block_id)
+            revision = session.get(SourceRevision, revision_id)
+            if (
+                block
+                and revision
+                and revision.source_id == citation.source_id
+                and block.revision_id == revision_id
+            ):
+                return block
+            return None
         return session.scalar(
             select(ContentBlock)
             .where(
@@ -3647,7 +3839,7 @@ class KnowledgeService:
         )
 
     @staticmethod
-    def _read_section(session: Session, block: ContentBlock) -> str:
+    def _section_blocks(session: Session, block: ContentBlock) -> list[ContentBlock]:
         """The section a passage sits in: the blocks under the same heading, or the three
         on each side when it has none. It grows outward from the passage, one block each
         way in turn, until it is as long as a source is read."""
@@ -3656,9 +3848,7 @@ class KnowledgeService:
         if block.heading_path_json and block.heading_path_json != "[]":
             query = query.where(ContentBlock.heading_path_json == block.heading_path_json)
         else:
-            query = query.where(
-                ContentBlock.ordinal.between(block.ordinal - 3, block.ordinal + 3)
-            )
+            query = query.where(ContentBlock.ordinal.between(block.ordinal - 3, block.ordinal + 3))
         blocks = list(session.scalars(query.order_by(ContentBlock.ordinal)))
         at = next((i for i, item in enumerate(blocks) if item.id == block.id), 0)
         low = high = at
@@ -3673,29 +3863,58 @@ class KnowledgeService:
                 step, edge = 1, high + 1
             else:
                 break
-            if size + len(blocks[edge].content) > READ_SECTION_CHARS:
+            if size + len(blocks[edge].content) + 2 > READ_SECTION_CHARS:
                 break
-            size += len(blocks[edge].content)
+            size += len(blocks[edge].content) + 2
             if step > 0:
                 high = edge
             else:
                 low = edge
             turn += 1
-        return "\n\n".join(item.content for item in blocks[low : high + 1])[:READ_SECTION_CHARS]
+        return blocks[low : high + 1]
 
-    def _ask_reader(self, session: Session, web_on: bool) -> Callable[[Evidence], str]:
+    @staticmethod
+    def _read_section(session: Session, block: ContentBlock) -> str:
+        return "\n\n".join(
+            item.content for item in KnowledgeService._section_blocks(session, block)
+        )[:READ_SECTION_CHARS]
+
+    @staticmethod
+    def _read_snapshot(blocks: list[ContentBlock], limit: int = READ_SECTION_CHARS) -> ReadResult:
+        pieces: list[str] = []
+        spans: list[dict[str, object]] = []
+        size = 0
+        for block in blocks:
+            remaining = limit - size - (2 if pieces else 0)
+            if remaining <= 0:
+                break
+            piece = block.content[:remaining]
+            pieces.append(piece)
+            size += len(piece) + (2 if len(pieces) > 1 else 0)
+            spans.append(
+                {
+                    "blockId": block.id,
+                    "revisionId": block.revision_id,
+                    "start": 0,
+                    "end": len(piece),
+                    "anchor": json.loads(block.anchor_json),
+                }
+            )
+        return ReadResult("\n\n".join(pieces), spans)
+
+    def _ask_reader(self, session: Session, web_on: bool) -> Callable[[Evidence], str | ReadResult]:
         """Reading more of a source in Ask's pool (read_source): the section around a library
         passage, or the whole web page. Only a source already in the pool is read, and a web
         page only with the Web switch on, through the same rules as capturing a page; the
         address is the one the search result gave, never one the model wrote."""
 
-        def read(item: Evidence) -> str:
+        def read(item: Evidence) -> str | ReadResult:
             citation = item.payload[0] if isinstance(item.payload, tuple) else None
             if item.kind == "library" and citation is not None and citation.source_id:
                 block = self._passage_block(session, citation)
                 if block is None:
                     raise ToolFailure("That passage is no longer in its source.")
-                return self._read_section(session, block)
+                return self._read_snapshot(self._section_blocks(session, block))
             if item.kind == "web" and item.url:
                 if not web_on:
                     raise ToolFailure("The web is off for this message")
@@ -3733,12 +3952,20 @@ class KnowledgeService:
                 )
                 .order_by(ContentBlock.ordinal)
             )
-            text = "\n\n".join(part.content for part in around)[:4000]
+            snapshot = self._read_snapshot(list(around), 4000)
+            text = snapshot.text
             if text.strip() == citation.quote.strip():
                 return None
             locator = f"{citation.locator} (with context)" if citation.locator else "with context"
             fresh = citation.model_copy(
-                update={"id": _id("cit"), "quote": text, "locator": locator, "ref": None}
+                update={
+                    "id": _id("cit"),
+                    "quote": text,
+                    "locator": locator,
+                    "ref": None,
+                    "support_text": text,
+                    "support_spans": snapshot.spans,
+                }
             )
             return Evidence(
                 kind="library",
@@ -3786,7 +4013,9 @@ class KnowledgeService:
             parent = self._output_version(session, workspace_id, base_id, artifact_id, latest=True)
             self._require_agent_output(parent)
             resolved = self._resolve_output_scope(
-                session, base_id, OutputScope.model_validate(json.loads(parent.scope_json)),
+                session,
+                base_id,
+                OutputScope.model_validate(json.loads(parent.scope_json)),
                 strict=False,
             )
             notes, _, inputs = self._output_material(session, resolved, limits)
@@ -3799,13 +4028,16 @@ class KnowledgeService:
                 ]
             )
             known = self._latest_checks(session, parent.id)
+            records = self._latest_check_records(session, parent.id)
             carried = [
                 known.get(section_hash(text))
                 for text in split_document(parent.content, parent.kind)[1]
             ]
-            tool = self._library_tool(
+            tool = self._output_search_tool(
                 session,
-                self._library_scope(session, resolved.source_ids),
+                base_id,
+                resolved.source_ids,
+                bool(json.loads(parent.provenance_json).get("library_supplements", False)),
                 f"{library.title}: {library.question}",
             )
             made_by = self._made_by(parent)
@@ -3830,9 +4062,7 @@ class KnowledgeService:
                 Spec(parent.kind, parent.audience, parent.style, parent.brief),
                 parent.content,
                 [
-                    Planned(
-                        item["heading"], item.get("goal", ""), layout=item.get("layout") or ""
-                    )
+                    Planned(item["heading"], item.get("goal", ""), layout=item.get("layout") or "")
                     for item in json.loads(parent.outline_json)
                 ],
                 carried,
@@ -3842,7 +4072,22 @@ class KnowledgeService:
                 pool,
                 notes,
                 events,
+                known_coverage={
+                    digest: record["coverage"]
+                    for digest, record in records.items()
+                    if record.get("coverage")
+                },
             )
+            for check in built.checks:
+                previous = records.get(check["hash"], {})
+                if "coverage" not in check and previous.get("coverage"):
+                    check["coverage"] = previous["coverage"]
+            made_by = {
+                **(made_by or {}),
+                "library_supplements": json.loads(parent.provenance_json).get(
+                    "library_supplements", False
+                ),
+            }
             fields = {
                 "kind": parent.kind,
                 "style": parent.style,
@@ -3903,14 +4148,11 @@ class KnowledgeService:
             parent = self._output_version(session, workspace_id, base_id, artifact_id, latest=True)
             self._require_agent_output(parent)
             known = self._latest_checks(session, parent.id)
+            records = self._latest_check_records(session, parent.id)
             hashes = dict.fromkeys(
                 section_hash(text) for text in split_document(payload.content, parent.kind)[1]
             )
-            checks = [
-                {"hash": digest, "issues": [issue.out() for issue in known[digest]]}
-                for digest in hashes
-                if digest in known
-            ]
+            checks = [records[digest] for digest in hashes if digest in known]
             fields = {
                 "kind": parent.kind,
                 "style": parent.style,
@@ -3954,10 +4196,19 @@ class KnowledgeService:
             )
             self._require_agent_output(artifact)
             known = self._latest_checks(session, artifact.id)
+            records = self._latest_check_records(session, artifact.id)
             artifact_kind = artifact.kind
             sections = split_document(artifact.content, artifact.kind)[1]
-            if all(section_hash(text) in known for text in sections):
+            if all(
+                records.get(section_hash(text), {}).get("coverage", {}).get("status") == "complete"
+                for text in sections
+            ):
                 return self._artifact_out(session, artifact)
+            known = {
+                key: value
+                for key, value in known.items()
+                if records.get(key, {}).get("coverage", {}).get("status") == "complete"
+            }
             by_ref = {
                 citation.ref: evidence_from_citation(citation)
                 for citation in (
@@ -3967,7 +4218,14 @@ class KnowledgeService:
                 if citation.ref is not None
             }
         checks = OutputAgents(self.models).check(
-            model, sections, known, by_ref, title_slide=artifact_kind == "slides"
+            model,
+            sections,
+            known,
+            by_ref,
+            title_slide=artifact_kind == "slides",
+            known_coverage={
+                key: value["coverage"] for key, value in records.items() if value.get("coverage")
+            },
         )
         with session_scope(self.sessions) as session:
             artifact = self._output_version(

@@ -40,6 +40,7 @@ import shutil
 import stat
 import threading
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -217,6 +218,7 @@ class LibraryFolders:
         self._wake = threading.Event()
         self._stopping = threading.Event()
         self._thread: threading.Thread | None = None
+        self.after_sync: Callable[[], None] | None = None
 
     # Running ---------------------------------------------------------------
 
@@ -263,6 +265,8 @@ class LibraryFolders:
             try:
                 plan = self._plan()
                 changed = self._apply(plan)
+                if self.after_sync is not None:
+                    self.after_sync()
             except Exception as error:
                 self.status.last_error = f"{type(error).__name__}: {error}"
                 raise

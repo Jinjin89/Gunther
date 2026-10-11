@@ -1,3 +1,4 @@
+import { persistentStorage } from "../persistentStorage";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 
 interface DragWidthOptions {
@@ -20,7 +21,7 @@ interface DragWidthOptions {
 export function useDragWidth({ storageKey, min, max, fallback, observe }: DragWidthOptions) {
   const clamp = useCallback((value: number) => Math.min(Math.max(value, min), Math.max(min, max())), [min, max]);
   const [width, setWidth] = useState(() => {
-    const stored = Number(window.localStorage.getItem(storageKey));
+    const stored = Number(persistentStorage.getItem(storageKey));
     return Number.isFinite(stored) && stored > 0 ? clamp(stored) : fallback;
   });
   const drag = useRef<{ startX: number; startWidth: number } | null>(null);
@@ -45,7 +46,7 @@ export function useDragWidth({ storageKey, min, max, fallback, observe }: DragWi
     const value = clamp(next);
     setWidth(value);
     try {
-      window.localStorage.setItem(storageKey, String(value));
+      persistentStorage.setItem(storageKey, String(value));
     } catch {
       // The width still holds until the app closes.
     }

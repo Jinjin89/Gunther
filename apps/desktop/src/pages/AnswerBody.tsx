@@ -2,6 +2,7 @@ import type { AgentStep, ConversationContext, ResearchUsed } from "@gunther/cont
 import { BookOpen, ChevronRight, CircleAlert, ClipboardCheck, Globe2, Library, ListChecks, LoaderCircle, PenLine } from "lucide-react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { sourceAssetUrl } from "../api";
 import type { LiveStep } from "./liveAnswer";
 import { BrandMark } from "../design/BrandMark";
 import type { LiveAnswerState } from "./liveAnswer";
@@ -54,6 +55,7 @@ export function withCitationLinks(text: string, numbers: number[]): string {
 }
 
 const SAFE_WEB = /^https?:\/\//i;
+const RETAINED_IMAGE = /^gunther-asset:([A-Za-z0-9_-]{1,160})$/;
 
 /** An answer, as Markdown, with its [n] citations as buttons that open the evidence. */
 export function AnswerBody({ content, numbers, onCitation, supportNotes }: { content: string; numbers: number[]; onCitation?: ((index: number) => void) | undefined; supportNotes?: string[] | undefined }) {
@@ -78,10 +80,12 @@ export function AnswerBody({ content, numbers, onCitation, supportNotes }: { con
       if (href && SAFE_WEB.test(href)) return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
       return <span>{children}</span>;
     },
-    // Answers are prose; raw images in them would be remote loads.
-    img: () => null,
+    img: ({ src, alt }) => {
+      const retained = typeof src === "string" ? RETAINED_IMAGE.exec(src) : null;
+      return retained ? <img src={sourceAssetUrl(retained[1]!)} alt={alt ?? ""} loading="lazy" style={{ maxWidth: "100%", height: "auto" }} /> : null;
+    },
   };
-  return <div className="answer-markdown"><Markdown remarkPlugins={[remarkGfm]} components={components} urlTransform={(url) => (CITE_LINK.test(url) || INFER_LINK.test(url) || DISPUTED_LINK.test(url) || PARTLY_LINK.test(url) || url === UNSOURCED_LINK || SAFE_WEB.test(url) ? url : "")}>{withCitationLinks(content, numbers)}</Markdown></div>;
+  return <div className="answer-markdown"><Markdown remarkPlugins={[remarkGfm]} components={components} urlTransform={(url, key) => ((key === "src" && RETAINED_IMAGE.test(url)) || CITE_LINK.test(url) || INFER_LINK.test(url) || DISPUTED_LINK.test(url) || PARTLY_LINK.test(url) || url === UNSOURCED_LINK || SAFE_WEB.test(url) ? url : "")}>{withCitationLinks(content, numbers)}</Markdown></div>;
 }
 
 /** "Used: Compare sources": the skill an answer followed, beside the model line. */

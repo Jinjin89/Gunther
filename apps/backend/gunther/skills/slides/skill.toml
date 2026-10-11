@@ -5,7 +5,7 @@
 
 name = "slides"
 kind = "slides"
-version = 1
+version = 2
 title = "Slides"
 description = "Plan and write a deck, for a talk or for reading, from the chosen material."
 

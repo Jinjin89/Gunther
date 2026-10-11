@@ -1,3 +1,4 @@
+import { persistentStorage } from "../persistentStorage";
 import type { KnowledgeSearchResult, SourceSummary } from "@gunther/contracts";
 import {
   ArrowRight,
@@ -133,7 +134,7 @@ export function HomePage({
   // How deep a skill with budgets (research) goes.
   const [budget, setBudget] = useState<SkillBudget>("standard");
   const askSkills = useAskSkills();
-  const [web, setWeb] = useState(() => window.localStorage.getItem(WEB_PREFERENCE_KEY) === "on");
+  const [web, setWeb] = useState(() => persistentStorage.getItem(WEB_PREFERENCE_KEY) === "on");
   const [savingResearch, setSavingResearch] = useState(false);
   const [savedResearchQuery, setSavedResearchQuery] = useState<string | null>(null);
   const composer = useRef<SearchComposerHandle>(null);
@@ -188,7 +189,7 @@ export function HomePage({
 
   const changeWeb = (next: boolean) => {
     setWeb(next);
-    window.localStorage.setItem(WEB_PREFERENCE_KEY, next ? "on" : "off");
+    persistentStorage.setItem(WEB_PREFERENCE_KEY, next ? "on" : "off");
     if (submitted) void run(submitted.query, next ? "both" : "knowledge", submitted.baseIds);
   };
 
@@ -231,7 +232,7 @@ export function HomePage({
   const fileConversation = async (libraryId: string) => {
     const sessionId = await homeAsk.file(libraryId);
     if (!sessionId) return;
-    window.localStorage.setItem(`gunther:active-session:${libraryId}`, sessionId);
+    persistentStorage.setItem(`gunther:active-session:${libraryId}`, sessionId);
     onNotify("Conversation filed in the library.");
     onOpenBase(libraryId, "ask");
   };
@@ -264,18 +265,18 @@ export function HomePage({
       return;
     }
     if (result.kind === "session") {
-      window.localStorage.setItem(`gunther:active-session:${baseId}`, result.id);
+      persistentStorage.setItem(`gunther:active-session:${baseId}`, result.id);
       onOpenBase(baseId, "ask");
       return;
     }
     if (result.kind === "source") {
-      window.localStorage.setItem(`gunther:open-source:${baseId}`, result.id);
+      persistentStorage.setItem(`gunther:open-source:${baseId}`, result.id);
       onOpenBase(baseId, "sources");
       return;
     }
     if (result.kind === "knowledge_unit" && result.sourceSessionId) {
-      window.localStorage.setItem(`gunther:active-session:${baseId}`, result.sourceSessionId);
-      if (result.sourceMessageId) window.localStorage.setItem(`gunther:selected-message:${baseId}`, result.sourceMessageId);
+      persistentStorage.setItem(`gunther:active-session:${baseId}`, result.sourceSessionId);
+      if (result.sourceMessageId) persistentStorage.setItem(`gunther:selected-message:${baseId}`, result.sourceMessageId);
       onOpenBase(baseId, "ask");
       return;
     }

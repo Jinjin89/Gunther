@@ -35,7 +35,7 @@ from gunther.pdf_text import looks_like_heading, title_by_font
 DOI = re.compile(r"\b(10\.\d{4,9}/[^\s\"'<>]+)", re.IGNORECASE)
 ARXIV = re.compile(r"arXiv:\s*(\d{4}\.\d{4,5})(?:v\d+)?", re.IGNORECASE)
 YEAR_NOTICE = re.compile(
-    r"(?:©|\(c\)|copyright|published|accepted|received|proceedings|conference|journal|"
+    r"(?:©|\(c\)|copyright|published|proceedings|conference|journal|"
     r"volume|vol\.)\D{0,40}?\b((?:19|20)\d{2})\b",
     re.IGNORECASE,
 )
@@ -115,28 +115,52 @@ def pdf_facts(path: Path) -> PdfFacts:
 
     from pypdf import PdfReader
 
+    from gunther.document_structure import pdf_metadata
+
     try:
         reader = PdfReader(path, strict=False)
         meta = reader.metadata or {}
     except Exception:
         return PdfFacts()
+    try:
+        declared = pdf_metadata(path)
+    except Exception:
+        declared = {}
     title = _plausible_title(title_by_font(reader)) or _plausible_title(
         str(meta.get("/Title") or "")
     )
     # Metadata sometimes carries emails: "Olaf Ronneberger (ronneber@…), …".
     author = re.sub(r"\(\s*\)", "", EMAIL.sub("", str(meta.get("/Author") or "")))
     author = re.sub(r"\s+([,;])", r"\1", re.sub(r"\s+", " ", author)).strip(" ,;")
+    declared_authors = declared.get("authors", [])
+    if declared_authors:
+        author = next(
+            (a["value"] for a in declared_authors if a["origin"] == "xmp:creator"),
+            declared_authors[0]["value"],
+        )
     if author.casefold() in {"", "unknown", "administrator", "user", "author"}:
         author = ""
-    created = re.match(r"D:((?:19|20)\d{2})", str(meta.get("/CreationDate") or ""))
+    publication_year = next(
+        (
+            match[0]
+            for key in ("published", "issued", "coverDate")
+            for value in declared.get(key, [])
+            if (match := re.search(r"\b(?:19|20)\d{2}\b", value["value"]))
+        ),
+        None,
+    )
     doi = next(
-        (DOI.search(str(meta.get(key) or "")) for key in ("/doi", "/prism:doi", "/Subject")),
+        (
+            match
+            for key in ("/doi", "/prism:doi", "/Subject")
+            if (match := DOI.search(str(meta.get(key) or "")))
+        ),
         None,
     )
     return PdfFacts(
         title=title,
         authors=author[:500] or None,
-        year=int(created[1]) if created else None,
+        year=int(publication_year) if publication_year else None,
         doi=_clean_doi(doi[1]) if doi else None,
     )
 
@@ -220,13 +244,13 @@ def _abstract(blocks: Sequence[ContentBlock]) -> tuple[str, list[str]]:
             break
         lead = ABSTRACT_LEAD.match(text)
         if lead and block.kind != "heading" and len(text) - lead.end() >= 60:
-            parts.append((block.id, text[lead.end():]))
+            parts.append((block.id, text[lead.end() :]))
             start = index + 1
             break
         # "…University of Freiburg, Germany Abstract. There is large consent…"
         inline = ABSTRACT_INLINE.search(text) if index < 40 else None
         if inline and block.kind != "heading" and len(text) - inline.end() >= 60:
-            parts.append((block.id, text[inline.end():]))
+            parts.append((block.id, text[inline.end() :]))
             start = index + 1
             break
     if start is None:
@@ -257,7 +281,7 @@ def _gist(blocks: Sequence[ContentBlock]) -> tuple[str, list[str]]:
         parts.append((block.id, text))
         if sum(len(part) for _, part in parts) >= GIST:
             break
-    return " ".join(part for _, part in parts)[:GIST * 2], [block for block, _ in parts]
+    return " ".join(part for _, part in parts)[: GIST * 2], [block for block, _ in parts]
 
 
 def _outline(blocks: Sequence[ContentBlock]) -> list[str]:
@@ -340,9 +364,7 @@ def title_key(title: str) -> str:
 def _assign_work(session: Session, facts: PaperFacts) -> str:
     identifier = facts.identifier
     key = title_key(facts.title)
-    work = (
-        session.scalar(select(Work).where(Work.identifier == identifier)) if identifier else None
-    )
+    work = session.scalar(select(Work).where(Work.identifier == identifier)) if identifier else None
     if work is None and facts.title_from_document and len(key) >= MIN_TITLE_KEY:
         work = session.scalar(
             select(Work).where(Work.title_key == key).order_by(Work.created_at).limit(1)
@@ -359,9 +381,7 @@ def _assign_work(session: Session, facts: PaperFacts) -> str:
 def drop_orphan_works(session: Session) -> None:
     session.execute(
         delete(Work).where(
-            Work.id.not_in(
-                select(SourcePaper.work_id).where(SourcePaper.work_id.is_not(None))
-            )
+            Work.id.not_in(select(SourcePaper.work_id).where(SourcePaper.work_id.is_not(None)))
         )
     )
 

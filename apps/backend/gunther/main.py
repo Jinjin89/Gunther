@@ -224,8 +224,7 @@ def create_app(
             # Nothing moves and nothing mixes: originals stay where they were.
             active_settings = active_settings.model_copy(
                 update={
-                    "assets_dir": active_settings.previous_assets_dir
-                    or active_settings.assets_dir,
+                    "assets_dir": active_settings.previous_assets_dir or active_settings.assets_dir,
                     "recordings_dir": active_settings.previous_recordings_dir
                     or active_settings.recordings_dir,
                 }
@@ -251,11 +250,24 @@ def create_app(
         quota_bytes=active_settings.storage_quota_bytes,
         min_free_bytes=active_settings.storage_min_free_bytes,
     )
-    worker = ProcessingWorker(knowledge_service.index, AssetService(
-        sessions, active_settings.assets_dir, knowledge_service, local_ocr, storage_budget,
-    ), document_parser=(DoclingParser(
-        active_settings.docling_python, active_settings.docling_artifacts_path,
-    ) if active_settings.docling_python and active_settings.docling_artifacts_path else None))
+    worker = ProcessingWorker(
+        knowledge_service.index,
+        AssetService(
+            sessions,
+            active_settings.assets_dir,
+            knowledge_service,
+            local_ocr,
+            storage_budget,
+        ),
+        document_parser=(
+            DoclingParser(
+                active_settings.docling_python,
+                active_settings.docling_artifacts_path,
+            )
+            if active_settings.docling_python and active_settings.docling_artifacts_path
+            else DoclingParser.bundled()
+        ),
+    )
 
     trash_service = TrashService(
         sessions,
@@ -281,8 +293,11 @@ def create_app(
         # In-memory SQLite uses a single shared connection: tests drive run_once
         # explicitly rather than allowing concurrent transactions on that connection.
         background = not active_settings.database_url.endswith(":memory:")
-        task = (asyncio.create_task(worker.run()) if active_settings.processing_worker_enabled
-                and background else None)
+        task = (
+            asyncio.create_task(worker.run())
+            if active_settings.processing_worker_enabled and background
+            else None
+        )
         trash_task = asyncio.create_task(purge_trash()) if background else None
         if library_folders and background:
             library_folders.start()
@@ -378,9 +393,7 @@ def create_app(
                         status_code=503,
                         content={"detail": "Workspace identity is unavailable"},
                     )
-                if not secrets.compare_digest(
-                    expected_workspace_id, actual_workspace_id
-                ):
+                if not secrets.compare_digest(expected_workspace_id, actual_workspace_id):
                     return JSONResponse(
                         status_code=409,
                         content={"detail": "Workspace identity changed"},
@@ -390,9 +403,7 @@ def create_app(
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        pairing_exchange_path = (
-            f"{active_settings.api_prefix.rstrip('/')}/pairing/exchange"
-        )
+        pairing_exchange_path = f"{active_settings.api_prefix.rstrip('/')}/pairing/exchange"
         if request.method == "POST" and request.url.path == pairing_exchange_path:
             if any(
                 (
@@ -437,8 +448,7 @@ def create_app(
         expected = active_settings.auth_token
         if sidecar_candidates and expected:
             authorized = any(
-                secrets.compare_digest(candidate, expected)
-                for candidate in sidecar_candidates
+                secrets.compare_digest(candidate, expected) for candidate in sidecar_candidates
             )
             if not authorized:
                 return JSONResponse(status_code=401, content={"detail": "Unauthorized"})

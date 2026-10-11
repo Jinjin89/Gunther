@@ -1,3 +1,4 @@
+import { persistentStorage } from "./persistentStorage";
 import { Check } from "lucide-react";
 import type { CreateKnowledgeBaseInput, CreateSourceInput, NotebookNote, TrashItem } from "@gunther/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -49,7 +50,7 @@ interface OpenItemState {
 /** The local profile name, or an empty string while it is still the placeholder. */
 const readProfileName = () => {
   try {
-    const profile = JSON.parse(window.localStorage.getItem(PROFILE_STORAGE_KEY) ?? "null") as { name?: unknown } | null;
+    const profile = JSON.parse(persistentStorage.getItem(PROFILE_STORAGE_KEY) ?? "null") as { name?: unknown } | null;
     const name = typeof profile?.name === "string" ? profile.name.trim() : "";
     return name === DEFAULT_PROFILE_NAME ? "" : name;
   } catch {
@@ -151,7 +152,7 @@ export default function App() {
 
   const refreshWorkspaceId = useCallback(async () => {
     const bootstrap = await knowledgeApi.workspaceBootstrap();
-    window.localStorage.setItem(WORKSPACE_ID_STORAGE_KEY, bootstrap.workspaceId);
+    persistentStorage.setItem(WORKSPACE_ID_STORAGE_KEY, bootstrap.workspaceId);
     setWorkspaceId(bootstrap.workspaceId);
     return bootstrap.workspaceId;
   }, []);
@@ -321,7 +322,7 @@ export default function App() {
 
   // A question asked from Home lands in the library's Ask composer, ready to send.
   const askBase = useCallback((id: string, question: string) => {
-    window.localStorage.setItem(`gunther:ask-draft:${id}`, question);
+    persistentStorage.setItem(`gunther:ask-draft:${id}`, question);
     openBase(id, undefined, "ask");
   }, [openBase]);
 
@@ -345,7 +346,7 @@ export default function App() {
       const payload = {
         format: "gunther-local-workbook-v3",
         exportedAt: new Date().toISOString(),
-        ownerProfile: (() => { try { return JSON.parse(window.localStorage.getItem("gunther:profile") ?? "null") as unknown; } catch { return null; } })(),
+        ownerProfile: (() => { try { return JSON.parse(persistentStorage.getItem("gunther:profile") ?? "null") as unknown; } catch { return null; } })(),
         knowledgeBase: metadataItems.find((item) => item.id === activeBase.id) ?? activeBase,
         curatedFieldView: activeBase,
         indexedSources,
@@ -428,7 +429,7 @@ export default function App() {
   }, [serviceOnline]);
   useEffect(() => {
     applyTheme(theme);
-    window.localStorage.setItem(THEME_STORAGE_KEY, themePreference);
+    persistentStorage.setItem(THEME_STORAGE_KEY, themePreference);
   }, [theme, themePreference]);
   useEffect(() => themePreference === "system" ? watchSystemTheme(() => setSystemThemeVersion((current) => current + 1)) : undefined, [themePreference]);
   useEffect(() => {

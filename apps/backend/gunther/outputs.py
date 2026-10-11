@@ -55,12 +55,24 @@ from gunther.agent import (
 from gunther.llm import ModelError, ModelGateway, ModelInfo, Turn
 from gunther.model_profiles import Effort
 from gunther.schemas import ConversationCitationOut
+from gunther.skill_checks import CHARTS, Context, Page, chart_numbers_cited
 
 logger = logging.getLogger(__name__)
 
 EVIDENCE_CHARS = 900
 CARRY_CHARS = 600
 UNCHANGED = "UNCHANGED"
+
+
+def figure_lines(item: Evidence) -> list[str]:
+    citation = item.payload[0] if isinstance(item.payload, tuple) and item.payload else None
+    return [
+        f"    Retained figure: ![{figure.get('caption', 'Figure')}]"
+        f"(gunther-asset:{figure['assetId']}) — cite [{item.ref}]. "
+        "Caption is source text; image contents/numbers are not verified."
+        for figure in getattr(citation, "figures", [])
+        if figure.get("assetId")
+    ]
 
 
 @dataclass(frozen=True)
@@ -176,6 +188,12 @@ class Pool:
 
         held = self.known.get(item.key)
         if held is not None:
+            citation = item.payload[0] if isinstance(item.payload, tuple) and item.payload else None
+            if getattr(citation, "support_spans", None) and len(item.text) > len(held.text):
+                expanded = replace(item, ref=held.ref)
+                self.items[self.items.index(held)] = expanded
+                self.known[item.key] = expanded
+                return expanded
             return held
         self.top += 1
         fresh = replace(item, ref=self.top)
@@ -271,6 +289,7 @@ class Outline(BaseModel):
 class Unsupported(BaseModel):
     # Numbers of the sentences whose cited passages do not state them; may be empty.
     unsupported: list[int] = Field(default_factory=list, max_length=40)
+    supported: list[int] = Field(default_factory=list, max_length=40)
 
 
 Events = Callable[[dict[str, Any]], None]
@@ -330,7 +349,7 @@ FORMATS = {
     ),
     "title": (
         'Format: the title slide. Write "# {heading}" and one subtitle line. No bullets, '
-        "no citations and no notes."
+        "no notes. Cite a factual subtitle with [n]; a topic-only title needs no citation."
     ),
 }
 
@@ -360,7 +379,8 @@ You are the support-check step of Gunther, a research assistant. Numbered senten
 follow, each with the passages it cites. List the numbers of the sentences that state \
 something the cited passages do not say: a fact, figure, name or cause that is not in \
 them, or the opposite of what they say. A sentence that fairly restates or summarises \
-its passages is supported. Return the numbers, possibly none."""
+its passages is supported. Return both "supported" and "unsupported" lists. Every
+numbered sentence must occur in exactly one list; omission is an unchecked claim."""
 
 
 def _what(spec: Spec) -> str:
@@ -392,6 +412,7 @@ def _origin(item: Evidence) -> str:
         part
         for part in (
             item.kind,
+            getattr(item.payload[0], "source_origin", "") if item.payload else "",
             item.title,
             item.locator,
             item.status if item.status and item.kind == "library" else "",
@@ -500,7 +521,7 @@ def cited_sentences(text: str) -> list[tuple[int, int, str, list[int]]]:
     for begin, end in merged:
         chunk = text[begin:end]
         numbers = _numbers(chunk)
-        if numbers and _plain(chunk) and not chunk.lstrip().startswith("#"):
+        if numbers and _plain(chunk):
             found.append((begin, end, chunk, numbers))
     return found
 
@@ -525,6 +546,7 @@ class Draft:
     text: str
     # None until a check has looked at it.
     issues: list[Issue] | None = None
+    coverage: dict[str, Any] | None = None
 
 
 def _no_events(_event: dict[str, Any]) -> None:
@@ -659,9 +681,11 @@ class OutputAgents:
         shown = order[: self.limits.shown]
         if not shown:
             return ["The pool: empty; nothing relevant was found."]
-        return ["The pool:"] + [
-            f"[{item.ref}] ({_origin(item)}) {item.text[:EVIDENCE_CHARS]}" for item in shown
-        ]
+        lines = ["The pool:"]
+        for item in shown:
+            lines.append(f"[{item.ref}] ({_origin(item)}) {item.text[:EVIDENCE_CHARS]}")
+            lines.extend(figure_lines(item))
+        return lines
 
     def write(
         self,
@@ -714,19 +738,46 @@ class OutputAgents:
     # Checker ------------------------------------------------------------------------------
 
     def _unsupported(
-        self, model: ModelInfo, text: str, by_ref: dict[int, Evidence]
+        self,
+        model: ModelInfo,
+        text: str,
+        by_ref: dict[int, Evidence],
+        coverage: dict[str, Any] | None = None,
     ) -> list[tuple[int, int, str, list[int]]]:
         """The cited sentences whose passages do not state them. A model that cannot
         answer finds none. A number with no passage behind it counts as unsupported."""
 
-        sentences = cited_sentences(text)[: self.limits.sentences]
+        sentences = cited_sentences(text)
         bad = [item for item in sentences if any(n not in by_ref for n in item[3])]
-        asked = [item for item in sentences if item not in bad]
-        if asked:
-            lines = []
-            for number, (_, _, chunk, refs) in enumerate(asked, start=1):
-                lines.append(f"[{number}] {_plain(chunk)}")
-                lines += [f"    cites {ref}: {by_ref[ref].text[:500]}" for ref in refs]
+        asked = [item for item in sentences[:600] if item not in bad]
+        checked = list(bad)
+        batches: list[list[tuple[tuple[int, int, str, list[int]], str]]] = [[]]
+        size = 0
+        for item in asked:
+            _, _, chunk, refs = item
+            passage = "\n".join(
+                [
+                    _plain(chunk),
+                    *(
+                        f"    cites {ref}: {by_ref[ref].context[:6000] or by_ref[ref].text[:900]}"
+                        for ref in refs
+                    ),
+                ]
+            )
+            if len(passage) > 23_500:
+                continue  # Explicitly unchecked rather than silently truncating its sources.
+            if size + len(passage) + 8 > 24_000 or len(batches[-1]) >= max(
+                1, min(40, self.limits.sentences)
+            ):
+                batches.append([])
+                size = 0
+            batches[-1].append((item, passage))
+            size += len(passage) + 8
+        for group in batches:
+            if not group:
+                continue
+            batch = [item for item, _ in group]
+            lines = [f"[{number}] {passage}" for number, (_, passage) in enumerate(group, 1)]
             try:
                 verdict, _ = self.gateway.complete_json(
                     model,
@@ -738,8 +789,38 @@ class OutputAgents:
             except ModelError as error:
                 logger.info("The support check failed: %s", error)
             else:
-                flagged = {n for n in verdict.unsupported if 1 <= n <= len(asked)}
-                bad += [item for number, item in enumerate(asked, start=1) if number in flagged]
+                flagged = {n for n in verdict.unsupported if 1 <= n <= len(batch)}
+                accepted = {n for n in verdict.supported if 1 <= n <= len(batch)} - flagged
+                bad += [item for number, item in enumerate(batch, start=1) if number in flagged]
+                checked += [
+                    item
+                    for number, item in enumerate(batch, start=1)
+                    if number in flagged | accepted
+                ]
+        if coverage is not None:
+            coverage.update(
+                status="complete"
+                if len(checked) == len(sentences)
+                else "partial"
+                if checked
+                else "failed",
+                considered=len(sentences),
+                checked=len(checked),
+                unchecked=len(sentences) - len(checked),
+                claims=[
+                    {
+                        "text": _plain(chunk),
+                        "refs": refs,
+                        "verdict": "not"
+                        if item in bad
+                        else "supported"
+                        if item in checked
+                        else "unchecked",
+                    }
+                    for item in sentences
+                    for _, _, chunk, refs in [item]
+                ],
+            )
         return sorted(bad)
 
     def check_built(
@@ -763,9 +844,7 @@ class OutputAgents:
         text, _ = check_citations(text, set(pool.by_ref()))
         text = place_marks(text, self.ask.unsourced_claims(model, text))
         dropped: list[tuple[str, str]] = []
-        text = self.ask.check_leads(
-            model, text, Toolbox((tool,)), pool.adopt, [], [], say, dropped
-        )
+        text = self.ask.check_leads(model, text, Toolbox((tool,)), pool.adopt, [], [], say, dropped)
         issues += [
             Issue(claim, "contradicted", f"Left out: the sources disagree ({titles}).")
             for claim, titles in dropped
@@ -774,18 +853,63 @@ class OutputAgents:
             Issue(claim, "unverified", "From the model's own knowledge; no source was found.")
             for _, _, claim in leads_in(text, 40)
         ]
-        flagged = self._unsupported(model, text, pool.by_ref())
+        coverage: dict[str, Any] = {}
+        flagged = self._unsupported(model, text, pool.by_ref(), coverage)
         issues += [
             Issue(_plain(chunk)[:300], "unsupported", "The sources it cites do not state this.")
             for _, _, chunk, _ in flagged
         ]
+        issues += [
+            Issue(claim["text"][:300], "unchecked", "The Checker returned no verdict.")
+            for claim in coverage.get("claims", [])
+            if claim["verdict"] == "unchecked"
+        ]
         # From the end, so the positions of the earlier sentences stay true.
         for begin, end, chunk, _ in reversed(flagged):
             text = text[:begin] + unsource(chunk) + text[end:]
-        return Draft(text, issues)
+        coverage = self._full_coverage(model, text, pool.by_ref(), issues)
+        return Draft(text, issues, coverage)
+
+    def _full_coverage(
+        self, model: ModelInfo, text: str, by_ref: dict[int, Evidence], issues: list[Issue]
+    ) -> dict[str, Any]:
+        """Use Ask's claim contract for headings, body, tables and speaker notes too."""
+        _, check, _, _ = self.ask.check_sentences(
+            model, "Verify this output section", text, by_ref, limit=self.limits.sentences
+        )
+        coverage = (
+            check._coverage
+            if check is not None
+            else {"status": "failed", "considered": 0, "checked": 0, "unchecked": 0, "claims": []}
+        )
+        coverage["answerHash"] = section_hash(text)
+        held = {_plain(issue.claim) for issue in issues}
+        for claim in coverage.get("claims", []):
+            verdict = claim["verdict"]
+            if verdict in {"supported", "nonfactual"} or _plain(claim["text"]) in held:
+                continue
+            label = (
+                "unchecked"
+                if verdict == "unchecked"
+                else "unsourced"
+                if verdict == "unsourced"
+                else "unsupported"
+            )
+            issues.append(
+                Issue(
+                    _plain(claim["text"])[:300],
+                    label,
+                    claim.get("reason") or "The claim was not fully supported.",
+                )
+            )
+        return coverage
 
     def check_unbuilt(
-        self, model: ModelInfo, text: str, by_ref: dict[int, Evidence]
+        self,
+        model: ModelInfo,
+        text: str,
+        by_ref: dict[int, Evidence],
+        coverage: dict[str, Any] | None = None,
     ) -> list[Issue]:
         """Check a section without changing it: what has no source, what is marked as the
         model's own, and what its cited passages do not state."""
@@ -806,6 +930,9 @@ class OutputAgents:
                 else "The sources it cites do not state this."
             )
             issues.append(Issue(_plain(chunk)[:300], "unsupported", note))
+        full = self._full_coverage(model, text, by_ref, issues)
+        if coverage is not None:
+            coverage.update(full)
         return issues
 
     # Assembling -----------------------------------------------------------------------------
@@ -825,6 +952,24 @@ class OutputAgents:
         """One document, with the passages it cites numbered 1, 2, 3 in reading order."""
 
         by_ref = pool.by_ref()
+        for index, (draft, plan) in enumerate(zip(drafts, outline, strict=True)):
+            if plan.layout not in CHARTS:
+                continue
+            problems = chart_numbers_cited(
+                [Page(index, plan.heading, plan.layout, draft.text)],
+                {},
+                Context(spec.kind, evidence=by_ref),
+            )
+            if (
+                problems
+                or draft.issues is None
+                or draft.issues
+                or (draft.coverage or {}).get("status") != "complete"
+            ):
+                reason = problems[0].message if problems else "Its verification is incomplete."
+                raise ModelError(
+                    "Chart claims and values must be verified before saving. " + reason
+                )
         raw = join_document(preamble, [draft.text for draft in drafts], spec.kind)
         _, used = check_citations(raw, set(by_ref))
         final = []
@@ -837,7 +982,30 @@ class OutputAgents:
             for number, ref in enumerate(used, start=1)
         ]
         checks = [
-            {"hash": section_hash(text), "issues": [issue.out() for issue in draft.issues]}
+            {
+                "hash": section_hash(text),
+                "issues": [issue.out() for issue in draft.issues],
+                **(
+                    {
+                        "coverage": {
+                            **draft.coverage,
+                            "answerHash": section_hash(text),
+                            "claims": [
+                                {
+                                    **claim,
+                                    "text": renumber_citations(claim["text"], used),
+                                    "refs": [
+                                        used.index(ref) + 1 for ref in claim["refs"] if ref in used
+                                    ],
+                                }
+                                for claim in draft.coverage.get("claims", [])
+                            ],
+                        }
+                    }
+                    if draft.coverage
+                    else {}
+                ),
+            }
             for text, draft in zip(final, drafts, strict=True)
             if draft.issues is not None
         ]
@@ -887,8 +1055,10 @@ class OutputAgents:
                 for index, item in enumerate(outline)
             ]
             # A deck is named by its title slide; a report by what it was asked or called.
-            title = planned[0].heading if spec.kind == "slides" else (
-                spec.title or fallback_title or planned[0].heading
+            title = (
+                planned[0].heading
+                if spec.kind == "slides"
+                else (spec.title or fallback_title or planned[0].heading)
             )
             title = " ".join(title.split())[:160]
         if spec.kind == "slides":
@@ -905,15 +1075,19 @@ class OutputAgents:
         for index in range(len(planned)):
             emit({"type": "section", "index": index, "state": "writing"})
             written = self.write(
-                model, effort, spec, planned, index, pool, passages.get(index, ()), notes,
-                drafts[-1].text if drafts else "", emit,
+                model,
+                effort,
+                spec,
+                planned,
+                index,
+                pool,
+                passages.get(index, ()),
+                notes,
+                drafts[-1].text if drafts else "",
+                emit,
             )
-            if spec.kind == "slides" and index == 0:
-                # The title slide states nothing to check: a title and a line, no citations.
-                drafts.append(Draft(written, []))
-            else:
-                emit({"type": "section", "index": index, "state": "checking"})
-                drafts.append(self.check_built(model, written, tool, pool, emit, index))
+            emit({"type": "section", "index": index, "state": "checking"})
+            drafts.append(self.check_built(model, written, tool, pool, emit, index))
             emit({"type": "section", "index": index, "state": "done"})
         preamble = ""
         if spec.kind == "report":
@@ -937,12 +1111,15 @@ class OutputAgents:
         pool: Pool,
         notes: Notes,
         events: Events | None = None,
+        *,
+        known_coverage: dict[str, dict[str, Any]] | None = None,
     ) -> BuiltOutput:
         """Change what the instruction asks for, in one section or all of them.
 
         The pool already holds the passages the output cites, under their numbers.
         ``carried`` is what the Checker found in each section before; a section left
-        as it is keeps it. Sections that change are checked again as in a build.
+        as it is keeps it, along with its ``known_coverage`` by section hash.
+        Sections that change are checked again as in a build.
         """
 
         emit = events or _no_events
@@ -958,33 +1135,56 @@ class OutputAgents:
             else Planned(heading_of(text))
             for i, text in enumerate(sections)
         ]
-        asked = (
-            f"{planned[target].heading}: {instruction}" if target is not None else instruction
-        )
+        asked = f"{planned[target].heading}: {instruction}" if target is not None else instruction
         found = self._research_section(
-            model, asked, [asked[:300]], tool, pool,
-            self.limits.per_section if len(pool) < pool.limit else 0, emit, target,
+            model,
+            asked,
+            [asked[:300]],
+            tool,
+            pool,
+            self.limits.per_section if len(pool) < pool.limit else 0,
+            emit,
+            target,
         )
         drafts = [
-            Draft(text, carried[i] if i < len(carried) else None)
+            Draft(
+                text,
+                carried[i] if i < len(carried) else None,
+                (known_coverage or {}).get(section_hash(text)),
+            )
             for i, text in enumerate(sections)
         ]
         for index in indexes:
             emit({"type": "section", "index": index, "state": "writing"})
             written = self.write(
-                model, effort, spec, planned, index, pool, found, notes,
-                drafts[index - 1].text if index else "", emit,
-                current=sections[index], instruction=instruction,
+                model,
+                effort,
+                spec,
+                planned,
+                index,
+                pool,
+                found,
+                notes,
+                drafts[index - 1].text if index else "",
+                emit,
+                current=sections[index],
+                instruction=instruction,
             )
             if section_hash(written) == section_hash(sections[index]):
                 emit({"type": "section", "index": index, "state": "done"})
                 continue
-            if spec.kind == "slides" and index == 0:
-                drafts[index] = Draft(written, [])
-            else:
-                emit({"type": "section", "index": index, "state": "checking"})
-                drafts[index] = self.check_built(model, written, tool, pool, emit, index)
+            emit({"type": "section", "index": index, "state": "checking"})
+            drafts[index] = self.check_built(model, written, tool, pool, emit, index)
             emit({"type": "section", "index": index, "state": "done"})
+        for index, draft in enumerate(drafts):
+            if planned[index].layout in CHARTS and draft.coverage is None:
+                # Older saved checks have no coverage record. Verify the unchanged
+                # chart without rewriting it before applying the save safeguard.
+                emit({"type": "section", "index": index, "state": "checking"})
+                coverage: dict[str, Any] = {}
+                issues = self.check_unbuilt(model, draft.text, pool.by_ref(), coverage)
+                drafts[index] = Draft(draft.text, issues, coverage)
+                emit({"type": "section", "index": index, "state": "done"})
         title = title_of(join_document(preamble, [d.text for d in drafts], spec.kind)) or ""
         return self.assemble(spec, title, preamble, drafts, pool, planned, model, effort)
 
@@ -996,19 +1196,25 @@ class OutputAgents:
         by_ref: dict[int, Evidence],
         *,
         title_slide: bool = False,
+        known_coverage: dict[str, dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """Checks for these sections, keeping what is known for a text that is unchanged
         (``known``, by section hash). Nothing is rewritten. With ``title_slide`` the first
         section is a deck's title slide, which has no claims to check."""
 
         checks = []
-        for index, text in enumerate(sections):
+        for text in sections:
             digest = section_hash(text)
+            coverage = (known_coverage or {}).get(digest, {}).copy()
             if digest in known:
                 issues = known[digest]
-            elif title_slide and index == 0:
-                issues = []
             else:
-                issues = self.check_unbuilt(model, text, by_ref)
-            checks.append({"hash": digest, "issues": [issue.out() for issue in issues]})
+                issues = self.check_unbuilt(model, text, by_ref, coverage)
+            checks.append(
+                {
+                    "hash": digest,
+                    "issues": [issue.out() for issue in issues],
+                    **({"coverage": coverage} if coverage else {}),
+                }
+            )
         return checks

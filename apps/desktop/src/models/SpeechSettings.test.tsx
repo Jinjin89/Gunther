@@ -1,5 +1,5 @@
 import type { SpeechOverview } from "@gunther/contracts";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SpeechSettings } from "./SpeechSettings";
@@ -48,5 +48,38 @@ describe("SpeechSettings", () => {
     const select = await screen.findByLabelText("Ask dictation", { selector: "select" });
     await userEvent.selectOptions(select, "qwen/qwen-audio-3.1-asr-flash");
     expect(api.saveSpeechRoles).toHaveBeenCalledWith({ dictation: { model: "qwen/qwen-audio-3.1-asr-flash", stream: false, language: "" } });
+  });
+
+  it("tests the edited model list before saving, without testing the previous model", async () => {
+    api.testSpeechProvider.mockResolvedValue({ ok: true, message: "Current model checked.", warning: null });
+    render(<SpeechSettings onNotify={vi.fn()} />);
+    await userEvent.click(await screen.findByRole("button", { name: /^Qwen/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Remove qwen-audio-3.1-asr-flash" }));
+    await userEvent.type(screen.getByLabelText("Model id to add"), "provider-supplied-asr");
+    await userEvent.click(screen.getByRole("button", { name: "Add" }));
+    await userEvent.click(screen.getByRole("button", { name: "Test connection" }));
+    expect(api.testSpeechProvider).toHaveBeenCalledWith("qwen", {
+      name: "Qwen", baseUrl: "https://maas.qianwenaiapi.com",
+      models: [{ id: "provider-supplied-asr", label: "" }],
+    });
+    expect(api.updateSpeechProvider).not.toHaveBeenCalled();
+    expect(await screen.findByText("Current model checked.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Remove provider-supplied-asr" }));
+    expect(screen.queryByText("Current model checked.")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Test connection" }));
+    expect(api.testSpeechProvider).toHaveBeenLastCalledWith("qwen", {
+      name: "Qwen", baseUrl: "https://maas.qianwenaiapi.com", models: [],
+    });
+  });
+
+  it("discards a late test result when its model has been changed", async () => {
+    let finish!: (value: unknown) => void;
+    api.testSpeechProvider.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    render(<SpeechSettings onNotify={vi.fn()} />);
+    await userEvent.click(await screen.findByRole("button", { name: /^Qwen/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Test connection" }));
+    await userEvent.click(screen.getByRole("button", { name: "Remove qwen-audio-3.1-asr-flash" }));
+    await act(async () => { finish({ ok: true, message: "Old model checked.", warning: null }); });
+    expect(screen.queryByText("Old model checked.")).not.toBeInTheDocument();
   });
 });

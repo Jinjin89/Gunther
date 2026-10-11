@@ -320,10 +320,11 @@ def test_a_report_is_planned_researched_written_and_checked(tmp_path: Path) -> N
         {"heading": "T cells", "goal": "How T cells are told apart"},
         {"heading": "B cells", "goal": "How B cells are told apart"},
     ]
-    assert artifact["sections"] == [
+    assert [{k: v for k, v in s.items() if k != "coverage"} for s in artifact["sections"]] == [
         {"index": 0, "heading": "T cells", "checked": True, "issues": []},
         {"index": 1, "heading": "B cells", "checked": True, "issues": []},
     ]
+    assert all(s["coverage"]["status"] == "complete" for s in artifact["sections"])
     assert artifact["scope"] == {
         "mode": "library",
         "sourceIds": [],
@@ -335,8 +336,11 @@ def test_a_report_is_planned_researched_written_and_checked(tmp_path: Path) -> N
     provenance = artifact["provenance"]
     assert (provenance["schemaVersion"], provenance["acceptedOnly"]) == (2, False)
     assert provenance["generator"] == "gunther.output-agents.v1"
-    assert provenance["model"] == {"ref": "deepseek/deepseek-flash", "label": "DeepSeek · Flash",
-                                   "effort": "high"}
+    assert provenance["model"] == {
+        "ref": "deepseek/deepseek-flash",
+        "label": "DeepSeek · Flash",
+        "effort": "high",
+    }
     assert (provenance["kind"], provenance["origin"], provenance["audience"]) == (
         "report",
         "build",
@@ -401,9 +405,9 @@ def test_a_deck_is_written_slide_by_slide_with_speaker_notes(tmp_path: Path) -> 
     assert [c["sourceTitle"] for c in artifact["citations"]] == ["Markers"]
     # Only the slide that makes a point searches; the title and closing slides do not.
     assert {d["section"] for n, d in events if n == "step"} == {1}
-    # The title slide states nothing to check, so only the two slides with claims are audited.
-    assert sum(is_auditing(r) for r in fake.requests) == 2
-    assert artifact["sections"][0] == {
+    # Titles can also make factual claims; all slides are audited.
+    assert sum(is_auditing(r) for r in fake.requests) == 3
+    assert {k: v for k, v in artifact["sections"][0].items() if k != "coverage"} == {
         "index": 0,
         "heading": "Immune markers",
         "checked": True,
@@ -415,7 +419,7 @@ def test_a_deck_is_written_slide_by_slide_with_speaker_notes(tmp_path: Path) -> 
     assert "3 to 5 bullets" in writing[1]["messages"][0]["content"]
 
 
-def test_a_title_slide_that_is_typed_over_needs_no_check(tmp_path: Path) -> None:
+def test_a_title_slide_that_is_typed_over_is_checked(tmp_path: Path) -> None:
     fake = FakeProvider(output_replies(SLIDES_OUTLINE, SLIDES))
     with built_output(tmp_path, fake, kind="slides", audience="student") as built_deck:
         client, base_id, first = built_deck
@@ -431,8 +435,8 @@ def test_a_title_slide_that_is_typed_over_needs_no_check(tmp_path: Path) -> None
         assert [s["checked"] for s in second["sections"]] == [False, True, True]
         before = len(fake.requests)
         checked = client.post(route(base_id, second["id"], "/check"), headers=headers).json()
-        # Nothing was asked of a model: a title and a line have no claims to look up.
-        assert len(fake.requests) == before
+        # The audit determines whether the edited title contains factual claims.
+        assert len(fake.requests) == before + 2
         assert [s["checked"] for s in checked["sections"]] == [True, True, True]
         assert checked["content"] == typed
 

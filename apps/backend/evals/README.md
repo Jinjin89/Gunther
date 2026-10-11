@@ -43,3 +43,20 @@ Below the table, each case that failed has one line saying why. The judge is one
 ## Tests
 
 `tests/test_ask_exam.py` covers the case file, the scoring and one full run with stand-in models; it needs no keys.
+
+## Knowledge/Agent upgrade comparison
+
+The schema-22 implementation adds deterministic regressions in `test_documents.py`,
+`test_agent_reliability.py` and `test_output_reliability.py`. The existing live Ask exam
+has not been run for this change; unit-test totals are not a model quality score.
+
+Before claiming improvement, run repeated baseline/upgraded comparisons with the same
+library, questions, provider, effort and independent judge. Record Skill/parser versions,
+actual calls including claim lookups/retries, check coverage, latency and token usage.
+Run parser-only comparisons with Agent settings fixed, then Agent-only comparisons with
+the parsed library fixed. Add blind same-material Report/PPT comparisons for argument,
+coverage, transitions and readability; citation count or length alone is not success.
+
+The annotated PDF corpus and proposed acceptance matrix are in
+`docs/KNOWLEDGE_AND_AGENT_UPGRADE_PLAN.md`; performed checks and unmet gates are in
+`docs/KNOWLEDGE_AND_AGENT_UPGRADE_IMPLEMENTATION.md` at the repository root.

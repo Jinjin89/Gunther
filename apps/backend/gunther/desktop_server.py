@@ -197,7 +197,9 @@ def _secure_data_tree(data_dir: Path) -> int:
                 with suppress(FileNotFoundError):
                     os.chmod(
                         candidate,
-                        0o700 if is_directory else 0o600,
+                        0o700
+                        if is_directory
+                        else (0o600 if metadata.st_mode & stat.S_IWUSR else 0o400),
                         follow_symlinks=False,
                     )
     return seen
@@ -208,11 +210,17 @@ def _secure_data_tree(data_dir: Path) -> int:
 DEFAULT_LIBRARY_ROOT = Path.home() / "Gunther"
 
 
-def _desktop_settings(data_dir: Path, auth_token: str) -> Settings:
+def _desktop_settings(
+    data_dir: Path,
+    auth_token: str,
+    *,
+    config_dir: Path | None = None,
+    library_root: Path | None = None,
+) -> Settings:
     """The sidecar's settings; LIBRARY_ROOT in the data folder's .env overrides the default."""
 
     base = {
-        "_env_file": data_dir / ".env",
+        "_env_file": (config_dir or data_dir) / ".env",
         "database_url": f"sqlite+pysqlite:///{data_dir / 'gunther.sqlite'}",
         # Originals kept here by earlier versions move into the library root once.
         "previous_assets_dir": data_dir / "assets",
@@ -221,8 +229,15 @@ def _desktop_settings(data_dir: Path, auth_token: str) -> Settings:
         "speech_dir": data_dir / "speech",
         "auth_token": auth_token,
         "seed_demo": False,
-        "service_settings_file": data_dir / SERVICE_SETTINGS_FILE_NAME,
+        "service_settings_file": (config_dir or data_dir) / SERVICE_SETTINGS_FILE_NAME,
     }
+    if library_root is not None:
+        return Settings(
+            **base,
+            library_root=library_root,
+            assets_dir=data_dir / "assets",
+            recordings_dir=data_dir / "recordings",
+        )
     settings = Settings(**base)
     configured = settings.library_root
     # The private data folder refuses symlinks, and library aliases are symlinks.
@@ -695,6 +710,9 @@ def _stop_when_app_is_gone(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Gunther desktop knowledge service")
     parser.add_argument("--data-dir", type=Path, required=True)
+    parser.add_argument("--config-dir", type=Path)
+    parser.add_argument("--library-root", type=Path)
+    parser.add_argument("--legacy-data-dir", type=Path)
     # Not 8787, so a development backend never blocks the installed app.
     parser.add_argument("--port", type=int, default=28787)
     parser.add_argument("--launch-nonce", required=True)
@@ -764,6 +782,23 @@ def _serve(args: argparse.Namespace) -> None:
     # while this one shuts down waits for the lock, instead of finding them still in use.
     with _acquire_instance_lock(data_dir):
         try:
+            config_dir = getattr(args, "config_dir", None)
+            library_root = getattr(args, "library_root", None)
+            if config_dir is not None:
+                from gunther.workspace_storage import prepare_workspace_storage
+
+                config_dir = config_dir.expanduser().absolute()
+                _secure_data_tree(data_dir)
+                _secure_data_tree(config_dir)
+                if library_root is None:
+                    raise RuntimeError("A desktop configuration directory requires a library root")
+                library_root = library_root.expanduser().absolute()
+                prepare_workspace_storage(
+                    data_dir,
+                    config_dir,
+                    library_root,
+                    getattr(args, "legacy_data_dir", None),
+                )
             # A second instance or occupied port must fail before credentials
             # are published. The prebound socket is passed directly to Uvicorn.
             listener = (
@@ -780,7 +815,12 @@ def _serve(args: argparse.Namespace) -> None:
                 _ensure_private_directory(private_dir)
 
             auth_token = secrets.token_urlsafe(32)
-            settings = _desktop_settings(data_dir, auth_token)
+            settings = _desktop_settings(
+                data_dir,
+                auth_token,
+                config_dir=config_dir,
+                library_root=library_root,
+            )
             logger.info("Library folder %s", settings.library_root)
             gateway_runtime = MobileGatewayRuntime(enabled=not args.disable_mobile_gateway)
             # One store for both apps, so a change saved in Settings reaches the phone too.
@@ -788,6 +828,14 @@ def _serve(args: argparse.Namespace) -> None:
             sidecar_app = create_app(
                 settings, mobile_gateway=gateway_runtime, service_settings=service_settings
             )
+            if config_dir is not None:
+                from gunther.workspace_storage import backup_workspace_database
+
+                backup_workspace_database(data_dir)
+                if sidecar_app.state.library_folders is not None:
+                    sidecar_app.state.library_folders.after_sync = (
+                        lambda: backup_workspace_database(data_dir)
+                    )
             logger.info("The service is set up (%s)", since_start())
             config = uvicorn.Config(
                 app_log.RequestLog(sidecar_app),

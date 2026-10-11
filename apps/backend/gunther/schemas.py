@@ -13,9 +13,7 @@ from pydantic import (
 from gunther.brief import SettledItem
 from gunther.model_profiles import Effort
 
-SourceKind = Literal[
-    "note", "paper", "link", "file", "image", "table", "recording", "course"
-]
+SourceKind = Literal["note", "paper", "link", "file", "image", "table", "recording", "course"]
 AssertionStatus = Literal["provisional", "verified", "disputed"]
 MessageRole = Literal["user", "assistant"]
 ProposalStatus = Literal["pending", "accepted", "held", "rejected"]
@@ -550,6 +548,11 @@ class ConversationCitationOut(ApiModel):
     source_revision_id: str | None = None
     block_id: str | None = None
     anchor: dict[str, object] = Field(default_factory=dict)
+    support_text: str | None = None
+    support_spans: list[dict[str, object]] = Field(default_factory=list)
+    source_origin: Literal["selected", "library_supplement", "web_supplement"] | None = None
+    work_identifier: str | None = None
+    figures: list[dict[str, object]] = Field(default_factory=list)
     # Its number in the conversation's source pool: `[ref]` in an answer, the same in
     # every answer of the conversation. Older answers have none and count from 1.
     ref: int | None = None
@@ -581,6 +584,8 @@ class ConversationContextOut(ApiModel):
     # that source does not cover.
     checked: bool = False
     support_notes: list[str] = Field(default_factory=list)
+    coverage: dict[str, object] | None = None
+    budget_usage: dict[str, object] | None = None
     # What this question found, for the context panel: {"subQuestions": [{id, text, query}],
     # "findings": [{ref | title, serves, says}]}. `ref` is the number in the answer's text.
     work: dict[str, object] | None = None
@@ -755,6 +760,8 @@ class OutputSupplementOut(ApiModel):
     url: str = ""
     role: str = "background"  # background | comparison | update | third_party
     why: str = ""
+    source_id: str | None = None
+    origin: Literal["library_supplement", "web_supplement"] = "web_supplement"
 
 
 class OutputApproachOut(ApiModel):
@@ -797,6 +804,7 @@ class OutputProvenanceOut(ArtifactProvenanceOut):
     skill: SkillRunOut | None = None
     approach: OutputApproachOut | None = None
     use: Literal["talk", "read"] | None = None
+    library_supplements: bool = False
 
 
 class OutputScope(ApiModel):
@@ -847,7 +855,7 @@ class ApproachInput(ApiModel):
 
 class OutputIssueOut(ApiModel):
     claim: str
-    verdict: Literal["unsupported", "unverified", "unsourced", "contradicted"]
+    verdict: Literal["unsupported", "unverified", "unsourced", "contradicted", "unchecked"]
     note: str = ""
 
 
@@ -857,6 +865,7 @@ class OutputSectionOut(ApiModel):
     # A check exists for the section's current text.
     checked: bool
     issues: list[OutputIssueOut] = Field(default_factory=list)
+    coverage: dict[str, object] | None = None
 
 
 class OutputInputsOut(ApiModel):
@@ -886,6 +895,8 @@ class BuildOutputInput(ApiModel):
     use: Literal["auto", "talk", "read"] = "auto"
     # Whether the web may be searched to add to the chosen material (when it is set up).
     web: bool = False
+    # Opt-in only: keep the selection central, permit other sources in this same library.
+    library_supplements: bool = False
 
     @model_validator(mode="after")
     def tidy(self) -> "BuildOutputInput":

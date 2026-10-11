@@ -11,10 +11,12 @@ use tauri::{Listener, Manager};
 mod app_log;
 mod application_menu;
 mod capture_shell;
+mod desktop_storage;
 mod external_links;
 mod leftover;
 mod library_location;
 mod microphone_access;
+mod storage_paths;
 mod tray_glyph;
 
 #[derive(Default)]
@@ -197,12 +199,14 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
     }
 
     set_private_umask();
-    let data_dir = app.path().app_data_dir()?;
+    let storage = storage_paths::resolve(app)?;
+    let data_dir = storage.data;
     create_private_dir(&data_dir)?;
     create_private_dir(&data_dir.join(READY_TOKEN_DIR_NAME))?;
     let launch_nonce = generate_launch_nonce()?;
     // A service a previous Gunther left running would hold the data folder.
     leftover::reclaim(&data_dir);
+    leftover::reclaim(&storage.legacy);
     let executable = backend_executable(app)?;
     log::info!(
         "Starting the knowledge service: {} (preferring port {RELEASE_BACKEND_PORT})",
@@ -219,9 +223,10 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
         command.arg("--log-dir").arg(folder);
     }
     // The folder chosen in Settings; without one the backend uses ~/Gunther.
-    if let Some(root) = library_location::chosen_root(&data_dir) {
-        command.env("LIBRARY_ROOT", root);
-    }
+    command.env("LIBRARY_ROOT", &storage.library);
+    command.arg("--config-dir").arg(&storage.config);
+    command.arg("--library-root").arg(&storage.library);
+    command.arg("--legacy-data-dir").arg(&storage.legacy);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -306,14 +311,15 @@ fn stop_backend(app: &tauri::AppHandle) {
         let _ = child.kill();
         let _ = child.wait();
     }
-    if let (Ok(data_dir), Some(launch_nonce)) = (app.path().app_data_dir(), launch_nonce) {
-        let _ = std::fs::remove_file(ready_token_path(&data_dir, &launch_nonce));
+    if let (Ok(storage), Some(launch_nonce)) = (storage_paths::resolve(app), launch_nonce) {
+        let _ = std::fs::remove_file(ready_token_path(&storage.data, &launch_nonce));
     }
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LibraryLocation {
+    configuration_root: String,
     /// The folder chosen in Settings, or None for the default.
     chosen: Option<String>,
     /// Only the installed app starts its own backend; in development it runs on its own.
@@ -332,12 +338,11 @@ fn print_output(window: tauri::WebviewWindow) -> Result<(), String> {
 
 #[tauri::command]
 fn library_location(app: tauri::AppHandle) -> Result<LibraryLocation, String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|_| "Gunther could not locate its private data directory".to_string())?;
+    let storage = storage_paths::resolve(&app)?;
     Ok(LibraryLocation {
-        chosen: library_location::chosen_root(&data_dir).map(|path| path.display().to_string()),
+        configuration_root: storage.config.display().to_string(),
+        chosen: library_location::chosen_root(&storage.config)?
+            .map(|path| path.display().to_string()),
         can_change: !cfg!(debug_assertions),
     })
 }
@@ -349,10 +354,7 @@ fn library_destination(
     from: String,
     picked: String,
 ) -> Result<String, String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|_| "Gunther could not locate its private data directory".to_string())?;
+    let data_dir = storage_paths::resolve(&app)?.config;
     let from = PathBuf::from(from);
     let to = library_location::destination(&from, Path::new(&picked));
     match library_location::problem_with(&from, &to, &data_dir) {
@@ -375,14 +377,15 @@ fn change_library_location(
                 .into(),
         );
     }
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|_| "Gunther could not locate its private data directory".to_string())?;
+    let storage = storage_paths::resolve(&app)?;
+    let data_dir = storage.config;
     let from = PathBuf::from(from);
     let to = PathBuf::from(to);
     if !from.is_absolute() {
         return Err("Gunther could not tell where your libraries are now.".into());
+    }
+    if from != storage.library {
+        return Err("The selected folder is no longer Gunther's active workspace.".into());
     }
     if let Some(problem) = library_location::problem_with(&from, &to, &data_dir) {
         return Err(problem);
@@ -396,6 +399,8 @@ fn change_library_location(
         from.display(),
         to.display()
     );
+    let persistence = app.state::<desktop_storage::DesktopStorage>();
+    let _storage_lock = persistence.0.lock().map_err(|error| error.to_string())?;
     stop_backend(&app);
     let outcome = library_location::move_library(&from, &to).and_then(|()| {
         library_location::save_choice(&data_dir, &to).map_err(|error| {
@@ -455,10 +460,7 @@ fn backend_connection(app: tauri::AppHandle) -> Result<BackendConnection, String
         });
     }
 
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|_| "Gunther could not locate its private data directory".to_string())?;
+    let data_dir = storage_paths::resolve(&app)?.data;
     let launch_nonce = app
         .state::<BackendProcess>()
         .0
@@ -543,6 +545,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(BackendProcess(Mutex::new(BackendRuntime::default())))
+        .manage(desktop_storage::DesktopStorage::default())
         .manage(capture_shell::CaptureShell::default())
         .menu(application_menu::build)
         .on_menu_event(|app, event| {
@@ -558,12 +561,9 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            let data_dir = app.path().app_data_dir().ok();
-            // The library folder the backend will use: the one chosen in Settings, or ~/Gunther.
-            let library_root = data_dir
-                .as_deref()
-                .and_then(library_location::chosen_root)
-                .or_else(|| app.path().home_dir().ok().map(|home| home.join("Gunther")));
+            let storage = storage_paths::resolve(app.handle())?;
+            let data_dir = Some(storage.data);
+            let library_root = Some(storage.library);
             let logs = app_log::install(app.handle(), library_root.as_deref());
             log::info!(
                 "Gunther {} starting on {} {} (process {})",
@@ -602,6 +602,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            desktop_storage::desktop_storage_load,
+            desktop_storage::desktop_storage_set,
+            desktop_storage::recording_spool_put,
+            desktop_storage::recording_spool_list,
+            desktop_storage::recording_spool_delete,
+            desktop_storage::recording_spool_probe,
             backend_connection,
             restart_backend,
             app_log::logs_folder,

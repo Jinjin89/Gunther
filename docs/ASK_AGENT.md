@@ -23,7 +23,9 @@ is visibly marked as not sourced.
    join the pool and those lines become the *notes*; the planner is asked again.
    Gathering ends when a plan says `answer`, when a round runs nothing, or when the
    budget is spent. The budget (`Budget`) is four searches, three reads and twelve
-   model calls (plans and gradings); a skill may set its own. A repeated search
+   gathering model calls; a skill may set its own. Shared run accounting also bounds
+   final writing/checking/revision and post-answer lookups, including JSON repair and
+   provider-setting retries. A repeated search
    is skipped. If the grading call fails, every result is kept and nothing is noted.
 3. **Write** (the chosen effort, in the chosen style). The writer sees only the
    pool. It cites `[n]` right after each claim; an inference cites the sources it
@@ -35,7 +37,8 @@ is visibly marked as not sourced.
    When the search found nothing to look at and the
    planner said `new_facts` is false (a translation, a shortening, a thanks), the
    reply is not checked and nothing is cut from it; the writer is told to add no
-   facts. Otherwise one model call reads the answer sentence by sentence, with the
+   facts. The planner's `transform` mode also suppresses gathering and later searches.
+   Otherwise bounded model calls read the answer sentence by sentence, with the
    full text of every source it cites, and gives each fact-stating sentence a verdict:
    - *supported*: left as it is, `[n]`;
    - *inference*: `[i:n]`, shown as a small "inference · from [n]" label;
@@ -75,8 +78,9 @@ it, so the answer need not rest on a summary:
   addresses only (also after each redirect), the redirect limit, the size limit, HTML
   or text only. A refusal is a failed step with the plain reason.
 
-What was read goes to the writer and the checker (the writer gets up to three such
-sources); the saved citation keeps its short quote. Outputs has its own `read_source`
+What was read goes to the writer and the checker; contexts are ranked for the question.
+The saved citation retains its original quote plus supporting text and pinned spans,
+and the evidence panel can reopen the supporting passage. Outputs has its own `read_source`
 (the passage and two blocks each side), unchanged.
 
 ## Notes
@@ -256,5 +260,10 @@ numbers, with the ones the selected answer cites in bold.
 ## Known limit
 
 Whether a sentence is a claim, and whether its sources support it, is a model
-judgement (the checker's), never a rule, so it can miss one. Outputs still uses the
-older audit and per-claim check (`unsourced_claims`, `check_leads`), unchanged.
+judgement (the checker's), never a rule, so it can miss one. Missing verdicts, failed calls
+and context limits are now recorded as unchecked with complete/partial/failed/skipped
+coverage. Headings, table cells and speaker notes participate in checking. Outputs also
+runs the shared coverage checker after its existing audit and per-claim lookup.
+
+See [implementation notes](KNOWLEDGE_AND_AGENT_UPGRADE_IMPLEMENTATION.md) for the
+verification performed and the remaining research-completion and release work.

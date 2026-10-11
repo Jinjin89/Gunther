@@ -1,3 +1,4 @@
+import { persistentStorage } from "../persistentStorage";
 /**
  * Reading comfort: how big text is and which typeface the interface uses.
  * Every font size in the stylesheets is multiplied by ``--gx-fs``, so one
@@ -24,7 +25,7 @@ export const FONTS: Array<{ id: FontChoice; label: string; detail: string }> = [
 
 const read = <T extends string>(key: string, allowed: readonly T[], fallback: T): T => {
   try {
-    const stored = window.localStorage.getItem(key);
+    const stored = persistentStorage.getItem(key);
     return allowed.includes(stored as T) ? (stored as T) : fallback;
   } catch {
     return fallback;
@@ -43,8 +44,8 @@ export function applyTypography(size: TextSize = readTextSize(), font: FontChoic
 
 export function saveTypography(size: TextSize, font: FontChoice) {
   try {
-    window.localStorage.setItem(TEXT_SIZE_STORAGE_KEY, size);
-    window.localStorage.setItem(FONT_STORAGE_KEY, font);
+    persistentStorage.setItem(TEXT_SIZE_STORAGE_KEY, size);
+    persistentStorage.setItem(FONT_STORAGE_KEY, font);
   } catch {
     // The choice still applies until the window closes.
   }

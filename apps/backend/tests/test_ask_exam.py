@@ -267,7 +267,7 @@ def test_agent_efforts_reach_the_agent(tmp_path: Path, monkeypatch) -> None:
 
     class Spy(AskAgent):
         def __init__(self, *args, **kwargs):
-            seen.update(kwargs)
+            seen.update({key: value for key, value in kwargs.items() if key.endswith("effort")})
             super().__init__(*args, **kwargs)
 
     monkeypatch.setattr(service_module, "AskAgent", Spy)

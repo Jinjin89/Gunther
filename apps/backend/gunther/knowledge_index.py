@@ -19,8 +19,11 @@ from sqlalchemy import bindparam, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from gunther import digest, vector_index
-from gunther.content import MIN_EMBED_CHARS, ParsedBlock, parse_content, search_tokens
+from gunther.content import MIN_EMBED_CHARS, ParsedBlock, search_tokens
 from gunther.database import session_scope
+from gunther.document_store import publish_document
+from gunther.document_structure import NON_BODY
+from gunther.documents import ParsedDocument, text_document
 from gunther.models import (
     ContentBlock,
     ProcessingJob,
@@ -32,8 +35,8 @@ from gunther.models import (
 
 # Parser versions are part of a revision's fingerprint. v2 reflows PDF lines into
 # paragraphs and makes passage-sized blocks; v1 revisions are parsed again.
-TEXT_PARSER = "gunther-text-v2"
-ASSET_PARSER = "gunther-asset-v2"
+TEXT_PARSER = "gunther-text-v3"
+ASSET_PARSER = "gunther-asset-v4"
 LEGACY_ASSET_PARSER = "gunther-asset-v1"
 
 
@@ -110,10 +113,23 @@ class KnowledgeIndex:
         *,
         parser: str = TEXT_PARSER,
         warning: str | None = None,
+        document: ParsedDocument | None = None,
     ) -> SourceRevision:
         fingerprint = hashlib.sha256(
             json.dumps(
-                {"blocks": [asdict(b) for b in blocks], "parser": parser, "warning": warning},
+                {
+                    "blocks": [asdict(b) for b in blocks],
+                    "parser": parser,
+                    "warning": warning,
+                    **(
+                        {
+                            "elements": [asdict(e) for e in document.elements],
+                            "manifest": document.manifest,
+                        }
+                        if document
+                        else {}
+                    ),
+                },
                 ensure_ascii=False,
                 sort_keys=True,
             ).encode()
@@ -131,6 +147,7 @@ class KnowledgeIndex:
                 parser=parser,
                 state="partial" if warning or not blocks else "ready",
                 warning=warning or ("No readable content was extracted." if not blocks else None),
+                manifest_json=json.dumps(document.manifest if document else {}),
             )
             session.add(revision)
             session.flush()
@@ -153,7 +170,9 @@ class KnowledgeIndex:
                 session.add(block)
                 # Flush parents before children for the self-referential foreign key.
                 session.flush()
-                if parsed.kind != "heading" and not parsed.payload.get("reference"):
+                if parsed.kind not in {"heading", *NON_BODY} and not parsed.payload.get(
+                    "reference"
+                ):
                     session.execute(
                         text(
                             "INSERT INTO knowledge_fts(block_id,source_id,revision_id,tokens) "
@@ -166,6 +185,8 @@ class KnowledgeIndex:
                             "tokens": " ".join(search_tokens(parsed.text)),
                         },
                     )
+            if document:
+                publish_document(session, revision.id, document, ids, blocks)
         head = session.get(SourceIndexHead, source.id)
         if head:
             head.revision_id = revision.id
@@ -233,7 +254,8 @@ class KnowledgeIndex:
         )
 
     def add_source(self, session: Session, source: Source) -> None:
-        self.publish(session, source, parse_content(source.content))
+        document = text_document(source.content)
+        self.publish(session, source, document.chunks(), document=document)
 
     def backfill(self, limit: int = 50) -> int:
         """Bounded startup batches; every commit is independently restartable."""
@@ -293,9 +315,7 @@ class KnowledgeIndex:
                         model_id=self.embedder.model_id,
                     )
             # Sources indexed before papers were read, or before the model was on.
-            summarized = select(ProcessingJob.dedupe_key).where(
-                ProcessingJob.kind == "summarize"
-            )
+            summarized = select(ProcessingJob.dedupe_key).where(ProcessingJob.kind == "summarize")
             heads = session.scalars(
                 select(SourceIndexHead)
                 .join(Source, Source.id == SourceIndexHead.source_id)

@@ -135,6 +135,7 @@
 .outputs-slide-face .answer-markdown h2 { margin: 0 0 calc(26px * var(--outputs-fit, 1)); font-family: var(--gx-font-display); font-size: calc(52px * var(--outputs-fit, 1)); font-weight: 450; letter-spacing: -0.015em; line-height: 1.12; }
 .outputs-slide-face .answer-markdown h3 { margin: 0 0 0.4em; font-size: 1em; font-weight: 600; }
 .outputs-slide-face .answer-markdown p { margin: 0; color: var(--outputs-slide-muted); }
+.outputs-slide-face .answer-markdown img { max-width: 100%; max-height: calc(340px * var(--outputs-fit, 1)); object-fit: contain; }
 .outputs-slide-face .answer-markdown ul, .outputs-slide-face .answer-markdown ol { margin: 0; padding-left: 1.05em; display: grid; gap: 0.6em; text-align: left; }
 .outputs-slide-face .answer-markdown li + li { margin-top: 0; }
 .outputs-slide-face .answer-markdown sup { font-size: 0.5em; }

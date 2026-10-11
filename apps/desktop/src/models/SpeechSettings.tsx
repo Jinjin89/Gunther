@@ -1,6 +1,6 @@
 import type { SpeechOverview, SpeechProvider, SpeechRole, SpeechKind, SpeechTestResult } from "@gunther/contracts";
 import { AudioLines, Check, ChevronRight, CircleAlert, Eye, EyeOff, KeyRound, Plug, Plus, Server, Trash2, TriangleAlert, X } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { knowledgeApi } from "../api";
 
 const STATE_LABELS = { configured: "Set up", not_configured: "Not set up", error: "Needs attention", off: "Off" } as const;
@@ -10,7 +10,7 @@ interface ProviderDraft {
   name: string;
   baseUrl: string;
   /** undefined: keep the saved key; "": remove it. */
-  apiKey?: string;
+  apiKey?: string | undefined;
   models: { id: string; label: string }[];
 }
 
@@ -72,6 +72,8 @@ function ProviderEditor({ provider, onOverview, onRemoved, onNotify }: {
   const baseId = useId();
   const initial = draftOf(provider);
   const [draft, setDraft] = useState<ProviderDraft>(initial);
+  const currentDraft = useRef(draft);
+  currentDraft.current = draft;
   const [newModel, setNewModel] = useState("");
   const [result, setResult] = useState<SpeechTestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -94,12 +96,18 @@ function ProviderEditor({ provider, onOverview, onRemoved, onNotify }: {
   const test = async () => {
     setBusy("testing");
     setError(null);
+    setResult(null);
+    const testedDraft = JSON.stringify(draft);
     try {
-      const tested = await knowledgeApi.testSpeechProvider(provider.id, { baseUrl: draft.baseUrl, ...(draft.apiKey ? { apiKey: draft.apiKey } : {}) });
+      const tested = await knowledgeApi.testSpeechProvider(provider.id, {
+        name: draft.name, baseUrl: draft.baseUrl.trim(), models: draft.models,
+        ...(draft.apiKey !== undefined ? { apiKey: draft.apiKey } : {}),
+      });
+      if (JSON.stringify(currentDraft.current) !== testedDraft) return;
       setResult(tested);
       if (tested.overview) onOverview(tested.overview);
     } catch (reason) {
-      setError(message(reason, "The connection could not be tested."));
+      if (JSON.stringify(currentDraft.current) === testedDraft) setError(message(reason, "The connection could not be tested."));
     } finally {
       setBusy(null);
     }
@@ -165,7 +173,7 @@ function ProviderEditor({ provider, onOverview, onRemoved, onNotify }: {
       {provider.kind !== "sensevoice" && <div className="service-field">
         <label htmlFor={`${baseId}-key`}>API key{provider.keySource === "environment" && draft.apiKey === undefined && <span className="service-source" title="Set in the backend's environment or .env file. A key saved here takes its place.">from .env</span>}</label>
         <div className="service-control">
-          <KeyField provider={provider} value={draft.apiKey} inputId={`${baseId}-key`} onChange={(apiKey) => setDraft((current) => { const next = { ...current }; if (apiKey === undefined) delete next.apiKey; else next.apiKey = apiKey; return next; })} />
+          <KeyField provider={provider} value={draft.apiKey} inputId={`${baseId}-key`} onChange={(apiKey) => edit({ apiKey })} />
           {provider.keyShared && !provider.keySet && <small>No key needed here: the {provider.name} key you already saved is used.</small>}
         </div>
       </div>}

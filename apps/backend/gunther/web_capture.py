@@ -26,11 +26,13 @@ from sqlalchemy.exc import IntegrityError
 from gunther.asset_service import (
     MAX_EXTRACTED_CHARACTERS,
     AssetService,
+    AssetValidationError,
     _decode_text,
     _ReadableHtml,
 )
 from gunther.database import session_scope
 from gunther.models import Asset, KnowledgeBaseRecord, Source, WebSnapshot
+from gunther.portable_documents import IMAGE_LIMIT, html_document, image_type
 from gunther.schemas import (
     CreateSourceInput,
     ImportCountsOut,
@@ -49,9 +51,7 @@ MAX_WEB_URL_LENGTH = 4_096
 MAX_WIRE_BYTES = 8 * 1024 * 1024
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 READ_CHUNK_BYTES = 64 * 1024
-ALLOWED_CONTENT_TYPES = frozenset(
-    {"text/html", "application/xhtml+xml", "text/plain"}
-)
+ALLOWED_CONTENT_TYPES = frozenset({"text/html", "application/xhtml+xml", "text/plain"})
 REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _RESERVED_HOST_SUFFIXES = (
     ".internal",
@@ -794,9 +794,7 @@ class WebCaptureService:
             with session_scope(self.knowledge.sessions) as session:
                 library = session.get(KnowledgeBaseRecord, intent.knowledge_base_id)
                 if library is None or library.trashed_at is not None:
-                    raise LookupError(
-                        f"Knowledge Base {intent.knowledge_base_id} was not found"
-                    )
+                    raise LookupError(f"Knowledge Base {intent.knowledge_base_id} was not found")
 
         target, response = await self._fetch(requested_url)
         content_type = _page_content_type(response)
@@ -807,6 +805,56 @@ class WebCaptureService:
             response.body,
             content_type,
         )
+        document = (
+            html_document(_decode_response(response.body, content_type), target.url)
+            if media_type != "text/plain"
+            else None
+        )
+        if document is not None:
+            deadline = time.monotonic() + 10
+            downloaded: dict[str, str] = {}
+            attempted: set[str] = set()
+            total = 0
+            for element in (e for e in document.elements if e.kind == "figure"):
+                url = str(element.payload.get("imageUrl", ""))
+                if url in downloaded:
+                    element.payload["imageAssetId"] = downloaded[url]
+                    continue
+                if url in attempted:
+                    continue
+                if len(attempted) >= 8 or time.monotonic() >= deadline:
+                    break
+                attempted.add(url)
+                try:
+                    _, fetched = await asyncio.wait_for(
+                        self._fetch(url), timeout=max(0.1, deadline - time.monotonic())
+                    )
+                    media = image_type(fetched.body)
+                    if (
+                        not 200 <= fetched.status < 300
+                        or not media
+                        or len(fetched.body) > IMAGE_LIMIT
+                        or total + len(fetched.body) > IMAGE_LIMIT
+                    ):
+                        continue
+                    total += len(fetched.body)
+                    retained = await self.assets.preserve_bytes(
+                        fetched.body,
+                        file_name=f"article-figure-{len(downloaded)}.{media.split('/')[-1]}",
+                        media_type=media,
+                    )
+                    downloaded[url] = retained.id
+                    element.payload["imageAssetId"] = retained.id
+                except (WebCaptureError, AssetValidationError, TimeoutError):
+                    continue
+            missing = sum(
+                e.kind == "figure" and not e.payload.get("imageAssetId") for e in document.elements
+            )
+            document.manifest.update(
+                parser="gunther-html-v1",
+                images="partial" if missing else "preserved",
+                missingImages=missing,
+            )
         captured_at = datetime.now(UTC).replace(tzinfo=None)
         content_hash = hashlib.sha256(response.body).hexdigest()
         snapshot_id = f"wbs_{uuid4().hex}"
@@ -846,6 +894,17 @@ class WebCaptureService:
             )
             _session.add(snapshot)
             snapshots.append(snapshot)
+            if document is not None:
+                self.knowledge.index.publish(
+                    _session,
+                    source,
+                    document.chunks(),
+                    parser="gunther-html-v1",
+                    warning="Some article images were unavailable; their positions were retained."
+                    if document.manifest["missingImages"]
+                    else None,
+                    document=document,
+                )
 
         try:
             imported = await asyncio.to_thread(

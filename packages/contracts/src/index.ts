@@ -134,6 +134,33 @@ export interface SourceStructure {
   blocks: ContentBlock[];
 }
 
+export interface DocumentMention {
+  id: string;
+  start: number;
+  end: number;
+  raw: string;
+  status: "resolved" | "ambiguous" | "unresolved";
+  targets: string[];
+}
+
+export interface DocumentElement extends ContentBlock {
+  mentions: DocumentMention[];
+}
+
+export interface DocumentReference {
+  id: string;
+  elementId: string;
+  label: string;
+  raw: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface SourceDocument extends Omit<SourceStructure, "blocks"> {
+  elements: DocumentElement[];
+  references: DocumentReference[];
+  manifest: Record<string, unknown>;
+}
+
 export interface KnowledgeTopic {
   id: string;
   knowledgeBaseId: string;
@@ -882,6 +909,11 @@ export interface ConversationCitation {
   confidence: number;
   sourceRevisionId?: string | null;
   blockId?: string | null;
+  supportText?: string | null;
+  sourceOrigin?: "selected" | "library_supplement" | "web_supplement" | null;
+  workIdentifier?: string | null;
+  figures?: Array<{ assetId: string; elementId: string; caption: string; page: number | null; revisionId: string }>;
+  supportSpans?: Array<{ blockId: string; revisionId: string; start: number; end: number; anchor: ContentBlock["anchor"] }>;
   anchor?: ContentBlock["anchor"];
   /** Its number in the conversation's source pool: `[ref]` in every answer of the conversation. Older answers have none and count from 1. */
   ref?: number | null;
@@ -916,6 +948,19 @@ export interface ConversationContext {
   checked?: boolean;
   /** One note per `[p:n]` (partly supported) in the text, in order: what that source does not cover. */
   supportNotes?: string[];
+  coverage?: {
+    status: "complete" | "partial" | "skipped" | "failed";
+    considered: number;
+    checked: number;
+    unchecked: number;
+    answerHash?: string;
+    claims: Array<{ id: string; n: number; text: string; refs: number[]; verdict: string; reason: string }>;
+  } | null;
+  budgetUsage?: {
+    used: { searches: number; reads: number; modelCalls: number; gatheringCalls: number };
+    limits: { searches: number; reads: number; modelCalls: number; gatheringCalls: number };
+    exhausted: string[];
+  } | null;
   /** What the question found: its sub-questions and what each source said. `ref` is the number in the answer's text; a source the answer does not cite has its `title` instead. */
   work?: {
     subQuestions: Array<{ id: string; text: string; query: string }>;
@@ -1157,6 +1202,8 @@ export interface OutputSupplement {
   /** background, comparison, update or third_party. */
   role: string;
   why: string;
+  sourceId?: string | null;
+  origin?: "library_supplement" | "web_supplement";
 }
 
 /** What a skill decided before planning: shown above the outline, and editable. */
@@ -1201,7 +1248,7 @@ export interface OutlineItem {
 export interface OutputIssue {
   claim: string;
   /** "unsupported": its passages do not state it. "unverified": from the model's own knowledge, no source found. "unsourced": no source cited. "contradicted": left out because sources disagree. */
-  verdict: "unsupported" | "unverified" | "unsourced" | "contradicted";
+  verdict: "unsupported" | "unverified" | "unsourced" | "contradicted" | "unchecked";
   note: string;
 }
 
@@ -1211,6 +1258,7 @@ export interface OutputSection {
   /** The Checker has looked at the section as it reads now. */
   checked: boolean;
   issues: OutputIssue[];
+  coverage?: { status: string; considered: number; checked: number; unchecked: number } | null;
 }
 
 export interface ArtifactSummary {
@@ -1269,6 +1317,8 @@ export interface BuildOutputRequest {
   use?: "auto" | DeckUse;
   /** The web may be searched to add to the chosen material (when it is set up). */
   web?: boolean;
+  /** Allow other sources from the same library while keeping selected sources primary. */
+  librarySupplements?: boolean;
 }
 
 export interface ReviseOutputRequest {

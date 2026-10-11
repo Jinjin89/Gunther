@@ -22,6 +22,7 @@ import logging
 import re
 import threading
 from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, TypeVar
@@ -40,6 +41,11 @@ T = TypeVar("T", bound=BaseModel)
 REQUEST_TIMEOUT_SECONDS = 300.0
 # Keys a self-hosted server ignores; the SDK insists on one.
 NO_KEY = "not-needed"
+# A run may bound actual requests, including the JSON repair attempt. Context-local
+# so concurrent conversations and background brief maintenance stay independent.
+REQUEST_ADMISSION: ContextVar[Callable[[], None] | None] = ContextVar(
+    "gunther_request_admission", default=None
+)
 
 
 @dataclass(frozen=True)
@@ -190,6 +196,9 @@ class ModelGateway:
     ) -> Completion:
         """Ask once. ``on_text`` hears the answer's text as it is written."""
 
+        admit = REQUEST_ADMISSION.get()
+        if admit is not None:
+            admit()
         turns = [Turn("user", messages)] if isinstance(messages, str) else list(messages)
         if trace.current() is None:
             return self._complete(
@@ -260,9 +269,13 @@ class ModelGateway:
                     logger.info("%s refused the effort setting: %s", model.ref, error)
                     send_effort, applied = Params(), None
                     notes.append(f"{model.label} refused the effort setting; used its default.")
+                    if admit := REQUEST_ADMISSION.get():
+                        admit()
                     continue
                 if send_json:
                     send_json = False
+                    if admit := REQUEST_ADMISSION.get():
+                        admit()
                     continue
                 raise ModelError(
                     f"{model.provider_name} refused the request: {_detail(error)}"
@@ -378,7 +391,10 @@ class ModelGateway:
         reasoning: list[str] = []
         finish: str | None = None
         usage: dict[str, Any] | None = None
-        for chunk in self._client(model).chat.completions.create(**request):
+        client = self._client(model)
+        if REQUEST_ADMISSION.get() is not None and isinstance(client, OpenAI):
+            client = client.with_options(max_retries=0)
+        for chunk in client.chat.completions.create(**request):
             # Token counts, when the provider sends them unasked (asking can be refused).
             counted = getattr(chunk, "usage", None)
             if counted is not None:

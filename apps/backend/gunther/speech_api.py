@@ -4,6 +4,7 @@ The desktop owner sets them up. Keys never leave the backend.
 """
 
 import hashlib
+import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -46,9 +47,17 @@ def _registry(request: Request) -> Registry:
     return request.app.state.speech_registry
 
 
-def _fingerprint(provider: dict[str, Any]) -> str:
+def _fingerprint(provider: dict[str, Any], effective_key: str | None) -> str:
     return hashlib.sha256(
-        f"{provider['baseUrl']}\n{provider.get('apiKey') or ''}".encode()
+        json.dumps(
+            {
+                "kind": provider["kind"],
+                "baseUrl": provider["baseUrl"],
+                "key": effective_key,
+                "models": [model["id"] for model in provider["models"]],
+            },
+            sort_keys=True,
+        ).encode()
     ).hexdigest()
 
 
@@ -57,7 +66,9 @@ def _provider_out(provider: dict[str, Any], request: Request) -> dict[str, Any]:
     preset = PRESETS[provider["kind"]]
     key = provider.get("apiKey")
     check = _store(request).speech_check(provider["id"])
-    if check and check.get("fingerprint") != _fingerprint(provider):
+    if check and check.get("fingerprint") != _fingerprint(
+        provider, speech_registry.key_for(provider, registry.shared)[0]
+    ):
         check = None
     problem = speech_registry.problem_with(provider, registry.shared)
     if problem:
@@ -306,18 +317,23 @@ async def test_provider(provider_id: str, payload: ProviderIn, request: Request)
     providers, index = _find(request, provider_id)
     current = providers[index]
     changes = payload.model_dump(exclude_unset=True)
-    draft = {
-        **current,
-        "baseUrl": changes.get("base_url") or current["baseUrl"],
-        "apiKey": changes["api_key"] if changes.get("api_key") else current.get("apiKey"),
-    }
+    draft = {**current}
+    for field, saved_field in (
+        ("name", "name"),
+        ("base_url", "baseUrl"),
+        ("api_key", "apiKey"),
+        ("models", "models"),
+    ):
+        if field in changes:
+            draft[saved_field] = changes[field]
     try:
         draft = speech_registry.clean_provider(draft)
     except SpeechError as error:
         raise HTTPException(422, str(error)) from error
-    outcome = await _test(draft, speech_registry.key_for(draft, _registry(request).shared)[0])
+    effective_key = speech_registry.key_for(draft, _registry(request).shared)[0]
+    outcome = await _test(draft, effective_key)
     entry = {k: outcome[k] for k in ("ok", "message", "warning")}
     _store(request).record_speech_check(
-        provider_id, {**entry, "fingerprint": _fingerprint(draft)}
+        provider_id, {**entry, "fingerprint": _fingerprint(draft, effective_key)}
     )
     return {**outcome, "overview": speech_overview(request)}

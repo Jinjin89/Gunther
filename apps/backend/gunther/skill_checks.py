@@ -53,6 +53,7 @@ class Context:
     kind: str  # "report" | "slides"
     use: str | None = None  # a deck's: "talk" | "read"
     limits: Mapping[str, int] | None = None
+    evidence: Mapping[int, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -225,7 +226,9 @@ def table_size(pages: Sequence[Page], params: Mapping[str, Any], _: Context) -> 
     return found
 
 
-def chart_numbers_cited(pages: Sequence[Page], _: Mapping[str, Any], __: Context) -> list[Finding]:
+def chart_numbers_cited(
+    pages: Sequence[Page], _: Mapping[str, Any], context: Context
+) -> list[Finding]:
     found = []
     for page in pages:
         if page.layout not in CHARTS or (table := _table(page)) is None:
@@ -244,6 +247,40 @@ def chart_numbers_cited(pages: Sequence[Page], _: Mapping[str, Any], __: Context
                     "Numbers with no source: " + ", ".join(f"“{label}”" for label in bare),
                 )
             )
+        if context.evidence is not None:
+            for row in table[1]:
+                joined = " ".join(row)
+                refs = [
+                    int(n)
+                    for group in re.findall(r"\[([\d,，、 ]+)\]", joined)
+                    for n in re.findall(r"\d+", group)
+                ]
+                passages = "\n".join(
+                    context.evidence[n].context or context.evidence[n].text
+                    for n in refs
+                    if n in context.evidence
+                )
+                pattern = r"(?<!\w)[+-]?\d[\d,]*(?:\.\d+)?%?"
+                source_values = {v.replace(",", "") for v in re.findall(pattern, passages)}
+                header_unit = "%" if any("%" in cell for cell in table[0][1:]) else ""
+                values = [
+                    v.replace(",", "") for v in re.findall(pattern, CITE.sub("", " ".join(row[1:])))
+                ]
+                missing = [
+                    v
+                    for v in values
+                    if v + (header_unit if not v.endswith("%") else "") not in source_values
+                ]
+                if missing:
+                    found.append(
+                        Finding(
+                            "chart_numbers_cited",
+                            page.index,
+                            f"Chart values for “{row[0]}” are absent from cited passages: "
+                            f"{', '.join(missing)}. Use sourced values with matching units; "
+                            "a derived value needs an explicit formula and operands.",
+                        )
+                    )
     return found
 
 
@@ -267,6 +304,9 @@ def run_checks(
     context: Context,
 ) -> list[Finding]:
     found: list[Finding] = []
+    for page in pages:
+        if page.text and not any(line.strip() for line in page.body):
+            found.append(Finding("empty_page", page.index, "This page has no content."))
     for name in names:
         found += CHECKS[name](pages, params.get(name, {}), context)
     return found

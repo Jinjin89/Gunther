@@ -23,6 +23,12 @@ describe("MarkdownView", () => {
     expect(screen.getByRole("button", { name: "Copy code" })).toBeInTheDocument();
   });
 
+  it("renders retained local figures without permitting arbitrary image URLs", () => {
+    render(<MarkdownView source={"![Source figure](gunther-asset:ast_figure_123)\n\n![Unsafe](gunther-asset:../../secret)"} />);
+    expect(screen.getByRole("img", { name: "Source figure" })).toHaveAttribute("src", expect.stringContaining("/api/assets/ast_figure_123"));
+    expect(screen.queryByRole("img", { name: "Unsafe" })).toBeNull();
+  });
+
   it("toggles tasks at their exact source position, even after hidden comments", () => {
     const source = "<!-- gunther:page=1 -->\n- [ ] first\n- [x] second";
     const onToggle = vi.fn((offset: number, checked: boolean) => setTaskCheckedAt(source, offset, checked));

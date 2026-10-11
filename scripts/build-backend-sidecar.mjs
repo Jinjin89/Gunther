@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { readdirSync, statSync, mkdirSync, chmodSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readdirSync, statSync, mkdirSync, chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -15,6 +16,12 @@ const visionSource = join(backendRoot, "gunther", "vision_ocr.m");
 const visionBuildDir = join(pyinstallerRoot, "vision");
 const visionBinary = join(visionBuildDir, "gunther-vision-ocr");
 const modelDir = join(backendRoot, "models", "multilingual-e5-small");
+const parserDir = join(root, "tools", "document-parser", ".build", "bundle");
+// Releases must include the layout runtime. A reduced build is an explicit choice.
+const withParser = !process.argv.includes("--without-document-parser")
+  && (!process.argv.includes("--if-missing") || existsSync(join(parserDir, "manifest.json")));
+const variantFile = join(pyinstallerRoot, "build-variant.json");
+const variant = JSON.stringify({ withParser });
 const helperEntitlements = join(root, "apps", "desktop", "src-tauri", "HelperEntitlements.plist");
 // Same variable Tauri reads to sign the outer app; notarization needs both signed alike.
 const signingIdentity = isMac ? process.env.APPLE_SIGNING_IDENTITY?.trim() : undefined;
@@ -25,7 +32,7 @@ const newestModifiedTime = (path) => {
   if (!stat.isDirectory()) return stat.mtimeMs;
   return readdirSync(path).reduce((latest, name) => {
     const child = join(path, name);
-    if ([".venv", ".pyinstaller", "__pycache__"].includes(name)) return latest;
+    if ([".venv", ".pyinstaller", ".build", "__pycache__"].includes(name)) return latest;
     return Math.max(latest, newestModifiedTime(child));
   }, stat.mtimeMs);
 };
@@ -35,8 +42,21 @@ const inputs = [
   join(backendRoot, "pyproject.toml"),
   join(backendRoot, "uv.lock"),
   modelDir,
+  ...(withParser ? [parserDir, join(root, "tools", "document-parser")] : []),
   fileURLToPath(import.meta.url),
 ];
+if (withParser && !existsSync(join(parserDir, "manifest.json"))) {
+  process.stderr.write("Release builds require the pinned layout parser. Run uv run --frozen --project tools/document-parser scripts/build-document-parser.py first, or explicitly use --without-document-parser for a reduced build.\n");
+  process.exit(1);
+}
+if (withParser && !process.argv.includes("--if-missing")) {
+  const manifest = JSON.parse(readFileSync(join(parserDir, "manifest.json"), "utf8"));
+  const sources = ["apps/backend/gunther/document_parser.py", "apps/backend/gunther/document_structure.py", "tools/document-parser/helper.py", "scripts/build-document-parser.py"];
+  if (sources.some((name) => manifest.sourceHashes?.[name] !== createHash("sha256").update(readFileSync(join(root, name))).digest("hex"))) {
+    process.stderr.write("The parser runtime is stale. Rebuild it with scripts/build-document-parser.py before packaging.\n");
+    process.exit(1);
+  }
+}
 const latestInput = Math.max(...inputs.filter(existsSync).map(newestModifiedTime));
 // `tauri dev` runs the backend with uvicorn on 8787 and never starts the helper; it only has
 // to exist for the bundle config. Rebuilding it after every backend edit cost a minute of
@@ -48,6 +68,8 @@ if (process.argv.includes("--if-missing") && existsSync(completedOutput)) {
 // A signed release always rebuilds, so an ad-hoc helper from a dev build never ships.
 if (
   !signingIdentity
+  && existsSync(variantFile)
+  && readFileSync(variantFile, "utf8") === variant
   && existsSync(completedOutput)
   && statSync(completedOutput).mtimeMs >= latestInput
 ) {
@@ -113,6 +135,8 @@ const result = spawnSync("uv", [
   "--collect-all", "onnxruntime",
   "--collect-all", "tokenizers",
   "--collect-all", "sqlite_vec",
+  "--collect-all", "PIL",
+  ...(withParser ? ["--add-data", `${parserDir}:document-parser`] : []),
   "--add-data", `${modelDir}:models/multilingual-e5-small`,
   // Skills are files the backend reads at run time (gunther/skillbook.py).
   "--add-data", `${join(backendRoot, "gunther", "skills")}:gunther/skills`,
@@ -128,4 +152,5 @@ const result = spawnSync("uv", [
 });
 
 if (result.status !== 0) process.exit(result.status ?? 1);
+writeFileSync(variantFile, variant);
 process.stdout.write(`Built Gunther backend helper: ${completedOutput}\n`);

@@ -1,9 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { reconnectBackend } from "./api";
+import { flushPersistentStorage } from "./persistentStorage";
 
 /** Where the libraries live is the desktop app's choice; the backend reads it as LIBRARY_ROOT. */
 export interface LibraryLocation {
+  configurationRoot?: string;
   /** The folder chosen in Settings, or null for the default (~/Gunther). */
   chosen: string | null;
   /** Only the installed app starts its own backend, so only it can move the libraries. */
@@ -30,6 +32,7 @@ export async function pickLibraryDestination(current: string): Promise<string | 
 
 /** Move the libraries there. The local service restarts meanwhile; this waits until it is back. */
 export async function moveLibraries(from: string, to: string): Promise<string> {
+  await flushPersistentStorage();
   try {
     return await invoke<string>("change_library_location", { from, to });
   } finally {

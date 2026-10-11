@@ -1,7 +1,7 @@
 import type { Effort, ModelProvider, ModelRole, ModelsOverview, ProviderKind, ProviderTestResult } from "@gunther/contracts";
 import { EFFORTS } from "@gunther/contracts";
 import { Check, ChevronRight, CircleAlert, Eye, EyeOff, KeyRound, Plug, Plus, RefreshCw, Server, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { knowledgeApi } from "../api";
 import { announceModelsChanged, EFFORT_NAMES, resolveEffort } from "./askModel";
 
@@ -20,7 +20,7 @@ interface ProviderDraft {
   name: string;
   baseUrl: string;
   /** undefined: keep the saved key; "": remove it. */
-  apiKey?: string;
+  apiKey?: string | undefined;
   models: ModelDraft[];
 }
 
@@ -95,6 +95,8 @@ function ProviderEditor({ provider, overview, onOverview, onRemoved, onNotify }:
   const baseId = useId();
   const initial = draftOf(provider);
   const [draft, setDraft] = useState<ProviderDraft>(initial);
+  const currentDraft = useRef(draft);
+  currentDraft.current = draft;
   const [newModel, setNewModel] = useState("");
   const [available, setAvailable] = useState<string[] | null>(null);
   const [result, setResult] = useState<ProviderTestResult | null>(null);
@@ -108,6 +110,7 @@ function ProviderEditor({ provider, overview, onOverview, onRemoved, onNotify }:
     setDraft((current) => ({ ...current, ...next }));
     setResult(null);
     setError(null);
+    if ("baseUrl" in next || "apiKey" in next) setAvailable(null);
   };
   const editModel = (id: string, next: Partial<ModelDraft>) => edit({ models: draft.models.map((model) => model.id === id ? { ...model, ...next } : model) });
   const addModel = (id: string) => {
@@ -120,13 +123,19 @@ function ProviderEditor({ provider, overview, onOverview, onRemoved, onNotify }:
   const test = async () => {
     setBusy("testing");
     setError(null);
+    setResult(null);
+    const testedDraft = JSON.stringify(draft);
     try {
-      const tested = await knowledgeApi.testProvider(provider.id, { baseUrl: draft.baseUrl, ...(draft.apiKey ? { apiKey: draft.apiKey } : {}) });
+      const tested = await knowledgeApi.testProvider(provider.id, {
+        name: draft.name, baseUrl: draft.baseUrl.trim(), models: draft.models,
+        ...(draft.apiKey !== undefined ? { apiKey: draft.apiKey } : {}),
+      });
+      if (JSON.stringify(currentDraft.current) !== testedDraft) return;
       setResult(tested);
       setAvailable(tested.ok ? tested.available : null);
       if (tested.overview) onOverview(tested.overview);
     } catch (reason) {
-      setError(message(reason, "The connection could not be tested."));
+      if (JSON.stringify(currentDraft.current) === testedDraft) setError(message(reason, "The connection could not be tested."));
     } finally {
       setBusy(null);
     }
@@ -194,7 +203,7 @@ function ProviderEditor({ provider, overview, onOverview, onRemoved, onNotify }:
       </div>
       <div className="service-field">
         <label htmlFor={`${baseId}-key`}>API key{provider.keySource === "environment" && draft.apiKey === undefined && <span className="service-source" title="Set in the backend's environment or .env file. A key saved here takes its place.">from .env</span>}</label>
-        <div className="service-control"><KeyField provider={provider} value={draft.apiKey} inputId={`${baseId}-key`} onChange={(apiKey) => setDraft((current) => { const next = { ...current }; if (apiKey === undefined) delete next.apiKey; else next.apiKey = apiKey; return next; })} /></div>
+        <div className="service-control"><KeyField provider={provider} value={draft.apiKey} inputId={`${baseId}-key`} onChange={(apiKey) => edit({ apiKey })} /></div>
       </div>
       <div className="service-field">
         <label>Models</label>

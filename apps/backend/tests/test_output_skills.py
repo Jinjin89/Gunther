@@ -76,7 +76,7 @@ def test_a_report_follows_its_skill_from_the_approach_to_a_revision(tmp_path: Pa
     assert version["style"] == "auto"
     provenance = version["provenance"]
     assert provenance["generator"] == "gunther.output-skills.v1"
-    assert provenance["skill"] == {"name": "report", "version": 1, "skipped": []}
+    assert provenance["skill"] == {"name": "report", "version": 2, "skipped": []}
     assert provenance["approach"]["answer"] == APPROACH["answer"]
     assert "so a panel needs it" in version["content"]
     assert [section["checked"] for section in version["sections"]] == [True, True, True]

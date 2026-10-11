@@ -1,3 +1,4 @@
+import { persistentStorage } from "../persistentStorage";
 import type {
   ConversationBrief,
   ConversationBriefInput,
@@ -527,7 +528,7 @@ const HISTORY_CHOICE_KEY = "gunther:ask-history";
 
 function readHistoryChoice(): "open" | "closed" | null {
   try {
-    const stored = window.localStorage.getItem(HISTORY_CHOICE_KEY);
+    const stored = persistentStorage.getItem(HISTORY_CHOICE_KEY);
     return stored === "open" || stored === "closed" ? stored : null;
   } catch {
     return null;
@@ -575,11 +576,11 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
   // Open by default so the sources behind an answer are in view; the reader's choice is kept.
   const [inspectorCollapsed, setInspectorCollapsed] = useState(() => {
     if (window.innerWidth <= 980) return true;
-    try { return window.localStorage.getItem("gunther:inspector-collapsed") === "1"; } catch { return false; }
+    try { return persistentStorage.getItem("gunther:inspector-collapsed") === "1"; } catch { return false; }
   });
   useEffect(() => {
     if (window.innerWidth <= 980) return;
-    try { window.localStorage.setItem("gunther:inspector-collapsed", inspectorCollapsed ? "1" : "0"); } catch { /* the choice just is not remembered */ }
+    try { persistentStorage.setItem("gunther:inspector-collapsed", inspectorCollapsed ? "1" : "0"); } catch { /* the choice just is not remembered */ }
   }, [inspectorCollapsed]);
   // The question just sent, shown in the conversation while it is being answered.
   const [asking, setAsking] = useState<string | null>(null);
@@ -647,7 +648,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
         const created = await knowledgeApi.createSession(base.id, { focusChapterId: null, selectedSourceIds: [] });
         loaded = [created];
       }
-      const remembered = window.localStorage.getItem(`gunther:active-session:${base.id}`);
+      const remembered = persistentStorage.getItem(`gunther:active-session:${base.id}`);
       const first = loaded.find((session) => session.id === remembered) ?? loaded[0]!;
       const detail = await knowledgeApi.session(first.id);
       return { sessions: loaded, detail };
@@ -667,12 +668,12 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
         setActiveSession(detail);
         const lastAnswer = [...detail.messages].reverse().find((message) => message.role === "assistant");
         const selectedMessageKey = `gunther:selected-message:${base.id}`;
-        const rememberedMessage = window.localStorage.getItem(selectedMessageKey);
+        const rememberedMessage = persistentStorage.getItem(selectedMessageKey);
         const selectedAnswer = detail.messages.find(
           (message) => message.id === rememberedMessage && message.role === "assistant",
         );
         setSelectedMessageId(selectedAnswer?.id ?? lastAnswer?.id ?? null);
-        if (rememberedMessage) window.localStorage.removeItem(selectedMessageKey);
+        if (rememberedMessage) persistentStorage.removeItem(selectedMessageKey);
       } catch {
         if (cancelled) return;
         const fallback = localSession(base);
@@ -686,9 +687,9 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
           if (bootstrapRequest.current?.baseId === base.id) bootstrapRequest.current = null;
           // A question asked from Home arrives as a ready-to-send draft, never auto-sent.
           const askDraftKey = `gunther:ask-draft:${base.id}`;
-          const handedOff = window.localStorage.getItem(askDraftKey);
+          const handedOff = persistentStorage.getItem(askDraftKey);
           if (handedOff) {
-            window.localStorage.removeItem(askDraftKey);
+            persistentStorage.removeItem(askDraftKey);
             setDraft(handedOff);
           }
         }
@@ -709,7 +710,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
   }, [base.id]);
 
   useEffect(() => {
-    if (activeId) window.localStorage.setItem(`gunther:active-session:${base.id}`, activeId);
+    if (activeId) persistentStorage.setItem(`gunther:active-session:${base.id}`, activeId);
   }, [activeId, base.id]);
   // Scroll only the conversation pane (scrollIntoView would move every ancestor too), and only
   // while the reader is at the bottom, so reading earlier messages is never yanked away.
@@ -1082,9 +1083,9 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
 
   useEffect(() => {
     const sourceKey = `gunther:open-source:${base.id}`;
-    const sourceId = window.localStorage.getItem(sourceKey);
+    const sourceId = persistentStorage.getItem(sourceKey);
     if (!sourceId) return;
-    window.localStorage.removeItem(sourceKey);
+    persistentStorage.removeItem(sourceKey);
     void openSourceDetail(sourceId);
   }, [base.id]);
 
@@ -1136,7 +1137,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
     const next = historyDocked ? "closed" : "open";
     setHistoryChoice(next);
     try {
-      window.localStorage.setItem(HISTORY_CHOICE_KEY, next);
+      persistentStorage.setItem(HISTORY_CHOICE_KEY, next);
     } catch {
       // The choice still holds while this page is open.
     }

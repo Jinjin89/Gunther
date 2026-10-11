@@ -68,6 +68,13 @@ describe("AnswerBody", () => {
     expect(screen.getByRole("link", { name: "site" })).toHaveAttribute("href", "https://example.org");
     expect(screen.queryByRole("link", { name: "bad" })).toBeNull();
   });
+
+  it("renders only managed local figures while retaining the source citation", () => {
+    render(<AnswerBody content={"![Study figure](gunther-asset:ast_plot) [1].\n\n![bad](gunther-asset:../secret)\n\n![remote](https://example.org/tracker.png)"} numbers={[1]} onCitation={vi.fn()} />);
+    expect(screen.getByRole("img", { name: "Study figure" })).toHaveAttribute("src", expect.stringContaining("/api/assets/ast_plot"));
+    expect(screen.getAllByRole("img")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Inspect citation 1" })).toBeVisible();
+  });
 });
 
 describe("AgentSteps", () => {

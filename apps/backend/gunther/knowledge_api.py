@@ -9,9 +9,12 @@ from gunther.database import session_scope
 from gunther.knowledge_index import embeddable, enqueue
 from gunther.models import (
     BlockEmbedding,
+    CitationMention,
     ContentBlock,
+    DocumentElement,
     KnowledgeBaseRecord,
     ProcessingJob,
+    ReferenceEntry,
     Source,
     SourceDigest,
     SourceIndexHead,
@@ -316,6 +319,102 @@ def source_structure(
                     "payload": json.loads(b.payload_json),
                 }
                 for b in blocks[:limit]
+            ],
+        }
+
+
+@router.get("/sources/{source_id}/document")
+def source_document(
+    source_id: str,
+    request: Request,
+    revision_id: str | None = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+):
+    import json
+
+    index = request.app.state.knowledge_service.index
+    with session_scope(index.sessions) as session:
+        if session.get(Source, source_id) is None:
+            raise HTTPException(404, "Source was not found")
+        head = session.get(SourceIndexHead, source_id)
+        revision_id = revision_id or (head.revision_id if head else None)
+        revision = session.get(SourceRevision, revision_id) if revision_id else None
+        if revision_id and (not revision or revision.source_id != source_id):
+            raise HTTPException(404, "Source revision was not found")
+        elements = (
+            list(
+                session.scalars(
+                    select(DocumentElement)
+                    .where(DocumentElement.revision_id == revision_id)
+                    .order_by(DocumentElement.ordinal)
+                    .offset(offset)
+                    .limit(limit + 1)
+                )
+            )
+            if revision
+            else []
+        )
+        shown = elements[:limit]
+        mentions: dict[str, list[dict]] = {}
+        for mention in session.scalars(
+            select(CitationMention).where(
+                CitationMention.revision_id == revision_id,
+                CitationMention.element_id.in_([e.id for e in shown]),
+            )
+        ):
+            mentions.setdefault(mention.element_id, []).append(
+                {
+                    "id": mention.id,
+                    "start": mention.char_start,
+                    "end": mention.char_end,
+                    "raw": mention.raw,
+                    "status": mention.status,
+                    "targets": json.loads(mention.targets_json),
+                }
+            )
+        references = (
+            list(
+                session.scalars(
+                    select(ReferenceEntry)
+                    .join(DocumentElement)
+                    .where(ReferenceEntry.revision_id == revision_id)
+                    .order_by(DocumentElement.ordinal)
+                )
+            )
+            if revision
+            else []
+        )
+        return {
+            "sourceId": source_id,
+            "revisionId": revision_id,
+            "processing": index.processing(session, source_id),
+            "parser": revision.parser if revision else None,
+            "manifest": json.loads(revision.manifest_json) if revision else {},
+            "nextOffset": offset + limit if len(elements) > limit else None,
+            "elements": [
+                {
+                    "id": e.id,
+                    "parentId": e.parent_id,
+                    "kind": e.kind,
+                    "content": e.content,
+                    "locator": e.locator,
+                    "headings": json.loads(e.heading_path_json),
+                    "anchor": json.loads(e.anchor_json),
+                    "payload": json.loads(e.payload_json),
+                    "mentions": mentions.get(e.id, []),
+                }
+                for e in shown
+            ],
+            "references": [
+                {
+                    "id": r.id,
+                    "elementId": r.element_id,
+                    "label": r.label,
+                    "raw": r.raw,
+                    "metadata": json.loads(r.metadata_json),
+                }
+                for r in references
             ],
         }
 

@@ -48,6 +48,7 @@ from gunther.outputs import (
     Spec,
     _notes_block,
     _origin,
+    figure_lines,
     heading_of,
     section_hash,
     shape_section,
@@ -80,9 +81,10 @@ Write the approach and the material cards for {what} as one JSON object.
 - question, answer, purpose: one or two sentences each.
 - structure: one of {structures}; structure_reason: one sentence.
 - use and pages: for a deck only.
-- supplements: web results you rely on, each with its pool number, its role and why.
+- supplements: permitted library/Web additions you rely on, with pool number, role and why.
 - gaps: what the material cannot answer, short; none when there is nothing.
-- cards: one claim each, with the pool numbers that state it. Use only numbers in the pool.
+- cards: one claim each, with pool numbers and an exact evidence excerpt. Include role in \
+the argument, scope/limitations and units/definitions. Use only numbers in the pool.
 Reply with the JSON object only."""
 
 OUTLINE = """\
@@ -112,6 +114,8 @@ cite each side.
 - The notes are the user's own earlier work. They shape what you write, but are never \
 cited and never passed off as sources.
 - The skill's examples show the form only; their numbers are not your sources.
+- Reuse a retained source figure when it explains the point, with its exact image reference
+  and pool citation. Image contents and plotted values are not independently verified.
 - {form}"""
 
 FORMS = {
@@ -120,8 +124,8 @@ FORMS = {
     "slide": 'Start with "## {heading}", then the body in the form the {layout} layout asks '
     'for. Speaker notes go after a line that starts with "Note:". No other "#" or "##" '
     'headings, and never a line that is only "---".',
-    "title": 'Write "# {heading}" and one line under it: the core message. No citations and '
-    "no notes.",
+    "title": 'Write "# {heading}" and one line under it: the core message. Cite any '
+    "factual message with [n]; a topic-only title needs no citation. No notes.",
 }
 
 EDITOR = """\
@@ -142,8 +146,11 @@ from 1) and an instruction saying what to change and why. None when nothing need
 Reply with the JSON object only."""
 
 KEEP = (
-    "Add a fact only with a number from the pool. Keep the heading unless the instruction "
-    "asks to change it."
+    "Editorial revision must not add factual claims, numbers or evidence, even with an "
+    "existing citation. Keep each [n] bound to the claim it originally supported. Improve "
+    "explanation, order, terminology and transitions using existing claims only. A missing "
+    "fact is a research gap, not permission to invent one. Keep the heading unless the "
+    "instruction asks to change it. Changed passages will be checked again."
 )
 
 
@@ -160,6 +167,10 @@ class Card(BaseModel):
     refs: list[int] = Field(default_factory=list)
     type: str = Field(default="", description="data | case | quote | view")
     note: str = ""
+    evidence: str = ""
+    role: str = ""
+    scope: str = ""
+    units: str = ""
 
 
 class Supplement(BaseModel):
@@ -232,6 +243,11 @@ class RevisionPlan(BaseModel):
     sections: list[RevisionAsk] = Field(default_factory=list)
 
 
+class EditorialFidelity(BaseModel):
+    faithful: bool = False
+    reason: str = "The editor did not confirm preservation of facts and citations."
+
+
 # The approach ---------------------------------------------------------------------------------
 
 
@@ -283,9 +299,16 @@ class Approach:
 
         by_ref = pool.by_ref()
         supplements = [
-            {"title": by_ref[ref].title, "url": by_ref[ref].url or "", "role": role, "why": why}
+            {
+                "title": by_ref[ref].title,
+                "url": by_ref[ref].url or "",
+                "role": role,
+                "why": why,
+                "source_id": by_ref[ref].payload[0].source_id,
+                "origin": "web_supplement" if by_ref[ref].kind == "web" else "library_supplement",
+            }
             for ref, role, why in self.supplements
-            if ref in by_ref and (by_ref[ref].url or "") in cited_urls
+            if ref in by_ref and (by_ref[ref].url or by_ref[ref].payload[0].source_id) in cited_urls
         ]
         return {
             "question": self.question,
@@ -427,6 +450,10 @@ class SkillAgents(OutputAgents):
             + "".join(f" [{ref}]" for ref in card.refs)
             + (f" ({card.type})" if card.type else "")
             + (f" — {card.note}" if card.note else "")
+            + (f" Evidence: {card.evidence}" if card.evidence else "")
+            + (f" Role: {card.role}" if card.role else "")
+            + (f" Limits: {card.scope}" if card.scope else "")
+            + (f" Definitions/units: {card.units}" if card.units else "")
             for index, card in chosen
         ]
 
@@ -438,6 +465,7 @@ class SkillAgents(OutputAgents):
             text = " ".join(item.text.split())
             text = text if len(text) <= GLANCE else text[: GLANCE - 1] + "…"
             lines.append(f"[{item.ref}] {item.kind} · {item.title}: {text}")
+            lines.extend(figure_lines(item))
         return lines
 
     def _actions(self, step: SkillStep) -> list[tuple[str, str]]:
@@ -534,7 +562,9 @@ class SkillAgents(OutputAgents):
             kept = 0
             for item in found:
                 held = pool.known.get(item.key)
-                if held is None and allowance > 0 and len(pool) < pool.limit:
+                if held is not None and name == "read_source":
+                    held = pool.adopt(item)
+                elif held is None and allowance > 0 and len(pool) < pool.limit:
                     held = pool.adopt(item)
                     allowance -= 1
                 if held is not None and held.ref is not None:
@@ -646,6 +676,10 @@ class SkillAgents(OutputAgents):
                 refs=[ref for ref in dict.fromkeys(card.refs) if ref in by_ref][:6],
                 type=_line(card.type, 20),
                 note=_line(card.note, 200),
+                evidence=_line(card.evidence, 800),
+                role=_line(card.role, 200),
+                scope=_line(card.scope, 300),
+                units=_line(card.units, 200),
             )
             for card in draft.cards
             if card.claim.strip()
@@ -661,7 +695,12 @@ class SkillAgents(OutputAgents):
             supplements=tuple(
                 (item.ref, item.role if item.role in ROLES else "background", _line(item.why, 300))
                 for item in draft.supplements
-                if item.ref in by_ref and by_ref[item.ref].kind == "web"
+                if item.ref in by_ref
+                and (
+                    by_ref[item.ref].kind == "web"
+                    or getattr(by_ref[item.ref].payload[0], "source_origin", "")
+                    == "library_supplement"
+                )
             )[:8],
             gaps=tuple(_line(gap, 300) for gap in draft.gaps if gap.strip())[:5],
         )
@@ -791,6 +830,7 @@ class SkillAgents(OutputAgents):
         *,
         current: str | None = None,
         instruction: str | None = None,
+        neighbors: str = "",
     ) -> str:
         """One section, written by the skill's write step; with ``current`` it is revised by
         its revise step (or the write step, when it has none)."""
@@ -842,6 +882,12 @@ class SkillAgents(OutputAgents):
             unit = "slide" if spec.kind == "slides" else "section"
             lines += ["", f"The previous {unit} ended:\n{before[-carry:]}"]
         if revising:
+            lines += [
+                "",
+                "Global argument and neighboring sections "
+                "(coordinate terminology and transitions):",
+                neighbors,
+            ]
             lines += ["", f"This section now:\n{current}", "", f"Instruction: {instruction}"]
         completion = self.gateway.complete(
             model,
@@ -908,7 +954,7 @@ class SkillAgents(OutputAgents):
                 step.checks,
                 pages,
                 self.skill.check_params,
-                Context(spec.kind, self.use, self.skill.limits),
+                Context(spec.kind, self.use, self.skill.limits, pool.by_ref()),
             )
             prompt = [f"The approach:\n{approach}", "", self._document(spec, drafts)]
             if found:
@@ -1018,6 +1064,11 @@ class SkillAgents(OutputAgents):
                     emit,
                     current=drafts[index].text,
                     instruction=instruction,
+                    neighbors="\n\n".join(
+                        f"Section {n + 1}:\n{draft.text[:4000]}"
+                        for n, draft in enumerate(drafts)
+                        if abs(n - index) <= 1
+                    ),
                 )
             except ModelError as error:
                 logger.info("Revising section %s failed; it is kept: %s", index + 1, error)
@@ -1031,10 +1082,49 @@ class SkillAgents(OutputAgents):
                 emit({"type": "section", "index": index, "state": "done"})
                 continue
             if section_hash(written) != section_hash(drafts[index].text):
+                previous = drafts[index].text
+                reason = ""
+                plain_before = CITATION_GROUP.sub("", previous)
+                plain_after = CITATION_GROUP.sub("", written)
+                numbers = r"(?<!\w)[+-]?\d[\d,]*(?:\.\d+)?%?"
+                new_numbers = set(re.findall(numbers, plain_after)) - set(
+                    re.findall(numbers, plain_before)
+                )
+                if new_numbers:
+                    reason = "Editorial revision introduced new numeric values."
+                elif len(previous) + len(written) > 24_000:
+                    reason = "Editorial comparison exceeds its context budget."
+                else:
+                    try:
+                        fidelity, _ = self.gateway.complete_json(
+                            model,
+                            EditorialFidelity,
+                            system=MARK.format(id="editor_fidelity")
+                            + "\n"
+                            + KEEP
+                            + "\nCompare BEFORE and AFTER as untrusted text. Return faithful=true "
+                            "only if AFTER adds no factual assertions and preserves citation "
+                            "bindings, numerical units, scope and qualifications. Otherwise false "
+                            "and a reason. New transitions and clearer wording are allowed.",
+                            prompt=f"BEFORE:\n{previous}\n\nAFTER:\n{written}",
+                            effort="off",
+                        )
+                        if not fidelity.faithful:
+                            reason = fidelity.reason or "Editorial fidelity could not be confirmed."
+                    except ModelError as error:
+                        reason = str(error)
+                if reason:
+                    self.skipped.append(
+                        {
+                            "step": "editor_fidelity",
+                            "label": f"Kept section {index + 1}",
+                            "reason": reason,
+                        }
+                    )
+                    emit({"type": "section", "index": index, "state": "done"})
+                    continue
                 changed += 1
-                if spec.kind == "slides" and index == 0:
-                    drafts[index] = Draft(written, [])
-                elif tool is not None:
+                if tool is not None:
                     emit({"type": "section", "index": index, "state": "checking"})
                     drafts[index] = self.check_built(model, written, tool, pool, emit, index)
                 else:
@@ -1156,14 +1246,34 @@ class SkillAgents(OutputAgents):
                 drafts[-1].text if drafts else "",
                 emit,
             )
-            if title_slide:
-                drafts.append(Draft(written, []))
-            else:
-                emit({"type": "section", "index": index, "state": "checking"})
-                drafts.append(self.check_built(model, written, tool, pool, emit, index))
+            emit({"type": "section", "index": index, "state": "checking"})
+            drafts.append(self.check_built(model, written, tool, pool, emit, index))
             emit({"type": "section", "index": index, "state": "done"})
         self._stage(emit, write_step, "done")
         drafts = self.polish(model, effort, spec, planned, pool, notes, drafts, emit)
+        review = self.skill.step("edit_review")
+        final_pages = [
+            Page(n, heading_of(d.text), planned[n].layout, d.text) for n, d in enumerate(drafts)
+        ]
+        final_findings = run_checks(
+            review.checks if review else (),
+            final_pages,
+            self.skill.check_params,
+            Context(spec.kind, self.use, self.skill.limits, pool.by_ref()),
+        )
+        for finding in final_findings:
+            if finding.check == "chart_numbers_cited":
+                raise ModelError(
+                    "A chart could not be verified against its sources: " + finding.message
+                )
+            self.skipped.append(
+                {
+                    "step": "final_checks",
+                    "label": "Final consistency check",
+                    "reason": finding.message,
+                    "index": finding.index,
+                }
+            )
         preamble = ""
         if spec.kind == "report":
             line = " ".join(spec.brief.split())
@@ -1171,6 +1281,6 @@ class SkillAgents(OutputAgents):
                 line = line[:199].rstrip() + "…"
             preamble = f"# {title}" + (f"\n\n_{line}_" if line else "")
         built = self.assemble(spec, title, preamble, drafts, pool, planned, model, effort)
-        cited = {citation.url or "" for citation in built.citations if citation.url}
+        cited = {citation.url or citation.source_id for citation in built.citations}
         assert self.approach is not None
         return replace(built, approach=self.approach.out(pool, cited), skill=self.record())

@@ -10,16 +10,20 @@ import asyncio
 import json
 import logging
 import math
+from dataclasses import replace
 from datetime import timedelta
+from difflib import SequenceMatcher
+from pathlib import Path
 from threading import Event
 
 from sqlalchemy import and_, or_, select, update
 
 from gunther import digest, papers, vector_index
-from gunther.asset_service import AssetService, extract_asset_content
-from gunther.content import parse_content
+from gunther.asset_service import AssetService, _decode_text, _read_prefix, extract_asset_content
 from gunther.database import session_scope
 from gunther.document_parser import DoclingParser
+from gunther.document_structure import organize_document, pdf_metadata
+from gunther.documents import ParsedDocument, text_document
 from gunther.knowledge_index import ASSET_PARSER, KnowledgeIndex, embeddable, new_id
 from gunther.models import (
     Asset,
@@ -28,8 +32,10 @@ from gunther.models import (
     ProcessingJob,
     Source,
     SourceIndexHead,
+    SourceRevision,
     utc_now,
 )
+from gunther.portable_documents import archive_document, html_document, pdf_raster_images
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +50,87 @@ AI_KINDS = ("digest",)
 def retry_delay_seconds(failures: int) -> float:
     """Exponential backoff for an unavailable worker: 2, 4, 8 … capped at a minute."""
     return min(MAX_RETRY_SECONDS, 2.0 * 2 ** max(0, min(failures - 1, 6)))
+
+
+def reconcile_fallback(structured: ParsedDocument, fallback: ParsedDocument) -> list:
+    """Recover missing text even on partially covered pages; never invent geometry."""
+
+    def normalize(text: str) -> tuple[str, list[int]]:
+        chars, offsets = [], []
+        for index, char in enumerate(text):
+            if char.isspace():
+                continue
+            for folded in char.casefold():
+                chars.append(folded)
+                offsets.append(index)
+        return "".join(chars), offsets
+
+    pages: dict[object, str] = {}
+    for element in structured.elements:
+        if element.kind != "figure":
+            page = element.anchor.get("page")
+            pages[page] = pages.get(page, "") + element.text
+    normalized = {page: normalize(text)[0] for page, text in pages.items()}
+    recovered = []
+    layout_pages = {
+        span.get("page")
+        for element in structured.elements
+        if element.kind not in {"page_header", "page_footer", "metadata"}
+        for span in element.anchor.get("spans", [{"page": element.anchor.get("page")}])
+    }
+    for element in fallback.elements:
+        # Native text has no geometry. Appending unmatched strings on a recognized
+        # layout page reintroduces intentionally separated headers and chart labels.
+        if (
+            structured.manifest.get("layout") == "structured"
+            and element.anchor.get("page") in layout_pages
+        ):
+            continue
+        text, offsets = normalize(element.text)
+        held = normalized.get(element.anchor.get("page"), "")
+        if not text or text in held:
+            continue
+        # Bound alignment cost, and only use long matches to remove duplicated text.
+        matches = (
+            SequenceMatcher(None, text, held, autojunk=False).get_matching_blocks()
+            if len(text) <= 10_000 and len(held) <= 50_000
+            else []
+        )
+        substantial = [match for match in matches if match.size >= 20]
+        if sum(match.size for match in substantial) / len(text) >= 0.92:
+            continue
+        spans = []
+        start = 0
+        for match in substantial:
+            if match.a - start >= 24:
+                spans.append((start, match.a))
+            start = match.a + match.size
+        if len(text) - start >= 24:
+            spans.append((start, len(text)))
+        if not substantial:
+            spans = [(0, len(text))]
+        for start, stop in spans:
+            left, right = offsets[start], offsets[stop - 1] + 1
+            anchor = {**element.anchor, "fallbackCharStart": left, "fallbackCharEnd": right}
+            if isinstance(anchor.get("charStart"), int):
+                anchor.update(
+                    charStart=anchor["charStart"] + left, charEnd=anchor["charStart"] + right
+                )
+            recovered.append(
+                replace(
+                    element,
+                    text=element.text[left:right],
+                    parent=None,
+                    anchor=anchor,
+                    payload={**element.payload, "extraction": "fallback-gap"},
+                )
+            )
+    if recovered:
+        structured.manifest.update(
+            fallbackElements=len(recovered),
+            fallbackOrder="page; position within partial pages uncertain",
+        )
+    return recovered
 
 
 class ProcessingWorker:
@@ -106,7 +193,8 @@ class ProcessingWorker:
                     state="failed", error="Processing was interrupted repeatedly. Retry to resume."
                 )
             )
-            return (claimed, token) if claimed else None
+        self.assets.release_abandoned()
+        return (claimed, token) if claimed else None
 
     def heartbeat(self, job_id: str, token: str) -> None:
         with session_scope(self.sessions) as session:
@@ -132,7 +220,6 @@ class ProcessingWorker:
                         raise ValueError("Original file is unavailable")
                     path, _, _ = self.assets.download(asset.id)
                     file_name, media_type = asset.original_name, asset.media_type
-                    source_content = source.content
                 elif kind == "digest":
                     image_path = (
                         self.assets.download(asset.id)[0]
@@ -175,31 +262,109 @@ class ProcessingWorker:
                     path, file_name, media_type, self.assets.ocr_provider
                 )
                 # Metadata and user context are retained, but not indexed as file evidence.
-                parsed = parse_content(
-                    source_content + "\n\n## Extracted content\n\n" + extracted.text
-                )
+                document = text_document(extracted.text)
                 warning = extracted.limitation
                 parser = ASSET_PARSER
+                suffix = Path(file_name).suffix.lower()
+                if suffix in {".docx", ".epub", ".html", ".htm"}:
+                    try:
+                        document = (
+                            archive_document(path, suffix)
+                            if suffix in {".docx", ".epub"}
+                            else html_document(_decode_text(_read_prefix(path, 8 * 1024 * 1024)[0]))
+                        )
+                    except Exception as error:
+                        warning = (
+                            (warning or "")
+                            + f" Structured import unavailable ({type(error).__name__}); "
+                            "text retained."
+                        )
                 if self.document_parser and media_type == "application/pdf":
                     try:
-                        structured = self.document_parser.parse(path)
-                        if not any(b.kind not in {"heading", "figure"} for b in structured):
+                        result = (
+                            self.document_parser.parse(path, stopping=self.stopping.is_set)
+                            if isinstance(self.document_parser, DoclingParser)
+                            else self.document_parser.parse(path)
+                        )
+                        structured = (
+                            result if isinstance(result, ParsedDocument) else ParsedDocument(result)
+                        )
+                        if not any(
+                            b.kind not in {"heading", "figure"} for b in structured.elements
+                        ):
                             raise ValueError("No structured document content")
-                        covered = {
-                            b.anchor.get("page")
-                            for b in structured
-                            if b.kind not in {"heading", "figure"} and b.anchor.get("page")
-                        }
-                        extras = [b for b in parsed if b.anchor.get("page") not in covered]
+                        extras = reconcile_fallback(structured, document)
                         for block in extras:
                             block.parent = None
-                        parsed = structured + extras
+                        # Retain page order and rebase parents after inserting fallback pages.
+                        indexed = list(enumerate(structured.elements + extras))
+                        if extras:
+                            indexed.sort(
+                                key=lambda pair: (pair[1].anchor.get("page") or 0, pair[0])
+                            )
+                        positions = {old: new for new, (old, _) in enumerate(indexed)}
+                        for new, (_, block) in enumerate(indexed):
+                            parent = (
+                                positions.get(block.parent) if block.parent is not None else None
+                            )
+                            block.parent = parent if parent is not None and parent < new else None
+                        structured.elements = [block for _, block in indexed]
+                        document = structured
                         parser = self.document_parser.version
+                        limitations = []
+                        if structured.manifest.get("conversionStatus") not in {
+                            None,
+                            "unknown",
+                            "success",
+                        }:
+                            limitations.append("Some PDF regions could not be parsed.")
+                        if structured.manifest.get("missingImages"):
+                            limitations.append("Some figure images could not be rendered.")
+                        if structured.manifest.get("metadataWarning"):
+                            limitations.append(str(structured.manifest["metadataWarning"]))
+                        if extras:
+                            limitations.append(
+                                "Missing pages were retained using text extraction; "
+                                "their layout is uncertain."
+                            )
+                        warning = " ".join(limitations) or None
                     except Exception as error:
                         warning = (warning or "") + (
                             f" Structured parsing unavailable ({type(error).__name__}); "
                             "using local text/OCR extraction."
                         )
+                if media_type == "application/pdf" and document.manifest.get("method") != "docling":
+                    try:
+                        pdf_raster_images(path, document)
+                    except Exception as error:
+                        document.manifest["images"] = "partial"
+                        warning = (
+                            warning or ""
+                        ) + f" Some images could not be extracted ({type(error).__name__})."
+                    warning = (warning or "") + (
+                        " Layout parsing is unavailable; heading hierarchy, vector figures "
+                        "and table structure may be incomplete. The original PDF is retained."
+                    )
+                    try:
+                        organize_document(document, pdf_metadata(path))
+                    except Exception:
+                        organize_document(document)
+                else:
+                    organize_document(document)
+                for image in document.assets:
+                    retained = asyncio.run(
+                        self.assets.preserve_bytes(
+                            image.data,
+                            file_name=image.name,
+                            media_type=image.media_type,
+                            staging=(job_id, token),
+                        )
+                    )
+                    for element in document.elements:
+                        if element.payload.get("imageKey") == image.key:
+                            element.payload["imageAssetId"] = retained.id
+                document.manifest.update(parser=parser, warning=warning)
+                parsed = document.chunks()
                 vectors = []
             elif kind == "embed" and self.index.embedder:
                 if model_id != self.index.embedder.model_id:
@@ -255,9 +420,28 @@ class ProcessingWorker:
                 ).rowcount
                 if not owned:
                     return
+                if self.stopping.is_set():
+                    return
                 source = session.get(Source, source_id)
                 if kind == "parse_asset":
-                    self.index.publish(session, source, parsed, parser=parser, warning=warning)
+                    head = session.get(SourceIndexHead, source_id)
+                    previous = session.get(SourceRevision, head.revision_id) if head else None
+                    if (
+                        previous
+                        and json.loads(previous.manifest_json).get("method") == "docling"
+                        and document.manifest.get("method") != "docling"
+                    ):
+                        job = session.get(ProcessingJob, job_id)
+                        job.state, job.error = (
+                            "failed",
+                            "Structured parsing failed; the previous document revision "
+                            "was retained.",
+                        )
+                        job.lease_token, job.lease_until = None, None
+                        return
+                    self.index.publish(
+                        session, source, parsed, parser=parser, warning=warning, document=document
+                    )
                 elif kind == "digest":
                     digest.publish(session, source, request, result)
                 elif kind == "summarize":
@@ -318,6 +502,9 @@ class ProcessingWorker:
                     job.available_at = utc_now() + timedelta(seconds=5 * 2**job.attempts)
                     job.lease_token, job.lease_until = None, None
                     job.updated_at = utc_now()
+
+        finally:
+            self.assets.release_staged(job_id, token)
 
     def run_once(self, ai: bool | None = None) -> bool:
         claimed = self.claim(ai)

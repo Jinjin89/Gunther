@@ -268,10 +268,10 @@ data/
 └── recordings/
 ```
 
-macOS 打包默认：
+macOS 打包默认：配置在 `~/.config/gunther/`，完整工作区在 `~/Gunther/`：
 
 ```text
-~/Library/Application Support/com.gunther.knowledge/
+~/Gunther/.gunther/
 ├── gunther.sqlite
 ├── assets/
 ├── recordings/
@@ -280,8 +280,11 @@ macOS 打包默认：
 │   └── backend-auth-token.<launchNonce>  本次启动 ready token；不属于业务备份
 ├── backend-instance.lock
 ├── backend.log             旧版本的日志；现在按天写在资料库的 .gunther/logs/
-└── .env                    可选秘密配置；备份需单独加密管理
+├── pending/                草稿与未确认音频
+└── backups/                数据库恢复快照
 ```
+
+Provider 设置、API keys 和可选 `.env` 在配置目录，备份需单独加密管理。旧 Application Support 目录只作为迁移来源。详细启动、迁移和恢复规则见 [Library folders](LIBRARY_FOLDERS.md)。
 
 打包 Helper 将整个私有数据树限制为当前用户访问，拒绝 symlink 与异常文件类型，并用进程锁阻止两套 Helper 同时打开同一数据目录。
 

@@ -5,7 +5,7 @@
 
 name = "report"
 kind = "report"
-version = 1
+version = 2
 title = "Report"
 description = "Plan and write a report that answers one core question from the chosen material."
 

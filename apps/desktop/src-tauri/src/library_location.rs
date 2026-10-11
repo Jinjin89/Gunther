@@ -1,7 +1,7 @@
 //! Where the libraries live, chosen in Settings rather than in an environment variable.
 //!
 //! The backend keeps reading `LIBRARY_ROOT` from its environment; the app owns the
-//! choice. It is remembered in the app's data folder, handed to the bundled backend
+//! choice. It is remembered in the configuration folder, handed to the bundled backend
 //! when it starts, and changing it moves the folder while the backend is stopped.
 
 use std::fs;
@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-const CHOICE_FILE_NAME: &str = "library-location.json";
+const CHOICE_FILE_NAME: &str = "config.json";
 
 #[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -19,10 +19,25 @@ struct Choice {
 }
 
 /// The folder chosen in Settings, if any; the backend's own default applies otherwise.
-pub fn chosen_root(data_dir: &Path) -> Option<PathBuf> {
-    let text = fs::read_to_string(data_dir.join(CHOICE_FILE_NAME)).ok()?;
-    let choice: Choice = serde_json::from_str(&text).ok()?;
-    choice.library_root.filter(|path| path.is_absolute())
+pub fn chosen_root(config_dir: &Path) -> Result<Option<PathBuf>, String> {
+    let path = config_dir.join(CHOICE_FILE_NAME);
+    if !path.exists() {
+        return Ok(None);
+    }
+    if path.is_symlink() || !path.is_file() {
+        return Err("Gunther's configuration must be a regular file.".into());
+    }
+    let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let choice: Choice = serde_json::from_str(&text)
+        .map_err(|error| format!("Gunther's configuration is unreadable: {error}"))?;
+    if choice
+        .library_root
+        .as_ref()
+        .is_some_and(|path| !path.is_absolute())
+    {
+        return Err("Gunther's data folder must have an absolute path.".into());
+    }
+    Ok(choice.library_root)
 }
 
 pub fn save_choice(data_dir: &Path, root: &Path) -> Result<(), String> {
@@ -31,7 +46,10 @@ pub fn save_choice(data_dir: &Path, root: &Path) -> Result<(), String> {
     })
     .map_err(|error| error.to_string())?;
     let temporary = data_dir.join(format!("{CHOICE_FILE_NAME}.tmp"));
-    fs::write(&temporary, text)
+    let mut file = crate::secure_open(&temporary, false).map_err(|error| error.to_string())?;
+    file.set_len(0).map_err(|error| error.to_string())?;
+    std::io::Write::write_all(&mut file, text.as_bytes())
+        .and_then(|()| file.sync_all())
         .and_then(|()| fs::rename(&temporary, data_dir.join(CHOICE_FILE_NAME)))
         .map_err(|error| format!("The new location could not be remembered: {error}"))
 }
@@ -148,18 +166,14 @@ mod tests {
     #[test]
     fn the_choice_is_remembered_in_the_data_folder() {
         let data = scratch("choice");
-        assert_eq!(chosen_root(&data), None);
+        assert_eq!(chosen_root(&data).unwrap(), None);
         save_choice(&data, &PathBuf::from("/Users/me/Documents/Gunther")).expect("saved");
         assert_eq!(
-            chosen_root(&data),
+            chosen_root(&data).unwrap(),
             Some(PathBuf::from("/Users/me/Documents/Gunther"))
         );
-        fs::write(
-            data.join("library-location.json"),
-            "{\"libraryRoot\":\"relative\"}",
-        )
-        .unwrap();
-        assert_eq!(chosen_root(&data), None);
+        fs::write(data.join("config.json"), "{\"libraryRoot\":\"relative\"}").unwrap();
+        assert!(chosen_root(&data).is_err());
         let _ = fs::remove_dir_all(&data);
     }
 

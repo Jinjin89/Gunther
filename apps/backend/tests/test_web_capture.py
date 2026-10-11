@@ -104,6 +104,46 @@ def create_base(client: TestClient, title: str = "Genome research") -> str:
     return response.json()["id"]
 
 
+def test_article_figures_are_retained_once_and_private_image_urls_are_not_fetched(tmp_path):
+    from test_documents import png
+
+    article = (
+        b'<h1>Study</h1><p>Result [1].</p><figure><img src="/plot.png"/>'
+        b"<figcaption>Figure 1. The observed result.</figcaption></figure>"
+        b'<img src="/plot.png"/><img src="http://127.0.0.1/private.png"/>'
+        b"<h2>References</h2><p>[1] Smith 2020.</p>"
+    )
+    fetcher = ScriptedFetcher(
+        {
+            "https://example.com/study": html_response(article),
+            "https://example.com/plot.png": WebFetchResponse(
+                200, {"content-type": "image/png"}, png()
+            ),
+        }
+    )
+    with make_client(tmp_path, fetcher) as client:
+        captured = client.post(
+            "/api/captures/web",
+            json={
+                "originalUrl": "https://example.com/study",
+            },
+        )
+        assert captured.status_code == 201, captured.text
+        source_id = captured.json()["importResult"]["source"]["id"]
+        document = client.get(f"/api/sources/{source_id}/document").json()
+        figures = [e for e in document["elements"] if e["kind"] == "figure"]
+        image = figures[0]["payload"]["imageAssetId"]
+        assert figures[1]["payload"]["imageAssetId"] == image
+        assert not figures[2]["payload"].get("imageAssetId")
+        assert client.get(f"/api/assets/{image}").content == png()
+        assert document["references"][0]["raw"] == "[1] Smith 2020."
+        assert document["manifest"]["missingImages"] == 1
+    assert [target.url for target in fetcher.calls] == [
+        "https://example.com/study",
+        "https://example.com/plot.png",
+    ]
+
+
 def test_web_capture_preserves_bytes_body_hash_locator_provenance_and_inbox(
     tmp_path: Path,
 ) -> None:

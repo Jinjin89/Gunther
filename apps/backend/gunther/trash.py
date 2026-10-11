@@ -29,16 +29,22 @@ from gunther.database import session_scope
 from gunther.knowledge_index import new_id
 from gunther.models import (
     Artifact,
+    ArtifactAsset,
     Asset,
+    DocumentElement,
+    ElementAsset,
     KnowledgeBaseRecord,
     KnowledgeBaseSource,
     KnowledgeProposal,
     KnowledgeSession,
     KnowledgeUnit,
     NotebookNote,
+    ProcessingAsset,
+    ProcessingJob,
     RecordingSession,
     Revision,
     Source,
+    SourceRevision,
     TopicNode,
     WebSnapshot,
     utc_now,
@@ -362,7 +368,34 @@ class TrashService:
         sources = session.scalars(select(Source).where(Source.trash_batch_id == batch)).all()
         self._refuse_live_recordings(session, sources)
         source_ids = [source.id for source in sources]
+        library_ids = list(
+            session.scalars(
+                select(KnowledgeBaseRecord.id).where(KnowledgeBaseRecord.trash_batch_id == batch)
+            )
+        )
         asset_ids = {source.asset_id for source in sources if source.asset_id}
+        asset_ids.update(
+            session.scalars(
+                select(ProcessingAsset.asset_id)
+                .join(ProcessingJob)
+                .where(ProcessingJob.source_id.in_(source_ids))
+            )
+        )
+        asset_ids.update(
+            session.scalars(
+                select(ArtifactAsset.asset_id)
+                .join(Artifact)
+                .where(Artifact.knowledge_base_id.in_(library_ids))
+            )
+        )
+        asset_ids.update(
+            session.scalars(
+                select(ElementAsset.asset_id)
+                .join(DocumentElement)
+                .join(SourceRevision)
+                .where(SourceRevision.source_id.in_(source_ids))
+            )
+        )
         asset_ids.update(
             session.scalars(
                 select(WebSnapshot.asset_id).where(WebSnapshot.source_id.in_(source_ids))
@@ -388,10 +421,26 @@ class TrashService:
 
         files: list[Path] = []
         for asset_id in asset_ids:
-            still_used = session.scalar(
-                select(Source.id).where(Source.asset_id == asset_id).limit(1)
-            ) or session.scalar(
-                select(WebSnapshot.id).where(WebSnapshot.asset_id == asset_id).limit(1)
+            still_used = (
+                session.scalar(select(Source.id).where(Source.asset_id == asset_id).limit(1))
+                or session.scalar(
+                    select(WebSnapshot.id).where(WebSnapshot.asset_id == asset_id).limit(1)
+                )
+                or session.scalar(
+                    select(ElementAsset.element_id)
+                    .where(ElementAsset.asset_id == asset_id)
+                    .limit(1)
+                )
+                or session.scalar(
+                    select(ArtifactAsset.artifact_id)
+                    .where(ArtifactAsset.asset_id == asset_id)
+                    .limit(1)
+                )
+                or session.scalar(
+                    select(ProcessingAsset.job_id)
+                    .where(ProcessingAsset.asset_id == asset_id)
+                    .limit(1)
+                )
             )
             asset = None if still_used else session.get(Asset, asset_id)
             if asset is not None:

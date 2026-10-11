@@ -245,8 +245,16 @@ ARTIFACT_REQUEST_IDENTITY_COLUMNS = frozenset({"client_request_id", "request_fin
 # Columns migration 20 adds. Migration 12 compares a stored table with the current models,
 # so these are not drift in a table that is older than they are.
 AGENT_OUTPUT_COLUMNS = frozenset(
-    {"kind", "style", "brief", "origin", "scope_json", "inputs_json", "outline_json",
-     "citations_json"}
+    {
+        "kind",
+        "style",
+        "brief",
+        "origin",
+        "scope_json",
+        "inputs_json",
+        "outline_json",
+        "citations_json",
+    }
 )
 
 
@@ -496,6 +504,25 @@ def _add_session_briefs(connection: Connection, _metadata: MetaData) -> None:
         )
 
 
+def _add_canonical_documents(connection: Connection, metadata: MetaData) -> None:
+    if inspect(connection).has_table("source_revisions"):
+        add_column_if_missing(
+            connection, "source_revisions", "manifest_json", "TEXT NOT NULL DEFAULT '{}'"
+        )
+    for name in (
+        "document_elements",
+        "block_element_maps",
+        "element_assets",
+        "reference_entries",
+        "citation_mentions",
+        "processing_assets",
+        "artifact_assets",
+    ):
+        table = metadata.tables.get(name)
+        if table is not None:
+            table.create(bind=connection, checkfirst=True)
+
+
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
 MIGRATIONS: tuple[Migration, ...] = (
@@ -520,6 +547,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(19, "knowledge_saved_without_review", _save_knowledge_without_review),
     Migration(20, "agent_outputs", _create_agent_outputs),
     Migration(21, "session_briefs", _add_session_briefs),
+    Migration(22, "canonical_documents", _add_canonical_documents),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

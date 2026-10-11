@@ -6,12 +6,13 @@ format 1.
 
 ## Where it lives
 
-The backend reads the folder from `LIBRARY_ROOT` in its environment and nowhere
-else. Who sets it depends on how Gunther runs:
+The installed app uses two independent locations. Configuration is kept in
+`~/.config/gunther/`; the complete workspace is kept in `~/Gunther/` by default.
+Replacing the application does not replace either folder.
 
 | How Gunther runs | Default | Chosen in |
 |---|---|---|
-| Desktop app | `~/Gunther` | **Settings → Library & storage → Change…** The app remembers the choice (`library-location.json` in its data folder) and starts its bundled backend with `LIBRARY_ROOT` set. |
+| Desktop app | `~/Gunther` | **Settings → Library & storage → Change…** The app remembers the choice in `~/.config/gunther/config.json` and starts its backend with explicit configuration and workspace paths. |
 | Development (`npm run dev`) | off | the repository's `.env`; restart the backend after changing it |
 
 Change… moves the folder while the app's backend is stopped: a rename on one
@@ -22,9 +23,21 @@ is mixed in, and moving is refused while a recording is running.
 `~/Gunther` sits outside Documents on purpose: macOS asks no permission for it,
 and iCloud does not sync recordings while they are still growing.
 
-The database never moves here. It stays in the application's private data
-folder, because SQLite must not live in a folder that iCloud or Dropbox syncs.
-Keys, tokens and logs stay there too.
+The database, originals, recordings, conversations and saved outputs all belong
+to the workspace. Its database is `.gunther/gunther.sqlite`; it keeps the same
+identity across reinstalls and schema upgrades. Moving the folder in Settings
+stops the backend and moves the entire workspace, including the database.
+
+Keep the active workspace on a local disk. Do not synchronize the live SQLite
+database through iCloud or Dropbox; use completed backups for synchronization.
+
+`~/.config/gunther/` holds `config.json` (data location), `preferences.json`
+(appearance and UI preferences), and `service-settings.json` (providers, models
+and API keys), plus an optional `.env`. Files have private permissions. The app
+bundle contains only replaceable software, parser runtimes and bundled models.
+Native development isolates preferences and pending captures in
+`~/.config/gunther-dev/` and `~/Gunther-dev/`; its separately started backend
+continues to use the development environment's database.
 
 ## Layout
 
@@ -46,10 +59,16 @@ Keys, tokens and logs stay there too.
 │       └── recording.<ext>       the audio, for a recording
 ├── Trash/                        the same shapes, for what rests in Trash
 └── .gunther/                     Gunther's own store; leave it alone
+    ├── gunther.sqlite            complete database, including conversations and outputs
     ├── root.json                 which workspace owns this root
     ├── folders.json              what Gunther wrote, so it removes only that
     ├── assets/                   originals, stored once by fingerprint
-    └── recordings/               recording audio
+    ├── recordings/               recording audio
+    ├── pending/                  unsent text, recording drafts and unacknowledged audio
+    ├── backups/                  checked database snapshots
+    ├── mobile-gateway-pki/        phone-pairing certificates
+    ├── speech/                    replaceable read-aloud audio
+    └── logs/                      daily app and backend logs
 ```
 
 - **One home per source.** A source filed in several libraries lives in the
@@ -104,9 +123,39 @@ Markdown with front matter: `format`, `id`, `title`, `created`, `updated`.
   another workspace owns, Gunther refuses it, leaves every original where it
   was, and says so in Settings.
 
+## Reinstalling, migrating and recovering
+
+On startup the installed app opens the existing database in the selected
+workspace. If configuration was removed, it checks the default `~/Gunther`
+folder. A new workspace is created only when there is no previous workspace.
+
+Older installations kept their database in Application Support. The new backend
+locks that old directory, copies a consistent SQLite snapshot (including committed
+WAL data), copies any remaining originals and pairing files, and migrates service
+settings. Existing configuration wins. The old copy remains intact, and a migration
+marker prevents repeated imports. Schema upgrades get a database snapshot first.
+
+Database snapshots are also made at startup and after folder updates, no more than
+once per fifteen minutes; the latest twelve automatic snapshots are retained.
+These recover a missing database when its original files still exist. They are
+not a full backup against losing the workspace folder or disk.
+
+If a database is missing, startup checks matching valid snapshots, newest first.
+Once migration is complete, the retained legacy database is never used for
+automatic recovery because it lacks work saved in the new workspace. If no matching
+snapshot is available, it leaves all files in place and reports the missing database. It never
+changes ownership or silently opens an empty replacement. Files exported by an
+older installation cannot reproduce deleted conversations and output history.
+
+Native preferences and pending text are migrated from webview storage. Recording
+chunks move to native files after checksum and ownership verification, and are
+removed from the webview only after the native write succeeds. Audio is deleted
+from the native spool only after the server acknowledges it. Browser development
+continues to use browser storage.
+
 ## Moving originals into the root
 
-When a root is first configured, originals kept in the data folder
+For legacy and development backends, when a root is first configured, originals kept in the data folder
 (`assets/`, `recordings/`) move into `.gunther/` at startup, before anything
 opens them, one file at a time: a rename on the same volume, otherwise a copy
 verified byte for byte before the old file goes. A file already in the root with
@@ -118,7 +167,13 @@ stop the backend, move the folder, set the new `LIBRARY_ROOT` and start it again
 
 ## Backups
 
-Pass the root to the backup tool so it copies the originals from `.gunther/`:
+For the installed app, the database and originals share `.gunther/`:
+
+```sh
+npm run backup:data -- --data-dir ~/Gunther/.gunther --library-root ~/Gunther
+```
+
+For older or development layouts, pass both locations:
 
 ```sh
 npm run backup:data -- --data-dir <data folder> --library-root <LIBRARY_ROOT>

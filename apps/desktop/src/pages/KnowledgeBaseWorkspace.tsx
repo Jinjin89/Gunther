@@ -1,3 +1,4 @@
+import { persistentStorage } from "../persistentStorage";
 import type {
   SourceDetail,
   SourceKind,
@@ -175,9 +176,9 @@ function MaterialsView({ base, onAdd, onOpenSource }: Pick<KnowledgeBaseWorkspac
 
   useEffect(() => {
     const sourceKey = `gunther:open-source:${base.id}`;
-    const sourceId = window.localStorage.getItem(sourceKey);
+    const sourceId = persistentStorage.getItem(sourceKey);
     if (!sourceId) return;
-    window.localStorage.removeItem(sourceKey);
+    persistentStorage.removeItem(sourceKey);
     if (onOpenSource) onOpenSource(sourceId, [sourceId]);
     else openSource(sourceId);
   }, [base.id, onOpenSource, openSource]);
@@ -311,7 +312,7 @@ export function KnowledgeBaseWorkspace(props: KnowledgeBaseWorkspaceProps) {
   const askTopic = async (id: string) => {
     try {
       const session = await knowledgeApi.createSession(props.base.id, { focusChapterId: id, selectedSourceIds: [] });
-      window.localStorage.setItem(`gunther:active-session:${props.base.id}`, session.id);
+      persistentStorage.setItem(`gunther:active-session:${props.base.id}`, session.id);
       props.onChapter(id); props.onMode("ask");
     } catch (reason) { props.onNotify(reason instanceof Error ? reason.message : "Could not open topic conversation."); }
   };

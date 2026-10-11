@@ -66,7 +66,7 @@ Android 模拟器开发默认使用 `http://10.0.2.2:8787/api/`，iOS 模拟器�
 
 ### Library 目录（`LIBRARY_ROOT`）
 
-设置 `LIBRARY_ROOT` 后，原件（`assets/`、`recordings/`）在启动时一次性移入 `<LIBRARY_ROOT>/.gunther/`，并为每个 Library 写出可读目录（`Inbox/`、`Libraries/`、`Trash/`）。数据库仍留在私有数据目录。桌面 App 默认 `~/Gunther`；开发模式默认关闭。布局与保证见 [Library folders](LIBRARY_FOLDERS.md)。
+桌面 App 采用两个位置：`~/.config/gunther/` 保存配置，`~/Gunther/` 保存完整工作区，包括 `.gunther/gunther.sqlite`、原件、录音、会话、输出和待上传草稿。首次升级自动从旧 Application Support 目录迁移，保留旧副本。开发模式仍使用单独的开发数据库。布局与恢复保证见 [Library folders](LIBRARY_FOLDERS.md)。
 
 备份时需要同时给出 Library 根目录，否则备份会因缺少原件而拒绝发布：
 
@@ -79,7 +79,7 @@ npm run backup:data -- --data-dir <数据目录> --library-root <LIBRARY_ROOT>
 默认：
 
 ```text
-~/Library/Application Support/com.gunther.knowledge/
+~/Gunther/.gunther/
 ├── gunther.sqlite
 ├── assets/
 ├── recordings/
@@ -88,8 +88,11 @@ npm run backup:data -- --data-dir <数据目录> --library-root <LIBRARY_ROOT>
 │   └── backend-auth-token.<launchNonce>  本次启动 ready token
 ├── backend-instance.lock
 ├── backend.log             旧版本的日志；现在的日志在资料库的 .gunther/logs/
-└── .env                    可选 Provider secrets
+├── pending/                本地草稿与未确认录音块
+└── backups/                升级前及自动数据库快照
 ```
+
+`~/.config/gunther/` 保存 `config.json`、`preferences.json`、`service-settings.json` 及可选 `.env`。旧版 Application Support 目录只用于迁移；替换 App 不会重建工作区。若原数据库缺失且没有匹配快照，启动保留原文件并报告恢复需求，不能仅凭导出的文件还原会话历史。
 
 打包 Helper 会收紧 POSIX 权限、拒绝 symlink/异常文件类型，并锁住数据目录，避免两套 Helper 同时写同一数据库。
 
@@ -129,7 +132,7 @@ npm run backup:data -- --output-dir /path/to/private-backups
 
 ```bash
 npm run backup:data -- \
-  --data-dir "$HOME/Library/Application Support/com.gunther.knowledge" \
+  --data-dir "$HOME/Gunther/.gunther" \
   --output-dir /path/to/private-backups
 ```
 

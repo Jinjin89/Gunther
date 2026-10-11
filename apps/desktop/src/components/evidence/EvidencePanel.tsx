@@ -46,7 +46,7 @@ function WebEvidence({ citation }: { citation: ConversationCitation }) {
     <div className="gx-evidence-body">
       <section aria-label="Passage from the page">
         <h3>What the page says</h3>
-        <blockquote className="gx-evidence-quote">{citation.quote}</blockquote>
+        <blockquote className="gx-evidence-quote">{citation.supportText || citation.quote}</blockquote>
         <p className="gx-evidence-note">The part of this page the search matched to your question. Open the page for the rest.</p>
       </section>
     </div>
@@ -109,7 +109,9 @@ function LibraryEvidence({ citation, onOpenSource }: { citation: ConversationCit
           : <div className="gx-evidence-image"><img src={assetUrl} alt={citation.sourceTitle} /></div>
         : <section aria-label="Passage from the source">
           <h3>{[citation.locator || "Passage", trail].filter(Boolean).join(" · ")}</h3>
-          {context.length > 1
+          {citation.supportText
+            ? <blockquote className="gx-evidence-quote">{citation.supportText}</blockquote>
+            : context.length > 1
             ? <div className="gx-evidence-context">
               {from > 0 && <button type="button" className="gx-evidence-more" onClick={() => setBefore((value) => value + CONTEXT_STEP)}>Show earlier</button>}
               {context.map((block) => block.id === citation.blockId
@@ -159,7 +161,7 @@ export function EvidencePanel({ citation, index, onClose, onOpenSource }: {
       <header>
         {index !== undefined && <i>{index + 1}</i>}
         <span>
-          <small>{web ? <><Globe2 size={11} />Web</> : <><FileText size={11} />Your library</>}</small>
+          <small>{web ? <><Globe2 size={11} />{citation.sourceOrigin === "web_supplement" ? "Web supplement" : "Web"}</> : <><FileText size={11} />{citation.sourceOrigin === "library_supplement" ? "Library supplement" : citation.sourceOrigin === "selected" ? "Selected material" : "Your library"}</>}</small>
           <strong title={citation.sourceTitle}>{citation.sourceTitle}</strong>
         </span>
         <button ref={close} type="button" className="gx-icon-button" onClick={onClose} aria-label="Close evidence" title="Close  Esc"><X size={15} /></button>

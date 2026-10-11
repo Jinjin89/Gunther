@@ -1,6 +1,7 @@
 import type { CreateSourceInput } from "@gunther/contracts";
 import { knowledgeApi } from "../api";
 import { removeStoredCapture } from "../localCaptureQueue";
+import { flushPersistentStorage } from "../persistentStorage";
 import type { CaptureKind } from "./captureTypes";
 
 export interface TextCaptureInput {
@@ -28,6 +29,7 @@ export interface CapturePersistenceResult {
 }
 
 export async function persistTextCapture(input: TextCaptureInput): Promise<CapturePersistenceResult> {
+  await flushPersistentStorage();
   const { title, baseId, content, kind, captureId, url, workspaceId } = input;
   let savedToService = false;
   let filedToRequestedBase = !baseId;

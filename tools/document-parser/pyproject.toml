@@ -1,0 +1,18 @@
+[project]
+name = "gunther-document-parser"
+version = "0.1.0"
+requires-python = "==3.12.*"
+dependencies = [
+  "docling-slim[convert-core,format-pdf,models-local,feat-ocr-rapidocr-onnx,cli]==2.132.0",
+  "pyinstaller>=6.16,<7",
+]
+
+# CPU wheels on Windows/Linux: do not install a CUDA runtime in the baseline.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform != 'darwin'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform != 'darwin'" }]

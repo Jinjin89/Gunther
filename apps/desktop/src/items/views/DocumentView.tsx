@@ -1,4 +1,4 @@
-import type { ContentBlock, SourceDetail, SourceStructure } from "@gunther/contracts";
+import type { ContentBlock, SourceDetail, SourceDocument, SourceStructure } from "@gunther/contracts";
 import { CircleAlert, Download, Eye, FileText, ImageIcon, LoaderCircle, RotateCcw, Sigma } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { knowledgeApi, sourceAssetUrl } from "../../api";
@@ -8,6 +8,7 @@ import { extensionOf, formatBytes, mediaTypeLabel, parseDelimitedTable, readable
 import { PaperCard } from "./PaperCard";
 import { ContextNote, PlainText } from "./ReaderViews";
 import { DataTable } from "./TableView";
+import { CanonicalReader } from "./CanonicalReader";
 
 const STRUCTURE_PAGE = 500;
 const ORIGINAL_TEXT_LIMIT = 2 * 1024 * 1024;
@@ -15,7 +16,7 @@ const WORKING = ["pending", "queued", "running"];
 
 /** Structured blocks for a source, polling while the service is still reading it. */
 export function useStructure(sourceId: string, enabled = true) {
-  const [data, setData] = useState<SourceStructure | null>(null);
+  const [data, setData] = useState<(SourceStructure & { document?: SourceDocument }) | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [reload, setReload] = useState(0);
@@ -28,7 +29,10 @@ export function useStructure(sourceId: string, enabled = true) {
     setError(null);
     const load = async () => {
       try {
-        const result = await knowledgeApi.sourceStructure(sourceId, 0, null, null, STRUCTURE_PAGE);
+        const document = await knowledgeApi.sourceDocument?.(sourceId).catch(() => null);
+        const result = document?.elements.length
+          ? { ...document, blocks: document.elements, document }
+          : await knowledgeApi.sourceStructure(sourceId, 0, null, null, STRUCTURE_PAGE);
         if (generation.current !== run) return;
         setData(result);
         setError(null);
@@ -48,8 +52,16 @@ export function useStructure(sourceId: string, enabled = true) {
     const run = generation.current;
     setLoadingMore(true);
     try {
-      const next = await knowledgeApi.sourceStructure(sourceId, data.nextOffset, data.revisionId, null, STRUCTURE_PAGE);
-      if (generation.current === run) setData({ ...next, blocks: [...data.blocks, ...next.blocks] });
+      if (data.document) {
+        const next = await knowledgeApi.sourceDocument(sourceId, data.nextOffset, data.revisionId);
+        if (generation.current === run) {
+          const document = { ...next, elements: [...data.document.elements, ...next.elements] };
+          setData({ ...document, blocks: document.elements, document });
+        }
+      } else {
+        const next = await knowledgeApi.sourceStructure(sourceId, data.nextOffset, data.revisionId, null, STRUCTURE_PAGE);
+        if (generation.current === run) setData({ ...next, blocks: [...data.blocks, ...next.blocks] });
+      }
     } catch (reason) {
       if (generation.current === run) setError(reason instanceof Error ? reason.message : "More of the document could not be read.");
     } finally {
@@ -284,7 +296,8 @@ export function DocumentBody({ source, file }: { source: SourceDetail; file: Fil
   const state = structure.data?.processing.state ?? source.processing?.state;
   const working = state ? WORKING.includes(state) : false;
   let content;
-  if (original && asset) content = <OriginalText assetId={asset.id} mode={original} title={source.title} />;
+  if (structure.data?.document) content = <CanonicalReader document={structure.data.document} />;
+  else if (original && asset) content = <OriginalText assetId={asset.id} mode={original} title={source.title} />;
   else if (blocks.length) content = <DocumentReader blocks={blocks} />;
   else if (file.extracted.trim()) content = <PlainText text={file.extracted} />;
   else if (working || !structure.data) content = <div className="gx-reading-skeleton is-working" aria-label="Reading the document">{[0, 1, 2, 3, 4].map((index) => <b key={index} />)}<p><LoaderCircle className="spin" size={13} />Gunther is reading this document. The original is already safe.</p></div>;
@@ -296,7 +309,7 @@ export function DocumentBody({ source, file }: { source: SourceDetail; file: Fil
       <ContextNote text={file.context} />
       {structure.data?.processing.warning && blocks.length > 0 && <p className="gx-reader-warning"><CircleAlert size={13} />{structure.data.processing.warning}</p>}
       {content}
-      {!original && structure.data?.nextOffset != null && (
+      {(!original || structure.data?.document) && structure.data?.nextOffset != null && (
         <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm gx-continue" disabled={structure.loadingMore} onClick={() => void structure.loadMore()}>
           {structure.loadingMore ? <LoaderCircle className="spin" size={13} /> : null}Continue reading
         </button>

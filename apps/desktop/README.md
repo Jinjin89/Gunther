@@ -141,13 +141,20 @@ release build 冻结 Python backend，Tauri 启动时：
 
 安装版 Helper 固定监听 `127.0.0.1:28787`（开发后端仍是 8787，两者互不占用）。端口已被占用时不会把数据发给占位进程。不要关闭认证或把 sidecar 改成 LAN 服务。
 
-macOS 默认数据目录：
+macOS 安装版采用两个位置：
 
 ```text
-~/Library/Application Support/com.gunther.knowledge/
+~/.config/gunther/           配置、Provider 设置、API keys、界面偏好
+~/Gunther/                  完整工作区
+└── .gunther/
+    ├── gunther.sqlite      会话、知识、输出及工作区 ID
+    ├── assets/
+    ├── recordings/
+    ├── pending/            草稿与未确认音频
+    └── backups/
 ```
 
-可选 `.env` 可放入该目录，但其中 key 应单独加密备份。业务 backup 不复制 `.env`、日志、ready token 或 mobile gateway 私钥。
+可选 `.env` 放在配置目录；秘密配置应单独加密备份。旧 Application Support 数据在首次升级时安全复制迁移，旧副本保留。重装自动打开已有数据库，保留工作区 ID；缺失数据库时只恢复匹配快照，否则保留文件并报告恢复需求。详见 [Library folders](../../docs/LIBRARY_FOLDERS.md)。
 
 ## Mobile gateway
 

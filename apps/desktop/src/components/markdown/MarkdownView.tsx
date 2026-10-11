@@ -3,6 +3,7 @@ import { createElement, memo, useMemo, useState, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import { sourceAssetUrl } from "../../api";
 
 /**
  * Markdown rendered with react-markdown + remark-gfm (CommonMark and GitHub
@@ -29,6 +30,7 @@ export interface MarkdownViewProps {
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
 const SAFE_LINK = /^(https?:|mailto:)/i;
 const SAFE_IMAGE = /^(data:image\/(png|jpe?g|gif|webp);|blob:)/i;
+const RETAINED_IMAGE = /^gunther-asset:([A-Za-z0-9_-]{1,160})$/;
 
 export function safeHref(href: string | null | undefined): string | null {
   const value = (href ?? "").trim();
@@ -36,7 +38,7 @@ export function safeHref(href: string | null | undefined): string | null {
 }
 
 const urlTransform = (url: string, key: string) => {
-  if (key === "src") return SAFE_IMAGE.test(url) || SAFE_LINK.test(url) ? url : "";
+  if (key === "src") return RETAINED_IMAGE.test(url) || SAFE_IMAGE.test(url) || SAFE_LINK.test(url) ? url : "";
   if (url.startsWith("#")) return url;
   return safeHref(url) ?? "";
 };
@@ -112,6 +114,8 @@ function buildComponents(headingLevel: number, onToggleTask: MarkdownViewProps["
     img: ({ src, alt }) => {
       const url = typeof src === "string" ? src : "";
       const label = alt || url.split("/").pop() || "Image";
+      const retained = RETAINED_IMAGE.exec(url);
+      if (retained) return <img className="gx-md-image" src={sourceAssetUrl(retained[1]!)} alt={alt ?? ""} loading="lazy" />;
       if (SAFE_IMAGE.test(url)) return <img className="gx-md-image" src={url} alt={alt ?? ""} />;
       return SAFE_LINK.test(url)
         ? <a className="gx-md-image-link" href={url} target="_blank" rel="noreferrer noopener" title="Remote images are not loaded. Open the image in your browser."><ImageIcon size={13} />{label}<ExternalLink size={11} /></a>

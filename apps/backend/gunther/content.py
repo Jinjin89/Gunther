@@ -208,7 +208,7 @@ def parse_content(content: str) -> list[ParsedBlock]:
                     "heading",
                     parent,
                     headings,
-                    {"charStart": start, "charEnd": offset},
+                    {"charStart": start, "charEnd": offset, **({"page": page} if page else {})},
                     title,
                 )
             )

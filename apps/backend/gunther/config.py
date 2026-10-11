@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     recordings_dir: Path = PROJECT_ROOT / "data" / "recordings"
     # Where libraries live on disk: originals under ``.gunther/`` and a readable
     # folder per library beside them (see library_folders). Unset keeps every
-    # original in the data folder. The database never moves here.
+    # original in the data folder. The desktop supplies a database inside .gunther;
+    # legacy and development database paths remain independently configurable.
     library_root: Path | None = None
     # Where originals were before the library root; they move into it once, at
     # startup. Defaults to the folders above.

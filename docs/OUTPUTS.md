@@ -16,6 +16,9 @@ sourced. The model plans and writes; the *facts* come from the library.
   (Auto, a talk, reading) and an **audience** (Scientist, Student, Collaborator).
 - **Web** (optional, when web search is set up): the shared Web switch lets a skill add web
   results where the chosen material has a gap.
+- **Library supplements** (API opt-in, `librarySupplements: true`): additional live sources
+  from the same library may support the selected material. Citation origin is labeled and
+  recorded with the version; the option does not expand into another library.
 - **Notes and sources are different things.** Saved knowledge and discussions are *notes*:
   they shape the plan and the writing, but are never cited. The passages they cite seed the
   pool instead, so the text can cite the passage itself.
@@ -73,7 +76,9 @@ The steps (`SkillAgents.make`):
    numbers (a talk's speaker notes as what the speaker says) and says what it understood, what
    was unclear, where it jumped and what it would ask.
 6. **revise.** One call picks at most `revise_max` sections, each with an instruction; each is
-   rewritten (or answered `UNCHANGED`) and checked again. One round only.
+   rewritten (or answered `UNCHANGED`) and checked again. One round only. Revision receives
+   the argument and neighboring sections. New numeric facts are refused; other edits
+   require an explicit fidelity verdict preserving factual assertions and citation bindings.
 
 understand, structure and write failing fail the build (nothing is saved). edit_review,
 reader_test and revise failing are **skipped and recorded**: the live view marks the step, and
@@ -119,8 +124,10 @@ or stopped build leaves nothing behind.
    - each `[?]` claim (at most two per section) is looked up in the library: a passage that
      states it becomes its citation, one that states the opposite removes the claim, and
      otherwise it stays `[?]`;
-   - one call per section lists the cited sentences whose cited passages do **not** state
-     them; each loses its numbers and becomes `[?]`.
+   - bounded batches list the cited sentences whose cited passages do **not** state
+     them; each loses its numbers and becomes `[?]`;
+   - shared claim checking records coverage across headings, prose, tables and notes,
+     including title-slide facts. Missing or failed verdicts remain unchecked.
 5. **Assemble.** The report is `# Title`, an optional one-line brief in italics, then the
    sections; a deck is the slides separated by `---`. Citations are renumbered 1, 2, 3 in the
    order the whole text first cites them, and the version stores the passages in that order,
@@ -129,11 +136,14 @@ or stopped build leaves nothing behind.
 
 ## The pool
 
-As in Ask, a passage keeps its number for good during a build and is adopted once (by kind,
-title or URL, and the start of its text). Only passages the text cites are kept. A version
+As in Ask, a passage keeps its number for good during a build and is adopted once by
+source/revision/block identity, or a full-text fallback digest. Only cited passages are kept. A version
 stores **copies** of what it cites (quote, title, locator, ids), with no link to the source,
 so a source that is deleted later never breaks an output; the evidence panel then says the
 source is gone. A passage from a source that has left this library is not used as a seed.
+Imported figures can be reused with a cited managed asset reference. Outputs retain image
+ownership so permanent source deletion does not break the saved figure. Credentials are
+resolved by the viewer and are not stored in Markdown.
 
 ## Findings
 
@@ -147,9 +157,18 @@ Each finding has a claim, a verdict and a note:
 | `unverified` | from the model's own knowledge; no source was found |
 | `unsourced` | no source is cited (found when checking, not building) |
 | `contradicted` | left out of the text because the sources disagree |
+| `unchecked` | a verdict was omitted, failed or exceeded the context/check budget |
 
 Findings belong to a **section's hash**: the sha256 of its text with `\n` line ends,
 trimmed. A section that changed is "not re-checked" until the Checker looks at it again.
+New checks mark a section checked only when coverage is complete. Chart pages require
+cited numeric values and completed verification before saving. Revisions carry complete
+coverage for unchanged sections into assembly. Older charts without coverage records
+are checked again without rewriting them. Final Skill checks run again after revision;
+these safeguards do not establish measured writing quality.
+
+See [implementation notes](KNOWLEDGE_AND_AGENT_UPGRADE_IMPLEMENTATION.md) for test
+results, optional parser packaging and the remaining quality/release evaluation.
 
 ## Sections
 

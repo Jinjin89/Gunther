@@ -271,6 +271,7 @@ class SourceRevision(Base):
     parser: Mapped[str] = mapped_column(String(120))
     state: Mapped[str] = mapped_column(String(24), default="ready")
     warning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    manifest_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
 
 
@@ -301,6 +302,102 @@ class ContentBlock(Base):
     heading_path_json: Mapped[str] = mapped_column(Text, default="[]")
     anchor_json: Mapped[str] = mapped_column(Text, default="{}")
     payload_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class DocumentElement(Base):
+    """Readable document nodes, independently of retrieval chunk sizes."""
+
+    __tablename__ = "document_elements"
+    __table_args__ = (UniqueConstraint("revision_id", "ordinal"),)
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    revision_id: Mapped[str] = mapped_column(
+        ForeignKey("source_revisions.id", ondelete="CASCADE"), index=True
+    )
+    parent_id: Mapped[str | None] = mapped_column(
+        ForeignKey("document_elements.id", ondelete="CASCADE"), nullable=True
+    )
+    ordinal: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(32))
+    content: Mapped[str] = mapped_column(Text)
+    locator: Mapped[str] = mapped_column(String(240))
+    heading_path_json: Mapped[str] = mapped_column(Text, default="[]")
+    anchor_json: Mapped[str] = mapped_column(Text, default="{}")
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class BlockElementMap(Base):
+    __tablename__ = "block_element_maps"
+    block_id: Mapped[str] = mapped_column(
+        ForeignKey("content_blocks.id", ondelete="CASCADE"), primary_key=True
+    )
+    element_id: Mapped[str] = mapped_column(
+        ForeignKey("document_elements.id", ondelete="CASCADE"), primary_key=True
+    )
+    char_start: Mapped[int] = mapped_column(Integer)
+    char_end: Mapped[int] = mapped_column(Integer)
+
+
+class ElementAsset(Base):
+    __tablename__ = "element_assets"
+    element_id: Mapped[str] = mapped_column(
+        ForeignKey("document_elements.id", ondelete="CASCADE"), primary_key=True
+    )
+    asset_id: Mapped[str] = mapped_column(
+        ForeignKey("assets.id", ondelete="RESTRICT"), primary_key=True
+    )
+    role: Mapped[str] = mapped_column(String(32), default="figure")
+
+
+class ProcessingAsset(Base):
+    __tablename__ = "processing_assets"
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("processing_jobs.id", ondelete="CASCADE"), primary_key=True
+    )
+    lease_token: Mapped[str] = mapped_column(String(80), primary_key=True)
+    asset_id: Mapped[str] = mapped_column(
+        ForeignKey("assets.id", ondelete="RESTRICT"), primary_key=True
+    )
+
+
+class ArtifactAsset(Base):
+    __tablename__ = "artifact_assets"
+    artifact_id: Mapped[str] = mapped_column(
+        ForeignKey("artifacts.id", ondelete="CASCADE"), primary_key=True
+    )
+    asset_id: Mapped[str] = mapped_column(
+        ForeignKey("assets.id", ondelete="RESTRICT"), primary_key=True
+    )
+
+
+class ReferenceEntry(Base):
+    __tablename__ = "reference_entries"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    revision_id: Mapped[str] = mapped_column(
+        ForeignKey("source_revisions.id", ondelete="CASCADE"), index=True
+    )
+    element_id: Mapped[str] = mapped_column(
+        ForeignKey("document_elements.id", ondelete="CASCADE"), index=True
+    )
+    label: Mapped[str] = mapped_column(String(80))
+    raw: Mapped[str] = mapped_column(Text)
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class CitationMention(Base):
+    __tablename__ = "citation_mentions"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    revision_id: Mapped[str] = mapped_column(
+        ForeignKey("source_revisions.id", ondelete="CASCADE"), index=True
+    )
+    element_id: Mapped[str] = mapped_column(
+        ForeignKey("document_elements.id", ondelete="CASCADE"), index=True
+    )
+    char_start: Mapped[int] = mapped_column(Integer)
+    char_end: Mapped[int] = mapped_column(Integer)
+    raw: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(24))
+    method: Mapped[str] = mapped_column(String(40))
+    targets_json: Mapped[str] = mapped_column(Text, default="[]")
 
 
 class BlockEmbedding(Base):

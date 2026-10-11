@@ -170,13 +170,19 @@ PDF layout parsing runs in that subprocess, not the API process. Downloads and H
 telemetry are disabled. The subprocess has a 240-second timeout, 180-second CPU limit,
 32-MB output limit, 64-MB input limit and 500-page input limit (macOS/Linux).
 
-The adapter walks document reading order, preserves hierarchy and PDF geometry, and
-keeps structured table cells in block payloads. Original images remain in the source
-asset. Existing local OCR supplies scan text; fallback or incomplete extraction is
-reported as partial, not silently presented as a complete document.
+Schema 22 preserves canonical document elements separately from retrieval chunks,
+exports figure images to managed assets, retains captions/native table cells and stores
+bibliography entries with conservative body-marker links. The reader uses `/document`
+for these revisions and keeps `/structure` as a legacy fallback. Publication is fenced
+by the processing lease; document/output ownership protects retained images.
 
-This adapter has contract tests, not a real-corpus accuracy benchmark. No model weights,
-external runtime or cloud service were installed or configured by this upgrade.
+A pinned CPU helper can be bundled using `scripts/build-document-parser.py` followed by
+`scripts/build-backend-sidecar.mjs --with-document-parser`. It includes offline models
+and is discovered by the packaged backend. The optional interpreter settings above
+remain useful for development. Digital, scanned and figure-bearing synthetic PDFs were
+tested through a frozen helper on macOS ARM64; Windows/GPU and real-corpus accuracy
+remain unqualified. See [implementation notes](KNOWLEDGE_AND_AGENT_UPGRADE_IMPLEMENTATION.md)
+for commands, measurements and remaining boundaries.
 
 ## API guide
 

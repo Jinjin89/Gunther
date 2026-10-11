@@ -67,7 +67,9 @@ export function LibraryFolderSettings({ onNotify, onCopy }: LibraryFolderSetting
 
   const canChange = Boolean(location?.canChange);
   return <section className="library-folder-settings" aria-labelledby="library-folder-heading">
-    <div className="setting-heading"><HardDrive size={16} /><span><strong id="library-folder-heading">Library folder</strong><small>Where your libraries live on disk</small></span></div>
+    <div className="setting-heading"><HardDrive size={16} /><span><strong id="library-folder-heading">Library folder</strong><small>Your documents, conversations, saved outputs and recordings</small></span></div>
+
+    {location?.configurationRoot && <div className="setting-row"><span><strong>Configuration</strong><code className="library-folder-path">{location.configurationRoot}</code><small>Settings are stored separately from your library data.</small></span></div>}
 
     {!storage && !unavailable && <div className="setting-row"><span><strong>Checking…</strong><small>Asking the local service where your libraries are kept.</small></span></div>}
     {unavailable && !moving && <div className="setting-row"><span><strong>Unavailable</strong><small>Reconnect the local service to see where your libraries are kept.</small></span></div>}

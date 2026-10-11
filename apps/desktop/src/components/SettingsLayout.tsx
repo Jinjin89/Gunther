@@ -1,3 +1,4 @@
+import { persistentStorage } from "../persistentStorage";
 import { AudioLines, Brain, HardDrive, Search, Settings2, Smartphone, SquareTerminal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
@@ -29,7 +30,7 @@ const isPane = (value: unknown): value is SettingsPaneId => SETTINGS_PANES.some(
 
 const rememberedPane = (): SettingsPaneId => {
   try {
-    const saved = window.localStorage.getItem(PANE_KEY);
+    const saved = persistentStorage.getItem(PANE_KEY);
     return isPane(saved) ? saved : "general";
   } catch {
     return "general";
@@ -39,7 +40,7 @@ const rememberedPane = (): SettingsPaneId => {
 /** Open Settings on one topic, from anywhere: `openSettings("voice")`. */
 export function openSettings(pane?: SettingsPaneId) {
   if (pane) {
-    try { window.localStorage.setItem(PANE_KEY, pane); } catch { /* opens on the last topic instead */ }
+    try { persistentStorage.setItem(PANE_KEY, pane); } catch { /* opens on the last topic instead */ }
   }
   window.dispatchEvent(new CustomEvent(OPEN_SETTINGS_EVENT, { detail: pane ? { pane } : undefined }));
 }
@@ -49,7 +50,7 @@ export function useSettingsPane() {
   const [pane, setPaneState] = useState<SettingsPaneId>(rememberedPane);
   const setPane = useCallback((next: SettingsPaneId) => {
     setPaneState(next);
-    try { window.localStorage.setItem(PANE_KEY, next); } catch { /* still shown, just not remembered */ }
+    try { persistentStorage.setItem(PANE_KEY, next); } catch { /* still shown, just not remembered */ }
   }, []);
   useEffect(() => {
     const onOpen = (event: Event) => {

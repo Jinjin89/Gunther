@@ -10,8 +10,9 @@ Layout (format 1)::
         assets/                   originals, stored once by fingerprint
         recordings/               recording audio
 
-The database stays in the application's private data directory: SQLite must
-not live in a folder that iCloud or Dropbox might sync. A root belongs to one
+The installed app keeps its database in this root's private .gunther directory;
+legacy and development backends may keep it elsewhere. Keep an active SQLite
+workspace on local storage and synchronize completed backups. A root belongs to one
 workspace; a second workspace pointed at it is refused rather than mixed in.
 
 Originals kept before a root was configured move into it once, at startup and

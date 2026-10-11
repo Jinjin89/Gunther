@@ -1,3 +1,4 @@
+import { persistentStorage } from "../persistentStorage";
 import type { Effort, KnowledgeSession, KnowledgeSessionSummary, SessionMessage } from "@gunther/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { readAloud } from "../speech/readAloud";
@@ -24,15 +25,15 @@ export interface AskOptions {
 
 const remembered = () => {
   try {
-    return window.localStorage.getItem(HOME_SESSION_KEY);
+    return persistentStorage.getItem(HOME_SESSION_KEY);
   } catch {
     return null;
   }
 };
 const remember = (id: string | null) => {
   try {
-    if (id) window.localStorage.setItem(HOME_SESSION_KEY, id);
-    else window.localStorage.removeItem(HOME_SESSION_KEY);
+    if (id) persistentStorage.setItem(HOME_SESSION_KEY, id);
+    else persistentStorage.removeItem(HOME_SESSION_KEY);
   } catch {
     // The conversation is still saved; it just will not reopen by itself.
   }

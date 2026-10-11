@@ -1,3 +1,5 @@
+import { persistentStorage } from "../persistentStorage";
+import { flushPersistentStorage } from "../persistentStorage";
 import type { CreateKnowledgeBaseInput, RecordingSession } from "@gunther/contracts";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
@@ -392,6 +394,7 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
           ...(normalizedUrl ? { url: normalizedUrl } : {}),
           createdAt: new Date().toISOString(),
         });
+        await flushPersistentStorage();
         await onCaptured(saving === "link" ? saveTitle : saveTitle || "Untitled source", saveBaseId || null, saveText.trim(), saving, captureId, normalizedUrl ?? undefined, boundWorkspaceId);
       }
       // When the parent keeps Capture open, clear only what was just saved.
@@ -1130,7 +1133,7 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
 export function AccountPageV2({ bases = knowledgeBases }: { bases?: KnowledgeBase[] }) {
   const defaultProfile = { initials: "KE", name: "Knowledge explorer", role: "Local learner", bio: "Building clear, evidence-backed maps of difficult fields." };
   const [profile, setProfile] = useState(() => {
-    try { return { ...defaultProfile, ...JSON.parse(window.localStorage.getItem("gunther:profile") ?? "{}") as Partial<typeof defaultProfile> }; } catch { return defaultProfile; }
+    try { return { ...defaultProfile, ...JSON.parse(persistentStorage.getItem("gunther:profile") ?? "{}") as Partial<typeof defaultProfile> }; } catch { return defaultProfile; }
   });
   const [draftProfile, setDraftProfile] = useState(profile);
   const [editing, setEditing] = useState(false);
@@ -1139,7 +1142,7 @@ export function AccountPageV2({ bases = knowledgeBases }: { bases?: KnowledgeBas
     const next = { initials: draftProfile.initials.trim().slice(0, 3).toUpperCase() || "KE", name: draftProfile.name.trim() || "Knowledge explorer", role: draftProfile.role.trim() || "Local learner", bio: draftProfile.bio.trim() || defaultProfile.bio };
     setProfile(next);
     setDraftProfile(next);
-    window.localStorage.setItem("gunther:profile", JSON.stringify(next));
+    persistentStorage.setItem("gunther:profile", JSON.stringify(next));
     setEditing(false);
   };
   return <div className="utility-page account-v2 page-enter"><header className="gx-page-header"><div><h1>Account</h1><p>Your profile is stored on this device and travels with complete workbook exports.</p></div></header><section className={`profile-card-v2 ${editing ? "is-editing" : ""}`}><span className="profile-avatar-v2">{profile.initials}</span>{editing ? <form className="profile-edit-form" onSubmit={saveProfile}><label><span>Initials</span><input autoFocus value={draftProfile.initials} maxLength={3} onChange={(event) => setDraftProfile((current) => ({ ...current, initials: event.target.value }))} /></label><label><span>Name</span><input value={draftProfile.name} maxLength={80} onChange={(event) => setDraftProfile((current) => ({ ...current, name: event.target.value }))} /></label><label><span>Role</span><input value={draftProfile.role} maxLength={80} onChange={(event) => setDraftProfile((current) => ({ ...current, role: event.target.value }))} /></label><label className="is-wide"><span>Bio</span><textarea value={draftProfile.bio} rows={2} maxLength={240} onChange={(event) => setDraftProfile((current) => ({ ...current, bio: event.target.value }))} /></label><div><button type="button" className="quiet-button" onClick={() => { setDraftProfile(profile); setEditing(false); }}>Cancel</button><button className="primary-button"><Check size={13} />Save locally</button></div></form> : <><div><small>{profile.role}</small><h2>{profile.name}</h2><p>{profile.bio}</p></div><button className="quiet-button" onClick={() => setEditing(true)}>Edit profile</button></>}</section><section className="profile-stats-v2"><div><strong>{bases.length}</strong><span>libraries</span></div><div><strong>{bases.reduce((sum, base) => sum + base.chapterCount, 0)}</strong><span>chapters</span></div><div><strong>{bases.reduce((sum, base) => sum + (base.indexedSourceCount ?? 0), 0)}</strong><span>indexed sources</span></div></section></div>;

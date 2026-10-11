@@ -5,6 +5,7 @@ are ready, to pick one in Ask. Keys never leave the backend.
 """
 
 import hashlib
+import json
 from collections.abc import Iterable
 from typing import Any
 
@@ -58,7 +59,17 @@ def _levels(dialect_id: str) -> list[dict[str, str]]:
 
 
 def _key_fingerprint(provider: dict[str, Any], key: str | None) -> str:
-    return hashlib.sha256(f"{provider['baseUrl']}\n{key or ''}".encode()).hexdigest()
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "kind": provider["kind"],
+                "baseUrl": provider["baseUrl"],
+                "key": key,
+                "models": [model["id"] for model in provider["models"]],
+            },
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
 
 
 def _provider_out(provider: dict[str, Any], request: Request) -> dict[str, Any]:
@@ -265,9 +276,7 @@ def _still_following(request: Request, roles: dict[str, Any], chosen: Iterable[s
     return {
         role_id: choice
         for role_id, choice in roles.items()
-        if not model_registry.ROLE_BY_ID[role_id].follows
-        or role_id in saved
-        or role_id in chosen
+        if not model_registry.ROLE_BY_ID[role_id].follows or role_id in saved or role_id in chosen
     }
 
 
@@ -394,11 +403,15 @@ async def test_provider(provider_id: str, payload: ProviderIn, request: Request)
     providers, index = _find(request, provider_id)
     current = providers[index]
     changes = payload.model_dump(exclude_unset=True)
-    draft = {
-        **current,
-        "baseUrl": changes.get("base_url") or current["baseUrl"],
-        "apiKey": changes["api_key"] if changes.get("api_key") else current["apiKey"],
-    }
+    draft = {**current}
+    for field, saved_field in (
+        ("name", "name"),
+        ("base_url", "baseUrl"),
+        ("api_key", "apiKey"),
+        ("models", "models"),
+    ):
+        if field in changes:
+            draft[saved_field] = changes[field]
     try:
         draft = model_registry.clean_provider(draft)
     except RegistryError as error:

@@ -84,7 +84,12 @@ describe("ModelSettings", () => {
     expect(screen.getByText("•••• 1234")).toBeInTheDocument();
     expect(screen.getByText("from .env")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Fetch models" }));
-    expect(api.testProvider).toHaveBeenCalledWith("deepseek", { baseUrl: "https://api.deepseek.com" });
+    expect(api.testProvider).toHaveBeenCalledWith("deepseek", {
+      name: "DeepSeek", baseUrl: "https://api.deepseek.com", models: [
+        { id: "deepseek-flash", label: "Flash", vision: null, dialect: null },
+        { id: "deepseek-v4-pro", label: "V4 Pro", vision: null, dialect: null },
+      ],
+    });
     expect(await screen.findByText(/3 models offered/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "deepseek-v5-preview" }));
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -97,6 +102,22 @@ describe("ModelSettings", () => {
         { id: "deepseek-v5-preview", label: "", vision: null, dialect: null },
       ],
     });
+  });
+
+  it("tests edited models without requiring a save", async () => {
+    api.testProvider.mockResolvedValue({ ok: true, message: "Connected.", warning: null, available: ["provided-model"] });
+    render(<ModelSettings onNotify={vi.fn()} />);
+    await userEvent.click(await screen.findByRole("button", { name: /^DeepSeek/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Remove deepseek-flash" }));
+    await userEvent.click(screen.getByRole("button", { name: "Remove deepseek-v4-pro" }));
+    await userEvent.type(screen.getByLabelText("Model id to add"), "provided-model");
+    await userEvent.click(screen.getByRole("button", { name: "Add" }));
+    await userEvent.click(screen.getByRole("button", { name: "Fetch models" }));
+    expect(api.testProvider).toHaveBeenCalledWith("deepseek", {
+      name: "DeepSeek", baseUrl: "https://api.deepseek.com",
+      models: [{ id: "provided-model", label: "", vision: null, dialect: null }],
+    });
+    expect(api.updateProvider).not.toHaveBeenCalled();
   });
 
   it("replaces a key without ever showing the saved one", async () => {

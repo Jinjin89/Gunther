@@ -1,3 +1,4 @@
+import { persistentStorage } from "../persistentStorage";
 import type {
   LectureSummary,
   RecordingAsset,
@@ -270,7 +271,7 @@ async function assertImportedAudioStorageAvailable(fileSizeBytes: number): Promi
 
 export function loadRecordingDrafts(): RecordingDraft[] {
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(RECORDING_DRAFTS_KEY) ?? "[]") as RecordingDraft[];
+    const parsed = JSON.parse(persistentStorage.getItem(RECORDING_DRAFTS_KEY) ?? "[]") as RecordingDraft[];
     return parsed
       .filter((draft) => draft?.id && draft?.recording?.id)
       .map((draft) => ({
@@ -287,7 +288,7 @@ export function loadRecordingDrafts(): RecordingDraft[] {
 
 export function removeRecordingDraft(id: string) {
   const next = loadRecordingDrafts().filter((draft) => draft.id !== id);
-  window.localStorage.setItem(RECORDING_DRAFTS_KEY, JSON.stringify(next));
+  persistentStorage.setItem(RECORDING_DRAFTS_KEY, JSON.stringify(next));
 }
 
 export function recordingDraftsForWorkspace(
@@ -301,7 +302,7 @@ export function recordingDraftsForWorkspace(
 
 function preserveRecordingDraft(draft: RecordingDraft) {
   const next = [draft, ...loadRecordingDrafts().filter((item) => item.id !== draft.id)].slice(0, 20);
-  window.localStorage.setItem(RECORDING_DRAFTS_KEY, JSON.stringify(next));
+  persistentStorage.setItem(RECORDING_DRAFTS_KEY, JSON.stringify(next));
 }
 
 function isRecordingSession(recording: RecordingAsset): recording is RecordingSession {

@@ -8,6 +8,7 @@ apps/mobile/build/
 apps/mobile/ios/Pods/
 apps/mobile/ios/.symlinks/
 apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/binaries/
 .uv-cache/
 .venv/
 __pycache__/
@@ -30,9 +31,12 @@ backups/
 apps/backend/.pyinstaller/
 # Fetched by `npm run models:fetch`; bundled into the desktop build.
 apps/backend/models/
+tools/document-parser/.build/
 coverage/
 .coverage
 *.log
+# SQLite extension scratch files produced by in-memory test databases.
+:memory:.ses
 
 # Cool-roof exam: results from every run stay local.
 apps/backend/evals/results/

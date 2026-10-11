@@ -253,3 +253,74 @@ def test_testing_a_qwen_connection_checks_the_key_and_the_chosen_model(
     assert tested["ok"] is True
     # Testing only checks the address and key (and warns about a chosen model the list lacks).
     assert "available" not in tested and tested["warning"] is None
+
+
+@pytest.mark.parametrize("chosen", [["provided-asr-model"], ["unavailable-asr-model"], []])
+def test_connection_uses_unsaved_models_and_does_not_replace_saved_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chosen: list[str]
+) -> None:
+    from gunther import speech_api
+    from gunther.service_settings import CheckResult
+
+    observed = []
+
+    async def listed(url, key, name, *, key_optional=False):
+        observed.append((url, key))
+        return CheckResult(True, "Connected."), ["provided-asr-model"]
+
+    monkeypatch.setattr(speech_api, "list_models", listed)
+    with TestClient(create_app(settings_for(tmp_path))) as client:
+        client.post(
+            "/api/settings/speech/providers",
+            headers=SIDECAR,
+            json={"kind": "qwen", "apiKey": KEY, "models": ["saved-asr-model"]},
+        )
+        response = client.post(
+            "/api/settings/speech/providers/qwen/test", headers=SIDECAR, json={"models": chosen}
+        )
+        assert response.status_code == 200
+        result = response.json()
+        assert result["warning"] == (
+            "unavailable-asr-model is not in this account's model list."
+            if chosen == ["unavailable-asr-model"]
+            else None
+        )
+        current = next(p for p in result["overview"]["providers"] if p["id"] == "qwen")
+        assert [m["id"] for m in current["models"]] == ["saved-asr-model"]
+        assert current["status"]["check"] is None
+        assert observed[0][1] == KEY
+        # Saving the tested configuration can use its check, changing models invalidates it.
+        saved = client.put(
+            "/api/settings/speech/providers/qwen", headers=SIDECAR, json={"models": chosen}
+        ).json()
+        current = next(p for p in saved["providers"] if p["id"] == "qwen")
+        assert current["status"]["check"]["warning"] == result["warning"]
+        changed = client.put(
+            "/api/settings/speech/providers/qwen",
+            headers=SIDECAR,
+            json={"models": ["different-asr-model"]},
+        ).json()
+        assert next(p for p in changed["providers"] if p["id"] == "qwen")["status"]["check"] is None
+
+
+def test_connection_honors_explicit_key_removal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gunther import speech_api
+    from gunther.service_settings import CheckResult
+
+    keys = []
+
+    async def listed(url, key, name, *, key_optional=False):
+        keys.append(key)
+        return CheckResult(False, "Add an API key first."), []
+
+    monkeypatch.setattr(speech_api, "list_models", listed)
+    with TestClient(create_app(settings_for(tmp_path))) as client:
+        client.post(
+            "/api/settings/speech/providers", headers=SIDECAR, json={"kind": "qwen", "apiKey": KEY}
+        )
+        result = client.post(
+            "/api/settings/speech/providers/qwen/test", headers=SIDECAR, json={"apiKey": ""}
+        ).json()
+    assert not result["ok"] and keys == [None]

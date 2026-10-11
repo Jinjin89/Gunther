@@ -26,6 +26,7 @@ import { applyTypography } from "./design/typography";
 import { installExternalLinkHandler } from "./externalLinks";
 import { StartupError } from "./StartupError";
 import { describeError, installLogForwarding, log } from "./log";
+import { initializePersistentStorage } from "./persistentStorage";
 
 document.documentElement.dataset.runtime = "__TAURI_INTERNALS__" in window ? "native" : "web";
 installLogForwarding();
@@ -39,7 +40,11 @@ const surface = new URLSearchParams(window.location.search).get("surface");
 const opened = performance.now();
 log.info("startup", `${surface ?? "main"} window opened`);
 
-void ensureBackendReady()
+void initializePersistentStorage().then(() => {
+  applyTheme(resolveTheme(readThemePreference()));
+  applyTypography();
+  return ensureBackendReady();
+})
   .then(() => {
     log.info("startup", `${surface ?? "main"} window connected after ${Math.round(performance.now() - opened)} ms`);
     root.render(

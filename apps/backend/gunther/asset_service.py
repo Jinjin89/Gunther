@@ -22,12 +22,20 @@ from pypdf import PageObject, PdfReader
 from pypdf import filters as pdf_filters
 from pypdf.errors import PdfReadError
 from pypdf.generic import ArrayObject
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from gunther.database import session_scope
-from gunther.models import Asset, Source
+from gunther.models import (
+    ArtifactAsset,
+    Asset,
+    ElementAsset,
+    ProcessingAsset,
+    ProcessingJob,
+    Source,
+    WebSnapshot,
+)
 from gunther.ocr import OcrError, OcrPage, OcrProvider, UnavailableOcrProvider
 from gunther.pdf_text import reflow, vocabulary_of
 from gunther.schemas import (
@@ -687,6 +695,7 @@ class AssetService:
         size: int,
         file_name: str,
         media_type: str,
+        staging: tuple[str, str] | None = None,
     ) -> Asset:
         # The bytes already count toward managed usage in ``.incoming``. A
         # zero-growth reservation revalidates external changes and translates a
@@ -698,6 +707,7 @@ class AssetService:
                 size,
                 file_name,
                 media_type,
+                staging,
             )
 
     def _preserve_received(
@@ -707,12 +717,14 @@ class AssetService:
         size: int,
         file_name: str,
         media_type: str,
+        staging: tuple[str, str] | None = None,
     ) -> Asset:
         safe_name = _safe_name(file_name)
         with _asset_lock(content_hash):
             with session_scope(self.sessions) as session:
                 existing = session.scalar(select(Asset).where(Asset.content_hash == content_hash))
                 if existing:
+                    self._stage_asset(session, existing.id, staging)
                     existing_path = self.assets_dir / existing.relative_path
                     existing_path.parent.mkdir(parents=True, exist_ok=True)
                     self.storage_budget.assert_safe_path(existing_path)
@@ -738,6 +750,7 @@ class AssetService:
                 with session_scope(self.sessions) as session:
                     session.add(asset)
                     session.flush()
+                    self._stage_asset(session, asset.id, staging)
             except IntegrityError:
                 try:
                     with session_scope(self.sessions) as session:
@@ -753,6 +766,8 @@ class AssetService:
                 if existing.relative_path != relative_path:
                     final_path.unlink(missing_ok=True)
                 asset = existing
+                with session_scope(self.sessions) as session:
+                    self._stage_asset(session, asset.id, staging)
             except Exception:
                 # The file is published before the DB row so readers never observe a
                 # row pointing at absent bytes. If the transaction fails, undo that
@@ -761,12 +776,88 @@ class AssetService:
                 raise
             return asset
 
+    @staticmethod
+    def _stage_asset(session: Session, asset_id: str, staging: tuple[str, str] | None) -> None:
+        if staging is None:
+            return
+        job_id, token = staging
+        job = session.get(ProcessingJob, job_id)
+        if not job or job.state != "running" or job.lease_token != token:
+            raise AssetValidationError("The processing lease is no longer owned")
+        if session.get(ProcessingAsset, (job_id, token, asset_id)) is None:
+            session.add(ProcessingAsset(job_id=job_id, lease_token=token, asset_id=asset_id))
+
+    def release_staged(self, job_id: str, token: str) -> None:
+        """Release this attempt's assets; committed document/output owners keep their bytes."""
+        with session_scope(self.sessions) as session:
+            ids = list(
+                session.scalars(
+                    select(ProcessingAsset.asset_id).where(
+                        ProcessingAsset.job_id == job_id, ProcessingAsset.lease_token == token
+                    )
+                )
+            )
+            hashes = [
+                (asset.id, asset.content_hash)
+                for asset_id in ids
+                if (asset := session.get(Asset, asset_id)) is not None
+            ]
+        for asset_id, content_hash in hashes:
+            with _asset_lock(content_hash):
+                path = None
+                with session_scope(self.sessions) as session:
+                    session.execute(
+                        delete(ProcessingAsset).where(
+                            ProcessingAsset.job_id == job_id,
+                            ProcessingAsset.lease_token == token,
+                            ProcessingAsset.asset_id == asset_id,
+                        )
+                    )
+                    owned = any(
+                        session.scalar(select(table).where(column == asset_id).limit(1))
+                        for table, column in (
+                            (Source.id, Source.asset_id),
+                            (WebSnapshot.id, WebSnapshot.asset_id),
+                            (ElementAsset.element_id, ElementAsset.asset_id),
+                            (ArtifactAsset.artifact_id, ArtifactAsset.asset_id),
+                            (ProcessingAsset.job_id, ProcessingAsset.asset_id),
+                        )
+                    )
+                    asset = session.get(Asset, asset_id)
+                    if asset and not owned:
+                        path = self.assets_dir / asset.relative_path
+                        session.delete(asset)
+                if path:
+                    path.unlink(missing_ok=True)
+
+    def release_abandoned(self) -> None:
+        """Bounded cleanup after a crashed attempt has lost its lease or completed."""
+        from sqlalchemy import or_
+
+        with session_scope(self.sessions) as session:
+            attempts = session.execute(
+                select(ProcessingAsset.job_id, ProcessingAsset.lease_token)
+                .join(ProcessingJob)
+                .where(
+                    or_(
+                        ProcessingJob.state != "running",
+                        ProcessingJob.lease_token != ProcessingAsset.lease_token,
+                        ProcessingJob.lease_token.is_(None),
+                    )
+                )
+                .distinct()
+                .limit(16)
+            ).all()
+        for job_id, token in attempts:
+            self.release_staged(job_id, token)
+
     async def preserve_bytes(
         self,
         data: bytes,
         *,
         file_name: str,
         media_type: str,
+        staging: tuple[str, str] | None = None,
     ) -> Asset:
         """Preserve an already bounded response body through the normal Asset path."""
 
@@ -784,6 +875,7 @@ class AssetService:
                 size,
                 file_name,
                 media_type,
+                staging,
             )
         finally:
             temporary.unlink(missing_ok=True)

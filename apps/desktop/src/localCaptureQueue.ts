@@ -1,3 +1,4 @@
+import { persistentStorage } from "./persistentStorage";
 export const LOCAL_CAPTURE_QUEUE_KEY = "gunther:local-captures";
 export const LOCAL_CAPTURE_QUARANTINE_KEY = "gunther:local-captures-quarantine";
 
@@ -67,7 +68,7 @@ const quarantine = (storage: Storage, reason: string, payload: unknown) => {
   storage.setItem(LOCAL_CAPTURE_QUARANTINE_KEY, JSON.stringify([...existing, entry]));
 };
 
-export const loadStoredCaptures = (storage: Storage = window.localStorage): StoredCapture[] => {
+export const loadStoredCaptures = (storage: Storage = persistentStorage): StoredCapture[] => {
   const raw = storage.getItem(LOCAL_CAPTURE_QUEUE_KEY);
   if (!raw) return [];
 
@@ -102,7 +103,7 @@ export const loadStoredCaptures = (storage: Storage = window.localStorage): Stor
 
 export const appendStoredCapture = (
   capture: StoredCapture,
-  storage: Storage = window.localStorage,
+  storage: Storage = persistentStorage,
 ) => {
   const captures = loadStoredCaptures(storage);
   storage.setItem(LOCAL_CAPTURE_QUEUE_KEY, JSON.stringify([...captures, capture]));
@@ -110,7 +111,7 @@ export const appendStoredCapture = (
 
 export const removeStoredCapture = (
   captureId: string,
-  storage: Storage = window.localStorage,
+  storage: Storage = persistentStorage,
 ) => {
   storage.setItem(
     LOCAL_CAPTURE_QUEUE_KEY,

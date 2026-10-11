@@ -167,6 +167,18 @@ def is_sentence_checking(request: dict[str, Any]) -> bool:
     return SENTENCE_CHECKER_MARK in str(request["messages"][0]["content"])
 
 
+def _quiet_sentence_check(request: dict[str, Any]) -> dict[str, Any]:
+    import re
+
+    prompt = str(request["messages"][-1]["content"])
+    return {
+        "sentences": [
+            {"n": int(n), "verdict": "supported" if re.search(r"\[\d", text) else "nonfactual"}
+            for n, text in re.findall(r"^\((\d+)\) (.+)$", prompt, re.M)
+        ]
+    }
+
+
 REVISER_MARK = "You are the revising step"
 
 
@@ -309,11 +321,20 @@ def output_replies(
             )
         if is_auditing(request):
             return json.dumps({"claims": unmarked or []})
+        if is_sentence_checking(request):
+            return json.dumps(_quiet_sentence_check(request))
         if is_checking(request):
             return json.dumps(verdict or {"supports": [], "contradicts": []})
         if is_support_checking(request):
             flagged = unsupported(request) if callable(unsupported) else unsupported
-            return json.dumps({"unsupported": flagged or []})
+            prompt = str(request["messages"][-1]["content"])
+            numbers = [int(n) for n in re.findall(r"^\[(\d+)\]", prompt, re.M)]
+            return json.dumps(
+                {
+                    "unsupported": flagged or [],
+                    "supported": [n for n in numbers if n not in (flagged or [])],
+                }
+            )
         prompt = str(request["messages"][-1]["content"])
         asked = re.search(r"Write section (\d+) of", prompt)
         if asked is None:
@@ -373,7 +394,11 @@ def skill_replies(
         system = str(request["messages"][0]["content"])
         prompt = str(request["messages"][-1]["content"])
         step = skill_step(request)
+        if step == "editor_fidelity":
+            return json.dumps({"faithful": True})
         if step is None:
+            if is_sentence_checking(request):
+                return json.dumps(_quiet_sentence_check(request))
             if is_grading(request):
                 return json.dumps(
                     {"relevant": relevant if relevant is not None else list(range(1, 41))}
@@ -383,7 +408,8 @@ def skill_replies(
             if is_checking(request):
                 return json.dumps({"supports": [], "contradicts": []})
             if is_support_checking(request):
-                return json.dumps({"unsupported": []})
+                numbers = [int(n) for n in re.findall(r"^\[(\d+)\]", prompt, re.M)]
+                return json.dumps({"unsupported": [], "supported": numbers})
             return "{}"
         if "Choose the next action" in system:
             return json.dumps(actions.pop(0) if actions else {"action": "done"})

@@ -75,6 +75,7 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (19, "knowledge_saved_without_review"),
             (20, "agent_outputs"),
             (21, "session_briefs"),
+            (22, "canonical_documents"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
@@ -131,6 +132,13 @@ def test_v10_upgrade_backfills_evidence_without_rewriting_original(tmp_path: Pat
         "source_digests",  # v16
         "speech_clips",  # v17
         "message_traces",  # v18
+        "document_elements",  # v22
+        "block_element_maps",
+        "element_assets",
+        "reference_entries",
+        "citation_mentions",
+        "processing_assets",
+        "artifact_assets",
     }
     legacy = MetaData()
     for table in Base.metadata.sorted_tables:
@@ -1154,6 +1162,6 @@ def test_v20_database_gains_session_briefs_without_losing_conversations(tmp_path
             assert connection.execute(
                 text("SELECT title, brief_json FROM knowledge_sessions WHERE id = 'ses_old'")
             ).one() == ("Kept", "{}")
-        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 21
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 22
     finally:
         engine.dispose()

@@ -532,7 +532,8 @@ def test_a_conversation_can_switch_model_and_effort_at_any_turn(tmp_path: Path) 
             effort="medium",
         )
         assert fourth["context"]["effortLabel"] == "High"
-        assert fourth["context"]["notes"] == ["Flash has no Medium setting; used High."]
+        assert "Flash has no Medium setting; used High." in fourth["context"]["notes"]
+        assert fourth["context"]["coverage"]["status"] == "partial"
         asked = [r for r in fake.requests if "The pool:" in str(r["messages"][-1]["content"])]
         assert asked[3]["reasoning_effort"] == "high"
         assert all("reasoning_content" not in m for m in asked[3]["messages"])
@@ -593,3 +594,36 @@ def test_a_failing_model_says_so_and_the_quotes_stand_in(tmp_path: Path) -> None
     assert reply["context"]["modelError"] == (
         "DeepSeek is busy or out of credit (Insufficient Balance). Try again shortly."
     )
+
+
+def test_provider_test_uses_unsaved_model_ids_without_changing_the_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gunther import models_api
+    from gunther.service_settings import CheckResult
+
+    async def listed(url, key, name, *, key_optional=False):
+        return CheckResult(True, "Connected."), ["supplied-model"]
+
+    monkeypatch.setattr(models_api, "list_models", listed)
+    with TestClient(create_app(settings_for(tmp_path))) as client:
+        client.post(
+            "/api/settings/providers",
+            headers=SIDECAR,
+            json={"kind": "compatible", "models": ["old-model"]},
+        )
+        result = client.post(
+            "/api/settings/providers/compatible/test",
+            headers=SIDECAR,
+            json={"models": ["supplied-model"]},
+        ).json()
+        assert result["warning"] is None
+        current = next(p for p in result["overview"]["providers"] if p["id"] == "compatible")
+        assert [m["id"] for m in current["models"]] == ["old-model"]
+        assert current["status"]["check"] is None
+        changed = client.post(
+            "/api/settings/providers/compatible/test",
+            headers=SIDECAR,
+            json={"models": ["another-model"]},
+        ).json()
+        assert changed["warning"] == "another-model is not in this account's model list."

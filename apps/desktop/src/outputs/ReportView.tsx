@@ -8,6 +8,7 @@ const VERDICT: Record<OutputIssue["verdict"], string> = {
   unverified: "Not backed by a source",
   unsourced: "No source is cited",
   contradicted: "Left out: the sources disagree",
+  unchecked: "The source check is incomplete",
 };
 
 /** What the Checker found in one section, and whether it has looked at the text as it is now. */

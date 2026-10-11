@@ -388,7 +388,9 @@ def test_a_statement_about_the_sources_marked_by_the_writer_is_not_looked_up_or_
             "The sources give no figure for offices [?]. Trials covered flats [1].",
             {"action": "search_library", "query": "offices"},
             {"action": "answer"},
-            checked={"sentences": [{"n": 2, "verdict": "supported"}]},
+            checked={
+                "sentences": [{"n": 1, "verdict": "nonfactual"}, {"n": 2, "verdict": "supported"}]
+            },
             lookups={"claims": [{"claim": 1, "contradicts": [1]}]},
         )
     )
@@ -1658,7 +1660,7 @@ def test_a_failed_checklist_item_revises_once_then_checks_sentences_again() -> N
     assert "item 2 is missing" in prompt and "The pool:" in prompt
     labels = [step.label for step in result.steps]
     assert labels[-2:] == ["Checked the method", "Revised to follow the method"]
-    assert result.checked
+    assert result.coverage["status"] == "partial" and not result.checked
 
 
 def test_an_answer_that_passes_the_checklist_is_not_revised() -> None:
@@ -1690,7 +1692,8 @@ def test_a_skill_answer_is_always_checked() -> None:
     # A plan that only reworks text skips the checker; with a skill it does not.
     answer = {"action": "answer", "new_facts": False}
     fake, result = skilled("Shorter: 18% [?].", method_check((True, True, True)), plan=answer)
-    assert result.checked and any(is_sentence_checking(r) for r in fake.requests)
+    assert result.coverage["status"] == "partial" and not result.checked
+    assert any(is_sentence_checking(r) for r in fake.requests)
     assert "add no new facts" not in writer_prompts(fake)[0]
 
 
@@ -1948,8 +1951,11 @@ def test_research_searches_every_sub_question_first_then_plans() -> None:
     )
     assert searched[:3] == ["trial results", "reanalysis", "downsides"]
     assert searched[3:] == ["more on downsides"]
-    order = ["frame" if is_framing(r) else "grade" if is_grading_notes(r) else "plan"
-             for r in fake.requests if is_framing(r) or is_grading_notes(r) or is_planning(r)]
+    order = [
+        "frame" if is_framing(r) else "grade" if is_grading_notes(r) else "plan"
+        for r in fake.requests
+        if is_framing(r) or is_grading_notes(r) or is_planning(r)
+    ]
     assert order[:3] == ["frame", "grade", "plan"]  # one grading round, then the first plan
     grading = next(r for r in fake.requests if is_grading_notes(r))
     assert "q1: What did the trial measure?" in str(grading["messages"][-1]["content"])
@@ -1969,7 +1975,8 @@ def test_research_searches_every_sub_question_first_then_plans() -> None:
     assert [s.id for s in result.work.sub_questions] == ["q1", "q2", "q3"]
     writer = writer_prompts(fake)[0]
     assert "This is a research answer." in writer and "q2: Do other sources disagree?" in writer
-    assert result.checked and any(is_sentence_checking(r) for r in fake.requests)
+    assert result.coverage["status"] == "partial" and not result.checked
+    assert any(is_sentence_checking(r) for r in fake.requests)
 
 
 def test_the_web_fills_only_sub_questions_the_library_left_thin() -> None:
