@@ -126,6 +126,10 @@ jobs:
             echo "::warning::Signed but not notarized: set APPLE_ID, APPLE_PASSWORD and APPLE_TEAM_ID secrets."
           fi
 
+      # Built after the certificate import so a signed release also signs the parser runtime.
+      - name: Build the pinned layout parser runtime
+        run: uv run --frozen --project tools/document-parser scripts/build-document-parser.py
+
       - name: Build the installer (frontend, Rust shell and frozen backend)
         run: npm run build:desktop
 
