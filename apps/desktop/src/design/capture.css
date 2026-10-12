@@ -335,6 +335,28 @@
 .gx-capture .lecture-transcript em { color: var(--gx-faint); font-size: calc(12px * var(--gx-fs, 1)); font-style: normal; }
 .gx-capture .lecture-transcript textarea { width: 100%; min-height: 130px; padding: 12px 14px; border: 0; outline: 0; resize: vertical; background: transparent; color: var(--gx-ink); font-family: var(--gx-font-sans); font-size: calc(15px * var(--gx-fs, 1)); line-height: 1.7; }
 .gx-capture .lecture-transcript textarea::placeholder { color: var(--gx-ghost); }
+.gx-capture .lecture-live-note { margin: 0; padding: 6px 14px 0; color: var(--gx-faint); font-size: calc(12px * var(--gx-fs, 1)); }
+/* Paragraphs while recording: time in the margin, black when confirmed, greys while still live. */
+.gx-capture .lecture-paragraphs { max-height: min(56vh, 460px); min-height: 130px; padding: 10px 14px; overflow-y: auto; font-family: var(--gx-font-sans); font-size: calc(15px * var(--gx-fs, 1)); line-height: 1.7; }
+.gx-capture .lp-row { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; column-gap: 12px; padding: 4px 0; }
+.gx-capture .lp-row + .lp-row { margin-top: 6px; }
+.gx-capture .lp-time { height: 22px; margin-top: 3px; padding: 0; justify-self: start; border: 0; background: transparent; color: var(--gx-faint) !important; font-family: var(--gx-font-sans); font-size: calc(11.5px * var(--gx-fs, 1)); font-weight: 600; font-variant-numeric: tabular-nums; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; }
+.gx-capture button.lp-time:not(:disabled):hover { color: var(--gx-ink) !important; text-decoration-color: currentColor; }
+.gx-capture button.lp-time:disabled { cursor: default; }
+.gx-capture .lp-body { min-width: 0; }
+.gx-capture .lp-body p { margin: 0; overflow-wrap: anywhere; }
+.gx-capture .lp-confirmed { color: var(--gx-ink); border-radius: 6px; cursor: text; }
+.gx-capture .lp-confirmed:hover { background: var(--gx-hover); }
+.gx-capture .lp-sentences { color: var(--gx-muted); }
+.gx-capture .lp-draft { color: var(--gx-ghost); }
+.gx-capture .lp-gap { color: var(--gx-faint); font-size: calc(13px * var(--gx-fs, 1)); font-style: italic; }
+.gx-capture .lp-edited { color: var(--gx-ghost); font-size: calc(11.5px * var(--gx-fs, 1)); }
+.gx-capture .lp-edit { width: 100%; min-height: 60px; padding: 0; border: 0; outline: 0; resize: none; background: transparent; color: var(--gx-ink); font: inherit; line-height: inherit; }
+.gx-capture .lp-aside:empty { display: none; }
+@media (max-width: 520px) {
+  .gx-capture .lp-row { grid-template-columns: minmax(0, 1fr); }
+  .gx-capture .lp-time { height: 18px; margin-top: 0; }
+}
 .gx-capture .recording-moments { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .gx-capture .recording-moments > span { display: inline-flex; align-items: center; gap: 5px; color: var(--gx-faint); font-size: calc(12px * var(--gx-fs, 1)); }
 .gx-capture .recording-moments > span svg { color: var(--gx-id-rose); }

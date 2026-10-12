@@ -283,6 +283,7 @@ def test_recording_checkpoint_is_idempotent_versioned_and_recoverable(
             json={**initial_checkpoint, "transcript": "stale competing text"},
         )
         assert stale.status_code == 409
+        assert state["transcriptSegments"] is None
 
         advanced = client.patch(
             f"/api/recordings/{recording_id}/checkpoint",
@@ -321,3 +322,48 @@ def test_recording_checkpoint_is_idempotent_versioned_and_recoverable(
         assert state["knowledgeBaseId"] == "bioinformatics"
         assert state["checkpointRevision"] == 3
         assert state["recovery"]["canResume"] is False
+
+
+def test_checkpoint_stores_and_returns_the_transcript_segments(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    segments = {
+        "version": 1,
+        "sentences": [{"id": "s-0", "startMs": 0, "endMs": 900, "text": "你好。"}],
+        "paragraphs": [{"id": "p-0", "sentenceIds": ["s-0"], "frozen": True}],
+    }
+    body = {
+        "expectedRevision": 0,
+        "transcript": "[00:00] 你好。",
+        "transcriptSegments": segments,
+        "durationSeconds": 3,
+    }
+    with TestClient(create_app(settings)) as client:
+        recording_id = client.post(
+            "/api/recordings/sessions?title=Paragraphs", headers={"Content-Type": "audio/webm"}
+        ).json()["id"]
+        saved = client.patch(f"/api/recordings/{recording_id}/checkpoint", json=body)
+        assert saved.status_code == 200
+        assert saved.json()["transcriptSegments"] == segments
+        # The same checkpoint again changes nothing; different segments make a new revision.
+        assert (
+            client.patch(f"/api/recordings/{recording_id}/checkpoint", json=body).json()[
+                "checkpointRevision"
+            ]
+            == 1
+        )
+        changed = {**segments, "paragraphs": []}
+        again = client.patch(
+            f"/api/recordings/{recording_id}/checkpoint",
+            json={**body, "expectedRevision": 1, "transcriptSegments": changed},
+        )
+        assert again.json()["checkpointRevision"] == 2
+        assert (
+            client.get(f"/api/recordings/{recording_id}/metadata").json()["transcriptSegments"]
+            == changed
+        )
+        too_big = {"version": 1, "pad": "x" * 2_100_000}
+        rejected = client.patch(
+            f"/api/recordings/{recording_id}/checkpoint",
+            json={**body, "expectedRevision": 2, "transcriptSegments": too_big},
+        )
+        assert rejected.status_code == 422

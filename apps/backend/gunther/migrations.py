@@ -523,6 +523,16 @@ def _add_canonical_documents(connection: Connection, metadata: MetaData) -> None
             table.create(bind=connection, checkfirst=True)
 
 
+def _add_recording_transcript_segments(connection: Connection, _metadata: MetaData) -> None:
+    """A recording keeps its transcript as sentences, check windows and paragraphs, so
+    recovery restores the paragraph view. Older recordings have none (NULL)."""
+
+    if inspect(connection).has_table("recording_sessions"):
+        add_column_if_missing(
+            connection, "recording_sessions", "transcript_segments_json", "TEXT"
+        )
+
+
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
 MIGRATIONS: tuple[Migration, ...] = (
@@ -548,6 +558,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(20, "agent_outputs", _create_agent_outputs),
     Migration(21, "session_briefs", _add_session_briefs),
     Migration(22, "canonical_documents", _add_canonical_documents),
+    Migration(23, "recording_transcript_segments", _add_recording_transcript_segments),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

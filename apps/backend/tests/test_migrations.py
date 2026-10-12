@@ -76,6 +76,7 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (20, "agent_outputs"),
             (21, "session_briefs"),
             (22, "canonical_documents"),
+            (23, "recording_transcript_segments"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
@@ -1162,6 +1163,38 @@ def test_v20_database_gains_session_briefs_without_losing_conversations(tmp_path
             assert connection.execute(
                 text("SELECT title, brief_json FROM knowledge_sessions WHERE id = 'ses_old'")
             ).one() == ("Kept", "{}")
-        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 22
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 23
+    finally:
+        engine.dispose()
+
+
+def test_v22_database_gains_transcript_segments_without_losing_recordings(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path)
+    try:
+        run_migrations(engine, Base.metadata, MIGRATIONS[:22])
+        with engine.begin() as connection:
+            # Baseline adopts current metadata; remove what a v22 app never had.
+            connection.exec_driver_sql(
+                "ALTER TABLE recording_sessions DROP COLUMN transcript_segments_json"
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO recording_sessions (id, title, status, content_type, file_name, "
+                    "byte_size, next_sequence, transcript, duration_seconds, moments_json, "
+                    "recording_context, checkpoint_revision, created_at, updated_at) "
+                    "VALUES ('rec_old', 'Kept', 'completed', 'audio/webm', 'old.webm', 0, 0, "
+                    "'[00:00] Hello', 5, '[]', 'lecture', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+        history = run_migrations(engine, Base.metadata)
+        assert run_migrations(engine, Base.metadata) == history
+        with engine.connect() as connection:
+            assert connection.execute(
+                text(
+                    "SELECT transcript, transcript_segments_json FROM recording_sessions "
+                    "WHERE id = 'rec_old'"
+                )
+            ).one() == ("[00:00] Hello", None)
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 23
     finally:
         engine.dispose()

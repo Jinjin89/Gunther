@@ -61,6 +61,16 @@ def _recording_lock(recording_id: str) -> threading.Lock:
         return _recording_locks.setdefault(recording_id, threading.Lock())
 
 
+def _segments_from(raw: str | None) -> dict[str, object] | None:
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def _timestamp(value: datetime) -> str:
     normalized = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
     return normalized.isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -137,6 +147,7 @@ class RecordingService:
             size_bytes=recording.byte_size,
             next_expected_sequence=recording.next_sequence,
             transcript=recording.transcript,
+            transcript_segments=_segments_from(recording.transcript_segments_json),
             duration_seconds=recording.duration_seconds,
             moments=moments,
             recording_context=recording.recording_context,  # type: ignore[arg-type]
@@ -454,13 +465,20 @@ class RecordingService:
         payload: RecordingCheckpointInput,
     ) -> RecordingSessionOut:
         moments = [moment.model_dump(mode="json") for moment in payload.moments]
-        checkpoint_document = {
+        checkpoint_document: dict[str, object] = {
             "transcript": payload.transcript,
             "durationSeconds": payload.duration_seconds,
             "moments": moments,
             "recordingContext": payload.recording_context,
             "knowledgeBaseId": payload.knowledge_base_id,
         }
+        segments_json: str | None = None
+        if payload.transcript_segments is not None:
+            # Part of the checkpoint (and its hash) only when sent, so older hashes stay valid.
+            checkpoint_document["transcriptSegments"] = payload.transcript_segments
+            segments_json = json.dumps(
+                payload.transcript_segments, ensure_ascii=False, separators=(",", ":")
+            )
         serialized = json.dumps(
             checkpoint_document,
             ensure_ascii=False,
@@ -490,6 +508,7 @@ class RecordingService:
 
             now = utc_now()
             recording.transcript = payload.transcript
+            recording.transcript_segments_json = segments_json
             recording.duration_seconds = payload.duration_seconds
             recording.moments_json = json.dumps(
                 moments,

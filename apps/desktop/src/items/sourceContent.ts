@@ -194,7 +194,7 @@ function isRecordingContent(content: string): boolean {
   return RECORDING_META.test(content.slice(0, 2_000));
 }
 
-function parseTranscript(text: string): TranscriptSegment[] {
+export function parseTranscript(text: string): TranscriptSegment[] {
   const segments: TranscriptSegment[] = [];
   let paragraph: string[] = [];
   const flush = () => {

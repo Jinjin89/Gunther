@@ -1,3 +1,4 @@
+import json
 from typing import Any, Literal
 
 from pydantic import (
@@ -6,6 +7,7 @@ from pydantic import (
     Field,
     SerializeAsAny,
     SerializerFunctionWrapHandler,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -455,10 +457,19 @@ class RecordingMoment(ApiModel):
 class RecordingCheckpointInput(ApiModel):
     expected_revision: int = Field(ge=0)
     transcript: str = Field(default="", max_length=1_000_000)
+    # The desktop's TranscriptState (sentences, check windows, paragraphs), kept as sent.
+    transcript_segments: dict[str, Any] | None = None
     duration_seconds: int = Field(default=0, ge=0, le=604_800)
     moments: list[RecordingMoment] = Field(default_factory=list, max_length=500)
     recording_context: RecordingContext = "lecture"
     knowledge_base_id: str | None = Field(default=None, min_length=1, max_length=160)
+
+    @field_validator("transcript_segments")
+    @classmethod
+    def _segments_fit(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is not None and len(json.dumps(value, ensure_ascii=False)) > 2_000_000:
+            raise ValueError("The transcript segments are limited to 2 MB.")
+        return value
 
 
 class RecordingRecoveryOut(ApiModel):
@@ -474,6 +485,7 @@ class RecordingSessionOut(RecordingAssetOut):
     status: RecordingStatus
     next_expected_sequence: int
     transcript: str
+    transcript_segments: dict[str, Any] | None = None
     duration_seconds: int
     moments: list[RecordingMoment] = Field(default_factory=list)
     recording_context: RecordingContext

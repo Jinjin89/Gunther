@@ -6,7 +6,7 @@ import type {
   RecordingMoment,
   RecordingSession,
 } from "@gunther/contracts";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type ChangeEvent } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   AudioLines,
   Bookmark,
@@ -23,7 +23,21 @@ import {
   X,
 } from "lucide-react";
 import { knowledgeApi, recordingAssetUrl, recordingSocketUrl } from "../api";
-import { encodePcm16 } from "../services/pcm";
+import { encodePcm16, pcm16Length } from "../services/pcm";
+import {
+  applyLiveEvent,
+  confirmLive,
+  editParagraph,
+  emptyTranscript,
+  hasTranscriptContent,
+  isTranscriptState,
+  renderTranscript,
+  storableTranscript,
+  transcriptFromText,
+  type TranscriptState,
+} from "../services/liveTranscript";
+import { parseTranscript } from "../items/sourceContent";
+import { TranscriptParagraphs } from "./TranscriptParagraphs";
 import {
   assertRecordingSpoolAvailable,
   bindRecordingSpoolWorkspace,
@@ -50,10 +64,13 @@ export interface ImportedAudioDraft {
 }
 
 export interface RecordingDraft {
-  formatVersion?: 2;
+  /** 3 adds `segments`; a version 2 draft has only the text and still restores. */
+  formatVersion?: 2 | 3;
   id: string;
   title: string;
   transcript: string;
+  /** The live transcript as sentences and paragraphs (drafts are never kept). */
+  segments?: TranscriptState | null;
   summary: LectureSummary | null;
   seconds: number;
   recording: RecordingAsset;
@@ -286,7 +303,8 @@ export function loadRecordingDrafts(): RecordingDraft[] {
       .filter((draft) => draft?.id && draft?.recording?.id)
       .map((draft) => ({
         ...draft,
-        formatVersion: 2 as const,
+        formatVersion: draft.formatVersion === 3 ? (3 as const) : (2 as const),
+        segments: isTranscriptState(draft.segments) ? draft.segments : null,
         workspaceId: typeof draft.workspaceId === "string" ? draft.workspaceId : null,
         importedAudio: normalizeImportedAudioDraft(draft.importedAudio),
       }))
@@ -344,10 +362,27 @@ function mergeMoments(local: RecordingMoment[], remote: RecordingMoment[]) {
   return [...merged.values()].sort((left, right) => left.seconds - right.seconds);
 }
 
-interface TranscriptPart {
-  draft: string;
-  final: string | null;
-  startSeconds: number | undefined;
+/** Live audio waits this long for a connection, then the oldest goes (it stays in the saved file). */
+const PENDING_AUDIO_MS = 60_000;
+/** Audio already sent is kept this long, to send again if the connection drops before it is heard. */
+const SENT_AUDIO_MS = 30_000;
+/** Pause and Stop wait this long for the last sentence before going on without it. */
+const FLUSH_WAIT_MS = 10_000;
+const LIVE_RATE = 16_000;
+
+interface PendingAudio {
+  audio: string;
+  offsetMs: number;
+  ms: number;
+}
+
+/** What a checkpoint or draft keeps of the transcript: no draft; lighter once it is very long. */
+function segmentsPayload(state: TranscriptState): TranscriptState | null {
+  if (!hasTranscriptContent(state)) return null;
+  const stored = storableTranscript(state);
+  return stored.sentences.length > 3_000
+    ? { ...stored, windows: stored.windows.map((window) => ({ ...window, live: [] })) }
+    : stored;
 }
 
 interface LectureRecorderProps {
@@ -399,6 +434,15 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   const [seconds, setSeconds] = useState(0);
   const [level, setLevel] = useState(0);
   const [transcript, setTranscript] = useState("");
+  const [segments, setSegments] = useState<TranscriptState>(emptyTranscript);
+  // What is saved of the transcript changes only when settled text does, not with every
+  // rewrite of the grey sentence being heard (several a second).
+  const storedSegments = useMemo(
+    () => segmentsPayload(segments),
+    [segments.sentences, segments.paragraphs, segments.live, segments.windows, segments.gaps, segments.confirmedUntilMs, segments.grouping, segments.heldEndMs],
+  );
+  const [liveNote, setLiveNote] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
   const [summary, setSummary] = useState<LectureSummary | null>(null);
   const [summarizing, setSummarizing] = useState(false);
   const [provider, setProvider] = useState<"checking" | "available" | "connecting" | "live" | "local-only">("checking");
@@ -433,11 +477,19 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   const nextSpoolSequenceRef = useRef(0);
   const persistenceInterruptedRef = useRef(false);
   const spoolFailureRef = useRef<Error | null>(null);
-  const pendingPcmRef = useRef<string[]>([]);
+  const pendingPcmRef = useRef<PendingAudio[]>([]);
+  const sentPcmRef = useRef<PendingAudio[]>([]);
+  const segmentsRef = useRef<TranscriptState>(emptyTranscript());
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  // The recording clock: milliseconds of microphone audio captured since the recording began
+  // (pauses excluded), counted at the microphone's own rate so it keeps step with the saved
+  // file, plus where an earlier part of a resumed recording ended.
+  const capturedMsRef = useRef(0);
+  const clockBaseMsRef = useRef(0);
+  const flushWaitersRef = useRef<{ untilMs: number; done: () => void }[]>([]);
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const transcriptionEnabledRef = useRef(true);
-  const partsRef = useRef(new Map<string, TranscriptPart>());
   const timerRef = useRef<number | null>(null);
   const transcriptRef = useRef<HTMLTextAreaElement | null>(null);
   const importedAudioRef = useRef<ImportedAudioDraft | null>(null);
@@ -579,6 +631,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
 
   useEffect(() => {
     checkpointSnapshotRef.current = {
+      ...checkpointSnapshotRef.current,
       transcript,
       durationSeconds: seconds,
       moments,
@@ -587,18 +640,45 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     };
   }, [knowledgeBaseId, moments, recordingContext, seconds, transcript]);
 
-  const publishTranscript = useCallback(() => {
-    const next = [...partsRef.current.values()]
-      .map((part) => `${part.startSeconds === undefined ? "" : `[${formatTime(Math.round(part.startSeconds))}] `}${part.final ?? part.draft}`)
-      .join("\n")
-      .replace(/[ \t]+/g, " ")
-      .trim();
+  /** Replace the transcript; `transcript` (checkpoint, draft, saved note) is its rendered text. */
+  const commitTranscript = useCallback((next: TranscriptState) => {
+    const previous = segmentsRef.current;
+    segmentsRef.current = next;
+    const sameText = previous.sentences === next.sentences
+      && previous.paragraphs === next.paragraphs
+      && previous.live === next.live
+      && previous.gaps === next.gaps;
+    const text = sameText ? checkpointSnapshotRef.current.transcript : renderTranscript(next);
     checkpointSnapshotRef.current = {
       ...checkpointSnapshotRef.current,
-      transcript: next,
+      transcript: text,
+      transcriptSegments: segmentsPayload(next) as unknown as Record<string, unknown> | null,
     };
-    setTranscript(next);
+    setSegments(next);
+    setTranscript(text);
   }, []);
+
+  const currentClockMs = () => clockBaseMsRef.current + Math.round(capturedMsRef.current);
+
+  /** Everything heard so far is final: confirm the live sentences (Pause, Stop, a closed socket). */
+  const closeOutTranscript = () => commitTranscript(confirmLive(segmentsRef.current, { closing: true }));
+
+  const releaseFlushWaiters = (untilMs = Number.POSITIVE_INFINITY) => {
+    const ready = flushWaitersRef.current.filter((waiter) => waiter.untilMs <= untilMs + 250);
+    flushWaitersRef.current = flushWaitersRef.current.filter((waiter) => !ready.includes(waiter));
+    ready.forEach((waiter) => waiter.done());
+  };
+
+  /** Ask the backend to finish the sentence being heard, and wait (a while) for its answer. */
+  const commitAndWait = (socket: WebSocket) => new Promise<void>((resolve) => {
+    const waiter = { untilMs: currentClockMs(), done: () => { window.clearTimeout(timer); resolve(); } };
+    const timer = window.setTimeout(() => {
+      flushWaitersRef.current = flushWaitersRef.current.filter((item) => item !== waiter);
+      resolve();
+    }, FLUSH_WAIT_MS);
+    flushWaitersRef.current.push(waiter);
+    socket.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+  });
 
   const closeAudioPipeline = useCallback(() => {
     microphoneRequestRef.current?.abort();
@@ -616,13 +696,41 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   const stopTranscriptionReconnect = useCallback(() => {
     transcriptionEnabledRef.current = false;
     pendingPcmRef.current = [];
+    sentPcmRef.current = [];
     if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
     reconnectTimerRef.current = null;
   }, []);
 
+  const sendAudio = (socket: WebSocket, item: PendingAudio) => {
+    socket.send(JSON.stringify({ type: "input_audio_buffer.append", audio: item.audio, offset_ms: item.offsetMs }));
+    const sent = sentPcmRef.current;
+    sent.push(item);
+    while (sent.length > 1 && item.offsetMs - sent[0]!.offsetMs > SENT_AUDIO_MS) sent.shift();
+  };
+
+  /**
+   * The connection dropped: audio sent after the last sentence the backend finished may never
+   * have been heard. Put it back in front of the queue; the backend drops what it already has.
+   */
+  const requeueUnheardAudio = () => {
+    const state = segmentsRef.current;
+    const heardUntil = state.live.reduce((end, sentence) => Math.max(end, sentence.endMs), state.confirmedUntilMs);
+    const unheard = sentPcmRef.current.filter((item) => item.offsetMs >= heardUntil);
+    sentPcmRef.current = [];
+    if (!unheard.length) return;
+    const queued = new Set(pendingPcmRef.current.map((item) => item.offsetMs));
+    pendingPcmRef.current = [...unheard.filter((item) => !queued.has(item.offsetMs)), ...pendingPcmRef.current];
+    let total = pendingPcmRef.current.reduce((sum, item) => sum + item.ms, 0);
+    while (total > PENDING_AUDIO_MS && pendingPcmRef.current.length > 1) total -= pendingPcmRef.current.shift()!.ms;
+  };
+
   const openTranscriptionSocket = (context: string) => {
     if (!transcriptionEnabledRef.current) return;
-    const socket = new WebSocket(recordingSocketUrl(context));
+    // The connection starts at the oldest audio still waiting: queued audio keeps its true place.
+    const socket = new WebSocket(recordingSocketUrl(context, "recording", {
+      offsetMs: pendingPcmRef.current[0]?.offsetMs ?? currentClockMs(),
+      recordingId: recordingSessionRef.current?.id,
+    }));
     socketRef.current = socket;
     setProvider("connecting");
     socket.onmessage = (message) => {
@@ -631,36 +739,34 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
         reconnectAttemptsRef.current = 0;
         setProvider("live");
         setTranscriptionLabel(transcriptionLabelFor(event));
+        setLiveNote(event.live === "segments");
         const buffered = pendingPcmRef.current.splice(0);
-        buffered.forEach((audio) => socket.send(JSON.stringify({ type: "input_audio_buffer.append", audio })));
+        buffered.forEach((item) => sendAudio(socket, item));
         if (buffered.length) setNotice("Live transcription reconnected and caught up with buffered audio.");
         return;
       }
       if (event.type === "service.error") {
-        if (event.code === "sensevoice_segment_failed") {
-          setNotice(String(event.message ?? "SenseVoice missed one short segment; the original audio is still safe."));
+        if (event.code === "sensevoice_segment_failed" || event.code === "segment_failed") {
+          setNotice(String(event.message ?? "Live transcription missed one short piece; the original audio is still safe."));
           return;
         }
-        if (event.code === "not_configured") {
+        if (event.code === "not_configured" || event.code === "provider_unavailable") {
+          // Trying again will not help: keep recording, and keep the audio locally.
           transcriptionEnabledRef.current = false;
           pendingPcmRef.current = [];
+          releaseFlushWaiters();
         }
         setProvider("local-only");
         setNotice(String(event.message ?? "Live transcription is unavailable; audio remains local."));
         return;
       }
-      const itemId = typeof event.item_id === "string" ? event.item_id : `current-${reconnectAttemptsRef.current}`;
-      if (event.type === "conversation.item.input_audio_transcription.delta") {
-        const current = partsRef.current.get(itemId) ?? { draft: "", final: null, startSeconds: typeof event.start_seconds === "number" ? event.start_seconds : undefined };
-        current.draft += String(event.delta ?? "");
-        partsRef.current.set(itemId, current);
-        publishTranscript();
+      const next = applyLiveEvent(segmentsRef.current, event);
+      if (next) {
+        commitTranscript(next);
+        return;
       }
-      if (event.type === "conversation.item.input_audio_transcription.completed") {
-        const current = partsRef.current.get(itemId) ?? { draft: "", final: null, startSeconds: typeof event.start_seconds === "number" ? event.start_seconds : undefined };
-        current.final = String(event.transcript ?? current.draft);
-        partsRef.current.set(itemId, current);
-        publishTranscript();
+      if (event.type === "transcript.flushed" && typeof event.until_ms === "number") {
+        releaseFlushWaiters(event.until_ms);
       }
     };
     socket.onerror = () => {
@@ -670,7 +776,9 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
       }
     };
     socket.onclose = () => {
+      releaseFlushWaiters();
       if (!transcriptionEnabledRef.current || !streamRef.current || phaseRef.current === "stopped" || phaseRef.current === "error") return;
+      if (socketRef.current === socket) requeueUnheardAudio();
       reconnectAttemptsRef.current += 1;
       if (reconnectAttemptsRef.current > 8) {
         setProvider("local-only");
@@ -699,13 +807,12 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     setMicrophoneIssue(null);
     setNotice("Saving the existing audio locally in reliable chunks…");
     setSummary(null);
-    setTranscript("");
+    commitTranscript(emptyTranscript());
     setMoments([]);
     setSeconds(0);
     setSavedRecording(null);
     setImportedAudio(null);
     importedAudioRef.current = null;
-    partsRef.current.clear();
     recordingSessionRef.current = null;
     checkpointChainRef.current = Promise.resolve();
     checkpointRevisionRef.current = 0;
@@ -781,10 +888,11 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
         importedAudioRef.current = nextState;
         setImportedAudio(nextState);
         const draft: RecordingDraft = {
-          formatVersion: 2,
+          formatVersion: 3,
           id: session.id,
           title: importedTitle,
           transcript: "",
+          segments: null,
           summary: null,
           seconds: importedDuration,
           recording,
@@ -900,17 +1008,31 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
       setImportedAudio(null);
       importedAudioRef.current = null;
       setMoments([]);
-      partsRef.current.clear();
-      setTranscript("");
       setSeconds(0);
       checkpointSnapshotRef.current = {
         transcript: "",
+        transcriptSegments: null,
         durationSeconds: 0,
         moments: [],
         recordingContext,
         knowledgeBaseId: knowledgeBaseId || null,
       };
+      commitTranscript(emptyTranscript());
     }
+    // A resumed recording continues the clock where its saved audio ends.
+    clockBaseMsRef.current = resumableSession
+      ? Math.max(seconds, resumableSession.durationSeconds) * 1_000
+      : 0;
+    capturedMsRef.current = 0;
+    sentPcmRef.current = [];
+    flushWaitersRef.current = [];
+    setLiveNote(false);
+    setFinalizing(false);
+    commitTranscript({
+      ...segmentsRef.current,
+      draft: null,
+      confirmedUntilMs: Math.max(segmentsRef.current.confirmedUntilMs, clockBaseMsRef.current),
+    });
     setPersistence("idle");
     recordingSessionRef.current = resumableSession;
     uploadChainRef.current = Promise.resolve();
@@ -986,10 +1108,11 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
       // It lets a restart discover both the server session and any IndexedDB chunks.
       failureStage = "draft";
       const minimalDraft: RecordingDraft = {
-        formatVersion: 2,
+        formatVersion: 3,
         id: session.id,
         title: title.trim() || recordingLabel,
         transcript: checkpointSnapshotRef.current.transcript,
+        segments: segmentsPayload(segmentsRef.current),
         summary: null,
         seconds: checkpointSnapshotRef.current.durationSeconds,
         recording: session,
@@ -1111,15 +1234,28 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
       };
       window.requestAnimationFrame(meter);
       processor.onaudioprocess = (event) => {
-        if (phaseRef.current !== "recording" || !transcriptionEnabledRef.current) return;
-        const audio = encodePcm16(event.inputBuffer.getChannelData(0), audioContext.sampleRate);
+        if (phaseRef.current !== "recording") return;
+        const channel = event.inputBuffer.getChannelData(0);
+        // Where this audio sits on the recording clock, whether or not it can be sent now.
+        const offsetMs = currentClockMs();
+        const length = pcm16Length(channel.length, audioContext.sampleRate, LIVE_RATE);
+        capturedMsRef.current += (channel.length * 1_000) / audioContext.sampleRate;
+        if (!transcriptionEnabledRef.current) return;
+        const item: PendingAudio = {
+          audio: encodePcm16(channel, audioContext.sampleRate, LIVE_RATE),
+          offsetMs,
+          ms: (length * 1_000) / LIVE_RATE,
+        };
         const socket = socketRef.current;
         if (socket?.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: "input_audio_buffer.append", audio }));
+          sendAudio(socket, item);
           return;
         }
-        pendingPcmRef.current.push(audio);
-        if (pendingPcmRef.current.length > 120) pendingPcmRef.current.shift();
+        // No connection: keep up to a minute of audio, each piece with its own place.
+        const queue = pendingPcmRef.current;
+        queue.push(item);
+        let queued = queue.reduce((total, piece) => total + piece.ms, 0);
+        while (queued > PENDING_AUDIO_MS && queue.length > 1) queued -= queue.shift()!.ms;
       };
       recorder.start(10_000);
       setPersistence("saving");
@@ -1158,14 +1294,20 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   };
 
   const pause = () => {
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-    }
+    const socket = socketRef.current;
+    // The sentence being said is finished; once the backend says so, everything is confirmed.
+    const heard = socket?.readyState === WebSocket.OPEN && transcriptionEnabledRef.current
+      ? commitAndWait(socket)
+      : Promise.resolve();
     if (recorderRef.current?.state === "recording") recorderRef.current.requestData();
     recorderRef.current?.pause();
     void audioContextRef.current?.suspend();
     updatePhase("paused");
     void queueCheckpoint();
+    void heard.then(() => {
+      closeOutTranscript();
+      void queueCheckpoint();
+    });
   };
 
   const resume = () => {
@@ -1176,14 +1318,20 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
 
   const stop = () => {
     const transcriptionSocket = socketRef.current;
-    if (transcriptionSocket?.readyState === WebSocket.OPEN) {
-      pendingPcmRef.current.splice(0).forEach((audio) => {
-        transcriptionSocket.send(JSON.stringify({ type: "input_audio_buffer.append", audio }));
-      });
-      transcriptionSocket.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-      window.setTimeout(() => transcriptionSocket.close(), 1_800);
+    let heard = Promise.resolve();
+    if (transcriptionSocket?.readyState === WebSocket.OPEN && transcriptionEnabledRef.current) {
+      pendingPcmRef.current.splice(0).forEach((item) => sendAudio(transcriptionSocket, item));
+      heard = commitAndWait(transcriptionSocket);
     } else transcriptionSocket?.close();
     stopTranscriptionReconnect();
+    // The last sentence is heard to its end (at most 10 s), then the socket closes and every
+    // live sentence is confirmed. The note is not ready for saving until then.
+    setFinalizing(true);
+    void heard.then(() => {
+      transcriptionSocket?.close();
+      closeOutTranscript();
+      setFinalizing(false);
+    });
     if (recorderRef.current?.state !== "inactive") recorderRef.current?.stop();
     closeAudioPipeline();
     setLevel(0);
@@ -1256,6 +1404,23 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     void queueCheckpoint();
   };
 
+  /**
+   * Put saved text back as paragraphs: the saved sentences if one of them renders to exactly
+   * this text, else (an older draft) its "[mm:ss]" lines as locked paragraphs. Text with no
+   * times, pasted or typed, stays plain text. Whatever was still live is now final.
+   */
+  const adoptTranscript = (text: string, candidates: (unknown)[], parseOlderText: boolean) => {
+    const saved = candidates.filter(isTranscriptState).find((candidate) => renderTranscript(candidate) === text);
+    const state = saved ?? (parseOlderText ? transcriptFromText(parseTranscript(text)) : null);
+    if (state) {
+      commitTranscript(confirmLive({ ...state, draft: null, checking: null }, { closing: true }));
+      return;
+    }
+    commitTranscript(emptyTranscript());
+    checkpointSnapshotRef.current = { ...checkpointSnapshotRef.current, transcript: text, transcriptSegments: null };
+    setTranscript(text);
+  };
+
   const restore = (draft: RecordingDraft) => {
     const boundWorkspaceId = requireWorkspaceId();
     if (!draft.workspaceId || draft.workspaceId !== boundWorkspaceId) {
@@ -1267,7 +1432,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     stopTranscriptionReconnect();
     closeAudioPipeline();
     onTitleChange?.(draft.title);
-    setTranscript(draft.transcript);
+    adoptTranscript(draft.transcript, [draft.segments], !draft.importedAudio);
     setSummary(draft.summary);
     setMoments(draft.moments ?? []);
     setSeconds(draft.seconds);
@@ -1288,7 +1453,8 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
       ? draft.recording.nextExpectedSequence
       : 0;
     checkpointSnapshotRef.current = {
-      transcript: draft.transcript,
+      transcript: checkpointSnapshotRef.current.transcript,
+      transcriptSegments: checkpointSnapshotRef.current.transcriptSegments ?? null,
       durationSeconds: draft.seconds,
       moments: draft.moments ?? [],
       recordingContext: draft.recordingContext,
@@ -1343,6 +1509,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
         ? server.knowledgeBaseId ?? draft.knowledgeBaseId
         : draft.knowledgeBaseId;
       checkpointSnapshotRef.current = {
+        ...checkpointSnapshotRef.current,
         transcript: mergedTranscript,
         durationSeconds: mergedSeconds,
         moments: mergedMoments,
@@ -1379,10 +1546,12 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
         importedAudioRef.current = restoredImport;
         setImportedAudio(restoredImport);
       }
+      adoptTranscript(mergedTranscript, [draft.segments, server.transcriptSegments], !restoredImport);
       const mergedDraft: RecordingDraft = {
         ...draft,
-        formatVersion: 2,
-        transcript: mergedTranscript,
+        formatVersion: 3,
+        transcript: checkpointSnapshotRef.current.transcript,
+        segments: segmentsPayload(segmentsRef.current),
         seconds: mergedSeconds,
         moments: mergedMoments,
         recordingContext: mergedContext,
@@ -1392,7 +1561,6 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
         recording: server,
         updatedAt: new Date().toISOString(),
       };
-      setTranscript(mergedTranscript);
       setMoments(mergedMoments);
       setSeconds(mergedSeconds);
       setSavedRecording(server);
@@ -1470,7 +1638,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
       void queueCheckpoint();
     }, 800);
     return () => window.clearTimeout(checkpointTimer);
-  }, [knowledgeBaseId, moments, phase, queueCheckpoint, recordingContext, seconds, transcript]);
+  }, [knowledgeBaseId, moments, phase, queueCheckpoint, recordingContext, seconds, storedSegments, transcript]);
   useEffect(() => {
     if (!savedRecording || phase === "idle" || phase === "error" || phase === "requesting" || phase === "importing") {
       onDraftChange?.(null);
@@ -1478,10 +1646,11 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     }
     if (phase === "recording" && seconds % 5 !== 0) return;
     const draft: RecordingDraft = {
-      formatVersion: 2,
+      formatVersion: 3,
       id: savedRecording.id,
       title: title.trim() || recordingLabel,
       transcript,
+      segments: storedSegments,
       summary,
       seconds,
       recording: savedRecording,
@@ -1494,12 +1663,13 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     };
     preserveRecordingDraft(draft);
     onDraftChange?.(draft);
-  }, [importedAudio, knowledgeBaseId, moments, onDraftChange, phase, recordingContext, recordingLabel, requireWorkspaceId, savedRecording, seconds, summary, title, transcript]);
+  }, [importedAudio, knowledgeBaseId, moments, onDraftChange, phase, recordingContext, recordingLabel, requireWorkspaceId, savedRecording, seconds, storedSegments, summary, title, transcript]);
   useEffect(() => {
-    onKnowledgeContent(phase === "stopped" && persistence === "saved"
+    // Not ready while the last sentence is still being heard to its end.
+    onKnowledgeContent(phase === "stopped" && persistence === "saved" && !finalizing
       ? knowledgeDocument(title, transcript, summary, seconds, savedRecording, moments)
       : "");
-  }, [moments, onKnowledgeContent, persistence, phase, savedRecording, seconds, summary, title, transcript]);
+  }, [finalizing, moments, onKnowledgeContent, persistence, phase, savedRecording, seconds, summary, title, transcript]);
   useEffect(() => {
     if (!active || !transcriptRef.current || document.activeElement === transcriptRef.current) return;
     transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
@@ -1542,17 +1712,33 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     {notice && <p className="lecture-notice" role={microphoneIssue ? "alert" : "status"}><CircleAlert size={13} />{notice}</p>}
     <div className="lecture-transcript">
       <header><span><strong>Live transcript</strong><small>Editable before it becomes knowledge</small></span><em>{transcript.trim() ? `${transcript.trim().split(/\s+/).length} words` : "Waiting for speech"}</em></header>
-      <textarea ref={transcriptRef} value={transcript} onChange={(event) => {
-        checkpointSnapshotRef.current = {
-          ...checkpointSnapshotRef.current,
-          transcript: event.target.value,
-        };
-        setTranscript(event.target.value);
-        setSummary(null);
-      }} placeholder={provider === "local-only" ? "Audio is recording locally. Paste or type a transcript here to summarize it." : "Your words will appear here as the lecture continues…"} rows={7} />
+      {liveNote && <p className="lecture-live-note">Live text comes in short pieces for this model.</p>}
+      {hasTranscriptContent(segments)
+        ? <TranscriptParagraphs
+          state={segments}
+          active={active}
+          onEdit={(paragraphId, text) => {
+            commitTranscript(editParagraph(segmentsRef.current, paragraphId, text));
+            setSummary(null);
+          }}
+          onSeek={audioUrl ? (seconds) => {
+            const element = audioRef.current;
+            if (!element) return;
+            element.currentTime = seconds;
+            void element.play().catch(() => undefined);
+          } : undefined}
+        />
+        : <textarea ref={transcriptRef} value={transcript} onChange={(event) => {
+          checkpointSnapshotRef.current = {
+            ...checkpointSnapshotRef.current,
+            transcript: event.target.value,
+          };
+          setTranscript(event.target.value);
+          setSummary(null);
+        }} placeholder={provider === "local-only" ? "Audio is recording locally. Paste or type a transcript here to summarize it." : "Your words will appear here as the lecture continues…"} rows={7} />}
     </div>
     {moments.length > 0 && <div className="recording-moments"><span><Bookmark size={13} />Marked for review</span>{moments.map((moment, index) => <button type="button" key={`${moment.seconds}-${index}`} onClick={() => removeMoment(index)} title="Remove this marker"><strong>{formatTime(moment.seconds)}</strong><small>{moment.label}</small><X size={11} /></button>)}</div>}
-    {audioUrl && <div className="lecture-playback"><audio controls src={audioUrl} /><span className={persistence === "saved" ? "is-saved" : ""}>{persistence === "saved" && savedRecording ? `Saved locally · ${savedRecording.sizeBytes >= 1_048_576 ? `${(savedRecording.sizeBytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(savedRecording.sizeBytes / 1024))} KB`}` : "Finishing local save…"}</span><a href={audioUrl} download={`${(title || "lecture").replace(/[^a-z0-9-_]+/gi, "-")}.${downloadExtension}`}><Download size={13} />Download</a></div>}
+    {audioUrl && <div className="lecture-playback"><audio ref={audioRef} controls src={audioUrl} /><span className={persistence === "saved" ? "is-saved" : ""}>{persistence === "saved" && savedRecording ? `Saved locally · ${savedRecording.sizeBytes >= 1_048_576 ? `${(savedRecording.sizeBytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(savedRecording.sizeBytes / 1024))} KB`}` : "Finishing local save…"}</span><a href={audioUrl} download={`${(title || "lecture").replace(/[^a-z0-9-_]+/gi, "-")}.${downloadExtension}`}><Download size={13} />Download</a></div>}
     <div className="lecture-summary-action">
       <span><Sparkles size={14} /><span><strong>{recordingContext === "meeting" ? "Turn the meeting into usable notes" : recordingContext === "memo" ? "Shape this thought into a clear note" : "Turn the recording into study notes"}</strong><small>Preview it here, or just save: Gunther writes the notes afterwards, citing the transcript.</small></span></span>
       <button type="button" onClick={() => void summarize()} disabled={summarizing || transcript.trim().length < 3 || active}>{summarizing ? <LoaderCircle className="spin" size={14} /> : <Sparkles size={14} />}{summarizing ? "Summarizing…" : summary ? "Refresh summary" : "Summarize recording"}</button>

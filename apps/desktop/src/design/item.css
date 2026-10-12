@@ -540,7 +540,13 @@ input.gx-item-title.is-editable::placeholder { color: var(--gx-ghost); }
 .gx-transcript-segment { margin: 0 -10px; padding: 5px 10px; border-radius: 9px; transition: background-color var(--gx-dur) var(--gx-ease); }
 .gx-transcript-body.is-timed .gx-transcript-segment { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 12px; }
 .gx-transcript-segment p { margin: 0; color: var(--gx-ink-2); }
-.gx-transcript-segment + .gx-transcript-segment { margin-top: 2px; }
+.gx-transcript-segment + .gx-transcript-segment { margin-top: 6px; }
+/* A paragraph is several sentences: the time stays in the margin, and moves above the
+   first line only when the window is too narrow for both. */
+@media (max-width: 560px) {
+  .gx-transcript-body.is-timed .gx-transcript-segment { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .gx-transcript-time { height: 18px; margin-top: 0; }
+}
 .gx-transcript-body:not(.is-timed) .gx-transcript-segment { padding-top: 0; padding-bottom: 0; margin-bottom: 0.8em; }
 .gx-transcript-segment.is-active { background: var(--gx-hover); }
 .gx-transcript-segment.is-active p { color: var(--gx-ink); }
@@ -561,7 +567,7 @@ input.gx-item-title.is-editable::placeholder { color: var(--gx-ghost); }
   text-underline-offset: 3px;
 }
 .gx-transcript-time:hover { color: var(--gx-ink) !important; text-decoration-color: currentColor; }
-.gx-transcript-segment.is-active .gx-transcript-time { color: var(--gx-id-rose) !important; }
+.gx-transcript-segment.is-active .gx-transcript-time { color: var(--gx-ink) !important; }
 .gx-transcript mark, .gx-ocr mark { padding: 0 1px; border-radius: 3px; background: var(--gx-brand-wash); color: inherit; box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--gx-brand) 40%, transparent); }
 
 /* Photo */

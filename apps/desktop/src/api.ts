@@ -248,11 +248,19 @@ function withQueryToken(url: string): string {
   return `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(authToken)}`;
 }
 
-export const recordingSocketUrl = (context: string, purpose: "recording" | "dictation" = "recording") => {
+export const recordingSocketUrl = (
+  context: string,
+  purpose: "recording" | "dictation" = "recording",
+  /** Protocol 2: sentence pieces on the recording clock. Absent = the original events. */
+  live?: { offsetMs: number; recordingId?: string },
+) => {
   const origin = configuredBase
     ? configuredBase.replace(/^http/, "ws").replace(/\/$/, "")
     : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
-  return withQueryToken(`${origin}/api/recordings/live?context=${encodeURIComponent(context)}${purpose === "dictation" ? "&purpose=dictation" : ""}`);
+  const v2 = live
+    ? `&protocol=2&sample_rate=16000&offset_ms=${Math.max(0, Math.round(live.offsetMs))}${live.recordingId ? `&recording_id=${encodeURIComponent(live.recordingId)}` : ""}`
+    : "";
+  return withQueryToken(`${origin}/api/recordings/live?context=${encodeURIComponent(context)}${purpose === "dictation" ? "&purpose=dictation" : ""}${v2}`);
 };
 
 export const recordingAssetUrl = (id: string) =>

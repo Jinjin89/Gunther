@@ -296,11 +296,16 @@ async def _proxy_segmented_transcription(
     ready: dict[str, object],
     reset_url: str | None = None,
     sample_rate: int = 24_000,
+    protocol: int = 1,
+    offset_ms: int = 0,
 ) -> None:
     """Cut live audio into segments and have an OpenAI-style server write each one.
 
     SenseVoice and any ``/audio/transcriptions`` server work alike: audio in,
-    text out, one segment at a time, sent on as it arrives.
+    text out, one segment at a time, sent on as it arrives. A v2 client gets each
+    segment as a final ``transcript.piece`` on the recording clock (``offset_ms`` plus the
+    audio received), and ``transcript.flushed`` once a ``commit`` has been written out;
+    a v1 client gets the old ``…completed`` events, unchanged.
     """
 
     await _accept(websocket)
@@ -308,13 +313,17 @@ async def _proxy_segmented_transcription(
     segment_size -= segment_size % 2
     pending = bytearray()
     sequence = 0
-    audio_cursor_seconds = 0.0
+    audio_cursor_seconds = max(0, offset_ms) / 1000
+    tag = secrets.token_hex(2)
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             if reset_url:
                 with suppress(httpx.HTTPError):
                     await client.post(reset_url)
-            await websocket.send_json({"type": "service.ready", "provider": provider, **ready})
+            announced = {"type": "service.ready", "provider": provider, **ready}
+            if protocol >= 2:
+                announced["protocol"] = protocol
+            await websocket.send_json(announced)
 
             async def transcribe_segment(chunk: bytes, start_seconds: float) -> None:
                 nonlocal sequence
@@ -324,6 +333,23 @@ async def _proxy_segmented_transcription(
                 if not transcript:
                     return
                 sequence += 1
+                if protocol >= 2:
+                    start_ms = round(start_seconds * 1000)
+                    end_ms = start_ms + round(len(chunk) / (sample_rate * 2) * 1000)
+                    await websocket.send_json(
+                        {
+                            "type": "transcript.piece",
+                            "id": f"{tag}-{sequence}",
+                            "start_ms": start_ms,
+                            "end_ms": end_ms,
+                            "text": transcript,
+                            "final": True,
+                            "sentences": [
+                                {"start_ms": start_ms, "end_ms": end_ms, "text": transcript}
+                            ],
+                        }
+                    )
+                    return
                 await websocket.send_json(
                     {
                         "type": "conversation.item.input_audio_transcription.completed",
@@ -365,6 +391,13 @@ async def _proxy_segmented_transcription(
                     await flush()
                 elif message_type == "input_audio_buffer.commit":
                     await flush(force=True)
+                    if protocol >= 2:
+                        await websocket.send_json(
+                            {
+                                "type": "transcript.flushed",
+                                "until_ms": round(audio_cursor_seconds * 1000),
+                            }
+                        )
                 elif message_type == "input_audio_buffer.clear":
                     pending.clear()
     except WebSocketDisconnect:
@@ -465,6 +498,8 @@ class _LiveStream:
         self.failures = 0
         self.item_count = 0
         self.recent = ""
+        # Recording-clock ms covered by each commit that has not been answered yet.
+        self.flush_marks: list[int] = []
         self.wake = asyncio.Event()
         self.send_lock = asyncio.Lock()
         self.reader: asyncio.Task[None] | None = None
@@ -574,11 +609,20 @@ class _LiveStream:
     def _commit(self) -> None:
         """The client paused or stopped: finish the task once everything so far is sent."""
 
+        if self.protocol >= 2:
+            self.flush_marks.append(self.cursor // BYTES_PER_MS)
         if self.task is not None and self.task.finish_sent:
             self.commit_later = True
         elif self.task is not None or self.chunks:
             self.finish_at = len(self.chunks)
         self.wake.set()
+
+    async def _flush(self) -> None:
+        """Tell a v2 client that every commit so far has been heard to its end."""
+
+        marks, self.flush_marks = self.flush_marks, []
+        for until_ms in marks:
+            await self.send({"type": "transcript.flushed", "until_ms": until_ms})
 
     def _remove_front(self, count: int) -> None:
         del self.chunks[:count]
@@ -740,6 +784,7 @@ class _LiveStream:
             if task is None:
                 if self.sent >= len(self.chunks):
                     self.finish_at = None
+                    await self._flush()  # a commit with nothing left to finish
                     return
                 await self._start_task()
                 continue
@@ -775,6 +820,8 @@ class _LiveStream:
             self._remove_front(self.finish_at or 0)
             self.sent = 0
             self.finish_at = None
+            if task.finish_sent:
+                await self._flush()
             if self.commit_later:
                 self.commit_later = False
                 self.finish_at = len(self.chunks) if self.chunks else None
@@ -978,4 +1025,6 @@ async def proxy_realtime_transcription(
         ready=ready,
         reset_url=reset_url,
         sample_rate=sample_rate,
+        protocol=protocol,
+        offset_ms=offset_ms,
     )

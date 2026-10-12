@@ -260,6 +260,9 @@ describe("desktop knowledge API contract", () => {
 
   it("builds encoded web asset and live recording routes without touching port 8787", () => {
     expect(recordingSocketUrl("lecture & lab")).toBe("ws://localhost:3000/api/recordings/live?context=lecture%20%26%20lab");
+    // Protocol 2 asks for sentences on the recording clock; dictation keeps the original form.
+    expect(recordingSocketUrl("lab", "recording", { offsetMs: 61_230.4, recordingId: "rec_1" })).toBe("ws://localhost:3000/api/recordings/live?context=lab&protocol=2&sample_rate=16000&offset_ms=61230&recording_id=rec_1");
+    expect(recordingSocketUrl("", "dictation")).toBe("ws://localhost:3000/api/recordings/live?context=&purpose=dictation");
     expect(recordingAssetUrl("rec/one")).toBe("/api/recordings/rec%2Fone");
     expect(sourceAssetUrl("asset/one")).toBe("/api/assets/asset%2Fone");
   });

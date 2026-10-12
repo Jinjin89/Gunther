@@ -75,6 +75,15 @@ describe("source content envelopes", () => {
     expect(parsed.transcript.map((segment) => segment.text)).toEqual(["First thought. Second line.", "New paragraph."]);
   });
 
+  it("reads a recording whose transcript is paragraphs, one timed segment each", () => {
+    const parsed = parseRecordingContent("# Lecture\n\nDuration: 00:03:00 · Captured: today\n\n## Transcript\n\n[00:00] A paragraph of several sentences. It goes on. And on.\n\n[01:04] The next paragraph.\n\n[02:10] (no audio was transcribed from 02:10 to 02:40)");
+    expect(parsed.transcript).toEqual([
+      { startSeconds: 0, text: "A paragraph of several sentences. It goes on. And on." },
+      { startSeconds: 64, text: "The next paragraph." },
+      { startSeconds: 130, text: "(no audio was transcribed from 02:10 to 02:40)" },
+    ]);
+  });
+
   it("reads web snapshots, uploaded files and web research", () => {
     const web = parseWebContent("# Web snapshot\n\nOriginal URL: https://example.com/a\nFinal URL: https://www.example.com/a?b=1\nCaptured at: 2026-09-27T10:00:00.000Z\nHTTP status: 200\nContent type: text/html\nSHA-256: abc\nSnapshot ID: snap\n\n## Your context\n\nWhy I saved it\n\n## Captured content\n\n## A heading inside the page\n\nBody text.");
     expect(web.finalUrl).toBe("https://www.example.com/a?b=1");

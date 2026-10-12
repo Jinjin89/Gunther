@@ -8,6 +8,14 @@ import {
   type ImportedAudioDraft,
   type RecordingDraft,
 } from "./LectureRecorder";
+import { parseTranscript } from "../items/sourceContent";
+import {
+  applyPiece,
+  confirmLive,
+  emptyTranscript,
+  renderTranscript,
+  transcriptFromText,
+} from "../services/liveTranscript";
 
 const recording = {
   id: "rec_0123456789abcdef01234567",
@@ -134,6 +142,57 @@ describe("recording draft workspace binding", () => {
     expect(recordingDraftsForWorkspace(drafts as unknown as RecordingDraft[], "wsp_primary")).toEqual([
       expect.objectContaining({ id: "current" }),
     ]);
+  });
+});
+
+describe("recording drafts with sentences and paragraphs", () => {
+  beforeEach(() => window.localStorage.clear());
+
+  const base = {
+    id: recording.id,
+    title: "Lecture",
+    summary: null,
+    seconds: 90,
+    recording,
+    moments: [],
+    recordingContext: "lecture",
+    knowledgeBaseId: "biology",
+    workspaceId: "wsp_primary",
+    updatedAt: new Date().toISOString(),
+  };
+
+  it("still loads a version 2 draft, which has only text", () => {
+    window.localStorage.setItem("gunther:recording-drafts", JSON.stringify([
+      { ...base, formatVersion: 2, transcript: "[00:00] Welcome.\n[00:40] Second point." },
+    ]));
+    const [draft] = loadRecordingDrafts();
+    expect(draft).toMatchObject({ formatVersion: 2, segments: null, transcript: "[00:00] Welcome.\n[00:40] Second point." });
+    // Its text becomes locked paragraphs when the recorder restores it.
+    const restored = transcriptFromText(parseTranscript(draft!.transcript))!;
+    expect(restored.paragraphs.map((paragraph) => paragraph.edited)).toEqual(["Welcome.", "Second point."]);
+    expect(renderTranscript(restored)).toBe("[00:00] Welcome.\n\n[00:40] Second point.");
+  });
+
+  it("keeps the sentences of a version 3 draft and drops a damaged one", () => {
+    const state = confirmLive(
+      applyPiece(emptyTranscript(), {
+        id: "k-1-1",
+        start_ms: 0,
+        end_ms: 4_000,
+        text: "Welcome.",
+        final: true,
+        sentences: [{ start_ms: 0, end_ms: 4_000, text: "Welcome." }],
+      }),
+      { closing: true },
+    );
+    window.localStorage.setItem("gunther:recording-drafts", JSON.stringify([
+      { ...base, formatVersion: 3, transcript: renderTranscript(state), segments: state },
+      { ...base, id: "damaged", formatVersion: 3, transcript: "x", segments: { version: 7 }, recording: { ...recording, id: "rec_damaged" } },
+    ]));
+    const [good, damaged] = loadRecordingDrafts();
+    expect(good).toMatchObject({ formatVersion: 3, transcript: "[00:00] Welcome." });
+    expect(good!.segments).toEqual(state);
+    expect(damaged!.segments).toBeNull();
   });
 });
 

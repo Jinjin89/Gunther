@@ -1396,6 +1396,8 @@ export interface RecordingMoment {
 export interface RecordingCheckpointInput {
   expectedRevision: number;
   transcript: string;
+  /** The desktop's live transcript (sentences, check windows, paragraphs); at most 2 MB. */
+  transcriptSegments?: Record<string, unknown> | null;
   durationSeconds: number;
   moments: RecordingMoment[];
   recordingContext: RecordingContext;
@@ -1416,6 +1418,8 @@ export interface RecordingSession extends RecordingAsset {
   status: RecordingStatus;
   nextExpectedSequence: number;
   transcript: string;
+  /** Null for recordings made before paragraphs were kept. */
+  transcriptSegments: Record<string, unknown> | null;
   durationSeconds: number;
   moments: RecordingMoment[];
   recordingContext: RecordingContext;

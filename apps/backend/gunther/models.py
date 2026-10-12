@@ -170,6 +170,7 @@ class RecordingSession(Base):
     transcript: Mapped[str] = mapped_column(Text, default="")
     duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
     moments_json: Mapped[str] = mapped_column(Text, default="[]")
+    transcript_segments_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     recording_context: Mapped[str] = mapped_column(String(24), default="lecture")
     knowledge_base_id: Mapped[str | None] = mapped_column(
         String(160), nullable=True, index=True
