@@ -7,8 +7,9 @@ export function runOnce(ref: { current: Promise<void> | null }, body: () => Prom
   if (ref.current) return ref.current;
   const run = body();
   ref.current = run;
+  // The caller gets the failure through `run`; this copy of it only clears the ref.
   void run.finally(() => {
     if (ref.current === run) ref.current = null;
-  });
+  }).catch(() => undefined);
   return run;
 }
