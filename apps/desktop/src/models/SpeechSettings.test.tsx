@@ -33,6 +33,12 @@ describe("SpeechSettings", () => {
   beforeEach(() => {
     Object.values(api).forEach((mock) => mock.mockReset());
     api.speechOverview.mockResolvedValue(overview());
+    // The service answers a save with the provider as saved (an empty label becomes the id).
+    api.updateSpeechProvider.mockImplementation(async (_id: string, body: { baseUrl: string; models: { id: string; label: string }[] }) => {
+      const next = overview();
+      next.providers[1] = { ...next.providers[1]!, baseUrl: body.baseUrl, models: body.models.map((model) => ({ id: model.id, ref: `qwen/${model.id}`, label: model.label || model.id })) };
+      return next;
+    });
   });
 
   it("shows each job with its model and no live switch", async () => {
@@ -75,26 +81,45 @@ describe("SpeechSettings", () => {
     expect(api.saveSpeechRoles).toHaveBeenCalledWith({ dictation: { model: "qwen/qwen-audio-3.1-asr-flash", stream: false, language: "" } });
   });
 
-  it("tests the edited model list before saving, without testing the previous model", async () => {
+  it("saves each model change at once, so Test checks what is saved", async () => {
     api.testSpeechProvider.mockResolvedValue({ ok: true, message: "Current model checked.", warning: null });
     render(<SpeechSettings onNotify={vi.fn()} />);
     await userEvent.click(await screen.findByRole("button", { name: /^Qwen/ }));
-    await userEvent.click(screen.getByRole("button", { name: "Remove qwen-audio-3.1-asr-flash" }));
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("Model id to add"), "provider-supplied-asr");
     await userEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(api.updateSpeechProvider).toHaveBeenLastCalledWith("qwen", {
+      name: "Qwen", baseUrl: "https://maas.qianwenaiapi.com",
+      models: [{ id: "qwen-audio-3.1-asr-flash", label: "qwen-audio-3.1-asr-flash" }, { id: "provider-supplied-asr", label: "" }],
+    });
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Remove qwen-audio-3.1-asr-flash" }));
+    expect(api.updateSpeechProvider).toHaveBeenLastCalledWith("qwen", expect.objectContaining({ models: [{ id: "provider-supplied-asr", label: "provider-supplied-asr" }] }));
     await userEvent.click(screen.getByRole("button", { name: "Test connection" }));
     expect(api.testSpeechProvider).toHaveBeenCalledWith("qwen", {
       name: "Qwen", baseUrl: "https://maas.qianwenaiapi.com",
-      models: [{ id: "provider-supplied-asr", label: "" }],
+      models: [{ id: "provider-supplied-asr", label: "provider-supplied-asr" }],
     });
-    expect(api.updateSpeechProvider).not.toHaveBeenCalled();
     expect(await screen.findByText("Current model checked.")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Remove provider-supplied-asr" }));
-    expect(screen.queryByText("Current model checked.")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Test connection" }));
-    expect(api.testSpeechProvider).toHaveBeenLastCalledWith("qwen", {
-      name: "Qwen", baseUrl: "https://maas.qianwenaiapi.com", models: [],
-    });
+    // Closing and opening the provider again shows what was saved, not an older model.
+    await userEvent.click(screen.getByRole("button", { name: /^Qwen/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Qwen/ }));
+    expect(screen.getByText("provider-supplied-asr", { selector: "code" })).toBeInTheDocument();
+    expect(screen.queryByText("qwen-audio-3.1-asr-flash", { selector: "code" })).not.toBeInTheDocument();
+  });
+
+  it("saves the address when it is left, and keeps one that isn't an address on screen with its problem", async () => {
+    render(<SpeechSettings onNotify={vi.fn()} />);
+    await userEvent.click(await screen.findByRole("button", { name: /^Qwen/ }));
+    const address = screen.getByLabelText("Address");
+    await userEvent.clear(address);
+    await userEvent.type(address, "not an address");
+    await userEvent.tab();
+    expect(api.updateSpeechProvider).not.toHaveBeenCalled();
+    expect(screen.getByText(/Use a full address/)).toBeInTheDocument();
+    await userEvent.clear(address);
+    await userEvent.type(address, "https://dashscope.aliyuncs.com{Enter}");
+    expect(api.updateSpeechProvider).toHaveBeenCalledWith("qwen", expect.objectContaining({ baseUrl: "https://dashscope.aliyuncs.com" }));
   });
 
   it("discards a late test result when its model has been changed", async () => {

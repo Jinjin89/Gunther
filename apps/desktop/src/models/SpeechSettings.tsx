@@ -1,6 +1,6 @@
 import type { SpeechOverview, SpeechProvider, SpeechRole, SpeechKind, SpeechTestResult } from "@gunther/contracts";
 import { AudioLines, Check, ChevronRight, CircleAlert, Eye, EyeOff, KeyRound, Plug, Plus, Server, Trash2, TriangleAlert, X } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { knowledgeApi } from "../api";
 
 const STATE_LABELS = { configured: "Set up", not_configured: "Not set up", error: "Needs attention", off: "Off" } as const;
@@ -29,6 +29,51 @@ const validUrl = (value: string) => {
   }
 };
 
+/**
+ * A provider's fields as typed, saved as soon as a change is finished (a model added or
+ * removed, a field left, Enter): what is on screen is what is saved, with no Save step to
+ * forget. Saves run one after another; `pending` resolves when the last one is done, so a
+ * test or sample can wait for it. Shared by Transcription and Read aloud.
+ */
+export function useSavedDraft<D extends object>(saved: D, persist: (draft: D) => Promise<D>) {
+  const [draft, setDraft] = useState<D>(saved);
+  const current = useRef(draft);
+  const stored = useRef(JSON.stringify(saved));
+  const pending = useRef<Promise<void>>(Promise.resolve());
+  const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
+  const [error, setError] = useState<string | null>(null);
+  const edit = (patch: Partial<D>) => {
+    const next = { ...current.current, ...patch };
+    current.current = next;
+    setDraft(next);
+    setError(null);
+    setState((was) => (was === "saved" ? "idle" : was));
+    return next;
+  };
+  const commit = (patch: Partial<D> = {}) => {
+    const next = edit(patch);
+    pending.current = pending.current.then(async () => {
+      if (JSON.stringify(next) === stored.current) return;
+      setState("saving");
+      try {
+        const result = await persist(next);
+        stored.current = JSON.stringify(result);
+        // Typing that went on during the save stays on screen, to be saved in turn.
+        if (JSON.stringify(current.current) === JSON.stringify(next)) {
+          current.current = result;
+          setDraft(result);
+        }
+        setState("saved");
+      } catch (reason) {
+        setError(message(reason, "This could not be saved."));
+        setState("idle");
+      }
+    });
+    return pending.current;
+  };
+  return { draft, current, edit, commit, pending, state, error, setError };
+}
+
 /** The parts of a provider its status and key fields need, shared by Transcription and Read aloud. */
 type KeyedProvider = Pick<SpeechProvider, "name" | "keySet" | "keyHint" | "keyShared" | "keyOptional" | "status">;
 
@@ -38,7 +83,7 @@ export function StatusBadge({ provider }: { provider: Pick<KeyedProvider, "statu
   return <span className={`service-badge is-${state}`}><i aria-hidden="true" />{label}</span>;
 }
 
-export function KeyField({ provider, value, onChange, inputId }: { provider: KeyedProvider; value: string | undefined; onChange: (value: string | undefined) => void; inputId: string }) {
+export function KeyField({ provider, value, onChange, onCommit, inputId }: { provider: KeyedProvider; value: string | undefined; onChange: (value: string | undefined) => void; /** The key is finished (field left, Enter) or removed: save it. */ onCommit?: (value: string | undefined) => void; inputId: string }) {
   const [visible, setVisible] = useState(false);
   const [replacing, setReplacing] = useState(false);
   useEffect(() => setReplacing(false), [provider.keyHint, provider.keySet]);
@@ -50,12 +95,12 @@ export function KeyField({ provider, value, onChange, inputId }: { provider: Key
         ? <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => onChange(undefined)}>Undo</button>
         : <>
           <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => setReplacing(true)}>Replace</button>
-          <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => onChange("")}>Remove</button>
+          <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => { onChange(""); onCommit?.(""); }}>Remove</button>
         </>}
     </div>;
   }
   return <div className="service-secret-input">
-    <input id={inputId} type={visible ? "text" : "password"} value={value ?? ""} placeholder={provider.keyShared ? `Using your ${provider.name} key from Models` : provider.keyOptional ? "Only if your server asks for one" : "Paste your key"} autoComplete="off" spellCheck={false} autoFocus={replacing} onChange={(event) => onChange(event.target.value === "" ? undefined : event.target.value)} />
+    <input id={inputId} type={visible ? "text" : "password"} value={value ?? ""} placeholder={provider.keyShared ? `Using your ${provider.name} key from Models` : provider.keyOptional ? "Only if your server asks for one" : "Paste your key"} autoComplete="off" spellCheck={false} autoFocus={replacing} onChange={(event) => onChange(event.target.value === "" ? undefined : event.target.value)} onBlur={() => { if (value) onCommit?.(value); }} onKeyDown={(event) => { if (event.key === "Enter" && value) { event.preventDefault(); onCommit?.(value); } }} />
     <button type="button" className="gx-icon-button" aria-label={visible ? "Hide API key" : "Show API key"} title={visible ? "Hide" : "Show"} onClick={() => setVisible((current) => !current)}>
       {visible ? <EyeOff size={14} /> : <Eye size={14} />}
     </button>
@@ -70,65 +115,57 @@ function ProviderEditor({ provider, onOverview, onRemoved, onNotify }: {
   onNotify: (message: string) => void;
 }) {
   const baseId = useId();
-  const initial = draftOf(provider);
-  const [draft, setDraft] = useState<ProviderDraft>(initial);
-  const currentDraft = useRef(draft);
-  currentDraft.current = draft;
   const [newModel, setNewModel] = useState("");
   const [result, setResult] = useState<SpeechTestResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"saving" | "testing" | "removing" | null>(null);
-  const changed = JSON.stringify(draft) !== JSON.stringify(initial);
+  const [busy, setBusy] = useState<"testing" | "removing" | null>(null);
+  const { draft, current, edit: change, commit: store, pending, state, error, setError } = useSavedDraft<ProviderDraft>(draftOf(provider), async (next) => {
+    const saved = await knowledgeApi.updateSpeechProvider(provider.id, {
+      name: next.name,
+      baseUrl: next.baseUrl.trim(),
+      ...(next.apiKey !== undefined ? { apiKey: next.apiKey } : {}),
+      models: next.models,
+    });
+    onOverview(saved);
+    return draftOf(saved.providers.find((item) => item.id === provider.id) ?? provider);
+  });
   const urlProblem = validUrl(draft.baseUrl) ? null : "Use a full address starting with http:// or https://.";
 
   const edit = (next: Partial<ProviderDraft>) => {
-    setDraft((current) => ({ ...current, ...next }));
+    change(next);
     setResult(null);
-    setError(null);
   };
+  const commit = (next: Partial<ProviderDraft> = {}) => {
+    setResult(null);
+    // An address that isn't one yet stays on screen with its problem, unsaved.
+    if (!validUrl({ ...current.current, ...next }.baseUrl)) { change(next); return; }
+    void store(next);
+  };
+  const enter = (event: KeyboardEvent<HTMLInputElement>) => { if (event.key === "Enter") { event.preventDefault(); commit(); } };
   const addModel = (id: string) => {
     const clean = id.trim();
     if (!clean || /\s/.test(clean) || draft.models.some((model) => model.id === clean)) return;
-    edit({ models: [...draft.models, { id: clean, label: "" }] });
+    commit({ models: [...draft.models, { id: clean, label: "" }] });
     setNewModel("");
   };
 
+  /** Tests what is saved: any save still on its way finishes first. */
   const test = async () => {
     setBusy("testing");
     setError(null);
     setResult(null);
-    const testedDraft = JSON.stringify(draft);
+    await pending.current;
+    const tested = current.current;
+    const testedDraft = JSON.stringify(tested);
     try {
-      const tested = await knowledgeApi.testSpeechProvider(provider.id, {
-        name: draft.name, baseUrl: draft.baseUrl.trim(), models: draft.models,
-        ...(draft.apiKey !== undefined ? { apiKey: draft.apiKey } : {}),
+      const outcome = await knowledgeApi.testSpeechProvider(provider.id, {
+        name: tested.name, baseUrl: tested.baseUrl.trim(), models: tested.models,
+        ...(tested.apiKey !== undefined ? { apiKey: tested.apiKey } : {}),
       });
-      if (JSON.stringify(currentDraft.current) !== testedDraft) return;
-      setResult(tested);
-      if (tested.overview) onOverview(tested.overview);
+      if (JSON.stringify(current.current) !== testedDraft) return;
+      setResult(outcome);
+      if (outcome.overview) onOverview(outcome.overview);
     } catch (reason) {
-      if (JSON.stringify(currentDraft.current) === testedDraft) setError(message(reason, "The connection could not be tested."));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const save = async () => {
-    if (urlProblem || !changed) return;
-    setBusy("saving");
-    setError(null);
-    try {
-      const next = await knowledgeApi.updateSpeechProvider(provider.id, {
-        name: draft.name,
-        baseUrl: draft.baseUrl.trim(),
-        ...(draft.apiKey !== undefined ? { apiKey: draft.apiKey } : {}),
-        models: draft.models,
-      });
-      onOverview(next);
-      setDraft(draftOf(next.providers.find((item) => item.id === provider.id) ?? provider));
-      onNotify(`${draft.name} saved.`);
-    } catch (reason) {
-      setError(message(reason, `${provider.name} could not be saved.`));
+      if (JSON.stringify(current.current) === testedDraft) setError(message(reason, "The connection could not be tested."));
     } finally {
       setBusy(null);
     }
@@ -154,26 +191,28 @@ function ProviderEditor({ provider, onOverview, onRemoved, onNotify }: {
         {result.ok ? result.warning ? <TriangleAlert size={14} /> : <Check size={14} /> : <CircleAlert size={14} />}
         <span>{result.message}{result.warning && <small>{result.warning}</small>}</span>
       </p>
-      : busy === "testing" ? <p className="service-outcome" role="status"><span className="gx-spinner" aria-hidden="true" />Connecting…</p> : null;
+      : busy === "testing" ? <p className="service-outcome" role="status"><span className="gx-spinner" aria-hidden="true" />Connecting…</p>
+        : state === "saving" ? <p className="service-outcome" role="status"><span className="gx-spinner" aria-hidden="true" />Saving…</p>
+          : state === "saved" ? <p className="service-outcome is-ok" role="status"><Check size={14} />Saved</p> : null;
 
-  return <form className="service-editor" noValidate onSubmit={(event) => { event.preventDefault(); void save(); }}>
+  return <form className="service-editor" noValidate onSubmit={(event) => { event.preventDefault(); commit(); }}>
     {provider.note && <p className="service-editor-lead">{provider.note}</p>}
     <div className="service-fields">
       <div className="service-field">
         <label htmlFor={`${baseId}-name`}>Name</label>
-        <div className="service-control"><input id={`${baseId}-name`} type="text" value={draft.name} maxLength={60} onChange={(event) => edit({ name: event.target.value })} /></div>
+        <div className="service-control"><input id={`${baseId}-name`} type="text" value={draft.name} maxLength={60} onChange={(event) => edit({ name: event.target.value })} onBlur={() => commit()} onKeyDown={enter} /></div>
       </div>
       <div className={`service-field ${urlProblem ? "has-problem" : ""}`}>
         <label htmlFor={`${baseId}-url`}>Address</label>
         <div className="service-control">
-          <input id={`${baseId}-url`} className="is-mono" type="url" value={draft.baseUrl} spellCheck={false} aria-invalid={Boolean(urlProblem) || undefined} onChange={(event) => edit({ baseUrl: event.target.value })} />
+          <input id={`${baseId}-url`} className="is-mono" type="url" value={draft.baseUrl} spellCheck={false} aria-invalid={Boolean(urlProblem) || undefined} onChange={(event) => edit({ baseUrl: event.target.value })} onBlur={() => commit()} onKeyDown={enter} />
           <small className={urlProblem ? "is-problem" : ""}>{urlProblem ?? (provider.kind === "sensevoice" ? "Where the SenseVoice server runs." : "The base URL, without /audio/transcriptions.")}</small>
         </div>
       </div>
       {provider.kind !== "sensevoice" && <div className="service-field">
         <label htmlFor={`${baseId}-key`}>API key{provider.keySource === "environment" && draft.apiKey === undefined && <span className="service-source" title="Set in the backend's environment or .env file. A key saved here takes its place.">from .env</span>}</label>
         <div className="service-control">
-          <KeyField provider={provider} value={draft.apiKey} inputId={`${baseId}-key`} onChange={(apiKey) => edit({ apiKey })} />
+          <KeyField provider={provider} value={draft.apiKey} inputId={`${baseId}-key`} onChange={(apiKey) => edit({ apiKey })} onCommit={(apiKey) => commit({ apiKey })} />
           {provider.keyShared && !provider.keySet && <small>No key needed here: the {provider.name} key you already saved is used.</small>}
         </div>
       </div>}
@@ -182,9 +221,9 @@ function ProviderEditor({ provider, onOverview, onRemoved, onNotify }: {
         <div className="service-control">
           <div className="provider-models">
             {draft.models.map((model) => <div className="provider-model" key={model.id}>
-              <input className="provider-model-label" type="text" value={model.label} placeholder={model.id} aria-label={`Name for ${model.id}`} onChange={(event) => edit({ models: draft.models.map((item) => item.id === model.id ? { ...item, label: event.target.value } : item) })} />
+              <input className="provider-model-label" type="text" value={model.label} placeholder={model.id} aria-label={`Name for ${model.id}`} onChange={(event) => edit({ models: draft.models.map((item) => item.id === model.id ? { ...item, label: event.target.value } : item) })} onBlur={() => commit()} onKeyDown={enter} />
               <code title={model.id}>{model.id}</code>
-              <button type="button" className="gx-icon-button" aria-label={`Remove ${model.id}`} title="Remove" onClick={() => edit({ models: draft.models.filter((item) => item.id !== model.id) })}><X size={13} /></button>
+              <button type="button" className="gx-icon-button" aria-label={`Remove ${model.id}`} title="Remove" onClick={() => commit({ models: draft.models.filter((item) => item.id !== model.id) })}><X size={13} /></button>
             </div>)}
             {draft.models.length === 0 && <p className="provider-models-empty">No models yet. Type the id of a model your provider offers.</p>}
           </div>
@@ -200,8 +239,6 @@ function ProviderEditor({ provider, onOverview, onRemoved, onNotify }: {
       <div className="service-actions">
         <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm provider-remove" disabled={busy !== null} onClick={() => void remove()}><Trash2 size={13} />Remove</button>
         <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={busy !== null || Boolean(urlProblem)} onClick={() => void test()}><Plug size={13} />{busy === "testing" ? "Testing…" : "Test connection"}</button>
-        {changed && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={busy !== null} onClick={() => { setDraft(initial); setResult(null); setError(null); }}>Discard</button>}
-        <button type="submit" className="gx-btn gx-btn-primary gx-btn-sm" disabled={!changed || busy !== null || Boolean(urlProblem)}>{busy === "saving" ? "Saving…" : "Save"}</button>
       </div>
     </footer>
   </form>;

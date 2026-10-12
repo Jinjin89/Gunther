@@ -1,8 +1,8 @@
 import type { TtsOption, TtsOverview, TtsPreset, TtsProvider, TtsRole, TtsRoleInput, TtsSampleInput } from "@gunther/contracts";
-import { ChevronRight, CircleAlert, Loader2, Play, Plus, Trash2, Volume2, X } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { Check, ChevronRight, CircleAlert, Loader2, Play, Plus, Trash2, Volume2, X } from "lucide-react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { knowledgeApi } from "../api";
-import { KeyField, StatusBadge } from "../models/SpeechSettings";
+import { KeyField, StatusBadge, useSavedDraft } from "../models/SpeechSettings";
 import { readAloud } from "./readAloud";
 import { allowSpeakerSound } from "./speakerAccess";
 
@@ -86,7 +86,7 @@ interface ProviderDraft {
   name: string;
   baseUrl: string;
   /** undefined: keep the saved key; "": remove it. */
-  apiKey?: string;
+  apiKey?: string | undefined;
   models: { id: string; label: string }[];
 }
 
@@ -105,92 +105,85 @@ function ProviderEditor({ provider, onOverview, onRemoved, onNotify, onChecked }
   onChecked: () => void;
 }) {
   const baseId = useId();
-  const initial = draftOf(provider);
-  const [draft, setDraft] = useState<ProviderDraft>(initial);
   const [newModel, setNewModel] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"saving" | "sample" | "removing" | null>(null);
+  /** The model a sample is being made with. */
+  const [hearing, setHearing] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const changed = JSON.stringify(draft) !== JSON.stringify(initial);
+  const { draft, current, edit, commit: store, pending, state, error, setError } = useSavedDraft<ProviderDraft>(draftOf(provider), async (next) => {
+    const saved = await knowledgeApi.updateTtsProvider(provider.id, {
+      name: next.name,
+      baseUrl: next.baseUrl.trim(),
+      ...(next.apiKey !== undefined ? { apiKey: next.apiKey } : {}),
+      models: next.models,
+    });
+    onOverview(saved);
+    return draftOf(saved.providers.find((item) => item.id === provider.id) ?? provider);
+  });
+  const busy = hearing !== null || removing;
   const urlProblem = validUrl(draft.baseUrl) ? null : "Use a full address starting with http:// or https://.";
 
-  const edit = (next: Partial<ProviderDraft>) => {
-    setDraft((current) => ({ ...current, ...next }));
-    setError(null);
+  const commit = (next: Partial<ProviderDraft> = {}) => {
+    // An address that isn't one yet stays on screen with its problem, unsaved.
+    if (!validUrl({ ...current.current, ...next }.baseUrl)) { edit(next); return; }
+    void store(next);
   };
+  const enter = (event: KeyboardEvent<HTMLInputElement>) => { if (event.key === "Enter") { event.preventDefault(); commit(); } };
   const addModel = (id: string) => {
     const clean = id.trim();
     if (!clean || /\s/.test(clean) || draft.models.some((model) => model.id === clean)) return;
-    edit({ models: [...draft.models, { id: clean, label: "" }] });
+    commit({ models: [...draft.models, { id: clean, label: "" }] });
     setNewModel("");
   };
 
-  const hear = async () => {
-    setBusy("sample");
+  /** A sample of one model, as saved: any save still on its way finishes first. */
+  const hear = async (model: string) => {
+    setHearing(model);
     setError(null);
+    await pending.current;
+    const saved = current.current;
     try {
-      await playSample({ providerId: provider.id, baseUrl: draft.baseUrl.trim(), ...(draft.apiKey ? { apiKey: draft.apiKey } : {}), ...(draft.models[0] ? { model: draft.models[0].id } : {}) });
+      await playSample({ providerId: provider.id, baseUrl: saved.baseUrl.trim(), ...(saved.apiKey ? { apiKey: saved.apiKey } : {}), model });
     } catch (reason) {
       if (mounted.current) setError(message(reason, "The sample could not be played."));
     } finally {
-      if (mounted.current) setBusy(null);
+      if (mounted.current) setHearing(null);
       onChecked();
-    }
-  };
-
-  const save = async () => {
-    if (urlProblem || !changed) return;
-    setBusy("saving");
-    setError(null);
-    try {
-      const next = await knowledgeApi.updateTtsProvider(provider.id, {
-        name: draft.name,
-        baseUrl: draft.baseUrl.trim(),
-        ...(draft.apiKey !== undefined ? { apiKey: draft.apiKey } : {}),
-        models: draft.models,
-      });
-      onOverview(next);
-      setDraft(draftOf(next.providers.find((item) => item.id === provider.id) ?? provider));
-      onNotify(`${draft.name} saved.`);
-    } catch (reason) {
-      setError(message(reason, `${provider.name} could not be saved.`));
-    } finally {
-      setBusy(null);
     }
   };
 
   const remove = async () => {
     if (!window.confirm(`Remove ${provider.name}? A job that uses its voice moves to another one, or turns off.`)) return;
-    setBusy("removing");
+    setRemoving(true);
     try {
       onOverview(await knowledgeApi.removeTtsProvider(provider.id));
       onRemoved();
       onNotify(`${provider.name} removed.`);
     } catch (reason) {
       setError(message(reason, `${provider.name} could not be removed.`));
-      setBusy(null);
+      setRemoving(false);
     }
   };
 
-  return <form className="service-editor" noValidate onSubmit={(event) => { event.preventDefault(); void save(); }}>
+  return <form className="service-editor" noValidate onSubmit={(event) => { event.preventDefault(); commit(); }}>
     {provider.note && <p className="service-editor-lead">{provider.note}</p>}
     <div className="service-fields">
       <div className="service-field">
         <label htmlFor={`${baseId}-name`}>Name</label>
-        <div className="service-control"><input id={`${baseId}-name`} type="text" value={draft.name} maxLength={60} onChange={(event) => edit({ name: event.target.value })} /></div>
+        <div className="service-control"><input id={`${baseId}-name`} type="text" value={draft.name} maxLength={60} onChange={(event) => edit({ name: event.target.value })} onBlur={() => commit()} onKeyDown={enter} /></div>
       </div>
       <div className={`service-field ${urlProblem ? "has-problem" : ""}`}>
         <label htmlFor={`${baseId}-url`}>Address</label>
         <div className="service-control">
-          <input id={`${baseId}-url`} className="is-mono" type="url" value={draft.baseUrl} spellCheck={false} aria-invalid={Boolean(urlProblem) || undefined} onChange={(event) => edit({ baseUrl: event.target.value })} />
+          <input id={`${baseId}-url`} className="is-mono" type="url" value={draft.baseUrl} spellCheck={false} aria-invalid={Boolean(urlProblem) || undefined} onChange={(event) => edit({ baseUrl: event.target.value })} onBlur={() => commit()} onKeyDown={enter} />
           <small className={urlProblem ? "is-problem" : ""}>{urlProblem ?? "The supplier's address. Keys work only in the region they were made in."}</small>
         </div>
       </div>
       <div className="service-field">
         <label htmlFor={`${baseId}-key`}>API key</label>
         <div className="service-control">
-          <KeyField provider={provider} value={draft.apiKey} inputId={`${baseId}-key`} onChange={(apiKey) => setDraft((current) => { const next = { ...current }; if (apiKey === undefined) delete next.apiKey; else next.apiKey = apiKey; return next; })} />
+          <KeyField provider={provider} value={draft.apiKey} inputId={`${baseId}-key`} onChange={(apiKey) => edit({ apiKey })} onCommit={(apiKey) => commit({ apiKey })} />
           {provider.keyShared && !provider.keySet && <small>No key needed here: the {provider.name} key you already saved is used.</small>}
         </div>
       </div>
@@ -199,9 +192,10 @@ function ProviderEditor({ provider, onOverview, onRemoved, onNotify, onChecked }
         <div className="service-control">
           <div className="provider-models">
             {draft.models.map((model) => <div className="provider-model" key={model.id}>
-              <input className="provider-model-label" type="text" value={model.label} placeholder={model.id} aria-label={`Name for ${model.id}`} onChange={(event) => edit({ models: draft.models.map((item) => item.id === model.id ? { ...item, label: event.target.value } : item) })} />
+              <input className="provider-model-label" type="text" value={model.label} placeholder={model.id} aria-label={`Name for ${model.id}`} onChange={(event) => edit({ models: draft.models.map((item) => item.id === model.id ? { ...item, label: event.target.value } : item) })} onBlur={() => commit()} onKeyDown={enter} />
               <code title={model.id}>{model.id}</code>
-              <button type="button" className="gx-icon-button" aria-label={`Remove ${model.id}`} title="Remove" onClick={() => edit({ models: draft.models.filter((item) => item.id !== model.id) })}><X size={13} /></button>
+              <button type="button" className="gx-icon-button" aria-label={`Hear ${model.id}`} title="Hear a sample of this model" disabled={busy || Boolean(urlProblem)} onClick={() => void hear(model.id)}>{hearing === model.id ? <Loader2 size={13} className="is-spinning" /> : <Play size={13} />}</button>
+              <button type="button" className="gx-icon-button" aria-label={`Remove ${model.id}`} title="Remove" onClick={() => commit({ models: draft.models.filter((item) => item.id !== model.id) })}><X size={13} /></button>
             </div>)}
             {draft.models.length === 0 && <p className="provider-models-empty">No models yet. Type the id of a model your supplier offers.</p>}
           </div>
@@ -214,13 +208,13 @@ function ProviderEditor({ provider, onOverview, onRemoved, onNotify, onChecked }
     </div>
     <footer className="service-editor-footer">
       <div className="service-outcome-slot" aria-live="polite">
-        {error ? <p className="service-outcome is-error" role="alert"><CircleAlert size={14} />{error}</p> : busy === "sample" ? <p className="service-outcome" role="status"><span className="gx-spinner" aria-hidden="true" />Making a sample…</p> : null}
+        {error ? <p className="service-outcome is-error" role="alert"><CircleAlert size={14} />{error}</p>
+          : hearing ? <p className="service-outcome" role="status"><span className="gx-spinner" aria-hidden="true" />Making a sample with {hearing}…</p>
+            : state === "saving" ? <p className="service-outcome" role="status"><span className="gx-spinner" aria-hidden="true" />Saving…</p>
+              : state === "saved" ? <p className="service-outcome is-ok" role="status"><Check size={14} />Saved</p> : null}
       </div>
       <div className="service-actions">
-        <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm provider-remove" disabled={busy !== null} onClick={() => void remove()}><Trash2 size={13} />Remove</button>
-        <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={busy !== null || Boolean(urlProblem) || draft.models.length === 0} onClick={() => void hear()}><Play size={13} />Hear a sample</button>
-        {changed && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={busy !== null} onClick={() => { setDraft(initial); setError(null); }}>Discard</button>}
-        <button type="submit" className="gx-btn gx-btn-primary gx-btn-sm" disabled={!changed || busy !== null || Boolean(urlProblem)}>{busy === "saving" ? "Saving…" : "Save"}</button>
+        <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm provider-remove" disabled={busy} onClick={() => void remove()}><Trash2 size={13} />Remove</button>
       </div>
     </footer>
   </form>;

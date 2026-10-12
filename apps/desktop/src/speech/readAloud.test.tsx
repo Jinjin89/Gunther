@@ -201,7 +201,7 @@ describe("TtsSettings", () => {
     expect(api.saveTtsRoles).toHaveBeenLastCalledWith({ answers: { model: null } });
   });
 
-  it("lists providers like Transcription: edit one, hear it with its unsaved key, add another", async () => {
+  it("lists providers like Transcription: a new key and a new model save at once, each model has its own sample", async () => {
     const user = userEvent.setup();
     api.ttsSample.mockResolvedValue(new Blob(["x"]));
     api.updateTtsProvider.mockResolvedValue(overview());
@@ -210,12 +210,15 @@ describe("TtsSettings", () => {
     api.addTtsProvider.mockResolvedValue(two);
     render(<TtsSettings onNotify={() => undefined} />);
     await user.click(await screen.findByRole("button", { name: /Qwen\s+1 model/ }));
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Replace" }));
     await user.type(screen.getByPlaceholderText("Paste your key"), "sk-new-5678");
-    await user.click(screen.getByRole("button", { name: /hear a sample/i }));
-    expect(api.ttsSample).toHaveBeenCalledWith({ providerId: "qwen", baseUrl: "https://maas.qianwenaiapi.com", apiKey: "sk-new-5678", model: "qwen-audio-3.1-tts-flash" });
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    // Leaving the key field saves it; the sample waits for that, then uses what is saved.
+    await user.click(screen.getByRole("button", { name: "Hear qwen-audio-3.1-tts-flash" }));
     expect(api.updateTtsProvider).toHaveBeenCalledWith("qwen", expect.objectContaining({ apiKey: "sk-new-5678" }));
+    await waitFor(() => expect(api.ttsSample).toHaveBeenCalledWith({ providerId: "qwen", baseUrl: "https://maas.qianwenaiapi.com", model: "qwen-audio-3.1-tts-flash" }));
+    await user.type(screen.getByLabelText("Model id to add"), "qwen-audio-3.0-tts-flash{Enter}");
+    expect(api.updateTtsProvider).toHaveBeenLastCalledWith("qwen", expect.objectContaining({ models: [{ id: "qwen-audio-3.1-tts-flash", label: expect.any(String) }, { id: "qwen-audio-3.0-tts-flash", label: "" }] }));
     await user.click(screen.getByRole("button", { name: /Add provider/ }));
     await user.click(screen.getByRole("button", { name: "Qwen" }));
     expect(api.addTtsProvider).toHaveBeenCalledWith({ kind: "qwen" });
