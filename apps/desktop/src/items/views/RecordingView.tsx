@@ -2,6 +2,7 @@ import { Bookmark, Download, Pause, Play, RotateCcw, RotateCw, Search, X } from 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { MarkdownView } from "../../components/markdown/MarkdownView";
 import { useShortcut, withShortcut } from "../../shortcuts/shortcuts";
+import { TranscriptUpgradeLine, useTranscriptUpgrade } from "./TranscriptUpgradeLine";
 import { formatClock, type RecordingContent, type TranscriptSegment } from "../sourceContent";
 
 const SPEEDS = [1, 1.25, 1.5, 2, 0.75] as const;
@@ -201,7 +202,9 @@ function Overview({ parsed }: { parsed: RecordingContent }) {
   );
 }
 
-export function RecordingBody({ parsed, audioUrl, downloadName }: { parsed: RecordingContent; audioUrl: string | null; downloadName: string }) {
+export function RecordingBody({ parsed, audioUrl, downloadName, onUpgraded }: { parsed: RecordingContent; audioUrl: string | null; downloadName: string; onUpgraded?: () => void }) {
+  const upgrade = useTranscriptUpgrade(parsed.recordingId, onUpgraded);
+  const upgradeLine = <TranscriptUpgradeLine upgrade={upgrade} />;
   const player = useAudio(audioUrl, parsed.durationSeconds);
   const hasOverview = Boolean(parsed.summary || parsed.keyPoints.length || parsed.actions.length || parsed.openQuestions.length || parsed.terms.length);
   const [tab, setTab] = useState<"overview" | "transcript">(hasOverview ? "overview" : "transcript");
@@ -220,12 +223,14 @@ export function RecordingBody({ parsed, audioUrl, downloadName }: { parsed: Reco
           ))}
         </div>
       )}
+      {tab === "overview" && hasOverview && upgradeLine}
       {hasOverview && (
         <nav className="gx-tabs gx-item-tabs" aria-label="Recording">
           <button type="button" className={tab === "overview" ? "is-active" : ""} aria-pressed={tab === "overview"} onClick={() => setTab("overview")}>Overview</button>
           <button type="button" className={tab === "transcript" ? "is-active" : ""} aria-pressed={tab === "transcript"} onClick={() => setTab("transcript")}>Transcript</button>
         </nav>
       )}
+      {!(tab === "overview" && hasOverview) && upgradeLine}
       {tab === "overview" && hasOverview ? <Overview parsed={parsed} /> : <Transcript segments={parsed.transcript} player={state} />}
     </div>
   );

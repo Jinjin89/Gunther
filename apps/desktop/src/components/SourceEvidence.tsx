@@ -71,7 +71,7 @@ export function SourceEvidence({ sourceId, baseId, assetId, revisionId, blockId 
         ? <><span>Original saved. Processing continues in the background.</span><button disabled={busy} onClick={() => void action(() => knowledgeApi.cancelSourceProcessing(sourceId))}>Cancel processing</button></>
         : <button disabled={busy} onClick={() => void action(() => knowledgeApi.reprocessSource(sourceId))}>Reprocess source</button>}
     </div>}
-    {topics.length > 0 && <label className="evidence-topic-picker">File evidence under<select aria-label="Evidence topic" value={topicId} onChange={(event) => setTopicId(event.target.value)}><option value="">Choose a topic</option>{topics.map((topic) => <option key={topic.id} value={topic.id}>{topic.title}</option>)}</select></label>}
+    {topics.length > 0 && <label className="evidence-topic-picker">File evidence under<select aria-label="Evidence section" value={topicId} onChange={(event) => setTopicId(event.target.value)}><option value="">Choose a section</option>{topics.map((topic) => <option key={topic.id} value={topic.id}>{topic.title}</option>)}</select></label>}
     <div className="structured-blocks">{data?.blocks.map((block) => <article key={block.id} className={`structured-block is-${block.kind}`}>
       <small>{block.headings.join(" / ") || block.locator}</small>
       {block.kind === "heading" ? <h4>{block.content}</h4> : <p>{block.content}</p>}
@@ -80,7 +80,7 @@ export function SourceEvidence({ sourceId, baseId, assetId, revisionId, blockId 
           await knowledgeApi.linkTopicEvidence(baseId, topicId, block.id);
           setLinked((items) => [...items, `${topicId}:${block.id}`]);
           window.dispatchEvent(new CustomEvent("gunther:topics-updated"));
-        })}>{linked.includes(`${topicId}:${block.id}`) ? "Linked" : "Link to topic"}</button>}
+        })}>{linked.includes(`${topicId}:${block.id}`) ? "Linked" : "Link to section"}</button>}
       </footer>
     </article>)}</div>
     {data?.nextOffset != null && <button disabled={busy} onClick={() => void more()}>Load more evidence</button>}

@@ -2516,8 +2516,12 @@ class KnowledgeService:
             ):
                 base_id = knowledge_session.knowledge_base_id
                 topic_id = knowledge_session.focus_chapter_id
-                block_scope = topic_block_ids(session, base_id, topic_id)
-                filed = topic_source_ids(session, base_id, topic_id)
+                try:
+                    block_scope = topic_block_ids(session, base_id, topic_id)
+                    filed = topic_source_ids(session, base_id, topic_id)
+                except LookupError:
+                    # The section is gone: ask the whole library.
+                    block_scope, filed = None, []
                 if filed:
                     # A topic of whole papers: ask all of them, and the sources of any
                     # passages linked to it one by one.

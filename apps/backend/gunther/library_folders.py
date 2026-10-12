@@ -8,8 +8,8 @@ Inside the library root Gunther writes::
       Notes/<title>.md             quick notes waiting in Inbox
     Libraries/<title>/
       library.json                 the library and where each of its sources is
-      Overview.md                  the library at a glance: topics and papers
-      Topics/<topic>.md            each topic's overview, or its list of papers
+      Overview.md                  the library's arranged contents
+      Sections/<section>.md        each section's overview, or its list of sources
       Sources/<date> <title>/      sources whose home is this library
         source.json                what it is, where it came from, your decisions
         summary.md                 its summary (key points citing passages); for a
@@ -331,13 +331,13 @@ class LibraryFolders:
                 select(TopicNode).order_by(TopicNode.position, TopicNode.created_at, TopicNode.id)
             ):
                 topics[topic.knowledge_base_id].append(topic)
-            filed: dict[str, list[str]] = defaultdict(list)
-            for topic_id, source_id in session.execute(
-                select(TopicSourceLink.topic_id, TopicSourceLink.source_id).order_by(
-                    TopicSourceLink.created_at, TopicSourceLink.id
-                )
+            filed: dict[str, list[tuple[int, str]]] = defaultdict(list)
+            for topic_id, source_id, position in session.execute(
+                select(
+                    TopicSourceLink.topic_id, TopicSourceLink.source_id, TopicSourceLink.position
+                ).order_by(TopicSourceLink.position, TopicSourceLink.created_at, TopicSourceLink.id)
             ):
-                filed[topic_id].append(source_id)
+                filed[topic_id].append((position, source_id))
             overviews = {
                 row.topic_id: row.markdown for row in session.scalars(select(TopicSynthesis))
             }
@@ -507,10 +507,10 @@ class LibraryFolders:
         summaries: dict[str, SourcePaper],
         digested: set[str],
         topics: list[TopicNode],
-        filed: dict[str, list[str]],
+        filed: dict[str, list[tuple[int, str]]],
         overviews: dict[str, str],
     ) -> None:
-        """``Overview.md`` and ``Topics/`` for one library."""
+        """``Overview.md`` (the arranged contents) and ``Sections/`` for one library."""
 
         where = {str(item["id"]): str(item["folder"]) for item in listed}
         titles = {str(item["id"]): str(item["title"]) for item in listed}
@@ -529,40 +529,72 @@ class LibraryFolders:
                 key=lambda i: (-(summaries[i].year or 0) if i in summaries else 0, titles[i]),
             )
 
-        topic_names: set[str] = set()
-        topic_files: dict[str, str] = {}
+        def placed(topic_id: str) -> list[str]:
+            return [i for _, i in filed.get(topic_id, []) if i in where]
+
+        section_names: set[str] = set()
+        section_files: dict[str, str] = {}
         for topic in topics:
-            name = _unique(safe_name(topic.title, "Topic"), topic_names)
-            topic_files[topic.id] = f"Topics/{name}.md"
+            name = _unique(safe_name(topic.title, "Section"), section_names)
+            section_files[topic.id] = f"Sections/{name}.md"
             if topic.id in overviews:
                 body = overviews[topic.id]
             else:
                 lines = [f"# {topic.title}", ""]
                 if topic.description.strip():
                     lines += [topic.description.strip(), ""]
-                lines += [f"- {link(i, '../')}" for i in by_year(filed.get(topic.id, []))]
+                lines += [f"- {link(i, '../')}" for i in placed(topic.id)]
                 body = "\n".join(lines) + "\n"
-            plan.file(folder / topic_files[topic.id], body.encode())
+            plan.file(folder / section_files[topic.id], body.encode())
 
         works = {summaries[i].work_id or i for i in where if i in summaries}
-        in_topics = {i for topic in topics for i in filed.get(topic.id, [])}
+        in_sections = {i for topic in topics for i in placed(topic.id)}
         lines = [f"# {library.title}", ""]
         if library.question.strip():
             lines += [f"> {library.question.strip()}", ""]
         if library.description.strip():
             lines += [library.description.strip(), ""]
-        lines += [f"{len(where)} sources · {len(works)} papers · {len(topics)} topics", ""]
-        if topics:
-            lines += ["## Topics", ""]
-            lines += [
-                f"- [{topic.title}](<{topic_files[topic.id]}>) — "
-                f"{len([i for i in dict.fromkeys(filed.get(topic.id, [])) if i in where])} sources"
-                for topic in topics
-            ]
-            lines.append("")
-        rest = by_year([i for i in where if i not in in_topics])
+        lines += [f"{len(where)} sources · {len(works)} papers · {len(topics)} sections", ""]
+
+        # Sections and sources share one order inside their parent.
+        children: dict[str | None, list[tuple[int, int, str, str]]] = defaultdict(list)
+        known = {topic.id for topic in topics}
+        for topic in topics:
+            parent = topic.parent_id if topic.parent_id in known else None
+            children[parent].append((topic.position, 0, "section", topic.id))
+        for topic in topics:
+            for position, source_id in filed.get(topic.id, []):
+                if source_id in where:
+                    children[topic.id].append((position, 1, "source", source_id))
+        by_id = {topic.id: topic for topic in topics}
+
+        def walk(parent: str | None, depth: int) -> None:
+            # Markdown has no way back out of a sub-heading, so a section's own sources are
+            # listed before its sub-sections (each kind in the user's order).
+            ordered = sorted(
+                children.get(parent, []), key=lambda item: (item[2] == "section", item[0])
+            )
+            for _, _, kind, item_id in ordered:
+                if kind == "source":
+                    lines.append(f"- {link(item_id)}")
+                    continue
+                if lines and lines[-1].startswith("- "):
+                    lines.append("")
+                topic = by_id[item_id]
+                lines.extend([
+                    f"{'#' * min(depth + 2, 6)} [{topic.title}](<{section_files[item_id]}>)",
+                    "",
+                ])
+                if topic.description.strip():
+                    lines.extend([topic.description.strip(), ""])
+                walk(item_id, depth + 1)
+                if lines[-1] != "":
+                    lines.append("")
+
+        walk(None, 0)
+        rest = by_year([i for i in where if i not in in_sections])
         if rest:
-            lines += ["## Not in a topic" if topics else "## Sources", ""]
+            lines += ["## Not placed yet" if topics else "## Sources", ""]
             lines += [f"- {link(i)}" for i in rest]
             lines.append("")
         lines += ["---", "", "Written by Gunther; edits here are not read back."]

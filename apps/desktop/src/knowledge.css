@@ -1,15 +1,3 @@
-.topic-manager { margin: 0 40px 40px; padding: 24px; border: 1px solid var(--border, #deded6); border-radius: 16px; }
-.topic-manager > header, .structured-evidence > header { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; }
-.topic-manager p, .structured-evidence small { color: var(--text-muted, #737d76); }
-.topic-manager-list article { display: flex; align-items: center; gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--border, #deded6); }
-.topic-manager-list article > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.topic-manager form { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 22px; }
-.topic-manager label, .evidence-topic-picker { display: grid; gap: 8px; font-size: calc(13px * var(--gx-fs, 1)); }
-.topic-manager input, .topic-manager select, .topic-manager textarea, .evidence-topic-picker select { width: 100%; padding: 10px; border: 1px solid var(--border, #deded6); border-radius: 8px; color: inherit; background: transparent; }
-.topic-manager textarea { min-height: 65px; resize: vertical; }
-.topic-manager button, .structured-evidence button { cursor: pointer; padding: 8px 12px; border: 1px solid var(--border, #deded6); border-radius: 8px; background: transparent; color: inherit; }
-.topic-manager button:disabled, .structured-evidence button:disabled { opacity: .5; cursor: default; }
-.topic-manager button:focus-visible, .structured-evidence button:focus-visible { outline: 2px solid #22856c; outline-offset: 3px; }
 .structured-evidence { margin: 24px 0; padding: 16px; border: 1px solid var(--border, #deded6); border-radius: 12px; }
 .session-source-detail-body > .structured-evidence { margin: 24px 19px; }
 .structured-evidence > header { margin-bottom: 14px; }
@@ -20,20 +8,10 @@
 .structured-block h4 { margin: 6px 0; }
 .structured-block footer { display: flex; gap: 12px; align-items: center; justify-content: space-between; font-size: calc(12px * var(--gx-fs, 1)); }
 .structured-block a { color: #22856c; }
-@media (max-width: 640px) { .topic-manager { margin: 0 16px 24px; padding: 16px; } .topic-manager form { grid-template-columns: 1fr; } .topic-manager-list article { flex-wrap: wrap; } }
-.topic-manager-actions { display: flex; align-items: center; gap: 12px; }
-.topic-suggestions, .topic-overview { margin: 16px 0; padding: 16px; border: 1px solid var(--border, #deded6); border-radius: 12px; }
-.topic-suggestions > header { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; }
-.topic-suggestion-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }
-.topic-suggestion-list article { display: grid; gap: 8px; align-content: start; padding: 14px; border: 1px solid var(--border, #deded6); border-radius: 10px; min-width: 0; overflow: hidden; }
-.topic-suggestion-list label, .topic-suggestion-list input { min-width: 0; box-sizing: border-box; }
-.topic-suggestion-list ul { min-width: 0; overflow: hidden; }
-.topic-suggestion-list small { color: var(--text-muted, #737d76); overflow-wrap: anywhere; }
-.topic-suggestion-list ul { margin: 0; padding-left: 18px; font-size: calc(13px * var(--gx-fs, 1)); line-height: 1.45; }
-.topic-suggestion-list li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.topic-suggestion-list button { justify-self: start; }
-.topic-overview { margin-top: 0; }
-.topic-overview > small { display: block; margin-bottom: 8px; color: var(--text-muted, #737d76); }
-.topic-overview-text { max-width: 72ch; }
-.topic-overview-sources { margin: 12px 0; padding-left: 22px; font-size: calc(13px * var(--gx-fs, 1)); line-height: 1.6; }
-.topic-manager .link-button { padding: 0; border: 0; border-radius: 0; text-align: left; text-decoration: underline; text-underline-offset: 2px; }
+.evidence-topic-picker { display: grid; gap: 8px; font-size: calc(13px * var(--gx-fs, 1)); }
+.evidence-topic-picker select { width: 100%; padding: 10px; border: 1px solid var(--border, #deded6); border-radius: 8px; color: inherit; background: transparent; }
+.structured-evidence button { cursor: pointer; padding: 8px 12px; border: 1px solid var(--border, #deded6); border-radius: 8px; background: transparent; color: inherit; }
+.structured-evidence button:disabled { opacity: .5; cursor: default; }
+.structured-evidence button:focus-visible { outline: 2px solid #22856c; outline-offset: 3px; }
+.structured-evidence small { color: var(--text-muted, #737d76); }
+.structured-evidence > header { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; }

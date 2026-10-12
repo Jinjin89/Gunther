@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import Field, field_validator
@@ -55,6 +55,22 @@ class TopicSourcesInput(ApiModel):
     source_ids: list[str] = Field(min_length=1, max_length=10_000)
 
 
+class ContentsItem(ApiModel):
+    kind: Literal["source", "section"]
+    id: str = Field(min_length=1, max_length=160)
+
+
+class ContentsMoveInput(ApiModel):
+    items: list[ContentsItem] = Field(min_length=1, max_length=10_000)
+    parent_id: str | None = Field(default=None, max_length=160)
+    index: int | None = Field(default=None, ge=0, le=100_000)
+
+
+class ContentsOrderInput(ApiModel):
+    parent_id: str | None = Field(default=None, max_length=160)
+    children: list[ContentsItem] = Field(max_length=10_000)
+
+
 def structure_error(error: Exception) -> HTTPException:
     return HTTPException(
         status_code=409
@@ -75,7 +91,8 @@ def list_topics(base_id: str, request: Request):
 @router.post("/knowledge-bases/{base_id}/topics", status_code=201)
 def create_topic(base_id: str, payload: TopicInput, request: Request):
     try:
-        values = payload.model_dump(exclude={"source_ids"})
+        # An omitted position means "at the end of its parent".
+        values = payload.model_dump(exclude={"source_ids"}, exclude_unset=True)
         return TopicService(request.app.state.knowledge_service.sessions).save(
             base_id, values, source_ids=payload.source_ids
         )
@@ -88,6 +105,52 @@ def update_topic(base_id: str, topic_id: str, payload: TopicInput, request: Requ
     try:
         return TopicService(request.app.state.knowledge_service.sessions).save(
             base_id, payload.model_dump(exclude_unset=True, exclude={"source_ids"}), topic_id
+        )
+    except (LookupError, ValueError) as error:
+        raise structure_error(error) from error
+
+
+@router.get("/knowledge-bases/{base_id}/contents")
+def library_contents(base_id: str, request: Request):
+    """The arranged contents of a library: sections, where sources are placed, and the
+    details each row shows."""
+
+    try:
+        return TopicService(request.app.state.knowledge_service.sessions).contents(base_id)
+    except LookupError as error:
+        raise structure_error(error) from error
+
+
+@router.post("/knowledge-bases/{base_id}/contents/move")
+def move_contents(base_id: str, payload: ContentsMoveInput, request: Request):
+    try:
+        return TopicService(request.app.state.knowledge_service.sessions).move(
+            base_id,
+            [(item.kind, item.id) for item in payload.items],
+            payload.parent_id,
+            payload.index,
+        )
+    except (LookupError, ValueError) as error:
+        raise structure_error(error) from error
+
+
+@router.put("/knowledge-bases/{base_id}/contents/order")
+def order_contents(base_id: str, payload: ContentsOrderInput, request: Request):
+    try:
+        return TopicService(request.app.state.knowledge_service.sessions).order(
+            base_id, payload.parent_id, [(item.kind, item.id) for item in payload.children]
+        )
+    except (LookupError, ValueError) as error:
+        raise structure_error(error) from error
+
+
+@router.delete("/knowledge-bases/{base_id}/topics/{topic_id}")
+def delete_topic(base_id: str, topic_id: str, request: Request):
+    """Delete a section with everything inside it; its sources are kept, not placed."""
+
+    try:
+        return TopicService(request.app.state.knowledge_service.sessions).delete(
+            base_id, topic_id
         )
     except (LookupError, ValueError) as error:
         raise structure_error(error) from error

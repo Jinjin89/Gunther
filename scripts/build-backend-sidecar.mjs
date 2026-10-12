@@ -143,6 +143,7 @@ const result = spawnSync("uv", [
   "--collect-all", "tokenizers",
   "--collect-all", "sqlite_vec",
   "--collect-all", "PIL",
+  "--collect-all", "av",
   ...(withParser ? ["--add-data", `${parserDir}:document-parser`] : []),
   "--add-data", `${modelDir}:models/multilingual-e5-small`,
   "--add-data", `${vadDir}:models/silero-vad`,

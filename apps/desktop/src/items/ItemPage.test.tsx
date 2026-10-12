@@ -19,6 +19,8 @@ const api = vi.hoisted(() => ({
   trashSource: vi.fn(),
   trashNote: vi.fn(),
   restoreFromTrash: vi.fn(),
+  transcriptUpgrade: vi.fn(),
+  retryTranscriptUpgrade: vi.fn(),
 }));
 
 vi.mock("../api", () => ({

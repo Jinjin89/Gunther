@@ -306,7 +306,7 @@ def test_papers_are_read_retitled_and_copies_share_a_work(tmp_path):
         assert summary.startswith("# Marker Genes for Cell Type Annotation")
         assert "## Abstract" in summary and "doi.org/10.1234/cells.2021.001" in summary
         overview = (folder / "Overview.md").read_text()
-        assert "3 sources · 2 papers · 0 topics" in overview
+        assert "3 sources · 2 papers · 0 sections" in overview
 
         # Deleting both copies for good leaves no orphaned work behind.
         for source_id in (first, second):
@@ -397,10 +397,10 @@ def test_topics_are_suggested_accepted_asked_and_written_up(tmp_path):
 
         client.app.state.library_folders.sync()
         folder = root / "Libraries" / "Mixed reading"
-        assert (folder / "Topics" / "Rockets.md").read_text() == overview["markdown"]
+        assert (folder / "Sections" / "Rockets.md").read_text() == overview["markdown"]
         listing = (folder / "Overview.md").read_text()
-        assert "[Rockets](<Topics/Rockets.md>) — 6 sources" in listing
-        assert "## Not in a topic" in listing
+        assert "## [Rockets](<Sections/Rockets.md>)" in listing
+        assert "## Not placed yet" in listing
 
 
 class TopicAxes:

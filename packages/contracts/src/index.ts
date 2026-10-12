@@ -174,11 +174,71 @@ export interface KnowledgeTopic {
   sourceIds: string[];
 }
 
-export type TopicInput = Pick<KnowledgeTopic, "title" | "description" | "parentId" | "position"> & {
+export type TopicInput = Pick<KnowledgeTopic, "title" | "description" | "parentId"> & {
+  /** Left out, a new section goes to the end of its parent and an edited one keeps its place. */
+  position?: number;
   version?: number;
   /** Whole sources to file under a new topic. */
   sourceIds?: string[];
 };
+
+/** A heading in a library's contents (stored as a topic). */
+export interface ContentsSection {
+  id: string;
+  parentId: string | null;
+  title: string;
+  description: string;
+  /** Shares one order with the sources placed in the same parent. */
+  position: number;
+  version: number;
+  passageCount: number;
+}
+
+export interface ContentsPlacement {
+  sourceId: string;
+  sectionId: string;
+  position: number;
+}
+
+/** What a contents row shows about a source; unknown details are null. */
+export interface ContentsSource {
+  id: string;
+  title: string;
+  kind: SourceKind;
+  createdAt: string;
+  durationSeconds: number | null;
+  authors: string | null;
+  year: number | null;
+  pages: number | null;
+  mediaType: string | null;
+  host: string | null;
+  processing: "ready" | "reading" | "failed";
+}
+
+/** Every section, where each source is placed, and every live source of a library. */
+export interface LibraryContents {
+  sections: ContentsSection[];
+  placements: ContentsPlacement[];
+  sources: ContentsSource[];
+}
+
+export interface ContentsItemRef {
+  kind: "source" | "section";
+  id: string;
+}
+
+/** Move items, in this order, under a section (null = top level / not placed). */
+export interface ContentsMoveInput {
+  items: ContentsItemRef[];
+  parentId: string | null;
+  /** Among the parent's remaining children; null = at the end. */
+  index: number | null;
+}
+
+export interface ContentsOrderInput {
+  parentId: string | null;
+  children: ContentsItemRef[];
+}
 
 /** A group of papers, not yet in a topic, that could become one. */
 export interface TopicSuggestion {
@@ -1385,6 +1445,17 @@ export interface RecordingAsset {
   contentType: string;
   sizeBytes: number;
   storedAt: string;
+}
+
+/** Where an old recording stands in being heard again and grouped into paragraphs (`GET /recordings/{id}/upgrade`). */
+export interface TranscriptUpgradeStatus {
+  state: "none" | "waiting" | "running" | "done" | "failed";
+  /** Why it waits: no usable Recording model, the models not answering lately, a live recording in progress, or others ahead in line. */
+  reason: "model" | "service" | "recording" | "queue" | null;
+  ahead: number;
+  heardMs: number;
+  totalMs: number;
+  error: string | null;
 }
 
 export type RecordingStatus = "capturing" | "completed" | "failed";

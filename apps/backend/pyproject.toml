@@ -18,6 +18,7 @@ dependencies = [
   "tokenizers>=0.21,<1",
   "uvicorn[standard]>=0.35.0,<1",
   "websockets>=17.0.1,<18",
+  "av>=14,<20",
 ]
 
 [dependency-groups]

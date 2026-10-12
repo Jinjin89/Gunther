@@ -119,6 +119,7 @@ from gunther.service import (
 )
 from gunther.skillbook import ask_skills
 from gunther.storage_budget import StorageBudgetError, StorageReservation
+from gunther.transcript_upgrade import NotFailed, UnknownRecording
 from gunther.web_capture import (
     WebCaptureConflictError,
     WebCaptureFetchError,
@@ -972,6 +973,37 @@ async def relisten_recording(
         "provider": choice.provider,
         "missing": [list(span) for span in listen_copy.missing_in(held, start, end)],
     }
+
+
+@router.get("/recordings/{recording_id}/upgrade")
+def recording_upgrade(recording_id: str, request: Request) -> dict[str, Any]:
+    """Whether an old recording is being heard again and grouped into paragraphs.
+
+    ``state`` is ``none`` (nothing to improve), ``waiting`` (with a ``reason``: ``model``,
+    ``recording`` or ``queue``), ``running``, ``done`` or ``failed`` (with ``error``).
+    """
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", recording_id):
+        raise HTTPException(status_code=404, detail="Recording not found")
+    return request.app.state.transcript_upgrader.status(recording_id)
+
+
+@router.post("/recordings/{recording_id}/upgrade/retry")
+def retry_recording_upgrade(recording_id: str, request: Request) -> dict[str, Any]:
+    """Try a recording whose upgrade failed again, before anything else waiting."""
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", recording_id):
+        raise HTTPException(status_code=404, detail="Recording not found")
+    upgrader = request.app.state.transcript_upgrader
+    try:
+        upgrader.retry(recording_id)
+    except UnknownRecording as error:
+        raise HTTPException(status_code=404, detail="Recording not found") from error
+    except NotFailed as error:
+        raise HTTPException(
+            status_code=409, detail="This transcript is not waiting to be retried."
+        ) from error
+    return upgrader.status(recording_id)
 
 
 class ParagraphsInput(ApiModel):

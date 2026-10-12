@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -209,6 +210,33 @@ class RecordingChunk(Base):
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
 
     recording: Mapped[RecordingSession] = relationship(back_populates="chunks")
+
+
+class TranscriptUpgrade(Base):
+    """One old recording being heard again and grouped into paragraphs, by itself.
+
+    ``state`` is ``running``, ``done`` or ``failed``; a recording with no row has not been
+    started. ``sentences_json`` holds what was heard before grouping, so a later attempt
+    only groups again. ``old_transcript`` is the transcript section as it was.
+    """
+
+    __tablename__ = "transcript_upgrades"
+
+    recording_id: Mapped[str] = mapped_column(
+        ForeignKey("recording_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    state: Mapped[str] = mapped_column(String(16), default="running")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    heard_ms: Mapped[int] = mapped_column(Integer, default=0)
+    total_ms: Mapped[int] = mapped_column(Integer, default=0)
+    sentences_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    old_transcript: Mapped[str] = mapped_column(Text, default="")
+    model: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    retry_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    started_at: Mapped[datetime] = mapped_column(default=utc_now)
+    finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(default=utc_now)
 
 
 class NotebookNote(Base):
@@ -854,7 +882,11 @@ class TopicSourceLink(Base):
     """A whole source filed under a topic, as opposed to one of its passages."""
 
     __tablename__ = "topic_sources"
-    __table_args__ = (UniqueConstraint("topic_id", "source_id"),)
+    __table_args__ = (
+        UniqueConstraint("topic_id", "source_id"),
+        # One place per source in a library, like a book on a shelf.
+        Index("ux_topic_sources_base_source", "knowledge_base_id", "source_id", unique=True),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     topic_id: Mapped[str] = mapped_column(
@@ -863,6 +895,9 @@ class TopicSourceLink(Base):
     source_id: Mapped[str] = mapped_column(
         ForeignKey("sources.id", ondelete="CASCADE"), index=True
     )
+    knowledge_base_id: Mapped[str] = mapped_column(String(160))
+    # Shares one order with the sections inside the same parent.
+    position: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
 
 

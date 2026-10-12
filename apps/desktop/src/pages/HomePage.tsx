@@ -271,7 +271,7 @@ export function HomePage({
     }
     if (result.kind === "source") {
       persistentStorage.setItem(`gunther:open-source:${baseId}`, result.id);
-      onOpenBase(baseId, "sources");
+      onOpenBase(baseId, "contents");
       return;
     }
     if (result.kind === "knowledge_unit" && result.sourceSessionId) {

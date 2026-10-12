@@ -77,6 +77,8 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (21, "session_briefs"),
             (22, "canonical_documents"),
             (23, "recording_transcript_segments"),
+            (24, "transcript_upgrades"),
+            (25, "library_contents"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
@@ -1163,7 +1165,7 @@ def test_v20_database_gains_session_briefs_without_losing_conversations(tmp_path
             assert connection.execute(
                 text("SELECT title, brief_json FROM knowledge_sessions WHERE id = 'ses_old'")
             ).one() == ("Kept", "{}")
-        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 23
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 25
     finally:
         engine.dispose()
 
@@ -1195,6 +1197,116 @@ def test_v22_database_gains_transcript_segments_without_losing_recordings(tmp_pa
                     "WHERE id = 'rec_old'"
                 )
             ).one() == ("[00:00] Hello", None)
-        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 23
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 25
+    finally:
+        engine.dispose()
+
+
+def test_v23_database_gains_the_upgrade_table_without_losing_recordings(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path)
+    try:
+        run_migrations(engine, Base.metadata, MIGRATIONS[:23])
+        with engine.begin() as connection:
+            # Baseline adopts current metadata; remove what a v23 app never had.
+            connection.exec_driver_sql("DROP TABLE IF EXISTS transcript_upgrades")
+            connection.execute(
+                text(
+                    "INSERT INTO recording_sessions (id, title, status, content_type, file_name, "
+                    "byte_size, next_sequence, transcript, duration_seconds, moments_json, "
+                    "recording_context, checkpoint_revision, created_at, updated_at) "
+                    "VALUES ('rec_old', 'Kept', 'completed', 'audio/webm', 'old.webm', 0, 0, "
+                    "'[00:00] Hello', 5, '[]', 'lecture', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+        assert not inspect(engine).has_table("transcript_upgrades")
+        history = run_migrations(engine, Base.metadata)
+        assert run_migrations(engine, Base.metadata) == history
+        assert inspect(engine).has_table("transcript_upgrades")
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO transcript_upgrades (recording_id, state, attempts, heard_ms, "
+                    "total_ms, old_transcript, started_at, updated_at) VALUES "
+                    "('rec_old', 'failed', 1, 0, 5000, '[00:00] Hello', "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+        with engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT transcript FROM recording_sessions WHERE id = 'rec_old'")
+            ).scalar_one() == "[00:00] Hello"
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 25
+    finally:
+        engine.dispose()
+
+
+def test_v24_database_gets_one_place_per_source_and_a_shared_order(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path)
+    try:
+        run_migrations(engine, Base.metadata, MIGRATIONS[:24])
+        with engine.begin() as connection:
+            # Baseline adopts current metadata; put back the table a v24 app had.
+            connection.exec_driver_sql("DROP TABLE topic_sources")
+            connection.exec_driver_sql(
+                "CREATE TABLE topic_sources (id VARCHAR PRIMARY KEY, "
+                "topic_id VARCHAR NOT NULL REFERENCES topic_nodes (id) ON DELETE CASCADE, "
+                "source_id VARCHAR NOT NULL REFERENCES sources (id) ON DELETE CASCADE, "
+                "created_at DATETIME NOT NULL, UNIQUE (topic_id, source_id))"
+            )
+            connection.exec_driver_sql(
+                "INSERT INTO knowledge_bases (id, title, eyebrow, subtitle, question, "
+                "description, color, status, created_at, updated_at) VALUES "
+                "('kb_1', 'One', '', '', 'q', 'd', 'green', 'Outline', "
+                "'2026-01-01', '2026-01-01')"
+            )
+            for number, name in ((1, "a"), (2, "b"), (3, "c")):
+                connection.exec_driver_sql(
+                    "INSERT INTO sources (id, title, kind, content, content_hash, created_at) "
+                    f"VALUES ('src_{name}', '{name}', 'note', '{name}', 'h{number}', "
+                    "'2026-01-01')"
+                )
+            # Two top-level sections in a stored order, one sub-section.
+            for topic, parent, position, created in (
+                ("t_second", None, 1, "2026-01-02"),
+                ("t_first", None, 0, "2026-01-03"),
+                ("t_sub", "t_first", 0, "2026-01-04"),
+            ):
+                connection.exec_driver_sql(
+                    "INSERT INTO topic_nodes (id, knowledge_base_id, parent_id, title, "
+                    "description, position, version, created_at) VALUES "
+                    f"('{topic}', 'kb_1', {'NULL' if parent is None else repr(parent)}, "
+                    f"'{topic}', '', {position}, 1, '{created}')"
+                )
+            for link, topic, source, created in (
+                ("l1", "t_first", "src_a", "2026-02-01"),
+                ("l2", "t_second", "src_a", "2026-02-02"),  # a repeat: dropped
+                ("l3", "t_first", "src_b", "2026-02-03"),
+                ("l4", "t_second", "src_c", "2026-02-04"),
+            ):
+                connection.exec_driver_sql(
+                    "INSERT INTO topic_sources (id, topic_id, source_id, created_at) VALUES "
+                    f"('{link}', '{topic}', '{source}', '{created}')"
+                )
+        history = run_migrations(engine, Base.metadata)
+        assert history[-1].name == "library_contents"
+        assert run_migrations(engine, Base.metadata) == history
+        with engine.connect() as connection:
+            links = connection.execute(
+                text("SELECT id, knowledge_base_id, position FROM topic_sources ORDER BY id")
+            ).all()
+            nodes = connection.execute(
+                text("SELECT id, position FROM topic_nodes ORDER BY id")
+            ).all()
+        # The earliest placement of a_source stays; sections come before sources.
+        assert links == [("l1", "kb_1", 1), ("l3", "kb_1", 2), ("l4", "kb_1", 0)]
+        assert nodes == [("t_first", 0), ("t_second", 1), ("t_sub", 0)]
+        indexes = {index["name"] for index in inspect(engine).get_indexes("topic_sources")}
+        assert "ux_topic_sources_base_source" in indexes
+        with pytest.raises(Exception, match="UNIQUE"), engine.begin() as connection:
+            connection.exec_driver_sql(
+                "INSERT INTO topic_sources (id, topic_id, source_id, created_at, "
+                "knowledge_base_id, position) VALUES "
+                "('l9', 't_second', 'src_b', '2026-03-01', 'kb_1', 5)"
+            )
     finally:
         engine.dispose()

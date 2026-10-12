@@ -9,8 +9,8 @@ const FOLDER_PICKER = { webkitdirectory: "", directory: "" } as Record<string, s
 // Refresh the source list this often while a large import runs.
 const REFRESH_EVERY = 10;
 
-/** Import a whole folder (or many files) of papers into one library. */
-export function BulkImport({ knowledgeBaseId }: { knowledgeBaseId: string }) {
+/** Import a whole folder (or many files) of papers into one library. `compact` is one button for a toolbar, with the progress below it. */
+export function BulkImport({ knowledgeBaseId, compact = false }: { knowledgeBaseId: string; compact?: boolean }) {
   const folderInput = useRef<HTMLInputElement>(null);
   const filesInput = useRef<HTMLInputElement>(null);
   const controller = useRef<AbortController | null>(null);
@@ -52,14 +52,16 @@ export function BulkImport({ knowledgeBaseId }: { knowledgeBaseId: string }) {
     skipped ? `${count(skipped)} skipped (hidden or unreadable)` : "",
   ].filter(Boolean).join(" · ");
 
-  return <div className="bulk-import">
+  return <div className={compact ? "bulk-import is-compact" : "bulk-import"}>
     <input ref={folderInput} type="file" hidden multiple {...FOLDER_PICKER} aria-label="Folder to import" onChange={(event) => { void start(event.target.files); event.target.value = ""; }} />
     <input ref={filesInput} type="file" hidden multiple aria-label="Files to import" onChange={(event) => { void start(event.target.files); event.target.value = ""; }} />
-    <div className="bulk-import-actions">
-      <span><strong>Many papers at once</strong><small>Pick a folder; Gunther keeps each file, then reads and indexes them in the background.</small></span>
-      <button type="button" disabled={running} onClick={() => folderInput.current?.click()}><FolderInput size={13} />Import folder</button>
-      <button type="button" disabled={running} onClick={() => filesInput.current?.click()}>Import files</button>
-    </div>
+    {compact
+      ? <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={running} title="Pick a folder; Gunther keeps each file, then reads and indexes them in the background." onClick={() => folderInput.current?.click()}><FolderInput size={13} />Import folder</button>
+      : <div className="bulk-import-actions">
+        <span><strong>Many papers at once</strong><small>Pick a folder; Gunther keeps each file, then reads and indexes them in the background.</small></span>
+        <button type="button" disabled={running} onClick={() => folderInput.current?.click()}><FolderInput size={13} />Import folder</button>
+        <button type="button" disabled={running} onClick={() => filesInput.current?.click()}>Import files</button>
+      </div>}
     {progress && <div className="bulk-import-status" role="status">
       {running
         ? <><progress max={progress.total} value={progress.done} /><span>Importing {count(progress.done)} of {count(progress.total)}{summary ? ` · ${summary}` : ""}</span><button type="button" onClick={() => controller.current?.abort()}>Stop</button></>

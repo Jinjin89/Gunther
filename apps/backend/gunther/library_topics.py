@@ -81,10 +81,9 @@ def _terms(text: str) -> list[str]:
 
 
 def _unfiled_papers(session: Session, base_id: str) -> list[Paper]:
-    """One paper per work, among live library sources not filed under a topic."""
+    """One paper per work, among live library sources not placed in a section."""
 
-    topics = select(TopicNode.id).where(TopicNode.knowledge_base_id == base_id)
-    filed = select(TopicSourceLink.source_id).where(TopicSourceLink.topic_id.in_(topics))
+    filed = select(TopicSourceLink.source_id).where(TopicSourceLink.knowledge_base_id == base_id)
     rows = session.execute(
         select(SourcePaper)
         .join(Source, Source.id == SourcePaper.source_id)

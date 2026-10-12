@@ -15,6 +15,7 @@ migration then runs in version order.
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -25,6 +26,8 @@ from sqlalchemy.engine import Connection
 
 from gunther.database import connection_transaction
 from gunther.source_identity import source_fingerprint
+
+logger = logging.getLogger(__name__)
 
 MIGRATION_TABLE = "gunther_schema_migrations"
 
@@ -533,6 +536,91 @@ def _add_recording_transcript_segments(connection: Connection, _metadata: MetaDa
         )
 
 
+def _create_transcript_upgrades(connection: Connection, metadata: MetaData) -> None:
+    """Old recordings are heard again and grouped into paragraphs in the background; one
+    row per recording keeps the progress, the error and the transcript as it was."""
+
+    if "transcript_upgrades" in metadata.tables:
+        metadata.tables["transcript_upgrades"].create(bind=connection, checkfirst=True)
+
+
+def _add_library_contents(connection: Connection, _metadata: MetaData) -> None:
+    """A library's contents are arranged by the user: each source has one place in a
+    library, and sections and sources share one order inside their parent.
+
+    Older data allowed one source under several sections and ordered only the sections.
+    The earliest placement is kept, and each parent is numbered sections first.
+    """
+
+    inspector = inspect(connection)
+    if not inspector.has_table("topic_sources") or not inspector.has_table("topic_nodes"):
+        return
+    add_column_if_missing(
+        connection, "topic_sources", "knowledge_base_id", "VARCHAR(160) NOT NULL DEFAULT ''"
+    )
+    add_column_if_missing(connection, "topic_sources", "position", "INTEGER NOT NULL DEFAULT 0")
+    connection.execute(
+        text(
+            "UPDATE topic_sources SET knowledge_base_id = ("
+            "SELECT knowledge_base_id FROM topic_nodes "
+            "WHERE topic_nodes.id = topic_sources.topic_id)"
+            " WHERE knowledge_base_id = ''"
+        )
+    )
+    # One place: keep the earliest placement of each source in each library.
+    repeated = [
+        row[0]
+        for row in connection.execute(
+            text(
+                "SELECT id FROM ("
+                "SELECT id, ROW_NUMBER() OVER ("
+                "PARTITION BY knowledge_base_id, source_id ORDER BY created_at, id) AS place "
+                "FROM topic_sources) WHERE place > 1"
+            )
+        )
+    ]
+    for link_id in repeated:
+        connection.execute(text("DELETE FROM topic_sources WHERE id = :id"), {"id": link_id})
+    if repeated:
+        logger.info("Library contents: removed %d repeated placements", len(repeated))
+    connection.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_topic_sources_base_source "
+            "ON topic_sources (knowledge_base_id, source_id)"
+        )
+    )
+    # Number each parent's children: sections first, then its sources.
+    nodes = connection.execute(
+        text(
+            "SELECT id, knowledge_base_id, parent_id FROM topic_nodes "
+            "ORDER BY knowledge_base_id, position, created_at, id"
+        )
+    ).all()
+    sources_by_topic: dict[str, list[str]] = {}
+    for link_id, topic_id in connection.execute(
+        text("SELECT id, topic_id FROM topic_sources ORDER BY created_at, id")
+    ):
+        sources_by_topic.setdefault(topic_id, []).append(link_id)
+    sections_by_parent: dict[tuple[str, str | None], list[str]] = {}
+    for node_id, base_id, parent_id in nodes:
+        sections_by_parent.setdefault((base_id, parent_id), []).append(node_id)
+    sections_in: dict[str, int] = {}
+    for (_base_id, parent_id), ids in sections_by_parent.items():
+        if parent_id is not None:
+            sections_in[parent_id] = len(ids)
+        for index, node_id in enumerate(ids):
+            connection.execute(
+                text("UPDATE topic_nodes SET position = :position WHERE id = :id"),
+                {"position": index, "id": node_id},
+            )
+    for topic_id, link_ids in sources_by_topic.items():
+        for index, link_id in enumerate(link_ids, start=sections_in.get(topic_id, 0)):
+            connection.execute(
+                text("UPDATE topic_sources SET position = :position WHERE id = :id"),
+                {"position": index, "id": link_id},
+            )
+
+
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
 MIGRATIONS: tuple[Migration, ...] = (
@@ -559,6 +647,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(21, "session_briefs", _add_session_briefs),
     Migration(22, "canonical_documents", _add_canonical_documents),
     Migration(23, "recording_transcript_segments", _add_recording_transcript_segments),
+    Migration(24, "transcript_upgrades", _create_transcript_upgrades),
+    Migration(25, "library_contents", _add_library_contents),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

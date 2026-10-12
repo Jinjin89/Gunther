@@ -162,7 +162,7 @@ describe("HomePage search", () => {
     expect(api.search).toHaveBeenCalledWith("paper");
     expect(api.webSearch).not.toHaveBeenCalled();
     expect(window.localStorage.getItem("gunther:open-source:base_1")).toBe("src_1");
-    expect(props.onOpenBase).toHaveBeenCalledWith("base_1", "sources");
+    expect(props.onOpenBase).toHaveBeenCalledWith("base_1", "contents");
   });
 
   it("sends unfiled captures to Inbox", async () => {

@@ -2,7 +2,7 @@ import { persistentStorage } from "./persistentStorage";
 import { Check } from "lucide-react";
 import type { CreateKnowledgeBaseInput, CreateSourceInput, NotebookNote, TrashItem } from "@gunther/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getKnowledgeBase, type AtlasMode, type KnowledgeBase, type KnowledgeChapter } from "./atlas";
+import { getKnowledgeBase, normalizeAtlasMode, type AtlasMode, type KnowledgeBase, type KnowledgeChapter } from "./atlas";
 import { metadataToBase } from "./atlasMetadata";
 import { AtlasPage, AtlasRail, AtlasTitlebar, type AtlasView } from "./components/AtlasChrome";
 import { AccountPageV2, CaptureSheet, CreateKnowledgeBaseSheet, EvidenceDrawer, SettingsPageV2, type CaptureKind } from "./components/AtlasUtilities";
@@ -312,11 +312,11 @@ export default function App() {
     }
   }, [notify, openItem, originOf, view]);
 
-  const openBase = useCallback((id: string, chapterId?: string, initialMode: AtlasMode = DEFAULT_KNOWLEDGE_BASE_MODE) => {
+  const openBase = useCallback((id: string, chapterId?: string, initialMode: AtlasMode | "overview" | "sources" = DEFAULT_KNOWLEDGE_BASE_MODE) => {
     const base = bases.find((item) => item.id === id) ?? getKnowledgeBase(id);
     setActiveBaseId(base.id);
     setSelectedChapterId(chapterId ?? base.chapters[0]!.id);
-    setMode(initialMode);
+    setMode(normalizeAtlasMode(initialMode));
     setView("base");
   }, [bases]);
 

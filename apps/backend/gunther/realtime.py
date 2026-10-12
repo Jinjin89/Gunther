@@ -1287,7 +1287,8 @@ def _provider_message(error: Exception, label: str) -> str:
             detail = error.response.text.strip()[:200]
         status = error.response.status_code
         return f"{label} answered {status}: {detail}" if detail else f"{label} answered {status}."
-    return f"{label} could not be reached ({error or type(error).__name__})."
+    # A timeout's message is empty: name the kind of failure instead.
+    return f"{label} could not be reached ({str(error) or type(error).__name__})."
 
 
 def _qwen_words(payload: object) -> list[dict[str, Any]]:
@@ -1328,6 +1329,7 @@ async def relisten_audio(
     terms: list[str],
     before: str,
     after: str,
+    timeout: httpx.Timeout = RELISTEN_TIMEOUT,
 ) -> dict[str, Any]:
     """Have a job's model write the words of ``pcm`` (16 kHz) again, with context.
 
@@ -1339,7 +1341,7 @@ async def relisten_audio(
 
     wav = _pcm16_wav(pcm, LIVE_RATE)
     term_text = ", ".join(term.strip() for term in terms if term.strip())
-    async with httpx.AsyncClient(timeout=RELISTEN_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=timeout) as client:
 
         async def post(**request: Any) -> httpx.Response:
             try:

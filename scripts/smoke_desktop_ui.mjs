@@ -663,17 +663,17 @@ async function run() {
       "reopened knowledge base default Ask view",
     );
 
-    if (!await cdp.evaluate(clickExpression("button", "Sources"))) {
-      throw new SmokeFailure("Sources view was not clickable");
+    if (!await cdp.evaluate(clickExpression("button", "Contents"))) {
+      throw new SmokeFailure("Contents view was not clickable");
     }
     await waitForEvaluation(
       cdp,
-      `document.body.innerText.includes('Original material, kept in context.') && [...document.querySelectorAll('button.material-row strong')].some((item) => item.textContent.trim() === ${JSON.stringify(noteTitle)})`,
-      "filed source in Sources view",
+      `document.querySelector('.base-mode-switch button[aria-current="page"]')?.textContent.trim() === 'Contents' && [...document.querySelectorAll('button.contents-source strong')].some((item) => item.textContent.trim() === ${JSON.stringify(noteTitle)})`,
+      "filed source in Contents view",
     );
     const sourceOpenState = await cdp.evaluate(`(() => {
-      const button = [...document.querySelectorAll('button.material-row')].find((candidate) => candidate.querySelector('strong')?.textContent.trim() === ${JSON.stringify(noteTitle)});
-      if (!button) return { clicked: false, reason: 'missing', rows: [...document.querySelectorAll('button.material-row')].map((candidate) => candidate.textContent.replace(/\\s+/g, ' ').trim()) };
+      const button = [...document.querySelectorAll('button.contents-source')].find((candidate) => candidate.querySelector('strong')?.textContent.trim() === ${JSON.stringify(noteTitle)});
+      if (!button) return { clicked: false, reason: 'missing', rows: [...document.querySelectorAll('button.contents-source')].map((candidate) => candidate.textContent.replace(/\\s+/g, ' ').trim()) };
       if (button.disabled) return { clicked: false, reason: 'disabled', rows: [button.textContent.replace(/\\s+/g, ' ').trim()] };
       button.click();
       return { clicked: true };
