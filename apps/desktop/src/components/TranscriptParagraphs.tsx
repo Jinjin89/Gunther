@@ -19,6 +19,8 @@ interface TranscriptParagraphsProps {
   onEdit: (paragraphId: string, text: string) => void;
   /** Listen again to a window whose check failed. */
   onRetry?: (windowId: string) => void;
+  /** Send the same sentences to be grouped again. */
+  onRetryGrouping?: () => void;
   /** Play the saved recording from here; absent until the audio is saved. */
   onSeek?: (seconds: number) => void;
 }
@@ -26,7 +28,7 @@ interface TranscriptParagraphsProps {
 type Row =
   | {
     kind: "paragraph"; id: string; startMs: number; text: string; edited: boolean; parts: TextPart[];
-    failed: { id: string; error?: string } | null; checking: boolean; heard: string | null;
+    failed: { id: string; error?: string } | null; checking: boolean; heard: string | null; groupingFailed: string | null;
   }
   | { kind: "gap"; id: string; startMs: number; text: string }
   | { kind: "live"; id: string; startMs: number; text: string; draft: string; joiner: string; checking: boolean };
@@ -34,7 +36,7 @@ type Row =
 const AT_BOTTOM_PX = 48;
 
 /** Paragraphs, one time each in the left margin: black when confirmed, grey while still live. */
-export function TranscriptParagraphs({ state, active, onEdit, onRetry, onSeek }: TranscriptParagraphsProps) {
+export function TranscriptParagraphs({ state, active, onEdit, onRetry, onRetryGrouping, onSeek }: TranscriptParagraphsProps) {
   const scroller = useRef<HTMLDivElement | null>(null);
   const field = useRef<HTMLTextAreaElement | null>(null);
   const following = useRef(true);
@@ -43,7 +45,7 @@ export function TranscriptParagraphs({ state, active, onEdit, onRetry, onSeek }:
 
   const rows = useMemo(() => {
     const list: Row[] = [];
-    state.paragraphs.forEach((paragraph) => {
+    state.paragraphs.forEach((paragraph, index) => {
       const text = paragraphText(state, paragraph).replace(/[ \t]+/g, " ").trim();
       if (!text) return;
       const check = paragraphCheck(state, paragraph);
@@ -58,6 +60,8 @@ export function TranscriptParagraphs({ state, active, onEdit, onRetry, onSeek }:
         failed: check.failed ? { id: check.failed.id, ...(check.failed.error ? { error: check.failed.error } : {}) } : null,
         checking: check.checking,
         heard: heardLive(state, paragraph),
+        // Grouping failed: the note sits under the newest paragraph, where the sentences wait.
+        groupingFailed: state.grouping.state === "failed" && index === state.paragraphs.length - 1 ? state.grouping.error ?? "" : null,
       });
     });
     state.gaps.forEach((gap) => {
@@ -166,6 +170,9 @@ export function TranscriptParagraphs({ state, active, onEdit, onRetry, onSeek }:
       <span className="lp-aside" data-slot="status">
         {row.kind === "live" && row.checking && <span className="lp-status">checking…</span>}
         {row.kind === "paragraph" && row.checking && <span className="lp-status">checking…</span>}
+        {row.kind === "paragraph" && row.groupingFailed !== null && <span className="lp-status is-failed" title={row.groupingFailed}>
+          Couldn't group into paragraphs · <button type="button" className="lp-retry" onClick={() => onRetryGrouping?.()}>Retry</button>
+        </span>}
         {row.kind === "paragraph" && !row.checking && row.failed && <span className="lp-status is-failed" title={row.failed.error}>
           Couldn't check · <button type="button" className="lp-retry" onClick={() => onRetry?.(row.failed!.id)}>Retry</button>
         </span>}

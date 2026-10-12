@@ -758,6 +758,9 @@ export const knowledgeApi = {
       provider: string;
       missing: [number, number][];
     }>(`/recordings/${encodeURIComponent(id)}/relisten`, { method: "POST", body: JSON.stringify(body) }),
+  /** Where paragraphs start among these sentences, by content (the Analysis model). Whole numbers only: no text comes back. */
+  groupParagraphs: (id: string, body: { sentences: string[]; before: string; pass: "live" | "regroup" }) =>
+    request<{ starts: number[]; model: string }>(`/recordings/${encodeURIComponent(id)}/paragraphs`, { method: "POST", body: JSON.stringify(body) }),
   testServiceSettings: (id: string, values: Record<string, ServiceSettingValue>) =>
     request<ServiceTestResult>(`/settings/services/${encodeURIComponent(id)}/test`, {
       method: "POST",

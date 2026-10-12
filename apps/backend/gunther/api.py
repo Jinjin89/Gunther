@@ -36,6 +36,7 @@ from gunther.device_auth import (
 from gunther.lecture import LectureSummaryError
 from gunther.llm import ModelError
 from gunther.pairing_exchange_guard import PairingExchangeRejected
+from gunther.paragraphs import ParagraphsError, group_paragraphs
 from gunther.realtime import (
     RELISTEN_PAD_MS,
     ListenError,
@@ -896,6 +897,7 @@ async def live_recording(
             and choice is not None
             and speech_registry.check_again(state.speech_registry)
         ),
+        group_paragraphs=state.models.for_role("analysis") is not None,
     )
 
 
@@ -968,6 +970,45 @@ async def relisten_recording(
         "provider": choice.provider,
         "missing": [list(span) for span in listen_copy.missing_in(held, start, end)],
     }
+
+
+class ParagraphsInput(ApiModel):
+    sentences: list[Annotated[str, Field(max_length=2_000)]] = Field(min_length=1, max_length=300)
+    before: str = Field(default="", max_length=4_000)
+    pass_: Literal["live", "regroup"] = Field(default="live", alias="pass")
+
+
+@router.post("/recordings/{recording_id}/paragraphs")
+async def group_recording_paragraphs(
+    recording_id: str, payload: ParagraphsInput, request: Request
+) -> dict[str, Any]:
+    """Where paragraphs start among these sentences, by content (the Analysis model).
+
+    Only sentence numbers come back; the model never returns or changes text.
+    """
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", recording_id):
+        raise HTTPException(status_code=404, detail="Recording not found")
+    gateway = request.app.state.models
+    chosen = gateway.for_role("analysis")
+    if chosen is None:
+        raise HTTPException(
+            status_code=424,
+            detail="Paragraphs by topic need a model. Set one up under Settings → Models.",
+        )
+    model, effort = chosen
+    try:
+        starts = await asyncio.to_thread(
+            group_paragraphs,
+            gateway,
+            model,
+            effort,
+            payload.sentences,
+            payload.before[-400:],
+        )
+    except ParagraphsError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    return {"starts": starts, "model": model.display}
 
 
 @router.get("/knowledge-bases", response_model=list[KnowledgeBaseOut])

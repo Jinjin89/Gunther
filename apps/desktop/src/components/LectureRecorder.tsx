@@ -24,24 +24,31 @@ import {
 } from "lucide-react";
 import { knowledgeApi, recordingAssetUrl, recordingSocketUrl } from "../api";
 import { flushAudio, offerAudio } from "../services/audioQueue";
+import { runOnce } from "../services/singleFlight";
 import { encodePcm16, pcm16Length } from "../services/pcm";
 import {
+  applyGrouping,
   applyLiveEvent,
+  applyRegroup,
   applyRetry,
   applyWindowResult,
   beginCheck,
+  beginGrouping,
   beginRetry,
   confirmLive,
   editParagraph,
   emptyTranscript,
   hasTranscriptContent,
+  groupingRequest,
   isTranscriptState,
+  nextRegroupChunk,
   nextWindow,
   renderTranscript,
   retryRange,
   storableTranscript,
   textBefore,
   transcriptFromText,
+  type GroupingOutcome,
   type TranscriptState,
   type WindowOutcome,
 } from "../services/liveTranscript";
@@ -452,6 +459,8 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   );
   const [liveNote, setLiveNote] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
+  // The backend has no Analysis model: paragraphs follow the minute checks, and a hint says how to group by topic.
+  const [groupHint, setGroupHint] = useState(false);
   const [summary, setSummary] = useState<LectureSummary | null>(null);
   const [summarizing, setSummarizing] = useState(false);
   const [provider, setProvider] = useState<"checking" | "available" | "connecting" | "live" | "local-only">("checking");
@@ -504,6 +513,8 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   const checkLoopRef = useRef<Promise<void> | null>(null);
   const closingRef = useRef(false);
   const skipRef = useRef(false);
+  const groupLoopRef = useRef<Promise<void> | null>(null);
+  const groupRetryRef = useRef<(() => Promise<void>) | null>(null);
   const titleRef = useRef(title);
   titleRef.current = title;
   const flushWaitersRef = useRef<{ untilMs: number; done: () => void }[]>([]);
@@ -681,7 +692,12 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   const currentClockMs = () => clockBaseMsRef.current + Math.round(capturedMsRef.current);
 
   /** Everything heard so far is final: confirm the live sentences (Pause, Stop, a closed socket). */
-  const closeOutTranscript = () => commitTranscript(confirmLive(segmentsRef.current, { closing: true }));
+  const closeOutTranscript = () => {
+    const before = segmentsRef.current;
+    const next = confirmLive(before, { closing: true });
+    commitTranscript(next);
+    if (next.sentences.length > before.sentences.length) void pumpGrouping();
+  };
 
   /** Listen again to a stretch of the recording; the outcome is the answer, or why there is none. */
   const relistenWindow = async (range: { startMs: number; endMs: number }, pass: "minute" | "retry"): Promise<WindowOutcome> => {
@@ -708,8 +724,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
    * is dropped, the text having been confirmed as it was.
    */
   const pumpChecks = (): Promise<void> => {
-    if (checkLoopRef.current) return checkLoopRef.current;
-    const loop = (async () => {
+    return runOnce(checkLoopRef, async () => {
       try {
         for (let guard = 0; guard < 1_000; guard += 1) {
           if (!checkAgainRef.current || skipRef.current) break;
@@ -722,15 +737,88 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
           const before = segmentsRef.current;
           const next = applyWindowResult(before, window, outcome, { closing, now: new Date().toISOString() });
           commitTranscript(next);
+          if (next.sentences.length > before.sentences.length) void pumpGrouping();
           if (next.confirmedUntilMs <= before.confirmedUntilMs && next.heldEndMs === before.heldEndMs) break;
         }
       } finally {
-        checkLoopRef.current = null;
         if (segmentsRef.current.checking) commitTranscript({ ...segmentsRef.current, checking: null });
       }
-    })();
-    checkLoopRef.current = loop;
-    return loop;
+    });
+  };
+
+  /** Ask the Analysis model where paragraphs start among these sentences. */
+  const askParagraphs = async (sentences: string[], before: string, pass: "live" | "regroup"): Promise<GroupingOutcome> => {
+    const id = recordingSessionRef.current?.id;
+    if (!id) return { error: "The recording is not saved yet." };
+    try {
+      const answer = await knowledgeApi.groupParagraphs(id, { sentences, before, pass });
+      return { starts: answer.starts };
+    } catch (reason) {
+      return { error: reason instanceof Error ? reason.message : "The paragraphs could not be grouped." };
+    }
+  };
+
+  /**
+   * Group the newest sentences into paragraphs by topic: one request at a time, each applied to
+   * the sentences it carried. If more were confirmed while it ran, it runs again. A failure stops
+   * the loop with the note and its Retry; the next confirmation sends the same sentences again.
+   */
+  const pumpGrouping = (): Promise<void> => {
+    return runOnce(groupLoopRef, async () => {
+      for (let guard = 0; guard < 1_000; guard += 1) {
+        if (skipRef.current) break;
+        const request = groupingRequest(segmentsRef.current);
+        if (!request) {
+          // Nothing is left to group: an old failure has nothing to retry.
+          if (segmentsRef.current.grouping.state === "failed") commitTranscript({ ...segmentsRef.current, grouping: { state: "idle" } });
+          break;
+        }
+        commitTranscript(beginGrouping(segmentsRef.current));
+        const outcome = await askParagraphs(request.sentences, request.before, "live");
+        if (skipRef.current) {
+          commitTranscript({ ...segmentsRef.current, grouping: { state: "idle" } });
+          break;
+        }
+        commitTranscript(applyGrouping(segmentsRef.current, request, outcome));
+        if ("error" in outcome) break;
+        const open = segmentsRef.current.paragraphs.at(-1);
+        if (!open || open.frozen || open.sentenceIds.at(-1) === request.sentenceIds.at(-1)) break;
+      }
+    });
+  };
+
+  /** After a grouping failed: send the same sentences again (or the regroup, from where it stopped). */
+  const retryGrouping = () => {
+    const retry = groupRetryRef.current;
+    groupRetryRef.current = null;
+    void (retry ? retry() : pumpGrouping());
+  };
+
+  /** After Stop: group the whole transcript again, in runs that start at a paragraph start and end before an edited one. */
+  const regroupTranscript = async (fromMs = 0): Promise<void> => {
+    let cursor = fromMs;
+    for (let guard = 0; guard < 1_000; guard += 1) {
+      if (skipRef.current || segmentsRef.current.grouping.state === "off") return;
+      const chunk = nextRegroupChunk(segmentsRef.current, cursor);
+      if (!chunk) return;
+      commitTranscript(beginGrouping(segmentsRef.current));
+      const outcome = await askParagraphs(chunk.sentences, chunk.before, "regroup");
+      if (skipRef.current) {
+        commitTranscript({ ...segmentsRef.current, grouping: { state: "idle" } });
+        return;
+      }
+      // Find the run again: something may have been retried or edited while the model worked.
+      const now = segmentsRef.current;
+      const first = chunk.sentenceIds[0];
+      const at = now.paragraphs.findIndex((paragraph) => paragraph.sentenceIds[0] === first);
+      commitTranscript(applyRegroup(now, at, chunk.sentenceIds, outcome));
+      if ("error" in outcome) {
+        const from = cursor;
+        groupRetryRef.current = () => regroupTranscript(from);
+        return;
+      }
+      cursor = chunk.endMs;
+    }
   };
 
   /** Pause and Stop: listen to what is left, then confirm anything still live as it is. */
@@ -843,6 +931,19 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
         setTranscriptionLabel(transcriptionLabelFor(event));
         setLiveNote(event.live === "segments");
         checkAgainRef.current = event.check_again === true;
+        if (typeof event.group_paragraphs === "boolean") {
+          const current = segmentsRef.current;
+          const open = current.paragraphs.at(-1);
+          // Without an Analysis model each window stays one paragraph, as it was.
+          commitTranscript(event.group_paragraphs
+            ? { ...current, grouping: current.grouping.state === "off" ? { state: "idle" } : current.grouping }
+            : {
+              ...current,
+              grouping: { state: "off" },
+              paragraphs: open && !open.frozen ? [...current.paragraphs.slice(0, -1), { ...open, frozen: true }] : current.paragraphs,
+            });
+          setGroupHint(event.group_paragraphs === false);
+        }
         sendQueued();
         if (checkAgainRef.current) void pumpChecks();
         return;
@@ -864,7 +965,10 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
       }
       const next = applyLiveEvent(segmentsRef.current, event, { checks: checkAgainRef.current });
       if (next) {
+        const before = segmentsRef.current;
         commitTranscript(next);
+        // Checks off: live batches are confirmed as they are, and grouped like checked ones.
+        if (next.sentences.length > before.sentences.length) void pumpGrouping();
         // A final piece may complete a minute: with the check on, only the check confirms text.
         if (checkAgainRef.current && event.type === "transcript.piece" && event.final === true) void pumpChecks();
         return;
@@ -1132,6 +1236,8 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     skipRef.current = false;
     closingRef.current = false;
     checkAgainRef.current = false;
+    groupRetryRef.current = null;
+    setGroupHint(false);
     sentPcmRef.current = [];
     flushWaitersRef.current = [];
     setLiveNote(false);
@@ -1440,6 +1546,9 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
       transcriptionSocket?.close();
       await settleTranscript();
       closeOutTranscript();
+      // The last live grouping, then one pass over the whole talk (Skip keeps the live grouping).
+      await pumpGrouping();
+      await regroupTranscript();
       setFinalizing(false);
     });
     if (recorderRef.current?.state !== "inactive") recorderRef.current?.stop();
@@ -1823,12 +1932,14 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     <div className="lecture-transcript">
       <header><span><strong>Live transcript</strong><small>Editable before it becomes knowledge</small></span><em>{transcript.trim() ? `${transcript.trim().split(/\s+/).length} words` : "Waiting for speech"}</em></header>
       {liveNote && <p className="lecture-live-note">Live text comes in short pieces for this model.</p>}
+      {groupHint && hasTranscriptContent(segments) && <p className="lecture-live-note">Add an Analysis model in Settings → Models to group paragraphs by topic.</p>}
       {finalizing && <p className="lecture-live-note" role="status">Finishing the transcript… <button type="button" className="lp-retry" onClick={skipChecks}>Skip</button></p>}
       {hasTranscriptContent(segments)
         ? <TranscriptParagraphs
           state={segments}
           active={active}
           onRetry={(windowId) => void retryCheck(windowId)}
+          onRetryGrouping={retryGrouping}
           onEdit={(paragraphId, text) => {
             commitTranscript(editParagraph(segmentsRef.current, paragraphId, text));
             setSummary(null);

@@ -652,3 +652,28 @@ The minute check is one or two tokens behind `paragraph`, so "no worse" is not s
 - Not tried in the real app, and the relisten upload (about 2.6 MB base64 per minute) is untested against the real service from the app (only the eval's equivalent call).
 - If the user resumes during a Pause's closing windows, what is still live goes on as the recording's live text (the closing results already applied stay applied).
 - The retry for a window whose audio copy is gone (older than 7 days) fails with the 409 message and keeps its Retry.
+
+### Phase 3B — 2026-10-12 (Sonnet; paragraphs by content)
+
+Built to §1.7, §2.11, §4.2, §4.7, §5.2. Uncommitted.
+
+**Backend**
+- `gunther/paragraphs.py` (new): prompt §5.2 verbatim as the system message (`PARAGRAPHS_PROMPT`; `evals/transcript/probe_paragraphs.py` keeps an identical copy, checked equal), the user message as §5.2 describes, `gateway.complete(..., json_mode=True)` (not `complete_json`, which would append a schema to the prompt), `usable_starts` (integers in range only, one-based to zero-based, sorted, deduped, 0 added; booleans and floats dropped), `ParagraphsError`.
+- `POST /api/recordings/{id}/paragraphs` (`api.py`): `{sentences (1–300, each ≤ 2000 chars), before (kept to its last 400), pass: live|regroup}` gives `{starts, model}`. 424 without an Analysis model ("Paragraphs by topic need a model. Set one up under Settings → Models."), 502 for a model error or an answer without usable starts ("The model didn't say where paragraphs start"). The call runs in a thread.
+- v2 `service.ready` carries `group_paragraphs` (true when `gateway.for_role("analysis")` exists), passed down like `check_again` in both the segmented and the live-stream paths. v1 unchanged.
+
+**Desktop**
+- `liveTranscript.ts`: `groupingRequest` (open paragraph, newest 60 sentences / 6000 chars as the pool, `before` ≤ 400 chars; the request also carries `sentenceIds`), `beginGrouping`, `applyGrouping(state, request, {starts}|{error})` (applies to the sentences sent; the older ones beyond the pool cap are frozen as a paragraph first, applied only on success; sentences confirmed meanwhile join the last part; an answer for a paragraph that changed or was edited meanwhile is ignored), `nextRegroupChunk(state, fromMs, max=300)` and `applyRegroup(state, chunkStart, chunkSentenceIds, outcome)` (a run of paragraphs that must still be exactly those, none edited; all results frozen). Failures only set `grouping = {state:"failed", error}`. `storableTranscript` turns a `running` grouping into `idle`. Paragraph ids stay `p-<first startMs>`.
+- `LectureRecorder.tsx`: `service.ready.group_paragraphs` sets `grouping` idle/off (off also freezes an open paragraph) and the hint "Add an Analysis model in Settings → Models to group paragraphs by topic." (one line under the transcript header). `pumpGrouping()` runs after any step that confirmed sentences (minute check, failed check, checks-off batches, Pause/Stop close-out): one request at a time, repeated if more were confirmed. Stop: `settleTranscript` → close-out → last live grouping → `regroupTranscript()` in chunks, all inside `finalizing`; Skip drops a late answer and keeps the live grouping. Pause does not regroup. A failed regroup keeps a retry that continues from the failed chunk.
+- `TranscriptParagraphs.tsx`: "Couldn't group into paragraphs · Retry" in `lp-aside`, beside the newest paragraph.
+- `api.ts`: `groupParagraphs`.
+
+**Tests (no network)**
+- `tests/test_paragraphs.py` (5): prompt and message exact, number conversion, dropped/duplicate/non-integer starts, 0 always present, no usable starts is a 502, 424 without a model, 502 on model error, request limits, `service.ready.group_paragraphs` true/false.
+- `liveGrouping.test.ts` (13) and `TranscriptParagraphs.test.tsx` (1): joining the open paragraph, split and freeze, frozen never change, context ≤ 400, sentences confirmed during a request, pool cap, failure and next request, invalid starts, edited paragraphs (live and regroup), chunks, failed regroup, storable, grouping off.
+
+**Not done / open**
+- Eval re-run of `probe_paragraphs.py` against a model: not run here (no key). The prompt is unchanged.
+- Not tried in the real app. The grouping model's effort is the Analysis job's saved effort.
+
+**Fixed from the browser run (Phase 3 bug, coordinator's request).** `pumpChecks` never ran after `service.ready`: its async body finished without awaiting, so its `finally` cleared `checkLoopRef` before `checkLoopRef.current = loop` ran, leaving a finished promise that every later call returned. New `services/singleFlight.ts` `runOnce(ref, body)` sets the ref first and clears it in `.finally` only if it still holds that promise; used by `pumpChecks` and `pumpGrouping`. `singleFlight.test.ts` (4): a body that finishes at once runs again on the next call, a run in flight is returned, a failed body clears the ref, and a final piece after an empty first pump yields a window. No recorder-level render test (the recorder needs microphone, socket and audio mocks); the loop logic is covered through the helper plus `nextWindow`.

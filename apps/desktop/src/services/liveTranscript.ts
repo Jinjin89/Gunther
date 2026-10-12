@@ -138,7 +138,9 @@ export function storableTranscript(state: TranscriptState): TranscriptState {
       ? { ...window, state: "failed" as const, error: "The check was interrupted." }
       : window))
     : state.windows;
-  return { ...state, windows, draft: null, checking: null };
+  // A grouping request that was on its way is forgotten: the sentences stay in the open paragraph.
+  const grouping = state.grouping.state === "running" ? { state: "idle" as const } : state.grouping;
+  return { ...state, windows, draft: null, checking: null, grouping };
 }
 
 // Text ---------------------------------------------------------------------------
@@ -500,6 +502,200 @@ export function confirmLive(
     current = next;
   }
   return options.closing ? { ...current, draft: null } : current;
+}
+
+// Paragraphs by content (§2.11) ------------------------------------------------------
+
+/** The pool a grouping request may hold: past this, the oldest sentences are frozen first. */
+export const GROUPING_POOL = { sentences: 60, chars: 6_000 };
+/** The most sentences one request may hold (the backend's limit); the regroup is chunked to it. */
+export const GROUPING_REQUEST_MAX = 300;
+/** How much of the paragraph before a request is sent as context. */
+const BEFORE_CHARS = 400;
+
+export type GroupingOutcome = { starts: number[] } | { error: string };
+
+/** What goes to the Analysis model: the sentences to group, and context that is not grouped. */
+export interface GroupingRequest {
+  sentences: string[];
+  /** The ids of those sentences, in order: the answer applies to exactly these. */
+  sentenceIds: string[];
+  before: string;
+}
+
+function tail(text: string): string {
+  return text.length > BEFORE_CHARS ? text.slice(-BEFORE_CHARS) : text;
+}
+
+/** The newest paragraph, if it can still be split: not frozen, not the user's. */
+function openParagraph(state: TranscriptState): TranscriptParagraph | null {
+  const last = state.paragraphs.at(-1);
+  return last && !last.frozen && last.edited === undefined ? last : null;
+}
+
+function paragraphOf(sentences: Sentence[]): TranscriptParagraph {
+  return { id: `p-${sentences[0]!.startMs}`, sentenceIds: sentences.map((sentence) => sentence.id), frozen: true };
+}
+
+/**
+ * The open paragraph's sentences (at most the newest 60 sentences / 6000 characters, the older
+ * ones being frozen as a paragraph when the answer is applied), with the end of the paragraph
+ * before as context. Null when grouping is off or there is nothing to group.
+ */
+export function groupingRequest(state: TranscriptState): GroupingRequest | null {
+  if (state.grouping.state === "off") return null;
+  const open = openParagraph(state);
+  if (!open) return null;
+  const sentences = paragraphSentences(state, open);
+  if (!sentences.length) return null;
+  let from = sentences.length;
+  let chars = 0;
+  while (from > 0) {
+    const size = sentences[from - 1]!.text.length;
+    if (from < sentences.length && (sentences.length - from >= GROUPING_POOL.sentences || chars + size > GROUPING_POOL.chars)) break;
+    chars += size;
+    from -= 1;
+  }
+  const pool = sentences.slice(from);
+  const earlier = from > 0
+    ? joinSentences(sentences.slice(0, from).map((sentence) => sentence.text))
+    : state.paragraphs.length > 1
+      ? paragraphText(state, state.paragraphs.at(-2)!)
+      : "";
+  return { sentences: pool.map((sentence) => sentence.text), sentenceIds: pool.map((sentence) => sentence.id), before: tail(earlier) };
+}
+
+/** Zero-based starts: whole numbers inside the range, sorted, no repeats, and 0. */
+function cleanStarts(starts: unknown, count: number): number[] {
+  const picked = new Set<number>([0]);
+  if (Array.isArray(starts)) {
+    for (const value of starts) {
+      if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value < count) picked.add(value);
+    }
+  }
+  return [...picked].sort((left, right) => left - right);
+}
+
+function failedGrouping(state: TranscriptState, error: string): TranscriptState {
+  return { ...state, grouping: { state: "failed", error } };
+}
+
+/** The grouping request is on its way. */
+export function beginGrouping(state: TranscriptState): TranscriptState {
+  return state.grouping.state === "off" ? state : { ...state, grouping: { state: "running" } };
+}
+
+/**
+ * Split the open paragraph where the answer says. It applies to the sentences that were sent,
+ * even if more were confirmed meanwhile: those join the last part. Every part but the last
+ * is frozen. Sentences older than the request (the pool cap) become a frozen paragraph first.
+ * A failure changes nothing but `grouping`.
+ */
+export function applyGrouping(state: TranscriptState, request: GroupingRequest, outcome: GroupingOutcome): TranscriptState {
+  if ("error" in outcome) return failedGrouping(state, outcome.error);
+  const idle: TranscriptState = { ...state, grouping: { state: "idle" } };
+  const open = openParagraph(state);
+  if (!open || !request.sentenceIds.length) return idle;
+  const at = open.sentenceIds.indexOf(request.sentenceIds[0]!);
+  const sent = open.sentenceIds.slice(at, at + request.sentenceIds.length);
+  // The paragraph changed under the request (an edit, a retry): the answer no longer fits.
+  if (at < 0 || sent.length !== request.sentenceIds.length || sent.some((id, index) => id !== request.sentenceIds[index])) return idle;
+
+  const byId = sentenceById(state);
+  const pick = (ids: string[]) => ids.flatMap((id) => byId.get(id) ?? []);
+  const starts = cleanStarts(outcome.starts, sent.length);
+  const parts: Sentence[][] = [];
+  if (at > 0) parts.push(pick(open.sentenceIds.slice(0, at)));
+  starts.forEach((start, index) => parts.push(pick(sent.slice(start, starts[index + 1] ?? sent.length))));
+  // What was confirmed while the request ran joins the last part.
+  parts[parts.length - 1]!.push(...pick(open.sentenceIds.slice(at + sent.length)));
+  const made = parts.filter((part) => part.length).map((part, index, all) => ({ ...paragraphOf(part), frozen: index < all.length - 1 }));
+  return { ...state, paragraphs: [...state.paragraphs.slice(0, -1), ...made], grouping: { state: "idle" } };
+}
+
+/** A run of paragraphs to group again after Stop. */
+export interface RegroupChunk {
+  /** Index in `paragraphs` of the run's first paragraph. */
+  chunkStart: number;
+  sentenceIds: string[];
+  sentences: string[];
+  before: string;
+  /** Just past the start of the run's last sentence: ask for the next chunk from here. */
+  endMs: number;
+}
+
+/**
+ * The first run of paragraphs that starts at or after `fromMs`, to group again: at most
+ * `max` sentences, beginning at a paragraph start and ending before a paragraph the user
+ * edited. Edited paragraphs are never in a run. Runs of one sentence are skipped.
+ */
+export function nextRegroupChunk(state: TranscriptState, fromMs = 0, max = GROUPING_REQUEST_MAX): RegroupChunk | null {
+  const sentencesOf = state.paragraphs.map((paragraph) => paragraphSentences(state, paragraph));
+  let index = 0;
+  while (index < state.paragraphs.length) {
+    const paragraph = state.paragraphs[index]!;
+    const own = sentencesOf[index]!;
+    if (paragraph.edited !== undefined || !own.length || own[0]!.startMs < fromMs || own.length > max) {
+      index += 1;
+      continue;
+    }
+    let end = index;
+    let count = 0;
+    while (end < state.paragraphs.length && state.paragraphs[end]!.edited === undefined && count + sentencesOf[end]!.length <= max) {
+      count += sentencesOf[end]!.length;
+      end += 1;
+    }
+    const run = sentencesOf.slice(index, end).flat();
+    if (run.length < 2) {
+      index = Math.max(end, index + 1);
+      continue;
+    }
+    const previous = index > 0 ? paragraphText(state, state.paragraphs[index - 1]!) : "";
+    return {
+      chunkStart: index,
+      sentenceIds: run.map((sentence) => sentence.id),
+      sentences: run.map((sentence) => sentence.text),
+      before: tail(previous),
+      endMs: run.at(-1)!.startMs + 1,
+    };
+  }
+  return null;
+}
+
+/**
+ * After Stop: split a run of paragraphs again where the answer says; every new paragraph is
+ * frozen. The run must still be exactly those paragraphs and none edited, else nothing
+ * changes (an edited paragraph is never merged, split or moved). A failure changes nothing
+ * but `grouping`.
+ */
+export function applyRegroup(
+  state: TranscriptState,
+  chunkStart: number,
+  chunkSentenceIds: string[],
+  outcome: GroupingOutcome,
+): TranscriptState {
+  if ("error" in outcome) return failedGrouping(state, outcome.error);
+  const idle: TranscriptState = { ...state, grouping: { state: "idle" } };
+  const involved: TranscriptParagraph[] = [];
+  let count = 0;
+  for (let index = chunkStart; index < state.paragraphs.length && count < chunkSentenceIds.length; index += 1) {
+    const paragraph = state.paragraphs[index]!;
+    if (paragraph.edited !== undefined) return idle;
+    involved.push(paragraph);
+    count += paragraph.sentenceIds.length;
+  }
+  const ids = involved.flatMap((paragraph) => paragraph.sentenceIds);
+  if (ids.length !== chunkSentenceIds.length || ids.some((id, index) => id !== chunkSentenceIds[index])) return idle;
+  const byId = sentenceById(state);
+  const sentences = ids.flatMap((id) => byId.get(id) ?? []);
+  if (sentences.length !== ids.length) return idle;
+  const starts = cleanStarts(outcome.starts, sentences.length);
+  const made = starts.map((start, index) => paragraphOf(sentences.slice(start, starts[index + 1] ?? sentences.length)));
+  return {
+    ...state,
+    paragraphs: [...state.paragraphs.slice(0, chunkStart), ...made, ...state.paragraphs.slice(chunkStart + involved.length)],
+    grouping: { state: "idle" },
+  };
 }
 
 // Retry --------------------------------------------------------------------------

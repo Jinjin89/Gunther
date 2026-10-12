@@ -313,6 +313,7 @@ async def _proxy_segmented_transcription(
     offset_ms: int = 0,
     listen: listen_copy.ListenCopy | None = None,
     check_again: bool = False,
+    group_paragraphs: bool = False,
 ) -> None:
     """Cut live audio into segments and have an OpenAI-style server write each one.
 
@@ -342,6 +343,7 @@ async def _proxy_segmented_transcription(
             if protocol >= 2:
                 announced["protocol"] = protocol
                 announced["check_again"] = check_again
+                announced["group_paragraphs"] = group_paragraphs
             await websocket.send_json(announced)
 
             async def transcribe_segment(chunk: bytes, start_seconds: float) -> None:
@@ -513,10 +515,12 @@ class _LiveStream:
         context: str,
         listen: listen_copy.ListenCopy | None = None,
         check_again: bool = False,
+        group_paragraphs: bool = False,
     ) -> None:
         self.websocket = websocket
         self.listen = listen
         self.check_again = check_again
+        self.group_paragraphs = group_paragraphs
         self.up: ClientConnection | None = upstream
         self.choice = choice
         self.model = qwen_live_id(choice.model)
@@ -581,6 +585,7 @@ class _LiveStream:
         if self.protocol >= 2:
             ready["protocol"] = self.protocol
             ready["check_again"] = self.check_again
+            ready["group_paragraphs"] = self.group_paragraphs
         await self.send(ready)
         self._attach(self.up)
         self.worker = asyncio.create_task(self._work())
@@ -946,6 +951,7 @@ async def _proxy_live_stream(
     context: str,
     listen: listen_copy.ListenCopy | None = None,
     check_again: bool = False,
+    group_paragraphs: bool = False,
 ) -> None:
     live = _LiveStream(
         websocket,
@@ -957,6 +963,7 @@ async def _proxy_live_stream(
         context=context,
         listen=listen,
         check_again=check_again,
+        group_paragraphs=group_paragraphs,
     )
     await live.run()
 
@@ -987,6 +994,7 @@ async def proxy_realtime_transcription(
     offset_ms: int = 0,
     listen: listen_copy.ListenCopy | None = None,
     check_again: bool = False,
+    group_paragraphs: bool = False,
 ) -> None:
     """Have the model chosen for a job write the words of audio sent over the socket.
 
@@ -1045,6 +1053,7 @@ async def proxy_realtime_transcription(
                     context=context,
                     listen=listen,
                     check_again=check_again,
+                    group_paragraphs=group_paragraphs,
                 )
                 return
             logger.warning(
@@ -1081,6 +1090,7 @@ async def proxy_realtime_transcription(
         offset_ms=offset_ms,
         listen=listen,
         check_again=check_again,
+        group_paragraphs=group_paragraphs,
     )
 
 
