@@ -228,6 +228,10 @@ CONNECT_TIMEOUT = 30.0
 # Audio kept to send again if the live socket drops, and queued while it reconnects.
 RETAIN_SECONDS = 30.0
 RECONNECT_BACKOFF = (0.5, 1.0, 2.0, 4.0)
+# The live socket goes direct, like the HTTP requests: websockets would otherwise follow the
+# system's proxy settings (a SOCKS proxy from a VPN app needs python-socks, which isn't here,
+# and failed the whole request).
+LIVE_PROXY = None
 FRAME_BYTES = 100 * BYTES_PER_MS  # 100 ms of audio per binary frame
 
 
@@ -264,6 +268,7 @@ async def open_live_socket(
             additional_headers={"Authorization": f"Bearer {api_key}"},
             open_timeout=CONNECT_TIMEOUT,
             max_size=None,
+            proxy=LIVE_PROXY,
         )
     except InvalidStatus as error:
         return None, f"Qwen answered {error.response.status_code} when connecting"
@@ -1076,6 +1081,7 @@ class _LiveStream:
                         additional_headers={"Authorization": f"Bearer {self.choice.api_key}"},
                         open_timeout=CONNECT_TIMEOUT,
                         max_size=None,
+                        proxy=LIVE_PROXY,
                     )
                     self._attach(self.up)
                 self.task_count += 1

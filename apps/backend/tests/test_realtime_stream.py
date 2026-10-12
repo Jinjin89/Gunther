@@ -772,3 +772,14 @@ def test_the_live_address_is_on_the_same_host_as_the_saved_one() -> None:
     )
     assert stream_url("http://127.0.0.1:9") == "ws://127.0.0.1:9/api-ws/v1/inference"
     assert BYTES_PER_MS == 32
+
+
+def test_the_live_socket_goes_direct_even_with_a_socks_proxy_in_the_system(monkeypatch):
+    """A VPN app's SOCKS proxy made websockets ask for python-socks and fail the request."""
+
+    monkeypatch.setenv("ALL_PROXY", "socks5://127.0.0.1:9")
+    monkeypatch.setenv("HTTPS_PROXY", "socks5://127.0.0.1:9")
+    reason = asyncio.run(
+        realtime.try_qwen_live("http://127.0.0.1:9", "sk-test", "qwen-audio-3.1-asr-flash")
+    )
+    assert reason is not None and reason.startswith("could not connect")
