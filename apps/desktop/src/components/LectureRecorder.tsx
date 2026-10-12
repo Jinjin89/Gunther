@@ -23,18 +23,27 @@ import {
   X,
 } from "lucide-react";
 import { knowledgeApi, recordingAssetUrl, recordingSocketUrl } from "../api";
+import { flushAudio, offerAudio } from "../services/audioQueue";
 import { encodePcm16, pcm16Length } from "../services/pcm";
 import {
   applyLiveEvent,
+  applyRetry,
+  applyWindowResult,
+  beginCheck,
+  beginRetry,
   confirmLive,
   editParagraph,
   emptyTranscript,
   hasTranscriptContent,
   isTranscriptState,
+  nextWindow,
   renderTranscript,
+  retryRange,
   storableTranscript,
+  textBefore,
   transcriptFromText,
   type TranscriptState,
+  type WindowOutcome,
 } from "../services/liveTranscript";
 import { parseTranscript } from "../items/sourceContent";
 import { TranscriptParagraphs } from "./TranscriptParagraphs";
@@ -485,7 +494,18 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   // (pauses excluded), counted at the microphone's own rate so it keeps step with the saved
   // file, plus where an earlier part of a resumed recording ended.
   const capturedMsRef = useRef(0);
+  // Source samples captured since the recording began: the 16 kHz length of each block follows
+  // from it, so the bytes sent always add up to the recording clock (no drift from rounding).
+  const capturedSamplesRef = useRef(0);
   const clockBaseMsRef = useRef(0);
+  // The minute check: whether the backend can listen again (per socket), the one running loop,
+  // whether Pause/Stop are taking everything that is left, and whether the user skipped it.
+  const checkAgainRef = useRef(false);
+  const checkLoopRef = useRef<Promise<void> | null>(null);
+  const closingRef = useRef(false);
+  const skipRef = useRef(false);
+  const titleRef = useRef(title);
+  titleRef.current = title;
   const flushWaitersRef = useRef<{ untilMs: number; done: () => void }[]>([]);
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
@@ -663,6 +683,80 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   /** Everything heard so far is final: confirm the live sentences (Pause, Stop, a closed socket). */
   const closeOutTranscript = () => commitTranscript(confirmLive(segmentsRef.current, { closing: true }));
 
+  /** Listen again to a stretch of the recording; the outcome is the answer, or why there is none. */
+  const relistenWindow = async (range: { startMs: number; endMs: number }, pass: "minute" | "retry"): Promise<WindowOutcome> => {
+    const id = recordingSessionRef.current?.id;
+    if (!id) return { error: "The recording has no saved audio to listen to again." };
+    const terms = titleRef.current.trim() ? [titleRef.current.trim()] : [];
+    try {
+      const answer = await knowledgeApi.relistenRecording(id, {
+        startMs: range.startMs,
+        endMs: range.endMs,
+        pass,
+        context: { terms, before: textBefore(segmentsRef.current, range.startMs) },
+      });
+      return { text: answer.text, sentences: answer.sentences, model: answer.model };
+    } catch (reason) {
+      return { error: reason instanceof Error ? reason.message : "The check could not be completed." };
+    }
+  };
+
+  /**
+   * Run the minute check: one window at a time, each starting where the last result ended. It
+   * goes on while there is a window to take (everything that is left once Pause or Stop has set
+   * `closingRef`). A result that comes back after Pause or Stop is still applied; after Skip it
+   * is dropped, the text having been confirmed as it was.
+   */
+  const pumpChecks = (): Promise<void> => {
+    if (checkLoopRef.current) return checkLoopRef.current;
+    const loop = (async () => {
+      try {
+        for (let guard = 0; guard < 1_000; guard += 1) {
+          if (!checkAgainRef.current || skipRef.current) break;
+          const closing = closingRef.current;
+          const window = nextWindow(segmentsRef.current, undefined, { closing });
+          if (!window) break;
+          commitTranscript(beginCheck(segmentsRef.current, window));
+          const outcome = await relistenWindow(window, "minute");
+          if (skipRef.current) break;
+          const before = segmentsRef.current;
+          const next = applyWindowResult(before, window, outcome, { closing, now: new Date().toISOString() });
+          commitTranscript(next);
+          if (next.confirmedUntilMs <= before.confirmedUntilMs && next.heldEndMs === before.heldEndMs) break;
+        }
+      } finally {
+        checkLoopRef.current = null;
+        if (segmentsRef.current.checking) commitTranscript({ ...segmentsRef.current, checking: null });
+      }
+    })();
+    checkLoopRef.current = loop;
+    return loop;
+  };
+
+  /** Pause and Stop: listen to what is left, then confirm anything still live as it is. */
+  const settleTranscript = async () => {
+    if (checkAgainRef.current && !skipRef.current) {
+      closingRef.current = true;
+      await pumpChecks();
+    }
+  };
+
+  const retryCheck = async (windowId: string) => {
+    const range = retryRange(segmentsRef.current, windowId);
+    if (!range) return;
+    commitTranscript(beginRetry(segmentsRef.current, windowId));
+    const outcome = await relistenWindow(range, "retry");
+    commitTranscript(applyRetry(segmentsRef.current, windowId, outcome, { now: new Date().toISOString() }));
+  };
+
+  /** Skip: the live text is confirmed as it is, now. */
+  const skipChecks = () => {
+    skipRef.current = true;
+    commitTranscript(confirmLive({ ...segmentsRef.current, checking: null }, { closing: true }));
+    setFinalizing(false);
+    socketRef.current?.close();
+  };
+
   const releaseFlushWaiters = (untilMs = Number.POSITIVE_INFINITY) => {
     const ready = flushWaitersRef.current.filter((waiter) => waiter.untilMs <= untilMs + 250);
     flushWaitersRef.current = flushWaitersRef.current.filter((waiter) => !ready.includes(waiter));
@@ -733,6 +827,14 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     }));
     socketRef.current = socket;
     setProvider("connecting");
+    // Whether this socket replaces one that dropped (the first connection has nothing to catch up on).
+    const reconnecting = reconnectAttemptsRef.current > 0;
+    // Audio captured while the socket opened goes first, in order, before anything new.
+    const sendQueued = () => {
+      const sent = flushAudio(pendingPcmRef.current, (item) => sendAudio(socket, item));
+      if (sent && reconnecting) setNotice("Live transcription reconnected and caught up with buffered audio.");
+    };
+    socket.onopen = sendQueued;
     socket.onmessage = (message) => {
       const event = JSON.parse(String(message.data)) as Record<string, unknown>;
       if (event.type === "service.ready") {
@@ -740,9 +842,9 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
         setProvider("live");
         setTranscriptionLabel(transcriptionLabelFor(event));
         setLiveNote(event.live === "segments");
-        const buffered = pendingPcmRef.current.splice(0);
-        buffered.forEach((item) => sendAudio(socket, item));
-        if (buffered.length) setNotice("Live transcription reconnected and caught up with buffered audio.");
+        checkAgainRef.current = event.check_again === true;
+        sendQueued();
+        if (checkAgainRef.current) void pumpChecks();
         return;
       }
       if (event.type === "service.error") {
@@ -760,9 +862,11 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
         setNotice(String(event.message ?? "Live transcription is unavailable; audio remains local."));
         return;
       }
-      const next = applyLiveEvent(segmentsRef.current, event);
+      const next = applyLiveEvent(segmentsRef.current, event, { checks: checkAgainRef.current });
       if (next) {
         commitTranscript(next);
+        // A final piece may complete a minute: with the check on, only the check confirms text.
+        if (checkAgainRef.current && event.type === "transcript.piece" && event.final === true) void pumpChecks();
         return;
       }
       if (event.type === "transcript.flushed" && typeof event.until_ms === "number") {
@@ -1024,6 +1128,10 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
       ? Math.max(seconds, resumableSession.durationSeconds) * 1_000
       : 0;
     capturedMsRef.current = 0;
+    capturedSamplesRef.current = 0;
+    skipRef.current = false;
+    closingRef.current = false;
+    checkAgainRef.current = false;
     sentPcmRef.current = [];
     flushWaitersRef.current = [];
     setLiveNote(false);
@@ -1238,22 +1346,20 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
         const channel = event.inputBuffer.getChannelData(0);
         // Where this audio sits on the recording clock, whether or not it can be sent now.
         const offsetMs = currentClockMs();
-        const length = pcm16Length(channel.length, audioContext.sampleRate, LIVE_RATE);
+        const startSample = capturedSamplesRef.current;
+        const length = pcm16Length(channel.length, audioContext.sampleRate, LIVE_RATE, startSample);
+        capturedSamplesRef.current += channel.length;
         capturedMsRef.current += (channel.length * 1_000) / audioContext.sampleRate;
         if (!transcriptionEnabledRef.current) return;
         const item: PendingAudio = {
-          audio: encodePcm16(channel, audioContext.sampleRate, LIVE_RATE),
+          audio: encodePcm16(channel, audioContext.sampleRate, LIVE_RATE, startSample),
           offsetMs,
           ms: (length * 1_000) / LIVE_RATE,
         };
-        const socket = socketRef.current;
-        if (socket?.readyState === WebSocket.OPEN) {
-          sendAudio(socket, item);
-          return;
-        }
-        // No connection: keep up to a minute of audio, each piece with its own place.
+        // Out at once only when nothing older is waiting, so audio always goes in order; else it
+        // waits (up to a minute, each piece with its own place on the clock).
         const queue = pendingPcmRef.current;
-        queue.push(item);
+        if (offerAudio(queue, item, socketRef.current?.readyState === WebSocket.OPEN, (piece) => sendAudio(socketRef.current!, piece))) return;
         let queued = queue.reduce((total, piece) => total + piece.ms, 0);
         while (queued > PENDING_AUDIO_MS && queue.length > 1) queued -= queue.shift()!.ms;
       };
@@ -1304,13 +1410,16 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     void audioContextRef.current?.suspend();
     updatePhase("paused");
     void queueCheckpoint();
-    void heard.then(() => {
-      closeOutTranscript();
+    void heard.then(async () => {
+      await settleTranscript();
+      // Resumed meanwhile: what is live now belongs to the recording that goes on.
+      if (phaseRef.current === "paused") closeOutTranscript();
       void queueCheckpoint();
     });
   };
 
   const resume = () => {
+    closingRef.current = false;
     recorderRef.current?.resume();
     void audioContextRef.current?.resume();
     updatePhase("recording");
@@ -1327,8 +1436,9 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     // The last sentence is heard to its end (at most 10 s), then the socket closes and every
     // live sentence is confirmed. The note is not ready for saving until then.
     setFinalizing(true);
-    void heard.then(() => {
+    void heard.then(async () => {
       transcriptionSocket?.close();
+      await settleTranscript();
       closeOutTranscript();
       setFinalizing(false);
     });
@@ -1713,10 +1823,12 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     <div className="lecture-transcript">
       <header><span><strong>Live transcript</strong><small>Editable before it becomes knowledge</small></span><em>{transcript.trim() ? `${transcript.trim().split(/\s+/).length} words` : "Waiting for speech"}</em></header>
       {liveNote && <p className="lecture-live-note">Live text comes in short pieces for this model.</p>}
+      {finalizing && <p className="lecture-live-note" role="status">Finishing the transcript… <button type="button" className="lp-retry" onClick={skipChecks}>Skip</button></p>}
       {hasTranscriptContent(segments)
         ? <TranscriptParagraphs
           state={segments}
           active={active}
+          onRetry={(windowId) => void retryCheck(windowId)}
           onEdit={(paragraphId, text) => {
             commitTranscript(editParagraph(segmentsRef.current, paragraphId, text));
             setSummary(null);

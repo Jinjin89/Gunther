@@ -4,14 +4,14 @@ import logging
 import re
 import secrets
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, WebSocket, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
-from gunther import speech_registry
+from gunther import listen_copy, speech_registry
 from gunther.answer_runs import AnswerRun, AnswerRuns, Stopped
 from gunther.asset_service import (
     AssetNotFoundError,
@@ -20,6 +20,7 @@ from gunther.asset_service import (
     AssetValidationError,
 )
 from gunther.brief import Brief
+from gunther.database import session_scope
 from gunther.device_auth import (
     WORKSPACE_PROTOCOL_VERSION,
     AuthPrincipal,
@@ -35,7 +36,13 @@ from gunther.device_auth import (
 from gunther.lecture import LectureSummaryError
 from gunther.llm import ModelError
 from gunther.pairing_exchange_guard import PairingExchangeRejected
-from gunther.realtime import proxy_realtime_transcription, sensevoice_health
+from gunther.realtime import (
+    RELISTEN_PAD_MS,
+    ListenError,
+    proxy_realtime_transcription,
+    relisten_audio,
+    sensevoice_health,
+)
 from gunther.recording_service import (
     MAX_CHUNK_BYTES,
     MAX_DIRECT_UPLOAD_BYTES,
@@ -47,6 +54,7 @@ from gunther.recording_service import (
     recording_media_type,
 )
 from gunther.schemas import (
+    ApiModel,
     ArtifactOut,
     ArtifactSummaryOut,
     AskSkillOut,
@@ -833,7 +841,9 @@ def get_recording(recording_id: str, request: Request) -> FileResponse:
         candidates = [
             path
             for path in request.app.state.settings.recordings_dir.glob(f"{recording_id}.*")
-            if path.is_file() and not path.name.endswith(".part")
+            if path.is_file()
+            and not path.name.endswith(".part")
+            and not listen_copy.is_copy(path)
         ]
         if len(candidates) != 1:
             raise HTTPException(status_code=404, detail="Recording not found") from error
@@ -854,16 +864,23 @@ async def live_recording(
     """The live transcript socket. v1 (the default) is what the phone and Ask dictation speak.
 
     ``protocol=2`` asks for sentence pieces on the recording clock; ``offset_ms`` is where
-    this connection's audio starts on that clock. ``recording_id`` is accepted for the
-    audio copy that comes later and is not used yet.
+    this connection's audio starts on that clock. ``recording_id``, when it names a
+    recording still being captured, makes the backend keep a 16 kHz copy of the audio so
+    it can be listened to again (``POST /recordings/{id}/relisten``).
     """
 
     if not await _authorize_websocket(websocket):
         return
     state = websocket.app.state
-    choice, problem = speech_registry.resolve(
-        state.speech_registry, "dictation" if purpose == "dictation" else "recording"
-    )
+    role = "dictation" if purpose == "dictation" else "recording"
+    choice, problem = speech_registry.resolve(state.speech_registry, role)
+    listen = None
+    if recording_id and purpose == "recording" and protocol >= 2:
+        # Only a recording still being captured gets an audio copy.
+        with session_scope(state.knowledge_service.sessions) as session:
+            capturing = listen_copy.recording_state(session, recording_id) == "capturing"
+        if capturing:
+            listen = listen_copy.ListenCopy(state.settings.recordings_dir, recording_id)
     await proxy_realtime_transcription(
         websocket,
         choice=choice,
@@ -873,7 +890,84 @@ async def live_recording(
         protocol=protocol,
         sample_rate=sample_rate,
         offset_ms=offset_ms,
+        listen=listen,
+        check_again=bool(
+            listen is not None
+            and choice is not None
+            and speech_registry.check_again(state.speech_registry)
+        ),
     )
+
+
+class RelistenContext(ApiModel):
+    terms: list[str] = Field(default_factory=list, max_length=60)
+    before: str = Field(default="", max_length=4_000)
+    after: str = Field(default="", max_length=4_000)
+
+
+class RelistenInput(ApiModel):
+    start_ms: int = Field(ge=0)
+    end_ms: int = Field(ge=0)
+    pass_: Literal["minute", "retry", "final"] = Field(default="minute", alias="pass")
+    context: RelistenContext = Field(default_factory=RelistenContext)
+
+
+MAX_RELISTEN_MS = 180_000
+
+
+@router.post("/recordings/{recording_id}/relisten")
+async def relisten_recording(
+    recording_id: str, payload: RelistenInput, request: Request
+) -> dict[str, Any]:
+    """Listen again to a stretch of a recording with the Recording job's model.
+
+    The stretch comes from the audio copy the live socket keeps. Parts the copy does not
+    hold are filled with silence and listed in ``missing``; with none of it, 409.
+    """
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", recording_id):
+        raise HTTPException(status_code=404, detail="Recording not found")
+    start, end = payload.start_ms, payload.end_ms
+    if end <= start or end - start > MAX_RELISTEN_MS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Choose a stretch of up to {MAX_RELISTEN_MS // 1000} seconds.",
+        )
+    choice, _problem = speech_registry.resolve(request.app.state.speech_registry, "recording")
+    if choice is None:
+        raise HTTPException(
+            status_code=424, detail="Choose a Recording model in Settings → Transcription."
+        )
+    directory = request.app.state.settings.recordings_dir
+    padded_start = max(0, start - RELISTEN_PAD_MS)
+    pcm, held = await asyncio.to_thread(
+        listen_copy.read_range, directory, recording_id, padded_start, end + RELISTEN_PAD_MS
+    )
+    if not listen_copy.touches(held, start, end):
+        raise HTTPException(
+            status_code=409,
+            detail=f"No audio was kept for {start / 1000:.1f}\u2013{end / 1000:.1f} s.",
+        )
+    try:
+        heard = await relisten_audio(
+            choice,
+            pcm,
+            audio_start_ms=padded_start,
+            start_ms=start,
+            end_ms=end,
+            terms=payload.context.terms,
+            before=payload.context.before,
+            after=payload.context.after,
+        )
+    except ListenError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    return {
+        "text": heard["text"],
+        "sentences": heard["sentences"],
+        "model": choice.model,
+        "provider": choice.provider,
+        "missing": [list(span) for span in listen_copy.missing_in(held, start, end)],
+    }
 
 
 @router.get("/knowledge-bases", response_model=list[KnowledgeBaseOut])

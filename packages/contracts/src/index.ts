@@ -489,6 +489,8 @@ export interface SpeechRole {
   stream: boolean;
   language: string;
   problem: string | null;
+  /** Recording only: the "Check each minute again" switch. */
+  checkAgain?: boolean;
 }
 
 export interface SpeechPreset {

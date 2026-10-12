@@ -24,7 +24,7 @@ from pathlib import Path
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
-from gunther import papers, vector_index
+from gunther import listen_copy, papers, vector_index
 from gunther.database import session_scope
 from gunther.knowledge_index import new_id
 from gunther.models import (
@@ -456,6 +456,8 @@ class TrashService:
             if recording is not None and recording.status != "capturing":
                 final_path = self.recordings_dir / recording.file_name
                 files += [final_path, final_path.with_name(f"{final_path.name}.part")]
+                # The audio copy kept for listening again goes with the recording.
+                files += list(listen_copy.copy_paths(self.recordings_dir, recording.id))
                 session.delete(recording)
         return files
 

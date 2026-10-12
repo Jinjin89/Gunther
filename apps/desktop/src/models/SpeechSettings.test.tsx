@@ -42,6 +42,19 @@ describe("SpeechSettings", () => {
     expect(screen.getByText("Qwen")).toBeTruthy();
   });
 
+  it("turns checking each minute again off from the Recording job, keeping its model", async () => {
+    const withSwitch = overview();
+    withSwitch.roles[0]!.checkAgain = true;
+    api.speechOverview.mockResolvedValue(withSwitch);
+    api.saveSpeechRoles.mockResolvedValue(withSwitch);
+    render(<SpeechSettings onNotify={() => undefined} />);
+    expect(await screen.findByText("Sends the audio a second time for better text.")).toBeTruthy();
+    const toggle = screen.getByRole("switch", { name: "Check each minute again" });
+    expect(toggle).toBeChecked();
+    await userEvent.click(toggle);
+    expect(api.saveSpeechRoles).toHaveBeenCalledWith({ recording: { model: "sensevoice/sensevoice-small", stream: true, language: "", check_again: false } });
+  });
+
   it("changes one job without touching the other", async () => {
     api.saveSpeechRoles.mockResolvedValue(overview());
     render(<SpeechSettings onNotify={() => undefined} />);

@@ -7,6 +7,10 @@ Methods (docs/LIVE_TRANSCRIPT_PLAN.md):
   stream     Layer 1: the streaming model, sent at real-time pace; final sentences only
   paragraph  Layer 2: each paragraph (from Layer 1's times) heard again by the HTTP model, with
              the previous paragraph as context
+  minute     Layer 2 as the app does it (§2.5): 60 s windows ending at a live sentence end, heard
+             again by the HTTP model with the title and the text before; all sentences but the
+             last are confirmed and the last is held back for the next window; at the end the
+             rest is taken. No pause length decides anything.
   final      Layer 3: the Analysis model lists the terms; every paragraph heard again with the
              terms and the paragraphs before and after
 
@@ -40,6 +44,7 @@ from evals.transcript.common import (
     wav_bytes,
 )
 from gunther.config import Settings
+from gunther.qwen_stream import split_sentences as split_words
 
 HTTP_MODEL = "qwen-audio-3.1-asr-flash"
 STREAM_MODEL = "qwen-audio-3.1-asr-flash-streaming"
@@ -416,13 +421,108 @@ def final_check(samples: np.ndarray, groups: list[dict], current: list[str]) -> 
     return {"text": join(checked), "paragraphs": checked, "terms": terms}
 
 
+# The minute check (docs/LIVE_TRANSCRIPT_PLAN.md §2.5) ------------------------------------
+
+WINDOW_MS = 60_000
+MAX_WINDOW_MS = 180_000
+WHOLE_WINDOW_MS = 150_000
+CUT_TOLERANCE_MS = 250
+
+
+def heard_sentences(reply: dict, window_start: int, window_end: int) -> list[dict]:
+    """The reply's sentences on the recording clock, without those only in the padding."""
+
+    output = reply.get("output") or {}
+    sentence = output.get("sentence")
+    words: list[dict] = []
+    for item in sentence if isinstance(sentence, list) else [sentence]:
+        if isinstance(item, dict):
+            words.extend(w for w in item.get("words") or [] if isinstance(w, dict))
+    offset = max(0, window_start - 300)
+    return [
+        s
+        for s in split_words(words, offset)
+        if s["end_ms"] > window_start and s["start_ms"] < window_end
+    ]
+
+
+def minute_check(samples: np.ndarray, live_sentences: list[dict]) -> dict:
+    """Run the app's rules over the live sentences as they would have arrived."""
+
+    live = sorted(live_sentences, key=lambda s: s["end_ms"])
+    confirmed: list[dict] = []
+    state = {"until": 0, "held": None}
+    windows: list[dict] = []
+
+    def take(arrived: list[dict], closing: bool) -> bool:
+        start = state["until"]
+        ahead = [s for s in arrived if s["end_ms"] > start + CUT_TOLERANCE_MS]
+        if not ahead:
+            return False
+        newest = max(s["end_ms"] for s in ahead)
+        if not closing:
+            if newest - start < WINDOW_MS:
+                return False
+            if state["held"] is not None and newest < state["held"] + WINDOW_MS:
+                return False
+        within = [s for s in ahead if s["end_ms"] <= start + MAX_WINDOW_MS]
+        end = max(s["end_ms"] for s in within) if within else min(s["end_ms"] for s in ahead)
+        inside = [s for s in arrived if start < s["end_ms"] <= end + CUT_TOLERANCE_MS]
+        before = join([s["text"] for s in confirmed])[-TURN_CHARS:]
+        reply = listen(cut(samples, start, end), [TITLE, before])
+        heard = heard_sentences(reply, start, end)
+        text = text_of(reply)
+        entry = {"start_ms": start, "end_ms": end, "live": len(inside)}
+        if not heard and not text:
+            # An empty answer is a failed check: the live text stays (the app marks it).
+            confirmed.extend(
+                {"start_ms": s["start_ms"], "end_ms": s["end_ms"], "text": s["text"]}
+                for s in inside
+            )
+            state.update(until=max(start, end), held=None)
+            windows.append({**entry, "result": "failed"})
+            return True
+        sentences = heard or [{"start_ms": start, "end_ms": end, "text": text}]
+        kept = sentences
+        if not closing and heard:
+            if len(sentences) >= 2:
+                kept = sentences[:-1]
+            elif end - start < WHOLE_WINDOW_MS:
+                kept = []
+        if not kept:
+            state["held"] = end
+            windows.append({**entry, "result": "held"})
+            return True
+        confirmed.extend(kept)
+        state.update(
+            until=max(start, end, kept[-1]["end_ms"])
+            if closing
+            else max(start, kept[-1]["end_ms"]),
+            held=None,
+        )
+        windows.append({**entry, "result": "checked", "kept": len(kept), "of": len(sentences)})
+        return True
+
+    arrived: list[dict] = []
+    for sentence in live:
+        arrived.append(sentence)
+        for _ in range(1_000):
+            if not take(arrived, False):
+                break
+    for _ in range(1_000):
+        if not take(arrived, True):
+            break
+    texts = [s["text"] for s in confirmed]
+    return {"text": join(texts), "paragraphs": texts, "windows": windows}
+
+
 # Run -------------------------------------------------------------------------------
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--audio", default="noisy", choices=["noisy", "clean", "hard"])
-    parser.add_argument("--only", default="today,stream,paragraph,final")
+    parser.add_argument("--only", default="today,stream,paragraph,minute,final")
     parser.add_argument("--speed", type=float, default=1.0, help="streaming pace; 1 = real time")
     parser.add_argument("--params", default="{}", help="extra streaming parameters, as JSON")
     parser.add_argument("--label", default="", help="added to the results folder's name")
@@ -454,7 +554,7 @@ def main() -> None:
     if "today" in wanted:
         started = time.monotonic()
         record("today", today(samples), time.monotonic() - started)
-    if wanted & {"stream", "paragraph", "final"}:
+    if wanted & {"stream", "paragraph", "minute", "final"}:
         started = time.monotonic()
         if args.reuse:
             live = json.loads(Path(args.reuse).read_text(encoding="utf-8"))["stream"]
@@ -473,6 +573,11 @@ def main() -> None:
             checked = paragraph_check(samples, groups)
             record("paragraph", checked, time.monotonic() - started)
             current = checked["paragraphs"]
+        if "minute" in wanted:
+            started = time.monotonic()
+            checked_minutes = minute_check(samples, split_sentences(live["sentences"]))
+            record("minute", checked_minutes, time.monotonic() - started)
+            print(f"           {len(checked_minutes['windows'])} windows", flush=True)
         if "final" in wanted:
             started = time.monotonic()
             record("final", final_check(samples, groups, current), time.monotonic() - started)

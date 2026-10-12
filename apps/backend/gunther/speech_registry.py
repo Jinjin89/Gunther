@@ -224,6 +224,10 @@ def clean_roles(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "stream": stream,
             "language": clean_language(choice.get("language"), role.label),
         }
+        if "check_again" in choice:
+            if role_id != "recording" or not isinstance(choice["check_again"], bool):
+                raise SpeechError(f"{role.label}: checking again must be on or off.")
+            roles[role_id]["check_again"] = choice["check_again"]
     return roles
 
 
@@ -375,6 +379,12 @@ def problem_with(
     if key_for(provider, shared)[0] or PRESETS[provider["kind"]].key_optional:
         return None
     return f"{provider['name']} needs an API key."
+
+
+def check_again(registry: Registry) -> bool:
+    """The "Check each minute again" switch under the Recording job; on unless turned off."""
+
+    return (registry.roles.get("recording") or {}).get("check_again") is not False
 
 
 def resolve(registry: Registry, role_id: str) -> tuple[Choice | None, str | None]:

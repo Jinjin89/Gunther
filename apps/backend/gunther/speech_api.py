@@ -126,6 +126,11 @@ def _roles_out(request: Request) -> list[dict[str, Any]]:
                 "stream": bool(choice.get("stream", role.stream)),
                 "language": choice.get("language") or "",
                 "problem": None if resolved else problem,
+                **(
+                    {"checkAgain": speech_registry.check_again(registry)}
+                    if role.id == "recording"
+                    else {}
+                ),
             }
         )
     return out
@@ -271,6 +276,11 @@ def save_roles(payload: RolesIn, request: Request) -> dict[str, Any]:
             raise HTTPException(
                 422, f"{speech_registry.ROLE_BY_ID[role_id].label}: that model is not set up."
             )
+    for role_id, choice in changes.items():
+        # A save that leaves the switch out keeps what was set.
+        previous = (registry.roles.get(role_id) or {}).get("check_again")
+        if role_id == "recording" and "check_again" not in choice and previous is not None:
+            choice["check_again"] = previous
     roles = {**registry.roles, **changes}
     # Saving jobs keeps the providers in use, even ones that came from the environment.
     _save(request, providers=[dict(p) for p in registry.providers], roles=roles)

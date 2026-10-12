@@ -207,13 +207,18 @@ function ProviderEditor({ provider, onOverview, onRemoved, onNotify }: {
   </form>;
 }
 
-type Choice = { model: string | null; stream: boolean; language: string };
+type Choice = { model: string | null; stream: boolean; language: string; check_again?: boolean };
 
 function RoleRow({ role, overview, onSave }: { role: SpeechRole; overview: SpeechOverview; onSave: (role: SpeechRole["id"], choice: Choice) => void }) {
   const id = useId();
   const [language, setLanguage] = useState(role.language);
   useEffect(() => setLanguage(role.language), [role.language]);
-  const choice = (next: Partial<Choice>): Choice => ({ model: role.model, stream: role.stream, language: role.language, ...next });
+  const choice = (next: Partial<Choice>): Choice => ({
+    model: role.model, stream: role.stream, language: role.language,
+    // Only the Recording job has the switch; saving the other job sends nothing about it.
+    ...(role.checkAgain === undefined ? {} : { check_again: role.checkAgain }),
+    ...next,
+  });
   const commitLanguage = () => { if (language.trim() !== role.language) onSave(role.id, choice({ language: language.trim() })); };
   return <div className={`model-role ${role.problem ? "has-problem" : ""}`}>
     <span className="model-role-name"><strong id={`${id}-label`}>{role.label}</strong><small>{role.description}</small></span>
@@ -226,6 +231,13 @@ function RoleRow({ role, overview, onSave }: { role: SpeechRole; overview: Speec
       </select>
       <input className="speech-language" type="text" value={language} maxLength={12} placeholder="Language" aria-label={`${role.label} language`} title="A code like en or zh. Empty lets the model detect it." spellCheck={false} onChange={(event) => setLanguage(event.target.value)} onBlur={commitLanguage} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitLanguage(); } }} />
     </div>
+    {role.checkAgain !== undefined && <div className="tts-role-options">
+      <label className="speech-live" title="Sends the audio a second time for better text.">
+        <input type="checkbox" role="switch" checked={role.checkAgain} onChange={(event) => onSave(role.id, choice({ check_again: event.target.checked }))} />
+        <span>Check each minute again</span>
+      </label>
+      <small className="model-roles-note">Sends the audio a second time for better text.</small>
+    </div>}
     {role.problem && <small className="model-role-problem"><CircleAlert size={12} />{role.problem}</small>}
   </div>;
 }

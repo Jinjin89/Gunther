@@ -21,6 +21,7 @@ from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, InvalidStatus, WebSocketException
 from websockets.protocol import State
 
+from gunther import listen_copy
 from gunther.qwen_stream import (
     BYTES_PER_MS,
     LIVE_RATE,
@@ -102,14 +103,26 @@ def qwen_endpoint(base_url: str) -> str:
     return f"{qwen_root(base_url)}/api/v1/services/aigc/multimodal-generation/generation"
 
 
-def qwen_request(model: str, wav: bytes, sample_rate: int = 24_000) -> dict[str, object]:
-    """Qwen-Audio takes the audio as a data URI inside a message."""
+def qwen_request(
+    model: str, wav: bytes, sample_rate: int = 24_000, context: list[str] | None = None
+) -> dict[str, object]:
+    """Qwen-Audio takes the audio as a data URI inside a message.
+
+    ``context`` (terms, then what came before and after) goes first, one user message
+    each, at most 400 characters; Qwen uses it to hear the same words again.
+    """
 
     encoded = base64.b64encode(wav).decode("ascii")
+    hints = [
+        {"role": "user", "content": [{"type": "input_text", "text": text[:400]}]}
+        for text in (context or [])
+        if text.strip()
+    ]
     return {
         "model": model,
         "input": {
             "messages": [
+                *hints,
                 {
                     "role": "user",
                     "content": [
@@ -121,7 +134,7 @@ def qwen_request(model: str, wav: bytes, sample_rate: int = 24_000) -> dict[str,
                             },
                         }
                     ],
-                }
+                },
             ]
         },
         "parameters": {"format": "wav", "sample_rate": str(sample_rate)},
@@ -298,6 +311,8 @@ async def _proxy_segmented_transcription(
     sample_rate: int = 24_000,
     protocol: int = 1,
     offset_ms: int = 0,
+    listen: listen_copy.ListenCopy | None = None,
+    check_again: bool = False,
 ) -> None:
     """Cut live audio into segments and have an OpenAI-style server write each one.
 
@@ -315,6 +330,9 @@ async def _proxy_segmented_transcription(
     sequence = 0
     audio_cursor_seconds = max(0, offset_ms) / 1000
     tag = secrets.token_hex(2)
+    # The audio copy is 16 kHz whatever the client sends; ``copy_cursor`` counts its bytes.
+    copy_resampler = Pcm16Resampler(sample_rate, LIVE_RATE) if sample_rate != LIVE_RATE else None
+    copy_cursor = max(0, offset_ms) * BYTES_PER_MS
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             if reset_url:
@@ -323,6 +341,7 @@ async def _proxy_segmented_transcription(
             announced = {"type": "service.ready", "provider": provider, **ready}
             if protocol >= 2:
                 announced["protocol"] = protocol
+                announced["check_again"] = check_again
             await websocket.send_json(announced)
 
             async def transcribe_segment(chunk: bytes, start_seconds: float) -> None:
@@ -386,8 +405,21 @@ async def _proxy_segmented_transcription(
                     encoded = payload.get("audio")
                     if not isinstance(encoded, str):
                         continue
+                    audio = b""
                     with suppress(ValueError):
-                        pending.extend(base64.b64decode(encoded, validate=True))
+                        audio = base64.b64decode(encoded, validate=True)
+                    pending.extend(audio)
+                    if listen is not None and audio:
+                        kept = copy_resampler.feed(audio) if copy_resampler else audio
+                        at = payload.get("offset_ms")
+                        if (
+                            protocol >= 2
+                            and isinstance(at, int | float)
+                            and not isinstance(at, bool)
+                        ):
+                            copy_cursor = max(0, int(at)) * BYTES_PER_MS
+                        listen.write(copy_cursor, kept)
+                        copy_cursor += len(kept) - len(kept) % 2
                     await flush()
                 elif message_type == "input_audio_buffer.commit":
                     await flush(force=True)
@@ -412,6 +444,9 @@ async def _proxy_segmented_transcription(
                 }
             )
             await websocket.close(code=1011)
+    finally:
+        if listen is not None:
+            listen.close()
 
 
 class _Fatal(Exception):
@@ -476,8 +511,12 @@ class _LiveStream:
         sample_rate: int,
         offset_ms: int,
         context: str,
+        listen: listen_copy.ListenCopy | None = None,
+        check_again: bool = False,
     ) -> None:
         self.websocket = websocket
+        self.listen = listen
+        self.check_again = check_again
         self.up: ClientConnection | None = upstream
         self.choice = choice
         self.model = qwen_live_id(choice.model)
@@ -541,6 +580,7 @@ class _LiveStream:
         }
         if self.protocol >= 2:
             ready["protocol"] = self.protocol
+            ready["check_again"] = self.check_again
         await self.send(ready)
         self._attach(self.up)
         self.worker = asyncio.create_task(self._work())
@@ -554,6 +594,8 @@ class _LiveStream:
         except WebSocketDisconnect:
             return
         finally:
+            if self.listen is not None:
+                self.listen.close()
             for task in (self.worker, self.reader):
                 if task is not None:
                     task.cancel()
@@ -599,6 +641,8 @@ class _LiveStream:
                 start = self.cursor
         if not pcm:
             return
+        if self.listen is not None:
+            self.listen.write(start, pcm)
         for position in range(0, len(pcm), FRAME_BYTES):
             frame = pcm[position : position + FRAME_BYTES]
             self.chunks.append(_Chunk(start + position, frame))
@@ -900,6 +944,8 @@ async def _proxy_live_stream(
     sample_rate: int,
     offset_ms: int,
     context: str,
+    listen: listen_copy.ListenCopy | None = None,
+    check_again: bool = False,
 ) -> None:
     live = _LiveStream(
         websocket,
@@ -909,6 +955,8 @@ async def _proxy_live_stream(
         sample_rate=sample_rate,
         offset_ms=offset_ms,
         context=context,
+        listen=listen,
+        check_again=check_again,
     )
     await live.run()
 
@@ -937,6 +985,8 @@ async def proxy_realtime_transcription(
     protocol: int = 1,
     sample_rate: int = 24_000,
     offset_ms: int = 0,
+    listen: listen_copy.ListenCopy | None = None,
+    check_again: bool = False,
 ) -> None:
     """Have the model chosen for a job write the words of audio sent over the socket.
 
@@ -993,6 +1043,8 @@ async def proxy_realtime_transcription(
                     sample_rate=sample_rate,
                     offset_ms=offset_ms,
                     context=context,
+                    listen=listen,
+                    check_again=check_again,
                 )
                 return
             logger.warning(
@@ -1027,4 +1079,153 @@ async def proxy_realtime_transcription(
         sample_rate=sample_rate,
         protocol=protocol,
         offset_ms=offset_ms,
+        listen=listen,
+        check_again=check_again,
     )
+
+
+# Listening again ---------------------------------------------------------------
+
+# Audio is read this much past each end so a word at the edge is not cut.
+RELISTEN_PAD_MS = 300
+# A minute of 16 kHz audio is about 2.6 MB once encoded for Qwen.
+RELISTEN_TIMEOUT = httpx.Timeout(120.0, write=300.0)
+RELISTEN_PROMPT_CHARS = 800
+
+
+class ListenError(Exception):
+    """The model could not listen again; the message is the provider's, for the user."""
+
+
+def _provider_message(error: Exception, label: str) -> str:
+    if isinstance(error, httpx.HTTPStatusError):
+        detail = ""
+        try:
+            body = error.response.json()
+        except ValueError:
+            body = None
+        if isinstance(body, dict):
+            nested = body.get("error")
+            candidates = [
+                body.get("message"),
+                nested.get("message") if isinstance(nested, dict) else nested,
+                body.get("detail"),
+            ]
+            detail = next((str(item) for item in candidates if isinstance(item, str) and item), "")
+        if not detail:
+            detail = error.response.text.strip()[:200]
+        status = error.response.status_code
+        return f"{label} answered {status}: {detail}" if detail else f"{label} answered {status}."
+    return f"{label} could not be reached ({error or type(error).__name__})."
+
+
+def _qwen_words(payload: object) -> list[dict[str, Any]]:
+    """The words of a Qwen-Audio reply: ``output.sentence`` is one object, or a list of them."""
+
+    output = payload.get("output") if isinstance(payload, dict) else None
+    sentence = output.get("sentence") if isinstance(output, dict) else None
+    found: list[dict[str, Any]] = []
+    for item in sentence if isinstance(sentence, list) else [sentence]:
+        words = item.get("words") if isinstance(item, dict) else None
+        if isinstance(words, list):
+            found.extend(word for word in words if isinstance(word, dict))
+    return found
+
+
+def _join_text(parts: list[str]) -> str:
+    """Sentences back into text: a space between words, none where either side is CJK."""
+
+    out = ""
+    for part in parts:
+        if out and not (_is_cjk(out[-1]) or _is_cjk(part[:1])):
+            out += " "
+        out += part
+    return out
+
+
+def _is_cjk(character: str) -> bool:
+    return bool(character) and ord(character) >= 0x2E80
+
+
+async def relisten_audio(
+    choice: Choice,
+    pcm: bytes,
+    *,
+    audio_start_ms: int,
+    start_ms: int,
+    end_ms: int,
+    terms: list[str],
+    before: str,
+    after: str,
+) -> dict[str, Any]:
+    """Have a job's model write the words of ``pcm`` (16 kHz) again, with context.
+
+    ``audio_start_ms`` is where ``pcm`` begins on the recording clock; ``start_ms`` and
+    ``end_ms`` are the range asked for, the rest being padding. Qwen answers with word
+    times, which become sentences on the recording clock (those lying only in the
+    padding are dropped); other providers answer text only, with no sentences.
+    """
+
+    wav = _pcm16_wav(pcm, LIVE_RATE)
+    term_text = ", ".join(term.strip() for term in terms if term.strip())
+    async with httpx.AsyncClient(timeout=RELISTEN_TIMEOUT) as client:
+
+        async def post(**request: Any) -> httpx.Response:
+            try:
+                return await client.post(**request)
+            except httpx.TransportError:
+                return await client.post(**request)  # one more try on a dropped connection
+
+        try:
+            if choice.kind == "qwen":
+                response = await post(
+                    url=qwen_endpoint(choice.base_url),
+                    headers={"Authorization": f"Bearer {choice.api_key}"},
+                    json=qwen_request(
+                        qwen_upload_id(choice.model),
+                        wav,
+                        LIVE_RATE,
+                        [term_text[:400], before.strip()[-400:], after.strip()[:400]],
+                    ),
+                )
+                if qwen_heard_nothing(response):
+                    return {"text": "", "sentences": []}
+                response.raise_for_status()
+                payload = response.json()
+                heard = split_sentences(_qwen_words(payload), audio_start_ms)
+                sentences = [
+                    sentence
+                    for sentence in heard
+                    if sentence["end_ms"] > start_ms and sentence["start_ms"] < end_ms
+                ]
+                text = qwen_text(payload)
+                if heard and len(sentences) != len(heard):
+                    # Words that lie only in the padding are not part of the answer.
+                    text = _join_text([sentence["text"] for sentence in sentences])
+                return {"text": text, "sentences": sentences}
+            if choice.kind == "sensevoice":
+                root = _sensevoice_root(choice.base_url)
+                endpoint, headers = f"{root}/v1/audio/transcriptions", {}
+                form = {"model": "sensevoice", "response_format": "json"}
+            else:
+                endpoint = compatible_endpoint(choice.base_url)
+                headers = {"Authorization": f"Bearer {choice.api_key}"} if choice.api_key else {}
+                form = {"model": choice.model, "response_format": "json"}
+                if choice.language:
+                    form["language"] = choice.language
+                prompt = term_text
+                room = RELISTEN_PROMPT_CHARS - len(prompt) - 1
+                if before.strip() and room > 0:
+                    prompt = f"{prompt} {before.strip()[-room:]}".strip()
+                if prompt:
+                    form["prompt"] = prompt[:RELISTEN_PROMPT_CHARS]
+            response = await post(
+                url=endpoint,
+                headers=headers,
+                files={"file": ("segment.wav", wav, "audio/wav")},
+                data=form,
+            )
+            response.raise_for_status()
+            return {"text": str(response.json().get("text", "")).strip(), "sentences": []}
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError) as error:
+            raise ListenError(_provider_message(error, choice.provider)) from error

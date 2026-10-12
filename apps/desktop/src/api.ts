@@ -742,8 +742,22 @@ export const knowledgeApi = {
   speechScript: (source: { clipId: string } | { jobId: string }) =>
     request<{ script: string }>("clipId" in source ? `/speech/clips/${encodeURIComponent(source.clipId)}/script` : `/speech/jobs/${encodeURIComponent(source.jobId)}/script`),
   speechAudio: (clipId: string) => requestBlob(`/speech/clips/${encodeURIComponent(clipId)}/audio`),
-  saveSpeechRoles: (roles: Partial<Record<SpeechRole["id"], { model: string | null; stream: boolean; language: string }>>) =>
+  saveSpeechRoles: (roles: Partial<Record<SpeechRole["id"], { model: string | null; stream: boolean; language: string; check_again?: boolean }>>) =>
     request<SpeechOverview>("/settings/speech/roles", { method: "PUT", body: JSON.stringify({ roles }) }),
+  /** Listen again to a stretch of a recording that is being captured (the backend keeps a copy of its audio). */
+  relistenRecording: (id: string, body: {
+    startMs: number;
+    endMs: number;
+    pass: "minute" | "retry" | "final";
+    context: { terms: string[]; before: string; after?: string };
+  }) =>
+    request<{
+      text: string;
+      sentences: { start_ms: number; end_ms: number; text: string }[];
+      model: string;
+      provider: string;
+      missing: [number, number][];
+    }>(`/recordings/${encodeURIComponent(id)}/relisten`, { method: "POST", body: JSON.stringify(body) }),
   testServiceSettings: (id: string, values: Record<string, ServiceSettingValue>) =>
     request<ServiceTestResult>(`/settings/services/${encodeURIComponent(id)}/test`, {
       method: "POST",

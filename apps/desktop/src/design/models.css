@@ -142,6 +142,7 @@
 .provider-model select:focus-visible { outline: none; box-shadow: var(--gx-ring); }
 .model-role-problem { grid-column: 1 / -1; display: inline-flex; align-items: center; gap: 5px; color: var(--gx-danger); font-size: var(--gx-text-2xs); }
 .model-roles-note { margin: 2px 17px 6px; color: var(--gx-faint); font-size: var(--gx-text-2xs); }
+.model-role .tts-role-options .model-roles-note { margin: 0; }
 .model-providers-label { display: block; }
 
 .provider-initial {

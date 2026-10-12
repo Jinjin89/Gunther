@@ -11,7 +11,14 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import event, select
 from sqlalchemy.orm import ORMExecuteState, Session, sessionmaker
 
-from gunther import log_buffer, model_registry, speech_registry, tts_service, vector_index
+from gunther import (
+    listen_copy,
+    log_buffer,
+    model_registry,
+    speech_registry,
+    tts_service,
+    vector_index,
+)
 from gunther.answer_runs import AnswerRuns
 from gunther.api import router
 from gunther.asset_service import AssetService
@@ -285,8 +292,19 @@ def create_app(
                 logging.getLogger(__name__).warning("Trash cleanup failed", exc_info=True)
             await asyncio.sleep(12 * 60 * 60)
 
+    def sweep_listen_copies() -> None:
+        def state_of(recording_id: str) -> str | None:
+            with session_scope(sessions) as session:
+                return listen_copy.recording_state(session, recording_id)
+
+        try:
+            listen_copy.sweep(active_settings.recordings_dir, status_of=state_of)
+        except Exception:  # A leftover copy is only disk space; start-up goes on.
+            logging.getLogger(__name__).warning("Audio copy cleanup failed", exc_info=True)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        await asyncio.to_thread(sweep_listen_copies)
         knowledge_service.ensure_saved_knowledge_units()
         if active_settings.seed_demo:
             knowledge_service.seed_if_empty()

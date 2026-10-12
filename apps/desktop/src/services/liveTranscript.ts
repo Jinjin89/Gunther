@@ -132,7 +132,13 @@ export function isTranscriptState(value: unknown): value is TranscriptState {
 
 /** A state as it is stored: no draft, and nothing "in flight" that a restart cannot finish. */
 export function storableTranscript(state: TranscriptState): TranscriptState {
-  return { ...state, draft: null, checking: null };
+  // A check that was on its way when the app closed cannot finish: it shows as failed, with Retry.
+  const windows = state.windows.some((window) => window.state === "checking")
+    ? state.windows.map((window) => (window.state === "checking"
+      ? { ...window, state: "failed" as const, error: "The check was interrupted." }
+      : window))
+    : state.windows;
+  return { ...state, windows, draft: null, checking: null };
 }
 
 // Text ---------------------------------------------------------------------------
@@ -221,9 +227,10 @@ export function transcriptLines(state: TranscriptState): { startMs: number; text
       kind: "gap",
     });
   }
-  lines.sort((left, right) => left.startMs - right.startMs);
   const live = liveText(state).replace(/\s+/g, " ").trim();
   if (live) lines.push({ startMs: state.live[0]!.startMs, text: live, kind: "live" });
+  // The live text is one line at its first sentence's time, so a gap inside it sorts after it.
+  lines.sort((left, right) => left.startMs - right.startMs);
   return lines;
 }
 
@@ -315,10 +322,19 @@ export function applyGap(state: TranscriptState, gap: TranscriptGap): Transcript
 /**
  * One transcript event from the live socket: a piece (draft or final) or a gap. Final
  * sentences that complete a minute are confirmed as they are until the minute check is on.
+ * With ``checks`` (the backend said it can listen again) a piece only updates the live text.
  * Returns null for any other event.
  */
-export function applyLiveEvent(state: TranscriptState, event: Record<string, unknown>): TranscriptState | null {
-  if (event.type === "transcript.piece") return confirmLive(applyPiece(state, event as unknown as PieceEvent));
+export function applyLiveEvent(
+  state: TranscriptState,
+  event: Record<string, unknown>,
+  options: { checks?: boolean } = {},
+): TranscriptState | null {
+  if (event.type === "transcript.piece") {
+    const next = applyPiece(state, event as unknown as PieceEvent);
+    // With the minute check on, only the check confirms text (the recorder runs it).
+    return options.checks ? next : confirmLive(next);
+  }
   if (event.type === "transcript.gap" && typeof event.start_ms === "number" && typeof event.end_ms === "number") {
     return applyGap(state, { startMs: event.start_ms, endMs: event.end_ms, reason: String(event.reason ?? "connection") });
   }
@@ -604,4 +620,88 @@ export function transcriptFromText(
     windows: [{ id: "w-restored", startMs: 0, endMs: last?.endMs ?? 0, live: [], state: "off", pass: "minute" }],
     confirmedUntilMs: last?.endMs ?? 0,
   };
+}
+
+// What the screen shows -----------------------------------------------------------
+
+/** Text cut into pieces, the ones in `changed` being the words a check changed. */
+export interface TextPart { text: string; changed: boolean }
+
+/** Cut `text` at the tokens in `ranges` ([from, to) token numbers, as `changedRanges` gives). */
+export function splitChanged(text: string, ranges: [number, number][] | undefined): TextPart[] {
+  if (!ranges?.length) return [{ text, changed: false }];
+  const tokens = Array.from(text.matchAll(TOKEN)).map((match) => ({ from: match.index ?? 0, to: (match.index ?? 0) + match[0].length }));
+  const parts: TextPart[] = [];
+  let cursor = 0;
+  for (const [first, last] of [...ranges].sort((a, b) => a[0] - b[0])) {
+    const from = tokens[first]?.from;
+    const to = tokens[Math.min(last, tokens.length) - 1]?.to;
+    if (from === undefined || to === undefined || from < cursor) continue;
+    if (from > cursor) parts.push({ text: text.slice(cursor, from), changed: false });
+    parts.push({ text: text.slice(from, to), changed: true });
+    cursor = to;
+  }
+  if (cursor < text.length) parts.push({ text: text.slice(cursor), changed: false });
+  return parts;
+}
+
+/**
+ * A paragraph's text as pieces, the words its check changed marked. A paragraph the user
+ * edited has no marks: their text is not the check's.
+ */
+export function paragraphParts(state: TranscriptState, paragraph: TranscriptParagraph): TextPart[] {
+  if (paragraph.edited !== undefined) return [{ text: paragraph.edited, changed: false }];
+  const parts: TextPart[] = [];
+  let text = "";
+  for (const sentence of paragraphSentences(state, paragraph)) {
+    const own = sentence.text.trim();
+    if (!own) continue;
+    const joined = joinSentences([text, own]);
+    const separator = joined.slice(text.length, joined.length - own.length);
+    if (separator) parts.push({ text: separator, changed: false });
+    parts.push(...splitChanged(own, sentence.changed));
+    text = joined;
+  }
+  return parts;
+}
+
+/** Whether a paragraph's check failed or is being tried again (its sentences' windows say). */
+export function paragraphCheck(
+  state: TranscriptState,
+  paragraph: TranscriptParagraph,
+): { failed: CheckWindow | null; checking: boolean } {
+  const ids = new Set(paragraphSentences(state, paragraph).map((sentence) => sentence.windowId));
+  const windows = state.windows.filter((window) => ids.has(window.id));
+  return {
+    failed: paragraph.edited !== undefined ? null : windows.find((window) => window.state === "failed") ?? null,
+    checking: windows.some((window) => window.state === "checking"),
+  };
+}
+
+/**
+ * What the live model heard where a paragraph is, from the windows that overlap it; null when
+ * there is none or it reads the same as the paragraph.
+ */
+export function heardLive(state: TranscriptState, paragraph: TranscriptParagraph): string | null {
+  const sentences = paragraphSentences(state, paragraph);
+  if (!sentences.length) return null;
+  const from = sentences[0]!.startMs;
+  const to = Math.max(...sentences.map((sentence) => sentence.endMs));
+  const seen = new Map<string, LiveSentence>();
+  for (const window of state.windows) {
+    if (window.endMs <= from || window.startMs >= to) continue;
+    for (const live of window.live) {
+      if (live.endMs > from && live.startMs < to) seen.set(live.id, live);
+    }
+  }
+  const text = joinSentences([...seen.values()].sort((a, b) => a.startMs - b.startMs).map((live) => live.text));
+  if (!text || tokenize(text).join(" ") === tokenize(joinSentences(sentences.map((sentence) => sentence.text))).join(" ")) return null;
+  return text;
+}
+
+/** The end of the last paragraph that starts before `ms`, as context for listening again. */
+export function textBefore(state: TranscriptState, ms: number, limit = 400): string {
+  const earlier = state.paragraphs.filter((paragraph) => paragraphStartMs(state, paragraph) < ms);
+  const last = earlier.at(-1);
+  return last ? paragraphText(state, last).slice(-limit) : "";
 }

@@ -4,19 +4,26 @@ import {
   applyLiveEvent,
   applyPiece,
   applyRetry,
+  beginCheck,
+  beginRetry,
   applyWindowResult,
   changedRanges,
   clockLabel,
   confirmLive,
   editParagraph,
   emptyTranscript,
+  heardLive,
   isTranscriptState,
   joinSentences,
   nextWindow,
+  paragraphCheck,
+  paragraphParts,
   paragraphText,
   renderTranscript,
   retryRange,
+  splitChanged,
   storableTranscript,
+  textBefore,
   tokenize,
   transcriptFromText,
   type PieceEvent,
@@ -341,5 +348,101 @@ describe("text", () => {
     expect(isTranscriptState(JSON.parse(JSON.stringify(stored)))).toBe(true);
     expect(isTranscriptState({ version: 2 })).toBe(false);
     expect(isTranscriptState(null)).toBe(false);
+  });
+});
+
+describe("with the minute check on", () => {
+  const rules = { windowMs: 60_000, maxWindowMs: 180_000, wholeWindowMs: 150_000 };
+  const piece = (id: string, sentences: [number, number, string][]) => ({ type: "transcript.piece", ...final(id, sentences) }) as unknown as Record<string, unknown>;
+
+  it("a final piece does not confirm: only the check does", () => {
+    const first = applyLiveEvent(emptyTranscript(), piece("a-1-1", [[0, 40_000, "One."]]), { checks: true })!;
+    const long = applyLiveEvent(first, piece("a-1-2", [[40_000, 90_000, "Two."]]), { checks: true })!;
+    expect(long.sentences).toEqual([]);
+    expect(long.paragraphs).toEqual([]);
+    expect(long.live).toHaveLength(2);
+    // Without the check (Phase 2's way) the same piece confirms the minute.
+    const off = applyLiveEvent(first, piece("a-1-2", [[40_000, 90_000, "Two."]]))!;
+    expect(off.paragraphs).toHaveLength(1);
+    // The window is there to be taken.
+    expect(nextWindow(long, rules)).toEqual({ startMs: 0, endMs: 90_000 });
+  });
+
+  it("closing windows take everything that is left, one after the other, and Skip confirms the rest", () => {
+    let state = withLive(
+      final("a-1-1", [[0, 100_000, "First."]]),
+      final("a-1-2", [[100_000, 200_000, "Second."]]),
+      final("a-1-3", [[200_000, 230_000, "Third."]]),
+    );
+    const windows: { startMs: number; endMs: number }[] = [];
+    for (let guard = 0; guard < 10; guard += 1) {
+      const window = nextWindow(state, rules, { closing: true });
+      if (!window) break;
+      windows.push(window);
+      state = applyWindowResult(beginCheck(state, window), window, { text: "", sentences: [timed(window.startMs, window.endMs, `W${window.startMs}.`)] }, { rules, closing: true });
+    }
+    // 180 s at most each; the rest follows; nothing is held back.
+    expect(windows).toEqual([{ startMs: 0, endMs: 100_000 }, { startMs: 100_000, endMs: 230_000 }]);
+    expect(state.live).toEqual([]);
+    expect(state.paragraphs).toHaveLength(2);
+
+    // Skip: the live text that is left is confirmed as it is.
+    const waiting = withLive(final("a-1-1", [[0, 30_000, "Live words."]]));
+    const skipped = confirmLive({ ...waiting, checking: null }, { closing: true });
+    expect(skipped.sentences.map((sentence) => sentence.text)).toEqual(["Live words."]);
+    expect(skipped.windows[0]).toMatchObject({ state: "off" });
+  });
+
+  it("underlines only the changed tokens, and nothing in text the user edited", () => {
+    expect(splitChanged("Use gradient descent now.", [[1, 3]])).toEqual([
+      { text: "Use ", changed: false },
+      { text: "gradient descent", changed: true },
+      { text: " now.", changed: false },
+    ]);
+    expect(splitChanged("same text", undefined)).toEqual([{ text: "same text", changed: false }]);
+    expect(splitChanged("梯度下降很好", [[2, 4]]).map((part) => [part.text, part.changed])).toEqual([["梯度", false], ["下降", true], ["很好", false]]);
+
+    const live = withLive(final("a-1-1", [[0, 20_000, "gradient didn't decent to train."], [20_000, 40_000, "Rate is a step."]]), final("a-1-2", [[40_000, 70_000, "Tail"]]));
+    const result = { text: "", sentences: [timed(0, 20_000, "Gradient descent to train."), timed(20_000, 40_000, "Rate is a step."), timed(40_000, 70_000, "Tail.")] };
+    const state = applyWindowResult(live, { startMs: 0, endMs: 70_000 }, result, { rules });
+    const parts = paragraphParts(state, state.paragraphs[0]!);
+    expect(parts.filter((part) => part.changed).map((part) => part.text)).toEqual(["descent"]);
+    expect(parts.map((part) => part.text).join("")).toBe(paragraphText(state, state.paragraphs[0]!));
+    const edited = editParagraph(state, state.paragraphs[0]!.id, "My own words.");
+    expect(paragraphParts(edited, edited.paragraphs[0]!)).toEqual([{ text: "My own words.", changed: false }]);
+  });
+
+  it("shows a failed or retried window on its paragraph, and what was heard live under a checked one", () => {
+    const live = withLive(final("a-1-1", [[0, 70_000, "Heard live wrongly."]]));
+    const failed = applyWindowResult(live, { startMs: 0, endMs: 70_000 }, { error: "No" }, { rules });
+    const paragraph = failed.paragraphs[0]!;
+    expect(paragraphCheck(failed, paragraph)).toMatchObject({ failed: { id: "w-0", error: "No" }, checking: false });
+    expect(paragraphCheck(beginRetry(failed, "w-0"), paragraph)).toMatchObject({ failed: null, checking: true });
+    // An edited paragraph shows no failure.
+    const mine = editParagraph(failed, paragraph.id, "Mine.");
+    expect(paragraphCheck(mine, mine.paragraphs[0]!).failed).toBeNull();
+    // Same text as heard: nothing to show; different text: the live text.
+    expect(heardLive(failed, paragraph)).toBeNull();
+    const checked = applyWindowResult(live, { startMs: 0, endMs: 70_000 }, { text: "", sentences: [timed(0, 35_000, "Heard right."), timed(35_000, 70_000, "Tail.")] }, { rules });
+    expect(heardLive(checked, checked.paragraphs[0]!)).toBe("Heard live wrongly.");
+  });
+
+  it("gives the tail of the paragraph before a time as context, and sorts a gap inside live text after it", () => {
+    const base = withLive(final("a-1-1", [[0, 70_000, "x"]]));
+    const checked = applyWindowResult(base, { startMs: 0, endMs: 70_000 }, { text: "", sentences: [timed(0, 30_000, "A".repeat(500)), timed(30_000, 70_000, "End.")] }, { rules });
+    expect(textBefore(checked, 40_000)).toHaveLength(400);
+    expect(textBefore(checked, 0)).toBe("");
+    const withGap = {
+      ...applyPiece(emptyTranscript(), final("a-2-1", [[2_000, 30_000, "Live text."]])),
+      gaps: [{ startMs: 58_000, endMs: 59_000, reason: "connection" }],
+    };
+    expect(renderTranscript(withGap).split("\n\n")).toEqual(["[00:02] Live text.", "[00:58] (no audio was transcribed from 00:58 to 00:59)"]);
+  });
+
+  it("shows a check interrupted by closing the app as failed, so it can be retried", () => {
+    const live = withLive(final("a-1-1", [[0, 70_000, "x"]]));
+    const failed = applyWindowResult(live, { startMs: 0, endMs: 70_000 }, { error: "No" }, { rules });
+    const retrying = beginRetry(failed, "w-0");
+    expect(storableTranscript(retrying).windows[0]).toMatchObject({ state: "failed", error: "The check was interrupted." });
   });
 });

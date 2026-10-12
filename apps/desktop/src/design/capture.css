@@ -353,6 +353,17 @@
 .gx-capture .lp-edited { color: var(--gx-ghost); font-size: calc(11.5px * var(--gx-fs, 1)); }
 .gx-capture .lp-edit { width: 100%; min-height: 60px; padding: 0; border: 0; outline: 0; resize: none; background: transparent; color: var(--gx-ink); font: inherit; line-height: inherit; }
 .gx-capture .lp-aside:empty { display: none; }
+.gx-capture .lp-aside { align-self: start; padding-top: 5px; white-space: nowrap; }
+.gx-capture .lp-status { color: var(--gx-faint); font-size: calc(11.5px * var(--gx-fs, 1)); }
+.gx-capture .lp-retry { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.gx-capture .lp-retry:hover { color: var(--gx-ink); }
+/* Words a check changed: a faint dotted underline that fades out; colour-free and no layout change. */
+.gx-capture .lp-changed { text-decoration: underline dotted; text-decoration-color: var(--gx-faint); text-underline-offset: 4px; animation: lp-changed-fade 4s ease-out forwards; }
+@keyframes lp-changed-fade { 0%, 60% { text-decoration-color: var(--gx-faint); } 100% { text-decoration-color: transparent; } }
+@media (prefers-reduced-motion: reduce) { .gx-capture .lp-changed { animation-duration: 0.01s; animation-delay: 2s; } }
+.gx-capture .lp-heard-toggle { display: block; margin-top: 2px; padding: 0; border: 0; background: transparent; color: var(--gx-ghost); font: inherit; font-size: calc(11.5px * var(--gx-fs, 1)); cursor: pointer; }
+.gx-capture .lp-heard-toggle:hover { color: var(--gx-muted); }
+.gx-capture .lp-heard { margin-top: 2px; color: var(--gx-muted); font-size: calc(13.5px * var(--gx-fs, 1)); }
 @media (max-width: 520px) {
   .gx-capture .lp-row { grid-template-columns: minmax(0, 1fr); }
   .gx-capture .lp-time { height: 18px; margin-top: 0; }
