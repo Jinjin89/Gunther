@@ -8,6 +8,7 @@ import "./styles.css";
 import "./design/tokens.css";
 import "./design/primitives.css";
 import "./design/shell.css";
+import "./design/activity.css";
 import "./design/home.css";
 import "./design/pages.css";
 import "./design/prose.css";

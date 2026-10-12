@@ -296,7 +296,6 @@
   .gx-nav-count { min-width: 16px; height: 16px; padding: 0 4px; position: absolute; right: -2px; top: -2px; font-size: calc(10px * var(--gx-fs, 1)); }
   .gx-account { height: 40px; }
   .gx-avatar { margin: 0; }
-  .gx-save-state { display: none; }
 }
 
 @media (max-width: 640px) {

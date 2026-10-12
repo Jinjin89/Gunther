@@ -258,9 +258,10 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
     return () => window.removeEventListener(CAPTURE_SWITCH_DOM_EVENT, launch);
   }, []);
   useEffect(() => {
-    if (surface !== "window") return undefined;
     const control = (event: Event) => {
       const action = (event as CustomEvent<CaptureControl>).detail;
+      // The top bar drives the overlay too; the rest is for Capture's own window.
+      if (surface !== "window" && action !== "pause" && action !== "resume" && action !== "finish" && action !== "show") return;
       if (action === "pause") recorderRef.current?.pause();
       else if (action === "resume") recorderRef.current?.resume();
       else if (action === "mark") recorderRef.current?.markMoment();

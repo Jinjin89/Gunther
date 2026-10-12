@@ -14,6 +14,8 @@ pub const CAPTURE_WINDOW_LABEL: &str = "capture";
 pub const CAPTURE_REQUEST_EVENT: &str = "gunther://capture-request";
 pub const CAPTURE_CONTROL_EVENT: &str = "gunther://capture-control";
 pub const CAPTURE_SAVED_EVENT: &str = "gunther://capture-saved";
+/// The main window hears every change of the recorder here, for the top bar.
+pub const CAPTURE_STATUS_EVENT: &str = "gunther://capture-status";
 /// Commands from the native menus that the main window carries out.
 pub const MENU_COMMAND_EVENT: &str = "gunther://menu-command";
 const OPEN_SEARCH_EVENT: &str = "gunther://open-search";
@@ -831,10 +833,39 @@ pub fn update_capture_status(app: AppHandle, status: CaptureStatus) -> Result<()
     if runtime.status.phase != status.phase {
         log::info!("Capture: {} → {}", runtime.status.phase, status.phase);
     }
-    runtime.status = status;
+    runtime.status = status.clone();
     drop(runtime);
+    let _ = app.emit_to("main", CAPTURE_STATUS_EVENT, &status);
     apply_tray_presentation(&app)
         .map_err(|error| format!("Gunther could not update the menu bar: {error}"))
+}
+
+/// The recorder's latest status, for a main window that loaded mid-recording.
+#[tauri::command]
+pub fn capture_status(app: AppHandle) -> CaptureStatus {
+    status_snapshot(&app)
+}
+
+/// What the top bar may ask the Capture window to do.
+fn control_name(control: &str) -> Option<&'static str> {
+    match control {
+        "pause" => Some("pause"),
+        "resume" => Some("resume"),
+        "mark" => Some("mark"),
+        "finish" => Some("finish"),
+        "show" => Some("show"),
+        _ => None,
+    }
+}
+
+#[tauri::command]
+pub fn send_capture_control(app: AppHandle, control: String) -> Result<(), String> {
+    let name = control_name(&control).ok_or_else(|| "That control is not available".to_string())?;
+    if name == "show" {
+        show_window(&app, CAPTURE_WINDOW_LABEL)?;
+    }
+    emit_capture_control(&app, name);
+    Ok(())
 }
 
 #[tauri::command]
@@ -871,6 +902,15 @@ mod tests {
         MENU_NEW_RECORDING, MENU_OPEN_CAPTURE, MENU_PAUSE_RESUME, MENU_QUIT, MENU_SETTINGS,
         MENU_SHOW_CAPTURE,
     };
+
+    #[test]
+    fn the_top_bar_may_only_send_known_controls() {
+        for known in ["pause", "resume", "mark", "finish", "show"] {
+            assert_eq!(super::control_name(known), Some(known));
+        }
+        assert_eq!(super::control_name("quit-blocked"), None);
+        assert_eq!(super::control_name("anything"), None);
+    }
 
     fn status(phase: &str, seconds: u64) -> CaptureStatus {
         CaptureStatus {

@@ -3211,6 +3211,34 @@ class KnowledgeService:
                 raise LookupError(f"Artifact {artifact_id} was not found")
             return self._artifact_out(session, artifact)
 
+    def library_title(self, base_id: str) -> str:
+        """A library's title, or its id when there is none."""
+
+        with session_scope(self.sessions) as session:
+            library = session.get(KnowledgeBaseRecord, base_id)
+            return library.title if library else base_id
+
+    def artifact_kind(self, base_id: str, artifact_id: str) -> str:
+        """``slides`` or ``report``: what this version of an output is."""
+
+        with session_scope(self.sessions) as session:
+            artifact = session.scalar(
+                select(Artifact).where(
+                    Artifact.id == artifact_id, Artifact.knowledge_base_id == base_id
+                )
+            )
+            if artifact is None:
+                raise LookupError(f"Artifact {artifact_id} was not found")
+            return artifact.kind
+
+    def session_library(self, session_id: str) -> str | None:
+        """The library a conversation belongs to (``@home`` for Home), None when missing."""
+
+        with session_scope(self.sessions) as session:
+            return session.scalar(
+                select(KnowledgeSession.knowledge_base_id).where(KnowledgeSession.id == session_id)
+            )
+
     # Outputs built by agents (see outputs) --------------------------------------------------
 
     def _output_model(self) -> tuple[ModelInfo, Effort]:

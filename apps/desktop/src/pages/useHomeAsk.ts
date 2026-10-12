@@ -8,6 +8,8 @@ import { useLiveAnswer } from "./liveAnswer";
 /** Home's conversations belong to no library; the service files them under this id. */
 const HOME_SCOPE = "@home";
 const HOME_SESSION_KEY = "gunther:home-session";
+/** Set (and announced as a window event of the same name) when Activity asks Home to show a conversation. */
+export const OPEN_HOME_SESSION_KEY = "gunther:open-home-session";
 
 export interface AskOptions {
   model?: string | null;
@@ -99,6 +101,8 @@ export function useHomeAsk() {
 
   useEffect(() => {
     reloadRecent();
+    // Activity asked for a particular conversation: that one opens instead (see below).
+    if (persistentStorage.getItem(OPEN_HOME_SESSION_KEY)) return;
     const id = remembered();
     if (!id) return;
     void Promise.resolve()
@@ -208,6 +212,17 @@ export function useHomeAsk() {
       setError(reason instanceof Error ? reason.message : "That conversation could not be opened.");
     }
   }, [follow]);
+  // Activity opens a conversation: from a key left for a Home that was not on screen, or an event.
+  useEffect(() => {
+    const take = (id: string | null) => {
+      persistentStorage.removeItem(OPEN_HOME_SESSION_KEY);
+      if (id) void open(id);
+    };
+    take(persistentStorage.getItem(OPEN_HOME_SESSION_KEY));
+    const heard = (event: Event) => take((event as CustomEvent<{ sessionId?: string }>).detail?.sessionId ?? null);
+    window.addEventListener(OPEN_HOME_SESSION_KEY, heard);
+    return () => window.removeEventListener(OPEN_HOME_SESSION_KEY, heard);
+  }, [open]);
   /** Move the conversation into a library; it stops being Home's. */
   const file = useCallback(async (libraryId: string): Promise<string | null> => {
     if (!session) return null;

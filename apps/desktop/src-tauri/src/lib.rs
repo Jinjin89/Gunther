@@ -620,6 +620,8 @@ pub fn run() {
             capture_shell::show_main_window,
             capture_shell::take_capture_launch_request,
             capture_shell::update_capture_status,
+            capture_shell::capture_status,
+            capture_shell::send_capture_control,
             capture_shell::menu_bar_mode,
             capture_shell::set_menu_bar_mode,
             external_links::open_external_url,

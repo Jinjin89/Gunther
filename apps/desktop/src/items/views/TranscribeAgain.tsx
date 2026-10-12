@@ -82,6 +82,7 @@ export function TranscribeAgainLine({ again }: { again: TranscribeAgain }) {
   const { status, refused } = again;
   if (refused) return <p className="gx-again-line is-failed" role="status">{refused}</p>;
   if (status?.state === "failed") return <p className="gx-again-line is-failed" role="status">Couldn’t transcribe again: {status.error ?? "unknown problem"}</p>;
+  if (status?.state === "stopped") return <p className="gx-again-line" role="status">Stopped.</p>;
   if (status?.state === "waiting") return <p className="gx-again-line" role="status">Waiting for another recording to finish transcribing…</p>;
   if (status?.state !== "running") return null;
   if (status.totalMs > 0 && status.heardMs >= status.totalMs) return <p className="gx-again-line" role="status">Making paragraphs…</p>;

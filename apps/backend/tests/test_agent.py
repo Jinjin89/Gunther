@@ -935,6 +935,112 @@ def test_only_stop_ends_an_answer_early_and_keeps_the_question(tmp_path: Path) -
     assert message["content"] == "Stop me?" and message["context"]["interrupted"] == "stopped"
 
 
+def activity_of(client: TestClient) -> dict[str, dict]:
+    return {item["id"]: item for item in client.app.state.activity.snapshot()["items"]}
+
+
+def test_an_answer_is_listed_while_it_is_written_and_when_it_is_ready(tmp_path: Path) -> None:
+    fake = FakeProvider(agent_replies("Saved answer.", {"action": "answer"}))
+    gate = threading.Event()
+    question = "What " + "does CD3D mark? " * 10
+    with app_for(tmp_path, fake) as client:
+        session_id = ready_session(client)
+        base_id = client.get(f"/api/sessions/{session_id}", headers=SIDECAR).json()[
+            "knowledgeBaseId"
+        ]
+        held_answers(client, gate)
+        first, _ = in_background(
+            lambda: stream(
+                client, "POST", f"/api/sessions/{session_id}/messages/stream",
+                json={"content": question},
+            )
+        )
+        key = f"answer:{session_id}"
+        wait_for(lambda: activity_of(client).get(key, {}).get("detail") == "Writing")
+        item = activity_of(client)[key]
+        assert (item["title"], item["state"], item["kind"]) == (
+            "Writing an answer", "running", "answer"
+        )  # fmt: skip
+        assert item["about"] == question.strip()[:80] + "\u2026" and item["canStop"] is True
+        assert item["progress"] is None
+        assert item["open"] == {
+            "view": "library", "libraryId": base_id, "tab": "ask", "sessionId": session_id,
+        }  # fmt: skip
+        gate.set()
+        first.join(10)
+        done = activity_of(client)[key]
+    assert (done["state"], done["title"]) == ("done", "Answer ready")
+    assert done["endedAt"] and done["canStop"] is False
+
+
+def test_conversations_answering_together_each_show_and_stop_through_the_activity_route(
+    tmp_path: Path,
+) -> None:
+    fake = FakeProvider("unused")
+    gate = threading.Event()
+    with app_for(tmp_path, fake) as client:
+        library_session = ready_session(client)
+        home = client.post("/api/knowledge-bases/@home/sessions", headers=SIDECAR, json={})
+        home_session = home.json()["id"]
+        held_answers(client, gate)
+        threads = [
+            in_background(
+                lambda sid=sid: stream(
+                    client, "POST", f"/api/sessions/{sid}/messages/stream",
+                    json={"content": "Stop me?"},
+                )
+            )
+            for sid in (library_session, home_session)
+        ]  # fmt: skip
+        wait_for(
+            lambda: all(
+                activity_of(client).get(f"answer:{sid}", {}).get("detail") == "Writing"
+                for sid in (library_session, home_session)
+            )
+        )
+        found = activity_of(client)
+        assert found[f"answer:{home_session}"]["open"] == {
+            "view": "home", "sessionId": home_session,
+        }  # fmt: skip
+        assert found[f"answer:{library_session}"]["open"]["tab"] == "ask"
+
+        stopped = client.post(f"/api/activity/answer%3A{home_session}/stop", headers=SIDECAR)
+        assert stopped.status_code == 204
+        gate.set()
+        for thread, _ in threads:
+            thread.join(10)
+        after = activity_of(client)
+        saved = client.get(f"/api/sessions/{home_session}", headers=SIDECAR).json()
+    assert threads[1][1][0][-1][0] == "stopped" and threads[0][1][0][-1][0] == "done"
+    assert f"answer:{home_session}" not in after
+    assert after[f"answer:{library_session}"]["state"] == "done"
+    assert saved["messages"][0]["context"]["interrupted"] == "stopped"
+
+
+def test_a_failed_answer_says_so_and_a_missing_conversation_shows_nothing(
+    tmp_path: Path,
+) -> None:
+    fake = FakeProvider("unused")
+    with app_for(tmp_path, fake) as client:
+        session_id = ready_session(client)
+
+        def broken(session_id, payload, hear):
+            raise RuntimeError("boom")
+
+        client.app.state.knowledge_service.create_session_turn = broken
+        events = stream(
+            client, "POST", f"/api/sessions/{session_id}/messages/stream", json={"content": "Why?"}
+        )
+        stream(client, "POST", "/api/sessions/ses_missing/messages/stream", json={"content": "Hi"})
+        found = activity_of(client)
+    assert events[-1][0] == "error"
+    assert list(found) == [f"answer:{session_id}"]
+    assert (found[f"answer:{session_id}"]["state"], found[f"answer:{session_id}"]["title"]) == (
+        "failed", "Couldn't write the answer"
+    )  # fmt: skip
+    assert found[f"answer:{session_id}"]["error"] == "The answer could not be written."
+
+
 def test_a_reader_leaving_only_stops_listening() -> None:
     run = AnswerRun("ses_1", "Why?")
     run.publish("text", {"type": "text", "text": "Half "})

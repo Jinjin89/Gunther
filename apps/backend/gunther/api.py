@@ -1328,12 +1328,48 @@ async def stream_session_message(
 
     service = _service(request)
     researching = (payload.skill or "").strip().lstrip("/") == "research"
+    activity = request.app.state.activity
+    runs = _answer_runs(request)
+    library_id = service.session_library(session_id)
+    question = payload.content.strip()
+    if len(question) > 80:
+        question = question[:80] + "…"
+    where = (
+        {"view": "home", "sessionId": session_id}
+        if library_id == "@home"
+        else {"view": "library", "libraryId": library_id, "tab": "ask", "sessionId": session_id}
+    )
 
     def work(run: AnswerRun) -> None:
         writing = False
+        # A conversation that isn't there is answered 404 below, with nothing to show.
+        tracked = (
+            activity.track(
+                f"answer:{session_id}",
+                "answer",
+                "Writing an answer",
+                question,
+                open=where,
+                stop=lambda: runs.stop(session_id),
+                detail="Thinking",
+            )
+            if library_id
+            else None
+        )
+
+        def fail(status: int, detail: str) -> None:
+            run.publish("error", {"status": status, "detail": detail})
+            if tracked is not None:
+                tracked.failed("Couldn't write the answer", detail)
 
         def hear(event: dict) -> None:
             nonlocal writing
+            if tracked is not None:
+                label = event.get("label")
+                if event["type"] == "step" and event.get("state") == "running" and label:
+                    tracked.update(detail=label)
+                elif event["type"] == "text" and not writing:
+                    tracked.update(detail="Writing")
             # Research keeps what it found when stopped before it writes (see ``stopping``);
             # every other answer is dropped.
             if run.stop_requested.is_set():
@@ -1362,17 +1398,25 @@ async def stream_session_message(
                 else service.create_session_turn(session_id, payload, hear)
             )
             run.publish("done", turn.model_dump(mode="json", by_alias=True))
+            if tracked is not None:
+                tracked.done("Answer ready")
         except Stopped:
             service.record_interrupted_question(session_id, payload.content, "stopped")
             run.publish("stopped", {"type": "stopped"})
+            if tracked is not None:
+                tracked.stopped()
         except LookupError as error:
-            run.publish("error", {"status": 404, "detail": str(error)})
+            fail(404, str(error))
         except ValueError as error:
-            run.publish("error", {"status": 400, "detail": str(error)})
+            fail(400, str(error))
         except Exception:
             logger.exception("Answering a question failed")
             service.record_interrupted_question(session_id, payload.content, "failed")
-            run.publish("error", {"status": 500, "detail": "The answer could not be written."})
+            fail(500, "The answer could not be written.")
+        finally:
+            # Whatever happened above, no entry is left running.
+            if tracked is not None:
+                tracked.failed("Couldn't write the answer", "Something went wrong.")
 
     run = _answer_runs(request).start(session_id, payload.content, work)
     if run is None:
@@ -1500,13 +1544,36 @@ WorkspaceHeader = Annotated[
 ]
 
 
+_SECTION_VERBS = {"researching": "Researching", "writing": "Writing", "checking": "Checking"}
+
+
 def _outputs_key(knowledge_base_id: str) -> str:
     """One output at a time is built in a library."""
 
     return f"outputs:{knowledge_base_id}"
 
 
-def _output_run(request: Request, knowledge_base_id: str, label: str, call) -> StreamingResponse:
+# The words for an output's entry in the top bar: running, done, failed.
+_OUTPUT_WORDS = {
+    ("build", "slides"): ("Building slides", "Slides ready", "Couldn't build slides"),
+    ("build", "report"): ("Writing a report", "Report ready", "Couldn't write the report"),
+    ("revise", "slides"): ("Revising slides", "Slides revised", "Couldn't revise the slides"),
+    ("revise", "report"): (
+        "Revising the report",
+        "Report revised",
+        "Couldn't revise the report",
+    ),
+}
+
+
+def _output_run(
+    request: Request,
+    knowledge_base_id: str,
+    label: str,
+    call,
+    words: tuple[str, str, str],
+    about: str,
+) -> StreamingResponse:
     """Start building (or revising) an output and stream how it goes.
 
     ``call`` does the work, given the function that hears each step. The events are the
@@ -1516,29 +1583,65 @@ def _output_run(request: Request, knowledge_base_id: str, label: str, call) -> S
     then nothing is saved.
     """
 
-    def work(run: AnswerRun) -> None:
-        def hear(event: dict) -> None:
-            if run.stop_requested.is_set():
-                raise Stopped
-            if event["type"] != "saving":
-                run.publish(event["type"], event)
+    running, done_word, failed_word = words
+    activity = request.app.state.activity
+    runs = _answer_runs(request)
 
-        try:
-            artifact = call(hear)
-            run.publish("done", artifact.model_dump(mode="json", by_alias=True))
-        except Stopped:
-            run.publish("stopped", {"type": "stopped"})
-        except (ArtifactConflictError, ArtifactIntegrityError) as error:
-            run.publish("error", {"status": 409, "detail": str(error)})
-        except LookupError as error:
-            run.publish("error", {"status": 404, "detail": str(error)})
-        except ModelError as error:
-            run.publish("error", {"status": 502, "detail": str(error)})
-        except ValueError as error:
-            run.publish("error", {"status": 400, "detail": str(error)})
-        except Exception:
-            logger.exception("Building an output failed")
-            run.publish("error", {"status": 500, "detail": "The output could not be built."})
+    def work(run: AnswerRun) -> None:
+        sections = 0
+        # A section can be checked again after it is done: each counts once.
+        finished: set[int] = set()
+        with activity.track(
+            f"output:{knowledge_base_id}",
+            "output",
+            running,
+            about,
+            open={"view": "library", "libraryId": knowledge_base_id, "tab": "outputs"},
+            stop=lambda: runs.stop(_outputs_key(knowledge_base_id)),
+            detail="Planning",
+        ) as tracked:
+
+            def hear(event: dict) -> None:
+                nonlocal sections
+                if run.stop_requested.is_set():
+                    raise Stopped
+                if event["type"] == "outline":
+                    sections = len(event.get("sections") or [])
+                elif event["type"] == "section":
+                    number = event["index"] + 1
+                    of = f" of {sections}" if sections else ""
+                    if event["state"] == "done":
+                        finished.add(event["index"])
+                        if sections:
+                            tracked.update(progress=len(finished) / sections)
+                    elif event["state"] in _SECTION_VERBS:
+                        verb = _SECTION_VERBS[event["state"]]
+                        tracked.update(detail=f"{verb} section {number}{of}")
+                if event["type"] != "saving":
+                    run.publish(event["type"], event)
+
+            def fail(status: int, detail: str) -> None:
+                run.publish("error", {"status": status, "detail": detail})
+                tracked.failed(failed_word, detail)
+
+            try:
+                artifact = call(hear)
+                run.publish("done", artifact.model_dump(mode="json", by_alias=True))
+                tracked.done(done_word)
+            except Stopped:
+                run.publish("stopped", {"type": "stopped"})
+                tracked.stopped()
+            except (ArtifactConflictError, ArtifactIntegrityError) as error:
+                fail(409, str(error))
+            except LookupError as error:
+                fail(404, str(error))
+            except ModelError as error:
+                fail(502, str(error))
+            except ValueError as error:
+                fail(400, str(error))
+            except Exception:
+                logger.exception("Building an output failed")
+                fail(500, "The output could not be built.")
 
     run = _answer_runs(request).start(_outputs_key(knowledge_base_id), label, work)
     if run is None:
@@ -1563,6 +1666,8 @@ async def build_output_stream(
         knowledge_base_id,
         payload.brief,
         lambda hear: service.build_output(knowledge_base_id, workspace_id, payload, hear),
+        _OUTPUT_WORDS["build", payload.kind],
+        service.library_title(knowledge_base_id),
     )
 
 
@@ -1577,6 +1682,10 @@ async def revise_output_stream(
     """Change a section (or all) of the latest version as instructed: the next version."""
 
     service = _service(request)
+    try:
+        kind = service.artifact_kind(knowledge_base_id, artifact_id)
+    except LookupError:
+        kind = "report"  # the run itself answers 404
     return _output_run(
         request,
         knowledge_base_id,
@@ -1584,6 +1693,8 @@ async def revise_output_stream(
         lambda hear: service.revise_output(
             knowledge_base_id, workspace_id, artifact_id, payload, hear
         ),
+        _OUTPUT_WORDS["revise", "slides" if kind == "slides" else "report"],
+        service.library_title(knowledge_base_id),
     )
 
 

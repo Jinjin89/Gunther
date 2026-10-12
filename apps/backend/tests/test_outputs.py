@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import openai
+import pytest
 from fake_models import (
     FakeProvider,
     agent_replies,
@@ -1190,3 +1191,120 @@ def test_deleting_a_library_forever_removes_what_the_checker_found(tmp_path: Pat
             assert session.scalar(select(func.count()).select_from(Artifact)) == 0
             assert session.scalar(select(func.count()).select_from(ArtifactCheck)) == 0
             assert session.execute(text("PRAGMA foreign_key_check")).all() == []
+
+
+# The top bar's activity list -----------------------------------------------------------
+
+
+def activity_of(client: TestClient) -> dict[str, dict]:
+    return {item["id"]: item for item in client.app.state.activity.snapshot()["items"]}
+
+
+@pytest.mark.parametrize(
+    ("kind", "outline", "replies", "words"),
+    [
+        ("report", OUTLINE, REPORT, ("Writing a report", "Report ready")),
+        ("slides", SLIDES_OUTLINE, SLIDES, ("Building slides", "Slides ready")),
+    ],
+)
+def test_a_build_is_listed_while_it_works_and_when_it_is_done(
+    tmp_path: Path, kind: str, outline: dict, replies: list[str], words: tuple[str, str]
+) -> None:
+    gate = threading.Event()
+    calls = itertools.count()
+
+    def written(index: int, prompt: str) -> str:
+        if next(calls) == 1:
+            assert gate.wait(10)
+        return replies[index]
+
+    fake = FakeProvider(output_replies(outline, written))
+    with app_for(tmp_path, fake) as client:
+        base_id, _ = library(client, "Immune cells")
+        key = f"output:{base_id}"
+        request = body(kind=kind, audience="student")
+        first, box = in_background(lambda: build(client, base_id, request))
+        wait_for(lambda: activity_of(client).get(key, {}).get("detail", "").startswith("Writing"))
+        item = activity_of(client)[key]
+        assert (item["title"], item["state"], item["kind"]) == (words[0], "running", "output")
+        assert item["about"] == "Immune cells" and item["canStop"] is True
+        assert re.fullmatch(rf"Writing section \d of {len(outline['sections'])}", item["detail"])
+        assert item["open"] == {"view": "library", "libraryId": base_id, "tab": "outputs"}
+        gate.set()
+        first.join(10)
+        done = activity_of(client)[key]
+    assert (done["state"], done["title"]) == ("done", words[1])
+    assert done["endedAt"] and done["canStop"] is False
+    built(box[0])
+
+
+def test_a_failed_build_says_why_in_the_list(tmp_path: Path) -> None:
+    with app_for(tmp_path, FakeProvider(output_replies(OUTLINE, REPORT))) as client:
+        base_id, _ = library(client, notes={})
+        events = build(client, base_id, body())
+        item = activity_of(client)[f"output:{base_id}"]
+    assert events[-1][0] == "error"
+    assert (item["state"], item["title"]) == ("failed", "Couldn't write the report")
+    assert item["error"] == events[-1][1]["detail"]
+
+
+def test_a_revision_has_its_own_words(tmp_path: Path) -> None:
+    def written(index: int, prompt: str) -> str:
+        if "This section now:" in prompt:
+            return "## B cells\n\nCD19 marks B cells, briefly, in the sources [1]."
+        return REPORT[index]
+
+    fake = FakeProvider(output_replies(OUTLINE, written))
+    with built_output(tmp_path, fake) as (client, base_id, first):
+        built(revise(client, base_id, first["id"], "Say it more briefly", sectionIndex=1))
+        done = activity_of(client)[f"output:{base_id}"]
+        # An old version can't be revised: that ends as a failure with the page's message.
+        events = revise(client, base_id, first["id"], "Again")
+        failed = activity_of(client)[f"output:{base_id}"]
+    assert (done["title"], done["state"]) == ("Report revised", "done")
+    assert (failed["title"], failed["state"]) == ("Couldn't revise the report", "failed")
+    assert failed["error"] == events[-1][1]["detail"]
+
+
+def test_two_libraries_building_at_once_both_show_and_stop_ends_one(tmp_path: Path) -> None:
+    gate = threading.Event()
+    with app_for(tmp_path, FakeProvider("unused")) as client:
+        first_id, _ = library(client, "Cells")
+        second_id, _ = library(client, "Genes")
+        service = client.app.state.knowledge_service
+        real = service.build_output
+
+        def slow(base_id, workspace_id, payload, hear):
+            hear({"type": "outline", "title": "T", "sections": [{"heading": "a"}] * 2})
+            hear({"type": "section", "index": 0, "state": "writing"})
+            assert gate.wait(10)
+            hear({"type": "section", "index": 0, "state": "done"})
+            hear({"type": "section", "index": 1, "state": "checking"})
+            return real(base_id, workspace_id, payload, hear)
+
+        service.build_output = slow
+        runs = client.app.state.answer_runs
+        slides = body(kind="slides", audience="student")
+        one, one_box = in_background(lambda: build(client, first_id, slides))
+        two, _ = in_background(lambda: build(client, second_id, body()))
+        wait_for(lambda: all(runs.get(f"outputs:{i}") for i in (first_id, second_id)))
+        wait_for(lambda: len(activity_of(client)) == 2)
+        found = activity_of(client)
+        assert found[f"output:{first_id}"]["title"] == "Building slides"
+        assert found[f"output:{second_id}"]["title"] == "Writing a report"
+        assert {item["about"] for item in found.values()} == {"Cells", "Genes"}
+        assert all(item["state"] == "running" for item in found.values())
+
+        # Stopping one through the activity route ends it like the old stop route.
+        stopped = client.post(
+            f"/api/activity/output%3A{first_id}/stop", headers=SIDECAR
+        )
+        assert stopped.status_code == 204
+        gate.set()
+        one.join(10)
+        two.join(10)
+        after = activity_of(client)
+        assert versions(client) == []
+    assert one_box[0][-1] == ("stopped", {"type": "stopped"})
+    assert f"output:{first_id}" not in after
+    assert after[f"output:{second_id}"]["state"] == "failed"

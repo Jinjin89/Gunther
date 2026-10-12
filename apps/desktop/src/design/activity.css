@@ -1,0 +1,145 @@
+/* Activity: the top bar's status pill and the panel under it. */
+
+/* The pill is a button that looks exactly like the old "Saved locally" line. */
+.gx-activity-pill {
+  height: 26px;
+  border: 0;
+  border-radius: var(--gx-radius-pill);
+  background: transparent;
+  font: inherit;
+  font-size: var(--gx-text-xs);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--gx-dur-fast) var(--gx-ease), color var(--gx-dur-fast) var(--gx-ease);
+}
+.gx-activity-pill:hover, .gx-activity-pill[aria-expanded="true"] { background: var(--gx-hover); }
+.gx-activity-icon { display: grid; place-items: center; min-width: 6px; color: var(--gx-faint); }
+.gx-activity-icon i { display: block; }
+.gx-activity-icon svg.lucide { stroke-width: 1.75; }
+.gx-activity-swap { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; }
+.gx-activity-swap.is-changing { animation: gx-activity-in var(--gx-dur) var(--gx-ease) both; }
+.gx-activity-text { min-width: 0; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.gx-activity-clock, .gx-activity-percent, .gx-activity-row-side { font-variant-numeric: tabular-nums; }
+.gx-activity-clock { color: var(--gx-ink); }
+.gx-activity-chip {
+  padding: 0 6px;
+  border-radius: var(--gx-radius-pill);
+  background: var(--gx-active);
+  color: var(--gx-muted);
+  font-size: calc(11px * var(--gx-fs, 1));
+  font-variant-numeric: tabular-nums;
+  line-height: 17px;
+  animation: gx-chip-in var(--gx-dur) var(--gx-ease-spring) both;
+}
+
+/* Colour only for status. */
+.gx-activity-pill.is-recording .gx-activity-text,
+.gx-activity-pill.is-paused .gx-activity-text { color: var(--gx-muted); }
+.gx-activity-pill.is-failed { color: var(--gx-warning); }
+.gx-activity-pill.is-failed .gx-activity-icon { color: var(--gx-warning); }
+.gx-activity-pill.is-busy .gx-activity-text { color: var(--gx-muted); }
+.gx-activity-pill.is-done .gx-activity-icon { color: var(--gx-brand); }
+.gx-activity-pill i.is-recording,
+.gx-activity-dot.is-recording { background: var(--gx-danger); box-shadow: 0 0 0 3px var(--gx-danger-wash); animation: gx-activity-breathe 2s ease-in-out infinite; }
+.gx-activity-pill i.is-grey,
+.gx-activity-dot.is-grey { background: var(--gx-ghost); box-shadow: none; }
+.gx-activity-dot { display: block; width: 6px; height: 6px; border-radius: 50%; }
+
+/* The ring */
+.gx-ring { display: block; overflow: visible; }
+.gx-ring-track { stroke: var(--gx-line-3); }
+.gx-ring-arc { stroke: currentColor; transition: stroke-dashoffset 400ms var(--gx-ease); }
+.gx-ring.is-turning { animation: gx-spin 1.1s linear infinite; }
+.gx-ring.is-done { color: var(--gx-brand); }
+.gx-ring.is-done .gx-ring-arc { animation: gx-activity-fill 400ms var(--gx-ease) both; }
+.gx-ring-check { stroke: var(--gx-brand); stroke-dasharray: 1; stroke-dashoffset: 1; animation: gx-draw 280ms var(--gx-ease) 380ms forwards; }
+.gx-activity-pill .gx-ring { color: var(--gx-muted); }
+.gx-activity-pill.is-done .gx-ring { color: var(--gx-brand); }
+
+/* The panel */
+.gx-activity-panel {
+  position: fixed;
+  z-index: 90;
+  width: 380px;
+  max-width: calc(100vw - 16px);
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+  padding: 6px 0;
+  border: 1px solid var(--gx-line-2);
+  border-radius: var(--gx-radius-md);
+  background: var(--gx-surface);
+  box-shadow: var(--gx-shadow-md);
+  color: var(--gx-ink);
+  font-size: var(--gx-text-sm);
+  outline: none;
+  animation: gx-activity-pop var(--gx-dur) var(--gx-ease) both;
+}
+.gx-activity-group + .gx-activity-group { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--gx-line); }
+.gx-activity-group h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+  padding: 6px 14px 4px;
+  color: var(--gx-faint);
+  font-size: var(--gx-text-xs);
+  font-weight: 500;
+}
+.gx-activity-group ul { margin: 0; padding: 0; list-style: none; }
+.gx-activity-clear { border: 0; background: none; color: var(--gx-faint); font: inherit; cursor: pointer; }
+.gx-activity-clear:hover { color: var(--gx-ink); }
+.gx-activity-empty { margin: 0; padding: 14px; color: var(--gx-faint); line-height: 1.5; }
+
+.gx-activity-row { display: flex; align-items: flex-start; gap: 2px; padding-right: 8px; }
+.gx-activity-row-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 6px 7px 14px;
+  border: 0;
+  border-radius: var(--gx-radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+button.gx-activity-row-main { cursor: pointer; transition: background-color var(--gx-dur-fast) var(--gx-ease); }
+button.gx-activity-row-main:hover { background: var(--gx-hover); }
+.gx-activity-row-icon { display: grid; flex: none; place-items: center; width: 16px; height: 20px; color: var(--gx-faint); }
+.gx-activity-row-icon .gx-ring { color: var(--gx-muted); }
+.gx-activity-done { color: var(--gx-brand); }
+.gx-activity-failed { color: var(--gx-warning); }
+.gx-activity-row-text { display: grid; flex: 1; min-width: 0; gap: 2px; }
+.gx-activity-row-text strong { overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; line-height: 20px; }
+.gx-activity-row-text small { overflow: hidden; color: var(--gx-faint); font-size: var(--gx-text-xs); text-overflow: ellipsis; white-space: nowrap; }
+.gx-activity-row-text small.is-failed { color: var(--gx-warning); white-space: normal; }
+.gx-activity-bar { display: block; height: 2px; margin-top: 3px; border-radius: 1px; background: var(--gx-line-2); overflow: hidden; }
+.gx-activity-bar i { display: block; height: 100%; background: var(--gx-ink); transition: width 400ms var(--gx-ease); }
+.gx-activity-row-side { flex: none; color: var(--gx-faint); font-size: var(--gx-text-xs); line-height: 20px; }
+.gx-activity-row-side.is-clock { color: var(--gx-ink); }
+.gx-activity-row-actions { display: flex; flex: none; align-items: center; gap: 2px; padding-top: 5px; }
+.gx-activity-action {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--gx-radius-sm);
+  background: none;
+  color: var(--gx-faint);
+  cursor: pointer;
+  transition: background-color var(--gx-dur-fast) var(--gx-ease), color var(--gx-dur-fast) var(--gx-ease);
+}
+.gx-activity-action:hover { background: var(--gx-active); color: var(--gx-ink); }
+
+@keyframes gx-activity-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+@keyframes gx-activity-pop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@keyframes gx-activity-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+@keyframes gx-activity-fill { from { stroke-dashoffset: 15; } to { stroke-dashoffset: 0; } }
+
+/* Narrow window: the pill keeps its icon and the clock or percent. */
+@media (max-width: 1080px) {
+  .gx-activity-text { display: none; }
+}

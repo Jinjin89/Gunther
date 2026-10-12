@@ -1449,11 +1449,49 @@ export interface RecordingAsset {
 
 /** Transcribing a recording again from its saved audio (`GET`/`POST /recordings/{id}/transcribe-again`). */
 export interface TranscribeAgainStatus {
-  /** `idle` until the button is pressed; `waiting` while another recording is being transcribed. */
-  state: "idle" | "waiting" | "running" | "done" | "failed";
+  /** `idle` until the button is pressed; `waiting` while another recording is being transcribed; `stopped` after Stop. */
+  state: "idle" | "waiting" | "running" | "done" | "failed" | "stopped";
   heardMs: number;
   totalMs: number;
   error: string | null;
+}
+
+/** What Gunther is working on in the background (`GET /activity`), shown in the top bar. */
+export type ActivityKind = "transcribe" | "output" | "answer";
+export type ActivityState = "waiting" | "running" | "done" | "failed";
+
+/** The page an activity row opens. */
+export type ActivityOpen =
+  | { view: "item"; itemType: "source"; id: string }
+  | { view: "library"; libraryId: string; tab: "outputs" | "ask"; sessionId?: string | null }
+  | { view: "home"; sessionId: string };
+
+export interface ActivityItem {
+  /** `transcribe:<recording id>` | `output:<library id>` | `answer:<session id>` */
+  id: string;
+  kind: ActivityKind;
+  /** The words for its state: "Building slides" → "Slides ready" / "Couldn't build slides". */
+  title: string;
+  /** What it is about: the recording's title, the library's title, the question. */
+  about: string;
+  state: ActivityState;
+  /** 0..1, null when unknown. */
+  progress: number | null;
+  /** One line: "5:02 of 12:00 heard", "Writing section 3 of 7". */
+  detail: string;
+  /** Plain words, only when failed. */
+  error: string | null;
+  /** ISO 8601 UTC. */
+  startedAt: string;
+  endedAt: string | null;
+  open: ActivityOpen | null;
+  /** True only while waiting/running and a stop exists. */
+  canStop: boolean;
+}
+
+export interface ActivityList {
+  version: number;
+  items: ActivityItem[];
 }
 
 export type RecordingStatus = "capturing" | "completed" | "failed";

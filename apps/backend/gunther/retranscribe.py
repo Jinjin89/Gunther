@@ -584,13 +584,31 @@ class RecordingNotFound(LookupError):
 
 @dataclass
 class Job:
-    """One recording being transcribed again: ``waiting``, ``running``, ``done`` or ``failed``."""
+    """One recording being transcribed again: ``waiting``, ``running``, ``done``, ``failed``
+    or ``stopped`` (the person stopped it)."""
 
     recording_id: str
     state: str = "waiting"
     heard_ms: int = 0
     total_ms: int = 0
     error: str | None = None
+    # Its entry in the top bar's activity list, when there is one.
+    tracked: Any = None
+    # Writing the new transcript: too late to stop, or it would be half written.
+    saving: bool = False
+
+    def note(self, **fields: Any) -> None:
+        if self.tracked is not None:
+            self.tracked.update(**fields)
+
+    def note_heard(self) -> None:
+        """Tell the activity list how much has been heard."""
+
+        if self.total_ms > 0:
+            self.note(
+                progress=min(1.0, self.heard_ms / self.total_ms),
+                detail=f"{_minutes(self.heard_ms)} of {_minutes(self.total_ms)} heard",
+            )
 
     def out(self) -> dict[str, Any]:
         return {
@@ -602,6 +620,14 @@ class Job:
 
 
 IDLE = {"state": "idle", "heardMs": 0, "totalMs": 0, "error": None}
+
+
+def _minutes(ms: int) -> str:
+    """``m:ss``, or ``h:mm:ss`` from an hour."""
+
+    total = max(0, ms // 1000)
+    hours, minutes, seconds = total // 3600, total // 60 % 60, total % 60
+    return f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{total // 60}:{seconds:02d}"
 
 
 def _iso(moment: datetime) -> str:
@@ -662,6 +688,8 @@ class Retranscriber:
         self.retry_waits = RETRY_WAITS
         self.jobs: dict[str, Job] = {}
         self._tasks: set[asyncio.Task[None]] = set()
+        self._task_of: dict[str, asyncio.Task[None]] = {}
+        self._stopping: set[str] = set()
         self._one_at_a_time: asyncio.Lock | None = None
 
     def status(self, recording_id: str) -> dict[str, Any]:
@@ -679,13 +707,49 @@ class Retranscriber:
             return job.out()
         plan = await asyncio.to_thread(self._plan, recording_id)
         job = Job(recording_id)
+        activity = getattr(self.state, "activity", None)
+        if activity is not None:
+            job.tracked = activity.track(
+                f"transcribe:{recording_id}",
+                "transcribe",
+                "Waiting to transcribe again",
+                plan["title"],
+                state="waiting",
+                detail="Waiting for another recording",
+                open={"view": "item", "itemType": "source", "id": plan["source_id"]}
+                if plan["source_id"]
+                else None,
+                stop=lambda: self.stop(recording_id),
+            )
         self.jobs[recording_id] = job
         if self._one_at_a_time is None:
             self._one_at_a_time = asyncio.Lock()
         task = asyncio.create_task(self._run(job, plan))
         self._tasks.add(task)
+        self._task_of[recording_id] = task
         task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(lambda done: self._forget(recording_id, done))
         return job.out()
+
+    def _forget(self, recording_id: str, task: asyncio.Task[None]) -> None:
+        if self._task_of.get(recording_id) is task:
+            del self._task_of[recording_id]
+            self._stopping.discard(recording_id)
+
+    def stop(self, recording_id: str) -> bool:
+        """End a waiting or running job quietly. False when there is none. Call on the loop."""
+
+        task = self._task_of.get(recording_id)
+        if task is None or task.done() or self.jobs[recording_id].saving:
+            return False
+        self._stopping.add(recording_id)
+        # Said now, not when the task notices: a task cancelled before it ever ran never does.
+        job = self.jobs[recording_id]
+        job.state = "stopped"
+        if job.tracked is not None:
+            job.tracked.stopped()
+        task.cancel()
+        return True
 
     async def wait(self) -> None:
         """Until every job has finished (for tests)."""
@@ -716,47 +780,76 @@ class Retranscriber:
             sources = _sources(session, recording_id)
             section = transcript_section(sources[0].content) if sources else None
             terms = recording_terms(section[0]) if section else []
+            title = recording.title
+            source_id = sources[0].id if sources else None
         if not path.is_file() or path.stat().st_size == 0:
             raise RetranscribeError("The audio of this recording isn't saved.")
-        return {"path": path, "choice": choice, "terms": terms}
+        return {
+            "path": path,
+            "choice": choice,
+            "terms": terms,
+            "title": title,
+            "source_id": source_id,
+        }
 
     async def _run(self, job: Job, plan: dict[str, Any]) -> None:
         assert self._one_at_a_time is not None
-        async with self._one_at_a_time:
-            job.state = "running"
-            began = time.monotonic()
-            logger.info("Transcribing %s again with %s", job.recording_id, plan["choice"].model)
-            try:
-                sentences, windows = await self._listen(job, plan)
-                paragraphs, grouped = await self._paragraphs(job, sentences)
-                state = transcript_state(
-                    sentences,
-                    windows,
-                    paragraphs,
-                    model=plan["choice"].model,
-                    at=_iso(utc_now()),
-                    grouped=grouped,
-                )
-                await asyncio.to_thread(self._write, job.recording_id, state)
-            except asyncio.CancelledError:
-                raise
-            except (ListenError, AudioUnreadable, RetranscribeError) as error:
-                job.state, job.error = "failed", str(error) or type(error).__name__
-                logger.warning("Transcribing %s again failed: %s", job.recording_id, job.error)
-            except Exception as error:
-                logger.warning("Transcribing %s again failed", job.recording_id, exc_info=True)
-                job.state, job.error = "failed", f"Unexpected problem: {error}"
+        try:
+            async with self._one_at_a_time:
+                await self._work(job, plan)
+        except asyncio.CancelledError:
+            # A stop ends the job quietly; shutdown (``close``) cancels and is not hidden.
+            if job.tracked is not None:
+                job.tracked.stopped()
+            if job.recording_id in self._stopping:
+                job.state = "stopped"
+                return
+            raise
+
+    async def _work(self, job: Job, plan: dict[str, Any]) -> None:
+        job.state = "running"
+        job.note(state="running", title="Transcribing again", detail="Reading the audio")
+        began = time.monotonic()
+        logger.info("Transcribing %s again with %s", job.recording_id, plan["choice"].model)
+        try:
+            sentences, windows = await self._listen(job, plan)
+            job.note(progress=None, detail="Finding paragraphs")
+            paragraphs, grouped = await self._paragraphs(job, sentences)
+            state = transcript_state(
+                sentences,
+                windows,
+                paragraphs,
+                model=plan["choice"].model,
+                at=_iso(utc_now()),
+                grouped=grouped,
+            )
+            job.saving = True
+            job.note(detail="Saving the transcript")
+            await asyncio.to_thread(self._write, job.recording_id, state)
+        except asyncio.CancelledError:
+            raise
+        except (ListenError, AudioUnreadable, RetranscribeError) as error:
+            job.state, job.error = "failed", str(error) or type(error).__name__
+            logger.warning("Transcribing %s again failed: %s", job.recording_id, job.error)
+        except Exception as error:
+            logger.warning("Transcribing %s again failed", job.recording_id, exc_info=True)
+            job.state, job.error = "failed", f"Unexpected problem: {error}"
+        else:
+            job.state = "done"
+            logger.info(
+                "Transcribed %s again: %d sentences, %d paragraphs in %.0f s",
+                job.recording_id,
+                len(sentences),
+                len(paragraphs),
+                time.monotonic() - began,
+            )
+        finally:
+            listen_copy.remove_copy(self.recordings_dir, job.recording_id)
+        if job.tracked is not None:
+            if job.state == "done":
+                job.tracked.done("Transcript updated")
             else:
-                job.state = "done"
-                logger.info(
-                    "Transcribed %s again: %d sentences, %d paragraphs in %.0f s",
-                    job.recording_id,
-                    len(sentences),
-                    len(paragraphs),
-                    time.monotonic() - began,
-                )
-            finally:
-                listen_copy.remove_copy(self.recordings_dir, job.recording_id)
+                job.tracked.failed("Transcribing again failed", job.error or "")
 
     async def _listen(self, job: Job, plan: dict[str, Any]) -> tuple[list[Heard], list[Window]]:
         """Decode the audio and hear all of it again."""
@@ -766,6 +859,7 @@ class Retranscriber:
             decode_to_copy, plan["path"], self.recordings_dir, recording_id
         )
         job.total_ms = total_ms
+        job.note_heard()
 
         async def hear(start_ms: int, end_ms: int, before: str) -> dict[str, Any]:
             end_ms = min(end_ms, total_ms)
@@ -799,6 +893,7 @@ class Retranscriber:
             async def report(heard_ms: int) -> None:
                 done[key] = heard_ms
                 job.heard_ms = sum(done.values())
+                job.note_heard()
 
             return report
 

@@ -640,6 +640,16 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
     }
   }, []);
 
+  // Activity can ask for a conversation while this tab is already open.
+  useEffect(() => {
+    const heard = (event: Event) => {
+      const detail = (event as CustomEvent<{ libraryId?: string; sessionId?: string }>).detail;
+      if (detail?.libraryId === base.id && detail.sessionId) void loadSession(detail.sessionId);
+    };
+    window.addEventListener("gunther:open-session", heard);
+    return () => window.removeEventListener("gunther:open-session", heard);
+  }, [base.id, loadSession]);
+
   useEffect(() => {
     let cancelled = false;
     const bootstrap = async (): Promise<{ sessions: KnowledgeSessionSummary[]; detail: KnowledgeSession }> => {

@@ -15,7 +15,8 @@ interface BreadcrumbSegment {
 interface AtlasTitlebarProps {
   path: BreadcrumbSegment[];
   theme: "light" | "dark";
-  serviceOnline?: boolean;
+  /** The status spot at the right of the bar (the activity pill). */
+  status?: ReactNode;
   showSearch?: boolean;
   onHome: () => void;
   onSearch: () => void;
@@ -23,7 +24,7 @@ interface AtlasTitlebarProps {
   onTheme: () => void;
 }
 
-export function AtlasTitlebar({ path, theme, serviceOnline = true, showSearch = true, onHome, onSearch, onCapture, onTheme }: AtlasTitlebarProps) {
+export function AtlasTitlebar({ path, theme, status = null, showSearch = true, onHome, onSearch, onCapture, onTheme }: AtlasTitlebarProps) {
   const startWindowDrag = (event: ReactMouseEvent<HTMLElement>) => {
     if (event.button !== 0 || !("__TAURI_INTERNALS__" in window)) return;
     const target = event.target as HTMLElement;
@@ -59,14 +60,7 @@ export function AtlasTitlebar({ path, theme, serviceOnline = true, showSearch = 
           <kbd>⌘K</kbd>
         </button>
       )}
-      <span
-        className={`gx-save-state ${serviceOnline ? "" : "is-offline"}`}
-        role="status"
-        data-tauri-drag-region
-        title={serviceOnline ? "Everything is stored on this device" : "The local knowledge service is not responding. New captures stay on this device and are sent when it returns."}
-      >
-        <i />{serviceOnline ? "Saved locally" : "Reconnecting…"}
-      </span>
+      {status}
       <button type="button" className="gx-icon-button" onClick={onTheme} aria-label="Toggle theme" title={theme === "light" ? "Dark appearance" : "Light appearance"} data-no-drag>
         <span className="gx-theme-icon" key={theme}>{theme === "light" ? <Moon size={15} /> : <Sun size={15} />}</span>
       </button>

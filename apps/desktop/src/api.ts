@@ -42,6 +42,7 @@ import type {
   RecordingCheckpointInput,
   RecordingSession,
   TranscribeAgainStatus,
+  ActivityList,
   SourceSummary,
   SourceDetail,
   UpdateAssertionStatusInput,
@@ -98,6 +99,7 @@ import { readServerEvents } from "./sse";
 import { webCaptureSchema } from "@gunther/contracts";
 import { invoke } from "@tauri-apps/api/core";
 import { log } from "./log";
+import { kickActivity } from "./activity/events";
 import type {
   CreateDevicePairingInput,
   DevicePairingSession,
@@ -496,6 +498,7 @@ async function streamOutput(path: string, init: RequestInit, workspaceId: string
     const body = (await response.json().catch(() => null)) as { detail?: string } | null;
     throw new Error(body?.detail ?? `Request failed with status ${response.status}`);
   }
+  if (init.method === "POST") kickActivity();
   return readOutput(response.body, onEvent);
 }
 
@@ -782,7 +785,15 @@ export const knowledgeApi = {
   transcribeAgainStatus: (recordingId: string) => request<TranscribeAgainStatus>(`/recordings/${encodeURIComponent(recordingId)}/transcribe-again`),
   /** Hear a recording's saved audio again with the Recording model and replace its transcript. */
   transcribeAgain: (recordingId: string) =>
-    request<TranscribeAgainStatus>(`/recordings/${encodeURIComponent(recordingId)}/transcribe-again`, { method: "POST" }),
+    request<TranscribeAgainStatus>(`/recordings/${encodeURIComponent(recordingId)}/transcribe-again`, { method: "POST" }).then((status) => { kickActivity(); return status; }),
+  /** What Gunther is working on. With `after`, waits (up to 25 s) until the list changes. */
+  activity: (after?: number, signal?: AbortSignal) =>
+    request<ActivityList>(`/activity${after === undefined ? "" : `?after=${after}`}`, signal ? { signal } : undefined),
+  stopActivity: (id: string) =>
+    request<void>(`/activity/${encodeURIComponent(id)}/stop`, { method: "POST" }).finally(kickActivity),
+  dismissActivity: (id: string) =>
+    request<void>(`/activity/${encodeURIComponent(id)}/dismiss`, { method: "POST" }).finally(kickActivity),
+  clearActivity: () => request<void>(`/activity/clear`, { method: "POST" }).finally(kickActivity),
   testServiceSettings: (id: string, values: Record<string, ServiceSettingValue>) =>
     request<ServiceTestResult>(`/settings/services/${encodeURIComponent(id)}/test`, {
       method: "POST",
@@ -853,6 +864,7 @@ export const knowledgeApi = {
       const body = (await response.json().catch(() => null)) as { detail?: string } | null;
       throw new Error(body?.detail ?? `Request failed with status ${response.status}`);
     }
+    kickActivity();
     return readAnswer(response.body, onEvent);
   },
   /**

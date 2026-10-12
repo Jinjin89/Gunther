@@ -9,6 +9,7 @@ import asyncio
 import dataclasses
 import json
 import re
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -774,3 +775,227 @@ def test_unreadable_audio_and_silence_fail_with_a_plain_message(
         encode(tmp_path / "recordings" / f"{REC}.wav", "wav", "pcm_s16le", 20.0, 8_000)
         press(client)
         assert finished(client)["error"] == "Nothing was heard in the audio."
+
+
+# The top bar's activity list -----------------------------------------------------------
+
+
+class Held(FakeRecording):
+    """Answers like ``FakeRecording``, but only ``allow`` requests; the rest wait for ``open``."""
+
+    def __init__(self, sentences: list[tuple[int, int, str]], allow: int = 0) -> None:
+        super().__init__(sentences)
+        self.allow = allow
+        self.open = asyncio.Event()
+
+    async def __call__(self, choice: Any, pcm: bytes, **request: Any) -> dict[str, Any]:
+        if self.requests >= self.allow:
+            self.requests += 1
+            await self.open.wait()
+            self.requests -= 1
+        return await super().__call__(choice, pcm, **request)
+
+
+async def settle() -> None:
+    await asyncio.sleep(0.1)
+
+
+async def until(check: Any) -> None:
+    for _ in range(500):
+        if check():
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError("timed out")
+
+
+def listed(client: TestClient) -> dict[str, dict[str, Any]]:
+    return {item["id"]: item for item in client.app.state.activity.snapshot()["items"]}
+
+
+@pytest.fixture
+def held(monkeypatch: pytest.MonkeyPatch) -> Held:
+    fake = Held(timeline(9))
+    monkeypatch.setattr(retranscribe, "relisten_audio", fake)
+    return fake
+
+
+def test_a_job_is_listed_waiting_then_running_with_progress_then_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = Held(timeline(30), allow=1)
+    monkeypatch.setattr(retranscribe, "relisten_audio", fake)
+    with make_app(tmp_path) as client:
+        source_id = seed(client, tmp_path, seconds=300, title="Week 3 lecture")
+        ready(client)
+        retranscriber = client.app.state.retranscriber
+
+        async def scenario() -> tuple[dict, dict, dict]:
+            await retranscriber.start(REC)
+            waiting = dict(listed(client)[f"transcribe:{REC}"])
+            await until(lambda: (listed(client)[f"transcribe:{REC}"]["progress"] or 0) > 0)
+            running = dict(listed(client)[f"transcribe:{REC}"])
+            fake.open.set()
+            await retranscriber.wait()
+            return waiting, running, dict(listed(client)[f"transcribe:{REC}"])
+
+        waiting, running, done = run(scenario())
+    assert (waiting["state"], waiting["title"]) == ("waiting", "Waiting to transcribe again")
+    assert waiting["detail"] == "Waiting for another recording" and waiting["canStop"] is True
+    assert waiting["about"] == "Week 3 lecture" and waiting["kind"] == "transcribe"
+    assert waiting["open"] == {"view": "item", "itemType": "source", "id": source_id}
+    assert (running["state"], running["title"]) == ("running", "Transcribing again")
+    assert running["progress"] is not None and 0 < running["progress"] < 1
+    assert re.fullmatch(r"\d+:\d\d of 5:00 heard", running["detail"])
+    assert (done["state"], done["title"]) == ("done", "Transcript updated")
+    assert done["endedAt"] and done["canStop"] is False and done["error"] is None
+
+
+def test_a_failed_job_says_so_in_the_list(tmp_path: Path, heard: FakeRecording) -> None:
+    heard.fail = "The model is down"
+    with make_app(tmp_path) as client:
+        seed(client, tmp_path)
+        ready(client)
+        assert press(client).status_code == 202
+        finished(client)
+        item = listed(client)[f"transcribe:{REC}"]
+    assert (item["state"], item["title"]) == ("failed", "Transcribing again failed")
+    assert item["error"] == "The model is down" and item["detail"] == ""
+
+
+def test_two_recordings_started_together_one_runs_and_one_waits(
+    tmp_path: Path, held: Held
+) -> None:
+    with make_app(tmp_path) as client:
+        seed(client, tmp_path)
+        seed(client, tmp_path, OTHER, title="Second")
+        ready(client)
+        retranscriber = client.app.state.retranscriber
+
+        async def scenario() -> tuple[dict, dict]:
+            await retranscriber.start(REC)
+            await retranscriber.start(OTHER)
+            await until(lambda: held.requests >= 1)
+            both = {key: dict(value) for key, value in listed(client).items()}
+            held.open.set()
+            await retranscriber.wait()
+            return both, listed(client)
+
+        both, after = run(scenario())
+    assert both[f"transcribe:{REC}"]["state"] == "running"
+    assert both[f"transcribe:{OTHER}"]["state"] == "waiting"
+    assert {item["state"] for item in after.values()} == {"done"} and len(after) == 2
+
+
+def test_stopping_a_running_job_removes_it_and_the_next_one_runs(
+    tmp_path: Path, held: Held
+) -> None:
+    with make_app(tmp_path) as client:
+        seed(client, tmp_path)
+        seed(client, tmp_path, OTHER, title="Second")
+        ready(client)
+        retranscriber = client.app.state.retranscriber
+
+        async def scenario() -> dict[str, Any]:
+            await retranscriber.start(REC)
+            await retranscriber.start(OTHER)
+            await until(lambda: held.requests >= 1)
+            assert list((tmp_path / "recordings").glob(f"{REC}*.listen.*"))
+            assert client.app.state.activity.stop(f"transcribe:{REC}") is True
+            await until(lambda: retranscriber.jobs[OTHER].state == "running")
+            await until(lambda: held.requests >= 2)
+            between = dict(listed(client))
+            held.open.set()
+            await retranscriber.wait()
+            return between
+
+        between = run(scenario())
+        assert status_of(client)["state"] == "stopped"
+        assert status_of(client, OTHER)["state"] == "done"
+        assert not list((tmp_path / "recordings").glob("*.listen.*"))
+        # The stopped recording keeps its old transcript, and the button is offered again.
+        with session_scope(sessions_of(client)) as session:
+            assert session.get(RecordingSession, REC).transcript == "Typed notes, not stamped."
+        assert press(client).status_code == 202
+        assert finished(client)["state"] == "done"
+    assert f"transcribe:{REC}" not in between
+    assert between[f"transcribe:{OTHER}"]["state"] == "running"
+
+
+def test_stopping_a_waiting_job_works_too(tmp_path: Path, held: Held) -> None:
+    with make_app(tmp_path) as client:
+        seed(client, tmp_path)
+        seed(client, tmp_path, OTHER, title="Second")
+        ready(client)
+        retranscriber = client.app.state.retranscriber
+
+        async def scenario() -> dict[str, Any]:
+            await retranscriber.start(REC)
+            await retranscriber.start(OTHER)
+            await until(lambda: held.requests >= 1)
+            assert retranscriber.stop(OTHER) is True
+            assert retranscriber.stop("rec_" + "c" * 24) is False
+            await settle()
+            between = dict(listed(client))
+            held.open.set()
+            await retranscriber.wait()
+            return between
+
+        between = run(scenario())
+        assert status_of(client, OTHER)["state"] == "stopped"
+        assert status_of(client)["state"] == "done"
+    assert f"transcribe:{OTHER}" not in between
+    assert between[f"transcribe:{REC}"]["state"] == "running"
+
+
+def test_shutdown_still_cancels_a_job_and_does_not_call_it_stopped(
+    tmp_path: Path, held: Held
+) -> None:
+    with make_app(tmp_path) as client:
+        seed(client, tmp_path)
+        ready(client)
+        retranscriber = client.app.state.retranscriber
+
+        async def scenario() -> asyncio.Task:
+            await retranscriber.start(REC)
+            await until(lambda: held.requests >= 1)
+            task = retranscriber._task_of[REC]
+            await retranscriber.close()
+            return task
+
+        task = run(scenario())
+        assert task.cancelled()
+        assert retranscriber.jobs[REC].state != "stopped"
+        assert f"transcribe:{REC}" not in listed(client)
+
+
+def test_a_job_that_is_saving_its_transcript_can_no_longer_be_stopped(
+    tmp_path: Path, held: Held
+) -> None:
+    with make_app(tmp_path) as client:
+        seed(client, tmp_path)
+        ready(client)
+        retranscriber = client.app.state.retranscriber
+        write, writing, release = retranscriber._write, threading.Event(), threading.Event()
+
+        def slow_write(recording_id: str, state: dict[str, Any]) -> None:
+            writing.set()
+            release.wait(5)
+            write(recording_id, state)
+
+        retranscriber._write = slow_write
+
+        async def scenario() -> tuple[bool | None, dict[str, Any]]:
+            held.open.set()
+            await retranscriber.start(REC)
+            await until(writing.is_set)
+            refused = client.app.state.activity.stop(f"transcribe:{REC}")
+            saving = dict(listed(client)[f"transcribe:{REC}"])
+            release.set()
+            await retranscriber.wait()
+            return refused, saving
+
+        refused, saving = run(scenario())
+        assert refused is False
+        assert saving["detail"] == "Saving the transcript"
+        assert status_of(client)["state"] == "done"
+        assert listed(client)[f"transcribe:{REC}"]["title"] == "Transcript updated"

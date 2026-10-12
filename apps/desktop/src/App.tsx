@@ -1,6 +1,9 @@
 import { persistentStorage } from "./persistentStorage";
+import { ActivityStatus } from "./activity/ActivityStatus";
+import { publishRecordingStatus } from "./activity/recordingStatus";
+import { ActivityProvider } from "./activity/useActivity";
 import { Check } from "lucide-react";
-import type { CreateKnowledgeBaseInput, CreateSourceInput, NotebookNote, TrashItem } from "@gunther/contracts";
+import type { ActivityOpen, CreateKnowledgeBaseInput, CreateSourceInput, NotebookNote, TrashItem } from "@gunther/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getKnowledgeBase, normalizeAtlasMode, type AtlasMode, type KnowledgeBase, type KnowledgeChapter } from "./atlas";
 import { metadataToBase } from "./atlasMetadata";
@@ -21,6 +24,7 @@ import type { RecorderSnapshot } from "./components/LectureRecorder";
 import { applyTheme, readThemePreference, resolveTheme, THEME_STORAGE_KEY, watchSystemTheme, type ThemePreference } from "./design/theme";
 import { ItemPage } from "./items/ItemPage";
 import { OPEN_SETTINGS_EVENT } from "./models/askModel";
+import { OPEN_HOME_SESSION_KEY } from "./pages/useHomeAsk";
 import { itemKey, sameItem, type ItemOrigin, type ItemRef } from "./items/itemRef";
 import { ShortcutSheet } from "./shortcuts/ShortcutSheet";
 import { formatCombo, useEscape, useShortcut } from "./shortcuts/shortcuts";
@@ -203,8 +207,10 @@ export default function App() {
 
   // Unsaved text in Capture's other tabs, so saving a recording leaves it open.
   const captureUnsavedRef = useRef(false);
-  const trackCaptureSnapshot = useCallback((_snapshot: RecorderSnapshot, _title: string, hasUnreviewedWork: boolean) => {
+  const trackCaptureSnapshot = useCallback((snapshot: RecorderSnapshot, title: string, hasUnreviewedWork: boolean) => {
     captureUnsavedRef.current = hasUnreviewedWork;
+    // In the desktop app the Capture window reports its own status; here the sheet is the recorder.
+    if (!isTauriRuntime()) publishRecordingStatus({ ...snapshot, title });
   }, []);
 
   const closeCapture = useCallback((force = false) => {
@@ -325,6 +331,32 @@ export default function App() {
     persistentStorage.setItem(`gunther:ask-draft:${id}`, question);
     openBase(id, undefined, "ask");
   }, [openBase]);
+
+  /** Go to the page an Activity row stands for; also works when that page is already open. */
+  const openActivity = useCallback((target: ActivityOpen) => {
+    if (target.view === "item") {
+      openItem({ type: "source", id: target.id }, originOf(view));
+    } else if (target.view === "library") {
+      if (target.tab === "ask" && target.sessionId) {
+        persistentStorage.setItem(`gunther:active-session:${target.libraryId}`, target.sessionId);
+      }
+      openBase(target.libraryId, undefined, target.tab);
+      if (target.tab === "ask" && target.sessionId) {
+        window.dispatchEvent(new CustomEvent("gunther:open-session", { detail: { libraryId: target.libraryId, sessionId: target.sessionId } }));
+      }
+    } else {
+      persistentStorage.setItem(OPEN_HOME_SESSION_KEY, target.sessionId);
+      navigate("home");
+      window.dispatchEvent(new CustomEvent(OPEN_HOME_SESSION_KEY, { detail: { sessionId: target.sessionId } }));
+    }
+  }, [navigate, openBase, openItem, originOf, view]);
+
+  /** Whether the page on screen already shows what an Activity row would open. */
+  const isActivityHere = useCallback((target: ActivityOpen) => {
+    if (target.view === "item") return view === "item" && openItemState?.ref.type === "source" && openItemState.ref.id === target.id;
+    if (target.view === "library") return view === "base" && activeBaseId === target.libraryId && mode === target.tab;
+    return view === "home";
+  }, [activeBaseId, mode, openItemState, view]);
 
   const exportBase = useCallback(async () => {
     notify("Preparing a complete local workbook…");
@@ -518,8 +550,9 @@ export default function App() {
   const itemIndex = openItemState ? openItemState.queue.findIndex((candidate) => sameItem(candidate, openItemState.ref)) : -1;
 
   return (
+    <ActivityProvider>
     <div className="app-shell atlas-app-shell">
-      <AtlasTitlebar path={path} theme={theme} serviceOnline={serviceOnline} showSearch={view !== "home"} onHome={() => navigate("home")} onSearch={openSearch} onCapture={() => openCapture()} onTheme={() => setThemePreference(theme === "light" ? "dark" : "light")} />
+      <AtlasTitlebar path={path} theme={theme} status={<ActivityStatus serviceOnline={serviceOnline} onOpen={openActivity} isHere={isActivityHere} />} showSearch={view !== "home"} onHome={() => navigate("home")} onSearch={openSearch} onCapture={() => openCapture()} onTheme={() => setThemePreference(theme === "light" ? "dark" : "light")} />
       <div className="atlas-app-body">
         <AtlasRail active={view} inboxCount={pendingCount} bases={bases} basesReady={basesReady} activeBaseId={activeBaseId} profileName={profileName} onNavigate={navigate} onOpenBase={(id) => openBase(id)} onCreateBase={() => setCreateBaseOpen(true)} />
         <main className="atlas-workspace" id="main-content">
@@ -618,5 +651,6 @@ export default function App() {
         {toast.action && <button type="button" className="gx-toast-action" onClick={runToastAction} aria-label={toast.action.label}>{toast.action.label}<kbd aria-hidden="true">{formatCombo("mod+z")}</kbd></button>}
       </div>}
     </div>
+    </ActivityProvider>
   );
 }

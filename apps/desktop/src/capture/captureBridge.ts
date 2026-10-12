@@ -83,3 +83,21 @@ export function listenForCaptureSaved(
 export function listenForOpenSearch(handler: () => void): Promise<UnlistenFn> {
   return listen(OPEN_SEARCH_EVENT, handler);
 }
+
+export const CAPTURE_STATUS_EVENT = "gunther://capture-status";
+
+/** The recorder's latest status, as the shell last heard it (for a main window that loaded mid-recording). */
+export async function getCaptureStatus(): Promise<CaptureRuntimeStatus> {
+  return invoke<CaptureRuntimeStatus>("capture_status");
+}
+
+/** Ask the Capture window to pause, resume, finish, or show itself. */
+export async function sendCaptureControl(control: Exclude<CaptureControl, "quit-blocked">): Promise<void> {
+  await invoke("send_capture_control", { control });
+}
+
+export function listenForCaptureStatus(
+  handler: (status: CaptureRuntimeStatus) => void,
+): Promise<UnlistenFn> {
+  return listen<CaptureRuntimeStatus>(CAPTURE_STATUS_EVENT, (event) => handler(event.payload));
+}

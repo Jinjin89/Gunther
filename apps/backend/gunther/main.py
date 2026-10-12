@@ -19,6 +19,8 @@ from gunther import (
     tts_service,
     vector_index,
 )
+from gunther.activity import Activity
+from gunther.activity_api import router as activity_router
 from gunther.answer_runs import AnswerRuns
 from gunther.api import router
 from gunther.asset_service import AssetService
@@ -348,6 +350,7 @@ def create_app(
     application.state.service_settings = service_store
     application.state.tts = TtsService(sessions, active_settings.speech_dir)
     application.state.answer_runs = AnswerRuns()
+    application.state.activity = Activity()
     # A recording's Transcribe again button.
     retranscriber = Retranscriber(application.state, sessions, active_settings.recordings_dir)
     application.state.retranscriber = retranscriber
@@ -485,6 +488,7 @@ def create_app(
 
     application.include_router(router, prefix=active_settings.api_prefix)
     application.include_router(knowledge_router, prefix=active_settings.api_prefix)
+    application.include_router(activity_router, prefix=active_settings.api_prefix)
     application.include_router(trash_router, prefix=active_settings.api_prefix)
     application.include_router(storage_router, prefix=active_settings.api_prefix)
     application.include_router(settings_router, prefix=active_settings.api_prefix)
