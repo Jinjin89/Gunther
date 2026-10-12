@@ -2,7 +2,7 @@ import { Bookmark, Download, Pause, Play, RotateCcw, RotateCw, Search, X } from 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { MarkdownView } from "../../components/markdown/MarkdownView";
 import { useShortcut, withShortcut } from "../../shortcuts/shortcuts";
-import { TranscriptUpgradeLine, useTranscriptUpgrade } from "./TranscriptUpgradeLine";
+import { TranscribeAgainButton, TranscribeAgainLine, useTranscribeAgain } from "./TranscribeAgain";
 import { formatClock, type RecordingContent, type TranscriptSegment } from "../sourceContent";
 
 const SPEEDS = [1, 1.25, 1.5, 2, 0.75] as const;
@@ -125,7 +125,8 @@ function highlight(text: string, needle: string): ReactNode {
   return parts.map((part, index) => index % 2 ? <mark key={index}>{part}</mark> : part);
 }
 
-function Transcript({ segments, player }: { segments: TranscriptSegment[]; player: PlayerState }) {
+/** The transcript, with Find and, when the audio is saved, Transcribe again. */
+function Transcript({ segments, player, again }: { segments: TranscriptSegment[]; player: PlayerState; again: ReturnType<typeof useTranscribeAgain> | null }) {
   const [query, setQuery] = useState("");
   const needle = query.trim();
   const timed = segments.some((segment) => segment.startSeconds !== null);
@@ -139,7 +140,18 @@ function Transcript({ segments, player }: { segments: TranscriptSegment[]; playe
   }, [player.time, segments, timed]);
   const matches = needle ? segments.filter((segment) => segment.text.toLowerCase().includes(needle.toLowerCase())).length : 0;
   const words = useMemo(() => segments.reduce((total, segment) => total + segment.text.split(/\s+/).filter(Boolean).length, 0), [segments]);
-  if (!segments.length) return <p className="gx-item-empty-line">No transcript was saved with this recording.</p>;
+  if (!segments.length) {
+    return (
+      <div className="gx-transcript">
+        <div className="gx-transcript-bar">
+          <p className="gx-item-empty-line">No transcript was saved with this recording.</p>
+          {again && <span className="gx-item-toolbar-fill" />}
+          {again && <TranscribeAgainButton again={again} />}
+        </div>
+        {again && <TranscribeAgainLine again={again} />}
+      </div>
+    );
+  }
   return (
     <div className="gx-transcript">
       <div className="gx-transcript-bar">
@@ -149,7 +161,9 @@ function Transcript({ segments, player }: { segments: TranscriptSegment[]; playe
           {query && <button type="button" onClick={() => setQuery("")} aria-label="Clear"><X size={12} /></button>}
         </label>
         <span className="gx-transcript-count" role="status">{needle ? `${matches} ${matches === 1 ? "passage" : "passages"}` : `${words.toLocaleString()} words`}</span>
+        {again && <TranscribeAgainButton again={again} />}
       </div>
+      {again && <TranscribeAgainLine again={again} />}
       <div className={`gx-transcript-body ${timed ? "is-timed" : ""}`}>
         {segments.map((segment, index) => {
           const hidden = needle && !segment.text.toLowerCase().includes(needle.toLowerCase());
@@ -202,9 +216,10 @@ function Overview({ parsed }: { parsed: RecordingContent }) {
   );
 }
 
-export function RecordingBody({ parsed, audioUrl, downloadName, onUpgraded }: { parsed: RecordingContent; audioUrl: string | null; downloadName: string; onUpgraded?: () => void }) {
-  const upgrade = useTranscriptUpgrade(parsed.recordingId, onUpgraded);
-  const upgradeLine = <TranscriptUpgradeLine upgrade={upgrade} />;
+export function RecordingBody({ parsed, audioUrl, downloadName, onTranscribed }: { parsed: RecordingContent; audioUrl: string | null; downloadName: string; onTranscribed?: () => void }) {
+  // Only a recording whose audio is saved can be heard again.
+  const canHearAgain = Boolean(audioUrl && parsed.recordingId);
+  const again = useTranscribeAgain(canHearAgain ? parsed.recordingId : null, onTranscribed);
   const player = useAudio(audioUrl, parsed.durationSeconds);
   const hasOverview = Boolean(parsed.summary || parsed.keyPoints.length || parsed.actions.length || parsed.openQuestions.length || parsed.terms.length);
   const [tab, setTab] = useState<"overview" | "transcript">(hasOverview ? "overview" : "transcript");
@@ -223,15 +238,13 @@ export function RecordingBody({ parsed, audioUrl, downloadName, onUpgraded }: { 
           ))}
         </div>
       )}
-      {tab === "overview" && hasOverview && upgradeLine}
       {hasOverview && (
         <nav className="gx-tabs gx-item-tabs" aria-label="Recording">
           <button type="button" className={tab === "overview" ? "is-active" : ""} aria-pressed={tab === "overview"} onClick={() => setTab("overview")}>Overview</button>
           <button type="button" className={tab === "transcript" ? "is-active" : ""} aria-pressed={tab === "transcript"} onClick={() => setTab("transcript")}>Transcript</button>
         </nav>
       )}
-      {!(tab === "overview" && hasOverview) && upgradeLine}
-      {tab === "overview" && hasOverview ? <Overview parsed={parsed} /> : <Transcript segments={parsed.transcript} player={state} />}
+      {tab === "overview" && hasOverview ? <Overview parsed={parsed} /> : <Transcript segments={parsed.transcript} player={state} again={canHearAgain ? again : null} />}
     </div>
   );
 }

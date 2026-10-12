@@ -1,6 +1,6 @@
 # A library that reads like a library: arranged contents — implementation plan
 
-> **Status 2026-10-12: L1 and L2 built and reviewed, including on the real screen (see the progress log); not yet tried on the Mac.** Written by Claude Opus for Sonnet agents, one phase per agent; Opus reviews each phase. Line numbers drift: grep for the names. Runs after `docs/TRANSCRIPT_UPGRADE_PLAN.md` Phase U1 (that one owns migration 24; this one is migration 25).
+> **Status 2026-10-12: L1 and L2 built and reviewed, including on the real screen (see the progress log); not yet tried on the Mac.** Written by Claude Opus for Sonnet agents, one phase per agent; Opus reviews each phase. Line numbers drift: grep for the names. This one is migration 25.
 
 The user's request (2026-10-12), in short: a library can hold very many sources, and its Overview shows them in a way that is hard to read and to organise. They want to see it **like a real library**, arranged under their own headings. Their examples:
 

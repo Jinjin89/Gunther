@@ -1447,12 +1447,10 @@ export interface RecordingAsset {
   storedAt: string;
 }
 
-/** Where an old recording stands in being heard again and grouped into paragraphs (`GET /recordings/{id}/upgrade`). */
-export interface TranscriptUpgradeStatus {
-  state: "none" | "waiting" | "running" | "done" | "failed";
-  /** Why it waits: no usable Recording model, the models not answering lately, a live recording in progress, or others ahead in line. */
-  reason: "model" | "service" | "recording" | "queue" | null;
-  ahead: number;
+/** Transcribing a recording again from its saved audio (`GET`/`POST /recordings/{id}/transcribe-again`). */
+export interface TranscribeAgainStatus {
+  /** `idle` until the button is pressed; `waiting` while another recording is being transcribed. */
+  state: "idle" | "waiting" | "running" | "done" | "failed";
   heardMs: number;
   totalMs: number;
   error: string | null;

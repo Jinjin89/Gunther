@@ -54,6 +54,7 @@ from gunther.recording_service import (
     RecordingValidationError,
     recording_media_type,
 )
+from gunther.retranscribe import RecordingNotFound, RetranscribeError
 from gunther.schemas import (
     ApiModel,
     ArtifactOut,
@@ -119,7 +120,6 @@ from gunther.service import (
 )
 from gunther.skillbook import ask_skills
 from gunther.storage_budget import StorageBudgetError, StorageReservation
-from gunther.transcript_upgrade import NotFailed, UnknownRecording
 from gunther.web_capture import (
     WebCaptureConflictError,
     WebCaptureFetchError,
@@ -975,35 +975,28 @@ async def relisten_recording(
     }
 
 
-@router.get("/recordings/{recording_id}/upgrade")
-def recording_upgrade(recording_id: str, request: Request) -> dict[str, Any]:
-    """Whether an old recording is being heard again and grouped into paragraphs.
-
-    ``state`` is ``none`` (nothing to improve), ``waiting`` (with a ``reason``: ``model``,
-    ``recording`` or ``queue``), ``running``, ``done`` or ``failed`` (with ``error``).
-    """
+@router.get("/recordings/{recording_id}/transcribe-again")
+def recording_transcribe_again(recording_id: str, request: Request) -> dict[str, Any]:
+    """How transcribing this recording again stands: ``idle``, ``waiting``, ``running``
+    (``heardMs`` of ``totalMs``), ``done`` or ``failed`` (with ``error``)."""
 
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", recording_id):
         raise HTTPException(status_code=404, detail="Recording not found")
-    return request.app.state.transcript_upgrader.status(recording_id)
+    return request.app.state.retranscriber.status(recording_id)
 
 
-@router.post("/recordings/{recording_id}/upgrade/retry")
-def retry_recording_upgrade(recording_id: str, request: Request) -> dict[str, Any]:
-    """Try a recording whose upgrade failed again, before anything else waiting."""
+@router.post("/recordings/{recording_id}/transcribe-again", status_code=202)
+async def transcribe_recording_again(recording_id: str, request: Request) -> dict[str, Any]:
+    """Hear the saved audio again with the Recording model and replace the transcript."""
 
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", recording_id):
         raise HTTPException(status_code=404, detail="Recording not found")
-    upgrader = request.app.state.transcript_upgrader
     try:
-        upgrader.retry(recording_id)
-    except UnknownRecording as error:
+        return await request.app.state.retranscriber.start(recording_id)
+    except RecordingNotFound as error:
         raise HTTPException(status_code=404, detail="Recording not found") from error
-    except NotFailed as error:
-        raise HTTPException(
-            status_code=409, detail="This transcript is not waiting to be retried."
-        ) from error
-    return upgrader.status(recording_id)
+    except RetranscribeError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 class ParagraphsInput(ApiModel):

@@ -56,13 +56,13 @@ from gunther.online_search import create_online_search
 from gunther.pairing_exchange_guard import PairingExchangeGuard
 from gunther.processing import ProcessingWorker
 from gunther.request_body_limit import RequestBodyLimitMiddleware
+from gunther.retranscribe import Retranscriber
 from gunther.service import KnowledgeService
 from gunther.service_settings import ServiceSettingsStore
 from gunther.settings_api import router as settings_router
 from gunther.speech_api import router as speech_router
 from gunther.storage_api import router as storage_router
 from gunther.storage_budget import StorageBudget
-from gunther.transcript_upgrade import TranscriptUpgrader
 from gunther.trash import TrashService
 from gunther.trash_api import router as trash_router
 from gunther.tts_api import router as tts_router
@@ -163,10 +163,6 @@ def _connect_models(
     application.state.lecture_summarizer = create_lecture_summarizer(models)
     # Transcription reads its settings per recording, from here.
     application.state.settings = settings
-    # A saved model or key may be what an old recording was waiting for.
-    upgrader = getattr(application.state, "transcript_upgrader", None)
-    if upgrader is not None:
-        upgrader.wake()
 
 
 def _shared_speech_keys(
@@ -322,7 +318,6 @@ def create_app(
             else None
         )
         trash_task = asyncio.create_task(purge_trash()) if background else None
-        upgrade_task = asyncio.create_task(upgrader.run()) if background else None
         if library_folders and background:
             library_folders.start()
         try:
@@ -332,8 +327,7 @@ def create_app(
                 library_folders.stop()
             if trash_task:
                 trash_task.cancel()
-            if upgrade_task:
-                upgrade_task.cancel()
+            await retranscriber.close()
             worker.stopping.set()
             if task:
                 await task
@@ -354,9 +348,9 @@ def create_app(
     application.state.service_settings = service_store
     application.state.tts = TtsService(sessions, active_settings.speech_dir)
     application.state.answer_runs = AnswerRuns()
-    # Old recordings are heard again by themselves; settings changes wake it (_connect_models).
-    upgrader = TranscriptUpgrader(application.state, sessions, active_settings.recordings_dir)
-    application.state.transcript_upgrader = upgrader
+    # A recording's Transcribe again button.
+    retranscriber = Retranscriber(application.state, sessions, active_settings.recordings_dir)
+    application.state.retranscriber = retranscriber
     application.state.recent_log = log_buffer.install()
     # Tests stand in for the providers here.
     application.state.model_client_factory = model_client_factory

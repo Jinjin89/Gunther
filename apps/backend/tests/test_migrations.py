@@ -79,6 +79,7 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (23, "recording_transcript_segments"),
             (24, "transcript_upgrades"),
             (25, "library_contents"),
+            (26, "drop_transcript_upgrades"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
@@ -1165,7 +1166,7 @@ def test_v20_database_gains_session_briefs_without_losing_conversations(tmp_path
             assert connection.execute(
                 text("SELECT title, brief_json FROM knowledge_sessions WHERE id = 'ses_old'")
             ).one() == ("Kept", "{}")
-        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 25
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 26
     finally:
         engine.dispose()
 
@@ -1197,18 +1198,24 @@ def test_v22_database_gains_transcript_segments_without_losing_recordings(tmp_pa
                     "WHERE id = 'rec_old'"
                 )
             ).one() == ("[00:00] Hello", None)
-        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 25
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 26
     finally:
         engine.dispose()
 
 
-def test_v23_database_gains_the_upgrade_table_without_losing_recordings(tmp_path: Path) -> None:
+def test_v25_database_loses_the_upgrade_table_and_keeps_its_recordings(tmp_path: Path) -> None:
     engine = make_engine(tmp_path)
     try:
-        run_migrations(engine, Base.metadata, MIGRATIONS[:23])
+        run_migrations(engine, Base.metadata, MIGRATIONS[:25])
         with engine.begin() as connection:
-            # Baseline adopts current metadata; remove what a v23 app never had.
-            connection.exec_driver_sql("DROP TABLE IF EXISTS transcript_upgrades")
+            # A v25 app had background upgrades in this table.
+            connection.exec_driver_sql(
+                "CREATE TABLE transcript_upgrades (recording_id VARCHAR PRIMARY KEY, "
+                "state VARCHAR(16), old_transcript TEXT)"
+            )
+            connection.exec_driver_sql(
+                "INSERT INTO transcript_upgrades VALUES ('rec_old', 'failed', '[00:00] Hello')"
+            )
             connection.execute(
                 text(
                     "INSERT INTO recording_sessions (id, title, status, content_type, file_name, "
@@ -1218,24 +1225,14 @@ def test_v23_database_gains_the_upgrade_table_without_losing_recordings(tmp_path
                     "'[00:00] Hello', 5, '[]', 'lecture', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
                 )
             )
-        assert not inspect(engine).has_table("transcript_upgrades")
         history = run_migrations(engine, Base.metadata)
         assert run_migrations(engine, Base.metadata) == history
-        assert inspect(engine).has_table("transcript_upgrades")
-        with engine.begin() as connection:
-            connection.execute(
-                text(
-                    "INSERT INTO transcript_upgrades (recording_id, state, attempts, heard_ms, "
-                    "total_ms, old_transcript, started_at, updated_at) VALUES "
-                    "('rec_old', 'failed', 1, 0, 5000, '[00:00] Hello', "
-                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
-                )
-            )
+        assert not inspect(engine).has_table("transcript_upgrades")
         with engine.connect() as connection:
             assert connection.execute(
                 text("SELECT transcript FROM recording_sessions WHERE id = 'rec_old'")
             ).scalar_one() == "[00:00] Hello"
-        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 25
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 26
     finally:
         engine.dispose()
 
@@ -1288,7 +1285,10 @@ def test_v24_database_gets_one_place_per_source_and_a_shared_order(tmp_path: Pat
                     f"('{link}', '{topic}', '{source}', '{created}')"
                 )
         history = run_migrations(engine, Base.metadata)
-        assert history[-1].name == "library_contents"
+        assert [item.name for item in history[-2:]] == [
+            "library_contents",
+            "drop_transcript_upgrades",
+        ]
         assert run_migrations(engine, Base.metadata) == history
         with engine.connect() as connection:
             links = connection.execute(

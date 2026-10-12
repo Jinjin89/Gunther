@@ -41,7 +41,7 @@ import type {
   NotebookNote,
   RecordingCheckpointInput,
   RecordingSession,
-  TranscriptUpgradeStatus,
+  TranscribeAgainStatus,
   SourceSummary,
   SourceDetail,
   UpdateAssertionStatusInput,
@@ -778,11 +778,11 @@ export const knowledgeApi = {
   /** Where paragraphs start among these sentences, by content (the Analysis model). Whole numbers only: no text comes back. */
   groupParagraphs: (id: string, body: { sentences: string[]; before: string; pass: "live" | "regroup" }) =>
     request<{ starts: number[]; model: string }>(`/recordings/${encodeURIComponent(id)}/paragraphs`, { method: "POST", body: JSON.stringify(body) }),
-  /** How an old recording's transcript is being improved in the background (heard again, grouped into paragraphs). */
-  transcriptUpgrade: (recordingId: string) => request<TranscriptUpgradeStatus>(`/recordings/${encodeURIComponent(recordingId)}/upgrade`),
-  /** Try a failed transcript improvement again. */
-  retryTranscriptUpgrade: (recordingId: string) =>
-    request<TranscriptUpgradeStatus>(`/recordings/${encodeURIComponent(recordingId)}/upgrade/retry`, { method: "POST" }),
+  /** How transcribing a recording again stands. */
+  transcribeAgainStatus: (recordingId: string) => request<TranscribeAgainStatus>(`/recordings/${encodeURIComponent(recordingId)}/transcribe-again`),
+  /** Hear a recording's saved audio again with the Recording model and replace its transcript. */
+  transcribeAgain: (recordingId: string) =>
+    request<TranscribeAgainStatus>(`/recordings/${encodeURIComponent(recordingId)}/transcribe-again`, { method: "POST" }),
   testServiceSettings: (id: string, values: Record<string, ServiceSettingValue>) =>
     request<ServiceTestResult>(`/settings/services/${encodeURIComponent(id)}/test`, {
       method: "POST",

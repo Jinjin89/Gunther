@@ -515,9 +515,10 @@ input.gx-item-title.is-editable::placeholder { color: var(--gx-ghost); }
 .gx-questions li::before { content: "?"; width: 22px; height: 22px; margin-top: 2px; display: grid; place-items: center; flex: none; border-radius: 50%; background: var(--gx-hover); color: var(--gx-muted); font-size: calc(12px * var(--gx-fs, 1)); font-weight: 700; }
 .gx-terms { margin: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .gx-terms span { padding: 3px 10px; border: 1px solid var(--gx-line); border-radius: var(--gx-radius-pill); background: var(--gx-surface-2); color: var(--gx-ink-2); font-size: calc(12.5px * var(--gx-fs, 1)); }
-.gx-upgrade-line { margin: 0; color: var(--gx-faint); font-size: calc(12.5px * var(--gx-fs, 1)); line-height: 1.5; }
-.gx-upgrade-line.is-failed { color: var(--gx-ink-2); }
-.gx-upgrade-line button { padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
+.gx-again-line { margin: 0; color: var(--gx-faint); font-size: calc(12.5px * var(--gx-fs, 1)); line-height: 1.5; }
+.gx-again-line.is-failed { color: var(--gx-danger); }
+.gx-again-button { flex: none; }
+.gx-again-button svg.is-spinning { animation: gx-spin 0.9s linear infinite; }
 .gx-transcript { display: grid; gap: 12px; }
 .gx-transcript-bar { padding: 8px 0; display: flex; align-items: center; gap: 12px; position: sticky; top: 52px; z-index: 4; background: var(--gx-canvas); }
 .gx-find {

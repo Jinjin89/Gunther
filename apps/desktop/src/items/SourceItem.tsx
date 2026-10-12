@@ -130,7 +130,7 @@ export function SourceItem({ source: initial, bases, nav, onResolved, onOpenBase
       { label: "Transcript", value: words ? `${words.toLocaleString()} words` : "None" },
       recording.terms.length ? { label: "Terms", value: recording.terms.slice(0, 4).join(", ") + (recording.terms.length > 4 ? "…" : "") } : null,
     ];
-    body = <RecordingBody parsed={recording} audioUrl={recording.recordingId ? recordingAssetUrl(recording.recordingId) : null} downloadName={`${source.title}.webm`} onUpgraded={() => { void refresh().then(() => window.dispatchEvent(new CustomEvent("gunther:sources-updated"))).catch(() => undefined); }} />;
+    body = <RecordingBody parsed={recording} audioUrl={recording.recordingId ? recordingAssetUrl(recording.recordingId) : null} downloadName={`${source.title}.webm`} onTranscribed={() => { void refresh().then(() => window.dispatchEvent(new CustomEvent("gunther:sources-updated"))).catch(() => undefined); }} />;
   } else if (web) {
     const host = hostOf(web.finalUrl ?? web.originalUrl);
     meta = [host, web.capturedAt ? `Captured ${formatDate(web.capturedAt)}` : created];

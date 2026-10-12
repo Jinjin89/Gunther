@@ -537,11 +537,18 @@ def _add_recording_transcript_segments(connection: Connection, _metadata: MetaDa
 
 
 def _create_transcript_upgrades(connection: Connection, metadata: MetaData) -> None:
-    """Old recordings are heard again and grouped into paragraphs in the background; one
-    row per recording keeps the progress, the error and the transcript as it was."""
+    """Version 24 kept background upgrades of old recordings here; version 26 drops the
+    table again (a Transcribe again button replaced them), so nothing is created now."""
 
     if "transcript_upgrades" in metadata.tables:
         metadata.tables["transcript_upgrades"].create(bind=connection, checkfirst=True)
+
+
+def _drop_transcript_upgrades(connection: Connection, _metadata: MetaData) -> None:
+    """Recordings are transcribed again when the user asks, with nothing kept between runs.
+    Every earlier transcript stays in its source's earlier revisions."""
+
+    connection.exec_driver_sql("DROP TABLE IF EXISTS transcript_upgrades")
 
 
 def _add_library_contents(connection: Connection, _metadata: MetaData) -> None:
@@ -649,6 +656,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(23, "recording_transcript_segments", _add_recording_transcript_segments),
     Migration(24, "transcript_upgrades", _create_transcript_upgrades),
     Migration(25, "library_contents", _add_library_contents),
+    Migration(26, "drop_transcript_upgrades", _drop_transcript_upgrades),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version
