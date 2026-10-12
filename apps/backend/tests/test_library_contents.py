@@ -425,3 +425,22 @@ def test_the_library_folder_mirrors_the_contents(client):
     assert (folder / "Sections" / "Lecture unit.md").is_file()
     assert not (folder / "Topics").exists()
     assert loose
+
+
+def test_a_source_can_be_renamed_and_keeps_its_place(client):
+    base = library(client)
+    lecture = section(client, base, "Lecture 1")
+    note = source(client, base, "untitled capture")
+    assert move(client, base, [("source", note)], lecture).status_code == 200
+
+    renamed = client.patch(f"/api/sources/{note}", json={"title": "  Week 1 questions  "})
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["title"] == "Week 1 questions"
+    data = contents(client, base)
+    assert next(s for s in data["sources"] if s["id"] == note)["title"] == "Week 1 questions"
+    assert children(data, lecture) == [("source", note)]
+
+    assert client.patch(f"/api/sources/{note}", json={"title": "   "}).status_code == 422
+    assert client.patch("/api/sources/src_missing", json={"title": "A name"}).status_code == 404
+    assert client.post(f"/api/sources/{note}/trash").status_code == 200
+    assert client.patch(f"/api/sources/{note}", json={"title": "Again"}).status_code == 404

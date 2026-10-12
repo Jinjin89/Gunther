@@ -675,7 +675,10 @@ async function run() {
       const button = [...document.querySelectorAll('button.contents-source')].find((candidate) => candidate.querySelector('strong')?.textContent.trim() === ${JSON.stringify(noteTitle)});
       if (!button) return { clicked: false, reason: 'missing', rows: [...document.querySelectorAll('button.contents-source')].map((candidate) => candidate.textContent.replace(/\\s+/g, ' ').trim()) };
       if (button.disabled) return { clicked: false, reason: 'disabled', rows: [button.textContent.replace(/\\s+/g, ' ').trim()] };
-      button.click();
+      // A click shows the source in the side panel; its row's ↗ button opens it.
+      const open = button.closest('.contents-row')?.querySelector('button[aria-label^="Open "]');
+      if (!open) return { clicked: false, reason: 'no open button', rows: [button.textContent.replace(/\\s+/g, ' ').trim()] };
+      open.click();
       return { clicked: true };
     })()`);
     if (!sourceOpenState?.clicked) {

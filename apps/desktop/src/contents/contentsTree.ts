@@ -16,15 +16,16 @@ export interface ContentsTree {
 }
 
 export interface ContentsRow {
-  /** `section:<id>`, `source:<id>` or `unplaced`: also the drag and drop id. */
+  /** `section:<id>`, `source:<id>`, `empty:<section id>` or `unplaced`: also the drag and drop id. */
   key: string;
-  type: "section" | "source" | "unplaced";
+  /** `empty` stands in an open section that holds nothing yet, so there is somewhere to drop. */
+  type: "section" | "source" | "unplaced" | "empty";
   id: string;
   depth: number;
   /** Where a drop beside this row lands (null for top level and for Not placed yet). */
   parentId: string | null;
   collapsed: boolean;
-  /** "8 sources" for a section, the count for Not placed yet. */
+  /** "3 recordings · 2 PDFs" for a section, the count for Not placed yet. */
   count: string;
   node?: ContentsNode;
   source?: ContentsSource;
@@ -34,6 +35,7 @@ export interface ContentsRow {
 
 export const sectionKey = (id: string) => `section:${id}`;
 export const sourceKey = (id: string) => `source:${id}`;
+export const emptyKey = (id: string) => `empty:${id}`;
 export const UNPLACED_KEY = "unplaced";
 export const refKey = (ref: ContentsItemRef) => ref.kind === "section" ? sectionKey(ref.id) : sourceKey(ref.id);
 
@@ -82,11 +84,81 @@ export function sourcesIn(node: ContentsNode): ContentsSource[] {
   return node.children.flatMap(sourcesIn);
 }
 
-/** "8 sources", or "12 papers" when all of them are papers. */
+/** What kind of thing a source is, in the words a row and a summary use. */
+const KIND_WORDS: Array<{ test: (source: ContentsSource) => boolean; one: string; many: string }> = [
+  { test: (source) => source.kind === "recording" || source.kind === "course", one: "recording", many: "recordings" },
+  { test: (source) => source.kind === "paper", one: "paper", many: "papers" },
+  { test: (source) => source.kind === "file" && source.mediaType === "application/pdf", one: "PDF", many: "PDFs" },
+  { test: (source) => source.kind === "file", one: "document", many: "documents" },
+  { test: (source) => source.kind === "link", one: "web page", many: "web pages" },
+  { test: (source) => source.kind === "note", one: "note", many: "notes" },
+  { test: (source) => source.kind === "image", one: "photo", many: "photos" },
+  { test: (source) => source.kind === "table", one: "table", many: "tables" },
+];
+
+/** Sources counted by kind, the most common first: [{ count: 3, label: "3 recordings" }, …]. */
+export function kindCounts(sources: ContentsSource[]): Array<{ word: string; count: number; label: string; sources: ContentsSource[] }> {
+  const groups = new Map<string, { word: string; count: number; label: string; sources: ContentsSource[] }>();
+  for (const source of sources) {
+    const kind = KIND_WORDS.find((item) => item.test(source)) ?? { one: "source", many: "sources" };
+    const group = groups.get(kind.one) ?? { word: kind.one, count: 0, label: "", sources: [] };
+    group.count += 1;
+    group.sources.push(source);
+    group.label = `${group.count.toLocaleString()} ${group.count === 1 ? kind.one : kind.many}`;
+    groups.set(kind.one, group);
+  }
+  return [...groups.values()].sort((a, b) => b.count - a.count);
+}
+
+/** "3 recordings · 2 PDFs"; past two kinds just "8 sources"; "Empty" when there is nothing. */
+export function describeSources(sources: ContentsSource[]): string {
+  if (sources.length === 0) return "Empty";
+  const kinds = kindCounts(sources);
+  return kinds.length <= 2 ? kinds.map((kind) => kind.label).join(" · ") : plural(sources.length, "source");
+}
+
+/** The count a collapsed section shows. */
 export function sectionCount(node: ContentsNode): string {
-  const found = sourcesIn(node);
-  if (found.length === 0) return "Empty";
-  return found.every((source) => source.kind === "paper") ? plural(found.length, "paper") : plural(found.length, "source");
+  return describeSources(sourcesIn(node));
+}
+
+/** Seconds of recording among these sources (0 when none is known). */
+export function totalSeconds(sources: ContentsSource[]): number {
+  return sources.reduce((sum, source) => sum + (source.durationSeconds ?? 0), 0);
+}
+
+/** "6 h 41 min", "58 min", "40 s": a length to read, not a clock. */
+export function readableLength(seconds: number): string {
+  const total = Math.round(seconds);
+  if (total < 60) return `${total} s`;
+  const h = Math.floor(total / 3600);
+  const m = Math.round((total % 3600) / 60);
+  if (h === 0) return `${m} min`;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
+/** The sections above a section or a placed source, outermost first. */
+export function sectionPath(tree: ContentsTree, id: string): Array<{ id: string; title: string }> {
+  const out: Array<{ id: string; title: string }> = [];
+  const seen = new Set<string>();
+  let cursor = tree.parents.get(id) ?? null;
+  while (cursor && !seen.has(cursor)) {
+    seen.add(cursor);
+    const node = tree.sections.get(cursor);
+    if (!node) break;
+    out.unshift({ id: cursor, title: node.section.title });
+    cursor = tree.parents.get(cursor) ?? null;
+  }
+  return out;
+}
+
+/** A source wherever it is: placed in a section or not placed yet. */
+export function findSource(tree: ContentsTree, id: string): ContentsSource | undefined {
+  const loose = tree.unplaced.find((source) => source.id === id);
+  if (loose) return loose;
+  const parent = tree.parents.get(id);
+  const node = parent ? tree.sections.get(parent)?.children.find((child) => child.id === id) : undefined;
+  return node?.type === "source" ? node.source : undefined;
 }
 
 /** True when `id` is inside the section `ancestorId` (not the section itself). */
@@ -147,24 +219,49 @@ function fileType(mediaType: string | null) {
   return "";
 }
 
-/** The one grey detail at the right of a row. */
+/**
+ * "Kingma & Ba", "Zhang et al.": the family names of a paper's authors, short enough for a
+ * row. Authors are written "First Last, First Last" (or with ";" / " and ").
+ */
+export function shortAuthors(authors: string | null): string {
+  if (!authors) return "";
+  const names = authors.split(/\s*(?:;|,|\band\b|&)\s*/).map((name) => name.trim()).filter(Boolean);
+  const family = (name: string) => name.split(/\s+/).at(-1) ?? name;
+  if (names.length === 0) return "";
+  if (names.length === 1) return family(names[0]!);
+  if (names.length === 2) return `${family(names[0]!)} & ${family(names[1]!)}`;
+  return `${family(names[0]!)} et al.`;
+}
+
+/** What a file is: "PDF · 24 pages", "Word", "Photo". */
+export function fileDetail(source: ContentsSource): string {
+  return [fileType(source.mediaType), source.pages ? plural(source.pages, "page") : ""].filter(Boolean).join(" · ");
+}
+
+export const recordingLength = formatDuration;
+export const addedOn = (source: ContentsSource) => shortDate(source.createdAt);
+
+/**
+ * The one grey detail at the right of a row: what tells sources apart in a list (a
+ * recording's length, a paper's authors and year, a file's pages, a page's site). The date
+ * a source was added is in the side panel; notes have nothing else, so they show it.
+ */
 export function rowDetail(source: ContentsSource): string {
   if (source.processing === "reading") return "Reading…";
   if (source.processing === "failed") return "Couldn’t read";
   const date = shortDate(source.createdAt);
-  const join = (...parts: Array<string | null | undefined>) => parts.filter(Boolean).join(" · ");
   switch (source.kind) {
     case "recording":
     case "course":
-      return join(date, source.durationSeconds ? formatDuration(source.durationSeconds) : "");
+      return source.durationSeconds ? formatDuration(source.durationSeconds) : date;
     case "paper":
-      return join(source.authors, source.year ? String(source.year) : "") || date;
+      return [shortAuthors(source.authors), source.year ? String(source.year) : ""].filter(Boolean).join(" · ") || date;
     case "link":
-      return join(source.host, date);
+      return source.host || date;
     case "note":
       return date;
     default:
-      return join(fileType(source.mediaType), source.pages ? plural(source.pages, "page") : "") || date;
+      return fileDetail(source) || date;
   }
 }
 
@@ -193,6 +290,9 @@ export function visibleRows(tree: ContentsTree, collapsed: ReadonlySet<string>, 
       if (node.type === "source") { rows.push(sourceRow(node.source, depth, parentId, false)); continue; }
       const open = needle ? true : !collapsed.has(node.id);
       rows.push({ key: sectionKey(node.id), type: "section", id: node.id, depth, parentId, collapsed: !open, count: sectionCount(node), node, loose: false });
+      if (open && node.children.length === 0 && !needle) {
+        rows.push({ key: emptyKey(node.id), type: "empty", id: node.id, depth: depth + 1, parentId: node.id, collapsed: false, count: "", loose: false });
+      }
       if (open) walk(node.children, depth + 1, node.id, all || (needle !== "" && matches(needle, node.section.title)));
     }
   };
@@ -222,6 +322,7 @@ export function dropTarget(tree: ContentsTree, rows: ContentsRow[], overKey: str
   const allowedInto = (parentId: string | null) => parentId === null || !sectionsDragged.some((ref) => ref.id === parentId || isDescendant(tree, parentId, ref.id));
   if (over.type === "unplaced" || over.loose) return sectionsDragged.length ? null : { parentId: null, index: null };
   if (draggedKeys.has(over.key)) return null;
+  if (over.type === "empty") return allowedInto(over.id) ? { parentId: over.id, index: null } : null;
   if (over.type === "section" && position === "on") return allowedInto(over.id) ? { parentId: over.id, index: null } : null;
   const parentId = over.parentId;
   // A source cannot sit at the top level: that is Not placed yet.

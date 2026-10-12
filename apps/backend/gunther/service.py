@@ -1354,6 +1354,29 @@ class KnowledgeService:
                 import_result=imported,
             )
 
+    def rename_source(self, source_id: str, title: str) -> SourceSummaryOut:
+        """A name the user chose; later model or paper titles leave it alone."""
+
+        with session_scope(self.sessions) as session:
+            source = session.get(Source, source_id)
+            if source is None or source.trashed_at is not None:
+                raise LookupError(f"Source {source_id} was not found")
+            title = title.strip()[:160]
+            if title != source.title:
+                source.title = title
+                session.add(
+                    Revision(
+                        id=_id("rev"),
+                        target_type="source",
+                        target_id=source.id,
+                        action="renamed",
+                        actor="user",
+                        reason=None,
+                    )
+                )
+                session.flush()
+            return self._source_summary(session, source)
+
     def get_source(self, source_id: str) -> SourceDetailOut:
         with session_scope(self.sessions) as session:
             source = session.get(Source, source_id)

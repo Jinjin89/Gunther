@@ -35,9 +35,14 @@ const show = async (contents: Contents = base, extra: Partial<ReturnType<typeof 
   await screen.findByRole("heading", { name: "Part A" });
   return all;
 };
-const rowOf = (title: string) => screen.getByText(title).closest(".contents-row") as HTMLElement;
+const list = () => within(document.querySelector(".contents-list") as HTMLElement);
+const panel = () => within(screen.getByRole("complementary", { name: "Details" }));
+const rowOf = (title: string) => list().getByText(title).closest(".contents-row") as HTMLElement;
 
-beforeEach(() => { window.localStorage.clear(); });
+beforeEach(() => {
+  window.localStorage.clear();
+  vi.spyOn(knowledgeApi, "sourceDigest").mockResolvedValue({ sourceId: "x", state: "off", stale: false, method: null, offReason: "no_key", error: null, digest: null });
+});
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe("Library contents", () => {
@@ -45,44 +50,82 @@ describe("Library contents", () => {
     await show();
     expect(screen.getByRole("heading", { name: "Lecture 1" })).toBeVisible();
     expect(within(rowOf("Course outline.pdf")).getByText("PDF · 4 pages")).toBeVisible();
-    expect(within(rowOf("Lecture 1 recording")).getByText(/1:12:04$/)).toBeVisible();
+    expect(within(rowOf("Lecture 1 recording")).getByText("1:12:04")).toBeVisible();
     expect(within(rowOf("week1-slides.pdf")).getByText("PDF · 24 pages")).toBeVisible();
     const order = [...document.querySelectorAll("[data-row]")].map((row) => row.getAttribute("data-row"));
-    expect(order).toEqual(["section:a", "source:outline", "section:l1", "source:rec1", "source:slides1", "section:l2", "source:rec2", "section:b", "unplaced", "source:note", "source:link"]);
-    expect(within(rowOf("A blog post about Adam")).getByText(/^example\.org · /)).toBeVisible();
+    expect(order).toEqual(["section:a", "source:outline", "section:l1", "source:rec1", "source:slides1", "section:l2", "source:rec2", "section:b", "empty:b", "unplaced", "source:note", "source:link"]);
+    expect(within(rowOf("A blog post about Adam")).getByText("example.org")).toBeVisible();
   });
 
-  it("opens a source with the visible rows as the J / K queue", async () => {
+  it("shows a clicked source in the panel, and opens it on a double click, Enter or ↗ with the visible rows as the J / K queue", async () => {
+    const user = userEvent.setup();
     const { onOpenSource } = await show();
-    await userEvent.click(screen.getByText("Lecture 2 recording"));
+    await user.click(list().getByText("Lecture 2 recording"));
+    expect(onOpenSource).not.toHaveBeenCalled();
+    expect(panel().getByLabelText("Name")).toHaveValue("Lecture 2 recording");
+    expect(panel().getByText("58:40")).toBeVisible();
+    expect(panel().getByRole("button", { name: "Lecture 2" })).toBeVisible();
+    await user.dblClick(list().getByText("Lecture 2 recording"));
     expect(onOpenSource).toHaveBeenCalledWith("rec2", ["outline", "rec1", "slides1", "rec2", "note", "link"]);
+    await user.click(panel().getByRole("button", { name: "Open" }));
+    expect(onOpenSource).toHaveBeenCalledTimes(2);
+    await user.click(screen.getByRole("button", { name: "Open week1-slides.pdf" }));
+    expect(onOpenSource).toHaveBeenLastCalledWith("slides1", expect.any(Array));
+    list().getByText("Course outline.pdf").closest("button")!.focus();
+    await user.keyboard("{Enter}");
+    expect(onOpenSource).toHaveBeenLastCalledWith("outline", expect.any(Array));
+  });
+
+  it("walks the rows with the arrow keys, and Left goes up to the section", async () => {
+    const user = userEvent.setup();
+    await show();
+    await user.click(list().getByText("Lecture 1 recording"));
+    list().getByText("Lecture 1 recording").closest("button")!.focus();
+    await user.keyboard("{ArrowDown}");
+    expect(list().getByText("week1-slides.pdf").closest("button")).toHaveFocus();
+    expect(panel().getByLabelText("Name")).toHaveValue("week1-slides.pdf");
+    await user.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("button", { name: "Lecture 1" })).toHaveFocus();
+    expect(panel().getByLabelText("Name")).toHaveValue("Lecture 1");
+    await user.keyboard("{ArrowLeft}");
+    expect(list().queryByText("week1-slides.pdf")).toBeNull();
   });
 
   it("hides what is under a collapsed section, remembers it, and shows the count", async () => {
     const user = userEvent.setup();
     await show();
     await user.click(screen.getByRole("button", { name: "Collapse Part A" }));
-    expect(screen.queryByText("Lecture 1 recording")).toBeNull();
-    expect(within(rowOf("Part A")).getByText("4 sources")).toBeVisible();
+    expect(list().queryByText("Lecture 1 recording")).toBeNull();
+    expect(within(rowOf("Part A")).getByText("2 PDFs · 2 recordings")).toBeVisible();
     expect(JSON.parse(window.localStorage.getItem("gunther:contents-collapsed:lib")!)).toEqual(["a"]);
   });
 
   it("starts collapsed where it was left", async () => {
     window.localStorage.setItem("gunther:contents-collapsed:lib", JSON.stringify(["a"]));
     await show();
-    expect(screen.queryByText("Lecture 1 recording")).toBeNull();
+    expect(list().queryByText("Lecture 1 recording")).toBeNull();
     expect(screen.getByRole("button", { name: "Expand Part A" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("closes and opens every section at once", async () => {
+    const user = userEvent.setup();
+    await show();
+    await user.click(screen.getByRole("button", { name: "Collapse all" }));
+    expect(list().queryByText("Course outline.pdf")).toBeNull();
+    expect(list().getByText("My notes on week 3")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Expand all" }));
+    expect(list().getByText("Lecture 2 recording")).toBeVisible();
   });
 
   it("filters rows, keeping their headings", async () => {
     const user = userEvent.setup();
     await show();
     await user.type(screen.getByLabelText("Filter contents"), "slides");
-    expect(screen.getByText("week1-slides.pdf")).toBeVisible();
+    expect(list().getByText("week1-slides.pdf")).toBeVisible();
     expect(screen.getByRole("heading", { name: "Lecture 1" })).toBeVisible();
-    expect(screen.queryByText("Lecture 2 recording")).toBeNull();
+    expect(list().queryByText("Lecture 2 recording")).toBeNull();
     await user.keyboard("{Escape}");
-    expect(screen.getByText("Lecture 2 recording")).toBeVisible();
+    expect(list().getByText("Lecture 2 recording")).toBeVisible();
   });
 
   it("adds a section with its name already being edited", async () => {
@@ -126,8 +169,7 @@ describe("Library contents", () => {
     await user.type(within(picker).getByLabelText("Filter"), "part b");
     await user.click(within(picker).getByRole("option", { name: "Part B" }));
     expect(move).toHaveBeenCalledWith("lib", { items: [{ kind: "source", id: "rec2" }], parentId: "b", index: null });
-    await waitFor(() => expect(within(rowOf("Part B")).queryByText("1 source")).toBeNull());
-    expect(await screen.findByText("Lecture 2 recording")).toBeVisible();
+    expect(await list().findByText("Lecture 2 recording")).toBeVisible();
     expect(onChanged).toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
@@ -136,10 +178,15 @@ describe("Library contents", () => {
     const user = userEvent.setup();
     await show();
     await user.click(screen.getByRole("button", { name: "Actions for Part A" }));
-    expect(screen.queryByRole("menuitem", { name: "Move to…" })).toBeNull();
+    await user.click(screen.getByRole("menuitem", { name: "Move to…" }));
+    const picker = screen.getByRole("dialog", { name: "Move to…" });
+    expect(within(picker).getByRole("option", { name: "Top level" })).toBeEnabled();
+    expect(within(picker).getByRole("option", { name: "Part A" })).toBeDisabled();
+    expect(within(picker).getByRole("option", { name: "Lecture 1" })).toBeDisabled();
+    expect(within(picker).getByRole("option", { name: "Part B" })).toBeEnabled();
   });
 
-  it("shows a bar for several selected rows and takes them out of their sections", async () => {
+  it("shows several selected rows in the panel and takes them out of their sections", async () => {
     const user = userEvent.setup();
     const move = vi.spyOn(knowledgeApi, "moveContents").mockResolvedValue(base);
     await show();
@@ -148,18 +195,23 @@ describe("Library contents", () => {
     await user.click(screen.getByRole("checkbox", { name: "Select week1-slides.pdf" }));
     await user.keyboard("{/Shift}");
     expect(screen.getByText("3 selected")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Take out of section" }));
+    expect(screen.getByRole("heading", { name: "2 PDFs · 1 recording" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Take out" }));
     expect(move).toHaveBeenCalledWith("lib", { items: [{ kind: "source", id: "outline" }, { kind: "source", id: "rec1" }, { kind: "source", id: "slides1" }], parentId: null, index: null });
     await waitFor(() => expect(screen.queryByText("3 selected")).toBeNull());
   });
 
-  it("clears a selection", async () => {
+  it("adds a row with ⌘-click to the one shown, and lets go of a selection", async () => {
     const user = userEvent.setup();
     await show();
-    await user.click(screen.getByRole("checkbox", { name: "Select My notes on week 3" }));
-    expect(screen.getByText("1 selected")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Clear" }));
-    expect(screen.queryByText("1 selected")).toBeNull();
+    await user.click(list().getByText("My notes on week 3"));
+    await user.keyboard("{Meta>}");
+    await user.click(list().getByText("A blog post about Adam"));
+    await user.keyboard("{/Meta}");
+    expect(screen.getByText("2 selected")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Clear the selection" }));
+    expect(screen.queryByText("2 selected")).toBeNull();
+    expect(panel().getByRole("heading", { name: "This library" })).toBeVisible();
   });
 
   it("adds sources into a section from its menu", async () => {
@@ -198,12 +250,12 @@ describe("Library contents", () => {
     await show();
     await user.click(screen.getByRole("button", { name: "Actions for Part A" }));
     await user.click(screen.getByRole("menuitem", { name: "Delete section" }));
-    expect(screen.getByText("Delete “Part A” and its 2 sub-sections? Their 4 sources go back to Not placed yet; no source is deleted.")).toBeVisible();
+    expect(panel().getByText("Delete “Part A” and its 2 sub-sections? Their 4 sources go back to Not placed yet; no source is deleted.")).toBeVisible();
     expect(remove).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Delete section" }));
     expect(remove).toHaveBeenCalledWith("lib", "a");
     await waitFor(() => expect(screen.queryByRole("heading", { name: "Part A" })).toBeNull());
-    expect(screen.getByText("Lecture 2 recording")).toBeVisible();
+    expect(list().getByText("Lecture 2 recording")).toBeVisible();
   });
 
   it("puts the rows back and says so when a move fails", async () => {
@@ -261,13 +313,82 @@ describe("Library contents", () => {
       method: "local", sourceCount: 1, createdAt: "2026-09-28T10:00:00",
     });
     const { onOpenSource } = await showReadings();
-    await user.click(screen.getByRole("button", { name: "Actions for Readings" }));
-    await user.click(screen.getByRole("menuitem", { name: "Overview" }));
-    await user.click(await screen.findByRole("button", { name: "Write overview" }));
+    await user.click(screen.getByRole("button", { name: "Readings" }));
+    await user.click(await panel().findByRole("button", { name: "Write overview" }));
     expect(write).toHaveBeenCalledWith("lib", "r");
     expect(await screen.findByText("Genome quality needs controls. [1]")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Quality paper" }));
     expect(onOpenSource).toHaveBeenCalledWith("p1", ["p1"]);
+  });
+
+  it("renames a section and writes its note in the panel", async () => {
+    const user = userEvent.setup();
+    const save = vi.spyOn(knowledgeApi, "saveTopic").mockResolvedValue({ id: "l1", knowledgeBaseId: "lib", parentId: "a", title: "Lecture 1 · Intro", description: "", position: 1, version: 2, blockIds: [], sourceIds: [] });
+    await show();
+    await user.click(screen.getByRole("button", { name: "Lecture 1" }));
+    expect(panel().getByRole("button", { name: "Part A" })).toBeVisible();
+    expect(panel().getByText("2 sources")).toBeVisible();
+    const name = panel().getByLabelText("Name");
+    await user.clear(name);
+    await user.type(name, "Lecture 1 · Intro{Enter}");
+    expect(save).toHaveBeenCalledWith("lib", { title: "Lecture 1 · Intro", description: "", parentId: "a", version: 1 }, "l1");
+    await user.type(panel().getByLabelText("Note"), "Week one{Enter}");
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith("lib", expect.objectContaining({ description: "Week one" }), "l1"));
+  });
+
+  it("adds a sub-section from the panel", async () => {
+    const user = userEvent.setup();
+    const save = vi.spyOn(knowledgeApi, "saveTopic").mockResolvedValue({ id: "c", knowledgeBaseId: "lib", parentId: "b", title: "New section", description: "", position: 0, version: 1, blockIds: [], sourceIds: [] });
+    await show();
+    await user.click(screen.getByRole("button", { name: "Part B" }));
+    await user.click(panel().getByRole("button", { name: "Sub-section" }));
+    expect(save).toHaveBeenCalledWith("lib", { title: "New section", description: "", parentId: "b" });
+  });
+
+  it("renames a source in the panel and in its row", async () => {
+    const user = userEvent.setup();
+    const rename = vi.spyOn(knowledgeApi, "renameSource").mockResolvedValue({} as never);
+    await show();
+    vi.mocked(knowledgeApi.contents).mockResolvedValue({ ...base, sources: base.sources.map((item) => item.id === "note" ? { ...item, title: "Week 3 questions" } : item) });
+    await user.click(list().getByText("My notes on week 3"));
+    const name = panel().getByLabelText("Name");
+    await user.clear(name);
+    await user.type(name, "Week 3 questions{Enter}");
+    expect(rename).toHaveBeenCalledWith("note", "Week 3 questions");
+    expect(await list().findByText("Week 3 questions")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Actions for A blog post about Adam" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+    const field = screen.getByLabelText("Source name");
+    expect(field).toHaveFocus();
+    await user.clear(field);
+    await user.type(field, "Adam, explained{Enter}");
+    expect(rename).toHaveBeenLastCalledWith("link", "Adam, explained");
+  });
+
+  it("shows the library in the panel when nothing is chosen", async () => {
+    const user = userEvent.setup();
+    const onAskLibrary = vi.fn();
+    vi.spyOn(knowledgeApi, "contents").mockResolvedValue(base);
+    render(<LibraryContents {...props()} library={{ title: "ML 2026", eyebrow: "Course", description: "Lectures and readings." }} onAskLibrary={onAskLibrary} />);
+    await screen.findByRole("heading", { name: "ML 2026" });
+    expect(panel().getByText("Lectures and readings.")).toBeVisible();
+    expect(panel().getByText("2 recordings")).toBeVisible();
+    expect(panel().getByText("2 PDFs")).toBeVisible();
+    expect(panel().getByRole("button", { name: "2 not placed yet" })).toBeVisible();
+    await user.click(panel().getByRole("button", { name: /My notes on week 3/ }));
+    expect(panel().getByLabelText("Name")).toHaveValue("My notes on week 3");
+    await user.click(panel().getByRole("button", { name: "Back to the library" }));
+    await user.click(panel().getByRole("button", { name: "Ask this library" }));
+    expect(onAskLibrary).toHaveBeenCalled();
+  });
+
+  it("offers a way to fill an empty section", async () => {
+    const user = userEvent.setup();
+    await show();
+    const empty = document.querySelector('[data-row="empty:b"]') as HTMLElement;
+    expect(empty).toHaveTextContent("Empty. Drag sources here, or");
+    await user.click(within(empty).getByRole("button", { name: "add sources" }));
+    expect(screen.getByRole("dialog", { name: "Add sources to “Part B”" })).toBeVisible();
   });
 
   it("says a library with nothing in it is ready for its first source", async () => {

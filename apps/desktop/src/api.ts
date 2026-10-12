@@ -682,6 +682,7 @@ export const knowledgeApi = {
   graph: () => request<KnowledgeGraph>("/graph"),
   sources: (knowledgeBaseId?: string) => request<SourceSummary[]>(knowledgeBaseId ? `/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/sources` : "/sources"),
   source: (id: string) => request<SourceDetail>(`/sources/${encodeURIComponent(id)}`),
+  renameSource: (id: string, title: string) => request<SourceSummary>(`/sources/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ title }) }),
   assertions: (status?: Assertion["status"]) =>
     request<Assertion[]>(`/assertions${status ? `?status=${status}` : ""}`),
   importSource: (payload: CreateSourceInput, expectedWorkspaceId?: string) =>

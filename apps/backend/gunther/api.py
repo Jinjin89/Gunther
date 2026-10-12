@@ -99,6 +99,7 @@ from gunther.schemas import (
     PairedDeviceOut,
     RecordingCheckpointInput,
     RecordingSessionOut,
+    RenameSourceInput,
     ReviseOutputInput,
     SourceDetailOut,
     SourceKind,
@@ -1097,6 +1098,16 @@ def sources(request: Request) -> list[SourceSummaryOut]:
 def source(source_id: str, request: Request) -> SourceDetailOut:
     try:
         return _service(request).get_source(source_id)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.patch("/sources/{source_id}", response_model=SourceSummaryOut)
+def rename_source(
+    source_id: str, payload: RenameSourceInput, request: Request
+) -> SourceSummaryOut:
+    try:
+        return _service(request).rename_source(source_id, payload.title)
     except LookupError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 

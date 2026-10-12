@@ -27,14 +27,17 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe("Library workspace", () => {
-  it("has three tabs: Contents, Ask and Outputs", async () => {
+  it("has three tabs: Ask, Contents and Outputs", async () => {
     const { onMode } = view("contents");
     const tabs = within_nav();
-    expect(tabs).toEqual(["Contents", "Ask", "Outputs"]);
+    expect(tabs).toEqual(["Ask", "Contents", "Outputs"]);
     expect(screen.getByRole("button", { name: "Contents" })).toHaveAttribute("aria-current", "page");
     expect(await screen.findByRole("heading", { name: "Part A" })).toBeVisible();
     expect(screen.getByText("Lectures and slides for autumn.")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+    expect(onMode).toHaveBeenCalledWith("ask");
+    onMode.mockClear();
+    await userEvent.click(screen.getByRole("button", { name: "Ask this library" }));
     expect(onMode).toHaveBeenCalledWith("ask");
   });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ContentsSection, ContentsSource, LibraryContents } from "@gunther/contracts";
-import { applyMove, buildTree, dropTarget, isDescendant, naturalOrder, nodeRef, rowDetail, sectionCount, subtreeStats, visibleRows } from "./contentsTree";
+import { applyMove, buildTree, describeSources, dropTarget, isDescendant, naturalOrder, nodeRef, readableLength, rowDetail, sectionCount, sectionPath, shortAuthors, subtreeStats, visibleRows } from "./contentsTree";
 
 const section = (id: string, title: string, parentId: string | null, position: number): ContentsSection => ({ id, parentId, title, description: "", position, version: 1, passageCount: 0 });
 const source = (id: string, title: string, kind: ContentsSource["kind"] = "file", extra: Partial<ContentsSource> = {}): ContentsSource => ({
@@ -48,22 +48,30 @@ describe("contents tree", () => {
 
   it("hides the children of a collapsed section and counts them", () => {
     const rows = visibleRows(tree, new Set(["a"]));
-    expect(keys(rows)).toEqual(["section:a", "section:b", "unplaced", "source:new", "source:old"]);
-    expect(rows[0]).toMatchObject({ collapsed: true, count: "4 sources" });
+    expect(keys(rows)).toEqual(["section:a", "section:b", "empty:b", "unplaced", "source:new", "source:old"]);
+    expect(rows[0]).toMatchObject({ collapsed: true, count: "2 documents · 2 recordings" });
     expect(rows.find((row) => row.key === "section:b")?.count).toBe("Empty");
   });
 
-  it("counts papers as papers when every source is one", () => {
+  it("says what a section holds by kind, up to two kinds", () => {
     const papers = buildTree({ sections: [section("r", "Readings", null, 0)], placements: [{ sourceId: "p1", sectionId: "r", position: 0 }, { sourceId: "p2", sectionId: "r", position: 1 }], sources: [source("p1", "P1", "paper"), source("p2", "P2", "paper")] });
     expect(sectionCount(papers.roots[0]!)).toBe("2 papers");
-    expect(sectionCount(tree.sections.get("l2")!)).toBe("1 source");
+    expect(sectionCount(tree.sections.get("l2")!)).toBe("1 recording");
+    expect(describeSources([source("x", "X", "file", { mediaType: "application/pdf" }), source("y", "Y", "recording"), source("z", "Z", "note")])).toBe("3 sources");
+    expect(describeSources([source("x", "X", "file", { mediaType: "application/pdf" }), source("w", "W", "file", { mediaType: "application/pdf" }), source("y", "Y", "recording")])).toBe("2 PDFs · 1 recording");
   });
 
-  it("gives every row its depth", () => {
+  it("gives every row its depth, with a stand-in row in an open empty section", () => {
     const rows = visibleRows(tree, new Set());
-    expect(rows.filter((row) => row.type !== "unplaced").map((row) => [row.id, row.depth])).toEqual([
-      ["a", 0], ["outline", 1], ["l1", 1], ["rec1", 2], ["slides1", 2], ["l2", 1], ["rec2", 2], ["b", 0], ["new", 1], ["old", 1],
+    expect(rows.filter((row) => row.type !== "unplaced").map((row) => [row.key, row.depth])).toEqual([
+      ["section:a", 0], ["source:outline", 1], ["section:l1", 1], ["source:rec1", 2], ["source:slides1", 2], ["section:l2", 1], ["source:rec2", 2], ["section:b", 0], ["empty:b", 1], ["source:new", 1], ["source:old", 1],
     ]);
+  });
+
+  it("knows the sections above a row", () => {
+    expect(sectionPath(tree, "rec1").map((step) => step.title)).toEqual(["Part A", "Lecture 1"]);
+    expect(sectionPath(tree, "l1").map((step) => step.title)).toEqual(["Part A"]);
+    expect(sectionPath(tree, "new")).toEqual([]);
   });
 
   it("filters rows but keeps their headings, ignoring collapse", () => {
@@ -104,15 +112,32 @@ describe("contents tree", () => {
 
 describe("row details", () => {
   const year = new Date().getFullYear();
-  it("shows each kind's own detail", () => {
-    expect(rowDetail(source("r", "R", "recording", { durationSeconds: 4324, createdAt: `${year}-10-03T10:00:00` }))).toMatch(/Oct 3 · 1:12:04$/);
-    expect(rowDetail(source("r", "R", "recording", { durationSeconds: 3520, createdAt: `${year}-10-03T10:00:00` }))).toMatch(/· 58:40$/);
-    expect(rowDetail(source("p", "P", "paper", { authors: "Zhang et al.", year: 2017 }))).toBe("Zhang et al. · 2017");
+  it("shows each kind's own detail: what tells sources apart, not the day they came in", () => {
+    expect(rowDetail(source("r", "R", "recording", { durationSeconds: 4324 }))).toBe("1:12:04");
+    expect(rowDetail(source("r", "R", "recording", { durationSeconds: 3520 }))).toBe("58:40");
+    expect(rowDetail(source("p", "P", "paper", { authors: "Chiyuan Zhang, Samy Bengio, Moritz Hardt", year: 2017 }))).toBe("Zhang et al. · 2017");
     expect(rowDetail(source("f", "F", "file", { mediaType: "application/pdf", pages: 24 }))).toBe("PDF · 24 pages");
     expect(rowDetail(source("f", "F", "file", { mediaType: "application/pdf", pages: 1 }))).toBe("PDF · 1 page");
     expect(rowDetail(source("f", "F", "file", { mediaType: "application/pdf" }))).toBe("PDF");
-    expect(rowDetail(source("l", "L", "link", { host: "arxiv.org", createdAt: `${year}-10-11T10:00:00` }))).toMatch(/^arxiv\.org · Oct 11$/);
+    expect(rowDetail(source("l", "L", "link", { host: "arxiv.org", createdAt: `${year}-10-11T10:00:00` }))).toBe("arxiv.org");
     expect(rowDetail(source("n", "N", "note", { createdAt: `${year}-10-12T10:00:00` }))).toMatch(/^Oct 12$/);
+    // With nothing else to say, the day it was added.
+    expect(rowDetail(source("r", "R", "recording", { createdAt: `${year}-10-03T10:00:00` }))).toMatch(/^Oct 3$/);
+  });
+
+  it("shortens authors to family names", () => {
+    expect(shortAuthors("Diederik P. Kingma")).toBe("Kingma");
+    expect(shortAuthors("Diederik P. Kingma, Jimmy Ba")).toBe("Kingma & Ba");
+    expect(shortAuthors("Kingma; Ba; Reddi")).toBe("Kingma et al.");
+    expect(shortAuthors("Ann Lee and Bo Chen")).toBe("Lee & Chen");
+    expect(shortAuthors(null)).toBe("");
+  });
+
+  it("reads a total length as hours and minutes", () => {
+    expect(readableLength(40)).toBe("40 s");
+    expect(readableLength(3520)).toBe("59 min");
+    expect(readableLength(4324 + 3520)).toBe("2 h 11 min");
+    expect(readableLength(7200)).toBe("2 h");
   });
 
   it("says when a source is still being read or could not be", () => {
@@ -128,6 +153,12 @@ describe("drop targets", () => {
 
   it("drops onto a heading at the end of that section", () => {
     expect(dropTarget(tree, rows, "section:b", "on", rec2)).toEqual({ parentId: "b", index: null });
+  });
+
+  it("drops onto an empty section's stand-in row into that section, but not a section into itself", () => {
+    expect(dropTarget(tree, rows, "empty:b", "on", rec2)).toEqual({ parentId: "b", index: null });
+    expect(dropTarget(tree, rows, "empty:b", "on", [{ kind: "section", id: "a" }])).toEqual({ parentId: "b", index: null });
+    expect(dropTarget(tree, rows, "empty:b", "on", [{ kind: "section", id: "b" }])).toBeNull();
   });
 
   it("drops between rows into that row's section", () => {

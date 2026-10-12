@@ -72,6 +72,17 @@ class UpdateNotebookNoteInput(ApiModel):
     status: NotebookNoteStatus | None = None
 
 
+class RenameSourceInput(ApiModel):
+    title: str = Field(min_length=1, max_length=160)
+
+    @field_validator("title")
+    @classmethod
+    def nonblank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("A name cannot be blank")
+        return value.strip()
+
+
 class FileNotebookNoteInput(ApiModel):
     knowledge_base_id: str = Field(min_length=1, max_length=160)
 

@@ -31,8 +31,8 @@ interface KnowledgeBaseWorkspaceProps {
 }
 
 const modeLabels: Array<{ id: AtlasMode; label: string }> = [
-  { id: "contents", label: "Contents" },
   { id: "ask", label: "Ask" },
+  { id: "contents", label: "Contents" },
   { id: "outputs", label: "Outputs" },
 ];
 
@@ -54,12 +54,13 @@ function BaseHeader({ base, mode, onMode, onBack, onExport, onEdit }: Pick<Knowl
   );
 }
 
-/** The Contents tab: the library's note, then its sections and sources as arranged. */
-function ContentsView({ base, onAdd, onOpenSource, onAsk, onChanged }: Pick<KnowledgeBaseWorkspaceProps, "base" | "onAdd"> & { onOpenSource: KnowledgeBaseWorkspaceProps["onOpenSource"] | undefined; onAsk: (sectionId: string) => void; onChanged: () => void }) {
+/** The Contents tab: the library's sections and sources as arranged, and a panel about what is chosen. */
+function ContentsView({ base, onAdd, onOpenSource, onAsk, onAskLibrary, onEdit, onChanged }: Pick<KnowledgeBaseWorkspaceProps, "base" | "onAdd" | "onEdit"> & { onOpenSource: KnowledgeBaseWorkspaceProps["onOpenSource"] | undefined; onAsk: (sectionId: string) => void; onAskLibrary: () => void; onChanged: () => void }) {
   const [count, setCount] = useState<number | null>(null);
   return <div className="contents-page page-enter">
-    {base.description && <p className="contents-intro">{base.description}</p>}
-    <LibraryContents baseId={base.id} onOpenSource={(id, queue) => onOpenSource?.(id, queue)} onAsk={onAsk} onAddSource={() => onAdd()} onChanged={onChanged} onLoaded={setCount}
+    <LibraryContents baseId={base.id} library={{ title: base.title, eyebrow: base.eyebrow, description: base.description }}
+      onOpenSource={(id, queue) => onOpenSource?.(id, queue)} onAsk={onAsk} onAskLibrary={onAskLibrary} onEditLibrary={onEdit}
+      onAddSource={() => onAdd()} onChanged={onChanged} onLoaded={setCount}
       toolbarEnd={<>
         <BulkImport knowledgeBaseId={base.id} compact />
         <PopMenu label="Add a source" triggerClass="gx-btn gx-btn-primary gx-btn-sm" trigger={<><Plus size={13} />Add source</>} items={[
@@ -68,11 +69,11 @@ function ContentsView({ base, onAdd, onOpenSource, onAsk, onChanged }: Pick<Know
           { label: "Web page", icon: Link2, onSelect: () => onAdd("link") },
           { label: "Recording", icon: Mic2, onSelect: () => onAdd("recording") },
         ]} />
-      </>} />
-    {count === 0 && base.sources.length > 0 && <section className="contents-references" aria-label="References">
-      <h2>References</h2>
-      <ul>{base.sources.map((source) => <li key={source.id}><span>{source.title}</span><small>{[source.scope, source.publisher].filter(Boolean).join(" · ")}</small></li>)}</ul>
-    </section>}
+      </>}
+      afterList={count === 0 && base.sources.length > 0 ? <section className="contents-references" aria-label="References">
+        <h2>References</h2>
+        <ul>{base.sources.map((source) => <li key={source.id}><span>{source.title}</span><small>{[source.scope, source.publisher].filter(Boolean).join(" · ")}</small></li>)}</ul>
+      </section> : null} />
   </div>;
 }
 
@@ -111,7 +112,7 @@ export function KnowledgeBaseWorkspace(props: KnowledgeBaseWorkspaceProps) {
     <div className="base-workspace">
       <BaseHeader {...props} mode={mode} />
       <div className="base-workspace-body">
-        {mode === "contents" && <ContentsView base={props.base} onAdd={props.onAdd} onOpenSource={props.onOpenSource} onAsk={(id) => void askSection(id)} onChanged={() => setTopicReload((value) => value + 1)} />}
+        {mode === "contents" && <ContentsView base={props.base} onAdd={props.onAdd} onEdit={props.onEdit} onOpenSource={props.onOpenSource} onAsk={(id) => void askSection(id)} onAskLibrary={() => props.onMode("ask")} onChanged={() => setTopicReload((value) => value + 1)} />}
         {mode === "ask" && <SessionWorkspace base={topicBase} selectedChapterId={props.selectedChapterId} onAdd={props.onAdd} onNotify={props.onNotify} onOpenSource={(id) => props.onOpenSource?.(id, [id])} onMakeReport={(sessionId) => { setReportFrom(sessionId); props.onMode("outputs"); }} />}
         {mode === "outputs" && <OutputsPage base={props.base} workspaceId={props.workspaceId} onNotify={props.onNotify} onAdd={props.onAdd} onOpenSource={props.onOpenSource} fromDiscussion={reportFrom} onFromDiscussion={() => setReportFrom(null)} />}
       </div>
