@@ -895,6 +895,8 @@ async def live_recording(
         check_again=bool(
             listen is not None
             and choice is not None
+            # SenseVoice can't use what was said before: hearing it again gains nothing.
+            and choice.kind != "sensevoice"
             and speech_registry.check_again(state.speech_registry)
         ),
         group_paragraphs=state.models.for_role("analysis") is not None,

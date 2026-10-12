@@ -930,7 +930,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
         reconnectAttemptsRef.current = 0;
         setProvider("live");
         setTranscriptionLabel(transcriptionLabelFor(event));
-        setLiveNote(event.live === "segments");
+        setLiveNote(event.live === "segments" || event.live === "segments-fixed");
         checkAgainRef.current = event.check_again === true;
         if (typeof event.group_paragraphs === "boolean") {
           const current = segmentsRef.current;

@@ -160,7 +160,7 @@ Client → server (v2):
 Server → client (v2):
 
 ```jsonc
-{"type": "service.ready", "provider": "qwen", "model": "...", "protocol": 2, "live": "stream" | "segments"}
+{"type": "service.ready", "provider": "qwen", "model": "...", "protocol": 2, "live": "stream" | "segments" | "segments-fixed"}
 {"type": "transcript.piece", "id": "k3f9-2-14", "start_ms": 61230, "end_ms": 64810 | null,
  "text": "We'll use gradient descent", "final": false,
  "sentences": [{"start_ms": 61390, "end_ms": 63100, "text": "…。"}, …]}   // final pieces only
@@ -416,19 +416,28 @@ During a recording, paragraphs follow the speaker's points (a question gets its 
 ### Done when
 After Stop, the transcript is re-checked paragraph by paragraph with terms from the whole recording, and saving uses the result.
 
-## Phase 5: Pause-based cuts for the other providers
+## Phase 5: Pause-based cuts for the other providers (built 2026-10-12)
 
-### Tasks
-1. `scripts/fetch_vad_model.py` (pattern of `fetch_embedding_model.py`): Silero VAD `silero_vad.onnx`, pinned revision + SHA-256, into `apps/backend/models/silero-vad/`; bundle with `--add-data` in `build-backend-sidecar.mjs`; `npm run models:fetch` fetches both.
-2. `gunther/vad.py`: Silero VAD on 16 kHz frames with `onnxruntime`. A sentence ends after ≥ 500 ms of silence, or is cut at the quietest point of its last 2 s once it reaches 15 s; minimum 1 s.
-3. `_proxy_segmented_transcription()` uses these cuts instead of fixed blocks and emits v2 `transcript.piece` (final only, one sentence per piece) with times, v1 `…completed` as before. Pass the last final text as context the same way as §4.4.
-4. Missing model file → keep today's fixed blocks and say so once in `service.ready` (`"live": "segments-fixed"`); the build always includes the file.
+### What was built
+1. `scripts/fetch_vad_model.py` (pattern of `fetch_embedding_model.py`): Silero VAD v6.2.3 `silero_vad.onnx` (SHA-256 `1a153a22…88e3`, 2,327,524 bytes, MIT, "Copyright (c) 2020-present Silero Team") into `apps/backend/models/silero-vad/` (ignored by git like the embedding model). `npm run models:fetch` fetches both models; `build-backend-sidecar.mjs` fetches whichever is missing and bundles `models/silero-vad` (`--add-data`). CI has no separate fetch step: the release build goes through the sidecar script.
+2. `gunther/vad.py`: `SileroVad` (ONNX Runtime + numpy, a port of Silero's `OnnxWrapper`: 512-sample frames with the 64 samples before them, `state` carried; probabilities match the torch model to 1e-6) and a pure `Segmenter(probability)`. The path is found like the embedding model's (bundle, then the repo); `new_detector()` returns None if the file is missing or won't load.
+   - A piece starts at a frame with probability ≥ 0.5 (stretches with none are never yielded).
+   - It ends once the probability has stayed below 0.35 for ≥ 500 ms; the end is where it first fell. At 15 s it ends at the quietest frame (lowest probability) of its last 2 s and the rest starts the next piece.
+   - 200 ms is kept on each side of a pause cut, never reaching into the neighbouring piece. A piece shorter than 1 s waits (the pause that follows, or speech that joins it); only `flush` can end one shorter. `flush()` ends the piece being heard (commit, Pause, Stop) and resets the model's state; `discard()` drops it (`input_audio_buffer.clear`).
+   - `FixedBlocks` is the old clock cut behind the same interface.
+3. `_proxy_segmented_transcription()` turns the audio into 16 kHz once (the listen copy gets the same bytes) and cuts it with the Segmenter when the role is live; a take that goes up whole (not `stream`) keeps one big block. The socket is read by one loop; a worker sends the pieces to the provider one at a time, in order, so a slow provider never blocks reading. Times: `offset_ms` plus the piece's bytes; an append whose `offset_ms` is > 250 ms from the audio received ends the open piece and counts from the new time.
+   - v1: `…completed` per piece with `start_seconds`, as before. v2: `transcript.piece` finals with one sentence per piece (`start_ms`, `end_ms`, `text`) and `transcript.flushed` after a commit, once the last piece is written.
+   - Context: OpenAI-style servers get `prompt` = the title (≤ 200 chars), then the tail (≤ 800) of the recent final text. The Qwen upload fallback gets the same as two context messages (title, then the last 400 chars). SenseVoice gets none.
+   - Drafts (v2 and SenseVoice only; local, so free): while a piece grows, every ≥ 2 s of new audio on a piece ≥ 1 s the piece so far is transcribed (never two at once, never while a piece is being written) and sent as `transcript.piece` with `final: false` and the id the final will have. A draft that is stale when its turn comes is skipped; a final with empty text clears a draft that was shown. Drafts never reach the context or the listen copy logic.
+   - Model file missing: today's fixed blocks (now at 16 kHz), `service.ready.live = "segments-fixed"`, one warning in the log per process. The desktop shows the same "Live text comes in short pieces" note for `segments` and `segments-fixed`.
+4. `service.ready.check_again` is false when the Recording job is SenseVoice (`api.py`). Settings → Transcription shows the switch off and disabled with "SenseVoice can't use what was said before, so hearing it again doesn't help. Live text is cut at pauses instead." Paragraph grouping is unchanged.
+5. `evals/transcript/pause_cuts.py` prints the Segmenter's pieces on `noisy` and `hard` next to the script's sentences.
 
 ### Tests
-VAD on synthetic audio (tone bursts separated by silence) cuts at the silences; a 20 s continuous tone is cut at ≤ 15 s; the segmented proxy emits v2 sentences with correct times.
+`tests/test_vad.py` (rules with injected probabilities: cut after 500 ms and not before, mid-speech pause, padding, 15 s cap at the quietest frame of the last 2 s, minimum length, silence never yielded, flush, discard, chunking does not change the cuts; the real model on silence and noise and on the first sentence of the sample lecture when it exists, skipped without the model file) and `tests/test_pause_cuts.py` (a loudness stand-in for the detector and a mock provider: v2 pieces on the recording clock, flushed after the last piece, v1 shape, 16 kHz upload from a 24 kHz client, drafts only for SenseVoice and v2, an empty final clearing a draft, context, order with a slow first answer, the fixed fallback and its single warning, `check_again`). `tests/conftest.py` hides the model file from every test unless it opts in. Desktop: the switch is off and disabled for SenseVoice.
 
 ### Done when
-SenseVoice and OpenAI-style providers produce sentence-aligned live text, and Layers 2–3 work for them.
+SenseVoice and OpenAI-style providers produce pause-aligned live text, and Layers 2–3 work for the providers that can use context.
 
 ---
 
@@ -694,3 +703,28 @@ Built to §1.7, §2.11, §4.2, §4.7, §5.2. Uncommitted.
 | whole file | 9.2% | 57.7% |
 
 Pause cuts halve SenseVoice's errors; listening again with the same model and no context does not help, and a whole minute falls apart in a bad room. So for SenseVoice: Phase 5's pause cuts, the minute check off, paragraphs by topic on. It stays far behind Qwen on technical lectures with English terms (`gradient decent`, `lo function`, `ite优化器` for Adam).
+
+### Phase 5 — 2026-10-12 (Sonnet; pause cuts)
+
+Built to the Phase 5 section above. Uncommitted. Files: `scripts/fetch_vad_model.py`, `apps/backend/gunther/vad.py`, `realtime.py` (`_proxy_segmented_transcription`, both transcribers), `api.py` (`check_again`), `evals/transcript/pause_cuts.py`, `tests/test_vad.py`, `tests/test_pause_cuts.py`, `tests/conftest.py`, `SpeechSettings.tsx` (+ test), `LectureRecorder.tsx` (note for `segments-fixed`), `package.json`, `build-backend-sidecar.mjs`.
+
+**Cuts on the test lecture** (`python -m evals.transcript.pause_cuts`, 100 ms chunks; Silero's own `get_speech_timestamps` with 500 ms / 15 s gave 16 and 15 cuts):
+
+| Sample | pieces | longest | pieces with an edge inside a script sentence |
+|---|---|---|---|
+| noisy | 18 | 14.1 s | 7 |
+| hard | 13 | 14.6 s | 6 |
+
+The edges inside a sentence are mostly the speaker's own mid-sentence pause (the first sentence is cut at its comma, 2.95 s) and the 15 s cap in the long stretches of the hard room, where the room noise never gives a 500 ms pause (pieces 5-9 are capped). The port's probabilities agree with the torch model to 1e-6 on the first 1500 frames of `noisy.wav`. The error rate of this exact code on SenseVoice was not re-measured; the 8.1% / 47.9% above came from Silero's own timestamps.
+
+**Choices to know about**
+- A piece under 1 s waits for more audio instead of being padded out: the end is taken when 1 s of audio exists since its start, so a pause longer than 500 ms may be sent a little later than the rule alone says.
+- A non-live take (`stream: false`, e.g. Ask dictation set to upload at the end) still goes up as one block; pause cuts apply only to live roles.
+- The fixed-block fallback now uploads 16 kHz audio too (it was 24 kHz for a 24 kHz client).
+- Existing tests that expected the Qwen fallback's `"live": "segments"` now see `"segments-fixed"` because the suite hides the model file.
+
+**Not done / open**
+- Not tried in the real app, nor with a real SenseVoice server. Draft cost on a slow CPU is untested: one draft at a time, only when nothing else is being written, so it can delay a final by at most one draft.
+- Overlap of padded pieces is avoided by clamping the next start to the last end, so after a 15 s cap the next piece starts exactly at the cut with no padding in front.
+
+**Opus check of Phase 5 against a real SenseVoice server (2026-10-12)**: a local SenseVoice-Small server with the same API (`/health`, `/reset`, `/v1/audio/transcriptions`), Gunther's `proxy_realtime_transcription` with the bundled Silero model, the lecture streamed at real pace: noisy 7.8% (v2) / 8.5% (v1) against 16.1% with the old 3.2 s cuts; hard 52.3% / 45.6% against 60.0%. 49 drafts over 132 s, no gaps, `check_again` false. Full backend suite 673 passed (the one PIL-dependent test deselected on this box), desktop 429 passed.

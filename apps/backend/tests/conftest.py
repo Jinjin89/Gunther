@@ -14,6 +14,9 @@ def _ignore_the_developers_library_root(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.delenv("LIBRARY_ROOT", raising=False)
     # Loading the real embedding model is slow; tests that want it opt in.
     monkeypatch.setenv("SEMANTIC_SEARCH", "false")
+    # Live pieces are cut at pauses with a model file a checkout may or may not have;
+    # tests that want it opt in, the rest hear fixed blocks.
+    monkeypatch.setattr("gunther.vad.default_model_path", lambda: None)
     # A developer's multi-GB parser bundle must not turn unit fixtures into
     # subprocess integration tests. Parser integration tests opt in explicitly.
     monkeypatch.setattr("gunther.document_parser.DoclingParser.bundled", lambda: None)

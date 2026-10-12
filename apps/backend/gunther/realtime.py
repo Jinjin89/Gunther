@@ -21,7 +21,7 @@ from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, InvalidStatus, WebSocketException
 from websockets.protocol import State
 
-from gunther import listen_copy
+from gunther import listen_copy, vad
 from gunther.qwen_stream import (
     BYTES_PER_MS,
     LIVE_RATE,
@@ -71,20 +71,37 @@ def _pcm16_wav(pcm: bytes, sample_rate: int = 24_000) -> bytes:
     return output.getvalue()
 
 
-Transcriber = Callable[[httpx.AsyncClient, bytes], Awaitable[str]]
+# (client, audio, the recent final text) -> the words. Servers that cannot use what was
+# said before ignore the last argument.
+Transcriber = Callable[..., Awaitable[str]]
+# The tail of the recent text that goes along as context (an OpenAI-style ``prompt``).
+CONTEXT_CHARS = 800
 
 
 def _form_transcriber(
-    endpoint: str, headers: dict[str, str], form: dict[str, str], sample_rate: int = 24_000
+    endpoint: str,
+    headers: dict[str, str],
+    form: dict[str, str],
+    sample_rate: int = 24_000,
+    title: str | None = None,
 ) -> Transcriber:
-    """An ``/audio/transcriptions`` server: the segment goes up as a WAV file."""
+    """An ``/audio/transcriptions`` server: the segment goes up as a WAV file.
 
-    async def transcribe(client: httpx.AsyncClient, pcm: bytes) -> str:
+    With a ``title`` (even an empty one) the server also gets a ``prompt``: the title, then
+    the tail of what it wrote last. SenseVoice passes ``None`` because it cannot use one.
+    """
+
+    async def transcribe(client: httpx.AsyncClient, pcm: bytes, recent: str = "") -> str:
+        data = dict(form)
+        if title is not None:
+            prompt = f"{title.strip()[:200]}\n{recent[-CONTEXT_CHARS:]}".strip()
+            if prompt:
+                data["prompt"] = prompt
         response = await client.post(
             endpoint,
             headers=headers,
             files={"file": ("segment.wav", _pcm16_wav(pcm, sample_rate), "audio/wav")},
-            data=form,
+            data=data,
         )
         response.raise_for_status()
         return str(response.json().get("text", "")).strip()
@@ -281,17 +298,24 @@ async def try_qwen_live(base_url: str, api_key: str, model: str) -> str | None:
 
 
 def _qwen_transcriber(
-    base_url: str, api_key: str, model: str, sample_rate: int = 24_000
+    base_url: str, api_key: str, model: str, sample_rate: int = 24_000, title: str = ""
 ) -> Transcriber:
-    """Qwen by upload: always the model's upload id, whichever of the pair was saved."""
+    """Qwen by upload: always the model's upload id, whichever of the pair was saved.
+
+    The title and the tail of the recent text go along as context messages (Qwen reads
+    only the first 400 characters of each, so the tail is cut to the part that matters).
+    """
 
     upload_model = qwen_upload_id(model)
 
-    async def transcribe(client: httpx.AsyncClient, pcm: bytes) -> str:
+    async def transcribe(client: httpx.AsyncClient, pcm: bytes, recent: str = "") -> str:
+        hints = [title.strip()[:400], recent.strip()[-400:]]
         response = await client.post(
             qwen_endpoint(base_url),
             headers={"Authorization": f"Bearer {api_key}"},
-            json=qwen_request(upload_model, _pcm16_wav(pcm, sample_rate), sample_rate),
+            json=qwen_request(
+                upload_model, _pcm16_wav(pcm, sample_rate), sample_rate, [h for h in hints if h]
+            ),
         )
         if qwen_heard_nothing(response):
             return ""
@@ -299,6 +323,21 @@ def _qwen_transcriber(
         return qwen_text(response.json())
 
     return transcribe
+
+
+# A client's offset_ms further than this from the audio received starts a new stretch.
+CLOCK_JUMP_MS = 250
+_warned_no_pause_model = False
+
+
+def _warn_no_pause_model() -> None:
+    global _warned_no_pause_model
+    if not _warned_no_pause_model:
+        _warned_no_pause_model = True
+        logger.warning(
+            "The pause-detection model is not installed (run npm run models:fetch); "
+            "live text is cut every few seconds instead of at pauses"
+        )
 
 
 async def _proxy_segmented_transcription(
@@ -311,31 +350,71 @@ async def _proxy_segmented_transcription(
     ready: dict[str, object],
     reset_url: str | None = None,
     sample_rate: int = 24_000,
+    pause_cuts: bool = True,
     protocol: int = 1,
     offset_ms: int = 0,
     listen: listen_copy.ListenCopy | None = None,
     check_again: bool = False,
     group_paragraphs: bool = False,
 ) -> None:
-    """Cut live audio into segments and have an OpenAI-style server write each one.
+    """Cut live audio into pieces and have an OpenAI-style server write each one.
 
-    SenseVoice and any ``/audio/transcriptions`` server work alike: audio in,
-    text out, one segment at a time, sent on as it arrives. A v2 client gets each
-    segment as a final ``transcript.piece`` on the recording clock (``offset_ms`` plus the
-    audio received), and ``transcript.flushed`` once a ``commit`` has been written out;
-    a v1 client gets the old ``…completed`` events, unchanged.
+    SenseVoice and any ``/audio/transcriptions`` server work alike: audio in, text out,
+    one piece at a time, in order, while the socket goes on being read. Audio is turned
+    into 16 kHz once. With ``pause_cuts`` a piece ends at a pause (Silero VAD, ``vad.py``);
+    without the model file, or for a take that goes up whole, pieces are fixed blocks.
+    A v2 client gets each piece as a final ``transcript.piece`` on the recording clock
+    (``offset_ms`` plus the audio received), SenseVoice also a draft of the piece still
+    growing, and ``transcript.flushed`` once a ``commit`` has been written out; a v1
+    client gets the old ``…completed`` events, unchanged.
     """
 
     await _accept(websocket)
-    segment_size = max(2 * sample_rate, int(sample_rate * 2 * max(1.0, segment_seconds)))
-    segment_size -= segment_size % 2
-    pending = bytearray()
-    sequence = 0
-    audio_cursor_seconds = max(0, offset_ms) / 1000
+    detector = vad.new_detector() if pause_cuts else None
+    if pause_cuts and detector is None:
+        _warn_no_pause_model()
+        ready = {**ready, "live": "segments-fixed"}
+    segmenter: vad.Segmenter | vad.FixedBlocks
+    if detector is not None:
+        segmenter = vad.Segmenter(detector)
+    else:
+        segmenter = vad.FixedBlocks(int(LIVE_RATE * 2 * max(1.0, segment_seconds)))
+    drafts = protocol >= 2 and provider == "sensevoice" and detector is not None
+    audio = bytearray()  # 16 kHz audio from ``audio_base`` on that a piece may still need
+    audio_base = 0
+    odd = b""  # a half sample when the client's chunk ends inside one
+    # The recording clock: ``clock_ms`` at byte ``clock_byte`` of the 16 kHz stream.
+    clock_byte = 0
+    clock_ms = max(0, offset_ms)
+
+    def at_ms(byte: int) -> int:
+        return clock_ms + (byte - clock_byte) // BYTES_PER_MS
+
     tag = secrets.token_hex(2)
-    # The audio copy is 16 kHz whatever the client sends; ``copy_cursor`` counts its bytes.
-    copy_resampler = Pcm16Resampler(sample_rate, LIVE_RATE) if sample_rate != LIVE_RATE else None
+    resampler = Pcm16Resampler(sample_rate, LIVE_RATE) if sample_rate != LIVE_RATE else None
     copy_cursor = max(0, offset_ms) * BYTES_PER_MS
+    jobs: asyncio.Queue[tuple[Any, ...]] = asyncio.Queue()
+    outstanding = 0  # jobs queued or running
+    pieces_closed = 0  # pieces handed to the worker; the next one is number pieces_closed + 1
+    draft_marks: dict[int, int] = {}  # piece number -> its end byte when the last draft went
+    drafted: set[int] = set()  # pieces whose draft put text on screen
+    sequence = 0
+    recent = ""  # the tail of what was written, the context for the next piece
+
+    def enqueue(job: tuple[Any, ...]) -> None:
+        nonlocal outstanding
+        outstanding += 1
+        jobs.put_nowait(job)
+
+    def enqueue_pieces(found: list[vad.Piece]) -> None:
+        nonlocal pieces_closed
+        for start, end in found:
+            pieces_closed += 1
+            number = pieces_closed
+            chunk = bytes(audio[start - audio_base : end - audio_base])
+            enqueue(("piece", number, chunk, at_ms(start), at_ms(end)))
+            draft_marks.pop(number, None)
+
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             if reset_url:
@@ -348,49 +427,42 @@ async def _proxy_segmented_transcription(
                 announced["group_paragraphs"] = group_paragraphs
             await websocket.send_json(announced)
 
-            async def transcribe_segment(chunk: bytes, start_seconds: float) -> None:
+            async def send_piece(
+                number: int, start_ms: int, end_ms: int, text: str, final: bool
+            ) -> None:
                 nonlocal sequence
-                if len(chunk) < 2:
-                    return
-                transcript = await transcriber(client, chunk)
-                if not transcript:
+                if protocol >= 2:
+                    event: dict[str, Any] = {
+                        "type": "transcript.piece",
+                        "id": f"{tag}-{number}",
+                        "start_ms": start_ms,
+                        "end_ms": end_ms if final else None,
+                        "text": text,
+                        "final": final,
+                    }
+                    if final:
+                        event["sentences"] = (
+                            [{"start_ms": start_ms, "end_ms": end_ms, "text": text}] if text else []
+                        )
+                    await websocket.send_json(event)
                     return
                 sequence += 1
-                if protocol >= 2:
-                    start_ms = round(start_seconds * 1000)
-                    end_ms = start_ms + round(len(chunk) / (sample_rate * 2) * 1000)
-                    await websocket.send_json(
-                        {
-                            "type": "transcript.piece",
-                            "id": f"{tag}-{sequence}",
-                            "start_ms": start_ms,
-                            "end_ms": end_ms,
-                            "text": transcript,
-                            "final": True,
-                            "sentences": [
-                                {"start_ms": start_ms, "end_ms": end_ms, "text": transcript}
-                            ],
-                        }
-                    )
-                    return
                 await websocket.send_json(
                     {
                         "type": "conversation.item.input_audio_transcription.completed",
                         "item_id": f"{provider}-{sequence}",
-                        "transcript": transcript,
+                        "transcript": text,
                         "provider": provider,
-                        "start_seconds": round(start_seconds, 2),
+                        "start_seconds": round(start_ms / 1000, 2),
                     }
                 )
 
-            async def flush(force: bool = False) -> None:
-                nonlocal audio_cursor_seconds
-                while len(pending) >= segment_size or (force and pending):
-                    take = segment_size if len(pending) >= segment_size else len(pending)
-                    chunk = bytes(pending[:take])
-                    del pending[:take]
+            async def write_piece(number: int, chunk: bytes, start_ms: int, end_ms: int) -> None:
+                nonlocal recent
+                text = ""
+                if len(chunk) >= 2:
                     try:
-                        await transcribe_segment(chunk, audio_cursor_seconds)
+                        text = await transcriber(client, chunk, recent)
                     except (httpx.HTTPError, ValueError, TypeError) as error:
                         await websocket.send_json(
                             {
@@ -399,43 +471,121 @@ async def _proxy_segmented_transcription(
                                 "message": f"{label} missed one segment: {error}",
                             }
                         )
-                    audio_cursor_seconds += len(chunk) / (sample_rate * 2)
+                        text = ""
+                if not text:
+                    # Empty speech clears a draft that was on screen; otherwise nothing is said.
+                    if protocol >= 2 and number in drafted:
+                        await send_piece(number, start_ms, end_ms, "", True)
+                    return
+                recent = f"{recent} {text}".strip()[-CONTEXT_CHARS:]
+                await send_piece(number, start_ms, end_ms, text, True)
 
-            while True:
-                message = await websocket.receive_text()
-                payload = json.loads(message)
-                message_type = payload.get("type")
-                if message_type == "input_audio_buffer.append":
-                    encoded = payload.get("audio")
-                    if not isinstance(encoded, str):
-                        continue
-                    audio = b""
-                    with suppress(ValueError):
-                        audio = base64.b64decode(encoded, validate=True)
-                    pending.extend(audio)
-                    if listen is not None and audio:
-                        kept = copy_resampler.feed(audio) if copy_resampler else audio
+            async def write_draft(number: int, chunk: bytes, start_ms: int, end_ms: int) -> None:
+                if number <= pieces_closed:
+                    return  # its final is already queued: a draft now would only be stale
+                try:
+                    text = await transcriber(client, chunk, "")
+                except (httpx.HTTPError, ValueError, TypeError) as error:
+                    logger.debug("Draft of a live piece failed: %s", error)
+                    return
+                if text and number > pieces_closed:
+                    drafted.add(number)
+                    await send_piece(number, start_ms, end_ms, text, False)
+
+            async def work() -> None:
+                nonlocal outstanding
+                try:
+                    while True:
+                        job = await jobs.get()
+                        try:
+                            if job[0] == "piece":
+                                await write_piece(*job[1:])
+                            elif job[0] == "draft":
+                                await write_draft(*job[1:])
+                            else:
+                                await websocket.send_json(
+                                    {"type": "transcript.flushed", "until_ms": job[1]}
+                                )
+                        finally:
+                            outstanding -= 1
+                except (WebSocketDisconnect, RuntimeError):
+                    return
+                except Exception as error:
+                    with suppress(RuntimeError, WebSocketDisconnect):
+                        await websocket.send_json(
+                            {
+                                "type": "service.error",
+                                "code": "provider_unavailable",
+                                "message": f"{label} stopped responding: {error}",
+                            }
+                        )
+                        await websocket.close(code=1011)
+
+            def maybe_draft() -> None:
+                opened = segmenter.open_piece()
+                if not drafts or opened is None or outstanding:
+                    return
+                start, end = opened
+                number = pieces_closed + 1
+                last = draft_marks.get(number, start)
+                if end - start < LIVE_RATE * 2 or end - last < LIVE_RATE * 4:
+                    return  # the piece is under 1 s, or under 2 s of new audio has come
+                draft_marks[number] = end
+                chunk = bytes(audio[start - audio_base : end - audio_base])
+                enqueue(("draft", number, chunk, at_ms(start), at_ms(end)))
+
+            worker = asyncio.create_task(work())
+            try:
+                while True:
+                    message = await websocket.receive_text()
+                    payload = json.loads(message)
+                    message_type = payload.get("type")
+                    if message_type == "input_audio_buffer.append":
+                        encoded = payload.get("audio")
+                        if not isinstance(encoded, str):
+                            continue
+                        raw = b""
+                        with suppress(ValueError):
+                            raw = base64.b64decode(encoded, validate=True)
+                        if not raw:
+                            continue
                         at = payload.get("offset_ms")
-                        if (
+                        stamped = (
                             protocol >= 2
                             and isinstance(at, int | float)
                             and not isinstance(at, bool)
-                        ):
-                            copy_cursor = max(0, int(at)) * BYTES_PER_MS
-                        listen.write(copy_cursor, kept)
-                        copy_cursor += len(kept) - len(kept) % 2
-                    await flush()
-                elif message_type == "input_audio_buffer.commit":
-                    await flush(force=True)
-                    if protocol >= 2:
-                        await websocket.send_json(
-                            {
-                                "type": "transcript.flushed",
-                                "until_ms": round(audio_cursor_seconds * 1000),
-                            }
                         )
-                elif message_type == "input_audio_buffer.clear":
-                    pending.clear()
+                        if stamped and abs(int(at) - at_ms(segmenter.total)) > CLOCK_JUMP_MS:
+                            # The client says this audio starts elsewhere: end what is open
+                            # and count from the new time.
+                            enqueue_pieces(segmenter.flush())
+                            clock_byte, clock_ms = segmenter.total, max(0, int(at))
+                        kept = resampler.feed(raw) if resampler else odd + raw
+                        if resampler is None:
+                            odd = kept[-1:] if len(kept) % 2 else b""
+                            kept = kept[: len(kept) - len(odd)]
+                        if listen is not None and kept:
+                            if stamped:
+                                copy_cursor = max(0, int(at)) * BYTES_PER_MS
+                            listen.write(copy_cursor, kept)
+                            copy_cursor += len(kept) - len(kept) % 2
+                        audio.extend(kept)
+                        enqueue_pieces(segmenter.feed(kept))
+                        maybe_draft()
+                        keep = max(segmenter.retain_from, audio_base)
+                        if keep - audio_base > LIVE_RATE * 2:
+                            del audio[: keep - audio_base]
+                            audio_base = keep
+                    elif message_type == "input_audio_buffer.commit":
+                        enqueue_pieces(segmenter.flush())
+                        if protocol >= 2:
+                            enqueue(("flushed", at_ms(segmenter.total)))
+                    elif message_type == "input_audio_buffer.clear":
+                        segmenter.discard()
+            finally:
+                worker.cancel()
+                with suppress(asyncio.CancelledError):
+                    await worker
     except WebSocketDisconnect:
         return
     except Exception as error:
@@ -1038,7 +1188,7 @@ async def proxy_realtime_transcription(
             f"{root}/v1/audio/transcriptions",
             {},
             {"model": "sensevoice", "response_format": "json"},
-            sample_rate,
+            LIVE_RATE,
         )
         ready = {**ready, "local": True, "diarize": bool(status.get("diarize"))}
         reset_url = f"{root}/reset"
@@ -1072,19 +1222,18 @@ async def proxy_realtime_transcription(
             )
             ready = {**ready, "live": "segments"}
         transcriber = _qwen_transcriber(
-            choice.base_url, choice.api_key or "", choice.model, sample_rate
+            choice.base_url, choice.api_key or "", choice.model, LIVE_RATE, context
         )
     else:
         form = {"model": choice.model, "response_format": "json"}
         if choice.language:
             form["language"] = choice.language
-        if context.strip():
-            form["prompt"] = context.strip()[:1_000]
         transcriber = _form_transcriber(
             compatible_endpoint(choice.base_url),
             {"Authorization": f"Bearer {choice.api_key}"} if choice.api_key else {},
             form,
-            sample_rate,
+            LIVE_RATE,
+            context,
         )
     await _proxy_segmented_transcription(
         websocket,
@@ -1095,6 +1244,7 @@ async def proxy_realtime_transcription(
         ready=ready,
         reset_url=reset_url,
         sample_rate=sample_rate,
+        pause_cuts=choice.stream,
         protocol=protocol,
         offset_ms=offset_ms,
         listen=listen,

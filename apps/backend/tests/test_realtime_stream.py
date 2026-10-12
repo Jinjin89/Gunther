@@ -353,7 +353,7 @@ def test_the_fallback_sends_v2_clients_final_pieces_on_the_recording_clock(
         client.websocket_connect(V2.format(offset=10_000), headers=SIDECAR) as socket,
     ):
         ready = socket.receive_json()
-        assert ready["live"] == "segments" and ready["protocol"] == 2
+        assert ready["live"] == "segments-fixed" and ready["protocol"] == 2
         socket.send_json({"type": "input_audio_buffer.append", "audio": audio(3_200)})
         first = socket.receive_json()
         assert first["type"] == "transcript.piece" and first["final"] is True
@@ -541,7 +541,7 @@ def test_a_model_with_no_live_version_falls_back_to_uploaded_pieces(
     )
     with app as client, client.websocket_connect("/api/recordings/live", headers=SIDECAR) as socket:
         ready = socket.receive_json()
-        assert ready["type"] == "service.ready" and ready["live"] == "segments"
+        assert ready["type"] == "service.ready" and ready["live"] == "segments-fixed"
         socket.send_json({"type": "input_audio_buffer.append", "audio": audio(1_000, 24_000)})
         socket.send_json({"type": "input_audio_buffer.commit"})
         event = socket.receive_json()

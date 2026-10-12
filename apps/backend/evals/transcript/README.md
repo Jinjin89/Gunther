@@ -42,3 +42,9 @@ Speech made by text-to-speech is cleaner than a real room, so the absolute numbe
    ```
    .venv/bin/python -m evals.transcript.probe_paragraphs [--run <results.json>]
    ```
+
+6. **See where live recording cuts at pauses** (SenseVoice and OpenAI-style servers; needs `npm run models:fetch`):
+
+   ```
+   .venv/bin/python -m evals.transcript.pause_cuts [noisy hard]
+   ```

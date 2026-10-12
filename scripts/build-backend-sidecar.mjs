@@ -16,6 +16,7 @@ const visionSource = join(backendRoot, "gunther", "vision_ocr.m");
 const visionBuildDir = join(pyinstallerRoot, "vision");
 const visionBinary = join(visionBuildDir, "gunther-vision-ocr");
 const modelDir = join(backendRoot, "models", "multilingual-e5-small");
+const vadDir = join(backendRoot, "models", "silero-vad");
 const parserDir = join(root, "tools", "document-parser", ".build", "bundle");
 // Releases must include the layout runtime. A reduced build is an explicit choice.
 const withParser = !process.argv.includes("--without-document-parser")
@@ -77,12 +78,18 @@ if (
   process.exit(0);
 }
 
-// Semantic search ships inside the helper; fetch the pinned model once.
-if (!existsSync(join(modelDir, "model.onnx")) || !existsSync(join(modelDir, "tokenizer.json"))) {
+// Semantic search and pause detection ship inside the helper; fetch each pinned model once.
+const models = [
+  { present: existsSync(join(modelDir, "model.onnx")) && existsSync(join(modelDir, "tokenizer.json")),
+    script: "fetch_embedding_model.py" },
+  { present: existsSync(join(vadDir, "silero_vad.onnx")), script: "fetch_vad_model.py" },
+];
+for (const model of models) {
+  if (model.present) continue;
   const fetched = spawnSync("uv", [
     "run",
     "--project", backendRoot,
-    "python", join(root, "scripts", "fetch_embedding_model.py"),
+    "python", join(root, "scripts", model.script),
   ], {
     cwd: root,
     env: uvEnv,
@@ -138,6 +145,7 @@ const result = spawnSync("uv", [
   "--collect-all", "PIL",
   ...(withParser ? ["--add-data", `${parserDir}:document-parser`] : []),
   "--add-data", `${modelDir}:models/multilingual-e5-small`,
+  "--add-data", `${vadDir}:models/silero-vad`,
   // Skills are files the backend reads at run time (gunther/skillbook.py).
   "--add-data", `${join(backendRoot, "gunther", "skills")}:gunther/skills`,
   ...(isMac ? ["--add-binary", `${visionBinary}:.`] : []),

@@ -219,6 +219,9 @@ function RoleRow({ role, overview, onSave }: { role: SpeechRole; overview: Speec
     ...(role.checkAgain === undefined ? {} : { check_again: role.checkAgain }),
     ...next,
   });
+  // SenseVoice can't take what was said before, so hearing a minute again gives it nothing.
+  const providerId = role.model?.split("/")[0];
+  const cannotUseContext = overview.providers.find((provider) => provider.id === providerId)?.kind === "sensevoice";
   const commitLanguage = () => { if (language.trim() !== role.language) onSave(role.id, choice({ language: language.trim() })); };
   return <div className={`model-role ${role.problem ? "has-problem" : ""}`}>
     <span className="model-role-name"><strong id={`${id}-label`}>{role.label}</strong><small>{role.description}</small></span>
@@ -233,10 +236,10 @@ function RoleRow({ role, overview, onSave }: { role: SpeechRole; overview: Speec
     </div>
     {role.checkAgain !== undefined && <div className="tts-role-options">
       <label className="speech-live" title="Sends the audio a second time for better text.">
-        <input type="checkbox" role="switch" checked={role.checkAgain} onChange={(event) => onSave(role.id, choice({ check_again: event.target.checked }))} />
+        <input type="checkbox" role="switch" checked={role.checkAgain && !cannotUseContext} disabled={cannotUseContext} onChange={(event) => onSave(role.id, choice({ check_again: event.target.checked }))} />
         <span>Check each minute again</span>
       </label>
-      <small className="model-roles-note">Sends the audio a second time for better text.</small>
+      <small className="model-roles-note">{cannotUseContext ? "SenseVoice can't use what was said before, so hearing it again doesn't help. Live text is cut at pauses instead." : "Sends the audio a second time for better text."}</small>
     </div>}
     {role.problem && <small className="model-role-problem"><CircleAlert size={12} />{role.problem}</small>}
   </div>;

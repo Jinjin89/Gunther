@@ -45,6 +45,7 @@ describe("SpeechSettings", () => {
   it("turns checking each minute again off from the Recording job, keeping its model", async () => {
     const withSwitch = overview();
     withSwitch.roles[0]!.checkAgain = true;
+    withSwitch.roles[0]!.model = "qwen/qwen-audio-3.1-asr-flash";
     api.speechOverview.mockResolvedValue(withSwitch);
     api.saveSpeechRoles.mockResolvedValue(withSwitch);
     render(<SpeechSettings onNotify={() => undefined} />);
@@ -52,7 +53,18 @@ describe("SpeechSettings", () => {
     const toggle = screen.getByRole("switch", { name: "Check each minute again" });
     expect(toggle).toBeChecked();
     await userEvent.click(toggle);
-    expect(api.saveSpeechRoles).toHaveBeenCalledWith({ recording: { model: "sensevoice/sensevoice-small", stream: true, language: "", check_again: false } });
+    expect(api.saveSpeechRoles).toHaveBeenCalledWith({ recording: { model: "qwen/qwen-audio-3.1-asr-flash", stream: true, language: "", check_again: false } });
+  });
+
+  it("shows the minute check as off and disabled for SenseVoice, with the reason", async () => {
+    const withSwitch = overview();
+    withSwitch.roles[0]!.checkAgain = true;
+    api.speechOverview.mockResolvedValue(withSwitch);
+    render(<SpeechSettings onNotify={() => undefined} />);
+    expect(await screen.findByText(/SenseVoice can't use what was said before/)).toBeTruthy();
+    const toggle = screen.getByRole("switch", { name: "Check each minute again" });
+    expect(toggle).not.toBeChecked();
+    expect(toggle).toBeDisabled();
   });
 
   it("changes one job without touching the other", async () => {
