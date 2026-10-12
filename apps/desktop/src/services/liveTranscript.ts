@@ -315,10 +315,19 @@ export function applyPiece(state: TranscriptState, event: PieceEvent): Transcrip
 }
 
 /** Audio the backend could not transcribe. */
+/** Gaps closer than this are one stretch of lost audio (it is reported a piece at a time). */
+const GAP_JOIN_MS = 250;
+
 export function applyGap(state: TranscriptState, gap: TranscriptGap): TranscriptState {
   if (gap.endMs <= gap.startMs) return state;
-  if (state.gaps.some((known) => known.startMs === gap.startMs && known.endMs === gap.endMs)) return state;
-  return { ...state, gaps: [...state.gaps, gap].sort((left, right) => left.startMs - right.startMs) };
+  const merged: TranscriptGap[] = [];
+  for (const item of [...state.gaps, gap].sort((left, right) => left.startMs - right.startMs)) {
+    const last = merged.at(-1);
+    if (last && item.startMs <= last.endMs + GAP_JOIN_MS) {
+      merged[merged.length - 1] = { ...last, endMs: Math.max(last.endMs, item.endMs) };
+    } else merged.push({ ...item });
+  }
+  return { ...state, gaps: merged };
 }
 
 /**

@@ -205,6 +205,8 @@ async def try_qwen_model(
 TASK_START_TIMEOUT = 10.0
 # How long to wait for a task to finish after finish-task.
 TASK_END_TIMEOUT = 10.0
+# How long one frame may take to go out before the live socket counts as stalled.
+SEND_TIMEOUT = 10.0
 CONNECT_TIMEOUT = 30.0
 # Audio kept to send again if the live socket drops, and queued while it reconnects.
 RETAIN_SECONDS = 30.0
@@ -848,12 +850,19 @@ class _LiveStream:
                         break
                     chunk = self.chunks[self.sent]
                     self.sent += 1
-                    await self.up.send(chunk.data)
+                    await asyncio.wait_for(self.up.send(chunk.data), SEND_TIMEOUT)
                 if self.finish_at is not None and not task.finish_sent:
                     task.finish_sent = True
-                    await self.up.send(finish_task_message(task.id))
+                    await asyncio.wait_for(self.up.send(finish_task_message(task.id)), SEND_TIMEOUT)
             except ConnectionClosed as error:
                 task.end("failed", f"the connection closed ({error})")
+            except TimeoutError:
+                # Qwen stopped taking audio (a stalled link, or a starved machine): drop this
+                # socket so the task starts again on a new one, from the last final sentence.
+                stalled, self.up = self.up, None
+                if stalled is not None:
+                    asyncio.create_task(stalled.close())
+                task.end("failed", f"Qwen took no audio for {SEND_TIMEOUT:g} seconds")
             if task.finish_sent and not task.ended.is_set():
                 try:
                     await asyncio.wait_for(task.ended.wait(), TASK_END_TIMEOUT)

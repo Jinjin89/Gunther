@@ -386,6 +386,54 @@ def test_a_dropped_task_starts_again_where_the_last_final_ended(tmp_path: Path, 
     assert server.real_tasks()[1]["bytes"] == 6 * FRAME  # all of it was sent again
 
 
+def test_a_stalled_live_socket_is_dropped_and_the_task_starts_again_on_a_new_one(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Qwen stops taking audio on the first socket (a starved machine or a stuck link): the
+    # send times out, that socket is dropped, and the task runs again on a new one.
+    monkeypatch.setattr(realtime, "SEND_TIMEOUT", 0.3)
+    original = realtime.connect
+    opened = {"count": 0}
+
+    async def stalling_connect(*args: Any, **kwargs: Any):
+        socket = await original(*args, **kwargs)
+        opened["count"] += 1
+        if opened["count"] == 1:
+            real_send = socket.send
+            frames = {"count": 0}
+
+            async def send(message: Any, *rest: Any, **options: Any) -> None:
+                if isinstance(message, bytes):
+                    frames["count"] += 1
+                    if frames["count"] >= 3:
+                        await asyncio.sleep(3600)
+                await real_send(message, *rest, **options)
+
+            socket.send = send  # type: ignore[method-assign]
+        return socket
+
+    monkeypatch.setattr(realtime, "connect", stalling_connect)
+    server = fake()
+    app = make_app(tmp_path, server, "qwen-audio-3.1-asr-flash")
+    with (
+        app as client,
+        client.websocket_connect(V2.format(offset=60_000), headers=SIDECAR) as socket,
+    ):
+        socket.receive_json()
+        socket.send_json(
+            {"type": "input_audio_buffer.append", "audio": audio(600), "offset_ms": 60_000}
+        )
+        final = None
+        for _ in range(10):
+            event = socket.receive_json()
+            assert event["type"] != "transcript.gap"
+            if event.get("final"):
+                final = event
+                break
+    assert final is not None and final["sentences"][0]["start_ms"] == 60_000
+    assert opened["count"] == 2
+
+
 def test_audio_queued_past_the_limit_is_reported_as_a_gap(
     tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -677,3 +677,20 @@ Built to §1.7, §2.11, §4.2, §4.7, §5.2. Uncommitted.
 - Not tried in the real app. The grouping model's effort is the Analysis job's saved effort.
 
 **Fixed from the browser run (Phase 3 bug, coordinator's request).** `pumpChecks` never ran after `service.ready`: its async body finished without awaiting, so its `finally` cleared `checkLoopRef` before `checkLoopRef.current = loop` ran, leaving a finished promise that every later call returned. New `services/singleFlight.ts` `runOnce(ref, body)` sets the ref first and clears it in `.finally` only if it still holds that promise; used by `pumpChecks` and `pumpGrouping`. `singleFlight.test.ts` (4): a body that finishes at once runs again on the next call, a run in flight is returned, a failed body clears the ref, and a final piece after an empty first pump yields a window. No recorder-level render test (the recorder needs microphone, socket and audio mocks); the loop logic is covered through the helper plus `nextWindow`.
+
+**Opus review of Phases 3 and 3B, with real browser runs (2026-10-12)**
+- Harness: a snapshot of the commit served by Vite and a real backend (Qwen 3.1, DeepSeek), headless Chromium with a fake microphone playing `noisy.wav` (`--use-file-for-fake-audio-capture`), DevTools recording the socket frames; scripts in `/tmp/asrwork` (`browser_e2e.mjs`).
+- Found and fixed: (1) the 16 kHz bytes and the recording clock drifted apart by ~100 ms a minute, so the backend declared "missing" audio and ended the Qwen task mid-speech; (2) audio from before the socket opened went out after newer audio; (3) the minute check never started (`pumpChecks` kept a finished promise; now `runOnce`); (4) a stalled upstream send blocked forever: it now times out after `SEND_TIMEOUT` (10 s), drops that socket and starts the task again on a new one; (5) audio lost a piece at a time showed one gap line per 85 ms; touching gaps now merge (`applyGap`).
+- Final run, all layers on: 10 final pieces, minute checks and grouping requests answered 200, no gaps; paragraphs by topic (00:02, 00:11, 00:26, 00:39, 00:55, 01:08 …); `SGD` right after the check where the live text had `HDD`.
+
+**SenseVoice-Small (self-hosted) on the same lecture** (FunASR, CPU, error rates):
+
+| Method | noisy | hard |
+|---|---|---|
+| 3.2 s clock cuts (today) | 16.1% | 60.0% |
+| cuts at pauses (Silero VAD, ≥ 500 ms, ≤ 15 s) | **8.1%** | **47.9%** |
+| 60 s windows, whole | 7.4% | 83.4% |
+| 60 s windows, FunASR's own VAD | 13.6% | 53.7% |
+| whole file | 9.2% | 57.7% |
+
+Pause cuts halve SenseVoice's errors; listening again with the same model and no context does not help, and a whole minute falls apart in a bad room. So for SenseVoice: Phase 5's pause cuts, the minute check off, paragraphs by topic on. It stays far behind Qwen on technical lectures with English terms (`gradient decent`, `lo function`, `ite优化器` for Adam).

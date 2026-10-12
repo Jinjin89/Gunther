@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseTranscript } from "../items/sourceContent";
 import {
+  applyGap,
   applyLiveEvent,
   applyPiece,
   applyRetry,
@@ -76,6 +77,15 @@ describe("live pieces", () => {
     expect(state.confirmedUntilMs).toBe(70_000);
     state = applyPiece(state, final("b-1-1", [[0, 70_000, "One long first stretch."]]));
     expect(state.live).toEqual([]);
+  });
+
+  it("joins lost audio reported a piece at a time into one gap", () => {
+    let state = emptyTranscript();
+    for (let start = 101_632; start < 103_000; start += 85) {
+      state = applyGap(state, { startMs: start, endMs: start + 85, reason: "connection" });
+    }
+    state = applyGap(state, { startMs: 120_000, endMs: 121_000, reason: "connection" });
+    expect(state.gaps.map((gap) => [gap.startMs, gap.endMs])).toEqual([[101_632, 103_077], [120_000, 121_000]]);
   });
 
   it("applies socket events: drafts, finals, a gap, and nothing for other events", () => {
