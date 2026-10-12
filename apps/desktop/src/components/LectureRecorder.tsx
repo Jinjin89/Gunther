@@ -47,6 +47,7 @@ import {
   retryRange,
   storableTranscript,
   textBefore,
+  tokenize,
   transcriptFromText,
   type GroupingOutcome,
   type TranscriptState,
@@ -1835,7 +1836,9 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   const capturing = phase === "requesting" || phase === "importing" || active || phase === "stopped";
   const canRetryMicrophone = phase === "error" && microphoneIssue !== null;
   const downloadExtension = savedRecording?.fileName.split(".").pop() || (audioType.includes("mp4") ? "m4a" : "webm");
-  const transcriptWords = transcript.trim() ? transcript.trim().split(/\s+/).length : 0;
+  // Words the way word processors count them: each Chinese or Japanese character is one, the
+  // [mm:ss] times are not words.
+  const transcriptWords = tokenize(transcript.replace(/\[\d{1,2}:\d{2}(?::\d{2})?\]/g, " ")).length;
   useEffect(() => {
     onActiveChange?.(capturing);
   }, [capturing, onActiveChange]);

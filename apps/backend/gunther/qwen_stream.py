@@ -8,6 +8,7 @@ events count from the start of the task's audio.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -73,13 +74,19 @@ def finish_task_message(task_id: str) -> str:
     )
 
 
+# Full-width punctuation already carries its own spacing; Qwen sometimes adds a space after it.
+_WIDE = r"[\u3000-\u303f\uff00-\uffef]"
+_SPACE_AT_WIDE_PUNCTUATION = re.compile(rf"(?<={_WIDE})\s+|\s+(?={_WIDE})")
+
+
 def _sentence(words: list[dict[str, Any]], offset_ms: int) -> dict[str, Any]:
+    text = "".join(
+        str(word.get("text") or "") + str(word.get("punctuation") or "") for word in words
+    ).strip()
     return {
         "start_ms": offset_ms + int(words[0]["begin_time"]),
         "end_ms": offset_ms + int(words[-1].get("end_time") or words[-1]["begin_time"]),
-        "text": "".join(
-            str(word.get("text") or "") + str(word.get("punctuation") or "") for word in words
-        ).strip(),
+        "text": _SPACE_AT_WIDE_PUNCTUATION.sub("", text),
     }
 
 
