@@ -13,7 +13,7 @@ describe("runOnce", () => {
 
   it("returns the run in flight instead of starting a second", async () => {
     const ref: { current: Promise<void> | null } = { current: null };
-    let release = () => undefined;
+    let release: () => void = () => undefined;
     let runs = 0;
     const first = runOnce(ref, () => new Promise<void>((resolve) => { runs += 1; release = resolve; }));
     expect(runOnce(ref, async () => { runs += 1; })).toBe(first);

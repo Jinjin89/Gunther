@@ -252,7 +252,7 @@ export const recordingSocketUrl = (
   context: string,
   purpose: "recording" | "dictation" = "recording",
   /** Protocol 2: sentence pieces on the recording clock. Absent = the original events. */
-  live?: { offsetMs: number; recordingId?: string },
+  live?: { offsetMs: number; recordingId?: string | undefined },
 ) => {
   const origin = configuredBase
     ? configuredBase.replace(/^http/, "ws").replace(/\/$/, "")

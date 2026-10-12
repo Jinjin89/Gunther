@@ -32,9 +32,9 @@ export interface CheckWindow {
   /** "off" = checks off, the live text was confirmed as it is. */
   state: "checked" | "checking" | "failed" | "off";
   pass: "minute" | "retry";
-  model?: string;
-  at?: string;
-  error?: string;
+  model?: string | undefined;
+  at?: string | undefined;
+  error?: string | undefined;
 }
 
 export interface TranscriptParagraph {
@@ -60,7 +60,7 @@ export interface TranscriptState {
   grouping: { state: "idle" | "running" | "failed" | "off"; error?: string };
   gaps: TranscriptGap[];
   /** End of a window whose whole result was held back; the next window waits for more audio. */
-  heldEndMs?: number;
+  heldEndMs?: number | undefined;
 }
 
 /** What the backend sends for one piece of live text (``transcript.piece``). */
@@ -362,7 +362,7 @@ export function applyLiveEvent(
 export function nextWindow(
   state: TranscriptState,
   rules: WindowRules = DEFAULT_RULES,
-  options: { closing?: boolean } = {},
+  options: { closing?: boolean | undefined } = {},
 ): { startMs: number; endMs: number } | null {
   if (state.checking) return null;
   const startMs = state.confirmedUntilMs;
@@ -421,7 +421,7 @@ export function applyWindowResult(
   state: TranscriptState,
   window: { startMs: number; endMs: number },
   outcome: WindowOutcome | null,
-  options: { closing?: boolean; checksOff?: boolean; rules?: WindowRules; model?: string; now?: string } = {},
+  options: { closing?: boolean | undefined; checksOff?: boolean | undefined; rules?: WindowRules | undefined; model?: string | undefined; now?: string | undefined } = {},
 ): TranscriptState {
   const rules = options.rules ?? DEFAULT_RULES;
   const windowId = `w-${window.startMs}`;
@@ -500,7 +500,7 @@ export function applyWindowResult(
  */
 export function confirmLive(
   state: TranscriptState,
-  options: { closing?: boolean; rules?: WindowRules } = {},
+  options: { closing?: boolean | undefined; rules?: WindowRules | undefined } = {},
 ): TranscriptState {
   let current = state;
   for (let guard = 0; guard < 10_000; guard += 1) {
@@ -728,7 +728,7 @@ export function applyRetry(
   state: TranscriptState,
   windowId: string,
   outcome: WindowOutcome,
-  options: { model?: string; now?: string } = {},
+  options: { model?: string | undefined; now?: string | undefined } = {},
 ): TranscriptState {
   const window = state.windows.find((item) => item.id === windowId);
   if (!window) return state;

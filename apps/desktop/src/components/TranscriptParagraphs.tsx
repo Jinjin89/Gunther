@@ -22,7 +22,7 @@ interface TranscriptParagraphsProps {
   /** Send the same sentences to be grouped again. */
   onRetryGrouping?: () => void;
   /** Play the saved recording from here; absent until the audio is saved. */
-  onSeek?: (seconds: number) => void;
+  onSeek?: ((seconds: number) => void) | undefined;
 }
 
 type Row =

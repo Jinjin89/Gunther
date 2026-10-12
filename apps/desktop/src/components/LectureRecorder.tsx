@@ -1933,7 +1933,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     </div>
     {notice && <p className="lecture-notice" role={microphoneIssue ? "alert" : "status"}><CircleAlert size={13} />{notice}</p>}
     <div className="lecture-transcript">
-      <header><span><strong>Live transcript</strong><small>Editable before it becomes knowledge</small></span><em>{transcript.trim() ? `${transcript.trim().split(/\s+/).length} words` : "Waiting for speech"}</em></header>
+      <header><span><strong>Live transcript</strong><small>Editable before it becomes knowledge</small></span><em>{transcriptWords ? `${transcriptWords} words` : "Waiting for speech"}</em></header>
       {liveNote && <p className="lecture-live-note">Live text comes in short pieces for this model.</p>}
       {groupHint && hasTranscriptContent(segments) && <p className="lecture-live-note">Add an Analysis model in Settings → Models to group paragraphs by topic.</p>}
       {finalizing && <p className="lecture-live-note" role="status">Finishing the transcript… <button type="button" className="lp-retry" onClick={skipChecks}>Skip</button></p>}
