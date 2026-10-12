@@ -139,6 +139,8 @@ describe("source pages", () => {
     api.source.mockResolvedValue(source());
     const { props } = renderPage();
     await screen.findByRole("heading", { name: "Choose a home" });
+    // ⌘↵ works once filing is possible, which is when the button is: wait for it, not the heading.
+    await waitFor(() => expect(screen.getByRole("button", { name: /File to library$/ })).toBeEnabled());
     fireEvent.keyDown(window, { key: "Enter", ctrlKey: true, metaKey: true });
     await waitFor(() => expect(api.fileSource).toHaveBeenCalledWith("src_1", "biology"));
     expect(props.onResolved).toHaveBeenCalled();
@@ -318,6 +320,8 @@ describe("note pages", () => {
     const user = userEvent.setup();
     const { props } = renderPage({ item: { type: "note", id: "note_1" } });
     await screen.findByRole("heading", { name: "This week" });
+    // E works once the note can be edited, which is when its Read / Write switch shows.
+    await screen.findByRole("button", { name: /Write/ });
     fireEvent.keyDown(window, { key: "e" });
     expect(await screen.findByRole("textbox", { name: "Note title" })).toHaveValue("Reading plan");
     await user.click(screen.getByRole("button", { name: /Read/ }));
