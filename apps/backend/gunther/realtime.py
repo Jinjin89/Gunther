@@ -1258,7 +1258,9 @@ async def proxy_realtime_transcription(
 # Audio is read this much past each end so a word at the edge is not cut.
 RELISTEN_PAD_MS = 300
 # A minute of 16 kHz audio is about 2.6 MB once encoded for Qwen.
-RELISTEN_TIMEOUT = httpx.Timeout(120.0, write=300.0)
+# A minute of 16 kHz audio is ~2.6 MB as base64. On a slow link a check fails within about a
+# minute and says so (the live text stays, with Retry) rather than holding up later checks.
+RELISTEN_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 RELISTEN_PROMPT_CHARS = 800
 
 
@@ -1342,8 +1344,10 @@ async def relisten_audio(
         async def post(**request: Any) -> httpx.Response:
             try:
                 return await client.post(**request)
-            except httpx.TransportError:
-                return await client.post(**request)  # one more try on a dropped connection
+            except (httpx.ConnectError, httpx.RemoteProtocolError):
+                # One more try when the connection never opened or was dropped; a timeout is
+                # not retried, so a slow link fails once instead of twice as slowly.
+                return await client.post(**request)
 
         try:
             if choice.kind == "qwen":

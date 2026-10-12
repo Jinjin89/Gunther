@@ -463,6 +463,39 @@ def test_parts_the_copy_lacks_are_silence_and_listed_and_nothing_covered_is_409(
     assert audio[4_300 * 32 : 5_300 * 32] == tone(1_000, 100)
 
 
+def test_a_check_that_times_out_fails_once_and_a_dropped_connection_is_tried_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    attempts: list[str] = []
+    failures = iter(["timeout", "dropped", None])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        failure = next(failures)
+        attempts.append(str(failure))
+        if failure == "timeout":
+            raise httpx.WriteTimeout("slow link", request=request)
+        if failure == "dropped":
+            raise httpx.ConnectError("no route", request=request)
+        return httpx.Response(200, json={"output": {"text": "ok"}})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        realtime.httpx,
+        "AsyncClient",
+        lambda **kw: real(transport=httpx.MockTransport(handler), **kw),
+    )
+    with TestClient(create_app(settings_for(tmp_path))) as client:
+        with_provider(client, "qwen")
+        seed_copy(tmp_path, "rec_t", [(0, 3_000)])
+        body = {"startMs": 0, "endMs": 3_000}
+        slow = client.post("/api/recordings/rec_t/relisten", headers=SIDECAR, json=body)
+        assert slow.status_code == 502
+        assert attempts == ["timeout"]  # a timeout is not tried twice
+        retried = client.post("/api/recordings/rec_t/relisten", headers=SIDECAR, json=body)
+        assert retried.status_code == 200 and retried.json()["text"] == "ok"
+        assert attempts == ["timeout", "dropped", "None"]
+
+
 def test_the_prompt_for_an_openai_style_server_is_terms_then_the_end_of_before(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
