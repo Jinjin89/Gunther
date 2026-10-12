@@ -877,8 +877,15 @@ export function paragraphCheck(
 ): { failed: CheckWindow | null; checking: boolean } {
   const ids = new Set(paragraphSentences(state, paragraph).map((sentence) => sentence.windowId));
   const windows = state.windows.filter((window) => ids.has(window.id));
+  // A failed minute may have been grouped into several paragraphs: its note goes once, under
+  // the last of them that the user has not rewritten.
+  const holdsItsEnd = (window: CheckWindow) => {
+    const last = [...state.paragraphs].reverse().find((item) => item.edited === undefined
+      && paragraphSentences(state, item).some((sentence) => sentence.windowId === window.id));
+    return last?.id === paragraph.id;
+  };
   return {
-    failed: paragraph.edited !== undefined ? null : windows.find((window) => window.state === "failed") ?? null,
+    failed: paragraph.edited !== undefined ? null : windows.find((window) => window.state === "failed" && holdsItsEnd(window)) ?? null,
     checking: windows.some((window) => window.state === "checking"),
   };
 }

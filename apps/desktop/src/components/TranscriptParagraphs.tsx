@@ -28,7 +28,7 @@ interface TranscriptParagraphsProps {
 type Row =
   | {
     kind: "paragraph"; id: string; startMs: number; text: string; edited: boolean; parts: TextPart[];
-    failed: { id: string; error?: string } | null; checking: boolean; heard: string | null; groupingFailed: string | null;
+    failed: { id: string; startMs: number; endMs: number; error?: string } | null; checking: boolean; heard: string | null; groupingFailed: string | null;
   }
   | { kind: "gap"; id: string; startMs: number; text: string }
   | { kind: "live"; id: string; startMs: number; text: string; draft: string; joiner: string; checking: boolean };
@@ -57,7 +57,7 @@ export function TranscriptParagraphs({ state, active, onEdit, onRetry, onRetryGr
         edited: paragraph.edited !== undefined,
         // The words a check changed are marked while recording, not when reading back.
         parts: active ? paragraphParts(state, paragraph) : [{ text, changed: false }],
-        failed: check.failed ? { id: check.failed.id, ...(check.failed.error ? { error: check.failed.error } : {}) } : null,
+        failed: check.failed ? { id: check.failed.id, startMs: check.failed.startMs, endMs: check.failed.endMs, ...(check.failed.error ? { error: check.failed.error } : {}) } : null,
         checking: check.checking,
         heard: heardLive(state, paragraph),
         // Grouping failed: the note sits under the newest paragraph, where the sentences wait.
@@ -174,7 +174,7 @@ export function TranscriptParagraphs({ state, active, onEdit, onRetry, onRetryGr
           Couldn't group into paragraphs · <button type="button" className="lp-retry" onClick={() => onRetryGrouping?.()}>Retry</button>
         </span>}
         {row.kind === "paragraph" && !row.checking && row.failed && <span className="lp-status is-failed" title={row.failed.error}>
-          Couldn't check · <button type="button" className="lp-retry" onClick={() => onRetry?.(row.failed!.id)}>Retry</button>
+          Couldn't check {clockLabel(row.failed!.startMs)}–{clockLabel(row.failed!.endMs)} · <button type="button" className="lp-retry" onClick={() => onRetry?.(row.failed!.id)}>Retry</button>
         </span>}
       </span>
     </div>)}

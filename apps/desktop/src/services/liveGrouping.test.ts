@@ -10,6 +10,8 @@ import {
   emptyTranscript,
   groupingRequest,
   nextRegroupChunk,
+  nextWindow,
+  paragraphCheck,
   paragraphSentences,
   paragraphText,
   storableTranscript,
@@ -179,5 +181,20 @@ describe("paragraphs by content", () => {
     state = applyWindowResult(state, { startMs: 0, endMs: 2_000 }, null, { checksOff: true });
     expect(state.paragraphs).toHaveLength(1);
     expect(state.paragraphs[0]!.frozen).toBe(false);
+  });
+});
+
+describe("a failed minute split into several paragraphs", () => {
+  it("shows its Couldn't check note once, under the last of them", () => {
+    let state: TranscriptState = grouped();
+    const sentences = numbered(4).map((text, index) => ({ start_ms: index * 1_000 + 10, end_ms: (index + 1) * 1_000, text }));
+    state = applyPiece(state, { id: "a", start_ms: 10, end_ms: 4_000, text: "", final: true, sentences });
+    const window = nextWindow(state, undefined, { closing: true })!;
+    state = applyWindowResult(state, window, { error: "slow link" }, { closing: true });
+    const request = groupingRequest(state)!;
+    state = applyGrouping(beginGrouping(state), request, { starts: [0, 2] });
+    expect(texts(state)).toEqual([["S1.", "S2."], ["S3.", "S4."]]);
+    const notes = state.paragraphs.map((paragraph) => paragraphCheck(state, paragraph).failed?.id ?? null);
+    expect(notes).toEqual([null, window.startMs === 0 ? "w-0" : `w-${window.startMs}`]);
   });
 });
