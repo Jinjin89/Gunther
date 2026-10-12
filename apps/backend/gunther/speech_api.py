@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from gunther import speech_registry
 from gunther.device_auth import AuthPrincipal
-from gunther.realtime import qwen_root, sensevoice_health, try_qwen_model
+from gunther.realtime import qwen_root, sensevoice_health, try_qwen_live, try_qwen_model
 from gunther.schemas import ApiModel
 from gunther.service_settings import ServiceSettingsStore, list_models, secret_hint
 from gunther.speech_registry import PRESETS, ROLES, Registry, SpeechError
@@ -305,12 +305,19 @@ async def _test(provider: dict[str, Any], api_key: str | None) -> dict[str, Any]
     chosen = [model["id"] for model in provider["models"]]
     warning = result.warning
     if result.ok and provider["kind"] == "qwen" and chosen and api_key:
-        # Its list leaves out the Qwen-Audio recognisers: ask each model instead.
+        # Its list leaves out the Qwen-Audio recognisers: ask each model instead. A model
+        # is a pair (upload and live ids): the upload half must work; the live half
+        # only decides whether recording can write live sentences.
+        problems: list[str | None] = []
         async with httpx.AsyncClient(timeout=30.0) as client:
-            problems = [
-                await try_qwen_model(client, provider["baseUrl"], api_key, model)
-                for model in chosen
-            ]
+            for model in chosen:
+                problem = await try_qwen_model(client, provider["baseUrl"], api_key, model)
+                if problem is None and await try_qwen_live(provider["baseUrl"], api_key, model):
+                    problem = (
+                        f"{model}: live text isn't available for this model; "
+                        "recording will send short pieces instead."
+                    )
+                problems.append(problem)
         found = [problem for problem in problems if problem]
         if found:
             warning = " ".join(dict.fromkeys(found))

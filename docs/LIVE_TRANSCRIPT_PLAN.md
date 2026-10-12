@@ -85,11 +85,12 @@ One time per paragraph, in a narrow grey gutter, clickable to play from there on
 5. **Model output or an error**: if a check fails, the paragraph keeps its live text and shows "Couldn't check · Retry". Never a made-up fallback.
 6. **No pause-length rules for sentences or paragraphs** (user, 2026-10-12: "it could be thinking"; a 10 s thinking pause can sit inside one sentence). Where a sentence ends is the model's call, and a sentence is confirmed only after the model has heard what follows it (the minute check holds back its last sentence, §2.5). Audio is never cut inside a word. The minute check is **on by default**, with a switch to turn it off; it roughly doubles the audio sent (about 2.1× with the held-back sentences), which costs cents per hour.
 7. **Paragraphs by content, not by time** (user, 2026-10-12: "certain content put in one paragraph"). The Analysis model reads the confirmed sentences and says only where paragraphs start (sentence numbers); it never sees or returns changed text, so every word still comes from listening. Live: earlier paragraphs are frozen and only the newest one can still split. After Stop: one regroup pass over the whole transcript. Without an Analysis model: one paragraph per minute check, with a hint to add one. Details §2.11, prompt §5.2.
+8. **Simple settings** (user, 2026-10-12: "I do not want complex settings, but make it work"). One model choice per job; Gunther picks the live or upload form of a Qwen model itself and falls back to short pieces if live isn't available; the minute check is one on/off switch (§2.2, §4.6).
 
 ## 2. Calls the planner made (the user may still override)
 
 1. **Qwen streaming is the live model** when the recording job uses a Qwen provider: `qwen-audio-3.1-asr-flash-streaming` over DashScope's duplex WebSocket (`run-task` / `result-generated` / `finish-task`). The existing HTTP model `qwen-audio-3.1-asr-flash` becomes the **checking** model.
-2. **A new transcription job "Checking"** in Settings → Transcription (beside Recording and Ask dictation). Default: the recording provider's first non-streaming model. Choosing "Off" (empty) is the switch that turns Layers 2 and 3 off, with a one-line hint ("Live text only: sentences aren't heard again").
+2. **No "Checking" job** (user, 2026-10-12: "I do not want complex settings, but make it work"). The minute check uses the Recording job's own model, in its upload form (§4.6). The only setting is one switch under Recording, **"Check each minute again"**, on by default, with the line "Sends the audio a second time for better text." Off turns Layers 2 and 3 off.
 3. **The desktop owns the transcript.** The backend streams sentence events and answers "listen to this time range again" requests; the desktop builds paragraphs, decides when to check, and checkpoints as today. This keeps one writer and leaves the durable-recording code alone.
 4. **The backend keeps its own copy of the audio it heard** (16 kHz mono PCM, ~115 MB per hour) next to the recording, so it can listen again without decoding WebM/MP4 (there is no ffmpeg in the sidecar). It is deleted when the recording is deleted, and a startup sweep removes copies of completed recordings older than 7 days.
 5. **Minute check and paragraphs** (replaces the 2 s pause rule, §1.6):
@@ -243,12 +244,12 @@ A live sentence that straddles `confirmedUntilMs` (its live end is later than th
 // 200
 {"text": "…", "model": "qwen-audio-3.1-asr-flash", "provider": "Qwen",
  "sentences": [{"start_ms": 61390, "end_ms": 64810, "text": "…。"}]}   // on the recording clock; [] when the model gives no word times
-// 409 {"detail": "No audio was kept for 61.2–118.4 s."} · 424 {"detail": "Choose a Checking model in Settings → Transcription."} · 502 {"detail": "<provider error>"}
+// 409 {"detail": "No audio was kept for 61.2–118.4 s."} · 424 {"detail": "Choose a Recording model in Settings → Transcription."} · 502 {"detail": "<provider error>"}
 ```
 
 Sentences come from Qwen's `sentence.words[]`: words are joined until one carries sentence-ending punctuation (`。！？.!?`), and times are shifted by the padded start. Sentences that lie entirely in the padding are dropped. These sentences are what the minute check keeps or holds back (§2.5).
 
-Reads the audio copy (padded 300 ms each side, range ≤ 180 s), calls the **Checking** job's model:
+Reads the audio copy (padded 300 ms each side, range ≤ 180 s), calls the **Recording** job's model in its upload form (§4.6):
 - Qwen HTTP: `qwen_request()` gains `context: list[str]`; each non-empty item becomes a `{"role": "user", "content": [{"type": "input_text", "text": item[:400]}]}` message **before** the audio message (order: terms, before, after).
 - OpenAI-style: `prompt` = terms joined by ", " then the tail of `before`, ≤ 800 characters.
 - SenseVoice: no context.
@@ -259,10 +260,10 @@ Body `{"transcript": "<rendered text>", "title": "…"}` → `{"terms": ["…"]}
 
 ### 4.6 Speech registry
 
-- `ROLES` gains `Role("checking", "Checking", "Listens to each minute again, with what was said before it, and replaces the live text. Sends the audio a second time.", False)`. `default_roles()`: the recording provider's first model that isn't a streaming model, else `None`.
-- `is_duplex_stream(kind, model) -> bool`: `kind == "qwen"` and the model id ends with `-streaming` or starts with `fun-asr-realtime`. Only these use the duplex socket.
-- `PRESETS["qwen"].models` lists `qwen-audio-3.1-asr-flash-streaming` and `qwen-audio-3.1-asr-flash`. The note says which is for live and which for checking.
-- When the Recording job's model is a Qwen model that isn't streaming, Settings shows one line: "For live sentences that correct themselves, use qwen-audio-3.1-asr-flash-streaming" with a **Use it** button (adds the model to the provider if missing and selects it). Saved choices are never switched silently.
+- **No new role.** The minute check resolves the `recording` job and uses its model's upload form. The switch is a boolean saved with the speech settings (`check_again: true` by default), shown under the Recording job.
+- **One choice, two ids** (2026-10-12; Qwen names the same model `X-streaming` for the socket and `X` for upload, §2.10). `qwen_live_id(model)` adds `-streaming` when missing; `qwen_upload_id(model)` removes a trailing `-streaming`; only for `kind == "qwen"` (the provider's naming convention, not a model list). Live recording uses `qwen_live_id`, every upload (dictation, segments, the minute check) uses `qwen_upload_id`, whichever form the user saved. If the live id is refused or `task-started` doesn't arrive in 10 s, the socket falls back to segmented uploads (`service.ready` `"live": "segments"`, one log line), so recording always works. `is_duplex_stream(kind, model)` stays the test for "this exact id is a socket id".
+- `PRESETS["qwen"].models` is the single `qwen-audio-3.1-asr-flash`; its note says Gunther uses its live version while recording and its upload version for everything else. Test connection checks both halves of the pair and only warns softly when the live half is missing ("live text isn't available for this model; recording will send short pieces instead").
+- No "Use it" hint is needed: any Qwen-Audio model the user picks already streams while recording.
 
 ### 4.7 Paragraphs — `POST /api/recordings/{id}/paragraphs` (Phase 3B)
 
@@ -330,7 +331,7 @@ The user (or Opus with the key) has run it, and the progress log records the ans
 2. Map each `result-generated` to `transcript.piece` (§4.1): `start_ms = task_start_offset + begin_time`, same for `end_ms` and every word time; skip `heartbeat` packets and empty sentence-begin events. Final pieces carry `sentences` from `split_sentences(words)` (a shared helper, also used by `relisten`): words are joined until one carries sentence-ending punctuation (`。！？.!?；;`). v1 clients get `…completed` per final sentence instead.
 3. Context: `input.context` = [terms turn: the `context` query (title) ≤ 400 chars] + [recent turn: the last final sentences of this socket, ≤ 400 chars, newest kept]. Refresh mid-task with `continue-task` every 3 final sentences (at most every 20 s) only if Phase 0 showed it works; otherwise only at each new task.
 4. Audio in: decode base64, resample to 16 kHz when `sample_rate` ≠ 16000 (`resample_pcm16()` with numpy, low-pass before decimating; unit-tested), drop bytes before the expected offset, note gaps after it.
-5. `speech_registry.py`: `is_duplex_stream()`, Qwen preset models (§4.6). The `checking` role is added in Phase 3, not here.
+5. `speech_registry.py`: `is_duplex_stream()`, `qwen_live_id()` / `qwen_upload_id()`, the fallback to segments, the Qwen preset and Test connection checking both halves (§4.6).
 6. `api.py` `live_recording()`: accept `protocol`, `sample_rate`, `offset_ms`, `recording_id` (validated, unused until Phase 3).
 7. Fix the desktop label bug while here: `openTranscriptionSocket()` shows "OpenAI live" for every non-SenseVoice provider; use the `service.ready` provider and model.
 
@@ -351,7 +352,7 @@ With the fake server, a v2 client sees sentences that revise in place and finali
 
 ### Tasks
 1. `services/liveTranscript.ts` per §4.2, pure functions, no React.
-2. `LectureRecorder.tsx`: v2 socket (`protocol=2`, `sample_rate=16000`, `offset_ms`, `recording_id`); `encodePcm16(samples, rate, 16_000)`; track `sentOffsetMs`; append messages carry `offset_ms`; pending audio while reconnecting keeps up to 60 s (was ~10 s). Replace `partsRef`/`publishTranscript` with a `TranscriptState` held in a ref and mirrored to state; `transcript` text = `renderTranscript(state)`. With no Checking job yet (this phase), paragraphs form with `checksOff` (§2.5): every ≥ 60 s of live sentences, and everything at `pause()`/`stop()`.
+2. `LectureRecorder.tsx`: v2 socket (`protocol=2`, `sample_rate=16000`, `offset_ms`, `recording_id`); `encodePcm16(samples, rate, 16_000)`; track `sentOffsetMs`; append messages carry `offset_ms`; pending audio while reconnecting keeps up to 60 s (was ~10 s). Replace `partsRef`/`publishTranscript` with a `TranscriptState` held in a ref and mirrored to state; `transcript` text = `renderTranscript(state)`. Before the minute check exists (this phase), paragraphs form with `checksOff` (§2.5): every ≥ 60 s of live sentences, and everything at `pause()`/`stop()`.
 3. Paragraph view replaces the `<textarea>` when the state has paragraphs or live text: gutter time, black confirmed paragraphs, dark grey live sentences, light grey draft, "checking…" / "Couldn't check · Retry" (wired in Phase 3), click a confirmed paragraph to edit (inline textarea, Esc cancels, blur/⌘↵ saves → `edited`; live text isn't editable while it can still change), "edited" faint label, "Show what was heard live" in the paragraph menu. Keep auto-scroll unless the user has scrolled up. When there are no paragraphs (transcription off, imported audio), keep today's textarea exactly.
 4. Checkpoint and draft carry `transcriptSegments` / `formatVersion: 3` (§4.3), backend migration 23 + schema + contracts. Recovery restores the paragraph view.
 5. `RecordingView.tsx` `Transcript`: paragraphs read as paragraphs (time in a narrow gutter above the first line on narrow widths, readable line length, the active paragraph slightly darker while playing). No change to `parseTranscript()` needed; add a test that the new rendered format parses to one timed segment per paragraph.
@@ -365,12 +366,12 @@ With the fake server, a v2 client sees sentences that revise in place and finali
 ### Done when
 Live recording shows a light grey sentence that rewrites itself, dark grey live sentences, and black paragraphs of about a minute; the saved recording shows paragraphs with clickable times; old recordings still display.
 
-## Phase 3: Minute check (backend audio copy + listen again + Checking job)
+## Phase 3: Minute check (backend audio copy + listen again + one switch)
 
 ### Tasks
 1. Audio copy: when the live socket has a valid `recording_id`, write the 16 kHz PCM to `<recordings_dir>/<id>.listen.pcm` at byte `offset_ms × 32`, and append covered ranges to `<id>.listen.ranges` (`start_ms end_ms` per line). Delete both with the recording; startup sweep per §2.4.
-2. `POST /api/recordings/{id}/relisten` per §4.4, using the `checking` job. Context per provider kind. Errors as listed.
-3. `speech_registry.py`: the `checking` role and its default; `SpeechSettings.tsx` shows it like the other jobs, plus the "Use it" hint (§4.6).
+2. `POST /api/recordings/{id}/relisten` per §4.4, using the `recording` job's model in its upload form (§4.6). Context per provider kind. Errors as listed.
+3. The "Check each minute again" switch (§2.2): saved with the speech settings, default on, shown under the Recording job in `SpeechSettings.tsx`; off means `nextWindow()` confirms live text as it is (`checksOff`).
 4. Desktop: after each final piece, `nextWindow()`; when it returns a window and none is in flight, set `checking` and call `relisten` with `pass: "minute"`. Context: `terms` = the recording title, `before` = the last confirmed paragraph's text tail. Apply with `applyWindowResult()`; failure → `failed` paragraph + Retry (§2.5). At Pause/Stop, one closing window takes everything; Stop's "content ready" waits for it (the existing "content not ready yet" path), with a "Skip" that confirms the live text as it is.
 5. The underline on changed words (§Display): a token diff of the window's live text vs the kept check sentences; mark changed tokens for ~4 s, then fade. Pure function in `liveTranscript.ts`, tested.
 6. `evals/transcript/compare.py` gains a `minute` method (the same §2.5 rules over the stream results, via `--reuse`). It must score no worse than `paragraph` on `noisy.wav` and `hard.wav`, and keep the sentence in `probe_pause.py` whole. Record the numbers in the progress log.
@@ -443,7 +444,7 @@ SenseVoice and OpenAI-style providers produce sentence-aligned live text, and La
 - **v1 must not change** for the phone and Ask dictation (`useDictation.ts`).
 - **Don't trust a check that came back empty**: keep the live text and mark `failed` with the reason ("The model returned no text"). It's an error, not a silent swap.
 - **Context limits are silent.** Qwen cuts turns over 400 chars and keeps only 5; trim on our side so the important part (newest text, first terms) survives.
-- **Privacy is unchanged**: the same audio already goes to the same provider; checks send it a second (and third) time. Say so in the Checking job's description.
+- **Privacy is unchanged**: the same audio already goes to the same provider; checks send it a second (and third) time. Say so beside the "Check each minute again" switch.
 
 ## Review checklist (Opus)
 
@@ -526,3 +527,49 @@ So the model keeps a thought whole when it hears both halves together; only our 
 - live, about once a minute with earlier paragraphs frozen: 11 paragraphs; the same 5 starts, the sixth one sentence early (38.6 s), a little finer.
 - The student's question and the teacher's answer got their own paragraphs both ways. An earlier prompt without the "avoid one short sentence" rule left `好，我们开始上课。` alone; §5.2 fixed that.
 So: group live (cheap, stable), regroup once after Stop (sees the whole talk). Added §1.7, §2.11, §4.7, §5.2, Phase 3B; the data model (§4.2) now keeps confirmed sentences, check windows and paragraph groups apart.
+
+### Phase 1 — 2026-10-12 (Sonnet; backend, plus the desktop label)
+
+Built to the plan and to the two changes of direction the same day (Qwen model ids are a pair, and silence can come back as a 400 `{}`). Uncommitted.
+
+**Changed**
+- `gunther/qwen_stream.py` (new): `stream_url()`, `context_turns()` (terms keep their start, recent text its end, each ≤ 400), `run_task_message()` / `finish_task_message()`, `split_sentences()` (shared with the later `relisten`), `Pcm16Resampler` / `resample_pcm16()` (windowed-sinc, remembers chunk edges).
+- `gunther/speech_registry.py`: `is_duplex_stream()`, `qwen_live_id()`, `qwen_upload_id()`; the Qwen preset keeps the single `qwen-audio-3.1-asr-flash` and its note says live uses the live version and everything else the upload version. `default_roles()` untouched (the `checking` role is Phase 3).
+- `gunther/realtime.py`: `open_live_socket()` (connect and run one empty task to prove the model works live), `try_qwen_live()`, `_LiveStream` / `_proxy_live_stream()` (tasks per stretch of audio, `finish-task` on commit, new task on the next audio, 100 ms frames, audio since the last final kept up to `RETAIN_SECONDS` and replayed from the last final's end after a failure, backoff 0.5/1/2/4 s, `transcript.gap` for audio that could not be kept or never arrived, drop-by-`offset_ms` on replay, v1 clients get one `…completed` per final sentence). `proxy_realtime_transcription` takes `protocol`, `sample_rate`, `offset_ms`; `_qwen_transcriber` always uploads with `qwen_upload_id`; the segmented path and the form transcribers take the sample rate (default 24 000, unchanged). `qwen_heard_nothing()` now also counts a 400 with body `{}` (Qwen-Audio 3.0). `try_qwen_model()` checks the upload id.
+- `gunther/api.py` `live_recording()`: accepts `protocol` (1–2), `sample_rate`, `offset_ms`, `recording_id` (format-checked, unused until Phase 3).
+- `gunther/speech_api.py` `_test`: upload half through `try_qwen_model`, live half through `try_qwen_live`; only upload working gives the soft note "live text isn't available for this model; recording will send short pieces instead"; upload failing gives the old messages and the live half is not asked. The "live (WebSocket) model, which Gunther cannot use yet" message is gone.
+- `apps/desktop/src/components/LectureRecorder.tsx`: `transcriptionLabelFor()` builds the label from `service.ready` (provider name and model) instead of "OpenAI live".
+
+**Behaviour**
+- Recording job on a Qwen model with live on: before accepting, the backend opens the socket and starts one empty task on the live id. Works: `service.ready` carries `"live": "stream"` (and `protocol` for v2) and the stream runs. Refused, no `task-started` in 10 s, or cannot connect: one warning line in the log (model and reason) and the old segmented upload path with the upload id, `"live": "segments"`; no `service.error`. Decided once per socket. The client waits for accept meanwhile (5–9 s from the US box); its existing 120-chunk buffer covers that.
+- v1 client on a live model: 24 kHz audio resampled to 16 kHz, one `…completed` per final sentence (`item_id` `qwen-N`, `start_seconds` on the clock that starts at `offset_ms`), finish-task on `commit`. v2 client: `transcript.piece` drafts (end_ms null) and finals with `sentences`, ids `<tag>-<task>-<sentence_id>`, `transcript.gap`.
+- Ask dictation and every upload (including a saved `-streaming` id) use the upload id, so the brief's "fail with a clear message" item was dropped as directed.
+- Mid-recording failures: the task is started again from the last final's end; after 4 failures in a row `service.error` `provider_unavailable` and the socket closes (the desktop reconnect takes over).
+
+**Tests** (no network): new `tests/test_realtime_stream.py`, 18 tests (fake upstream via `websockets.serve` in a thread): ids and recording-clock times across a pause, gap for missing audio, drop and replay, gaps from the retention limit (two cases), v1 completed events with 24 kHz to 16 kHz byte count, both context turns ≤ 400, fallback when run-task is refused and when it is never answered, saved `-streaming` id uploads without the suffix while recording stays live, pairing helper, Test connection's three outcomes, live check's refusal/silence messages, `{}` 400 versus other 400s (also through the segmented path), resampler (rate, tone, chunking, high tone removed), `split_sentences`, `context_turns`, `stream_url`. Run: `test_realtime_stream.py test_transcription.py test_speech.py test_api.py`: 76 passed. `ruff check gunther tests` clean; `ruff format --check` clean on the touched files (`api.py` was not formatted before and was left alone). Desktop: `vitest run src/components/LectureRecorder.test.ts` 7 passed, `tsc --noEmit` clean.
+- Changed existing tests (`tests/test_speech.py`): the two Test connection tests and the unsaved-models test now stub `try_qwen_live`; the old assertion that a `-streaming` id is reported as a WebSocket-only model was replaced by "no WebSocket message".
+
+**Deviations and open points**
+- `service.ready` is sent after the start-up check, not before the upstream connects, so the fallback can be reported in it.
+- The desktop still treats a `service.error` as "local only" and reconnects up to 8 times; a live socket that fails for good (4 failures) therefore reconnects and probes again each time. Phase 2 should stop on `provider_unavailable`.
+- v2 clients on the fallback path get v1 events (segments emit only `…completed`) until Phase 5.
+- `recording_id` and the audio copy are Phase 3. `commit` after the last audio of Stop relies on the desktop's existing 1.8 s wait before closing for the final sentence.
+- Not tried against the real service; the real flow was only checked against the reference code in `evals/transcript`.
+
+**Opus review of Phase 1 (2026-10-12)**
+- Fixed: the client is now accepted *before* the live model is checked (`realtime._accept()`), so the desktop's audio waits in the socket instead of its 10 s queue while Qwen connects (6–19 s from the US box). The segmented minimum went back to 1 s (`2 * sample_rate` bytes), as before.
+- **Tried against the real service** (`/tmp`-only harness: a real uvicorn server running `proxy_realtime_transcription`, `noisy.wav` at real pace, a 4 s Pause at 60 s): v1 at 24 kHz 0.7% errors, 21 final sentences, starts within 0.2 s of the script; v2 at 16 kHz 0.7%, 147 drafts, 8 final pieces split into 21 sentences, no gaps, no errors; the times continued correctly after the Pause; the last final arrived 0.5 s after the final commit.
+- For Phase 2: v2 needs a `transcript.flushed` event after a commit's task ends, so Stop waits for the last sentence instead of a fixed 1.8 s; the desktop must stop reconnecting on `provider_unavailable`; v2 clients on the segmented fallback should get `transcript.piece` finals too (one sentence per segment, segment times), so the desktop handles one format.
+
+**Qwen-Audio 3.0 vs 3.1** (same day, `compare.py --http-model/--stream-model`; error rates):
+
+| Room | Method | 3.0 | 3.1 |
+|---|---|---|---|
+| noisy | today | 6.0% | 4.9% |
+| noisy | stream | 2.5% | 0.7% |
+| noisy | stream + check | 0.7% | 0.7% |
+| hard | today | 29.8% | 23.3% |
+| hard | stream | 23.7% | 23.7% |
+| hard | stream + check | 7.8% | 4.2% |
+
+3.1 is as good or better everywhere; it stays the default. Both work through the id pairing.

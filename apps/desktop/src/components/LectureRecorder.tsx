@@ -95,6 +95,16 @@ export class MicrophonePermissionTimeoutError extends Error {
   }
 }
 
+/** What the header shows for the transcription service that answered: its name and model. */
+export function transcriptionLabelFor(ready: Record<string, unknown>): string {
+  const provider = typeof ready.provider === "string" ? ready.provider : "";
+  const model = typeof ready.model === "string" ? ready.model : "";
+  if (provider === "sensevoice") return "SenseVoice · local";
+  const names: Record<string, string> = { qwen: "Qwen", compatible: "Transcription server" };
+  const name = names[provider] ?? (provider || "Transcription");
+  return model ? `${name} · ${model}` : name;
+}
+
 function stopMediaStream(stream: MediaStream) {
   stream.getTracks().forEach((track) => track.stop());
 }
@@ -620,7 +630,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
       if (event.type === "service.ready") {
         reconnectAttemptsRef.current = 0;
         setProvider("live");
-        setTranscriptionLabel(event.provider === "sensevoice" ? "SenseVoice · local" : "OpenAI live");
+        setTranscriptionLabel(transcriptionLabelFor(event));
         const buffered = pendingPcmRef.current.splice(0);
         buffered.forEach((audio) => socket.send(JSON.stringify({ type: "input_audio_buffer.append", audio })));
         if (buffered.length) setNotice("Live transcription reconnected and caught up with buffered audio.");

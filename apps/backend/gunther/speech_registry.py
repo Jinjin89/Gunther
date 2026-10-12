@@ -50,7 +50,8 @@ PRESETS: dict[str, Preset] = {
         ("qwen-audio-3.1-asr-flash",),
         note=(
             "Strong on Chinese. Use a Qwen-Audio model such as qwen-audio-3.1-asr-flash; "
-            "Qwen3-ASR models (qwen3-asr-flash) take an older kind of request."
+            "Gunther uses its live version while recording and its upload version for "
+            "everything else. Qwen3-ASR models (qwen3-asr-flash) take an older kind of request."
         ),
     ),
     "openai": Preset(
@@ -107,6 +108,29 @@ LEGACY_KEYS = (
 
 class SpeechError(ValueError):
     """A provider or job that cannot be saved; the message says why."""
+
+
+# Qwen names one recogniser twice: ``X-streaming`` works only over the live socket and
+# ``X`` only by upload. Gunther treats the pair as one choice.
+LIVE_SUFFIX = "-streaming"
+
+
+def is_duplex_stream(kind: str, model: str) -> bool:
+    """Whether this exact id is one that only works over Qwen's live (duplex) socket."""
+
+    return kind == "qwen" and (model.endswith(LIVE_SUFFIX) or model.startswith("fun-asr-realtime"))
+
+
+def qwen_live_id(model: str) -> str:
+    """The id to use over the live socket: the model with ``-streaming`` added if missing."""
+
+    return model if is_duplex_stream("qwen", model) else f"{model}{LIVE_SUFFIX}"
+
+
+def qwen_upload_id(model: str) -> str:
+    """The id to use when sending audio whole: the model without a trailing ``-streaming``."""
+
+    return model.removesuffix(LIVE_SUFFIX)
 
 
 # Checking what is saved ---------------------------------------------------------

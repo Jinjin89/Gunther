@@ -846,7 +846,18 @@ async def live_recording(
     websocket: WebSocket,
     context: str = "",
     purpose: Literal["recording", "dictation"] = "recording",
+    protocol: Annotated[int, Query(ge=1, le=2)] = 1,
+    sample_rate: Annotated[int, Query(ge=8_000, le=48_000)] = 24_000,
+    offset_ms: Annotated[int, Query(ge=0)] = 0,
+    recording_id: Annotated[str | None, Query(max_length=64, pattern="^[A-Za-z0-9_-]+$")] = None,
 ) -> None:
+    """The live transcript socket. v1 (the default) is what the phone and Ask dictation speak.
+
+    ``protocol=2`` asks for sentence pieces on the recording clock; ``offset_ms`` is where
+    this connection's audio starts on that clock. ``recording_id`` is accepted for the
+    audio copy that comes later and is not used yet.
+    """
+
     if not await _authorize_websocket(websocket):
         return
     state = websocket.app.state
@@ -859,6 +870,9 @@ async def live_recording(
         problem=problem or "",
         segment_seconds=state.settings.sensevoice_segment_seconds,
         context=context,
+        protocol=protocol,
+        sample_rate=sample_rate,
+        offset_ms=offset_ms,
     )
 
 

@@ -246,7 +246,12 @@ def test_testing_a_qwen_connection_checks_the_key_and_the_chosen_model(
         return None
 
     monkeypatch.setattr(speech_api, "list_models", listed)
+
+    async def live(base_url, api_key, model):
+        return None
+
     monkeypatch.setattr(speech_api, "try_qwen_model", tried)
+    monkeypatch.setattr(speech_api, "try_qwen_live", live)
     with TestClient(create_app(settings_for(tmp_path))) as client:
         added = client.post(
             "/api/settings/speech/providers", headers=SIDECAR, json={"kind": "qwen"}
@@ -274,8 +279,6 @@ def test_testing_qwen_names_a_model_it_cannot_use(
         model = json.loads(request.content)["model"]
         if model == "qwen-audio-3.1-asr-flash":
             return httpx.Response(400, json={"message": "ASR_RESPONSE_HAVE_NO_WORDS"})
-        if model == "qwen-audio-3.1-asr-flash-streaming":
-            return httpx.Response(400, json={"message": "url error, please check url"})
         if model == "qwen3-asr-flash":
             return httpx.Response(400, json={"message": "Input should be a valid string"})
         return httpx.Response(404, json={"message": "Model not exist."})
@@ -291,10 +294,13 @@ def test_testing_qwen_names_a_model_it_cannot_use(
     async def listed(url, key, name, *, key_optional=False):
         return CheckResult(True, "Connected, and the key works."), ["qwen-plus"]
 
+    async def live(base_url, api_key, model):
+        return None
+
     monkeypatch.setattr(speech_api, "list_models", listed)
+    monkeypatch.setattr(speech_api, "try_qwen_live", live)
     models = [
         "qwen-audio-3.1-asr-flash",
-        "qwen-audio-3.1-asr-flash-streaming",
         "qwen3-asr-flash",
         "qwen-audio-9-asr",
     ]
@@ -306,7 +312,7 @@ def test_testing_qwen_names_a_model_it_cannot_use(
             "/api/settings/speech/providers/qwen/test", headers=SIDECAR, json={"models": models}
         ).json()["warning"]
     assert "qwen-audio-3.1-asr-flash:" not in warning
-    assert "qwen-audio-3.1-asr-flash-streaming is a live (WebSocket) model" in warning
+    assert "WebSocket" not in warning
     assert "qwen3-asr-flash takes an older kind of request" in warning
     assert "qwen-audio-9-asr: Qwen has no model with this id." in warning
 
@@ -329,8 +335,12 @@ def test_connection_uses_unsaved_models_and_does_not_replace_saved_settings(
             None if model == "provided-asr-model" else f"{model}: Qwen has no model with this id."
         )
 
+    async def live(base_url, api_key, model):
+        return None
+
     monkeypatch.setattr(speech_api, "list_models", listed)
     monkeypatch.setattr(speech_api, "try_qwen_model", tried)
+    monkeypatch.setattr(speech_api, "try_qwen_live", live)
     with TestClient(create_app(settings_for(tmp_path))) as client:
         client.post(
             "/api/settings/speech/providers",

@@ -105,8 +105,11 @@ def listen(samples: np.ndarray, context: list[str] | None = None) -> dict:
         if response.status_code < 500:
             break
         time.sleep(2 * (attempt + 1))
-    # Audio with no speech in it is refused as "no words"; that is an empty transcript.
-    if response.status_code == 400 and "ASR_RESPONSE_HAVE_NO_WORDS" in response.text:
+    # Audio with no speech in it is refused: "no words" from 3.1, an empty `{}` from 3.0.
+    # Either is an empty transcript.
+    if response.status_code == 400 and (
+        "ASR_RESPONSE_HAVE_NO_WORDS" in response.text or response.text.strip() == "{}"
+    ):
         return {"output": {"text": ""}}
     response.raise_for_status()
     return response.json()

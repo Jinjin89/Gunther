@@ -4,6 +4,7 @@ import {
   importStorageHasCapacity,
   loadRecordingDrafts,
   recordingDraftsForWorkspace,
+  transcriptionLabelFor,
   type ImportedAudioDraft,
   type RecordingDraft,
 } from "./LectureRecorder";
@@ -170,5 +171,14 @@ describe("durable imported-audio planning", () => {
     expect(importStorageHasCapacity({ quota: 300_000_000, usage: 10_000_000 }, 100_000_000)).toBe(true);
     expect(importStorageHasCapacity({ quota: 150_000_000, usage: 10_000_000 }, 100_000_000)).toBe(false);
     expect(importStorageHasCapacity({}, 100_000_000)).toBe(true);
+  });
+});
+
+describe("transcription label", () => {
+  it("names the service and model that answered, not a fixed brand", () => {
+    expect(transcriptionLabelFor({ provider: "sensevoice", model: "sensevoice-small" })).toBe("SenseVoice · local");
+    expect(transcriptionLabelFor({ provider: "qwen", model: "qwen-audio-3.1-asr-flash" })).toBe("Qwen · qwen-audio-3.1-asr-flash");
+    expect(transcriptionLabelFor({ provider: "compatible", model: "whisper-1" })).toBe("Transcription server · whisper-1");
+    expect(transcriptionLabelFor({})).toBe("Transcription");
   });
 });
