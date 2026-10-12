@@ -7,11 +7,12 @@ import hashlib
 import json
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 
 from gunther import speech_registry
 from gunther.device_auth import AuthPrincipal
-from gunther.realtime import qwen_root, sensevoice_health
+from gunther.realtime import qwen_root, sensevoice_health, try_qwen_model
 from gunther.schemas import ApiModel
 from gunther.service_settings import ServiceSettingsStore, list_models, secret_hint
 from gunther.speech_registry import PRESETS, ROLES, Registry, SpeechError
@@ -302,8 +303,19 @@ async def _test(provider: dict[str, Any], api_key: str | None) -> dict[str, Any]
         address, api_key, provider["name"], key_optional=preset.key_optional
     )
     chosen = [model["id"] for model in provider["models"]]
-    missing = [model for model in chosen if listed and model not in listed]
     warning = result.warning
+    if result.ok and provider["kind"] == "qwen" and chosen and api_key:
+        # Its list leaves out the Qwen-Audio recognisers: ask each model instead.
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            problems = [
+                await try_qwen_model(client, provider["baseUrl"], api_key, model)
+                for model in chosen
+            ]
+        found = [problem for problem in problems if problem]
+        if found:
+            warning = " ".join(dict.fromkeys(found))
+        return {"ok": result.ok, "message": result.message, "warning": warning}
+    missing = [model for model in chosen if listed and model not in listed]
     if result.ok and missing:
         warning = f"{', '.join(missing)} is not in this account's model list."
     return {"ok": result.ok, "message": result.message, "warning": warning}

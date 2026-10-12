@@ -13,7 +13,13 @@ from gunther.database import create_database_engine
 from gunther.extraction import ModelExtractor
 from gunther.main import create_app
 from gunther.models import Artifact
-from gunther.realtime import _pcm16_wav, qwen_endpoint, qwen_request, qwen_text
+from gunther.realtime import (
+    _pcm16_wav,
+    qwen_endpoint,
+    qwen_heard_nothing,
+    qwen_request,
+    qwen_text,
+)
 
 
 def make_client() -> TestClient:
@@ -49,6 +55,22 @@ def test_qwen_audio_takes_a_wav_data_uri_and_answers_with_output_text() -> None:
     expected = "https://maas.qianwenaiapi.com/api/v1/services/aigc/multimodal-generation/generation"
     assert qwen_endpoint("https://maas.qianwenaiapi.com/compatible-mode/v1") == expected
     assert qwen_endpoint("https://maas.qianwenaiapi.com/") == expected
+
+
+def test_a_qwen_segment_without_speech_is_empty_text_not_an_error() -> None:
+    url = "https://maas.qianwenaiapi.com/api/v1/services/aigc/multimodal-generation/generation"
+    request = httpx.Request("POST", url)
+    # What Qwen-Audio answers for a pause or a stretch of room noise.
+    quiet = httpx.Response(
+        400,
+        json={"request_id": "r", "code": "CLIENT_ERROR", "message": "ASR_RESPONSE_HAVE_NO_WORDS"},
+        request=request,
+    )
+    missing = httpx.Response(
+        404, json={"code": "InvalidParameter", "message": "Model not exist."}, request=request
+    )
+    assert qwen_heard_nothing(quiet)
+    assert not qwen_heard_nothing(missing)
 
 
 def test_file_backed_sqlite_uses_desktop_safe_pragmas(tmp_path: Path) -> None:

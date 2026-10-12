@@ -47,7 +47,11 @@ PRESETS: dict[str, Preset] = {
     "qwen": Preset(
         "Qwen",
         "https://maas.qianwenaiapi.com",
-        note="Strong on Chinese. Use a Qwen-Audio model such as qwen-audio-3.1-asr-flash.",
+        ("qwen-audio-3.1-asr-flash",),
+        note=(
+            "Strong on Chinese. Use a Qwen-Audio model such as qwen-audio-3.1-asr-flash; "
+            "Qwen3-ASR models (qwen3-asr-flash) take an older kind of request."
+        ),
     ),
     "openai": Preset(
         "OpenAI",

@@ -105,6 +105,47 @@ def qwen_text(payload: object) -> str:
     return ""
 
 
+def qwen_heard_nothing(response: httpx.Response) -> bool:
+    """Qwen refuses audio with no speech in it (a pause, only noise) instead of returning ''."""
+
+    return response.status_code == 400 and "ASR_RESPONSE_HAVE_NO_WORDS" in response.text
+
+
+async def try_qwen_model(
+    client: httpx.AsyncClient, base_url: str, api_key: str, model: str
+) -> str | None:
+    """Send half a second of silence to a model; what is wrong with it, or None if it answers.
+
+    Qwen's model list leaves out the Qwen-Audio recognisers, so asking the model is the
+    only reliable check.
+    """
+
+    try:
+        response = await client.post(
+            qwen_endpoint(base_url),
+            headers={"Authorization": f"Bearer {api_key}"},
+            json=qwen_request(model, _pcm16_wav(b"\x00\x00" * 12_000)),
+        )
+    except httpx.HTTPError:
+        return f"{model}: Qwen did not answer. Try again."
+    if response.status_code < 400 or qwen_heard_nothing(response):
+        return None
+    if response.status_code in (401, 403):
+        return "Qwen did not accept this API key."
+    text = response.text
+    if response.status_code == 404 or "Model not exist" in text:
+        return f"{model}: Qwen has no model with this id."
+    if "url error" in text:
+        return f"{model} is a live (WebSocket) model, which Gunther cannot use yet."
+    if "Input should be" in text:
+        return (
+            f"{model} takes an older kind of request. "
+            "Use a Qwen-Audio model such as qwen-audio-3.1-asr-flash."
+        )
+    # Anything else came from the model itself (silence it could not read), so it exists.
+    return None
+
+
 def _qwen_transcriber(base_url: str, api_key: str, model: str) -> Transcriber:
     async def transcribe(client: httpx.AsyncClient, pcm: bytes) -> str:
         response = await client.post(
@@ -112,6 +153,8 @@ def _qwen_transcriber(base_url: str, api_key: str, model: str) -> Transcriber:
             headers={"Authorization": f"Bearer {api_key}"},
             json=qwen_request(model, _pcm16_wav(pcm)),
         )
+        if qwen_heard_nothing(response):
+            return ""
         response.raise_for_status()
         return qwen_text(response.json())
 

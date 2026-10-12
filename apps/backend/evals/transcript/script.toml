@@ -1,0 +1,54 @@
+# A made-up lecture for measuring live transcription. Two speakers, Chinese with English terms,
+# paragraphs separated by longer pauses. `make_sample.py` speaks it with Qwen's text-to-speech and
+# adds room noise; the text here is the reference the transcripts are scored against.
+
+[voices]
+teacher = "Ethan"
+student = "Cherry"
+
+[[paragraph]]
+speaker = "teacher"
+sentences = [
+  "好，我们开始上课。今天这节课讲神经网络是怎么学习的，重点是 gradient descent，也就是梯度下降。",
+  "上节课我们定义了 loss function，损失函数，它衡量模型的预测和真实答案差多少。",
+  "训练的目标很简单：找到一组参数，让 loss 尽可能小。",
+]
+
+[[paragraph]]
+speaker = "teacher"
+sentences = [
+  "那怎么找呢？我们先算 loss 对每个参数的偏导数，这一组偏导数合起来就叫 gradient。",
+  "gradient 指向 loss 增长最快的方向，所以我们沿着它的反方向走一小步。",
+  "这一小步有多大，由 learning rate 决定，通常写成希腊字母 eta。",
+]
+
+[[paragraph]]
+speaker = "teacher"
+sentences = [
+  "learning rate 太大，模型会在最低点附近来回跳，甚至发散；太小的话，训练会非常慢。",
+  "In English papers, you will often see stochastic gradient descent, or SGD for short.",
+  "实际中大家常用 Adam 优化器，它会根据历史梯度自动调整每个参数的步长。",
+  "另外一个常见技巧是 learning rate warmup，前几百步先用很小的学习率，再慢慢升上去。",
+]
+
+[[paragraph]]
+speaker = "student"
+sentences = [
+  "老师，我想问一下，batch size 和 learning rate 之间有关系吗？",
+]
+
+[[paragraph]]
+speaker = "teacher"
+sentences = [
+  "好问题。一般来说，batch size 变大，梯度的估计更稳定，learning rate 也可以相应调大。",
+  "有一个经验规则叫 linear scaling rule，batch size 翻倍，learning rate 也翻倍。",
+  "不过这个规则在 batch 特别大的时候会失效，所以要配合 warmup 一起用。",
+]
+
+[[paragraph]]
+speaker = "teacher"
+sentences = [
+  "最后说一下 backpropagation，反向传播。它用链式法则，从输出层往回，一层一层地算出每个参数的梯度。",
+  "在 PyTorch 里面，你只需要调用 backward 函数，框架会自动帮你完成这一步。",
+  "下节课我们讲 overfitting，也就是过拟合，以及 dropout 和 weight decay 这两种正则化方法。",
+]
