@@ -1,5 +1,5 @@
 import type { Artifact, ConversationCitation } from "@gunther/contracts";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SlidesView } from "./SlidesView";
@@ -35,7 +35,11 @@ async function show(artifact: Artifact, onCite = vi.fn()) {
   return { ...view, onCite };
 }
 
-afterEach(() => {
+afterEach(async () => {
+  cleanup();
+  // Reveal's window-resize text fitting debounces for 100 ms. Let its deferred
+  // destroy and trailing animation frame finish before jsdom closes the window.
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
   delete (window as unknown as Record<string, unknown>)["__TAURI_INTERNALS__"];
   setFullscreen.mockClear();
 });

@@ -828,6 +828,9 @@ class OutputProvenanceOut(ArtifactProvenanceOut):
     approach: OutputApproachOut | None = None
     use: Literal["talk", "read"] | None = None
     library_supplements: bool = False
+    conversation_id: str | None = None
+    conversation_title: str | None = None
+    request: str | None = None
 
 
 class OutputScope(ApiModel):
@@ -900,7 +903,27 @@ class OutputInputsOut(ApiModel):
 REQUEST_ID = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
 
 
-class BuildOutputInput(ApiModel):
+class OutputRequestInput(ApiModel):
+    model: str | None = Field(default=None, min_length=1, max_length=200)
+    effort: Effort | None = None
+    conversation_id: str | None = Field(default=None, min_length=1, max_length=100)
+    conversation_title: str | None = Field(default=None, min_length=1, max_length=160)
+
+    @model_validator(mode="after")
+    def tidy_output_context(self) -> "OutputRequestInput":
+        for name in ("model", "conversation_id", "conversation_title"):
+            value = getattr(self, name)
+            if value is not None:
+                value = value.strip()
+                if not value:
+                    raise ValueError(f"{name} must not be blank")
+                setattr(self, name, value)
+        if self.conversation_title and not self.conversation_id:
+            raise ValueError("A conversation title needs a conversation id")
+        return self
+
+
+class BuildOutputInput(OutputRequestInput):
     client_request_id: str = REQUEST_ID
     kind: OutputKind
     # Reports only; slides have none. A report without one is an overview.
@@ -938,7 +961,7 @@ class BuildOutputInput(ApiModel):
         return self
 
 
-class ReviseOutputInput(ApiModel):
+class ReviseOutputInput(OutputRequestInput):
     client_request_id: str = REQUEST_ID
     instruction: str = Field(min_length=1, max_length=2_000)
     # The section or slide to change (counted from 0); the whole output when left out.
@@ -975,6 +998,10 @@ class ArtifactSummaryOut(ApiModel):
     kind: OutputKind = "report"
     style: str | None = None
     origin: OutputOrigin = "legacy"
+    conversation_id: str | None = None
+    conversation_title: str | None = None
+    client_request_id: str | None = None
+    request: str | None = None
 
 
 class ArtifactOut(ArtifactSummaryOut):

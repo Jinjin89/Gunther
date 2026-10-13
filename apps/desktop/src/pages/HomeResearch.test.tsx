@@ -60,7 +60,7 @@ describe("research from Home", () => {
     expect(await screen.findByText("Which options?")).toBeVisible();
     // The chip was cleared when the question went, and is back for the answer to it.
     expect(await screen.findByRole("button", { name: "Remove /research" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Deep" })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByRole("button", { name: "Deep" })).toHaveAttribute("aria-pressed", "true");
     await user.type(box(), "Cool roofs and green roofs{Enter}");
     await waitFor(() => expect(api.sendMessageStream).toHaveBeenCalledTimes(2));
     expect(api.sendMessageStream.mock.calls[1]![1]).toMatchObject({ skill: "research", budget: "deep" });

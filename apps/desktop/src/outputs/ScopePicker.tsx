@@ -1,9 +1,10 @@
-import type { KnowledgeSessionSummary, KnowledgeUnit, OutputScope, SourceSummary } from "@gunther/contracts";
+import type { KnowledgeSessionSummary, KnowledgeUnit, LibraryContents, OutputScope, SourceSummary } from "@gunther/contracts";
 import { CircleAlert, LoaderCircle, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { knowledgeApi } from "../api";
+import { loadScopeMaterials } from "./scopeMaterials";
 import { useEscape } from "../shortcuts/shortcuts";
+import { SourceScopeTree } from "./SourceScopeTree";
 
 export interface ScopeCounts {
   sources: number;
@@ -35,10 +36,10 @@ interface Row {
   meta: string;
 }
 
-function Group({ title, rows, picked, onToggle, onAll, empty }: {
+export function ScopeGroup({ title, rows, picked, onToggle, onAll, empty }: {
   title: string;
   rows: Row[];
-  picked: Set<string>;
+  picked: ReadonlySet<string>;
   onToggle: (id: string) => void;
   onAll: (select: boolean) => void;
   empty: string;
@@ -69,6 +70,7 @@ export function ScopePicker({ baseId, initial, onApply, onClose }: {
   onClose: () => void;
 }) {
   const [sources, setSources] = useState<SourceSummary[] | null>(null);
+  const [contents, setContents] = useState<LibraryContents | null>(null);
   const [units, setUnits] = useState<KnowledgeUnit[]>([]);
   const [sessions, setSessions] = useState<KnowledgeSessionSummary[]>([]);
   const [problem, setProblem] = useState<string | null>(null);
@@ -80,10 +82,10 @@ export function ScopePicker({ baseId, initial, onApply, onClose }: {
 
   useEffect(() => {
     let active = true;
-    void Promise.all([knowledgeApi.sources(baseId), knowledgeApi.knowledgeUnits(baseId), knowledgeApi.sessions(baseId)]).then(([sourceItems, unitItems, sessionItems]) => {
+    void loadScopeMaterials(baseId).then(({ sources: sourceItems, units: trusted, sessions: sessionItems, contents: arranged }) => {
       if (!active) return;
-      const trusted = unitItems.filter((unit) => unit.status === "trusted");
       setSources(sourceItems);
+      setContents(arranged);
       setUnits(trusted);
       setSessions(sessionItems);
       // A choice made earlier may name something that has since gone.
@@ -115,6 +117,14 @@ export function ScopePicker({ baseId, initial, onApply, onClose }: {
     }
     setter(next);
   };
+  const chooseSources = (ids: string[], select: boolean) => setPickedSources((current) => {
+    const next = new Set(current);
+    for (const id of ids) {
+      if (select) next.add(id);
+      else next.delete(id);
+    }
+    return next;
+  });
 
   const counts: ScopeCounts = { sources: pickedSources.size, units: pickedUnits.size, sessions: pickedSessions.size };
   const chosen = counts.sources + counts.units + counts.sessions;
@@ -126,7 +136,7 @@ export function ScopePicker({ baseId, initial, onApply, onClose }: {
   });
 
   return createPortal(
-    <section className="atlas-overlay" role="dialog" aria-modal="true" aria-labelledby="outputs-picker-title" onMouseDown={onClose}>
+    <section className="atlas-overlay outputs-picker-overlay" role="dialog" aria-modal="true" aria-labelledby="outputs-picker-title" onMouseDown={onClose}>
       <div className="outputs-picker" onMouseDown={(event) => event.stopPropagation()}>
         <header>
           <h2 id="outputs-picker-title">Choose what to use</h2>
@@ -139,9 +149,12 @@ export function ScopePicker({ baseId, initial, onApply, onClose }: {
         {problem && <div className="gx-banner is-error" role="alert"><CircleAlert size={16} /><span><strong>Couldn’t read this library</strong><small>{problem}</small></span></div>}
         {!problem && !sources && <div className="outputs-picker-wait"><LoaderCircle className="spin" size={15} />Reading the library…</div>}
         {sources && <div className="outputs-picker-groups">
-          <Group title="Sources" rows={sourceRows} picked={pickedSources} onToggle={toggle(pickedSources, setPickedSources)} onAll={choose(pickedSources, setPickedSources, sourceRows)} empty="No sources" />
-          <Group title="Saved knowledge" rows={unitRows} picked={pickedUnits} onToggle={toggle(pickedUnits, setPickedUnits)} onAll={choose(pickedUnits, setPickedUnits, unitRows)} empty="Nothing saved yet" />
-          <Group title="Discussions" rows={sessionRows} picked={pickedSessions} onToggle={toggle(pickedSessions, setPickedSessions)} onAll={choose(pickedSessions, setPickedSessions, sessionRows)} empty="No discussions" />
+          {contents ? <SourceScopeTree contents={contents} filter={filter} picked={pickedSources} onChoose={chooseSources} /> : <>
+            <p className="outputs-source-hint" role="status">Contents couldn’t be loaded. You can still choose individual sources below.</p>
+            <ScopeGroup title="Sources" rows={sourceRows} picked={pickedSources} onToggle={toggle(pickedSources, setPickedSources)} onAll={choose(pickedSources, setPickedSources, sourceRows)} empty="No sources" />
+          </>}
+          <ScopeGroup title="Saved knowledge" rows={unitRows} picked={pickedUnits} onToggle={toggle(pickedUnits, setPickedUnits)} onAll={choose(pickedUnits, setPickedUnits, unitRows)} empty="Nothing saved yet" />
+          <ScopeGroup title="Discussions" rows={sessionRows} picked={pickedSessions} onToggle={toggle(pickedSessions, setPickedSessions)} onAll={choose(pickedSessions, setPickedSessions, sessionRows)} empty="No discussions" />
         </div>}
         <footer>
           <span>{describeScope(counts)}</span>

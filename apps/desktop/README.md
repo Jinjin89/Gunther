@@ -110,11 +110,15 @@ macOS 包内已包含 `NSMicrophoneUsageDescription` 和 `com.apple.security.dev
 - 崩溃/重启后无需重选原文件，可根据服务端确认 offset 和剩余 durable chunks 完成；
 - 若进程在初始完整 staging 之前退出，仍需重选原文件重新开始，不完整残片不会被当作完整导入。
 
-## Evidence 与 Outputs
+## Evidence 与 Artifacts
 
 Library 的 Ask 只使用当前 Library / selected Sources，并显示 citation snapshots。若 Source 尚无可用的结构化 Assertion，Ask 会从保存的原始正文检索有限相关段落，并以 `assertionId=null` 的 provisional citation 回答；不足以匹配时仍显示证据缺口。回答可以提出 Knowledge Proposal；只有用户接受后才形成 trusted KnowledgeUnit revision。
 
-Outputs 当前读取后端持久 Artifact history：
+Library 的 Ask、Contents、Artifacts 合并在顶部导航；Gunther 导航可展开、收起，Auto 在浏览时展开、进入 Artifacts 时收起。Artifacts 使用三栏工作区：左侧选择材料和切换对话，中央通过对话创建、修改或重新生成，右侧管理该对话的多个 Report / PDF 与 Slides 并预览。输入框复用真实语音转写、模型与 thinking effort 控件；请求使用所选模型。右侧 Agent plan 来自生成流中的实际 stage / section / tool 事件。
+
+材料区与对话列表可上下拖动分配空间，三栏宽度和预览控制区高度可调整；Details 将成果列表、计划和大纲收起，保留预览与当前活动。Focus 扩展预览，Esc 返回。布局、对话草稿、材料选择和请求历史通过原生 persistent storage 保存；已生成成果在后端 provenance 中记录 conversation id、title 和原始指令，界面可据此恢复归属。浏览历史成果不会覆盖材料选择或改写保存的来源快照。每个成果保留版本、编辑、修订、重新生成、复制、下载和 PDF 导出操作。
+
+Artifacts 读取后端持久历史：
 
 - 列出全部不可变版本；
 - 打开历史正文；
@@ -124,7 +128,7 @@ Outputs 当前读取后端持久 Artifact history：
 - 复制/下载持久 Markdown；
 - Library workbook v3 导出包含 Artifact 详情。
 
-Artifact 尚未加入全局 Search，也没有 archive 或 PDF/DOCX renderer。
+Artifact 尚未加入全局 Search，也没有 archive 或 DOCX renderer；PDF 导出使用独立打印布局和系统打印面板。
 
 ## 打包 sidecar
 

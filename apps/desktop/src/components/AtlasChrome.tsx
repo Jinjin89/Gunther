@@ -1,6 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
-import { ChevronRight, Home, Inbox, Library, Moon, Plus, Search, Settings, Sun, Trash2, UserRound } from "lucide-react";
+import { useLayoutEffect, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { ChevronRight, Home, Inbox, Library, Moon, PanelLeft, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Sun, Trash2, UserRound } from "lucide-react";
 import type { KnowledgeBase } from "../atlas";
 import { BrandMark } from "../design/BrandMark";
 import { LibraryGlyph } from "../design/LibraryGlyph";
@@ -18,13 +18,23 @@ interface AtlasTitlebarProps {
   /** The status spot at the right of the bar (the activity pill). */
   status?: ReactNode;
   showSearch?: boolean;
+  /** The current library's views, alongside its breadcrumb. */
+  navigation?: ReactNode;
+  sidebarCollapsed?: boolean;
+  onSidebar?: () => void;
   onHome: () => void;
   onSearch: () => void;
   onCapture: () => void;
   onTheme: () => void;
 }
 
-export function AtlasTitlebar({ path, theme, status = null, showSearch = true, onHome, onSearch, onCapture, onTheme }: AtlasTitlebarProps) {
+export function AtlasTitlebar({ path, theme, status = null, navigation = null, showSearch = true, sidebarCollapsed = false, onSidebar, onHome, onSearch, onCapture, onTheme }: AtlasTitlebarProps) {
+  const inLibrary = navigation !== null;
+  useLayoutEffect(() => {
+    // Portalled pickers and dialogs also need the titlebar's actual height.
+    document.documentElement.dataset.libraryWorkspace = String(inLibrary);
+    return () => { delete document.documentElement.dataset.libraryWorkspace; };
+  }, [inLibrary]);
   const startWindowDrag = (event: ReactMouseEvent<HTMLElement>) => {
     if (event.button !== 0 || !("__TAURI_INTERNALS__" in window)) return;
     const target = event.target as HTMLElement;
@@ -34,9 +44,10 @@ export function AtlasTitlebar({ path, theme, status = null, showSearch = true, o
   };
 
   return (
-    <header className="gx-titlebar" data-tauri-drag-region onMouseDown={startWindowDrag}>
+    <header className={`gx-titlebar${inLibrary ? " has-library-navigation" : ""}${onSidebar ? " has-sidebar-toggle" : ""}`} data-tauri-drag-region onMouseDown={startWindowDrag}>
       <div className="gx-titlebar-lead" data-tauri-drag-region>
         <span className="gx-traffic-space" data-tauri-drag-region />
+        {onSidebar && <button type="button" className="gx-icon-button" aria-label={sidebarCollapsed ? "Expand Gunther sidebar" : "Collapse Gunther sidebar"} aria-expanded={!sidebarCollapsed} onClick={onSidebar} data-no-drag>{sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}</button>}
         <button type="button" className="gx-wordmark" onClick={onHome} aria-label="Gunther home" data-no-drag>
           <BrandMark size={18} />
           <span>Gunther</span>
@@ -52,9 +63,10 @@ export function AtlasTitlebar({ path, theme, status = null, showSearch = true, o
           </span>
         ))}
       </nav>
+      {navigation}
       <div className="gx-titlebar-fill" data-tauri-drag-region />
       {showSearch && (
-        <button type="button" className="gx-search-trigger" onClick={onSearch} data-no-drag>
+        <button type="button" className="gx-search-trigger" onClick={onSearch} aria-label="Search ⌘K" title="Search ⌘K" data-no-drag>
           <Search size={14} />
           <span>Search</span>
           <kbd>⌘K</kbd>
@@ -64,8 +76,8 @@ export function AtlasTitlebar({ path, theme, status = null, showSearch = true, o
       <button type="button" className="gx-icon-button" onClick={onTheme} aria-label="Toggle theme" title={theme === "light" ? "Dark appearance" : "Light appearance"} data-no-drag>
         <span className="gx-theme-icon" key={theme}>{theme === "light" ? <Moon size={15} /> : <Sun size={15} />}</span>
       </button>
-      <button type="button" className="gx-btn gx-btn-primary gx-btn-sm gx-capture-button" onClick={onCapture} data-no-drag>
-        <Plus size={14} className="gx-capture-plus" />Capture
+      <button type="button" className="gx-btn gx-btn-primary gx-btn-sm gx-capture-button" onClick={onCapture} aria-label="Capture" title="Capture" data-no-drag>
+        <Plus size={14} className="gx-capture-plus" /><span>Capture</span>
       </button>
     </header>
   );
@@ -81,13 +93,15 @@ interface AtlasRailProps {
   onNavigate: (view: AtlasView) => void;
   onOpenBase?: (id: string) => void;
   onCreateBase?: () => void;
+  onSidebarAuto?: () => void;
+  sidebarAutomatic?: boolean;
 }
 
 const MAX_SIDEBAR_LIBRARIES = 7;
 
 const initialsOf = (name: string) => name.trim().split(/\s+/).slice(0, 2).map((part) => part[0] ?? "").join("").toUpperCase() || "G";
 
-export function AtlasRail({ active, inboxCount, bases = [], basesReady = true, activeBaseId = null, profileName = "", onNavigate, onOpenBase, onCreateBase }: AtlasRailProps) {
+export function AtlasRail({ active, inboxCount, bases = [], basesReady = true, activeBaseId = null, profileName = "", onNavigate, onOpenBase, onCreateBase, onSidebarAuto, sidebarAutomatic }: AtlasRailProps) {
   const item = (view: AtlasView, label: string, icon: ReactNode, trailing?: ReactNode, isActive = active === view, describedBy?: string) => (
     <button
       type="button"
@@ -164,6 +178,7 @@ export function AtlasRail({ active, inboxCount, bases = [], basesReady = true, a
           <span className="gx-nav-label">{displayName}</span>
         </button>
       </nav>
+      {onSidebarAuto && <button type="button" className="gx-sidebar-auto" aria-label="Use automatic sidebar layout" aria-pressed={sidebarAutomatic} title="Automatic: expand for browsing, collapse in Artifacts" onClick={onSidebarAuto}><PanelLeft size={14} /><span>{sidebarAutomatic ? "Auto layout" : "Reset to auto"}</span></button>}
     </aside>
   );
 }

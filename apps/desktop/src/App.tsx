@@ -8,11 +8,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getKnowledgeBase, normalizeAtlasMode, type AtlasMode, type KnowledgeBase, type KnowledgeChapter } from "./atlas";
 import { metadataToBase } from "./atlasMetadata";
 import { AtlasPage, AtlasRail, AtlasTitlebar, type AtlasView } from "./components/AtlasChrome";
+import { useSidebarLayout } from "./components/useSidebarLayout";
 import { AccountPageV2, CaptureSheet, CreateKnowledgeBaseSheet, EvidenceDrawer, SettingsPageV2, type CaptureKind } from "./components/AtlasUtilities";
 import { AtlasLibraryPage } from "./pages/AtlasLibraryPage";
 import { HomePage, type HomeCaptureKind } from "./pages/HomePage";
 import { InboxPageV3 } from "./pages/InboxPage";
 import { KnowledgeBaseWorkspace } from "./pages/KnowledgeBaseWorkspace";
+import { LibraryWorkspaceNavigation } from "./components/LibraryWorkspaceNavigation";
 import { NotebookPage } from "./pages/NotebookPage";
 import { TrashPage } from "./pages/TrashPage";
 import { knowledgeApi } from "./api";
@@ -121,6 +123,9 @@ export default function App() {
   const [activeBaseId, setActiveBaseId] = useState("single-cell-annotation");
   const [selectedChapterId, setSelectedChapterId] = useState("context");
   const [mode, setMode] = useState<AtlasMode>(DEFAULT_KNOWLEDGE_BASE_MODE);
+  const [artifactPreviewFocused, setArtifactPreviewFocused] = useState(false);
+  const sidebar = useSidebarLayout(view === "base" && normalizeAtlasMode(mode) === "outputs", artifactPreviewFocused);
+  useEffect(() => setArtifactPreviewFocused(false), [view, mode, activeBaseId]);
   const [captureOpen, setCaptureOpen] = useState(false);
   const [captureRecordingActive, setCaptureRecordingActive] = useState(false);
   const [captureKind, setCaptureKind] = useState<CaptureKind | null>(null);
@@ -398,7 +403,7 @@ export default function App() {
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
       const plural = (count: number, singular: string) => `${count} ${singular}${count === 1 ? "" : "s"}`;
-      notify(`Exported ${plural(indexedSources.length, "source")}, ${plural(sessions.length, "session")}, ${plural(knowledgeUnits.length, "knowledge unit")}, and ${plural(artifacts.length, "Output version")}.`);
+      notify(`Exported ${plural(indexedSources.length, "source")}, ${plural(sessions.length, "session")}, ${plural(knowledgeUnits.length, "knowledge unit")}, and ${plural(artifacts.length, "Artifact version")}.`);
     } catch (reason) {
       notify(reason instanceof Error ? `Export failed: ${reason.message}` : "The complete workbook could not be exported.");
     }
@@ -551,14 +556,14 @@ export default function App() {
 
   return (
     <ActivityProvider>
-    <div className="app-shell atlas-app-shell">
-      <AtlasTitlebar path={path} theme={theme} status={<ActivityStatus serviceOnline={serviceOnline} onOpen={openActivity} isHere={isActivityHere} />} showSearch={view !== "home"} onHome={() => navigate("home")} onSearch={openSearch} onCapture={() => openCapture()} onTheme={() => setThemePreference(theme === "light" ? "dark" : "light")} />
+    <div className={`app-shell atlas-app-shell has-adaptive-sidebar${sidebar.collapsed ? " is-sidebar-collapsed" : " is-sidebar-expanded"}`}>
+      <AtlasTitlebar path={path} theme={theme} sidebarCollapsed={sidebar.collapsed} onSidebar={() => { setArtifactPreviewFocused(false); sidebar.toggle(); }} status={<ActivityStatus serviceOnline={serviceOnline} onOpen={openActivity} isHere={isActivityHere} />} navigation={view === "base" ? <LibraryWorkspaceNavigation mode={mode} onMode={setMode} onEdit={() => setEditingBaseId(activeBase.id)} onExport={exportBase} /> : null} showSearch={view !== "home"} onHome={() => navigate("home")} onSearch={openSearch} onCapture={() => openCapture()} onTheme={() => setThemePreference(theme === "light" ? "dark" : "light")} />
       <div className="atlas-app-body">
-        <AtlasRail active={view} inboxCount={pendingCount} bases={bases} basesReady={basesReady} activeBaseId={activeBaseId} profileName={profileName} onNavigate={navigate} onOpenBase={(id) => openBase(id)} onCreateBase={() => setCreateBaseOpen(true)} />
+        <AtlasRail active={view} inboxCount={pendingCount} bases={bases} basesReady={basesReady} activeBaseId={activeBaseId} profileName={profileName} onNavigate={navigate} onOpenBase={(id) => openBase(id)} onCreateBase={() => setCreateBaseOpen(true)} onSidebarAuto={sidebar.reset} sidebarAutomatic={sidebar.automatic} />
         <main className="atlas-workspace" id="main-content">
           {view === "home" && <AtlasPage className="gx-page-home"><HomePage bases={bases} basesReady={basesReady} inboxCount={pendingCount} profileName={profileName} focusRequest={searchFocusRequest} onCapture={(kind?: HomeCaptureKind) => openCapture(kind ?? null)} onOpenBase={(id, initialMode) => openBase(id, undefined, initialMode)} onOpenChapter={openBase} onAskBase={askBase} onOpenNote={(id) => openItem({ type: "note", id }, "home")} onOpenItem={(ref, queue) => openItem(ref, "home", queue)} resumeSearch={homeResume} onOpenLibraries={() => navigate("library")} onCreateBase={() => setCreateBaseOpen(true)} onOpenInbox={() => navigate("inbox")} onNotify={notify} resolveWorkspaceId={refreshWorkspaceId} /></AtlasPage>}
           {view === "library" && <AtlasPage><AtlasLibraryPage bases={bases} loading={!basesReady} onOpen={openBase} onAdd={() => openCapture()} onCreateBase={() => setCreateBaseOpen(true)} /></AtlasPage>}
-          {view === "base" && <KnowledgeBaseWorkspace base={activeBase} workspaceId={workspaceId} mode={mode} selectedChapterId={selectedChapterId} onMode={setMode} onChapter={setSelectedChapterId} onBack={() => navigate("library")} onOpenSource={(id, queue) => openItem({ type: "source", id }, "base", queue.map((sourceId): ItemRef => ({ type: "source", id: sourceId })))} onEvidence={setEvidenceChapter} onAdd={(kind) => openCapture(kind ?? null, "lecture", activeBase.id)} onRecord={(context) => openCapture("recording", context, activeBase.id)} onExport={exportBase} onEdit={() => setEditingBaseId(activeBase.id)} onNotify={notify} />}
+          {view === "base" && <KnowledgeBaseWorkspace showHeader={false} previewFocused={artifactPreviewFocused} onPreviewFocus={setArtifactPreviewFocused} base={activeBase} workspaceId={workspaceId} mode={mode} selectedChapterId={selectedChapterId} onMode={setMode} onChapter={setSelectedChapterId} onBack={() => navigate("library")} onOpenSource={(id, queue) => openItem({ type: "source", id }, "base", queue.map((sourceId): ItemRef => ({ type: "source", id: sourceId })))} onEvidence={setEvidenceChapter} onAdd={(kind) => openCapture(kind ?? null, "lecture", activeBase.id)} onRecord={(context) => openCapture("recording", context, activeBase.id)} onExport={exportBase} onEdit={() => setEditingBaseId(activeBase.id)} onNotify={notify} />}
           {view === "notebook" && <NotebookPage bases={bases} focusNoteId={focusNoteId} onFocused={() => setFocusNoteId(null)} onNotify={notify} onFiled={(note: NotebookNote, baseId) => {
             const base = bases.find((item) => item.id === baseId) ?? getKnowledgeBase(baseId);
             void refreshKnowledgeBases().catch(() => undefined);

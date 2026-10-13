@@ -27,10 +27,10 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe("Library workspace", () => {
-  it("has three tabs: Ask, Contents and Outputs", async () => {
+  it("has three tabs: Ask, Contents and Artifacts", async () => {
     const { onMode } = view("contents");
     const tabs = within_nav();
-    expect(tabs).toEqual(["Ask", "Contents", "Outputs"]);
+    expect(tabs).toEqual(["Ask", "Contents", "Artifacts"]);
     expect(screen.getByRole("button", { name: "Contents" })).toHaveAttribute("aria-current", "page");
     expect(await screen.findByRole("heading", { name: "Part A" })).toBeVisible();
     expect(screen.getByText("Lectures and slides for autumn.")).toBeVisible();

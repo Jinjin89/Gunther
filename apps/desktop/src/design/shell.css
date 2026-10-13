@@ -121,6 +121,48 @@
 .gx-capture-button .gx-capture-plus { transition: transform var(--gx-dur) var(--gx-ease-spring); }
 .gx-capture-button:hover .gx-capture-plus { transform: rotate(90deg); }
 
+/* A library's location and views share one titlebar. Dialogs inherit its height. */
+:root[data-library-workspace="true"] { --gx-titlebar-h: 52px; }
+.gx-library-navigation { display: flex; align-items: center; gap: 5px; flex: none; min-width: 0; -webkit-app-region: no-drag; }
+.gx-library-tabs { display: flex; align-items: center; gap: 3px; }
+.gx-library-tabs button {
+  height: 30px; padding: 0 11px; border: 0; border-radius: var(--gx-radius-sm);
+  background: transparent; color: var(--gx-faint); font: inherit; font-size: var(--gx-text-sm); font-weight: 500;
+  transition: background-color var(--gx-dur-fast) var(--gx-ease), color var(--gx-dur-fast) var(--gx-ease);
+}
+.gx-library-tabs button:hover { color: var(--gx-ink); background: var(--gx-hover); }
+.gx-library-tabs button[aria-current="page"] { color: var(--gx-ink); background: var(--gx-active); }
+.base-workspace-header > .gx-library-navigation { margin-left: auto; }
+.gx-titlebar.has-library-navigation .gx-breadcrumb { max-width: min(22vw, 300px); }
+.gx-titlebar.has-library-navigation .gx-titlebar-fill { min-width: 12px; }
+.gx-titlebar.has-library-navigation .gx-search-trigger { width: 30px; padding: 0; justify-content: center; }
+.gx-titlebar.has-library-navigation .gx-search-trigger span,
+.gx-titlebar.has-library-navigation .gx-search-trigger kbd { display: none; }
+@media (max-width: 1280px) {
+  .gx-titlebar.has-library-navigation .gx-breadcrumb { max-width: 18vw; }
+  .gx-titlebar.has-library-navigation .gx-activity-text { max-width: 100px; }
+}
+@media (max-width: 720px) {
+  :root[data-library-workspace="true"] { --gx-titlebar-h: 92px; }
+  .gx-titlebar.has-library-navigation > :not(.gx-library-navigation) { align-self: flex-start; margin-top: 9px; }
+  .gx-titlebar.has-library-navigation > .gx-titlebar-lead { align-self: stretch; margin-top: 0; }
+  .gx-titlebar.has-library-navigation .gx-breadcrumb { height: 34px; margin-top: 5px; max-width: 30vw; }
+  .gx-titlebar.has-library-navigation .gx-library-navigation { position: absolute; left: calc(var(--gx-sidebar-w) + 12px); right: 10px; bottom: 7px; justify-content: space-between; }
+  .gx-titlebar.has-library-navigation .gx-titlebar-fill { min-height: 30px; }
+  .gx-titlebar.has-library-navigation .gx-capture-button span { display: none; }
+  .gx-titlebar.has-library-navigation .gx-capture-button { width: 30px; padding: 0; }
+  .gx-titlebar.has-library-navigation .gx-activity-text { max-width: 68px; }
+}
+@media (max-width: 560px) {
+  .gx-titlebar.has-library-navigation { gap: 4px; }
+  .gx-titlebar.has-library-navigation .gx-breadcrumb { padding-left: 8px; flex: 1; max-width: none; }
+  .gx-titlebar.has-library-navigation .gx-crumb:not(:last-child),
+  .gx-titlebar.has-library-navigation .gx-crumb-separator,
+  .gx-titlebar.has-library-navigation .gx-titlebar-fill,
+  .gx-titlebar.has-library-navigation .gx-activity-swap { display: none; }
+  .gx-titlebar.has-library-navigation .gx-save-state { padding-inline: 4px; }
+}
+
 /* Sidebar */
 .gx-sidebar {
   width: var(--gx-sidebar-w);
@@ -320,3 +362,39 @@
 
 .gx-save-state.is-offline { color: var(--gx-warning); }
 .gx-save-state.is-offline i { background: var(--gx-warning); box-shadow: 0 0 0 3px var(--gx-warning-wash); animation: gx-breathe 1.4s ease-in-out infinite; }
+
+/* Adaptive navigation and compact library tabs. Native window controls retain their space. */
+.has-adaptive-sidebar.is-sidebar-collapsed { --gx-sidebar-w: 62px; }
+.has-adaptive-sidebar.is-sidebar-expanded { --gx-sidebar-w: 210px; }
+.is-sidebar-collapsed .gx-sidebar { padding-inline: 7px; }
+.is-sidebar-collapsed .gx-sidebar .gx-nav-label,
+.is-sidebar-collapsed .gx-sidebar-section > header,
+.is-sidebar-collapsed .gx-sidebar-library > span:not(.gx-glyph),
+.is-sidebar-collapsed .gx-sidebar-empty,
+.is-sidebar-collapsed .gx-sidebar-more { display: none; }
+.is-sidebar-collapsed .gx-nav-item, .is-sidebar-collapsed .gx-sidebar-library { justify-content: center; padding-inline: 0; }
+.is-sidebar-collapsed .gx-sidebar-library { min-height: 43px; }
+.is-sidebar-collapsed .gx-sidebar-library .gx-glyph { width: 30px; height: 30px; font-size: 17px; }
+.gx-sidebar-auto { min-height: 32px; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 6px 8px; margin-top: 8px; border: 1px solid var(--gx-line); border-radius: 5px; background: transparent; color: var(--gx-faint); font-size: var(--gx-text-2xs); }
+.is-sidebar-collapsed .gx-sidebar-auto > span { display: none; }
+.gx-sidebar-auto:hover { background: var(--gx-hover); color: var(--gx-ink); }
+.gx-titlebar.has-sidebar-toggle .gx-titlebar-lead { width: auto; min-width: 0; background: var(--gx-canvas); border: 0; gap: 4px; }
+.gx-titlebar.has-sidebar-toggle .gx-breadcrumb { max-width: min(24vw, 300px); }
+.gx-titlebar.has-sidebar-toggle.has-library-navigation .gx-library-navigation { margin-inline: auto; }
+.gx-titlebar.has-sidebar-toggle.has-library-navigation .gx-library-tabs { height: var(--gx-titlebar-h); gap: 3px; }
+.gx-titlebar.has-sidebar-toggle.has-library-navigation .gx-library-tabs button { position: relative; height: 100%; min-width: 58px; padding-inline: 14px; border-radius: 0; font-size: var(--gx-text-sm); }
+.gx-titlebar.has-sidebar-toggle.has-library-navigation .gx-library-tabs button[aria-current="page"] { color: var(--gx-brand); font-weight: 600; background: transparent; }
+.gx-titlebar.has-sidebar-toggle.has-library-navigation .gx-library-tabs button[aria-current="page"]::after { content: ""; position: absolute; bottom: 0; height: 2px; left: 13px; right: 13px; background: var(--gx-brand); }
+.gx-titlebar.has-sidebar-toggle.has-library-navigation .gx-titlebar-fill { flex: 0 0 6px; min-width: 6px; }
+@media (max-width: 1100px) { .gx-titlebar.has-sidebar-toggle .gx-wordmark > span { display: none; } .gx-titlebar.has-sidebar-toggle .gx-breadcrumb { max-width: 18vw; } }
+@media (max-width: 720px) {
+  .gx-titlebar.has-sidebar-toggle.has-library-navigation { height: 52px; min-height: 52px; }
+  .has-adaptive-sidebar { --gx-titlebar-h: 52px; }
+  .gx-titlebar.has-sidebar-toggle.has-library-navigation > :not(.gx-library-navigation) { align-self: center; margin-top: 0; }
+  .gx-titlebar.has-sidebar-toggle.has-library-navigation > .gx-titlebar-lead { align-self: stretch; }
+  .gx-titlebar.has-sidebar-toggle.has-library-navigation .gx-breadcrumb { height: 100%; max-width: 17vw; margin-top: 0; padding-left: 0; }
+  .gx-titlebar.has-sidebar-toggle.has-library-navigation .gx-crumb:not(:last-child), .gx-titlebar.has-sidebar-toggle.has-library-navigation .gx-crumb-separator { display: none; }
+  .gx-titlebar.has-sidebar-toggle.has-library-navigation .gx-library-navigation { position: static; margin-inline: auto; }
+  .gx-titlebar.has-sidebar-toggle.has-library-navigation .gx-library-tabs button { min-width: 0; padding-inline: 7px; font-size: var(--gx-text-xs); }
+  .gx-titlebar.has-sidebar-toggle .gx-activity-text, .gx-titlebar.has-sidebar-toggle .gx-theme-icon { display: none; }
+}

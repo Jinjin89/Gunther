@@ -3014,6 +3014,7 @@ class KnowledgeService:
     @staticmethod
     def _artifact_summary_out(artifact: Artifact) -> ArtifactSummaryOut:
         accepted_unit_ids = json.loads(artifact.accepted_unit_ids_json)
+        provenance = json.loads(artifact.provenance_json)
         return ArtifactSummaryOut(
             id=artifact.id,
             workspace_id=artifact.workspace_id,
@@ -3032,6 +3033,10 @@ class KnowledgeService:
             kind=artifact.kind,
             style=artifact.style,
             origin=artifact.origin,
+            conversation_id=provenance.get("conversation_id"),
+            conversation_title=provenance.get("conversation_title"),
+            client_request_id=artifact.client_request_id or None,
+            request=provenance.get("request"),
         )
 
     @staticmethod
@@ -3264,15 +3269,33 @@ class KnowledgeService:
 
     # Outputs built by agents (see outputs) --------------------------------------------------
 
-    def _output_model(self) -> tuple[ModelInfo, Effort]:
+    def _output_model(
+        self, model_ref: str | None = None, effort: Effort | None = None
+    ) -> tuple[ModelInfo, Effort]:
         """The model that writes outputs: the Outputs job's, else Ask's."""
 
         chosen = None
         if self.models is not None:
+            if model_ref:
+                model = self.models.get(model_ref)
+                if model is None:
+                    raise ValueError(
+                        "The selected model is not available. Choose a configured model."
+                    )
+                return model, effort or "high"
             chosen = self.models.for_role("outputs") or self.models.for_role("ask")
         if chosen is None:
             raise ValueError(OUTPUTS_NEED_A_MODEL)
-        return chosen
+        return chosen[0], effort or chosen[1]
+
+    @staticmethod
+    def _output_request_fields(payload: BuildOutputInput | ReviseOutputInput) -> dict:
+        fields = payload.model_dump(mode="json", exclude={"client_request_id"})
+        # Requests made before the conversation UI retain their original fingerprint.
+        for name in ("model", "effort", "conversation_id", "conversation_title"):
+            if fields.get(name) is None:
+                fields.pop(name, None)
+        return fields
 
     @staticmethod
     def _output_fingerprint(
@@ -3604,6 +3627,15 @@ class KnowledgeService:
                         f"The output is larger than the {MAX_OUTPUT_BYTES:,}-byte limit"
                     )
                 skilled = made_by or {}
+                parent_provenance = json.loads(parent.provenance_json) if parent else {}
+                conversation_id = skilled.get("conversation_id") or parent_provenance.get(
+                    "conversation_id"
+                )
+                if (
+                    parent_provenance.get("conversation_id")
+                    and conversation_id != parent_provenance["conversation_id"]
+                ):
+                    raise ValueError("This artifact belongs to a different conversation.")
                 provenance = OutputProvenanceOut(
                     schema_version=2,
                     generator=str(skilled.get("generator") or "gunther.output-agents.v1"),
@@ -3623,9 +3655,20 @@ class KnowledgeService:
                     approach=skilled.get("approach"),
                     use=skilled.get("use"),
                     library_supplements=bool(skilled.get("library_supplements", False)),
+                    conversation_id=conversation_id,
+                    conversation_title=skilled.get("conversation_title")
+                    or parent_provenance.get("conversation_title"),
+                    request=skilled.get("request") if conversation_id else None,
                 )
                 sealed = provenance.model_dump()
-                for key in ("skill", "approach", "use"):
+                for key in (
+                    "skill",
+                    "approach",
+                    "use",
+                    "conversation_id",
+                    "conversation_title",
+                    "request",
+                ):
                     # A version made without a skill keeps the provenance it always had.
                     if sealed.get(key) is None:
                         sealed.pop(key, None)
@@ -3738,12 +3781,12 @@ class KnowledgeService:
             workspace_id,
             base_id,
             "build",
-            payload.model_dump(mode="json", exclude={"client_request_id"}),
+            self._output_request_fields(payload),
         )
         earlier = self._earlier_output(workspace_id, payload.client_request_id, fingerprint)
         if earlier is not None:
             return earlier
-        model, effort = self._output_model()
+        model, effort = self._output_model(payload.model, payload.effort)
         skilled = self.output_skills
         # Without a skill there is nothing to choose a structure: "auto" is an overview.
         style = "overview" if not skilled and payload.style == "auto" else payload.style
@@ -3757,6 +3800,10 @@ class KnowledgeService:
                 if payload.supersedes_artifact_id
                 else None
             )
+            if parent and payload.conversation_id:
+                owner = json.loads(parent.provenance_json).get("conversation_id")
+                if owner and owner != payload.conversation_id:
+                    raise ValueError("This artifact belongs to a different conversation.")
             resolved = self._resolve_output_scope(session, base_id, payload.scope)
             if not (resolved.source_ids or resolved.units or resolved.sessions):
                 raise ValueError(NOTHING_TO_BUILD_FROM)
@@ -3819,7 +3866,13 @@ class KnowledgeService:
                     outline=outline,
                     fallback_title=fallback_title,
                 )
-            made_by = {**(made_by or {}), "library_supplements": payload.library_supplements}
+            made_by = {
+                **(made_by or {}),
+                "library_supplements": payload.library_supplements,
+                "conversation_id": payload.conversation_id,
+                "conversation_title": payload.conversation_title,
+                "request": payload.brief,
+            }
             parent_id = parent.id if parent else None
         if events:
             events({"type": "saving"})  # a reader who pressed Stop by now gets nothing saved
@@ -4056,17 +4109,21 @@ class KnowledgeService:
             "revise",
             {
                 "artifactId": artifact_id,
-                **payload.model_dump(mode="json", exclude={"client_request_id"}),
+                **self._output_request_fields(payload),
             },
         )
         earlier = self._earlier_output(workspace_id, payload.client_request_id, fingerprint)
         if earlier is not None:
             return earlier
-        model, effort = self._output_model()
+        model, effort = self._output_model(payload.model, payload.effort)
         with session_scope(self.sessions) as session:
             library = self._output_library(session, workspace_id, base_id)
             parent = self._output_version(session, workspace_id, base_id, artifact_id, latest=True)
             self._require_agent_output(parent)
+            if payload.conversation_id:
+                owner = json.loads(parent.provenance_json).get("conversation_id")
+                if owner and owner != payload.conversation_id:
+                    raise ValueError("This artifact belongs to a different conversation.")
             resolved = self._resolve_output_scope(
                 session,
                 base_id,
@@ -4139,6 +4196,9 @@ class KnowledgeService:
                     check["coverage"] = previous["coverage"]
             made_by = {
                 **(made_by or {}),
+                "conversation_id": payload.conversation_id,
+                "conversation_title": payload.conversation_title,
+                "request": payload.instruction,
                 "library_supplements": json.loads(parent.provenance_json).get(
                     "library_supplements", False
                 ),

@@ -1,13 +1,14 @@
 import { persistentStorage } from "../persistentStorage";
 import type { KnowledgeTopic } from "@gunther/contracts";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Camera, Download, FileText, Link2, Mic2, Plus, Settings2 } from "lucide-react";
+import { ArrowLeft, Camera, FileText, Link2, Mic2, Plus } from "lucide-react";
 import { normalizeAtlasMode, type AtlasMode, type KnowledgeBase, type KnowledgeChapter } from "../atlas";
 import { knowledgeApi } from "../api";
 import { BulkImport } from "../components/BulkImport";
 import { LibraryContents } from "../contents/LibraryContents";
 import { PopMenu } from "../contents/SectionMenu";
 import { LibraryGlyph } from "../design/LibraryGlyph";
+import { LibraryWorkspaceNavigation } from "../components/LibraryWorkspaceNavigation";
 import "../knowledge.css";
 import { OutputsPage } from "../outputs/OutputsPage";
 import { SessionWorkspace } from "./SessionWorkspace";
@@ -28,13 +29,11 @@ interface KnowledgeBaseWorkspaceProps {
   onNotify: (message: string) => void;
   /** Open a source in its own page; `queue` lists this library's sources for J / K. */
   onOpenSource?: (id: string, queue: string[]) => void;
+  /** The app supplies the navigation in its titlebar; standalone workspaces keep a header. */
+  showHeader?: boolean;
+  previewFocused?: boolean;
+  onPreviewFocus?: (value: boolean) => void;
 }
-
-const modeLabels: Array<{ id: AtlasMode; label: string }> = [
-  { id: "ask", label: "Ask" },
-  { id: "contents", label: "Contents" },
-  { id: "outputs", label: "Outputs" },
-];
 
 function BaseHeader({ base, mode, onMode, onBack, onExport, onEdit }: Pick<KnowledgeBaseWorkspaceProps, "base" | "mode" | "onMode" | "onBack" | "onExport" | "onEdit">) {
   return (
@@ -45,11 +44,7 @@ function BaseHeader({ base, mode, onMode, onBack, onExport, onEdit }: Pick<Knowl
         <span>{base.eyebrow}</span>
         <strong>{base.title}</strong>
       </div>
-      <nav className="base-mode-switch" aria-label="Library views">
-        {modeLabels.map((item) => <button key={item.id} className={mode === item.id ? "is-active" : ""} aria-current={mode === item.id ? "page" : undefined} onClick={() => onMode(item.id)}>{item.label}</button>)}
-      </nav>
-      <button className="base-edit" onClick={onEdit} aria-label="Edit library details" title="Edit library details"><Settings2 size={14} /></button>
-      <button className="base-export" onClick={onExport}><Download size={14} />Export</button>
+      <LibraryWorkspaceNavigation mode={mode} onMode={onMode} onEdit={onEdit} onExport={onExport} />
     </header>
   );
 }
@@ -109,12 +104,12 @@ export function KnowledgeBaseWorkspace(props: KnowledgeBaseWorkspaceProps) {
     } catch (reason) { props.onNotify(reason instanceof Error ? reason.message : "Could not open a conversation about this section."); }
   };
   return (
-    <div className="base-workspace">
-      <BaseHeader {...props} mode={mode} />
+    <div className={`base-workspace${mode === "outputs" ? " has-outputs-workspace" : ""}`}>
+      {props.showHeader !== false && <BaseHeader {...props} mode={mode} />}
       <div className="base-workspace-body">
         {mode === "contents" && <ContentsView base={props.base} onAdd={props.onAdd} onEdit={props.onEdit} onOpenSource={props.onOpenSource} onAsk={(id) => void askSection(id)} onAskLibrary={() => props.onMode("ask")} onChanged={() => setTopicReload((value) => value + 1)} />}
         {mode === "ask" && <SessionWorkspace base={topicBase} selectedChapterId={props.selectedChapterId} onAdd={props.onAdd} onNotify={props.onNotify} onOpenSource={(id) => props.onOpenSource?.(id, [id])} onMakeReport={(sessionId) => { setReportFrom(sessionId); props.onMode("outputs"); }} />}
-        {mode === "outputs" && <OutputsPage base={props.base} workspaceId={props.workspaceId} onNotify={props.onNotify} onAdd={props.onAdd} onOpenSource={props.onOpenSource} fromDiscussion={reportFrom} onFromDiscussion={() => setReportFrom(null)} />}
+        {mode === "outputs" && <OutputsPage base={props.base} workspaceId={props.workspaceId} focused={props.previewFocused} onFocus={props.onPreviewFocus} onNotify={props.onNotify} onAdd={props.onAdd} onOpenSource={props.onOpenSource} fromDiscussion={reportFrom} onFromDiscussion={() => setReportFrom(null)} />}
       </div>
     </div>
   );

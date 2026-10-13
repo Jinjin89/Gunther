@@ -50,7 +50,7 @@ export function DeveloperSettings({ onNotify }: { onNotify: (message: string) =>
     try {
       const saved = await knowledgeApi.saveDeveloperSettings({ traces: traces.on, outputSkills: on });
       setSkills(saved.outputSkills ?? on);
-      onNotify(on ? "Outputs follow their skill again." : "Outputs are made the earlier way, without a skill.");
+      onNotify(on ? "Artifacts follow their skill again." : "Artifacts are made the earlier way, without a skill.");
     } catch (reason) {
       onNotify(reason instanceof Error ? reason.message : "That could not be saved.");
     }

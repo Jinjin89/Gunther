@@ -654,7 +654,7 @@ async function run() {
     }
     await waitForEvaluation(
       cdp,
-      `document.querySelector('[aria-label="Back to library"]') !== null && document.body.innerText.includes(${JSON.stringify(libraryTitle)})`,
+      `document.querySelector('[aria-label="Library views"]') !== null && document.body.innerText.includes(${JSON.stringify(libraryTitle)})`,
       "created knowledge base workspace",
     );
     await waitForEvaluation(
@@ -783,22 +783,23 @@ async function run() {
     if (!await cdp.evaluate(clickExpression("button", libraryTitle))) {
       throw new SmokeFailure("The created knowledge base could not be reopened");
     }
-    await waitForEvaluation(cdp, "document.querySelector('[aria-label=\"Back to library\"]') !== null", "knowledge base workspace before output generation");
-    if (!await cdp.evaluate(clickExpression("button", "Outputs"))) {
+    await waitForEvaluation(cdp, "document.querySelector('[aria-label=\"Library views\"]') !== null", "knowledge base workspace before output generation");
+    if (!await cdp.evaluate(clickExpression("button", "Artifacts"))) {
       throw new SmokeFailure("Outputs view was not clickable");
     }
+    await waitForEvaluation(cdp, `document.querySelector('[aria-label="New conversation"]')?.disabled === false`, "Artifacts ready for a new draft");
     // Outputs read the whole library: the filed source and the saved answer.
     const trustedCount = units.filter((item) => item.status === "trusted").length;
     const scopeWords = `${sources.length} ${sources.length === 1 ? "source" : "sources"} · ${trustedCount} saved`;
     await waitForEvaluation(
       cdp,
-      `document.body.innerText.includes('Turn what you’ve gathered into a report or slides.') && document.querySelector('.outputs-controls .outputs-hint')?.textContent.trim() === ${JSON.stringify(scopeWords)}`,
+      `document.querySelector('.aw-pane-head h1')?.textContent.trim() === 'Conversation' && document.querySelector('.aw-input-context')?.textContent.trim() === ${JSON.stringify(scopeWords)}`,
       "Outputs counting the library's sources and saved knowledge",
     );
     // The smoke has no model, so Outputs says so instead of building one from a stand-in.
     await waitForEvaluation(
       cdp,
-      "document.querySelector('.outputs-empty h2')?.textContent.trim() === 'Outputs need a model' && document.querySelector('button.outputs-build')?.disabled === true && document.body.innerText.includes('Nothing built yet.')",
+      "document.querySelector('.outputs-setup-note')?.textContent.includes('Artifacts need a model') && document.querySelector('button[aria-label=\"Send message\"]')?.disabled === true && document.querySelector('[aria-label=\"Conversations\"]') !== null",
       "Outputs asking for a model instead of building one",
     );
 
@@ -878,7 +879,7 @@ async function run() {
         "grounded Ask answer persisted with citations",
         "answer saved as knowledge with no Inbox review",
         "saved answer became a trusted evidenced unit",
-        "Outputs counted the library's sources and saved knowledge, and asked for a model instead of building without one",
+        "Artifacts counted the library's sources and saved knowledge, and asked for a model instead of building without one",
         "capture moved to Trash from Inbox and brought back with Undo",
         "capture restored from the Trash page",
         "capture deleted forever from Trash",

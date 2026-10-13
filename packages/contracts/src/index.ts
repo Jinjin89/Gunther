@@ -1252,6 +1252,10 @@ export interface ArtifactProvenance {
   skill?: SkillRun | null;
   approach?: OutputApproach | null;
   use?: DeckUse | null;
+  conversationId?: string | null;
+  conversationTitle?: string | null;
+  /** The instruction which produced this version. */
+  request?: string | null;
 }
 
 /** What a deck is for: a talk (few words, speaker notes) or reading on its own. */
@@ -1342,6 +1346,10 @@ export interface ArtifactSummary {
   /** A report's style (a legacy version's old format); none for slides. */
   style: string | null;
   origin: OutputOrigin;
+  conversationId?: string | null;
+  conversationTitle?: string | null;
+  clientRequestId?: string | null;
+  request?: string | null;
 }
 
 export interface Artifact extends ArtifactSummary {
@@ -1362,6 +1370,10 @@ export interface Artifact extends ArtifactSummary {
 
 export interface BuildOutputRequest {
   clientRequestId: string;
+  model?: string;
+  effort?: Effort;
+  conversationId?: string;
+  conversationTitle?: string;
   kind: OutputKind;
   /** Reports only; an overview when left out. */
   style?: OutputStyle;
@@ -1385,6 +1397,10 @@ export interface BuildOutputRequest {
 
 export interface ReviseOutputRequest {
   clientRequestId: string;
+  model?: string;
+  effort?: Effort;
+  conversationId?: string;
+  conversationTitle?: string;
   instruction: string;
   /** The section or slide to change, counted from 0; the whole output when left out. */
   sectionIndex?: number;

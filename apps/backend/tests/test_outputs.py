@@ -755,6 +755,7 @@ def test_the_outputs_job_can_have_its_own_model_and_otherwise_follows_ask(tmp_pa
                 "models": ["kimi-k3", "kimi-k2.6"],
             },
         )
+
         def roles() -> dict[str, dict]:
             found = client.get("/api/settings/models", headers=SIDECAR).json()["roles"]
             return {role["id"]: role for role in found}
@@ -855,9 +856,7 @@ def test_a_rebuild_with_an_edited_outline_skips_the_planner_and_is_the_next_vers
     assert [item["heading"] for item in second["outline"]] == ["B cells", "T cells"]
     assert [s["heading"] for s in second["sections"]] == ["B cells", "T cells"]
     # Each section was searched by its heading and goal.
-    searches = [
-        r["messages"][-1]["content"] for r in fake.requests if is_grading(r)
-    ]
+    searches = [r["messages"][-1]["content"] for r in fake.requests if is_grading(r)]
     assert any("Search: B cells Start with B cells" in prompt for prompt in searches)
     # Only the latest version can be built on.
     [(name, error)] = stale
@@ -1131,9 +1130,7 @@ def test_a_second_build_waits_and_a_page_that_comes_back_follows_the_first(
         gate.set()
         first.join(10)
         again.join(10)
-        after = client.get(
-            f"/api/knowledge-bases/{base_id}/outputs/build/stream", headers=headers
-        )
+        after = client.get(f"/api/knowledge-bases/{base_id}/outputs/build/stream", headers=headers)
         assert len(versions(client)) == 1
 
     [followed] = again_box
@@ -1164,9 +1161,7 @@ def test_stopping_a_build_saves_nothing(tmp_path: Path) -> None:
         key = f"outputs:{base_id}"
         first, first_box = in_background(lambda: build(client, base_id, body(), headers))
         wait_for(lambda: writing(runs.get(key)))
-        stopped = client.post(
-            f"/api/knowledge-bases/{base_id}/outputs/build/stop", headers=headers
-        )
+        stopped = client.post(f"/api/knowledge-bases/{base_id}/outputs/build/stop", headers=headers)
         assert stopped.status_code == 204
         gate.set()
         first.join(10)
@@ -1296,9 +1291,7 @@ def test_two_libraries_building_at_once_both_show_and_stop_ends_one(tmp_path: Pa
         assert all(item["state"] == "running" for item in found.values())
 
         # Stopping one through the activity route ends it like the old stop route.
-        stopped = client.post(
-            f"/api/activity/output%3A{first_id}/stop", headers=SIDECAR
-        )
+        stopped = client.post(f"/api/activity/output%3A{first_id}/stop", headers=SIDECAR)
         assert stopped.status_code == 204
         gate.set()
         one.join(10)
@@ -1308,3 +1301,73 @@ def test_two_libraries_building_at_once_both_show_and_stop_ends_one(tmp_path: Pa
     assert one_box[0][-1] == ("stopped", {"type": "stopped"})
     assert f"output:{first_id}" not in after
     assert after[f"output:{second_id}"]["state"] == "failed"
+
+
+def test_conversation_membership_and_instructions_survive_revise_and_edit(tmp_path: Path) -> None:
+    fake = FakeProvider(output_replies(ONE_SECTION, [REPORT[0]]))
+    with app_for(tmp_path, fake) as client:
+        base_id, _ = library(client)
+        request = body(
+            conversationId="conversation_first",
+            conversationTitle="Lab briefing",
+            brief="Make notes",
+        )
+        first = built(build(client, base_id, request))
+        assert first["conversationId"] == "conversation_first"
+        assert first["conversationTitle"] == "Lab briefing"
+        assert first["clientRequestId"] == request["clientRequestId"]
+        assert first["provenance"]["request"] == "Make notes"
+        listed = client.get(
+            f"/api/knowledge-bases/{base_id}/artifacts", headers=workspace(client)
+        ).json()
+        assert listed[0]["conversationId"] == "conversation_first"
+        assert listed[0]["request"] == "Make notes"
+        second = built(
+            revise(
+                client,
+                base_id,
+                first["id"],
+                "Make it shorter",
+                conversationId="conversation_first",
+                conversationTitle="Lab briefing",
+            )
+        )
+        assert second["conversationId"] == "conversation_first"
+        assert second["provenance"]["request"] == "Make it shorter"
+        edited = client.post(
+            route(base_id, second["id"], "/edits"),
+            headers=workspace(client),
+            json={
+                "clientRequestId": "conversation_edit_001",
+                "content": second["content"] + "\n\nExtra notes.",
+            },
+        ).json()
+        assert edited["conversationId"] == "conversation_first"
+        assert edited["provenance"]["conversationTitle"] == "Lab briefing"
+        before = len(fake.requests)
+        rejected = revise(
+            client, base_id, edited["id"], "Change ownership", conversationId="conversation_other"
+        )
+        assert rejected[-1][0] == "error"
+        assert "different conversation" in rejected[-1][1]["detail"]
+        assert len(fake.requests) == before
+
+
+def test_explicit_output_model_and_effort_are_used_and_invalid_models_do_not_run(
+    tmp_path: Path,
+) -> None:
+    fake = FakeProvider(output_replies(ONE_SECTION, [REPORT[0]]))
+    with app_for(tmp_path, fake) as client:
+        base_id, _ = library(client)
+        chosen = client.get("/api/models", headers=SIDECAR).json()["models"][-1]["ref"]
+        model = client.app.state.knowledge_service.models.get(chosen)
+        start = len(fake.requests)
+        artifact = built(build(client, base_id, body(model=chosen, effort="max")))
+        assert artifact["provenance"]["model"]["ref"] == chosen
+        assert artifact["provenance"]["model"]["effort"] == "max"
+        assert all(call["model"] == model.model_id for call in fake.requests[start:])
+        start = len(fake.requests)
+        rejected = build(client, base_id, body(model="missing/model"))
+        assert rejected[-1][0] == "error"
+        assert "selected model" in rejected[-1][1]["detail"]
+        assert len(fake.requests) == start
