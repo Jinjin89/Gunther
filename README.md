@@ -180,6 +180,8 @@ npm run mobile:analyze
 npm run mobile:test
 ```
 
+提交前运行 `npm run check`：除 lint、单元测试、前端构建与 Rust 检查外，它还包含 CI 使用的真实浏览器流程检查。需要本机安装 Chrome 或 Chromium；若无法自动找到，可通过 `CHROME_BIN` 指定可执行文件路径。浏览器检查使用临时后端、资料目录与浏览器配置，不使用日常资料，结束后自动清理。只验证浏览器流程时可运行 `npm run smoke:desktop-ui`。
+
 ### 打包桌面安装包
 
 `npm run build:desktop` 在当前系统上把前端、Rust 外壳和冻结的 Python Helper 打成一个安装包。PyInstaller 不能跨平台构建，所以每个平台都要在对应系统上打包。

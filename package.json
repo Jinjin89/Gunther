@@ -28,7 +28,7 @@
     "mobile:get": "flutter pub get --directory apps/mobile",
     "mobile:analyze": "flutter analyze apps/mobile",
     "mobile:test": "cd apps/mobile && flutter test",
-    "check": "npm run lint && npm test && npm run test:desktop && npm run build && npm run check:desktop"
+    "check": "npm run lint && npm test && npm run test:desktop && npm run build && npm run check:desktop && npm run smoke:desktop-ui"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

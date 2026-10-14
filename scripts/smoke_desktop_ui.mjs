@@ -556,7 +556,7 @@ async function run() {
     await waitForEvaluation(cdp, `document.body.innerText.includes(${JSON.stringify(libraryTitle)})`, "created knowledge base workspace");
     await waitForEvaluation(
       cdp,
-      `document.querySelector('.base-mode-switch button[aria-current="page"]')?.textContent.trim() === 'Ask' && document.body.innerText.includes('Ask the knowledge')`,
+      `document.querySelector('nav[aria-label="Library views"] button[aria-current="page"]')?.textContent.trim() === 'Ask' && document.body.innerText.includes('Ask the knowledge')`,
       "new knowledge base default Ask view",
     );
 
@@ -621,17 +621,29 @@ async function run() {
       throw new SmokeFailure(`Library folders were not in use: ${JSON.stringify(storage)}`);
     }
     const libraryDirectory = path.join(libraryRoot, "Libraries", libraryTitle);
-    let sourceFolder = null;
-    for (let attempt = 0; attempt < 100 && !sourceFolder; attempt += 1) {
-      const listed = await readFile(path.join(libraryDirectory, "library.json"), "utf8")
-        .then((body) => JSON.parse(body).sources.find((item) => item.id === source.id))
-        .catch(() => null);
-      if (listed) sourceFolder = path.join(libraryDirectory, listed.folder);
-      else await delay(100);
+    let exportedSource = null;
+    let exportPending = "The source was not listed in library.json";
+    // The folder sync writes the library listing before the individual source files.
+    for (let attempt = 0; attempt < 100 && !exportedSource; attempt += 1) {
+      try {
+        const library = JSON.parse(await readFile(path.join(libraryDirectory, "library.json"), "utf8"));
+        const listed = library.sources.find((item) => item.id === source.id);
+        if (listed) {
+          const sourceFolder = path.join(libraryDirectory, listed.folder);
+          exportedSource = await Promise.all([
+            readFile(path.join(sourceFolder, "source.json"), "utf8"),
+            readFile(path.join(sourceFolder, "content.md"), "utf8"),
+          ]);
+        }
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+        exportPending = error.message;
+      }
+      if (!exportedSource) await delay(100);
     }
-    if (!sourceFolder) throw new SmokeFailure("The filed source did not appear in its library folder");
-    const described = JSON.parse(await readFile(path.join(sourceFolder, "source.json"), "utf8"));
-    const text = await readFile(path.join(sourceFolder, "content.md"), "utf8");
+    if (!exportedSource) throw new SmokeFailure(`The filed source export did not finish: ${exportPending}`);
+    const described = JSON.parse(exportedSource[0]);
+    const text = exportedSource[1];
     if (described.id !== source.id || !text.trim()) {
       throw new SmokeFailure("The source folder did not describe the filed source");
     }
@@ -671,7 +683,7 @@ async function run() {
     );
     await waitForEvaluation(
       cdp,
-      `document.querySelector('.base-mode-switch button[aria-current="page"]')?.textContent.trim() === 'Ask' && document.body.innerText.includes('Ask the knowledge')`,
+      `document.querySelector('nav[aria-label="Library views"] button[aria-current="page"]')?.textContent.trim() === 'Ask' && document.body.innerText.includes('Ask the knowledge')`,
       "reopened knowledge base default Ask view",
     );
 
@@ -680,7 +692,7 @@ async function run() {
     }
     await waitForEvaluation(
       cdp,
-      `document.querySelector('.base-mode-switch button[aria-current="page"]')?.textContent.trim() === 'Contents' && [...document.querySelectorAll('button.contents-source strong')].some((item) => item.textContent.trim() === ${JSON.stringify(noteTitle)})`,
+      `document.querySelector('nav[aria-label="Library views"] button[aria-current="page"]')?.textContent.trim() === 'Contents' && [...document.querySelectorAll('button.contents-source strong')].some((item) => item.textContent.trim() === ${JSON.stringify(noteTitle)})`,
       "filed source in Contents view",
     );
     const sourceOpenState = await cdp.evaluate(`(() => {
@@ -719,7 +731,7 @@ async function run() {
       return true;
     })()`);
     if (!wentBack) throw new SmokeFailure("The source page could not go back to its library");
-    await waitForEvaluation(cdp, "document.querySelector('.base-mode-switch') !== null", "library workspace after the source page");
+    await waitForEvaluation(cdp, `document.querySelector('nav[aria-label="Library views"]') !== null`, "library workspace after the source page");
 
     const askReadyStartedAt = Date.now();
     if (!await cdp.evaluate(clickExpression("button", "Ask"))) {
