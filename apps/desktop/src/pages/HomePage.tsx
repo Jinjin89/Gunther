@@ -25,7 +25,6 @@ import { LibraryGlyph } from "../design/LibraryGlyph";
 import { refFromSearch, type ItemRef } from "../items/itemRef";
 import { readAnswerStyle, usableChoice, useDeviceChoice, useModelMenu, WEB_PREFERENCE_KEY } from "../models/askModel";
 import { ModelPicker } from "../models/ModelPicker";
-import { StylePicker } from "../models/StylePicker";
 import { useHomeAsk } from "./useHomeAsk";
 
 export type HomeCaptureKind = "note" | "link" | "file" | "image" | "recording" | "table";
@@ -353,7 +352,7 @@ export function HomePage({
           onBudgetChange={setBudget}
           onClear={clear}
           onArrowDown={submitted ? focusFirstResult : undefined}
-          picker={<><ModelPicker menu={modelMenu} choice={usableChoice(modelMenu, deviceChoice)} onChange={setDeviceChoice} placement="down" /><StylePicker /></>}
+          picker={<ModelPicker menu={modelMenu} choice={usableChoice(modelMenu, deviceChoice)} onChange={setDeviceChoice} placement="down" />}
         />
         {!hasResults && !asking && (
           <div className="gx-capture-row" role="group" aria-label="Capture">

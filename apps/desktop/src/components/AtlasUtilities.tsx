@@ -65,6 +65,7 @@ import { SETTINGS_PANES, SettingsNav, useSettingsAttention, useSettingsPane } fr
 import { DeveloperSettings } from "../developer/DeveloperSettings";
 import { TypographySettings } from "./TypographySettings";
 import { ModelSettings } from "../models/ModelSettings";
+import { AnswerStyleSetting } from "../models/AnswerStyleSetting";
 import { SpeechSettings } from "../models/SpeechSettings";
 import { TtsSettings } from "../speech/TtsSettings";
 import { CAPTURE_CONTROL_DOM_EVENT, CAPTURE_SWITCH_DOM_EVENT, recorderOwnsCapture, type CaptureControl, type CaptureKind, type CaptureLaunchRequest, type RecordingContext } from "../capture/captureTypes";
@@ -1044,6 +1045,7 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
     {pane === "general" && <section>
       <label className="setting-row"><span><strong>Theme</strong><small>Applied immediately and remembered on this device.</small></span><select value={theme} aria-label="Theme" onChange={(event) => onTheme(event.target.value as ThemePreference)}><option value="light">Light</option><option value="dark">Dark</option><option value="system">Match system</option></select></label>
       <TypographySettings />
+      <AnswerStyleSetting />
       {isTauriRuntime() && <label className="setting-row"><span><strong>Menu bar</strong><small>Gunther’s mark stays in the menu bar for quick capture. Recordings always show there, with their timer, while they run.</small></span><select value={menuBarMode} aria-label="Menu bar" onChange={(event) => changeMenuBarMode(event.target.value as MenuBarMode)}><option value="always">Always show</option><option value="whileCapturing">Only while capturing</option></select></label>}
       <div className="setting-row"><span><strong>Keyboard shortcuts</strong><small>Capture, search and move through Inbox without the mouse. Press {formatCombo("mod+/")} any time.</small></span><button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => window.dispatchEvent(new CustomEvent("gunther:show-shortcuts"))}>Show all</button></div>
     </section>}

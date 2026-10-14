@@ -15,8 +15,10 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   stat,
+  writeFile,
 } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
@@ -381,11 +383,21 @@ async function run() {
   }
   await access(viteBin, fsConstants.R_OK);
   const chromeBinary = await findChrome();
-  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "gunther-desktop-ui-smoke."));
+  const temporaryRoot = await realpath(await mkdtemp(path.join(os.tmpdir(), "gunther-desktop-ui-smoke.")));
   const dataDirectory = path.join(temporaryRoot, "data");
   const libraryRoot = path.join(dataDirectory, "Gunther");
   const distDirectory = path.join(temporaryRoot, "dist");
   const chromeProfile = path.join(temporaryRoot, "chrome");
+  const screenshotsArgument = process.argv.find((arg) => arg.startsWith("--screenshots-dir="));
+  const screenshotsDirectory = screenshotsArgument ? path.resolve(screenshotsArgument.slice("--screenshots-dir=".length)) : null;
+  const screenshot = async (name) => {
+    if (!screenshotsDirectory) return;
+    await mkdir(screenshotsDirectory, { recursive: true });
+    await waitForEvaluation(cdp, "!document.querySelector('.atlas-toast')", "notifications settling before the layout screenshot");
+    await cdp.evaluate("new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    const { data } = await cdp.send("Page.captureScreenshot", { format: "png" });
+    await writeFile(path.join(screenshotsDirectory, `${name}.png`), Buffer.from(data, "base64"));
+  };
   await Promise.all([mkdir(dataDirectory), mkdir(chromeProfile)]);
 
   let backend;
@@ -736,6 +748,38 @@ async function run() {
       throw new SmokeFailure(`${error instanceof Error ? error.message : String(error)}; diagnostics=${JSON.stringify(diagnostics)}; sessions=${JSON.stringify(sessions)}`);
     }
     const askReadyMilliseconds = Date.now() - askReadyStartedAt;
+    // A display-only model menu fixture stresses wrapping without sending a model request.
+    const longModelMenu = {
+      models: [{ ref: "example/long-model", provider: "Example provider with a long name", label: "A model with a long display name", display: "Example provider · A model with a long display name", vision: false, levels: [{ id: "max", label: "Max" }] }],
+      default: { model: "example/long-model", effort: "max" }, efforts: ["max"],
+    };
+    await cdp.evaluate(`(() => {
+      window.__smokeOriginalFetch = window.fetch;
+      window.fetch = (input, init) => new URL(typeof input === 'string' ? input : input.url, location.href).pathname === '/api/models'
+        ? Promise.resolve(new Response(${JSON.stringify(JSON.stringify(longModelMenu))}, { headers: { 'Content-Type': 'application/json' } }))
+        : window.__smokeOriginalFetch(input, init);
+      window.dispatchEvent(new CustomEvent('gunther:models-changed'));
+    })()`);
+    await waitForEvaluation(cdp, "document.querySelector('.composer [data-chip=model]')?.textContent.includes('A model with a long display name')", "long model menu fixture");
+    // The narrowest desktop window keeps All sources and the two action buttons usable.
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 900, height: 640, deviceScaleFactor: 1, mobile: false });
+    await waitForEvaluation(cdp, "window.innerWidth === 900", "narrow Ask window");
+    const composerLayout = await cdp.evaluate(`(() => {
+      const composer = document.querySelector('.composer').getBoundingClientRect();
+      const options = document.querySelector('.composer-options').getBoundingClientRect();
+      const actions = document.querySelector('.composer-actions').getBoundingClientRect();
+      const mic = document.querySelector('.composer-actions .mic-button').getBoundingClientRect();
+      const send = document.querySelector('.composer-actions .send-button').getBoundingClientRect();
+      return { right: composer.right, bottom: composer.bottom, optionsRight: options.right, actionsLeft: actions.left, micTop: mic.top, sendTop: send.top, micRight: mic.right, sendLeft: send.left,
+        hasSources: document.querySelector('.scope-chip')?.textContent.trim() === 'All sources', hasStyle: Boolean(document.querySelector('.composer [aria-label="Answer style"]')) };
+    })()`);
+    if (composerLayout.right > 900 || composerLayout.bottom > 640 || composerLayout.optionsRight > composerLayout.actionsLeft || Math.abs(composerLayout.micTop - composerLayout.sendTop) > 1 || composerLayout.micRight > composerLayout.sendLeft || !composerLayout.hasSources || composerLayout.hasStyle) {
+      throw new SmokeFailure(`The narrow Ask layout is crowded: ${JSON.stringify(composerLayout)}`);
+    }
+    await screenshot("ask-900");
+    await cdp.send("Emulation.clearDeviceMetricsOverride");
+    await cdp.evaluate("window.fetch = window.__smokeOriginalFetch; delete window.__smokeOriginalFetch; window.dispatchEvent(new CustomEvent('gunther:models-changed'))");
+    await waitForEvaluation(cdp, "document.querySelector('.composer .gx-model-chip.is-empty')?.textContent.includes('No model')", "real model menu restored before asking");
     const question = "What does BRCA1 regulate?";
     if (!await cdp.evaluate(setAriaValueExpression("Message Gunther", question))) {
       throw new SmokeFailure("Ask composer was not editable");
@@ -787,7 +831,7 @@ async function run() {
     if (!await cdp.evaluate(clickExpression("button", "Artifacts"))) {
       throw new SmokeFailure("Outputs view was not clickable");
     }
-    await waitForEvaluation(cdp, `document.querySelector('[aria-label="New conversation"]')?.disabled === false`, "Artifacts ready for a new draft");
+    await waitForEvaluation(cdp, `document.querySelector('[aria-label="New conversation"]')?.disabled === false`, "Outputs ready for a new draft");
     // Outputs read the whole library: the filed source and the saved answer.
     const trustedCount = units.filter((item) => item.status === "trusted").length;
     const scopeWords = `${sources.length} ${sources.length === 1 ? "source" : "sources"} · ${trustedCount} saved`;
@@ -802,6 +846,55 @@ async function run() {
       "document.querySelector('.outputs-setup-note')?.textContent.includes('Artifacts need a model') && document.querySelector('button[aria-label=\"Send message\"]')?.disabled === true && document.querySelector('[aria-label=\"Conversations\"]') !== null",
       "Outputs asking for a model instead of building one",
     );
+
+    // Output selection follows the same real sections and placements as Contents.
+    const makeSection = async (title, parentId, sourceIds = []) => {
+      const response = await fetch(`${backendOrigin}/api/knowledge-bases/${encodeURIComponent(knowledgeBase.id)}/topics`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, description: "", parentId, sourceIds }),
+      });
+      if (!response.ok) throw new SmokeFailure(`Could not arrange output material (${response.status})`);
+      return response.json();
+    };
+    const course = await makeSection("Course materials", null);
+    await makeSection("Week 1", course.id, sources.map((item) => item.id));
+    await cdp.evaluate("window.dispatchEvent(new Event('gunther:topics-updated'))");
+    await waitForEvaluation(cdp, "document.querySelector('.artifacts-materials .outputs-source-tree')?.textContent.includes('Week 1')", "persistent source selection showing Contents hierarchy");
+    await cdp.evaluate(`(() => {
+      const panel = document.querySelector('.artifacts-materials');
+      const extras = panel.querySelector('.artifacts-other-materials');
+      if (extras) {
+        extras.open = true;
+        for (const input of extras.querySelectorAll('input:checked')) input.click();
+      }
+      const clear = [...panel.querySelectorAll('.outputs-source-group button')].find(button => button.textContent.trim() === 'Clear');
+      if (clear) clear.click();
+    })()`);
+    if (!await cdp.evaluate(clickExpression("input", "Select Course materials"))) throw new SmokeFailure("A whole course could not be selected");
+    await waitForEvaluation(cdp, "[...document.querySelectorAll('.artifacts-materials .outputs-source-row input')].every((input) => input.checked)", "all sources in the selected course");
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 900, height: 640, deviceScaleFactor: 1, mobile: false });
+    await screenshot("artifacts-sources-900");
+    const sourcesFit = await cdp.evaluate(`(() => { const box = document.querySelector('.artifacts-materials').getBoundingClientRect(); const footer = document.querySelector('.artifacts-materials > footer').getBoundingClientRect(); return box.top >= 0 && box.bottom <= innerHeight + 1 && footer.bottom <= box.bottom + 1 && box.right <= innerWidth; })()`);
+    if (!sourcesFit) throw new SmokeFailure("Source selection does not fit in a narrow window");
+    if (await cdp.evaluate("Boolean(document.querySelector('.outputs-picker-overlay'))")) throw new SmokeFailure("Source selection still uses a popup");
+    const chosenWords = `${sources.length} ${sources.length === 1 ? "source" : "sources"}`;
+    await waitForEvaluation(cdp, `document.querySelector('.aw-input-context')?.textContent.trim() === ${JSON.stringify(chosenWords)}`, "artifact selection containing only course sources");
+    await cdp.send("Emulation.clearDeviceMetricsOverride");
+
+    // The answer preference remains available in General Settings and survives reopening.
+    if (!await cdp.evaluate(clickExpression("button", "Settings"))) throw new SmokeFailure("Settings was not clickable");
+    await waitForEvaluation(cdp, "document.querySelector('.settings-nav') !== null", "Settings topics");
+    await cdp.evaluate(clickExpression("button", "General"));
+    await waitForEvaluation(cdp, "document.querySelector('.settings-pane [aria-label=\"Answer style\"]') !== null", "Answer style in General Settings");
+    await cdp.evaluate(`(() => { const select = document.querySelector('[aria-label="Answer style"]'); select.value = 'concise'; select.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await waitForEvaluation(cdp, "localStorage.getItem('gunther:answer-style') === 'concise'", "remembered concise answer preference");
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1000, height: 820, deviceScaleFactor: 1, mobile: false });
+    await screenshot("settings-answer-style");
+    await cdp.evaluate(clickExpression("button", "Home"));
+    await waitForEvaluation(cdp, "document.querySelector('.gx-home') !== null", "Home after choosing an answer style");
+    if (await cdp.evaluate("Boolean(document.querySelector('.gx-home [aria-label=\"Answer style\"]'))")) throw new SmokeFailure("Home still crowds its composer with answer style");
+    await cdp.evaluate(clickExpression("button", "Settings"));
+    await waitForEvaluation(cdp, "document.querySelector('.settings-pane [aria-label=\"Answer style\"]')?.value === 'concise'", "answer preference after reopening Settings");
+    await cdp.send("Emulation.clearDeviceMetricsOverride");
 
     // Trash: move a capture there from Inbox, undo, restore from the Trash page, delete forever.
     const trashTitle = `Disposable capture ${marker}`;
@@ -859,7 +952,7 @@ async function run() {
 
     result = {
       status: "passed",
-      checks: 42,
+      checks: 50,
       browser: path.basename(chromeBinary),
       knowledgeBaseId: knowledgeBase.id,
       noteId: filedNote.id,
@@ -880,6 +973,9 @@ async function run() {
         "answer saved as knowledge with no Inbox review",
         "saved answer became a trusted evidenced unit",
         "Artifacts counted the library's sources and saved knowledge, and asked for a model instead of building without one",
+        "Ask kept All sources and side-by-side voice/send actions at 900 × 640",
+        "Artifacts selected sources directly in the persistent Contents hierarchy",
+        "Answer style moved to General Settings, persisted and stayed out of Ask/Home composers",
         "capture moved to Trash from Inbox and brought back with Undo",
         "capture restored from the Trash page",
         "capture deleted forever from Trash",

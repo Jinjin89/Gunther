@@ -59,9 +59,15 @@
 .answer-markdown th, .answer-markdown td { padding: 5px 10px; border: 1px solid var(--gx-line-2); text-align: left; }
 .answer-markdown th { background: var(--gx-surface-2); font-weight: 600; }
 
-/* A crowded composer toolbar wraps instead of squeezing its chips. */
-.composer-toolbar > div { flex-wrap: wrap; row-gap: 4px; }
+/* Options wrap within their space; voice and Send remain side by side. */
+.composer-toolbar { align-items: flex-end; }
+.composer-toolbar > .composer-options { flex: 1; flex-wrap: wrap; row-gap: 4px; }
+.composer-toolbar > .composer-actions { flex: none; flex-wrap: nowrap; align-self: flex-end; }
 .scope-chip, .chapter-chip { white-space: nowrap; }
+.chapter-chip { min-width: 0; max-width: 100%; }
+.chapter-chip > span { overflow: hidden; text-overflow: ellipsis; }
+.chapter-chip > svg { flex: none; }
+.composer-options > .gx-model-picker { max-width: 100%; flex-wrap: wrap; }
 
 .live-wait { margin: 10px 0 0 30px; display: flex; align-items: center; gap: 9px; color: var(--gx-faint); font-size: var(--gx-text-xs); }
 .live-wait > span { display: flex; gap: 3px; }

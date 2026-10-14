@@ -30,6 +30,7 @@
 .gx-model-chip:disabled { cursor: default; }
 .gx-model-chip.is-fixed { color: var(--gx-faint) !important; }
 .gx-model-chip.is-empty { color: var(--gx-ink) !important; }
+.gx-model-chip[data-chip="effort"] { flex: none; }
 .gx-model-chip-provider { color: var(--gx-faint); font-weight: 500; }
 .gx-model-chip-provider::after { content: " ·"; }
 
@@ -200,23 +201,6 @@
   font-size: var(--gx-text-xs);
 }
 .speech-language:focus-visible { outline: none; box-shadow: var(--gx-ring); }
-
-/* Answer style: a quiet native menu beside the model chips. */
-.gx-style-picker { display: inline-flex; align-items: center; }
-.gx-style-picker select {
-  height: 28px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--gx-muted);
-  font: inherit;
-  font-size: var(--gx-text-xs);
-  font-weight: 550;
-  cursor: pointer;
-}
-.gx-style-picker select:hover:not(:disabled) { background: var(--gx-hover); color: var(--gx-ink); }
-.gx-style-picker select:focus-visible { outline: none; box-shadow: var(--gx-ring); }
 
 /* A claim from the model's own knowledge that no source backs. */
 .unverified-mark {

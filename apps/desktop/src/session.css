@@ -1,6 +1,6 @@
 .session-workspace {
   height: 100%;
-  min-height: 580px;
+  min-height: 0;
   display: grid;
   grid-template-columns: 252px minmax(460px, 1fr) var(--inspector-w, 326px);
   overflow: hidden;

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { forgetAskSkills } from "../components/search/skills";
 import { HomePage } from "./HomePage";
+import { ANSWER_STYLE_KEY } from "../models/askModel";
 
 const api = vi.hoisted(() => ({
   sources: vi.fn(),
@@ -40,14 +41,16 @@ describe("research from Home", () => {
   });
 
   it("asks with the depth chosen", async () => {
+    window.localStorage.setItem(ANSWER_STYLE_KEY, "academic");
     const user = userEvent.setup();
     api.sendMessageStream.mockResolvedValue(turn(null, "An answer."));
     renderHome();
+    expect(screen.queryByRole("combobox", { name: "Answer style" })).not.toBeInTheDocument();
     await user.type(box(), "/res{Enter}");
     await user.click(await screen.findByRole("button", { name: "Deep" }));
     await user.type(box(), "Compare the options.{Enter}");
     await waitFor(() => expect(api.sendMessageStream).toHaveBeenCalled());
-    expect(api.sendMessageStream.mock.calls[0]![1]).toMatchObject({ content: "Compare the options.", skill: "research", budget: "deep" });
+    expect(api.sendMessageStream.mock.calls[0]![1]).toMatchObject({ content: "Compare the options.", skill: "research", budget: "deep", style: "academic" });
   });
 
   it("puts the research chip back, at the same depth, when it asked something first", async () => {
