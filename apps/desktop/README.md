@@ -40,6 +40,8 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features native-s
 npm run build:desktop
 ```
 
+macOS 打包在 Tauri 完成后会移除安装卷根目录的 `.VolumeIcon.icns`，避免 Finder 显示隐藏文件时出现第二个半透明图标；保留应用图标、Applications 快捷方式、窗口布局及应用签名。修复后的 DMG 会重新校验，有 Developer ID 签名时重新签名。使用 `npm run build:desktop`（参数会原样传给 Tauri）即可，本地和 CI 采用同一流程。
+
 最终回归：Desktop 72 passed，TypeScript typecheck 与 Vite production build 通过；Rust 壳 10 passed，原生构建通过；Chrome UI→backend E2E 32/32；冻结 Helper 随机 loopback 启动 1 passed。macOS 候选为 `artifacts/releases/Gunther_0.1.0_macOS_arm64.dmg`，33,658,539 bytes，SHA-256 `98684b1da7b4728b9c3e94e3a0687cdb8f30fb6cf8dff5006631ad67150a641d`。
 
 ## 产品结构
