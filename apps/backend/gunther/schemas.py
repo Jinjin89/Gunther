@@ -831,6 +831,11 @@ class OutputProvenanceOut(ArtifactProvenanceOut):
     conversation_id: str | None = None
     conversation_title: str | None = None
     request: str | None = None
+    # Made by the Artifacts agent: what it told the user, the parts this version changed, and
+    # the artifact's work as it was made (kept sealed, never sent to the screen).
+    reply: str | None = None
+    changes: list[dict[str, Any]] | None = None
+    work: dict[str, Any] | None = Field(default=None, exclude=True)
 
 
 class OutputScope(ApiModel):
@@ -1017,6 +1022,237 @@ class ArtifactOut(ArtifactSummaryOut):
     inputs: OutputInputsOut = Field(default_factory=OutputInputsOut)
     model_label: str | None = None
     sections: list[OutputSectionOut] = Field(default_factory=list)
+
+
+# The Artifacts agent's conversations, kept on the backend (see artifact_workspace) ------------
+
+ArtifactMark = Literal["you", "guessed", "edited"]
+# Where a part stands (see artifact_workspace.status), and the approach or the outline.
+ArtifactPartState = Literal["ok", "not_written", "out_of_date", "not_checked"]
+ArtifactStepState = Literal["ok", "not_written", "out_of_date"]
+
+
+class ArtifactLineOut(ApiModel):
+    """One line of the brief, and whose it is: the user's words, typed by them, or a guess."""
+
+    text: str
+    mark: ArtifactMark
+
+
+class ArtifactBriefOut(ApiModel):
+    """What the conversation is for."""
+
+    goal: ArtifactLineOut | None = None
+    audience: ArtifactLineOut | None = None
+    constraints: list[ArtifactLineOut] = Field(default_factory=list)
+    open: list[ArtifactLineOut] = Field(default_factory=list)
+
+
+class ArtifactSpecOut(ApiModel):
+    """What the brief says about one artifact."""
+
+    kind: OutputKind
+    use: ArtifactLineOut | None = None
+    length: ArtifactLineOut | None = None
+    structure: ArtifactLineOut | None = None
+
+
+class ArtifactBriefStateOut(ApiModel):
+    """The brief, and the spec of the artifact being worked on (none before there is one)."""
+
+    brief: ArtifactBriefOut
+    spec: ArtifactSpecOut | None = None
+
+
+class ArtifactPartOut(ApiModel):
+    """One slide or section of a work: where it stands. ``position`` counts from 1."""
+
+    position: int
+    item_id: str
+    heading: str
+    layout: str
+    state: ArtifactPartState
+    why: str = ""
+
+
+class ArtifactStepOut(ApiModel):
+    state: ArtifactStepState
+    why: str = ""
+
+
+class ArtifactWorkOut(ApiModel):
+    """One artifact of a conversation: its version, spec, and what is out of date in it."""
+
+    key: str
+    kind: OutputKind
+    title: str
+    version_id: str | None = None
+    spec: ArtifactSpecOut
+    approach: ArtifactStepOut
+    outline: ArtifactStepOut
+    parts: list[ArtifactPartOut]
+
+
+class ArtifactMessageOut(ApiModel):
+    """A message of the conversation. ``payload``: the user's focus; the agent's options,
+    changes, steps or error."""
+
+    id: str
+    role: MessageRole
+    kind: str
+    text: str
+    payload: dict[str, object] = Field(default_factory=dict)
+    artifact_id: str | None = None
+    client_request_id: str | None = None
+    created_at: str
+
+
+class ArtifactPendingOut(ApiModel):
+    """A question the agent asked and is waiting on."""
+
+    question: str
+    options: list[str]
+    message_id: str
+
+
+class ArtifactConversationSummaryOut(ApiModel):
+    id: str
+    title: str
+    updated_at: str
+    artifact_count: int
+    # The agent asked a question and has not had its answer.
+    waiting: bool
+
+
+class ArtifactConversationOut(ArtifactConversationSummaryOut):
+    scope: OutputScope
+    brief: ArtifactBriefOut
+    messages: list[ArtifactMessageOut]
+    works: list[ArtifactWorkOut]
+    active: str | None = None
+    pending: ArtifactPendingOut | None = None
+    archived: bool = False
+    created_at: str
+
+
+class CreateArtifactConversationInput(ApiModel):
+    # The device's conversations keep their ids, so what they made stays linked to them.
+    id: str | None = Field(default=None, min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    title: str | None = Field(default=None, min_length=1, max_length=160)
+    scope: OutputScope | None = None
+
+
+class UpdateArtifactConversationInput(ApiModel):
+    title: str | None = Field(default=None, min_length=1, max_length=160)
+    scope: OutputScope | None = None
+    archived: bool | None = None
+
+
+class ArtifactSpecInput(ApiModel):
+    use: str | None = Field(default=None, max_length=300)
+    length: str | None = Field(default=None, max_length=300)
+    structure: str | None = Field(default=None, max_length=300)
+
+
+class EditArtifactBriefInput(ApiModel):
+    """What the user typed in the Brief panel. Left out leaves a field alone, empty text clears
+    it, and a list is the whole new list. What they set is marked as theirs."""
+
+    goal: str | None = Field(default=None, max_length=300)
+    audience: str | None = Field(default=None, max_length=300)
+    constraints: list[str] | None = Field(default=None, max_length=8)
+    open: list[str] | None = Field(default=None, max_length=8)
+    spec: ArtifactSpecInput | None = None
+
+    @field_validator("constraints", "open")
+    @classmethod
+    def short_lines(cls, lines: list[str] | None) -> list[str] | None:
+        if lines is not None and any(len(line) > 300 for line in lines):
+            raise ValueError("A line is at most 300 characters")
+        return lines
+
+
+class ArtifactFocusInput(ApiModel):
+    """What the user points at: a part (counted from 1, as the map shows it), selected text in
+    it, or only the part that is on screen (``selected`` false)."""
+
+    section: int | None = Field(default=None, ge=1, le=1000)
+    quote: str = Field(default="", max_length=4000)
+    selected: bool = True
+
+
+class ArtifactTurnInput(ApiModel):
+    """One message of the user to the agent. ``answer`` replies to its question, ``start`` is
+    "just start" (no more questions), ``continue`` picks up a paused turn."""
+
+    client_request_id: str = Field(min_length=8, max_length=120)
+    kind: Literal["message", "answer", "start", "continue"] = "message"
+    text: str = Field(default="", max_length=20_000)
+    focus: ArtifactFocusInput | None = None
+    model: str | None = Field(default=None, max_length=200)
+    effort: Effort | None = None
+    web: bool = False
+
+    @model_validator(mode="after")
+    def needs_words(self) -> "ArtifactTurnInput":
+        self.text = self.text.strip()
+        if not self.text:
+            if self.kind in ("message", "answer"):
+                raise ValueError("Write a message")
+            self.text = "Just start" if self.kind == "start" else "Continue"
+        return self
+
+
+class ArtifactChangeOut(ApiModel):
+    """One thing a saved version changed. ``position`` is in the new version (none for a part
+    that was removed), ``was`` in the one before (none for a new part)."""
+
+    position: int | None = None
+    was: int | None = None
+    heading: str
+    what: Literal["added", "rewritten", "edited", "deleted", "moved"]
+    note: str = ""
+
+
+class ArtifactQuestionOut(ApiModel):
+    text: str
+    options: list[str] = Field(default_factory=list)
+
+
+class ArtifactTurnOut(ApiModel):
+    """How a turn ended: it asked, answered, saved a version, replied, or paused."""
+
+    outcome: Literal["asked", "answered", "saved", "replied", "paused"]
+    reply: str
+    question: ArtifactQuestionOut | None = None
+    artifact: ArtifactOut | None = None
+    changes: list[ArtifactChangeOut] = Field(default_factory=list)
+    message: ArtifactMessageOut
+
+
+class ImportedArtifactTurn(ApiModel):
+    """One turn of a conversation the device kept: what was asked and how it ended."""
+
+    id: str | None = Field(default=None, min_length=1, max_length=120)
+    # Generous: a turn that failed for being too long is still a turn to keep.
+    instruction: str = Field(max_length=20_000)
+    status: Literal["running", "saved", "failed", "stopped", "interrupted"]
+    artifact_id: str | None = Field(default=None, max_length=80)
+    created_at: str | None = Field(default=None, max_length=40)
+    error: str | None = Field(default=None, max_length=20_000)
+
+
+class ImportedArtifactConversation(ApiModel):
+    id: str = Field(min_length=1, max_length=80)
+    title: str | None = Field(default=None, max_length=160)
+    # Read leniently: a selection that no longer holds together becomes the whole library.
+    scope: dict[str, object] | None = None
+    created_at: str | None = Field(default=None, max_length=40)
+    turns: list[ImportedArtifactTurn] = Field(default_factory=list, max_length=500)
+
+
+class ImportArtifactConversationsInput(ApiModel):
+    conversations: list[ImportedArtifactConversation] = Field(max_length=500)
 
 
 class KnowledgeSearchResultOut(ApiModel):

@@ -2,7 +2,7 @@ import type { Artifact } from "@gunther/contracts";
 import { ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
 
-const STRUCTURE_LABEL: Record<string, string> = {
+export const STRUCTURE_LABEL: Record<string, string> = {
   what: "Its parts, the most important first",
   why: "Causes, the main one first",
   how: "Steps, in order",

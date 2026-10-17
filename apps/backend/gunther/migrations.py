@@ -628,6 +628,18 @@ def _add_library_contents(connection: Connection, _metadata: MetaData) -> None:
             )
 
 
+ARTIFACT_CONVERSATION_TABLES = ("artifact_conversations", "artifact_messages")
+
+
+def _create_artifact_conversations(connection: Connection, metadata: MetaData) -> None:
+    """The Artifacts agent's conversations and their messages, kept on the backend. The
+    versions they made stay where they were; their provenance already names the conversation."""
+
+    for name in ARTIFACT_CONVERSATION_TABLES:
+        if name in metadata.tables:
+            metadata.tables[name].create(bind=connection, checkfirst=True)
+
+
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
 MIGRATIONS: tuple[Migration, ...] = (
@@ -657,6 +669,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(24, "transcript_upgrades", _create_transcript_upgrades),
     Migration(25, "library_contents", _add_library_contents),
     Migration(26, "drop_transcript_upgrades", _drop_transcript_upgrades),
+    Migration(27, "artifact_conversations", _create_artifact_conversations),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

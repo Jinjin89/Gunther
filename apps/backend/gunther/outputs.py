@@ -30,9 +30,9 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, NamedTuple
 
 from pydantic import BaseModel, Field
 
@@ -55,7 +55,7 @@ from gunther.agent import (
 from gunther.llm import ModelError, ModelGateway, ModelInfo, Turn
 from gunther.model_profiles import Effort
 from gunther.schemas import ConversationCitationOut
-from gunther.skill_checks import CHARTS, Context, Page, chart_numbers_cited
+from gunther.skill_checks import CHARTS, Context, Page, chart_numbers_cited, figures_of
 
 logger = logging.getLogger(__name__)
 
@@ -64,14 +64,91 @@ CARRY_CHARS = 600
 UNCHANGED = "UNCHANGED"
 
 
+IMAGE = re.compile(r"!\[([^\]\n]*)\]\(gunther-asset:([A-Za-z0-9_-]+)\)")
+
+
+def kept_figures(pool: Pool) -> set[str]:
+    """The asset ids of the figures kept with the passages in a pool: the only images an
+    output may show, since each belongs to a source it can cite."""
+
+    return {str(figure["assetId"]) for item in pool.items for figure in figures_of(item)}
+
+
+def drop_unknown_figures(text: str, kept: set[str]) -> tuple[str, list[str]]:
+    """The text without the images that are not among ``kept``, and their captions. A text
+    with none to leave out is given back exactly as it was."""
+
+    left_out: list[str] = []
+
+    def keep(match: re.Match[str]) -> str:
+        if match.group(2) in kept:
+            return match.group(0)
+        left_out.append(match.group(1).strip() or "Figure")
+        return ""
+
+    shown = IMAGE.sub(keep, text)
+    if not left_out:
+        return text, []
+    # The lines the images stood on alone are taken out with them.
+    shown = re.sub(r"\n[ \t]*\n(?:[ \t]*\n)+", "\n\n", re.sub(r"(?m)^[ \t]+$", "", shown))
+    return shown.strip("\n"), left_out
+
+
+VALUE_IN = re.compile(r"(?<!\w)[+-]?\d[\d,]*(?:\.\d+)?%?")
+
+
+def chart_unverified(
+    text: str,
+    issues: Sequence[Issue] | None,
+    coverage: Mapping[str, Any] | None,
+    by_ref: dict[int, Evidence],
+    index: int,
+) -> tuple[list[str], str | None]:
+    """Why a chart slide may not be drawn as a chart, or None when it may.
+
+    Every value must be cited and stated by its cited passage (a check in code), and the
+    Checker must have looked at the table's values and found them supported: a claim with a
+    value in it must be "supported", and no finding may be about a value. Findings about the
+    speaker notes or the line under the chart do not stop the chart; they are shown with the
+    slide like any other.
+
+    Returns the problems the code check found (to be shown as findings) and the reason."""
+
+    layout, body = layout_of(text)
+    page = Page(index, heading_of(body), layout or "bar_chart", body)
+    problems = [
+        item.message
+        for item in chart_numbers_cited([page], {}, Context("slides", evidence=by_ref))
+    ]
+    if problems:
+        return problems, problems[0]
+    values = {
+        value.replace(",", "").rstrip("%")
+        for line in page.body
+        if line.strip().startswith("|")
+        for value in VALUE_IN.findall(CITATION_GROUP.sub("", line))
+    }
+
+    def about_values(claim: str) -> bool:
+        return bool({v.replace(",", "").rstrip("%") for v in VALUE_IN.findall(claim)} & values)
+
+    for issue in issues or ():
+        if about_values(issue.claim):
+            return [], f"The Checker found a problem with a value: “{issue.claim[:120]}”"
+    claims = [claim for claim in (coverage or {}).get("claims", []) if about_values(claim["text"])]
+    if issues is None or not claims:
+        return [], "Its verification is incomplete: its values were not checked."
+    if any(claim.get("verdict") != "supported" for claim in claims):
+        return [], "Its verification is incomplete: not every value was found supported."
+    return [], None
+
+
 def figure_lines(item: Evidence) -> list[str]:
-    citation = item.payload[0] if isinstance(item.payload, tuple) and item.payload else None
     return [
         f"    Retained figure: ![{figure.get('caption', 'Figure')}]"
         f"(gunther-asset:{figure['assetId']}) — cite [{item.ref}]. "
         "Caption is source text; image contents/numbers are not verified."
-        for figure in getattr(citation, "figures", [])
-        if figure.get("assetId")
+        for figure in figures_of(item)
     ]
 
 
@@ -100,9 +177,20 @@ class OutputLimits:
 #   one (the title, the brief) is the preamble.
 # - A deck's slides are the parts between lines that are only "---". Empty ones are left out.
 # - A section's hash is the sha256 of its text with "\n" line ends, trimmed.
+# - A slide made by a skill starts with a marker line that says how it is drawn:
+#   "<!-- layout: compare -->", and on the title slide also "<!-- layout: title; accent:
+#   blue -->". Code writes it from the plan; the model never does. It is a comment: the
+#   heading of a slide is the first line under it, the Checker never sees it, and the hash of
+#   the section covers it. A slide without one (older decks) has no layout of its own.
 
 FENCE = re.compile(r"^\s*(```|~~~)")
 KINDS = ("report", "slides")
+ACCENTS = ("ink", "blue", "teal", "red", "amber", "violet")
+# At the start of a slide, after any blank lines: the whole marker line.
+LAYOUT_MARK = re.compile(
+    r"[ \t\r\n]*<!--[ \t]*layout:[ \t]*(?P<layout>[a-z][a-z0-9_]*)[ \t]*"
+    r"(?:;[ \t]*accent:[ \t]*(?P<accent>[a-z]+)[ \t]*)?-->[ \t]*(?:\r?\n|\Z)"
+)
 
 
 def _lines(content: str) -> list[tuple[str, bool]]:
@@ -151,8 +239,54 @@ def section_hash(text: str) -> str:
     return hashlib.sha256(normal.encode("utf-8")).hexdigest()
 
 
+class Marked(NamedTuple):
+    """A slide split at its layout marker."""
+
+    line: str  # the marker line as it was written; empty when there is none
+    layout: str | None
+    accent: str | None  # only the title slide has one, and only one of ACCENTS
+    body: str  # the slide without the marker line, and without the blank lines after it
+
+
+def _marked(text: str) -> Marked:
+    found = LAYOUT_MARK.match(text)
+    if found is None:
+        return Marked("", None, None, text)
+    layout, accent = found.group("layout"), found.group("accent")
+    return Marked(
+        found.group(0).strip(),
+        layout,
+        accent if layout == "title" and accent in ACCENTS else None,
+        re.sub(r"\A(?:[ \t]*\r?\n)+", "", text[found.end() :]),
+    )
+
+
+def layout_of(text: str) -> tuple[str | None, str]:
+    """A slide's layout from its marker, and the slide without the marker. A slide with no
+    marker has no layout and is given back as it is."""
+
+    marked = _marked(text)
+    return marked.layout, marked.body
+
+
+def with_layout(text: str, layout: str, accent: str | None = None) -> str:
+    """The slide with the marker for ``layout`` as its first line, in place of any it had. The
+    title slide keeps the accent it had, or takes ``accent``; no other slide has one."""
+
+    marked = _marked(text)
+    kept = (accent or marked.accent) if layout == "title" else None
+    line = f"<!-- layout: {layout}" + (f"; accent: {kept}" if kept in ACCENTS else "") + " -->"
+    return f"{line}\n{marked.body}" if marked.body else line
+
+
+def unmarked(text: str, spec: Spec) -> str:
+    """A section as a model is shown it: a deck's slide without its layout marker."""
+
+    return layout_of(text)[1] if spec.kind == "slides" else text
+
+
 def heading_of(section: str) -> str:
-    for line in section.splitlines():
+    for line in layout_of(section)[1].splitlines():
         line = line.strip()
         if line:
             return re.sub(r"^#{1,6}\s*", "", line)[:160]
@@ -251,10 +385,12 @@ class Planned:
     goal: str = ""
     queries: tuple[str, ...] = ()
     # Set by a skill (see skill_runner): a slide's layout, how a section follows the one
-    # before it, and the pool numbers of the material planned for it.
+    # before it, the pool numbers of the material planned for it, and the numbers (counted
+    # from 1, as the planner was shown them) of the material cards it chose.
     layout: str = ""
     link: str = ""
     refs: tuple[int, ...] = ()
+    cards: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -272,6 +408,9 @@ class BuiltOutput:
     # Made by a skill: the approach it followed and the run ({name, version, skipped}).
     approach: dict[str, Any] | None = None
     skill: dict[str, Any] | None = None
+    # The pool number of each citation, in order: ``citations[n - 1]`` is the pool's passage
+    # ``pool_refs[n - 1]``, the one the text calls [n].
+    pool_refs: tuple[int, ...] = ()
 
 
 class PlannedSection(BaseModel):
@@ -456,13 +595,26 @@ def _unfence(text: str) -> str:
     return match.group(1).strip() if match else body
 
 
-def shape_section(text: str, spec: Spec, heading: str, title_slide: bool) -> str:
+def shape_section(
+    text: str,
+    spec: Spec,
+    heading: str,
+    title_slide: bool,
+    layout: str | None = None,
+    *,
+    accent: str | None = None,
+) -> str:
     """The section as the rules want it: its own heading first, no stray section starts.
 
-    This is structure only. What the model said is left as it is.
+    This is structure only. What the model said is left as it is, except that a deck's slide
+    starts with the marker of its planned ``layout`` (see the rules above): the plan chooses
+    that, not the writer, so a marker the writer wrote is dropped. A slide with no planned
+    layout has no marker. ``accent`` is the title slide's, kept from the slide being rewritten.
     """
 
     body = _unfence(text)
+    if spec.kind == "slides":
+        body = layout_of(body)[1]
     rows = _lines(body)
     out: list[str] = []
     for position, (line, fenced) in enumerate(rows):
@@ -475,11 +627,13 @@ def shape_section(text: str, spec: Spec, heading: str, title_slide: bool) -> str
     first = next((line for line in body.splitlines() if line.strip()), "")
     mark = "# " if title_slide else "## "
     if first.startswith(mark) and not first.startswith(mark + "#"):
-        return body
-    if first.startswith("#") and not first.startswith("###"):
+        shaped = body
+    elif first.startswith("#") and not first.startswith("###"):
         # A heading of another level: the same heading, at the right one.
-        return mark + re.sub(r"^#+\s*", "", first) + body[len(first) :]
-    return f"{mark}{heading}\n\n{body}" if body else f"{mark}{heading}"
+        shaped = mark + re.sub(r"^#+\s*", "", first) + body[len(first) :]
+    else:
+        shaped = f"{mark}{heading}\n\n{body}" if body else f"{mark}{heading}"
+    return with_layout(shaped, layout, accent) if spec.kind == "slides" and layout else shaped
 
 
 # Checking -------------------------------------------------------------------------------------
@@ -500,8 +654,11 @@ def _plain(chunk: str) -> str:
 
 
 def cited_sentences(text: str) -> list[tuple[int, int, str, list[int]]]:
-    """The sentences that cite passages: (start, end, sentence, numbers)."""
+    """The sentences that cite passages: (start, end, sentence, numbers). A slide's marker is
+    no sentence; the positions are still those of the whole text."""
 
+    shift = len(text) - len(layout_of(text)[1])
+    text = text[shift:]
     spans: list[tuple[int, int]] = []
     start = 0
     for match in SENTENCE_END.finditer(text):
@@ -522,7 +679,7 @@ def cited_sentences(text: str) -> list[tuple[int, int, str, list[int]]]:
         chunk = text[begin:end]
         numbers = _numbers(chunk)
         if numbers and _plain(chunk):
-            found.append((begin, end, chunk, numbers))
+            found.append((begin + shift, end + shift, chunk, numbers))
     return found
 
 
@@ -561,6 +718,9 @@ class OutputAgents:
         self.limits = limits or OutputLimits()
         # Ask's helpers (grading, the audit, the look-up of own-knowledge claims).
         self.ask = AskAgent(gateway, limits=Limits(leads=self.limits.leads))
+        # What was changed in a section so that it could be saved (a figure left out, a chart
+        # drawn as a table). A skill's version lists these with its skipped steps.
+        self.skipped: list[dict[str, str]] = []
 
     # Planner ----------------------------------------------------------------------------
 
@@ -721,9 +881,14 @@ class OutputAgents:
         lines += _notes_block(notes)
         lines += ["", *self._pool_lines(pool, passages)]
         if before:
-            lines += ["", f"The previous section ended:\n{before[-CARRY_CHARS:]}"]
+            lines += ["", f"The previous section ended:\n{unmarked(before, spec)[-CARRY_CHARS:]}"]
         if current is not None:
-            lines += ["", f"This section now:\n{current}", "", f"Instruction: {instruction}"]
+            lines += [
+                "",
+                f"This section now:\n{unmarked(current, spec)}",
+                "",
+                f"Instruction: {instruction}",
+            ]
         completion = self.gateway.complete(
             model,
             system=writer_prompt(spec, kind, item.heading, revising=current is not None),
@@ -733,7 +898,14 @@ class OutputAgents:
         )
         if current is not None and completion.text.strip().upper() == UNCHANGED:
             return current
-        return shape_section(completion.text, spec, item.heading, title_slide)
+        return shape_section(
+            completion.text,
+            spec,
+            item.heading,
+            title_slide,
+            item.layout or None,
+            accent=_marked(current).accent if current is not None else None,
+        )
 
     # Checker ------------------------------------------------------------------------------
 
@@ -833,12 +1005,35 @@ class OutputAgents:
         section: int,
     ) -> Draft:
         """Check a section as it is built: mark what has no source, look up what the model
-        said from memory, and take the number off what its passages do not state."""
+        said from memory, and take the number off what its passages do not state. A slide's
+        marker is not looked at, and is on the text that comes back."""
 
         def say(event: dict[str, Any]) -> None:
             emit({**event, "section": section})
 
+        marked = _marked(text)
+        marker, text = marked.line, marked.body
         issues: list[Issue] = []
+        # An image that is not one of the figures kept with the material cannot be saved (it
+        # belongs to no cited source): it is left out, and the section says so.
+        text, left_out = drop_unknown_figures(text, kept_figures(pool))
+        issues += [
+            Issue(
+                f"Figure: {caption}"[:300],
+                "unsupported",
+                "Left out: it is not one of the figures kept with the material.",
+            )
+            for caption in left_out
+        ]
+        if left_out and marked.layout == "figure" and not IMAGE.search(text):
+            marker = with_layout("", "text")
+            self.skipped.append(
+                {
+                    "step": "layout",
+                    "label": f"Slide {section + 1} drawn as text",
+                    "reason": "Its figure is not one of those kept with the material.",
+                }
+            )
         # A number the pool does not have is dropped first, as in Ask, so what is left
         # uncited is seen as uncited.
         text, _ = check_citations(text, set(pool.by_ref()))
@@ -867,15 +1062,49 @@ class OutputAgents:
         # From the end, so the positions of the earlier sentences stay true.
         for begin, end, chunk, _ in reversed(flagged):
             text = text[:begin] + unsource(chunk) + text[end:]
+        text = f"{marker}\n{text}" if marker else text
         coverage = self._full_coverage(model, text, pool.by_ref(), issues)
+        text = self._chart_or_table(text, issues, coverage, pool, section)
         return Draft(text, issues, coverage)
+
+    def _chart_or_table(
+        self,
+        text: str,
+        issues: list[Issue],
+        coverage: dict[str, Any],
+        pool: Pool,
+        section: int,
+    ) -> str:
+        """A chart is drawn only from values that were all verified; otherwise the same table is
+        drawn as a table, with what the Checker found, and the version says so. A value its
+        cited source does not state is added to what the Checker found."""
+
+        layout = layout_of(text)[0]
+        if layout not in CHARTS:
+            return text
+        problems, reason = chart_unverified(text, issues, coverage, pool.by_ref(), section)
+        if reason is None:
+            return text
+        issues += [
+            Issue(problem[:300], "unsupported", "Its cited source does not state this.")
+            for problem in problems
+        ]
+        self.skipped.append(
+            {"step": "layout", "label": f"Slide {section + 1} drawn as a table", "reason": reason}
+        )
+        return with_layout(text, "compare")
 
     def _full_coverage(
         self, model: ModelInfo, text: str, by_ref: dict[int, Evidence], issues: list[Issue]
     ) -> dict[str, Any]:
-        """Use Ask's claim contract for headings, body, tables and speaker notes too."""
+        """Use Ask's claim contract for headings, body, tables and speaker notes too. A slide's
+        marker is no claim; the hash is that of the whole slide, marker included."""
         _, check, _, _ = self.ask.check_sentences(
-            model, "Verify this output section", text, by_ref, limit=self.limits.sentences
+            model,
+            "Verify this output section",
+            layout_of(text)[1],
+            by_ref,
+            limit=self.limits.sentences,
         )
         coverage = (
             check._coverage
@@ -912,8 +1141,10 @@ class OutputAgents:
         coverage: dict[str, Any] | None = None,
     ) -> list[Issue]:
         """Check a section without changing it: what has no source, what is marked as the
-        model's own, and what its cited passages do not state."""
+        model's own, and what its cited passages do not state. A slide's marker is not looked
+        at."""
 
+        whole, text = text, _marked(text).body
         issues = [
             Issue(claim, "unsourced", "No source is cited for this.")
             for claim in self.ask.unsourced_claims(model, text)
@@ -930,7 +1161,7 @@ class OutputAgents:
                 else "The sources it cites do not state this."
             )
             issues.append(Issue(_plain(chunk)[:300], "unsupported", note))
-        full = self._full_coverage(model, text, by_ref, issues)
+        full = self._full_coverage(model, whole, by_ref, issues)
         if coverage is not None:
             coverage.update(full)
         return issues
@@ -953,23 +1184,20 @@ class OutputAgents:
 
         by_ref = pool.by_ref()
         for index, (draft, plan) in enumerate(zip(drafts, outline, strict=True)):
-            if plan.layout not in CHARTS:
+            # A chart is judged by how the slide is drawn: its marker's layout, else the
+            # plan's. One that could not be verified is drawn as a table (check_built).
+            drawn = (layout_of(draft.text)[0] if spec.kind == "slides" else None) or plan.layout
+            if drawn not in CHARTS:
                 continue
-            problems = chart_numbers_cited(
-                [Page(index, plan.heading, plan.layout, draft.text)],
-                {},
-                Context(spec.kind, evidence=by_ref),
+            _, reason = chart_unverified(
+                with_layout(unmarked(draft.text, spec), drawn),
+                draft.issues,
+                draft.coverage,
+                by_ref,
+                index,
             )
-            if (
-                problems
-                or draft.issues is None
-                or draft.issues
-                or (draft.coverage or {}).get("status") != "complete"
-            ):
-                reason = problems[0].message if problems else "Its verification is incomplete."
-                raise ModelError(
-                    "Chart claims and values must be verified before saving. " + reason
-                )
+            if reason is not None:
+                raise ModelError("Chart values must be verified before saving. " + reason)
         raw = join_document(preamble, [draft.text for draft in drafts], spec.kind)
         _, used = check_citations(raw, set(by_ref))
         final = []
@@ -1022,6 +1250,7 @@ class OutputAgents:
             model=model,
             effort=effort,
             notes=tuple(notes),
+            pool_refs=tuple(used),
         )
 
     # Whole runs ----------------------------------------------------------------------------
@@ -1129,12 +1358,21 @@ class OutputAgents:
             raise ValueError(f"There is no section {indexes[-1] + 1} to change.")
         if not sections:
             raise ValueError("This output has no sections to change.")
-        planned = [
-            replace(outline[i], heading=heading_of(text), queries=())
-            if i < len(outline)
-            else Planned(heading_of(text))
-            for i, text in enumerate(sections)
-        ]
+        planned: list[Planned] = []
+        for i, text in enumerate(sections):
+            # A slide's marker says how it is drawn now, which a hand edit may have changed.
+            layout = layout_of(text)[0] if spec.kind == "slides" else None
+            if i < len(outline):
+                planned.append(
+                    replace(
+                        outline[i],
+                        heading=heading_of(text),
+                        layout=layout or outline[i].layout,
+                        queries=(),
+                    )
+                )
+            else:
+                planned.append(Planned(heading_of(text), layout=layout or ""))
         asked = f"{planned[target].heading}: {instruction}" if target is not None else instruction
         found = self._research_section(
             model,

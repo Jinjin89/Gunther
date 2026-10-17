@@ -93,5 +93,5 @@ export function PreviewHeightHandle({ value, onChange }: { value: number; onChan
     measure(); if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure); observer.observe(panel); return () => observer.disconnect();
   }, []);
-  return <div ref={ref} className={`aw-controls-height-divider${dragging ? " is-dragging" : ""}`}><ResizeHandle label="Resize preview controls height" orientation="horizontal" value={clamp(value, 120, max)} min={120} max={max} controls="artifact-preview-controls" onChange={onChange} onReset={() => onChange(320)} onDragging={setDragging} /></div>;
+  return <div ref={ref} className={`aw-controls-height-divider${dragging ? " is-dragging" : ""}`}><ResizeHandle label="Resize preview controls height" orientation="horizontal" value={clamp(value, 120, max)} min={120} max={max} controls="artifact-preview-controls" onChange={onChange} onReset={() => onChange(380)} onDragging={setDragging} /></div>;
 }

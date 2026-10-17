@@ -7,6 +7,7 @@ from sqlalchemy import Column, Integer, MetaData, String, Table, inspect, select
 from gunther.database import create_database_engine, create_session_factory, session_scope
 from gunther.knowledge_index import KnowledgeIndex
 from gunther.migrations import (
+    ARTIFACT_CONVERSATION_TABLES,
     LATEST_SCHEMA_VERSION,
     MIGRATION_TABLE,
     MIGRATIONS,
@@ -80,6 +81,7 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (24, "transcript_upgrades"),
             (25, "library_contents"),
             (26, "drop_transcript_upgrades"),
+            (27, "artifact_conversations"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
@@ -143,6 +145,7 @@ def test_v10_upgrade_backfills_evidence_without_rewriting_original(tmp_path: Pat
         "citation_mentions",
         "processing_assets",
         "artifact_assets",
+        *ARTIFACT_CONVERSATION_TABLES,  # v27
     }
     legacy = MetaData()
     for table in Base.metadata.sorted_tables:
@@ -1166,7 +1169,7 @@ def test_v20_database_gains_session_briefs_without_losing_conversations(tmp_path
             assert connection.execute(
                 text("SELECT title, brief_json FROM knowledge_sessions WHERE id = 'ses_old'")
             ).one() == ("Kept", "{}")
-        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 26
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 27
     finally:
         engine.dispose()
 
@@ -1198,7 +1201,7 @@ def test_v22_database_gains_transcript_segments_without_losing_recordings(tmp_pa
                     "WHERE id = 'rec_old'"
                 )
             ).one() == ("[00:00] Hello", None)
-        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 26
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 27
     finally:
         engine.dispose()
 
@@ -1232,7 +1235,7 @@ def test_v25_database_loses_the_upgrade_table_and_keeps_its_recordings(tmp_path:
             assert connection.execute(
                 text("SELECT transcript FROM recording_sessions WHERE id = 'rec_old'")
             ).scalar_one() == "[00:00] Hello"
-        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 26
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 27
     finally:
         engine.dispose()
 
@@ -1285,9 +1288,10 @@ def test_v24_database_gets_one_place_per_source_and_a_shared_order(tmp_path: Pat
                     f"('{link}', '{topic}', '{source}', '{created}')"
                 )
         history = run_migrations(engine, Base.metadata)
-        assert [item.name for item in history[-2:]] == [
+        assert [item.name for item in history[-3:]] == [
             "library_contents",
             "drop_transcript_upgrades",
+            "artifact_conversations",
         ]
         assert run_migrations(engine, Base.metadata) == history
         with engine.connect() as connection:

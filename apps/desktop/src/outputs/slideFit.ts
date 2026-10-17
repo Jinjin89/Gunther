@@ -24,6 +24,25 @@ export function fitFor(used: number, room: number, from = 1): number {
   return Math.max(SMALLEST, Math.floor(from * (room / used) * 100) / 100);
 }
 
+/**
+ * The largest fit at which content still fits, between `low` (a fit it is thought to fit at, the
+ * proportional guess of fitFor) and `high` (one it does not fit at). Content that wraps gets
+ * shorter faster than its type is scaled, so the proportional guess can be far smaller than
+ * needed; this halves the distance until it is within a hundredth. `used(fit)` is how much of the
+ * slide's height the content takes when drawn at that fit.
+ */
+export function settleFit(used: (fit: number) => number, room: number, low: number, high: number): number {
+  let fits = low;
+  let over = high;
+  for (let step = 0; step < 8 && over - fits > 0.011; step += 1) {
+    const middle = Math.round(((fits + over) / 2) * 100) / 100;
+    if (middle <= fits || middle >= over) break;
+    if (used(middle) <= room) fits = middle;
+    else over = middle;
+  }
+  return fits;
+}
+
 export function rememberFit(key: string, fit: number) {
   if (fits.get(key) === fit) return;
   fits.delete(key);

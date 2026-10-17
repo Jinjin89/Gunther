@@ -3,6 +3,7 @@
 import re
 from types import SimpleNamespace
 
+import httpx
 import openai
 import pytest
 from fake_models import FakeProvider, agent_replies, api_error, gateway
@@ -175,3 +176,34 @@ def test_a_valid_reference_does_not_settle_an_unchecked_or_reworded_new_fact():
     safe = _enforce(brief, {1}, supported_claims=["The trial measured response [1]."])
     assert [item.text for item in safe.settled] == ["The trial measured response."]
     assert "The drug cures everyone." in safe.open
+
+
+def test_a_broken_connection_is_sent_once_more_then_is_a_model_error():
+    broke = httpx.RemoteProtocolError("peer closed connection")
+    fake = FakeProvider(broke, "Answer")
+    chosen = gateway(fake)
+    answer = chosen.complete(chosen.models[0], system="Answer.", messages="Hi", effort="off")
+    assert answer.text == "Answer" and len(fake.requests) == 2
+
+    fake = FakeProvider(broke, broke)
+    chosen = gateway(fake)
+    with pytest.raises(ModelError, match="connection .* broke"):
+        chosen.complete(chosen.models[0], system="Answer.", messages="Hi", effort="off")
+    # A streamed answer someone may have read part of is not sent again.
+    fake = FakeProvider(broke, "Answer")
+    chosen = gateway(fake)
+    with pytest.raises(ModelError):
+        chosen.complete(
+            chosen.models[0], system="Answer.", messages="Hi", effort="off", on_text=lambda _: None
+        )
+
+
+def test_an_empty_answer_is_asked_for_once_more():
+    fake = FakeProvider("", "Answer")
+    chosen = gateway(fake)
+    answer = chosen.complete(chosen.models[0], system="Answer.", messages="Hi", effort="off")
+    assert answer.text == "Answer" and len(fake.requests) == 2
+    fake = FakeProvider("", "")
+    chosen = gateway(fake)
+    with pytest.raises(ModelError, match="empty answer"):
+        chosen.complete(chosen.models[0], system="Answer.", messages="Hi", effort="off")

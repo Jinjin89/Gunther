@@ -224,6 +224,32 @@ describe("desktop knowledge API contract", () => {
       expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/knowledge-bases/biology/artifacts/art%2F1/revise/stream");
     });
 
+    it("sends a message to the Artifacts agent and hands over its events, then how the turn ended", async () => {
+      fetchMock.mockResolvedValueOnce(stream(events(
+        ["turn", { type: "turn", conversationId: "talk", messageId: "acm_1" }],
+        ["action", { type: "action", id: "a1", state: "done", label: "Wrote slide 2", note: "" }],
+        ["done", { outcome: "replied", reply: "Done.", question: null, artifact: null, changes: [], message: { id: "acm_2" } }],
+      )));
+      const heard: unknown[] = [];
+
+      const ended = await knowledgeApi.artifactTurnStream("biology/team", "talk/1", { clientRequestId: "turn_request_1", text: "Shorten 2", focus: { section: 2, selected: false } }, "wsp_primary", (event) => heard.push(event));
+
+      expect(ended.outcome).toBe("replied");
+      expect(heard).toEqual([
+        { type: "turn", conversationId: "talk", messageId: "acm_1" },
+        { type: "action", id: "a1", state: "done", label: "Wrote slide 2", note: "" },
+      ]);
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("/api/knowledge-bases/biology%2Fteam/artifact-conversations/talk%2F1/messages/stream");
+      expect(init.method).toBe("POST");
+      expect(new Headers(init.headers).get("X-Gunther-Workspace-Id")).toBe("wsp_primary");
+
+      fetchMock.mockResolvedValueOnce(stream(events(["stopped", { type: "stopped" }])));
+      await expect(knowledgeApi.artifactTurnStream("biology", "talk", { clientRequestId: "turn_request_2", text: "Go" }, "wsp_primary", () => undefined)).rejects.toBeInstanceOf(OutputStoppedError);
+      fetchMock.mockResolvedValueOnce(stream(events(["error", { status: 502, detail: "The model is down." }])));
+      await expect(knowledgeApi.artifactTurnStream("biology", "talk", { clientRequestId: "turn_request_3", text: "Go" }, "wsp_primary", () => undefined)).rejects.toThrow("The model is down.");
+    });
+
     it("says why nothing was saved, and tells a stop from a failure", async () => {
       fetchMock.mockResolvedValueOnce(stream(events(["error", { status: 502, detail: "DeepSeek did not accept the API key." }])));
       await expect(knowledgeApi.buildOutputStream("biology", request, "wsp_primary", () => undefined)).rejects.toThrow("DeepSeek did not accept the API key.");

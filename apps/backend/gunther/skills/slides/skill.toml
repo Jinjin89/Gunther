@@ -5,7 +5,7 @@
 
 name = "slides"
 kind = "slides"
-version = 2
+version = 3
 title = "Slides"
 description = "Plan and write a deck, for a talk or for reading, from the chosen material."
 
@@ -14,7 +14,7 @@ structures = ["what", "why", "how", "guide", "which", "change", "learn"]
 # Page layouts (ids in references/layouts.md). The first page is "title", the last "takeaways".
 layouts = [
   "title", "big_number", "compare", "two_column", "flow", "timeline",
-  "bar_chart", "line_chart", "cards", "quote", "text", "takeaways",
+  "bar_chart", "line_chart", "cards", "quote", "figure", "text", "takeaways",
 ]
 # What the deck is for. "auto": the understand step reads the brief; with no hint, "talk".
 uses = ["talk", "read"]
@@ -50,6 +50,8 @@ tools = ["search_library", "read_source"]
 tool_calls = 2
 # "{layout}": only this page's layout section is loaded.
 references = ["layouts.md#{layout}", "writing.md"]
+# A page whose body does not take its layout's form is written again once, then drawn as text.
+checks = ["layout_shape"]
 
 [[steps]]
 id = "edit_review"
@@ -57,7 +59,9 @@ does = "edit_review"
 label = "Reading it through as an editor"
 effort = "low"
 references = ["writing.md"]
-checks = ["heading_length", "density", "table_size", "chart_numbers_cited", "layout_run"]
+checks = [
+  "heading_length", "density", "table_size", "chart_numbers_cited", "layout_run", "layout_shape",
+]
 
 [[steps]]
 id = "reader_test"
@@ -75,6 +79,7 @@ references = ["layouts.md#{layout}", "writing.md"]
 
 [checks.layout_run]
 max_run = 2  # the same layout at most twice in a row ("title" and "takeaways" excepted)
+max_text = 2  # "text" is the last resort: at most this many in a deck, and never two in a row
 
 [checks.heading_length]
 # A page title is one complete claim, at most two lines. The title page is exempt.

@@ -10,7 +10,7 @@ const PART_LABEL: Record<Part, string> = { goal: "Goal", constraints: "Constrain
 const inputOf = (brief: ConversationBrief): ConversationBriefInput => ({ goal: brief.goal, constraints: brief.constraints, settled: brief.settled, open: brief.open });
 
 /** One line: click to edit, Enter saves, Escape or leaving the field cancels. */
-function Line({ text, label, readOnly, onSave, onRemove, children }: { text: string; label: string; readOnly: boolean; onSave: (text: string) => void; onRemove: () => void; children?: React.ReactNode }) {
+export function Line({ text, label, readOnly, onSave, onRemove, children }: { text: string; label: string; readOnly: boolean; onSave: (text: string) => void; onRemove: () => void; children?: React.ReactNode }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(text);
   if (editing) {

@@ -1256,6 +1256,9 @@ export interface ArtifactProvenance {
   conversationTitle?: string | null;
   /** The instruction which produced this version. */
   request?: string | null;
+  /** Made by the Artifacts agent: what it told the user, and the parts this version changed. */
+  reply?: string | null;
+  changes?: ArtifactChange[] | null;
 }
 
 /** What a deck is for: a talk (few words, speaker notes) or reading on its own. */
@@ -1410,6 +1413,216 @@ export interface EditOutputRequest {
   clientRequestId: string;
   content: string;
 }
+
+/** The Artifacts agent's conversations, kept on the backend. Whose a line of the brief is: "you" said it in a message, "edited" was typed in the panel, "guessed" is the agent's. */
+export type ArtifactMark = "you" | "guessed" | "edited";
+
+export interface ArtifactLine {
+  text: string;
+  mark: ArtifactMark;
+}
+
+/** What the conversation is for. */
+export interface ArtifactBrief {
+  goal: ArtifactLine | null;
+  audience: ArtifactLine | null;
+  constraints: ArtifactLine[];
+  open: ArtifactLine[];
+}
+
+/** What the brief says about one artifact. */
+export interface ArtifactSpec {
+  kind: OutputKind;
+  /** A deck's: "talk" or "read". */
+  use: ArtifactLine | null;
+  length: ArtifactLine | null;
+  /** A structure id of the kind's skill (what, why, how, guide, which, change, learn). */
+  structure: ArtifactLine | null;
+}
+
+/** The brief, and the spec of the artifact being worked on (none before there is one). */
+export interface ArtifactBriefState {
+  brief: ArtifactBrief;
+  spec: ArtifactSpec | null;
+}
+
+/** Where a part stands. Out of date is computed from what the part was written from, never remembered. */
+export type ArtifactPartState = "ok" | "not_written" | "out_of_date" | "not_checked";
+export type ArtifactStepState = "ok" | "not_written" | "out_of_date";
+
+export interface ArtifactPart {
+  /** Counted from 1. */
+  position: number;
+  itemId: string;
+  heading: string;
+  layout: string;
+  state: ArtifactPartState;
+  /** Why it is out of date, in words. */
+  why: string;
+}
+
+export interface ArtifactStep {
+  state: ArtifactStepState;
+  why: string;
+}
+
+/** One artifact of a conversation: its version, spec, and what is out of date in it. */
+export interface ArtifactWork {
+  /** The lineage id ("draft_…" before the first save). */
+  key: string;
+  kind: OutputKind;
+  title: string;
+  versionId: string | null;
+  spec: ArtifactSpec;
+  approach: ArtifactStep;
+  outline: ArtifactStep;
+  parts: ArtifactPart[];
+}
+
+export interface ArtifactConversationMessage {
+  id: string;
+  role: "user" | "assistant";
+  /** user: message | answer | start | continue. assistant: question | answer | result | reply | paused | stopped | failed. */
+  kind: string;
+  text: string;
+  /** The user's focus; the agent's options, changes, steps or error. "imported": the turn came from a device or an earlier version. */
+  payload: Record<string, unknown>;
+  artifactId: string | null;
+  clientRequestId: string | null;
+  createdAt: string;
+}
+
+/** A question the agent asked and is waiting on. */
+export interface ArtifactPending {
+  question: string;
+  options: string[];
+  messageId: string;
+}
+
+export interface ArtifactConversationSummary {
+  id: string;
+  title: string;
+  updatedAt: string;
+  artifactCount: number;
+  /** The agent asked a question and has not had its answer. */
+  waiting: boolean;
+}
+
+export interface ArtifactConversationDetail extends ArtifactConversationSummary {
+  scope: OutputScope;
+  brief: ArtifactBrief;
+  messages: ArtifactConversationMessage[];
+  works: ArtifactWork[];
+  /** The key of the work being worked on. */
+  active: string | null;
+  pending: ArtifactPending | null;
+  archived: boolean;
+  createdAt: string;
+}
+
+export interface CreateArtifactConversationRequest {
+  /** A device's conversation keeps its id; asking again for an id that exists returns it. */
+  id?: string;
+  title?: string;
+  scope?: OutputScope;
+}
+
+export interface UpdateArtifactConversationRequest {
+  title?: string;
+  scope?: OutputScope;
+  archived?: boolean;
+}
+
+/** What the user typed in the Brief panel. A field left out stays, empty text clears it, a list is the whole new list. */
+export interface EditArtifactBriefRequest {
+  goal?: string;
+  audience?: string;
+  constraints?: string[];
+  open?: string[];
+  /** Belongs to the artifact being worked on. */
+  spec?: { use?: string; length?: string; structure?: string };
+}
+
+/** One turn of a conversation a device kept: what was asked and how it ended. */
+export interface ImportedArtifactTurn {
+  id?: string;
+  instruction: string;
+  status: "running" | "saved" | "failed" | "stopped" | "interrupted";
+  artifactId?: string | null;
+  createdAt?: string;
+  error?: string | null;
+}
+
+export interface ImportedArtifactConversation {
+  id: string;
+  title?: string;
+  scope?: OutputScope;
+  createdAt?: string;
+  turns: ImportedArtifactTurn[];
+}
+
+export interface ImportArtifactConversationsRequest {
+  conversations: ImportedArtifactConversation[];
+}
+
+/** What the user points at in a message to the Artifacts agent. */
+export interface ArtifactFocus {
+  /** The part, counted from 1 as the map shows it. */
+  section?: number;
+  /** Text selected in it. */
+  quote?: string;
+  /** False: the part is only the one on screen. */
+  selected?: boolean;
+}
+
+/** One message to the Artifacts agent. "answer" replies to its question, "start" is "just start" (no more questions), "continue" picks up a paused turn. */
+export interface ArtifactTurnInput {
+  clientRequestId: string;
+  kind?: "message" | "answer" | "start" | "continue";
+  /** Left out for "start" and "continue". */
+  text?: string;
+  focus?: ArtifactFocus;
+  model?: string;
+  effort?: Effort;
+  /** The web may be searched for this message (when it is set up). */
+  web?: boolean;
+}
+
+/** One thing a saved version changed. `position` is in the new version (null for a part that was removed), `was` in the one before (null for a new part). */
+export interface ArtifactChange {
+  position: number | null;
+  was: number | null;
+  heading: string;
+  what: "added" | "rewritten" | "edited" | "deleted" | "moved";
+  note: string;
+}
+
+export interface ArtifactQuestion {
+  text: string;
+  options: string[];
+}
+
+/** How a turn ended: the `done` event of a message. */
+export interface ArtifactTurnOut {
+  outcome: "asked" | "answered" | "saved" | "replied" | "paused";
+  reply: string;
+  question: ArtifactQuestion | null;
+  /** The version a turn saved. */
+  artifact: Artifact | null;
+  changes: ArtifactChange[];
+  /** The agent's message as it is stored. */
+  message: ArtifactConversationMessage;
+}
+
+/** What the agent reports while it works on a message (besides the skill's own events: outline, section, text, step, stage and approach). */
+export type ArtifactAgentEvent =
+  | { type: "turn"; conversationId: string; messageId: string }
+  | ({ type: "brief" } & ArtifactBriefState)
+  | { type: "decision"; actions: Array<{ id: string; do: string; label: string }> }
+  | { type: "action"; id: string; state: "running" | "done" | "failed" | "skipped"; label: string; note: string }
+  | { type: "question"; text: string; options: string[] }
+  /** Pieces of an answer as it is written. */
+  | { type: "reply"; text: string };
 
 export interface KnowledgeSearchResult {
   id: string;

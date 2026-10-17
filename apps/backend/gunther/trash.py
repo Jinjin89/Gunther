@@ -30,6 +30,7 @@ from gunther.knowledge_index import new_id
 from gunther.models import (
     Artifact,
     ArtifactAsset,
+    ArtifactConversation,
     Asset,
     DocumentElement,
     ElementAsset,
@@ -479,6 +480,10 @@ class TrashService:
             if not leaves:
                 break
             session.execute(delete(Artifact).where(Artifact.id.in_(leaves)))
+        # The Artifacts agent's conversations; their messages cascade.
+        session.execute(
+            delete(ArtifactConversation).where(ArtifactConversation.knowledge_base_id == library_id)
+        )
         # Trusted knowledge (revisions cascade) before the suggestions it came from.
         session.execute(delete(KnowledgeUnit).where(KnowledgeUnit.knowledge_base_id == library_id))
         # Conversations; their messages, branches and suggestions cascade.

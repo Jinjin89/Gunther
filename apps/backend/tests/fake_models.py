@@ -292,6 +292,15 @@ def is_support_checking(request: dict[str, Any]) -> bool:
     return SUPPORT_MARK in str(request["messages"][0]["content"])
 
 
+REPLACER_MARK = "changing one passage of"
+
+
+def is_replacing(request: dict[str, Any]) -> bool:
+    """A request to change one passage of a part (see artifact_steps.REPLACER)."""
+
+    return REPLACER_MARK in str(request["messages"][0]["content"])
+
+
 def output_replies(
     outline: dict[str, Any],
     written: Any,
@@ -369,6 +378,7 @@ def skill_replies(
     revision: dict[str, Any] | None = None,
     rewrite: Any = None,
     relevant: list[int] | None = None,
+    replacer: Reply | None = None,
 ) -> Callable[[dict[str, Any]], Any]:
     """Replies for an output made by a skill.
 
@@ -377,7 +387,8 @@ def skill_replies(
     function of (section index, prompt). The editor and the reader find nothing unless
     given; ``revision`` is the revise step's plan ({"sections": [...]}) and ``rewrite``
     a function of (section index, prompt) for what it rewrites. The Checker's calls are
-    quiet, as in ``output_replies``.
+    quiet, as in ``output_replies``. ``replacer`` is what the writer answers when asked to
+    change one passage: {"text": ...}, or a function of the request that returns the JSON text.
     """
 
     import json
@@ -397,6 +408,8 @@ def skill_replies(
         if step == "editor_fidelity":
             return json.dumps({"faithful": True})
         if step is None:
+            if replacer is not None and is_replacing(request):
+                return answer(replacer, request)
             if is_sentence_checking(request):
                 return json.dumps(_quiet_sentence_check(request))
             if is_grading(request):
@@ -429,5 +442,48 @@ def skill_replies(
         if step == "revise":
             return rewrite(index, prompt) if rewrite else "UNCHANGED"
         return written(index, prompt) if callable(written) else written[index]
+
+    return reply
+
+
+ORCHESTRATOR_MARK = "You are the orchestrator of Gunther's Artifacts"
+ANSWERER_MARK = "You are Gunther, answering a question about"
+
+
+def is_orchestrating(request: dict[str, Any]) -> bool:
+    """A request for the Artifacts agent's next decision (see artifact_agent.ORCHESTRATOR)."""
+
+    return str(request["messages"][0]["content"]).startswith(ORCHESTRATOR_MARK)
+
+
+def is_answering(request: dict[str, Any]) -> bool:
+    """A request to answer a question about an artifact (see artifact_agent.ANSWERER)."""
+
+    return str(request["messages"][0]["content"]).startswith(ANSWERER_MARK)
+
+
+def orchestrator_replies(
+    decisions: list[Any],
+    inner: Callable[[dict[str, Any]], Any],
+    *,
+    answer: Reply = "It says so.",
+) -> Callable[[dict[str, Any]], Any]:
+    """Replies for a turn of the Artifacts agent: each decision call gets the next of
+    ``decisions`` (a dict, or a function of the request that returns one), then the last
+    again; the answerer gets ``answer``; every other request is ``inner``'s (the skill's)."""
+
+    import json
+
+    queue = list(decisions)
+
+    def reply(request: dict[str, Any]) -> Any:
+        if is_orchestrating(request):
+            chosen = queue.pop(0) if len(queue) > 1 else queue[0]
+            if callable(chosen):
+                chosen = chosen(request)
+            return chosen if isinstance(chosen, str) else json.dumps(chosen)
+        if is_answering(request):
+            return answer(request) if callable(answer) else answer
+        return inner(request)
 
     return reply

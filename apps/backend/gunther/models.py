@@ -779,6 +779,56 @@ class ArtifactUnitBinding(Base):
     content_hash: Mapped[str] = mapped_column(String(64))
 
 
+# A conversation made from the whole library, as OutputScope.model_dump() writes it.
+LIBRARY_SCOPE_JSON = '{"mode":"library","source_ids":[],"unit_ids":[],"session_ids":[]}'
+
+
+class ArtifactConversation(Base):
+    """One conversation of the Artifacts agent, kept on the backend (see artifact_workspace).
+
+    ``brief_json`` is what the user wants, ``state_json`` the workspace: the pool of sources
+    (each under a number it keeps for the whole conversation) and one work per artifact.
+    The versions it made stay in ``artifacts``, linked by the conversation id in their
+    provenance.
+    """
+
+    __tablename__ = "artifact_conversations"
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(160), index=True)
+    knowledge_base_id: Mapped[str] = mapped_column(String(160), index=True)
+    title: Mapped[str] = mapped_column(String(160), default="New conversation")
+    scope_json: Mapped[str] = mapped_column(Text, default=LIBRARY_SCOPE_JSON)
+    brief_json: Mapped[str] = mapped_column(Text, default="{}")
+    state_json: Mapped[str] = mapped_column(Text, default="{}")
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=utc_now, index=True)
+
+
+class ArtifactMessage(Base):
+    """One message of an Artifacts conversation: the user's, or the agent's reply to it."""
+
+    __tablename__ = "artifact_messages"
+    __table_args__ = (UniqueConstraint("conversation_id", "client_request_id"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(
+        ForeignKey("artifact_conversations.id", ondelete="CASCADE"), index=True
+    )
+    # "user" | "assistant"
+    role: Mapped[str] = mapped_column(String(16))
+    # user: "message" | "answer" | "start" | "continue"
+    # assistant: "question" | "answer" | "result" | "reply" | "paused" | "stopped" | "failed"
+    kind: Mapped[str] = mapped_column(String(16))
+    text: Mapped[str] = mapped_column(Text, default="")
+    # user: focus; assistant: options, changes, steps, error
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    artifact_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    client_request_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
 class Work(Base):
     """One paper (or book, or talk), however many copies of it were captured.
 

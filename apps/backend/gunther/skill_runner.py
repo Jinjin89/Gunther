@@ -9,7 +9,10 @@
    the cards it uses, a few searches and, in a deck, a layout. Code checks the outline;
    one more try fixes what they found.
 3. **write.** Section by section, from its cards' passages (searched for when there are
-   too few), each followed by the Checker in outputs, exactly as without a skill.
+   too few), each followed by the Checker in outputs, exactly as without a skill. A slide
+   starts with a marker line that code writes from the plan, and its body is checked against
+   the form its layout asks for: it is written again once if it does not fit, and drawn as
+   text if it still does not.
 4. **edit_review, reader_test.** An editor lists problems, with what code checks found; a
    fresh reader, who sees only the text, says what it understood. Neither changes a word.
 5. **revise.** The model picks a few sections and says what to change; each is rewritten
@@ -46,14 +49,18 @@ from gunther.outputs import (
     Planned,
     Pool,
     Spec,
+    _marked,
     _notes_block,
     _origin,
     figure_lines,
     heading_of,
+    layout_of,
     section_hash,
     shape_section,
+    unmarked,
+    with_layout,
 )
-from gunther.skill_checks import Context, Finding, Page, run_checks
+from gunther.skill_checks import Context, Finding, Page, figures_of, run_checks
 from gunther.skillbook import Skill, SkillStep
 
 logger = logging.getLogger(__name__)
@@ -151,6 +158,14 @@ KEEP = (
     "explanation, order, terminology and transitions using existing claims only. A missing "
     "fact is a research gap, not permission to invent one. Keep the heading unless the "
     "instruction asks to change it. Changed passages will be checked again."
+)
+
+# What a second look at the material adds to the understand step's input (the first look has
+# neither): what the person wants it to focus on now, and the approach as it stands.
+AGAIN_FOCUS = "Focus now: {focus}"
+AGAIN_SO_FAR = (
+    "The approach so far (keep what still holds; change what the focus or the brief changed):\n"
+    "Question: {question} / Answer: {answer} / Purpose: {purpose} / Structure: {structure}"
 )
 
 
@@ -358,6 +373,25 @@ class Approach:
             ],
             "gaps": list(self.gaps),
         }
+
+
+def understanding_again(focus: str | None, approach: Approach | None) -> str | None:
+    """The lines that make the understand step a second look: the focus the person has now,
+    when there is one, and the approach so far, when there is one. None for a first look."""
+
+    lines = []
+    if focus and focus.strip():
+        lines.append(AGAIN_FOCUS.format(focus=_line(focus, 300)))
+    if approach is not None:
+        lines.append(
+            AGAIN_SO_FAR.format(
+                question=approach.question,
+                answer=approach.answer,
+                purpose=approach.purpose,
+                structure=approach.structure,
+            )
+        )
+    return "\n".join(lines) or None
 
 
 def _no_events(_event: dict[str, Any]) -> None:
@@ -582,7 +616,9 @@ class SkillAgents(OutputAgents):
 
     # 1. Understand -------------------------------------------------------------------------
 
-    def _asked(self, spec: Spec, notes: Notes, fixed: dict[str, str] | None) -> list[str]:
+    def _asked(
+        self, spec: Spec, notes: Notes, fixed: dict[str, str] | None, again: str | None = None
+    ) -> list[str]:
         skill = self.skill
         lines = [
             f"Brief: {spec.brief or '(none)'}",
@@ -607,6 +643,8 @@ class SkillAgents(OutputAgents):
         if fixed:
             lines += ["", "The person wrote these; keep them exactly as written:"]
             lines += [f"- {key}: {value}" for key, value in fixed.items() if value]
+        if again:
+            lines += ["", *again.splitlines()]
         lines += _notes_block(notes)
         if notes.sources:
             lines += ["", "Sources in the library (what each is about):"]
@@ -622,11 +660,16 @@ class SkillAgents(OutputAgents):
         notes: Notes,
         emit: Events,
         fixed: dict[str, str] | None = None,
+        again: str | None = None,
     ) -> Approach:
+        """Look through the material and write the approach and the material cards. ``again``
+        is the extra input of a second look (see ``understanding_again``): the focus, and the
+        approach so far."""
+
         step = self.skill.step("understand")
         assert step is not None
         self._stage(emit, step, "running")
-        asked = self._asked(spec, notes, fixed)
+        asked = self._asked(spec, notes, fixed, again)
         self.gather(model, step, spec, asked, pool, emit, allowance=3 * self.limits.per_section)
         listing = [
             f"[{item.ref}] ({_origin(item)}) {' '.join(item.text.split())[:600]}"
@@ -722,9 +765,12 @@ class SkillAgents(OutputAgents):
             if not item.heading.strip():
                 continue
             refs: list[int] = []
+            numbers: list[int] = []
             for number in item.cards:
                 if 1 <= number <= len(self.cards):
                     refs += [ref for ref in self.cards[number - 1].refs if ref not in refs]
+                    if number not in numbers:
+                        numbers.append(number)
             planned.append(
                 Planned(
                     heading=_line(item.heading, 160),
@@ -737,6 +783,7 @@ class SkillAgents(OutputAgents):
                     else "",
                     link=_line(item.link, 200),
                     refs=tuple(refs),
+                    cards=tuple(numbers),
                 )
             )
         return planned
@@ -744,8 +791,54 @@ class SkillAgents(OutputAgents):
     def _pages(self, planned: Sequence[Planned]) -> list[Page]:
         return [Page(index, item.heading, item.layout) for index, item in enumerate(planned)]
 
+    def _page(self, spec: Spec, planned: Sequence[Planned], index: int, text: str) -> Page:
+        """A section as the code checks see it: its heading and body, without a slide's marker,
+        and the layout it is drawn in, which is its marker's, else the plan's."""
+
+        layout = layout_of(text)[0] if spec.kind == "slides" else None
+        body = unmarked(text, spec)
+        plan = planned[index].layout if index < len(planned) else ""
+        return Page(index, heading_of(body), layout or plan, body)
+
+    def _figures_text(self, pool: Pool) -> list[str]:
+        """The cards whose passages come with a figure, so a figure slide can be planned."""
+
+        by_ref = pool.by_ref()
+        found = []
+        for number, card in enumerate(self.cards, start=1):
+            captions = [
+                str(figure.get("caption") or "Figure")
+                for ref in card.refs
+                if ref in by_ref
+                for figure in figures_of(by_ref[ref])
+            ]
+            if captions:
+                found.append(f"- C{number}: {'; '.join(dict.fromkeys(captions))}")
+        if not found:
+            return []
+        return ["", "Figures kept with the material (a figure slide can show one):", *found]
+
+    def _unfigured(self, planned: list[Planned], pool: Pool) -> list[Planned]:
+        """A figure slide whose material has no figure kept with it becomes a text slide, and
+        the version says so."""
+
+        by_ref = pool.by_ref()
+        for index, item in enumerate(planned):
+            if item.layout == "figure" and not any(
+                figures_of(by_ref[ref]) for ref in item.refs if ref in by_ref
+            ):
+                self.skipped.append(
+                    {
+                        "step": "layout",
+                        "label": f"Slide {index + 1} drawn as text",
+                        "reason": "No figure is kept with the material this slide uses.",
+                    }
+                )
+                planned[index] = replace(item, layout="text")
+        return planned
+
     def structure(
-        self, model: ModelInfo, effort: Effort | None, spec: Spec, emit: Events
+        self, model: ModelInfo, effort: Effort | None, spec: Spec, emit: Events, *, pool: Pool
     ) -> tuple[str, list[Planned]]:
         step = self.skill.step("structure")
         assert step is not None and self.approach is not None
@@ -766,6 +859,7 @@ class SkillAgents(OutputAgents):
             "",
             "Material cards:" if self.cards else "Material cards: none.",
             *self._cards_text(),
+            *(self._figures_text(pool) if spec.kind == "slides" else []),
         ]
         effort_now = self._effort(step, effort)
         plan, _ = self.gateway.complete_json(
@@ -802,6 +896,7 @@ class SkillAgents(OutputAgents):
             planned[0] = replace(planned[0], heading=title, layout="title", queries=())
             if len(planned) > 1:
                 planned[-1] = replace(planned[-1], layout="takeaways")
+            planned = self._unfigured(planned, pool)
         self._stage(emit, step, "done")
         return title, planned
 
@@ -831,9 +926,17 @@ class SkillAgents(OutputAgents):
         current: str | None = None,
         instruction: str | None = None,
         neighbors: str = "",
+        editorial: bool = False,
+        own_heading: bool = False,
     ) -> str:
         """One section, written by the skill's write step; with ``current`` it is revised by
-        its revise step (or the write step, when it has none)."""
+        its revise step (or the write step, when it has none).
+
+        ``own_heading``: a revision keeps the heading the writer gave it (an instruction may
+        be to translate or retitle it) rather than the planned one.
+
+        ``editorial`` is for the skill's own polishing pass, which may only improve how the
+        text reads (``KEEP``). A revision the person asked for may add facts and evidence."""
 
         revising = current is not None
         step = (self.skill.step("revise") if revising else None) or self.skill.step("write")
@@ -850,7 +953,9 @@ class SkillAgents(OutputAgents):
             form=FORMS[part].format(heading=item.heading, layout=layout),
         )
         if revising:
-            rules += f"\n\n{REVISION}\n{KEEP}"
+            rules += f"\n\n{REVISION}"
+            if editorial:
+                rules += f"\n{KEEP}"
         lines = [f"Brief: {spec.brief or '(none)'}"]
         if self.approach is not None:
             lines += ["", "The approach:", self.approach.text()]
@@ -880,15 +985,26 @@ class SkillAgents(OutputAgents):
         if before:
             carry = 1200 if spec.kind == "slides" else CARRY_CHARS
             unit = "slide" if spec.kind == "slides" else "section"
-            lines += ["", f"The previous {unit} ended:\n{before[-carry:]}"]
+            lines += ["", f"The previous {unit} ended:\n{unmarked(before, spec)[-carry:]}"]
         if revising:
+            if neighbors:
+                lines += [
+                    "",
+                    "Global argument and neighboring sections "
+                    "(coordinate terminology and transitions):",
+                    neighbors,
+                ]
             lines += [
                 "",
-                "Global argument and neighboring sections "
-                "(coordinate terminology and transitions):",
-                neighbors,
+                f"This section now:\n{unmarked(current or '', spec)}",
+                "",
+                f"Instruction: {instruction}",
             ]
-            lines += ["", f"This section now:\n{current}", "", f"Instruction: {instruction}"]
+            if own_heading:
+                lines.append(
+                    "The heading line is part of the section: change it too when the instruction "
+                    "asks for it (a translation translates it), else keep it."
+                )
         completion = self.gateway.complete(
             model,
             system=self.system(step, rules, layout=layout),
@@ -898,7 +1014,93 @@ class SkillAgents(OutputAgents):
         )
         if revising and completion.text.strip().upper() == UNCHANGED:
             return current or ""
-        return shape_section(completion.text, spec, item.heading, title_slide)
+        heading = item.heading
+        if revising and own_heading:
+            own = heading_of(unmarked(completion.text, spec)) or ""
+            bare = " ".join(CITATION_GROUP.sub("", own).replace(UNSOURCED, "").split())
+            heading = bare or heading
+        return shape_section(
+            completion.text,
+            spec,
+            heading,
+            title_slide,
+            layout or None,
+            accent=_marked(current).accent if current is not None else None,
+        )
+
+    def _misfit(
+        self, spec: Spec, planned: Sequence[Planned], index: int, pool: Pool, text: str
+    ) -> list[str]:
+        """How a slide fails to take the form its layout asks for; nothing when it does, or
+        when the skill's write step does not check that."""
+
+        step = self.skill.step("write")
+        if spec.kind != "slides" or step is None or "layout_shape" not in step.checks:
+            return []
+        found = run_checks(
+            ("layout_shape",),
+            [self._page(spec, planned, index, text)],
+            self.skill.check_params,
+            Context(spec.kind, self.use, self.skill.limits, pool.by_ref()),
+        )
+        return [item.message for item in found if item.check == "layout_shape"]
+
+    def fit(
+        self,
+        model: ModelInfo,
+        effort: Effort | None,
+        spec: Spec,
+        planned: Sequence[Planned],
+        index: int,
+        pool: Pool,
+        passages: Sequence[int],
+        notes: Notes,
+        before: str,
+        emit: Events,
+        text: str,
+    ) -> str:
+        """A slide that takes the form its layout asks for, or the nearest thing to it.
+
+        One that does not is written again, once, with the problem named (an ordinary
+        rewrite, not the editorial one). If it still does not fit it is drawn as text, and the
+        version says so. Nothing is invented: only the marker changes.
+        """
+
+        problems = self._misfit(spec, planned, index, pool, text)
+        if not problems:
+            return text
+        emit({"type": "section", "index": index, "state": "revising"})
+        try:
+            text = self.write(
+                model,
+                effort,
+                spec,
+                planned,
+                index,
+                pool,
+                passages,
+                notes,
+                before,
+                _no_events,
+                current=text,
+                instruction="The slide does not take the form its layout asks for. "
+                + " ".join(problems)
+                + " Write it again so that it does, keeping what it says.",
+            )
+        except ModelError as error:
+            logger.info("Writing slide %s again failed: %s", index + 1, error)
+        else:
+            problems = self._misfit(spec, planned, index, pool, text)
+        if not problems:
+            return text
+        self.skipped.append(
+            {
+                "step": "layout",
+                "label": f"Slide {index + 1} drawn as text",
+                "reason": " ".join(problems),
+            }
+        )
+        return with_layout(text, "text")
 
     # 4 and 5. Review and revise ------------------------------------------------------------
 
@@ -906,7 +1108,7 @@ class SkillAgents(OutputAgents):
         word = "Slide" if spec.kind == "slides" else "Section"
         parts = []
         for number, draft in enumerate(drafts, start=1):
-            text = draft.text
+            text = unmarked(draft.text, spec)
             if reader:
                 text = _plain(text)
                 if spec.kind == "slides":
@@ -929,9 +1131,24 @@ class SkillAgents(OutputAgents):
         notes: Notes,
         drafts: list[Draft],
         emit: Events,
+        *,
+        only: set[int] | None = None,
     ) -> list[Draft]:
-        """The editor and the reader read it through, then a few sections are revised."""
+        """The editor and the reader read it through, then a few sections are revised.
 
+        With ``only`` (positions in ``drafts``, from 0) the revision may pick only those
+        sections: the editor and the reader still read the whole, and a section they point at
+        that is not in ``only`` is left as it is, with no call. None means any section."""
+
+        if spec.kind == "slides":
+            # A slide is revised as the layout it is drawn in, its marker's, which a fall back
+            # to text may have changed from the plan.
+            planned = [
+                replace(item, layout=layout_of(drafts[i].text)[0] or item.layout)
+                if i < len(drafts)
+                else item
+                for i, item in enumerate(planned)
+            ]
         what = self._what(spec)
         count = len(drafts)
         found: list[Finding] = []
@@ -942,13 +1159,7 @@ class SkillAgents(OutputAgents):
         if step := self.skill.step("edit_review"):
             self._stage(emit, step, "running")
             pages = [
-                Page(
-                    index,
-                    heading_of(draft.text),
-                    planned[index].layout if index < len(planned) else "",
-                    draft.text,
-                )
-                for index, draft in enumerate(drafts)
+                self._page(spec, planned, index, draft.text) for index, draft in enumerate(drafts)
             ]
             found = run_checks(
                 step.checks,
@@ -1026,6 +1237,9 @@ class SkillAgents(OutputAgents):
             ]
             prompt += [f"- Jumped after {item.after}: {item.why}" for item in reader.jumps]
             prompt += [f"- Would ask: {question}" for question in reader.questions[:3]]
+        if only is not None:
+            allowed = ", ".join(str(n + 1) for n in sorted(only)) or "none"
+            prompt += ["", f"Only these sections may be changed: {allowed}."]
         try:
             plan, _ = self.gateway.complete_json(
                 model,
@@ -1043,6 +1257,7 @@ class SkillAgents(OutputAgents):
                 1 <= ask.section <= count
                 and ask.section - 1 not in chosen
                 and ask.instruction.strip()
+                and (only is None or ask.section - 1 in only)
             ):
                 chosen[ask.section - 1] = _line(ask.instruction, 1000)
         tool = self.tools.get("search_library")
@@ -1064,8 +1279,9 @@ class SkillAgents(OutputAgents):
                     emit,
                     current=drafts[index].text,
                     instruction=instruction,
+                    editorial=True,
                     neighbors="\n\n".join(
-                        f"Section {n + 1}:\n{draft.text[:4000]}"
+                        f"Section {n + 1}:\n{unmarked(draft.text, spec)[:4000]}"
                         for n, draft in enumerate(drafts)
                         if abs(n - index) <= 1
                     ),
@@ -1082,17 +1298,18 @@ class SkillAgents(OutputAgents):
                 emit({"type": "section", "index": index, "state": "done"})
                 continue
             if section_hash(written) != section_hash(drafts[index].text):
-                previous = drafts[index].text
+                # The marker is no part of what is compared: it says how the slide is drawn.
+                previous, revised = unmarked(drafts[index].text, spec), unmarked(written, spec)
                 reason = ""
                 plain_before = CITATION_GROUP.sub("", previous)
-                plain_after = CITATION_GROUP.sub("", written)
+                plain_after = CITATION_GROUP.sub("", revised)
                 numbers = r"(?<!\w)[+-]?\d[\d,]*(?:\.\d+)?%?"
                 new_numbers = set(re.findall(numbers, plain_after)) - set(
                     re.findall(numbers, plain_before)
                 )
                 if new_numbers:
                     reason = "Editorial revision introduced new numeric values."
-                elif len(previous) + len(written) > 24_000:
+                elif len(previous) + len(revised) > 24_000:
                     reason = "Editorial comparison exceeds its context budget."
                 else:
                     try:
@@ -1106,7 +1323,7 @@ class SkillAgents(OutputAgents):
                             "only if AFTER adds no factual assertions and preserves citation "
                             "bindings, numerical units, scope and qualifications. Otherwise false "
                             "and a reason. New transitions and clearer wording are allowed.",
-                            prompt=f"BEFORE:\n{previous}\n\nAFTER:\n{written}",
+                            prompt=f"BEFORE:\n{previous}\n\nAFTER:\n{revised}",
                             effort="off",
                         )
                         if not fidelity.faithful:
@@ -1123,6 +1340,19 @@ class SkillAgents(OutputAgents):
                     )
                     emit({"type": "section", "index": index, "state": "done"})
                     continue
+                written = self.fit(
+                    model,
+                    effort,
+                    spec,
+                    planned,
+                    index,
+                    pool,
+                    refs,
+                    notes,
+                    drafts[index - 1].text if index else "",
+                    emit,
+                    written,
+                )
                 changed += 1
                 if tool is not None:
                     emit({"type": "section", "index": index, "state": "checking"})
@@ -1132,6 +1362,37 @@ class SkillAgents(OutputAgents):
             emit({"type": "section", "index": index, "state": "done"})
         self._stage(emit, step, "done", f"{changed} changed")
         return drafts
+
+    def final_notes(
+        self, spec: Spec, planned: Sequence[Planned], drafts: Sequence[Draft], pool: Pool
+    ) -> list[dict[str, Any]]:
+        """What the review step's checks say about the finished output as a whole (too few
+        slides, a layout used too often…), as notes for the version. An unverified chart
+        fails instead: it must not be saved as one."""
+
+        review = self.skill.step("edit_review")
+        pages = [self._page(spec, planned, n, d.text) for n, d in enumerate(drafts)]
+        found = run_checks(
+            review.checks if review else (),
+            pages,
+            self.skill.check_params,
+            Context(spec.kind, self.use, self.skill.limits, pool.by_ref()),
+        )
+        notes: list[dict[str, Any]] = []
+        for finding in found:
+            if finding.check == "chart_numbers_cited":
+                raise ModelError(
+                    "A chart could not be verified against its sources: " + finding.message
+                )
+            notes.append(
+                {
+                    "step": "final_checks",
+                    "label": "Final consistency check",
+                    "reason": finding.message,
+                    "index": finding.index,
+                }
+            )
+        return notes
 
     # The whole run ---------------------------------------------------------------------------
 
@@ -1156,7 +1417,7 @@ class SkillAgents(OutputAgents):
             raise ValueError("Outputs need the library to search.")
         self.understand(model, effort, spec, pool, notes, emit, fixed)
         if outline is None:
-            title, planned = self.structure(model, effort, spec, emit)
+            title, planned = self.structure(model, effort, spec, emit, pool=pool)
         else:
             # The person's own outline: each section is searched by its heading and goal.
             planned = [
@@ -1234,7 +1495,11 @@ class SkillAgents(OutputAgents):
                     section=index,
                 )
             emit({"type": "section", "index": index, "state": "writing"})
+            before = drafts[-1].text if drafts else ""
             written = self.write(
+                model, effort, spec, planned, index, pool, passages[index], notes, before, emit
+            )
+            written = self.fit(
                 model,
                 effort,
                 spec,
@@ -1243,37 +1508,16 @@ class SkillAgents(OutputAgents):
                 pool,
                 passages[index],
                 notes,
-                drafts[-1].text if drafts else "",
+                before,
                 emit,
+                written,
             )
             emit({"type": "section", "index": index, "state": "checking"})
             drafts.append(self.check_built(model, written, tool, pool, emit, index))
             emit({"type": "section", "index": index, "state": "done"})
         self._stage(emit, write_step, "done")
         drafts = self.polish(model, effort, spec, planned, pool, notes, drafts, emit)
-        review = self.skill.step("edit_review")
-        final_pages = [
-            Page(n, heading_of(d.text), planned[n].layout, d.text) for n, d in enumerate(drafts)
-        ]
-        final_findings = run_checks(
-            review.checks if review else (),
-            final_pages,
-            self.skill.check_params,
-            Context(spec.kind, self.use, self.skill.limits, pool.by_ref()),
-        )
-        for finding in final_findings:
-            if finding.check == "chart_numbers_cited":
-                raise ModelError(
-                    "A chart could not be verified against its sources: " + finding.message
-                )
-            self.skipped.append(
-                {
-                    "step": "final_checks",
-                    "label": "Final consistency check",
-                    "reason": finding.message,
-                    "index": finding.index,
-                }
-            )
+        self.skipped.extend(self.final_notes(spec, planned, drafts, pool))
         preamble = ""
         if spec.kind == "report":
             line = " ".join(spec.brief.split())

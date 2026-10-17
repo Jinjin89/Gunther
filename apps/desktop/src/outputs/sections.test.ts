@@ -1,8 +1,46 @@
-import type { Artifact } from "@gunther/contracts";
+import type { Artifact, OutlineItem } from "@gunther/contracts";
 import { describe, expect, it } from "vitest";
-import { headingOf, joinDocument, parseSlides, sectionHash, splitDocument, splitNotes, titleOf, withDraft } from "./sections";
+import { headingOf, joinDocument, layoutOf, parseSlides, sectionHash, slideLayouts, splitDocument, splitNotes, titleOf, withAccent, withDraft } from "./sections";
 
 // The same cases as tests/test_outputs.py: the service and the app split a document alike.
+
+// A slide's marker: [text, its layout, its accent, the slide without the marker]. The same list as
+// MARKER_CASES in tests/test_outputs.py.
+const MARKER_CASES: Array<[string, string | null, string | null, string]> = [
+  ["<!-- layout: compare -->\n## A claim\n\n| a | b |", "compare", null, "## A claim\n\n| a | b |"],
+  ["<!-- layout: title; accent: blue -->\n# Deck\n\nOne line", "title", "blue", "# Deck\n\nOne line"],
+  ["## No marker\n\n- a", null, null, "## No marker\n\n- a"],
+  ["<!--layout:big_number-->\n## Tight\n\n**62%**", "big_number", null, "## Tight\n\n**62%**"],
+  ["\n\n  <!-- layout: text -->\n\n\n## Blank lines", "text", null, "## Blank lines"],
+  ["<!-- layout: text -->\r\n## Windows", "text", null, "## Windows"],
+  ["<!-- layout: text -->", "text", null, ""],
+  // Only the title slide has an accent, and only one of the six.
+  ["<!-- layout: title; accent: pink -->\n# Deck", "title", null, "# Deck"],
+  ["<!-- layout: compare; accent: blue -->\n## A claim", "compare", null, "## A claim"],
+  // Not a marker: not the first line, not the whole line, not a layout, not one line.
+  ["## A\n\n<!-- layout: text -->\n- a", null, null, "## A\n\n<!-- layout: text -->\n- a"],
+  ["<!-- layout: text --> ## A", null, null, "<!-- layout: text --> ## A"],
+  ["<!-- note: layout -->\n## A", null, null, "<!-- note: layout -->\n## A"],
+  ["<!-- layout: Text -->\n## A", null, null, "<!-- layout: Text -->\n## A"],
+  ["<!--\nlayout: text -->\n## A", null, null, "<!--\nlayout: text -->\n## A"],
+  ["```\n<!-- layout: text -->\n```", null, null, "```\n<!-- layout: text -->\n```"],
+];
+
+describe("a slide's marker", () => {
+  it.each(MARKER_CASES)("is read from %j", (text, layout, accent, body) => {
+    expect(layoutOf(text)).toEqual({ layout, accent, body });
+  });
+
+  it("stays with its slide when a deck is split and put back, and the hash covers it", async () => {
+    const content = "<!-- layout: title; accent: blue -->\n# Deck\n\nsub\n\n---\n\n<!-- layout: flow -->\n## One\n\n1. a\n2. b";
+    const { sections } = splitDocument(content, "slides");
+    expect(sections).toEqual(["<!-- layout: title; accent: blue -->\n# Deck\n\nsub", "<!-- layout: flow -->\n## One\n\n1. a\n2. b"]);
+    expect(joinDocument("", sections, "slides")).toBe(content);
+    expect(await sectionHash(sections[1] ?? "")).not.toBe(await sectionHash("## One\n\n1. a\n2. b"));
+    expect(await sectionHash(sections[1] ?? "")).toBe(await sectionHash("  <!-- layout: flow -->\r\n## One\r\n\r\n1. a\r\n2. b\n"));
+    expect(titleOf(content)).toBe("Deck");
+  });
+});
 
 describe("a report's sections", () => {
   it("start at level-two headings outside code", () => {
@@ -41,12 +79,20 @@ describe("a deck's slides", () => {
 });
 
 describe("parsing a deck", () => {
-  it("gives each slide its heading, what it shows and what is said", () => {
+  it("gives each slide its heading, how it is drawn, what it shows and what is said", () => {
     expect(parseSlides("# Deck\n\nsub\n\n---\n\n## One\n\n- a\n\nNote: Say a.")).toEqual([
-      { heading: "Deck", body: "# Deck\n\nsub", notes: "" },
-      { heading: "One", body: "## One\n\n- a", notes: "Say a." },
+      { heading: "Deck", layout: null, accent: null, body: "# Deck\n\nsub", notes: "" },
+      { heading: "One", layout: null, accent: null, body: "## One\n\n- a", notes: "Say a." },
     ]);
     expect(parseSlides("")).toEqual([]);
+  });
+
+  it("takes the marker off a slide's body and keeps it out of the heading and the notes", () => {
+    const content = "<!-- layout: title; accent: blue -->\n# Deck\n\nsub\n\n---\n\n<!-- layout: flow -->\n## One\n\n1. a\n2. b\n\nNote: Say a.";
+    expect(parseSlides(content)).toEqual([
+      { heading: "Deck", layout: "title", accent: "blue", body: "# Deck\n\nsub", notes: "" },
+      { heading: "One", layout: "flow", accent: null, body: "## One\n\n1. a\n2. b", notes: "Say a." },
+    ]);
   });
 });
 
@@ -67,6 +113,74 @@ describe("title and headings", () => {
     expect(titleOf(`# ${"x".repeat(200)}`)).toBe("x".repeat(160));
     expect(headingOf("\n## The heading\n\ntext")).toBe("The heading");
     expect(headingOf("# Title slide")).toBe("Title slide");
+    // A slide's heading is the first line under its marker.
+    expect(headingOf("<!-- layout: compare -->\n## The claim\n\ntext")).toBe("The claim");
+    expect(headingOf("<!-- layout: title; accent: blue -->\n# Title slide")).toBe("Title slide");
+  });
+});
+
+describe("a deck's accent", () => {
+  const rest = "\n\n---\n\n<!-- layout: flow -->\n## One\n\n1. a\n2. b\n\nNote: Say a.";
+
+  it("is set in the title slide's marker, and nothing else in the deck moves", () => {
+    const plain = `<!-- layout: title -->\n# Deck\n\nOne line${rest}`;
+    const blue = withAccent(plain, "blue");
+    expect(blue).toBe(`<!-- layout: title; accent: blue -->\n# Deck\n\nOne line${rest}`);
+    expect(parseSlides(blue).map((slide) => slide.accent)).toEqual(["blue", null]);
+    // Another colour replaces it, and ink takes it away: ink is the default.
+    expect(withAccent(blue, "teal")).toBe(`<!-- layout: title; accent: teal -->\n# Deck\n\nOne line${rest}`);
+    expect(withAccent(blue, "ink")).toBe(plain);
+    // Choosing what it already is changes nothing.
+    expect(withAccent(blue, "blue")).toBe(blue);
+    expect(withAccent(plain, "ink")).toBe(plain);
+  });
+
+  it("makes a marker for a first slide that has none, and leaves a deck with no slides alone", () => {
+    expect(withAccent("# Deck\n\nOne line", "red")).toBe("<!-- layout: title; accent: red -->\n# Deck\n\nOne line");
+    expect(withAccent("\n\n# Deck", "red")).toBe("\n\n<!-- layout: title; accent: red -->\n# Deck");
+    expect(withAccent("# Deck", "ink")).toBe("# Deck");
+    expect(parseSlides(withAccent("# Deck\n\n---\n\n## One", "amber")).map((slide) => [slide.layout, slide.accent])).toEqual([["title", "amber"], [null, null]]);
+  });
+
+  it("keeps the line ends of the file, and the blank lines before the marker", () => {
+    expect(withAccent("<!-- layout: title -->\r\n# Deck\r\n", "violet")).toBe("<!-- layout: title; accent: violet -->\r\n# Deck\r\n");
+    expect(withAccent("\n  <!-- layout: title; accent: blue -->\n# Deck", "teal")).toBe("\n  <!-- layout: title; accent: teal -->\n# Deck");
+    expect(withAccent("<!--layout:title-->\n# Deck", "blue")).toBe("<!-- layout: title; accent: blue -->\n# Deck");
+  });
+
+  it("comes back as it was when the first slide is not a title slide, or the colour is not one of the six", () => {
+    const text = "<!-- layout: text -->\n## Not a title\n\n- a";
+    expect(withAccent(text, "blue")).toBe(text);
+    const title = "<!-- layout: title -->\n# Deck";
+    expect(withAccent(title, "pink")).toBe(title);
+    expect(withAccent(title, "")).toBe(title);
+    expect(withAccent("", "blue")).toBe("");
+    expect(withAccent("\n \n", "blue")).toBe("\n \n");
+  });
+});
+
+describe("the layout each slide is drawn in", () => {
+  const item = (layout: string): OutlineItem => ({ heading: "x", goal: "", layout });
+  const outline = [item("title"), item("compare"), item("takeaways")];
+  const marked = "<!-- layout: title -->\n# Deck\n\n---\n\n<!-- layout: cards -->\n## One\n\n---\n\n<!-- layout: takeaways -->\n## Two";
+  const unmarked = "# Deck\n\n---\n\n## One\n\n---\n\n## Two";
+
+  it("is the marker's, which a hand edit may have changed from the plan", () => {
+    expect(slideLayouts({ content: marked, outline })).toEqual(["title", "cards", "takeaways"]);
+  });
+
+  it("is the outline's for a deck made before markers, when the outline has a part for every slide", () => {
+    expect(slideLayouts({ content: unmarked, outline })).toEqual(["title", "compare", "takeaways"]);
+    expect(slideLayouts({ content: unmarked, outline: [item("title"), { heading: "x", goal: "" }, item("takeaways")] })).toEqual(["title", null, "takeaways"]);
+  });
+
+  it("is none when the outline and the deck do not line up, or there is no outline", () => {
+    expect(slideLayouts({ content: unmarked, outline: outline.slice(0, 2) })).toEqual([null, null, null]);
+    expect(slideLayouts({ content: unmarked, outline: [] })).toEqual([null, null, null]);
+    expect(slideLayouts({ content: unmarked } as Pick<Artifact, "content" | "outline">)).toEqual([null, null, null]);
+    // A slide with a marker still has its layout.
+    expect(slideLayouts({ content: marked, outline: outline.slice(0, 1) })).toEqual(["title", "cards", "takeaways"]);
+    expect(slideLayouts({ content: "", outline })).toEqual([]);
   });
 });
 

@@ -65,13 +65,23 @@ The steps (`SkillAgents.make`):
 2. **structure.** The outline: a claim as each heading, a goal, its cards, a few searches, and a
    slide's layout. The step's checks (`section_count`, `page_count`, `first_and_last`,
    `layout_run`) run on it; if they find something the model gets one more try. A deck's first
-   slide is always `title` and its last `takeaways`.
+   slide is always `title` and its last `takeaways`. A `figure` slide whose cards' passages
+   have no figure kept with them becomes a `text` slide, and the version says so.
 3. **write.** Sections with fewer than two passages are researched as in "One build", and may
    then use the step's tools; each section is written from its cards' passages with the skill's
-   instructions and its layout's reference, then checked.
+   instructions and its layout's reference, then checked. A deck's slide starts with a
+   **layout marker**, a line `<!-- layout: compare -->` (the title slide's may also say
+   `; accent: blue`): code writes it from the plan, the model never does, and neither the
+   Checker nor the models that read the deck see it. The slide's body must take the form its
+   layout asks for (`layout_shape`: a table for `compare`, 2 to 6 numeric rows for a chart, an
+   ordered list for `flow` and so on); one that does not is written again once with the problem
+   named, and drawn as `text` if it still does not (`provenance.skill.skipped`, "Slide 3 drawn
+   as text"). The section hash covers the marker, and the desktop reads it the same way
+   (`sections.ts`); a deck made before markers falls back to its outline's layouts.
 4. **edit_review.** Code checks (`heading_length`, `filler_phrases`, `density`, `table_size`,
-   `chart_numbers_cited`, `layout_run`; settings in `skill.toml`), then an editor lists problems
-   per section. Nothing is changed.
+   `chart_numbers_cited`, `layout_run`, `layout_shape`; settings in `skill.toml`; `text` is the
+   last resort, so `layout_run.max_text` keeps it to 2 slides and never two in a row), then an
+   editor lists problems per section. Nothing is changed.
 5. **reader_test.** A fresh reader, who gets no preamble and no approach, reads the text without
    numbers (a talk's speaker notes as what the speaker says) and says what it understood, what
    was unclear, where it jumped and what it would ask.
@@ -231,6 +241,25 @@ them: they have no citations or scope to edit.
   spacing are scaled down together (`slideFit.ts`, down to 55%) instead of running off the
   slide. The scale depends only on the slide's text, so the deck, its thumbnails and the printed
   page agree.
+- **Each layout has its own drawing** (`apps/desktop/src/outputs/slides/`): `parseSlide.ts`
+  reads a slide's body for its layout's form (the rules of the service's `layout_shape`, with
+  the same cases in `parseSlide.test.ts` and `tests/test_skillbook.py`) and one component per
+  layout draws it: a title with a rule, a big number, a grid for `compare`, panels for
+  `two_column`, numbered circles for `flow`, dots on a line for `timeline`, bars or a line for
+  the charts, cards, a quote with a hanging mark, the managed image for `figure`, and large
+  numerals for `takeaways`. Every piece of text is the slide's own Markdown, drawn by
+  `AnswerBody`, so a citation stays a number that opens its evidence. A slide with no layout, or
+  whose body does not take its layout's form, is drawn as its text, as before layouts; a table
+  that cannot be a chart (a value that is not a number, rows in different units, fewer than two
+  or more than six rows) is drawn as the table it is. A chart draws only what the table says:
+  the row whose label is bold is in the accent and the rest in grey, a bar's value is at its tip,
+  a line has its value at the end only and no numbers on its scale, and pointing at a mark shows
+  its value and its source. `gallery.fixture.md` there has one slide of every layout.
+- **The accent** is the deck's one colour: `ink` (the default, no colour), `blue`, `teal`, `red`,
+  `amber` or `violet`, each at least 4.5:1 against white. It is written in the title slide's
+  marker (`<!-- layout: title; accent: blue -->`) and applies to every slide. The Accent menu in
+  the slides toolbar saves a change as an edit version (`withAccent` in `sections.ts`), for the
+  latest version only.
 - **Export PDF** prints a layout made for paper (`PrintRoot.tsx`): a report on A4 with
   superscript numbers and a list of sources; a deck as one 13⅓ × 7½ in page per slide, no
   notes, with a final page of sources. macOS's web view ignores `window.print()`, so the app

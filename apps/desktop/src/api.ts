@@ -4,7 +4,17 @@ import type {
   ConversationContext,
   ResearchUsed,
   Artifact,
+  ArtifactAgentEvent,
+  ArtifactBriefState,
+  ArtifactConversationDetail,
+  ArtifactConversationSummary,
   ArtifactSummary,
+  ArtifactTurnInput,
+  ArtifactTurnOut,
+  CreateArtifactConversationRequest,
+  EditArtifactBriefRequest,
+  ImportArtifactConversationsRequest,
+  UpdateArtifactConversationRequest,
   BuildOutputRequest,
   EditOutputRequest,
   OutlineItem,
@@ -467,20 +477,40 @@ export class OutputStoppedError extends Error {
   }
 }
 
+/** What ends an output stream: a saved version, or (when the run was a turn of the Artifacts agent) how the turn ended. */
+export type OutputDone = Artifact | ArtifactTurnOut;
+/** Told apart by `outcome`: only a turn has one. */
+export const isTurnResult = (done: OutputDone): done is ArtifactTurnOut => "outcome" in done;
+
 /** The events of an output until it is saved, fails or is stopped. */
-async function readOutput(body: ReadableStream<Uint8Array>, onEvent: (event: OutputEvent) => void): Promise<Artifact> {
+async function readOutput(body: ReadableStream<Uint8Array>, onEvent: (event: ArtifactTurnEvent) => void): Promise<OutputDone> {
   for await (const message of readServerEvents(body)) {
     const data = JSON.parse(message.data) as Record<string, unknown>;
-    if (message.event === "done") return data as unknown as Artifact;
+    if (message.event === "done") return data as unknown as OutputDone;
     if (message.event === "stopped") throw new OutputStoppedError();
     if (message.event === "error") throw new Error(typeof data.detail === "string" ? data.detail : "The output could not be built.");
-    onEvent(data as unknown as OutputEvent);
+    onEvent(data as unknown as ArtifactTurnEvent);
   }
   throw new Error("The connection closed before the output was finished.");
 }
 
+/** What is heard while the Artifacts agent works on a message: its own events and the skill's. */
+export type ArtifactTurnEvent = ArtifactAgentEvent | OutputEvent;
+
+/** The events of a turn of the Artifacts agent until it ends, fails or is stopped. */
+async function readTurn(body: ReadableStream<Uint8Array>, onEvent: (event: ArtifactTurnEvent) => void): Promise<ArtifactTurnOut> {
+  for await (const message of readServerEvents(body)) {
+    const data = JSON.parse(message.data) as Record<string, unknown>;
+    if (message.event === "done") return data as unknown as ArtifactTurnOut;
+    if (message.event === "stopped") throw new OutputStoppedError();
+    if (message.event === "error") throw new Error(typeof data.detail === "string" ? data.detail : "The message could not be handled.");
+    onEvent(data as unknown as ArtifactTurnEvent);
+  }
+  throw new Error("The connection closed before the message was handled.");
+}
+
 /** Start a build or a revision (a POST), or follow one (a GET), and hear it until it ends. */
-async function streamOutput(path: string, init: RequestInit, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal): Promise<Artifact | null> {
+async function streamOutput(path: string, init: RequestInit, workspaceId: string, onEvent: (event: ArtifactTurnEvent) => void, signal?: AbortSignal): Promise<OutputDone | null> {
   await waitForDesktopBackend();
   let response: Response;
   try {
@@ -500,6 +530,29 @@ async function streamOutput(path: string, init: RequestInit, workspaceId: string
   }
   if (init.method === "POST") kickActivity();
   return readOutput(response.body, onEvent);
+}
+
+/** Send a message to the Artifacts agent (a POST) and hear it until its turn ends. */
+async function streamTurn(path: string, payload: ArtifactTurnInput, workspaceId: string, onEvent: (event: ArtifactTurnEvent) => void, signal?: AbortSignal): Promise<ArtifactTurnOut> {
+  await waitForDesktopBackend();
+  let response: Response;
+  try {
+    response = await backendFetch(`${apiBase}${path}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+      headers: { "Content-Type": "application/json", "X-Gunther-Workspace-Id": workspaceId },
+      ...(signal ? { signal } : {}),
+    });
+  } catch (reason) {
+    if (reason instanceof TypeError) throw new ServiceUnavailableError();
+    throw reason;
+  }
+  if (!response.ok || !response.body) {
+    const body = (await response.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail ?? `Request failed with status ${response.status}`);
+  }
+  kickActivity();
+  return readTurn(response.body, onEvent);
 }
 
 const outputsPath = (baseId: string) => `/knowledge-bases/${encodeURIComponent(baseId)}`;
@@ -917,13 +970,34 @@ export const knowledgeApi = {
     ),
   /** Build a report or slides and hear the agents at work; resolves with the saved version. */
   buildOutputStream: async (baseId: string, payload: BuildOutputRequest, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal): Promise<Artifact> =>
-    (await streamOutput(`${outputsPath(baseId)}/outputs/build/stream`, { method: "POST", body: JSON.stringify(payload) }, workspaceId, onEvent, signal)) as Artifact,
+    (await streamOutput(`${outputsPath(baseId)}/outputs/build/stream`, { method: "POST", body: JSON.stringify(payload) }, workspaceId, (event) => onEvent(event as OutputEvent), signal)) as Artifact,
   /** Change one section (or all) of the latest version as instructed: the next version. */
   reviseOutputStream: async (baseId: string, artifactId: string, payload: ReviseOutputRequest, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal): Promise<Artifact> =>
-    (await streamOutput(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/revise/stream`, { method: "POST", body: JSON.stringify(payload) }, workspaceId, onEvent, signal)) as Artifact,
-  /** Follow a build or revision still running in this library; null when there is none. Aborting only stops listening. */
-  followOutputBuild: (baseId: string, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal) =>
+    (await streamOutput(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/revise/stream`, { method: "POST", body: JSON.stringify(payload) }, workspaceId, (event) => onEvent(event as OutputEvent), signal)) as Artifact,
+  /** Send a message to the Artifacts agent and hear it work; resolves with how the turn ended (a question, an answer, a saved version, a reply or a pause). */
+  artifactTurnStream: (baseId: string, conversationId: string, payload: ArtifactTurnInput, workspaceId: string, onEvent: (event: ArtifactTurnEvent) => void, signal?: AbortSignal): Promise<ArtifactTurnOut> =>
+    streamTurn(`${outputsPath(baseId)}/artifact-conversations/${encodeURIComponent(conversationId)}/messages/stream`, payload, workspaceId, onEvent, signal),
+  /** Follow a build, revision or turn of the Artifacts agent still running in this library; null when there is none. Aborting only stops listening. A turn ends with how it ended, anything else with the saved version. */
+  followOutputBuild: (baseId: string, workspaceId: string, onEvent: (event: ArtifactTurnEvent) => void, signal?: AbortSignal) =>
     streamOutput(`${outputsPath(baseId)}/outputs/build/stream`, { method: "GET" }, workspaceId, onEvent, signal),
+  /** The Artifacts conversations of a library, the latest first. */
+  artifactConversations: (baseId: string, workspaceId: string) =>
+    request<ArtifactConversationSummary[]>(`${outputsPath(baseId)}/artifact-conversations`, undefined, workspaceId),
+  /** One conversation: its messages, brief and works. */
+  artifactConversation: (baseId: string, conversationId: string, workspaceId: string) =>
+    request<ArtifactConversationDetail>(`${outputsPath(baseId)}/artifact-conversations/${encodeURIComponent(conversationId)}`, undefined, workspaceId),
+  /** Start a conversation under the id given; asking for one that exists returns it. */
+  createArtifactConversation: (baseId: string, payload: CreateArtifactConversationRequest, workspaceId: string) =>
+    request<ArtifactConversationDetail>(`${outputsPath(baseId)}/artifact-conversations`, { method: "POST", body: JSON.stringify(payload) }, workspaceId),
+  /** Rename a conversation, change what it reads from, or archive it. */
+  updateArtifactConversation: (baseId: string, conversationId: string, payload: UpdateArtifactConversationRequest, workspaceId: string) =>
+    request<ArtifactConversationDetail>(`${outputsPath(baseId)}/artifact-conversations/${encodeURIComponent(conversationId)}`, { method: "PATCH", body: JSON.stringify(payload) }, workspaceId),
+  /** Take in the conversations a device kept; ids the service has are skipped. */
+  importArtifactConversations: (baseId: string, payload: ImportArtifactConversationsRequest, workspaceId: string) =>
+    request<ArtifactConversationSummary[]>(`${outputsPath(baseId)}/artifact-conversations/import`, { method: "POST", body: JSON.stringify(payload) }, workspaceId),
+  /** Set lines of the brief the user typed; the lines set are marked as theirs. */
+  editArtifactBrief: (baseId: string, conversationId: string, payload: EditArtifactBriefRequest, workspaceId: string) =>
+    request<ArtifactBriefState>(`${outputsPath(baseId)}/artifact-conversations/${encodeURIComponent(conversationId)}/brief`, { method: "PATCH", body: JSON.stringify(payload) }, workspaceId),
   /** Stop the build or revision; nothing is saved, and its stream ends with OutputStoppedError. */
   stopOutputBuild: (baseId: string, workspaceId: string) =>
     request<void>(`${outputsPath(baseId)}/outputs/build/stop`, { method: "POST" }, workspaceId),

@@ -1,0 +1,555 @@
+# The Artifacts exam: two fixtures (a deck and a report) and the messages sent to them.
+#
+# A fixture is built once, through the real build path, from the Ask exam's demo library and
+# with the fixed outline below, so a case can name a part by what it is about. Every case then
+# starts from its own copy of a fixture. `has` strings (and `paragraphs`) must be found in a
+# built part, or the fixture is built again: they are what the cases below rely on.
+#
+# Cases. Parts are counted from 1, in the fixture as it was before the message.
+#   artifact    deck | report | none (nothing exists yet)
+#   history     earlier messages, sent first; only the last message is scored
+#   focus       what the person points at: section, quote (selected text), selected
+#               (false: the part is only on screen)
+#   setup       what the case does to its copy first: typo = N breaks one word of part N
+#               ({typo} is the broken word, {fixed} the right one); quote = [N, K] makes {quote}
+#               the Kth sentence of part N. The placeholders work in message, focus and expect.
+#   expect      intent: ask | answer | make | change (a list: any of them)
+#               changed / may_change: parts that must / may change (may_change = "all": any)
+#               count_delta: parts added (negative: removed); "any" when the case does not say
+#               layout: layout each part must have afterwards, by original part number
+#               order: the original part numbers in the order they must come in afterwards
+#               new_at: where the new parts must sit afterwards
+#               shorter: parts that must have fewer words afterwards
+#               cites: titles of notes a changed or new part must cite (any of them)
+#               must_contain / must_not_contain: strings in the result (the new text, or the
+#               reply or question)
+#               gone: sentences that must be gone: no sentence or line of the result is one of
+#               them (the same words inside a longer sentence of the notes do not count)
+#               asks: must | may | must_not (default: must for intent ask, else must_not)
+#               judge: a yes/no question for the judge model
+#   today       how the old path takes the message (the baseline): route = revise | rebuild |
+#               outline | new | none, why (for none), edit (parts of the outline to change, for
+#               outline), kind / audience / use (for new). Left out, it follows from the case.
+
+[fixture.deck]
+kind = "slides"
+audience = "student"
+use = "talk"
+brief = "A 10-minute talk for students on what the Velmora cool roof trial found, and what to make of it."
+
+[[fixture.deck.outline]]
+heading = "Cool roofs in Velmora: what the trial found"
+goal = ""
+layout = "title"
+
+[[fixture.deck.outline]]
+heading = "Top-floor flats in Velmora overheat from late June"
+goal = "Why the city asked for a trial: heat in top-floor flats and the rising share of the summer electricity load that goes to air conditioning."
+layout = "text"
+
+[[fixture.deck.outline]]
+heading = "Albedo is the share of sunlight a surface reflects"
+goal = "Define albedo in the glossary's own words."
+layout = "quote"
+has = ["albedo"]
+
+[[fixture.deck.outline]]
+heading = "The trial followed 412 buildings over three summers"
+goal = "The scale of the trial: 412 residential buildings in six districts, summers 2021 to 2023."
+layout = "big_number"
+has = ["412"]
+
+[[fixture.deck.outline]]
+heading = "Each coated roof was measured and compared with a matched twin"
+goal = "The method in four steps: coat the roof, measure its reflectance, log indoor temperature every 15 minutes, compare with matched untreated buildings."
+layout = "flow"
+has = ["untreated"]
+
+[[fixture.deck.outline]]
+heading = "Top-floor flats peaked 2.1 °C cooler"
+goal = "The headline temperature result of the trial."
+layout = "big_number"
+has = ["2.1"]
+
+[[fixture.deck.outline]]
+heading = "Top floors cooled; ground floors did not change"
+goal = "Contrast the top-floor result with the ground-floor flats, where no change was measured."
+layout = "two_column"
+has = ["ground"]
+
+[[fixture.deck.outline]]
+heading = "Weather adjustment halves the cooling-energy saving"
+goal = "Compare the trial as first reported with the weather-adjusted reanalysis: the cooling electricity saving (18% against 9%) and the peak indoor temperature (2.1 °C in both). Cite every cell."
+layout = "compare"
+has = ["18", "9"]
+
+[[fixture.deck.outline]]
+heading = "Green roofs cost four to six times as much as cool roofs"
+goal = "Compare green and cool roofs on cost per square metre, rainwater held, and what each does best."
+layout = "compare"
+has = ["cost"]
+
+[[fixture.deck.outline]]
+heading = "Winter heating rises by only 1.2% in Velmora"
+goal = "The winter heating penalty for Velmora's mild winters, against 3 to 7% in cold climates."
+layout = "big_number"
+has = ["1.2"]
+
+[[fixture.deck.outline]]
+heading = "The city pays €14 per square metre toward the cost of a coating"
+goal = "The Climate Plan: 30% of residential roofs coated by 2030, a €14 per square metre subsidy, and a review in 2028."
+layout = "cards"
+has = ["14"]
+
+[[fixture.deck.outline]]
+heading = "Cooler flats are well supported; quote the adjusted energy saving"
+goal = "Close with what holds up (the temperature result), what changed (the energy saving) and what to watch (cleaning, glare, winter heating)."
+layout = "takeaways"
+
+[fixture.report]
+kind = "report"
+audience = "scientist"
+style = "overview"
+title = "Cool roofs in Velmora: what the evidence says"
+brief = "A short report for colleagues on what the Velmora cool roof trial found and how far its numbers can be trusted."
+
+[[fixture.report.outline]]
+heading = "Velmora's trial found top-floor flats up to 2.1 °C cooler"
+goal = "The trial's design (412 buildings, three summers) and its headline results: peak indoor temperature down 2.1 °C in top-floor flats, cooling electricity down 18% as first reported."
+has = ["2.1"]
+
+[[fixture.report.outline]]
+heading = "Half of the reported energy saving came from the weather, not the coating"
+goal = "The 2025 reanalysis: a weather-adjusted saving of 9% instead of 18%, the unchanged temperature result, and why the 2022 drought summer matters."
+has = ["9"]
+
+[[fixture.report.outline]]
+heading = "The coating fades and can dazzle neighbours unless it is looked after"
+goal = "Practical limits: reflectance fell from 0.71 to 0.55 in 18 months; six of eleven managers had glare complaints; cleaning every two years restores most of the brightness. Write at least two paragraphs."
+has = ["0.55"]
+paragraphs = 2
+
+[[fixture.report.outline]]
+heading = "Green roofs cost more, and winter heating rises a little"
+goal = "Cool roofs against green roofs on cost (four to six times) and rainwater, and the winter heating penalty: +1.2% in Velmora, 3 to 7% in cold climates."
+has = ["1.2"]
+
+[[fixture.report.outline]]
+heading = "The city plans to coat 30% of roofs, and one question is still open"
+goal = "The Climate Plan (30% of residential roofs by 2030, a €14 per square metre subsidy) and the lab's open question on using the weather-adjusted figure."
+has = ["30"]
+
+# --- Small edits ---------------------------------------------------------------------------
+
+[[case]]
+id = "E1"
+category = "small edit"
+artifact = "deck"
+message = "Fix the typo on slide 4."
+setup = { typo = 4 }
+
+[case.expect]
+intent = "change"
+changed = [4]
+must_contain = ["{fixed}"]
+must_not_contain = ["{typo}"]
+judge = "Is the only difference between slide 4 before and after the correction of the misspelt word “{typo}”, with nothing else reworded?"
+
+[[case]]
+id = "E2"
+category = "small edit"
+artifact = "deck"
+message = "Slide 2 is too long. Shorten it."
+
+[case.expect]
+intent = "change"
+changed = [2]
+shorter = [2]
+judge = "Is slide 2 clearly shorter than before while keeping its main point and its source numbers?"
+
+[[case]]
+id = "E3"
+category = "small edit"
+artifact = "deck"
+message = "Change the title of the deck to “What Velmora's cool roofs taught us”."
+
+[case.expect]
+intent = "change"
+changed = [1]
+layout = { 1 = "title" }
+must_contain = ["What Velmora's cool roofs taught us"]
+
+[[case]]
+id = "E4"
+category = "small edit"
+artifact = "report"
+message = "In section 2, say this sentence in plainer words: “{quote}”"
+setup = { quote = [2, 2] }
+
+[case.expect]
+intent = "change"
+changed = [2]
+gone = ["{quote}"]
+judge = "Does section 2 now say what the quoted sentence said, in plainer words, while the rest of section 2 stays as it was?"
+
+# --- Finding the part by what it is about -----------------------------------------------------
+
+[[case]]
+id = "C1"
+category = "find by content"
+artifact = "deck"
+message = "On the winter heating slide, drop the speaker notes."
+
+[case.expect]
+intent = "change"
+changed = [10]
+shorter = [10]
+judge = "Have the speaker notes been removed from the winter heating slide (slide 10), while its big number and the line under it are kept?"
+
+[[case]]
+id = "C2"
+category = "find by content"
+artifact = "deck"
+message = "On the slide that compares the energy saving, call the two value columns “Raw figure” and “Weather-corrected”."
+
+[case.expect]
+intent = "change"
+changed = [8]
+must_contain = ["Raw figure", "Weather-corrected"]
+judge = "Do the two value columns of the comparison table on slide 8 now have the headings “Raw figure” and “Weather-corrected”, with the same numbers as before?"
+
+[[case]]
+id = "C3"
+category = "find by content"
+artifact = "report"
+message = "Make the second paragraph of section 3 shorter."
+
+[case.expect]
+intent = "change"
+changed = [3]
+shorter = [3]
+judge = "Is the second paragraph of section 3 shorter than before, while the first paragraph of section 3 and the other paragraphs of it stay as they were?"
+
+# --- Finding the part by what the person points at ----------------------------------------------
+
+[[case]]
+id = "F1"
+category = "find by focus"
+artifact = "deck"
+message = "Make this one simpler for first-year students."
+
+[case.focus]
+section = 5
+selected = true
+
+[case.expect]
+intent = "change"
+changed = [5]
+judge = "Is slide 5 now simpler (shorter sentences or plainer words) while keeping the same steps and their source numbers?"
+
+[[case]]
+id = "F2"
+category = "find by focus"
+artifact = "deck"
+message = "Say this more plainly."
+setup = { quote = [2, 1] }
+
+[case.focus]
+section = 2
+quote = "{quote}"
+selected = true
+
+[case.expect]
+intent = "change"
+changed = [2]
+gone = ["{quote}"]
+judge = "Is the quoted sentence of slide 2 now in plainer words, with the rest of slide 2 kept?"
+
+[[case]]
+id = "F3"
+category = "find by focus"
+artifact = "deck"
+message = "This slide is too long."
+
+[case.focus]
+section = 7
+selected = false
+
+[case.expect]
+intent = "change"
+changed = [7]
+shorter = [7]
+judge = "Is slide 7 clearly shorter than before while keeping its main point and its source numbers?"
+
+# --- Finding the part from the conversation ------------------------------------------------------
+
+[[case]]
+id = "V1"
+category = "find by conversation"
+artifact = "deck"
+history = [{ message = "Shorten slide 7." }]
+message = "No, the one before it."
+
+[case.expect]
+intent = "change"
+changed = [6]
+may_change = [7]
+shorter = [6]
+judge = "Did the assistant shorten slide 6, the slide before slide 7, and not some other slide?"
+
+[[case]]
+id = "V2"
+category = "find by conversation"
+artifact = "deck"
+history = [{ message = "Make slide 11 shorter." }]
+message = "Do the same for the next slide."
+
+[case.expect]
+intent = "change"
+changed = [12]
+may_change = [11]
+shorter = [12]
+judge = "Did the assistant shorten slide 12, the slide after slide 11, and not some other slide?"
+
+# --- Structure ------------------------------------------------------------------------------------
+
+[[case]]
+id = "S1"
+category = "structure"
+artifact = "report"
+message = "Add a short section after section 2 explaining how a weather adjustment works."
+
+[case.expect]
+intent = "change"
+count_delta = 1
+new_at = [3]
+judge = "Is there a new section after section 2 that explains how a weather adjustment works (for example by dividing electricity use by cooling degree days), with the other sections unchanged?"
+
+[[case]]
+id = "S2"
+category = "structure"
+artifact = "deck"
+message = "Delete the slide that defines albedo."
+
+[case.expect]
+intent = "change"
+changed = [3]
+count_delta = -1
+
+[[case]]
+id = "S3"
+category = "structure"
+artifact = "deck"
+message = "Move the winter heating slide to just after the slide on weather adjustment."
+
+[case.expect]
+intent = "change"
+order = [1, 2, 3, 4, 5, 6, 7, 8, 10, 9, 11, 12]
+
+[[case]]
+id = "S4"
+category = "structure"
+artifact = "deck"
+message = "Split slide 5 into two slides: one for coating the roofs and one for the measurements and the comparison."
+
+[case.expect]
+intent = "change"
+changed = [5]
+count_delta = 1
+judge = "Has slide 5 been split into two consecutive slides, the first about coating the roofs and the second about the measurements and the comparison, which together keep the original steps?"
+
+[[case]]
+id = "S5"
+category = "structure"
+artifact = "deck"
+message = "Show slide 7 as cards instead of a two-column table."
+today = { route = "outline", edit = [{ part = 7, layout = "cards" }] }
+
+[case.expect]
+intent = "change"
+changed = [7]
+layout = { 7 = "cards" }
+
+[[case]]
+id = "S6"
+category = "structure"
+artifact = "report"
+message = "Rename section 3 to “Keep the roof clean and mind the neighbours” and make it about those two points."
+today = { route = "outline", edit = [{ part = 3, heading = "Keep the roof clean and mind the neighbours", goal = "Cleaning every two years, and glare complaints from the neighbours." }] }
+
+[case.expect]
+intent = "change"
+changed = [3]
+must_contain = ["Keep the roof clean and mind the neighbours"]
+judge = "Is section 3 now headed “Keep the roof clean and mind the neighbours” and about cleaning the roof and the neighbours' glare?"
+
+# --- Changes upstream of the parts -----------------------------------------------------------------
+
+[[case]]
+id = "U1"
+category = "upstream"
+artifact = "deck"
+message = "Focus on cost instead."
+
+[case.expect]
+intent = "change"
+may_change = "all"
+judge = "Is the deck now mainly about costs (what a coating costs, what green roofs cost, subsidies, savings in money or energy) rather than mainly about the temperature result?"
+
+[[case]]
+id = "U2"
+category = "upstream"
+artifact = "report"
+message = "Make it for first-year students."
+
+[case.expect]
+intent = "change"
+may_change = "all"
+judge = "Is the report now written for first-year students: plainer words and technical terms (such as albedo or cooling degree days) explained, with the same findings?"
+
+[[case]]
+id = "U3"
+category = "upstream"
+artifact = "deck"
+message = "Cut it down to six slides for a council briefing."
+
+[case.expect]
+intent = "change"
+may_change = "all"
+count_delta = -6
+judge = "Is it now a short deck suited to a council briefing (non-specialists, plain words) that still gives the main results?"
+
+# --- New content ------------------------------------------------------------------------------------
+
+[[case]]
+id = "N1"
+category = "content"
+artifact = "deck"
+message = "Add a slide about the Guangzhou pilot."
+
+[case.expect]
+intent = "change"
+count_delta = 1
+must_contain = ["Guangzhou"]
+cites = ["广州屋顶降温试点简报（2023）"]
+judge = "Does the new slide report what the Guangzhou pilot found (for example the roof surface temperature down 12 °C, the indoor temperature down 1.5 °C, the coating cost of 35 yuan per square metre) and nothing that the library does not say?"
+
+[[case]]
+id = "N2"
+category = "content"
+artifact = "deck"
+message = "Add a slide with how many tonnes of CO2 the trial saved."
+today = { route = "none" }
+
+[case.expect]
+intent = ["change", "answer"]
+count_delta = "any"
+asks = "may"
+judge = "Does the response avoid stating any CO2 figure, and say that the library has no such number (in the slide or in the reply)?"
+
+[[case]]
+id = "N3"
+category = "content"
+artifact = "deck"
+message = "On the takeaways slide, add the question the lab left open about using the weather-adjusted figure."
+
+[case.expect]
+intent = "change"
+changed = [12]
+cites = ["Lab meeting notes, 14 March 2026"]
+judge = "Does slide 12 now include the lab's open question about whether to use the weather-adjusted figure in the council briefing?"
+
+# --- The whole document ------------------------------------------------------------------------------
+
+[[case]]
+id = "W1"
+category = "whole document"
+artifact = "report"
+message = "Translate the whole report into Chinese."
+
+[case.expect]
+intent = "change"
+changed = [1, 2, 3, 4, 5]
+must_contain = ["2.1", "1.2", "0.55"]
+judge = "Is the report now written in Chinese, with the same sections, numbers and meaning?"
+
+[[case]]
+id = "W2"
+category = "whole document"
+artifact = "deck"
+message = "Make every slide title shorter."
+
+[case.expect]
+intent = "change"
+may_change = "all"
+judge = "Are the slide titles clearly shorter than before on the whole, and does each still say what its slide shows?"
+
+# --- Questions: answered, nothing saved ------------------------------------------------------------
+
+[[case]]
+id = "Q1"
+category = "question"
+artifact = "report"
+message = "Which source says the cooling saving was 18%?"
+
+[case.expect]
+intent = "answer"
+must_contain = ["Harlow"]
+judge = "Does the reply name the Velmora cool roof trial (Harlow 2024) as the source of the 18%, without inventing a source?"
+
+[[case]]
+id = "Q2"
+category = "question"
+artifact = "deck"
+message = "What did the Checker find on slide 8?"
+
+[case.expect]
+intent = "answer"
+judge = "Does the reply report what the Checker found on slide 8, as the findings shown list it (or say that nothing was found when the list is empty), without inventing findings?"
+
+[[case]]
+id = "Q3"
+category = "question"
+artifact = "deck"
+message = "Where does the 2.1 °C on slide 6 come from?"
+
+[case.expect]
+intent = "answer"
+must_contain = ["Harlow"]
+judge = "Does the reply say that the 2.1 °C comes from the Velmora cool roof trial (Harlow 2024), the fall in peak indoor temperature of top-floor flats against matched untreated buildings?"
+
+# --- Asking -------------------------------------------------------------------------------------------
+
+[[case]]
+id = "A1"
+category = "asking"
+artifact = "none"
+message = "Slides about roofs."
+
+[case.expect]
+intent = "ask"
+asks = "must"
+
+[[case]]
+id = "A2"
+category = "asking"
+artifact = "none"
+message = "A 10-minute talk for the lab on the Velmora trial results."
+today = { route = "new", kind = "slides", audience = "collaborator" }
+
+[case.expect]
+intent = "make"
+asks = "must_not"
+must_contain = ["Velmora"]
+judge = "Is the result a slide deck for a talk to lab colleagues about the results of the Velmora cool roof trial?"
+
+[[case]]
+id = "A3"
+category = "asking"
+artifact = "deck"
+message = "Make the costs slide shorter."
+
+[case.expect]
+intent = "ask"
+asks = "must"
+judge = "Does the question (with its options) let the person choose between the slide on green-roof costs (slide 9) and the slide on the city's subsidy (slide 11)?"

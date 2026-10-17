@@ -17,10 +17,26 @@ CITE = re.compile(r"\[(?:\d+(?:\s*[,，、]\s*\d+)*|\?)\]")
 CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿가-힯]")
 WORD = re.compile(r"[A-Za-z0-9][\w'’.%-]*")
 ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.*)$")
+ORDERED = re.compile(r"^\s*\d+[.)]\s+\S")
+BOLD_START = re.compile(r"^\*\*.+?\*\*")
+BOLD_ONLY = re.compile(r"^\*\*(.+?)\*\*$")
+IMAGE = re.compile(r"^!\[[^\]]*\]\(gunther-asset:([A-Za-z0-9_-]+)\)$")
+# The line of dashes under a table's header, and a number with at most a sign and a currency
+# sign before it and a unit after it.
+RULE = re.compile(r"^\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?$")
+VALUE = re.compile(r"[~≈<>≤≥±+\-−–]?[$€£¥￥]?\d+(?:\.\d+)?[^\d]{0,12}")
 # About 1.7 units a Latin word, so that 14 English words come to about 24 Chinese characters.
 WORD_UNITS = 1.7
 TABLES = ("compare", "two_column", "bar_chart", "line_chart")
 CHARTS = ("bar_chart", "line_chart")
+
+
+def figures_of(item: Any) -> list[dict[str, Any]]:
+    """The figures kept with a passage (its citation's ``figures``), each with an ``assetId``."""
+
+    payload = getattr(item, "payload", None)
+    citation = payload[0] if isinstance(payload, tuple) and payload else None
+    return [figure for figure in getattr(citation, "figures", []) if figure.get("assetId")]
 
 
 def units(text: str) -> float:
@@ -37,7 +53,9 @@ class Page:
     index: int
     heading: str
     layout: str = ""
-    text: str = ""  # the whole section, heading and speaker notes included
+    # The whole section, heading and speaker notes included. A deck's layout marker is not
+    # part of it: it is the line that says how the slide is drawn, and is given as ``layout``.
+    text: str = ""
 
     @property
     def body(self) -> list[str]:
@@ -100,7 +118,11 @@ def first_and_last(pages: Sequence[Page], _: Mapping[str, Any], __: Context) -> 
 
 
 def layout_run(pages: Sequence[Page], params: Mapping[str, Any], _: Context) -> list[Finding]:
+    """The same layout too many times in a row. With ``max_text`` the text layout, the last
+    resort, is also kept to that many slides in a deck and never used twice in a row."""
+
     longest = int(params.get("max_run", 2))
+    most_text = params.get("max_text")
     found, run = [], 0
     for at, page in enumerate(pages):
         same = at and page.layout == pages[at - 1].layout
@@ -112,6 +134,27 @@ def layout_run(pages: Sequence[Page], params: Mapping[str, Any], _: Context) -> 
                     at,
                     f"“{page.layout}” is used {run} times in a row; vary the form, or check "
                     "the slides are not just retelling the material.",
+                )
+            )
+        if most_text is not None and page.layout == "text" and run == 2:
+            found.append(
+                Finding(
+                    "layout_run",
+                    at,
+                    "Two text slides in a row; text is the last resort, so give one of them "
+                    "the layout that matches what it says.",
+                )
+            )
+    if most_text is not None:
+        texts = [page for page in pages if page.layout == "text"]
+        if len(texts) > int(most_text):
+            found.append(
+                Finding(
+                    "layout_run",
+                    None,
+                    f"{len(texts)} slides use the text layout; at most {most_text} should. "
+                    "Use the layout that matches a number, a comparison, a sequence, a change "
+                    "over time or a figure.",
                 )
             )
     return found
@@ -162,7 +205,7 @@ def density(pages: Sequence[Page], params: Mapping[str, Any], context: Context) 
     talk = context.use != "read"
     found = []
     for page in pages:
-        if page.layout in ("title", *TABLES, "big_number", "quote"):
+        if page.layout in ("title", *TABLES, "big_number", "quote", "figure"):
             continue
         items = [match.group(1) for line in page.body if (match := ITEM.match(line))]
         loose = [line for line in page.body if not ITEM.match(line)]
@@ -284,6 +327,123 @@ def chart_numbers_cited(
     return found
 
 
+def _rows(page: Page) -> list[list[str]] | None:
+    """The rows of the table in a page (not its header), or None when it has no table: a
+    header row, a line of dashes under it, and rows."""
+
+    lines = [line.strip() for line in page.body if line.strip().startswith("|")]
+    if len(lines) < 2 or not RULE.match(lines[1]):
+        return None
+    cells = [[cell.strip() for cell in line.strip("|").split("|")] for line in lines]
+    return [row for row in cells[2:] if any(row)]
+
+
+def _is_value(cell: str) -> bool:
+    """Whether a table cell is a number once its citations, unit and thousands separators are
+    taken off."""
+
+    plain = CITE.sub("", cell).replace("**", "").replace("__", "").strip()
+    plain = re.sub(r"(?<=\d)[,，\u2009\u202f ](?=\d{3}(?!\d))", "", plain)
+    return VALUE.fullmatch(plain) is not None
+
+
+def _misfit(page: Page, context: Context) -> str | None:
+    """Why a page does not take the form its layout asks for, or None when it does."""
+
+    layout, body = page.layout, page.body
+    if layout == "title":
+        # The title stays the title: a missing message line is no reason to draw it as text.
+        first = next((line for line in page.text.splitlines() if line.strip()), "")
+        if not first.startswith("# "):
+            return (
+                "A “title” slide is a “# ” title line with one line under it that says the "
+                "core message."
+            )
+    elif layout == "big_number":
+        number = BOLD_ONLY.match(body[0].strip()) if body else None
+        if number is None or units(number.group(1)) > 24 or len(body) < 2:
+            return (
+                "A “big_number” slide is one line that is only the number in bold (like "
+                "**62%**; at most about 24 characters or 14 words), then a line saying what "
+                "it is compared with and where it comes from."
+            )
+    elif layout in ("compare", "two_column"):
+        if not _rows(page):
+            return (
+                f"A “{layout}” slide is a table: a header row, a line of dashes under it, "
+                "then the rows."
+            )
+    elif layout in CHARTS:
+        rows = _rows(page)
+        if rows is None:
+            return (
+                f"A “{layout}” slide is a table: a header row, a line of dashes under it, "
+                "then 2 to 6 rows with a number in the second column."
+            )
+        if not 2 <= len(rows) <= 6:
+            return f"A “{layout}” slide is a table of 2 to 6 rows; this one has {len(rows)}."
+        bad = [row[0] for row in rows if len(row) < 2 or not _is_value(row[1])]
+        if bad:
+            return (
+                f"In a “{layout}” slide the second column is a number (the unit goes in the "
+                f"header); it is not for {', '.join(f'“{label}”' for label in bad)}."
+            )
+    elif layout == "flow":
+        steps = [line for line in body if ORDERED.match(line)]
+        if not 2 <= len(steps) <= 6:
+            return (
+                f"A “flow” slide is a numbered list of 2 to 6 steps; this one has {len(steps)}."
+            )
+    elif layout in ("timeline", "cards"):
+        items = [match.group(1) for line in body if (match := ITEM.match(line))]
+        most = 7 if layout == "timeline" else 6
+        if not 2 <= len(items) <= most:
+            return (
+                f"A “{layout}” slide is a list of 2 to {most} lines; this one has {len(items)}."
+            )
+        if any(not BOLD_START.match(item) for item in items):
+            what = "the time" if layout == "timeline" else "a name"
+            return f"In a “{layout}” slide every line starts with {what} in bold, like **…**."
+    elif layout == "quote":
+        quoted = next((at for at, line in enumerate(body) if line.strip().startswith("> ")), None)
+        by = next((at for at, line in enumerate(body) if line.strip().startswith("—")), None)
+        if quoted is None or by is None or by < quoted:
+            return (
+                "A “quote” slide is a line starting with “> ” that holds the words, then a "
+                "line starting with “—” that says who said it."
+            )
+    elif layout == "figure":
+        image = IMAGE.match(body[0].strip()) if body else None
+        if image is None or len(body) < 2 or any("![" in line for line in body[1:]):
+            return (
+                "A “figure” slide is one line that is only the image, ![caption]"
+                "(gunther-asset:…), then one line saying what to look at."
+            )
+        if context.evidence is not None:
+            kept = {
+                str(figure["assetId"])
+                for item in context.evidence.values()
+                for figure in figures_of(item)
+            }
+            if image.group(1) not in kept:
+                return (
+                    "The image of a “figure” slide must be one of the figures kept with the "
+                    "material, written exactly as given."
+                )
+    return None
+
+
+def layout_shape(pages: Sequence[Page], _: Mapping[str, Any], context: Context) -> list[Finding]:
+    """A slide that does not take the form its layout asks for (references/layouts.md), so it
+    cannot be drawn as that layout. The text and takeaways layouts take any form."""
+
+    found = []
+    for page in pages:
+        if problem := _misfit(page, context):
+            found.append(Finding("layout_shape", page.index, problem))
+    return found
+
+
 CHECKS: dict[str, Check] = {
     "section_count": section_count,
     "page_count": page_count,
@@ -294,6 +454,7 @@ CHECKS: dict[str, Check] = {
     "density": density,
     "table_size": table_size,
     "chart_numbers_cited": chart_numbers_cited,
+    "layout_shape": layout_shape,
 }
 
 

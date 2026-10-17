@@ -232,3 +232,47 @@
 .aw-main-preview-toolbar > .contents-menu > button { width: 28px; height: 28px; }
 .aw-main-preview-toolbar > select[aria-label="Artifact versions"] { width: 52px; flex: none; border-color: transparent; }
 @media (max-width: 650px) { .aw-workspace.is-preview-focused .aw-paper.outputs-document { padding-inline: 24px; } }
+
+/* One message box: what the message is about, the agent's steps and questions, and what a turn changed. */
+.aw-focus-chip { display: flex; align-items: center; gap: 4px; width: fit-content; max-width: 100%; margin: 0 0 8px; padding: 2px 4px 2px 10px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-pill); background: var(--gx-surface-2); color: var(--gx-ink); font-size: var(--gx-text-xs); }
+.aw-focus-chip > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aw-focus-chip > button { width: 20px; height: 20px; min-height: 20px; flex: none; padding: 0; }
+.artifact-reply { min-width: 0; display: grid; gap: 8px; justify-items: start; }
+.artifact-reply > p, .artifact-reply > .answer-markdown { margin: 0; max-width: 100%; }
+.artifact-reply .message-steps { margin: 0; max-width: 100%; }
+.artifact-reply .message-steps li.is-quiet, .artifact-reply .message-steps li.is-quiet svg { color: var(--gx-faint); }
+.artifact-reply .message-steps li { min-width: 0; }
+.artifact-reply .message-steps small { max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-folded-steps { color: var(--gx-faint); font-size: var(--gx-text-xs); max-width: 100%; }
+.artifact-folded-steps summary { width: fit-content; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; list-style: none; }
+.artifact-folded-steps summary::-webkit-details-marker { display: none; }
+.artifact-folded-steps summary svg { transition: transform var(--gx-dur) var(--gx-ease); }
+.artifact-folded-steps[open] summary svg { transform: rotate(90deg); }
+.artifact-folded-steps summary:hover { color: var(--gx-ink); }
+.artifact-folded-steps .message-steps { margin-top: 6px; }
+.artifact-failed { color: var(--gx-danger); }
+.artifact-about { display: block; margin: 4px 0 0; color: var(--gx-faint); font-size: 10px; }
+.aw-message.is-user .artifact-about { margin-top: 6px; }
+.artifact-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.artifact-pill { padding: 5px 12px; border: 1px solid var(--gx-line-3); border-radius: var(--gx-radius-pill); background: var(--gx-canvas); color: var(--gx-ink); font: inherit; font-size: var(--gx-text-xs); cursor: pointer; }
+.artifact-pill:hover { background: var(--gx-hover); border-color: var(--gx-ink); }
+.artifact-pill.is-quiet { border-style: dashed; color: var(--gx-muted); }
+.artifact-changes { width: 100%; margin: 0; padding: 0; list-style: none; display: grid; gap: 1px; border-top: 1px solid var(--gx-line); }
+.artifact-changes > li { border-bottom: 1px solid var(--gx-line); }
+.artifact-change-row { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 2px; border: 0; background: transparent; color: var(--gx-ink); font: inherit; font-size: var(--gx-text-xs); text-align: left; cursor: pointer; }
+.artifact-change-row:hover { background: var(--gx-hover); }
+.artifact-change-row svg { flex: none; color: var(--gx-faint); }
+.artifact-not-done { padding: 6px 2px; color: var(--gx-muted); font-size: var(--gx-text-xs); }
+.aw-controls-brief { margin: 0 16px 9px; }
+.aw-controls-brief:empty { display: none; }
+.aw-controls-brief .brief-section { margin: 0; padding: 10px 12px; border: 1px solid var(--gx-line); border-radius: 9px; background: var(--gx-canvas); }
+.artifact-brief .brief-mark { flex: none; margin-left: 2px; color: var(--gx-faint); font-size: var(--gx-text-2xs); white-space: nowrap; }
+.artifact-brief .brief-line .brief-text { overflow-wrap: anywhere; }
+.artifact-brief .brief-row { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: var(--gx-text-sm); color: var(--gx-ink); }
+.artifact-brief .brief-key { flex: none; width: 58px; color: var(--gx-faint); font-size: var(--gx-text-xs); }
+.artifact-brief .brief-row select { min-width: 0; max-width: 190px; padding: 2px 4px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-xs); background: var(--gx-surface); color: var(--gx-ink); font: inherit; font-size: var(--gx-text-xs); }
+.artifact-brief .brief-row .brief-input { flex: 1; }
+.artifact-brief .brief-line:hover .brief-remove { opacity: 1; }
+.artifact-brief .brief-part { grid-template-columns: 74px minmax(0, 1fr); align-items: baseline; column-gap: 8px; }
+.artifact-brief .brief-part ul { min-width: 0; }
+.artifact-brief .brief-section header, .artifact-brief .brief-error, .artifact-brief .brief-add { grid-column: auto; }

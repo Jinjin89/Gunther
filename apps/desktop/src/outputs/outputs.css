@@ -161,12 +161,16 @@
 /* Slides: a deck in the page (reveal.js), thumbnails, and the presenter's notes. */
 .outputs-slides { display: grid; gap: 14px; }
 .outputs-slides-bar { display: flex; align-items: center; justify-content: space-between; color: var(--gx-faint); font-size: var(--gx-text-xs); }
+.outputs-slides-tools { display: inline-flex; align-items: center; gap: 6px; }
 .outputs-noslides { margin: 0; color: var(--gx-muted); font-size: var(--gx-text-sm); }
 /* A slide is always white paper and black ink, in the dark theme too: it is shown to a room. */
 .outputs-stage, .outputs-thumb-frame, .outputs-print-slide {
   --outputs-slide-paper: #ffffff;
   --outputs-slide-ink: #1a1a18;
   --outputs-slide-muted: #5f5e5a;
+  /* Hairlines, and the marks of a chart that are not the one to look at (slides/slides.css). */
+  --outputs-slide-rule: #dcdbd6;
+  --outputs-slide-grey: #949390;
 }
 .outputs-stage {
   --r-main-font: var(--gx-font-sans);
@@ -416,3 +420,16 @@
   .outputs-print-slide-sources .outputs-print-sources h2 { margin-bottom: 18px; font-family: var(--gx-font-display); font-size: 48px; font-weight: 450; }
   .outputs-print-slide-sources .outputs-print-sources ol { gap: 12px; padding-left: 32px; }
 }
+
+/* Pointing at a part, and marking what the latest version changed. */
+.outputs-changed { font-style: normal; color: var(--gx-ink); font-size: var(--gx-text-2xs); font-weight: 500; }
+.outputs-thumbs small .outputs-changed { display: block; }
+.outputs-slides-bar .outputs-changed { font-size: inherit; }
+.outputs-section { position: relative; }
+.outputs-section-tools { position: absolute; top: 4px; right: 0; display: flex; align-items: center; gap: 8px; }
+.outputs-section.is-changed { box-shadow: -3px 0 0 -1px var(--gx-ink); padding-left: 10px; margin-left: -10px; }
+.outputs-ask-section { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-pill); background: var(--gx-canvas); color: var(--gx-muted); font: inherit; font-size: var(--gx-text-2xs); opacity: 0; cursor: pointer; }
+.outputs-section:hover .outputs-ask-section, .outputs-ask-section:focus-visible { opacity: 1; }
+.outputs-ask-section:hover { color: var(--gx-ink); border-color: var(--gx-ink); }
+.outputs-ask-selection { position: fixed; z-index: 60; display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; border: 1px solid var(--gx-ink); border-radius: var(--gx-radius-pill); background: var(--gx-ink); color: var(--gx-canvas); font: inherit; font-size: var(--gx-text-xs); cursor: pointer; box-shadow: var(--gx-shadow-xs); }
+@media (hover: none) { .outputs-ask-section { opacity: 1; } }

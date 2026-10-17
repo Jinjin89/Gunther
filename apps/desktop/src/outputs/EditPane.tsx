@@ -36,7 +36,7 @@ export function EditPane({ artifact, saving, onSave, onCancel, onCite }: {
     <div className="outputs-edit-columns">
       <div className="outputs-edit-source">
         <MarkdownEditor value={draft} onChange={setDraft} ariaLabel={artifact.kind === "slides" ? "Slides, as Markdown" : "Report, as Markdown"} autoFocus maxLength={2_500_000} onEscape={onCancel} onSubmit={() => { if (changed && draft.trim()) onSave(draft); }} />
-        {artifact.kind === "slides" && <p className="outputs-edit-hint">A line with only <code>---</code> starts the next slide. A line starting with <code>Note:</code> begins the speaker notes.</p>}
+        {artifact.kind === "slides" && <p className="outputs-edit-hint">A line with only <code>---</code> starts the next slide. A line starting with <code>Note:</code> begins the speaker notes. The comment on a slide's first line, <code>{"<!-- layout: … -->"}</code>, says how it is drawn; keep it with the slide.</p>}
       </div>
       <div className="outputs-edit-preview" aria-label="Preview">
         {artifact.kind === "slides"

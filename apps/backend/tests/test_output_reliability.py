@@ -13,7 +13,7 @@ from gunther.agent import Evidence
 from gunther.asset_service import AssetTextExtraction
 from gunther.database import session_scope
 from gunther.llm import ModelError
-from gunther.models import Artifact, ArtifactAsset, ArtifactCheck, Asset
+from gunther.models import ArtifactAsset, ArtifactCheck, Asset
 from gunther.outputs import Draft, OutputAgents, Planned, Pool, Spec, section_hash, split_document
 
 
@@ -71,7 +71,7 @@ def test_supplements_are_opt_in_and_cannot_search_another_library(tmp_path):
             )
 
 
-def test_invented_chart_values_are_rejected_even_if_the_model_accepts_the_citation(tmp_path):
+def test_invented_chart_values_are_never_drawn_as_a_chart(tmp_path):
     outline = {
         "title": "Markers",
         "sections": [
@@ -81,17 +81,22 @@ def test_invented_chart_values_are_rejected_even_if_the_model_accepts_the_citati
         ],
     }
     pages = [
-        "# Markers",
-        "## Marker levels\n\n| Marker | Level (%) |\n| --- | --- |\n| CD3D | 62 [1] |",
+        "# Markers\n\nHow the markers compare",
+        "## Marker levels\n\n| Marker | Level (%) |\n| --- | --- |\n| CD3D | 62 [1] |\n"
+        "| CD19 | 41 [1] |",
         "## Choose markers\n\nCD3D marks T cells [1].",
     ]
     fake = FakeProvider(skill_replies({**APPROACH, "use": "talk"}, outline, pages, gather=SEARCH))
     with app_for(tmp_path, fake, skills=True) as client:
         base_id, _ = library(client)
-        events = build(client, base_id, body(kind="slides"))
-        assert events[-1][0] == "error"
-        with session_scope(client.app.state.knowledge_service.sessions) as session:
-            assert session.scalar(select(Artifact.id)) is None
+        version = built(build(client, base_id, body(kind="slides")))
+    # The deck is saved, but the slide whose values its source does not state is drawn as a
+    # table with what the Checker found, never as a chart, and the version says why.
+    chart = version["content"].split("\n---\n")[1].strip()
+    assert chart.startswith("<!-- layout: compare -->")
+    assert version["sections"][1]["issues"]
+    skipped = version["provenance"]["skill"]["skipped"]
+    assert any(item["label"] == "Slide 2 drawn as a table" for item in skipped)
 
 
 @pytest.mark.parametrize("historical_check", [False, True])
@@ -105,8 +110,9 @@ def test_revising_another_slide_preserves_a_verified_chart(tmp_path, historical_
         ],
     }
     pages = [
-        "# Measured rates",
-        "## Cohort rate\n\n| Cohort | Rate (%) |\n| --- | --- |\n| CD3D | 62 [1] |",
+        "# Measured rates\n\nTwo cohort rates",
+        "## Cohort rate\n\n| Cohort | Rate (%) |\n| --- | --- |\n| CD3D | 62 [1] |\n"
+        "| CD19 | 41 [1] |",
         "## Takeaways\n\nCD3D cohort rate was 62% [1].",
     ]
     fake = FakeProvider(
@@ -119,7 +125,9 @@ def test_revising_another_slide_preserves_a_verified_chart(tmp_path, historical_
         )
     )
     with app_for(tmp_path, fake, skills=True) as client:
-        base_id, _ = library(client, notes={"Measured rate": "CD3D cohort rate was 62%."})
+        base_id, _ = library(
+            client, notes={"Measured rate": "CD3D cohort rate was 62%. CD19 cohort rate was 41%."}
+        )
         first = built(build(client, base_id, body(kind="slides")))
         if historical_check:
             with session_scope(client.app.state.knowledge_service.sessions) as session:
@@ -246,3 +254,28 @@ def test_output_retains_its_figure_when_the_original_source_is_deleted(tmp_path,
         assert client.delete(f"/api/trash/library/{base_id}").status_code == 200
         with session_scope(service.sessions) as session:
             assert session.get(Asset, image_ids[0]) is None
+
+
+def test_a_finding_in_the_speaker_notes_does_not_stop_a_verified_chart():
+    from gunther.outputs import Issue, chart_unverified
+
+    by_ref = {1: Evidence("library", "Cohort", "Cohort A rate was 62%; cohort B 41%.", ref=1)}
+    chart = (
+        "<!-- layout: bar_chart -->\n## Cohort A leads\n\n| Cohort | Rate (%) |\n| --- | --- |\n"
+        "| A | 62 [1] |\n| B | 41 [1] |\n\nNote: Stress that A is higher [1]."
+    )
+    supported = {
+        "status": "partial",
+        "claims": [
+            {"text": "A 62", "verdict": "supported", "refs": [1]},
+            {"text": "B 41", "verdict": "supported", "refs": [1]},
+            {"text": "Stress that A is higher", "verdict": "unchecked", "refs": [1]},
+        ],
+    }
+    notes_issue = [Issue("Stress that A is higher", "unsupported", "Not stated.")]
+    assert chart_unverified(chart, notes_issue, supported, by_ref, 1) == ([], None)
+    # A finding about a value, or a value claim not found supported, keeps it a table.
+    value_issue = [Issue("B 41", "unsupported", "Not stated.")]
+    assert chart_unverified(chart, value_issue, supported, by_ref, 1)[1] is not None
+    unchecked = {**supported, "claims": [{**supported["claims"][0], "verdict": "unchecked"}]}
+    assert chart_unverified(chart, [], unchecked, by_ref, 1)[1] is not None

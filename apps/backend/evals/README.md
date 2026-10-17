@@ -44,6 +44,10 @@ Below the table, each case that failed has one line saying why. The judge is one
 
 `tests/test_ask_exam.py` covers the case file, the scoring and one full run with stand-in models; it needs no keys.
 
+## The Artifacts exam
+
+A second exam, `evals/artifacts/`, sends messages to a slide deck and a report built from this same demo library and scores what changed and what stayed (`python -m evals.artifacts.run --path baseline`). It reuses this exam's library seeding, settings and app creation; see `evals/artifacts/README.md`.
+
 ## Knowledge/Agent upgrade comparison
 
 The schema-22 implementation adds deterministic regressions in `test_documents.py`,

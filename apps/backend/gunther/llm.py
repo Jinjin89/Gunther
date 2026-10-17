@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Literal, TypeVar
 from urllib.parse import urlsplit
 
+import httpx
 import openai
 from openai import OpenAI
 from pydantic import BaseModel, ValidationError
@@ -255,6 +256,7 @@ class ModelGateway:
             max_tokens = minimum
 
         send_effort, send_json = params, json_mode
+        broke = emptied = False
         while True:
             try:
                 text, reasoning, finish, usage = self._stream(
@@ -262,6 +264,13 @@ class ModelGateway:
                 )
                 if call is not None:
                     trace.update(call, finish=finish, usage=usage)
+                if not text.strip() and finish != "length" and not emptied:
+                    # An empty answer that did not run out of room is asked for once more.
+                    emptied = True
+                    logger.info("%s returned an empty answer, asking again", model.ref)
+                    if admit := REQUEST_ADMISSION.get():
+                        admit()
+                    continue
                 break
             except openai.BadRequestError as error:
                 # A setting this server does not know: once without it, and say so.
@@ -282,6 +291,19 @@ class ModelGateway:
                 ) from error
             except openai.APIError as error:
                 raise ModelError(_explain(model, error)) from error
+            except httpx.HTTPError as error:
+                # The connection broke while the answer streamed in. A request whose text no
+                # one has seen yet is sent once more; otherwise it is a model error like others.
+                if on_text is None and not broke:
+                    broke = True
+                    logger.info("%s: the connection broke, sending again: %s", model.ref, error)
+                    if admit := REQUEST_ADMISSION.get():
+                        admit()
+                    continue
+                what = str(error) or type(error).__name__
+                raise ModelError(
+                    f"The connection to {model.provider_name} broke: {what}"
+                ) from error
         if not text.strip():
             raise ModelError(
                 f"{model.display} ran out of room while thinking. Try a lower effort."

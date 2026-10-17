@@ -4,8 +4,14 @@ import json
 from pathlib import Path
 
 import openai
-from fake_models import FakeProvider, api_error, skill_replies, skill_step
+from fake_models import FakeProvider, api_error, gateway, skill_replies, skill_step
 from test_outputs import app_for, body, build, built, library, revise, versions, workspace
+
+from gunther.agent import Evidence
+from gunther.outputs import Pool, Spec, layout_of, split_document
+from gunther.schemas import ConversationCitationOut
+from gunther.skill_runner import Approach, Card, SkillAgents
+from gunther.skillbook import skill_for
 
 APPROACH = {
     "question": "How are T and B cells told apart?",
@@ -98,6 +104,13 @@ def test_a_report_follows_its_skill_from_the_approach_to_a_revision(tmp_path: Pa
     assert "# Report" not in str(reading["messages"][0]["content"])
     assert "[1]" not in str(reading["messages"][-1]["content"])
     assert "Core question" not in str(reading["messages"][-1]["content"])
+    # The skill's own polishing may only improve how the text reads.
+    polishing = next(
+        r
+        for r in fake.requests
+        if skill_step(r) == "revise" and "Instruction:" in str(r["messages"][-1]["content"])
+    )
+    assert "Editorial revision must not add" in str(polishing["messages"][0]["content"])
 
 
 SLIDES_APPROACH = {**APPROACH, "use": "talk", "pages": 6}
@@ -126,6 +139,19 @@ def test_a_deck_writes_each_slide_by_its_own_layout(tmp_path: Path) -> None:
     # The first slide is the title and the last the takeaways, whatever was planned.
     assert [item.get("layout") for item in version["outline"]] == ["title", "compare", "takeaways"]
     assert version["provenance"]["use"] == "talk"
+    assert version["provenance"]["skill"] == {"name": "slides", "version": 3, "skipped": []}
+    # Every slide starts with the marker of its layout. Code wrote it: no model was shown one,
+    # and the sections are the slides under their markers.
+    slides = split_document(version["content"], "slides")[1]
+    assert [layout_of(slide)[0] for slide in slides] == ["title", "compare", "takeaways"]
+    assert slides[1].startswith("<!-- layout: compare -->\n## CD3D and CD19 set T and B cells")
+    assert [section["heading"] for section in version["sections"]] == [
+        "Markers",
+        "CD3D and CD19 set T and B cells apart",
+        "Use both in every panel",
+    ]
+    assert all(section["checked"] for section in version["sections"])
+    assert not any("<!--" in str(request["messages"]) for request in fake.requests)
     writes = [r for r in fake.requests if skill_step(r) == "write"]
     second = str(writes[1]["messages"][0]["content"])
     assert "## compare" in second and "## flow" not in second
@@ -193,6 +219,8 @@ def test_a_skilled_version_is_revised_by_its_skill_and_keeps_its_approach(tmp_pa
     rewriting = next(r for r in fake.requests if skill_step(r) == "revise")
     assert "Instruction: Shorter" in str(rewriting["messages"][-1]["content"])
     assert "Core question" in str(rewriting["messages"][-1]["content"])
+    # The person's own revision may add facts: the polishing pass's rule is not given to it.
+    assert "Editorial revision must not add" not in str(rewriting["messages"][0]["content"])
     for version in (second, edited):
         assert version["provenance"]["skill"]["name"] == "report"
         assert version["provenance"]["approach"] == first["provenance"]["approach"]
@@ -272,3 +300,234 @@ def test_reading_more_of_a_source_adds_the_passage_with_its_surroundings(tmp_pat
     )
     assert "(with context)" in str(approach["messages"][-1]["content"])
     assert "It sits in the T-cell receptor complex." in str(approach["messages"][-1]["content"])
+
+
+# A slide's layout: its marker, and the form its body takes ---------------------------------------
+
+RATES_NOTE = {"Measured rates": "CD3D cohort rate was 62%. CD19 cohort rate was 41%."}
+RATES_OUTLINE = {
+    "title": "Rates",
+    "sections": [
+        {"heading": "Rates", "layout": "title", "cards": []},
+        {"heading": "CD3D is the more common marker", "layout": "bar_chart", "cards": [1]},
+        {"heading": "Use both markers in every panel", "layout": "takeaways", "cards": [1]},
+    ],
+}
+RATES_TITLE = "# Rates\n\nTwo cohort rates"
+ONE_ROW = (
+    "## CD3D is the more common marker\n\n| Marker | Rate (%) |\n| --- | --- |\n| CD3D | 62 [1] |"
+)
+TWO_ROWS = ONE_ROW + "\n| CD19 | 41 [1] |"
+RATES_CLOSE = "## Use both markers in every panel\n\n- CD3D was 62% [1]\n\nNote: Close here [1]."
+RATES_SEARCH = [{"action": "search_library", "query": "cohort rate"}]
+
+
+def rates(rewrite) -> FakeProvider:
+    return FakeProvider(
+        skill_replies(
+            {**APPROACH, "use": "talk", "cards": [{"claim": "CD3D is common", "refs": [1]}]},
+            RATES_OUTLINE,
+            [RATES_TITLE, ONE_ROW, RATES_CLOSE],
+            gather=RATES_SEARCH,
+            rewrite=rewrite,
+        )
+    )
+
+
+def written_again(fake: FakeProvider) -> list[dict]:
+    """The requests that asked a slide to be written again (they carry the instruction)."""
+
+    return [
+        request
+        for request in fake.requests
+        if skill_step(request) == "revise" and "Instruction:" in str(request["messages"][-1])
+    ]
+
+
+def test_a_slide_that_does_not_fit_its_layout_is_written_again_once_with_the_problem(
+    tmp_path: Path,
+) -> None:
+    fake = rates(lambda index, prompt: TWO_ROWS)
+    with app_for(tmp_path, fake, skills=True) as client:
+        base_id, _ = library(client, notes=RATES_NOTE)
+        events = build(client, base_id, body(kind="slides"))
+        version = built(events)
+
+    # A chart of one row is no chart; the second try has two, and keeps its layout.
+    slides = split_document(version["content"], "slides")[1]
+    assert slides[1] == "<!-- layout: bar_chart -->\n" + TWO_ROWS
+    assert version["provenance"]["skill"]["skipped"] == []
+    [again] = written_again(fake)
+    prompt = str(again["messages"][-1]["content"])
+    assert "Instruction: The slide does not take the form its layout asks for." in prompt
+    assert "a table of 2 to 6 rows; this one has 1" in prompt
+    # An ordinary rewrite, not the editorial one, of the slide as the model saw it: no marker.
+    assert "Editorial revision must not add" not in str(again["messages"][0]["content"])
+    assert "This section now:\n## CD3D is the more common marker" in prompt
+    assert "Layout: bar_chart" in prompt
+    assert not any("<!--" in str(request["messages"]) for request in fake.requests)
+    states = [(data["index"], data["state"]) for name, data in events if name == "section"]
+    assert states.count((1, "revising")) == 1
+
+
+def test_a_slide_that_still_does_not_fit_is_drawn_as_text_and_the_version_says_so(
+    tmp_path: Path,
+) -> None:
+    fake = rates(lambda index, prompt: ONE_ROW)
+    with app_for(tmp_path, fake, skills=True) as client:
+        base_id, _ = library(client, notes=RATES_NOTE)
+        version = built(build(client, base_id, body(kind="slides")))
+
+    slides = split_document(version["content"], "slides")[1]
+    assert slides[1] == "<!-- layout: text -->\n" + ONE_ROW
+    assert [layout_of(slide)[0] for slide in slides] == ["title", "text", "takeaways"]
+    [note] = version["provenance"]["skill"]["skipped"]
+    assert (note["step"], note["label"]) == ("layout", "Slide 2 drawn as text")
+    assert "a table of 2 to 6 rows; this one has 1" in note["reason"]
+    # Written again once, not more; and the plan still says what was planned.
+    assert len(written_again(fake)) == 1
+    layouts = [item.get("layout") for item in version["outline"]]
+    assert layouts == ["title", "bar_chart", "takeaways"]
+    assert [section["checked"] for section in version["sections"]] == [True, True, True]
+
+
+def test_the_skills_own_revision_keeps_a_slide_drawn_as_text_as_text(tmp_path: Path) -> None:
+    def rewrite(index: int, prompt: str) -> str:
+        if "does not take the form" in prompt:
+            return ONE_ROW  # still not a chart
+        return ONE_ROW.replace("Marker", "Cohort")
+
+    fake = FakeProvider(
+        skill_replies(
+            {**APPROACH, "use": "talk", "cards": [{"claim": "CD3D is common", "refs": [1]}]},
+            RATES_OUTLINE,
+            [RATES_TITLE, ONE_ROW, RATES_CLOSE],
+            gather=RATES_SEARCH,
+            editor={"issues": [{"section": 2, "problem": "The first column is vague."}]},
+            revision={"sections": [{"section": 2, "instruction": "Name the first column better."}]},
+            rewrite=rewrite,
+        )
+    )
+    with app_for(tmp_path, fake, skills=True) as client:
+        base_id, _ = library(client, notes=RATES_NOTE)
+        version = built(build(client, base_id, body(kind="slides")))
+
+    # The chart fell back to text at the first writing; the revision wrote it as text, so it
+    # fits and is not made a chart again, nor drawn as text a second time.
+    slides = split_document(version["content"], "slides")[1]
+    assert slides[1] == "<!-- layout: text -->\n" + ONE_ROW.replace("Marker", "Cohort")
+    assert [item["step"] for item in version["provenance"]["skill"]["skipped"]] == ["layout"]
+    assert len(written_again(fake)) == 2
+
+
+def test_a_slide_that_fits_is_not_written_again(tmp_path: Path) -> None:
+    fake = FakeProvider(
+        skill_replies(
+            {**APPROACH, "use": "talk", "cards": [{"claim": "CD3D is common", "refs": [1]}]},
+            RATES_OUTLINE,
+            [RATES_TITLE, TWO_ROWS, RATES_CLOSE],
+            gather=RATES_SEARCH,
+        )
+    )
+    with app_for(tmp_path, fake, skills=True) as client:
+        base_id, _ = library(client, notes=RATES_NOTE)
+        version = built(build(client, base_id, body(kind="slides")))
+    assert not written_again(fake)
+    assert version["provenance"]["skill"]["skipped"] == []
+
+
+def test_a_revision_takes_a_slides_layout_from_its_marker_and_keeps_the_titles_accent(
+    tmp_path: Path,
+) -> None:
+    def rewrite(index: int, prompt: str) -> str:
+        if index == 0:
+            return "# Markers\n\nA new message"
+        return (
+            "## CD3D and CD19 set T and B cells apart\n\n- CD3D marks T cells [1]\n"
+            "- CD19 marks B cells [2]\n\nNote: Say it as a list [1]."
+        )
+
+    fake = FakeProvider(
+        skill_replies(SLIDES_APPROACH, SLIDES_OUTLINE, SLIDES, gather=SEARCH, rewrite=rewrite)
+    )
+    with app_for(tmp_path, fake, skills=True) as client:
+        base_id, _ = library(client)
+        first = built(build(client, base_id, body(kind="slides")))
+        # The person changed this slide's layout, and picked an accent for the title slide, by hand.
+        typed = first["content"].replace("<!-- layout: compare -->", "<!-- layout: cards -->")
+        typed = typed.replace("<!-- layout: title -->", "<!-- layout: title; accent: blue -->")
+        assert typed.count("layout: cards") == 1 and "accent: blue" in typed
+        second = client.post(
+            f"/api/knowledge-bases/{base_id}/artifacts/{first['id']}/edits",
+            headers=workspace(client),
+            json={"clientRequestId": "edit_request_0006", "content": typed},
+        ).json()
+        fake.requests.clear()
+        third = built(revise(client, base_id, second["id"], "Say it as a list", sectionIndex=1))
+        fourth = built(revise(client, base_id, third["id"], "A new message", sectionIndex=0))
+
+    old = split_document(second["content"], "slides")[1]
+    middle = split_document(third["content"], "slides")[1]
+    last = split_document(fourth["content"], "slides")[1]
+    # The slide was rewritten as the layout it now has; the others are as they were.
+    assert middle[1].startswith("<!-- layout: cards -->\n## CD3D and CD19 set T and B cells apart")
+    assert (middle[0], middle[2]) == (old[0], old[2])
+    assert last[0] == "<!-- layout: title; accent: blue -->\n# Markers\n\nA new message"
+    assert (last[1], last[2]) == (middle[1], middle[2])
+    asked = written_again(fake)
+    assert "Layout: cards" in str(asked[0]["messages"][-1]["content"])
+    assert "Layout: title" in str(asked[1]["messages"][-1]["content"])
+    assert not any("<!--" in str(request["messages"]) for request in fake.requests)
+    # What was planned is still the plan.
+    assert [item.get("layout") for item in fourth["outline"]] == ["title", "compare", "takeaways"]
+
+
+def test_a_figure_slide_needs_a_figure_kept_with_its_material() -> None:
+    plan = {
+        "title": "Curves",
+        "sections": [
+            {"heading": "Curves", "layout": "title", "cards": []},
+            {"heading": "The curve rises after week four", "layout": "figure", "cards": [1]},
+            {"heading": "Nothing was kept for this slide", "layout": "figure", "cards": [2]},
+            {"heading": "The steps were the same in both", "layout": "flow", "cards": [2]},
+            {"heading": "Three causes were found", "layout": "cards", "cards": [2]},
+            {"heading": "Takeaways", "layout": "takeaways", "cards": [1]},
+        ],
+    }
+    fake = FakeProvider(json.dumps(plan))
+    chosen = gateway(fake)
+    agents = SkillAgents(chosen, skill_for("slides"))
+    agents.approach = Approach("Q", "A", "P", "what")
+    agents.cards = [Card(claim="The curve rises", refs=[1]), Card(claim="Another claim", refs=[2])]
+    citation = ConversationCitationOut(
+        id="cit_1",
+        source_id="src_1",
+        source_title="Paper",
+        quote="Figure 2 shows the curve.",
+        locator="p. 3",
+        status="provisional",
+        confidence=0.0,
+        figures=[{"assetId": "ast_1", "caption": "Figure 2: the curve"}],
+    )
+    pool = Pool(10)
+    pool.adopt(Evidence("library", "Paper", "Figure 2 shows the curve.", payload=(citation, None)))
+    pool.adopt(Evidence("library", "Notes", "Nothing is drawn here."))
+
+    title, planned = agents.structure(
+        chosen.models[0], "off", Spec("slides", "scientist"), lambda event: None, pool=pool
+    )
+
+    assert [item.layout for item in planned] == [
+        "title", "figure", "text", "flow", "cards", "takeaways",
+    ]  # fmt: skip
+    assert agents.skipped == [
+        {
+            "step": "layout",
+            "label": "Slide 3 drawn as text",
+            "reason": "No figure is kept with the material this slide uses.",
+        }
+    ]
+    # The planner was told which cards come with a figure.
+    prompt = str(fake.requests[0]["messages"][-1]["content"])
+    assert "Figures kept with the material" in prompt
+    assert "- C1: Figure 2: the curve" in prompt and "- C2:" not in prompt

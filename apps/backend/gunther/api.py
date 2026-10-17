@@ -57,14 +57,19 @@ from gunther.recording_service import (
 from gunther.retranscribe import RecordingNotFound, RetranscribeError
 from gunther.schemas import (
     ApiModel,
+    ArtifactBriefStateOut,
+    ArtifactConversationOut,
+    ArtifactConversationSummaryOut,
     ArtifactOut,
     ArtifactSummaryOut,
+    ArtifactTurnInput,
     AskSkillOut,
     AssertionOut,
     AssetCaptureOut,
     BriefOut,
     BuildOutputInput,
     ConversationTurnOut,
+    CreateArtifactConversationInput,
     CreateDevicePairingInput,
     CreateKnowledgeBaseInput,
     CreateKnowledgeProposalInput,
@@ -75,6 +80,7 @@ from gunther.schemas import (
     CreateSourceInput,
     DeviceCredentialOut,
     DevicePairingSessionOut,
+    EditArtifactBriefInput,
     EditOutputInput,
     ExchangeDevicePairingInput,
     FileNotebookNoteInput,
@@ -83,6 +89,7 @@ from gunther.schemas import (
     FileSourceInput,
     FileSourceOut,
     HealthOut,
+    ImportArtifactConversationsInput,
     ImportResultOut,
     InboxItemOut,
     KnowledgeBaseOut,
@@ -104,6 +111,7 @@ from gunther.schemas import (
     SourceDetailOut,
     SourceKind,
     SourceSummaryOut,
+    UpdateArtifactConversationInput,
     UpdateAssertionStatusInput,
     UpdateKnowledgeBaseInput,
     UpdateKnowledgeProposalInput,
@@ -154,16 +162,12 @@ async def _read_limited_body(
         if declared_size < 0:
             raise RecordingValidationError("Content-Length cannot be negative.")
         if declared_size > max_bytes:
-            raise RecordingTooLargeError(
-                f"The upload exceeds the {max_bytes}-byte request limit."
-            )
+            raise RecordingTooLargeError(f"The upload exceeds the {max_bytes}-byte request limit.")
 
     body = bytearray()
     async for chunk in request.stream():
         if len(body) + len(chunk) > max_bytes:
-            raise RecordingTooLargeError(
-                f"The upload exceeds the {max_bytes}-byte request limit."
-            )
+            raise RecordingTooLargeError(f"The upload exceeds the {max_bytes}-byte request limit.")
         if reservation is not None and chunk:
             # Hold the full received body until the service materializes it on
             # disk. Unknown-length streams therefore remain concurrency-safe.
@@ -255,8 +259,7 @@ async def _authorize_websocket(websocket: WebSocket) -> bool:
     expected = settings.auth_token
     if sidecar_candidates and expected:
         authorized = any(
-            secrets.compare_digest(candidate, expected)
-            for candidate in sidecar_candidates
+            secrets.compare_digest(candidate, expected) for candidate in sidecar_candidates
         )
         if not authorized:
             await websocket.close(code=1008)
@@ -418,10 +421,7 @@ async def exchange_device_pairing(request: Request) -> DeviceCredentialOut:
 @router.get("/devices", response_model=list[PairedDeviceOut])
 def paired_devices(request: Request) -> list[PairedDeviceOut]:
     _require_sidecar_admin(request)
-    return [
-        _paired_device_out(device)
-        for device in request.app.state.device_auth.list_devices()
-    ]
+    return [_paired_device_out(device) for device in request.app.state.device_auth.list_devices()]
 
 
 @router.post("/devices/{device_id}/revoke", response_model=PairedDeviceOut)
@@ -514,9 +514,7 @@ def search(
             status_code=422,
             detail="Search at most 20 knowledge bases, each identified by at most 160 characters",
         )
-    return _service(request).search_knowledge(
-        query, limit=limit, knowledge_base_ids=scope or None
-    )
+    return _service(request).search_knowledge(query, limit=limit, knowledge_base_ids=scope or None)
 
 
 @router.get("/search/web", response_model=WebSearchOut)
@@ -538,9 +536,7 @@ async def capture_asset(
     title: Annotated[str, Query(min_length=1, max_length=160)],
     file_name: Annotated[str, Query(alias="fileName", min_length=1, max_length=255)],
     kind: Annotated[SourceKind, Query()] = "file",
-    knowledge_base_id: Annotated[
-        str | None, Query(alias="knowledgeBaseId", max_length=160)
-    ] = None,
+    knowledge_base_id: Annotated[str | None, Query(alias="knowledgeBaseId", max_length=160)] = None,
     notes: Annotated[str, Query(max_length=5_000)] = "",
     defer_processing: Annotated[bool, Query(alias="deferProcessing")] = False,
 ) -> AssetCaptureOut:
@@ -844,9 +840,7 @@ def get_recording(recording_id: str, request: Request) -> FileResponse:
         candidates = [
             path
             for path in request.app.state.settings.recordings_dir.glob(f"{recording_id}.*")
-            if path.is_file()
-            and not path.name.endswith(".part")
-            and not listen_copy.is_copy(path)
+            if path.is_file() and not path.name.endswith(".part") and not listen_copy.is_copy(path)
         ]
         if len(candidates) != 1:
             raise HTTPException(status_code=404, detail="Recording not found") from error
@@ -1103,9 +1097,7 @@ def source(source_id: str, request: Request) -> SourceDetailOut:
 
 
 @router.patch("/sources/{source_id}", response_model=SourceSummaryOut)
-def rename_source(
-    source_id: str, payload: RenameSourceInput, request: Request
-) -> SourceSummaryOut:
+def rename_source(source_id: str, payload: RenameSourceInput, request: Request) -> SourceSummaryOut:
     try:
         return _service(request).rename_source(source_id, payload.title)
     except LookupError as error:
@@ -1302,8 +1294,6 @@ def file_home_session(
         return _service(request).file_home_session(session_id, payload.knowledge_base_id)
     except LookupError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-
-
 
 
 def _answer_runs(request: Request) -> AnswerRuns:
@@ -1584,6 +1574,7 @@ def _output_run(
     call,
     words: tuple[str, str, str],
     about: str,
+    result=None,
 ) -> StreamingResponse:
     """Start building (or revising) an output and stream how it goes.
 
@@ -1592,9 +1583,13 @@ def _output_run(
     the saved version, ``error`` saying why there is none, or ``stopped``. Closing the
     connection only stops listening; ``POST .../outputs/build/stop`` ends the work, and
     then nothing is saved.
+
+    ``result`` shapes the ``done`` payload from what ``call`` returns (a saved version unless
+    told otherwise; the Artifacts agent's turn has its own).
     """
 
     running, done_word, failed_word = words
+    shaped = result or (lambda saved: saved.model_dump(mode="json", by_alias=True))
     activity = request.app.state.activity
     runs = _answer_runs(request)
 
@@ -1616,7 +1611,9 @@ def _output_run(
                 nonlocal sections
                 if run.stop_requested.is_set():
                     raise Stopped
-                if event["type"] == "outline":
+                if event["type"] == "action" and event.get("state") == "running":
+                    tracked.update(detail=event.get("label") or "Working")
+                elif event["type"] == "outline":
                     sections = len(event.get("sections") or [])
                 elif event["type"] == "section":
                     number = event["index"] + 1
@@ -1637,7 +1634,7 @@ def _output_run(
 
             try:
                 artifact = call(hear)
-                run.publish("done", artifact.model_dump(mode="json", by_alias=True))
+                run.publish("done", shaped(artifact))
                 tracked.done(done_word)
             except Stopped:
                 run.publish("stopped", {"type": "stopped"})
@@ -1656,9 +1653,7 @@ def _output_run(
 
     run = _answer_runs(request).start(_outputs_key(knowledge_base_id), label, work)
     if run is None:
-        raise HTTPException(
-            status_code=409, detail="Gunther is still building an output here."
-        )
+        raise HTTPException(status_code=409, detail="Gunther is still building an output here.")
     return _sse(run)
 
 
@@ -1706,6 +1701,41 @@ async def revise_output_stream(
         ),
         _OUTPUT_WORDS["revise", "slides" if kind == "slides" else "report"],
         service.library_title(knowledge_base_id),
+    )
+
+
+@router.post(
+    "/knowledge-bases/{knowledge_base_id}/artifact-conversations/{conversation_id}/messages/stream"
+)
+async def artifact_turn_stream(
+    knowledge_base_id: str,
+    conversation_id: str,
+    payload: ArtifactTurnInput,
+    request: Request,
+    workspace_id: WorkspaceHeader,
+) -> StreamingResponse:
+    """Send a message to the Artifacts agent and hear it work: ``decision`` and ``action``
+    events (and the skill's own) while it does, then ``done`` with how the turn ended, ``error``
+    or ``stopped``. The run is the library's one output run: Stop and Follow work as for a
+    build."""
+
+    service = _service(request)
+    try:
+        title = service.artifact_conversation_title(
+            knowledge_base_id, workspace_id, conversation_id, payload.text
+        )
+    except LookupError:
+        title = "your artifacts"  # the run itself answers 404
+    return _output_run(
+        request,
+        knowledge_base_id,
+        payload.text,
+        lambda hear: service.artifact_turn(
+            knowledge_base_id, workspace_id, conversation_id, payload, hear
+        ),
+        (f"Working on {title}", "Done", "Couldn't finish"),
+        service.library_title(knowledge_base_id),
+        result=lambda turn: turn.model_dump(mode="json", by_alias=True),
     )
 
 
@@ -1775,6 +1805,144 @@ def check_output(
         raise HTTPException(status_code=409, detail=str(error)) from error
     except ModelError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.get(
+    "/knowledge-bases/{knowledge_base_id}/artifact-conversations",
+    response_model=list[ArtifactConversationSummaryOut],
+)
+def artifact_conversations(
+    knowledge_base_id: str, request: Request, workspace_id: WorkspaceHeader
+) -> list[ArtifactConversationSummaryOut]:
+    """The Artifacts conversations of a library, the latest first."""
+
+    try:
+        return _service(request).artifact_conversations(knowledge_base_id, workspace_id)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (ArtifactConflictError, ArtifactIntegrityError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.post(
+    "/knowledge-bases/{knowledge_base_id}/artifact-conversations",
+    response_model=ArtifactConversationOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_artifact_conversation(
+    knowledge_base_id: str,
+    payload: CreateArtifactConversationInput,
+    request: Request,
+    workspace_id: WorkspaceHeader,
+) -> ArtifactConversationOut:
+    """Start an Artifacts conversation, under the id given (a device's keeps its own)."""
+
+    try:
+        return _service(request).create_artifact_conversation(
+            knowledge_base_id, workspace_id, payload
+        )
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (ArtifactConflictError, ArtifactIntegrityError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.post(
+    "/knowledge-bases/{knowledge_base_id}/artifact-conversations/import",
+    response_model=list[ArtifactConversationSummaryOut],
+)
+def import_artifact_conversations(
+    knowledge_base_id: str,
+    payload: ImportArtifactConversationsInput,
+    request: Request,
+    workspace_id: WorkspaceHeader,
+) -> list[ArtifactConversationSummaryOut]:
+    """Take in the conversations a device kept. Ids that exist are skipped."""
+
+    try:
+        return _service(request).import_artifact_conversations(
+            knowledge_base_id, workspace_id, payload
+        )
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (ArtifactConflictError, ArtifactIntegrityError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.get(
+    "/knowledge-bases/{knowledge_base_id}/artifact-conversations/{conversation_id}",
+    response_model=ArtifactConversationOut,
+)
+def artifact_conversation(
+    knowledge_base_id: str,
+    conversation_id: str,
+    request: Request,
+    workspace_id: WorkspaceHeader,
+) -> ArtifactConversationOut:
+    """One Artifacts conversation: its messages, brief and works."""
+
+    try:
+        return _service(request).artifact_conversation(
+            knowledge_base_id, workspace_id, conversation_id
+        )
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (ArtifactConflictError, ArtifactIntegrityError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.patch(
+    "/knowledge-bases/{knowledge_base_id}/artifact-conversations/{conversation_id}",
+    response_model=ArtifactConversationOut,
+)
+def update_artifact_conversation(
+    knowledge_base_id: str,
+    conversation_id: str,
+    payload: UpdateArtifactConversationInput,
+    request: Request,
+    workspace_id: WorkspaceHeader,
+) -> ArtifactConversationOut:
+    """Rename an Artifacts conversation, change what it reads from, or archive it."""
+
+    try:
+        return _service(request).update_artifact_conversation(
+            knowledge_base_id, workspace_id, conversation_id, payload
+        )
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (ArtifactConflictError, ArtifactIntegrityError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.patch(
+    "/knowledge-bases/{knowledge_base_id}/artifact-conversations/{conversation_id}/brief",
+    response_model=ArtifactBriefStateOut,
+)
+def edit_artifact_brief(
+    knowledge_base_id: str,
+    conversation_id: str,
+    payload: EditArtifactBriefInput,
+    request: Request,
+    workspace_id: WorkspaceHeader,
+) -> ArtifactBriefStateOut:
+    """Set the lines the user typed in the Brief panel; they are marked as theirs."""
+
+    try:
+        return _service(request).edit_artifact_brief(
+            knowledge_base_id, workspace_id, conversation_id, payload
+        )
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (ArtifactConflictError, ArtifactIntegrityError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 

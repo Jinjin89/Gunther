@@ -9,7 +9,7 @@ from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from threading import Lock
 from typing import Literal
 from urllib.parse import urlsplit
@@ -19,8 +19,9 @@ from sqlalchemy import and_, delete, func, or_, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
+from gunther import artifact_agent, trace
+from gunther import artifact_workspace as workspaces
 from gunther import brief as briefs
-from gunther import trace
 from gunther.agent import (
     DEFAULT_STYLE,
     STYLES,
@@ -32,16 +33,20 @@ from gunther.agent import (
     ToolFailure,
 )
 from gunther.agent import Notes as Work
+from gunther.answer_runs import Stopped
+from gunther.artifact_workspace import evidence_from_citation
 from gunther.conversation import GroundingClaim, KnowledgeResponder
 from gunther.database import session_scope
 from gunther.extraction import CandidateAssertion, ExtractionResult, Extractor
 from gunther.knowledge_index import KnowledgeIndex
-from gunther.llm import ModelGateway, ModelInfo, Turn
+from gunther.llm import ModelError, ModelGateway, ModelInfo, Turn
 from gunther.model_profiles import Effort
 from gunther.models import (
     Artifact,
     ArtifactAsset,
     ArtifactCheck,
+    ArtifactConversation,
+    ArtifactMessage,
     ArtifactUnitBinding,
     Assertion,
     Asset,
@@ -86,11 +91,27 @@ from gunther.outputs import (
     split_document,
     title_of,
 )
+from gunther.run_budget import BudgetedGateway, RunBudget
 from gunther.schemas import (
+    ArtifactBriefOut,
+    ArtifactBriefStateOut,
+    ArtifactChangeOut,
+    ArtifactConversationOut,
+    ArtifactConversationSummaryOut,
+    ArtifactLineOut,
+    ArtifactMessageOut,
     ArtifactOut,
+    ArtifactPartOut,
+    ArtifactPendingOut,
     ArtifactProvenanceOut,
+    ArtifactQuestionOut,
+    ArtifactSpecOut,
+    ArtifactStepOut,
     ArtifactSummaryOut,
+    ArtifactTurnInput,
+    ArtifactTurnOut,
     ArtifactUnitSnapshotOut,
+    ArtifactWorkOut,
     AssertionOut,
     AssetOut,
     BriefOut,
@@ -98,12 +119,14 @@ from gunther.schemas import (
     ConversationCitationOut,
     ConversationContextOut,
     ConversationTurnOut,
+    CreateArtifactConversationInput,
     CreateKnowledgeBaseInput,
     CreateKnowledgeProposalInput,
     CreateKnowledgeSessionInput,
     CreateNotebookNoteInput,
     CreateSessionMessageInput,
     CreateSourceInput,
+    EditArtifactBriefInput,
     EditOutputInput,
     EntityRefOut,
     EvidenceOut,
@@ -113,7 +136,9 @@ from gunther.schemas import (
     FileSourceOut,
     GraphEdgeOut,
     GraphNodeOut,
+    ImportArtifactConversationsInput,
     ImportCountsOut,
+    ImportedArtifactConversation,
     ImportResultOut,
     InboxItemOut,
     InboxKnowledgeBaseRefOut,
@@ -138,6 +163,7 @@ from gunther.schemas import (
     SessionMessageOut,
     SourceDetailOut,
     SourceSummaryOut,
+    UpdateArtifactConversationInput,
     UpdateAssertionStatusInput,
     UpdateKnowledgeBaseInput,
     UpdateKnowledgeProposalInput,
@@ -159,6 +185,7 @@ ASK_EFFORTS: tuple[Effort, Effort] = ("low", "off")
 # Sources found by meaning, added after the exact matches of a search.
 MEANING_RESULTS = 6
 
+NEW_CONVERSATION = "New conversation"
 OUTPUTS_NEED_A_MODEL = "Outputs need a model. Set one up under Settings → Models."
 NOTHING_TO_BUILD_FROM = (
     "There is nothing to build from yet. Add sources, or save an answer as knowledge."
@@ -183,9 +210,9 @@ def _id(prefix: str) -> str:
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
 
 
 def manifest_hash_of(artifact: Artifact) -> str:
@@ -237,6 +264,19 @@ def _count_label(count: int, singular: str, plural: str | None = None) -> str:
     return f"{count} {singular if count == 1 else plural or f'{singular}s'}"
 
 
+def _device_time(value: str | None) -> datetime | None:
+    """A time a device wrote (ISO 8601, usually ending in Z) as the UTC time the database
+    keeps; None when it is missing or cannot be read."""
+
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed.astimezone(UTC).replace(tzinfo=None) if parsed.tzinfo else parsed
+
+
 class ArtifactConflictError(ValueError):
     """An idempotency key or immutable lineage head conflicts with current state."""
 
@@ -275,6 +315,19 @@ class _OutputScope:
     source_ids: list[str]
     units: list[KnowledgeUnit]
     sessions: list[KnowledgeSession]
+
+
+@dataclass(frozen=True, slots=True)
+class _OwnedVersion:
+    """A version, as much of it as tells which conversation it belongs to and what was asked."""
+
+    id: str
+    lineage_id: str
+    created_at: datetime
+    client_request_id: str
+    scope_json: str
+    conversation_title: str | None
+    request: str | None
 
 
 @dataclass
@@ -349,9 +402,7 @@ def _in_pool_numbers(message: SessionMessage) -> str:
 
     # [i:2] (an inference) and [p:2] (partly supported) are read as plain pool numbers;
     # [d:2] says the claim was disputed by that source.
-    return re.sub(
-        r"(\s?)\[(?:(i|p|d):)?(\d+(?:\s*[,，、]\s*\d+)*)\]", replace, message.content
-    )
+    return re.sub(r"(\s?)\[(?:(i|p|d):)?(\d+(?:\s*[,，、]\s*\d+)*)\]", replace, message.content)
 
 
 def _work_out(work: Work | None, cited: list[Evidence]) -> dict[str, object] | None:
@@ -385,23 +436,6 @@ def _around(text: str, snippet: str, limit: int = READ_PAGE_CHARS) -> str:
     at = text.find(snippet[:60]) if snippet[:60].strip() else -1
     start = 0 if at < 0 else max(0, min(at - limit // 2, len(text) - limit))
     return text[start : start + limit]
-
-
-def evidence_from_citation(citation: ConversationCitationOut) -> Evidence:
-    """A saved citation as a passage a model may cite again, under the number it has."""
-
-    return Evidence(
-        kind=citation.kind,
-        title=citation.source_title,
-        text=citation.quote,
-        locator=citation.locator,
-        status=citation.status,
-        confidence=citation.confidence,
-        url=citation.url,
-        ref=citation.ref,
-        payload=(citation, None),
-        context=citation.support_text or "",
-    )
 
 
 def conversation_pool(messages: list[SessionMessage]) -> list[Evidence]:
@@ -448,6 +482,11 @@ class KnowledgeService:
         self.index = KnowledgeIndex(sessions)
         self._source_import_locks_guard = Lock()
         self._source_import_locks: dict[str, tuple[Lock, int]] = {}
+        # How far one turn of the Artifacts agent may go; the exam and tests may change it.
+        self.artifact_limits = artifact_agent.AgentLimits()
+        # Rows of Artifacts conversations are made one request at a time (listing makes the
+        # missing ones), so two requests for the same conversation cannot both make it.
+        self._artifact_conversations_lock = Lock()
 
     @property
     def extraction_mode(self) -> str:
@@ -995,9 +1034,7 @@ class KnowledgeService:
     def list_sources(self) -> list[SourceSummaryOut]:
         with session_scope(self.sessions) as session:
             sources = session.scalars(
-                select(Source)
-                .where(Source.trashed_at.is_(None))
-                .order_by(Source.created_at.desc())
+                select(Source).where(Source.trashed_at.is_(None)).order_by(Source.created_at.desc())
             ).all()
             return [self._source_summary(session, source) for source in sources]
 
@@ -1021,9 +1058,7 @@ class KnowledgeService:
             return None
         rows = sum(1 for line in lines[1:] if not re.fullmatch(r"[\s|:\-]+", line))
         columns = ", ".join(cell for cell in cells if cell)
-        return cls._inbox_preview(
-            f"{rows} {'row' if rows == 1 else 'rows'} · Columns: {columns}"
-        )
+        return cls._inbox_preview(f"{rows} {'row' if rows == 1 else 'rows'} · Columns: {columns}")
 
     def list_inbox(
         self,
@@ -1104,9 +1139,7 @@ class KnowledgeService:
                         item_type="source",
                         state="unfiled",
                         title=source.title,
-                        preview=(
-                            source.kind == "table" and self._table_preview(source.content)
-                        )
+                        preview=(source.kind == "table" and self._table_preview(source.content))
                         or self._inbox_preview(source.content),
                         source_kind=source.kind,
                         source_id=source.id,
@@ -1124,9 +1157,7 @@ class KnowledgeService:
                         item_type="source",
                         state="needs_review",
                         title=source.title,
-                        preview=(
-                            source.kind == "table" and self._table_preview(source.content)
-                        )
+                        preview=(source.kind == "table" and self._table_preview(source.content))
                         or self._inbox_preview(source.content),
                         source_kind=source.kind,
                         knowledge_bases=source_knowledge_bases[source.id],
@@ -1174,9 +1205,7 @@ class KnowledgeService:
                 raise LookupError(f"Source {source_id} was not found")
             knowledge_base = self._live_knowledge_base(session, payload.knowledge_base_id)
             if knowledge_base is None:
-                raise LookupError(
-                    f"Knowledge Base {payload.knowledge_base_id} was not found"
-                )
+                raise LookupError(f"Knowledge Base {payload.knowledge_base_id} was not found")
             membership = session.scalar(
                 select(KnowledgeBaseSource).where(
                     KnowledgeBaseSource.knowledge_base_id == payload.knowledge_base_id,
@@ -1307,9 +1336,7 @@ class KnowledgeService:
             if note is None or note.trashed_at is not None:
                 raise LookupError(f"Notebook note {note_id} was not found")
             if self._live_knowledge_base(session, payload.knowledge_base_id) is None:
-                raise LookupError(
-                    f"Knowledge Base {payload.knowledge_base_id} was not found"
-                )
+                raise LookupError(f"Knowledge Base {payload.knowledge_base_id} was not found")
             if note.promoted_source_id:
                 raise ValueError("This note has already been filed into knowledge")
             content = note.content.strip()
@@ -1386,9 +1413,7 @@ class KnowledgeService:
             assertions = session.scalars(
                 self._assertion_query().where(Assertion.source_id == source_id)
             ).all()
-            snapshot = session.scalar(
-                select(WebSnapshot).where(WebSnapshot.source_id == source_id)
-            )
+            snapshot = session.scalar(select(WebSnapshot).where(WebSnapshot.source_id == source_id))
             knowledge_bases = session.execute(
                 select(KnowledgeBaseRecord.id, KnowledgeBaseRecord.title)
                 .join(
@@ -1903,9 +1928,7 @@ class KnowledgeService:
             # Keep a hyphenated concept together: “T-cell” should match “T cell”,
             # while “cell-type” must not degrade into the overly broad “cell”.
             normalized = re.sub(r"[-–—]+", " ", token).strip()
-            if " " in normalized or (
-                len(normalized) > 2 and normalized not in stopwords
-            ):
+            if " " in normalized or (len(normalized) > 2 and normalized not in stopwords):
                 terms.add(normalized)
         return terms
 
@@ -2853,9 +2876,7 @@ class KnowledgeService:
             without_unit = session.scalars(
                 select(KnowledgeProposal).where(
                     KnowledgeProposal.status == "accepted",
-                    KnowledgeProposal.id.not_in(
-                        select(KnowledgeUnitRevision.source_proposal_id)
-                    ),
+                    KnowledgeProposal.id.not_in(select(KnowledgeUnitRevision.source_proposal_id)),
                 )
             ).all()
             for proposal in without_unit:
@@ -3206,9 +3227,7 @@ class KnowledgeService:
             )
         return sections
 
-    def list_artifacts(
-        self, knowledge_base_id: str, workspace_id: str
-    ) -> list[ArtifactSummaryOut]:
+    def list_artifacts(self, knowledge_base_id: str, workspace_id: str) -> list[ArtifactSummaryOut]:
         with session_scope(self.sessions) as session:
             if self._live_knowledge_base(session, knowledge_base_id) is None:
                 raise LookupError(f"Knowledge Base {knowledge_base_id} was not found")
@@ -3401,8 +3420,10 @@ class KnowledgeService:
                 .order_by(Source.created_at.desc())
             )
         )
-        units = select(KnowledgeUnit).options(selectinload(KnowledgeUnit.revisions)).where(
-            KnowledgeUnit.knowledge_base_id == base_id, KnowledgeUnit.status == "trusted"
+        units = (
+            select(KnowledgeUnit)
+            .options(selectinload(KnowledgeUnit.revisions))
+            .where(KnowledgeUnit.knowledge_base_id == base_id, KnowledgeUnit.status == "trusted")
         )
         if scope.mode == "library":
             found = list(session.scalars(units.order_by(KnowledgeUnit.updated_at.desc())))
@@ -3446,9 +3467,7 @@ class KnowledgeService:
     ) -> tuple[KnowledgeUnitRevision, KnowledgeProposal, SessionMessage | None]:
         """A saved answer's current text, the proposal it came from, and the answer itself."""
 
-        head = next(
-            (item for item in unit.revisions if item.id == unit.head_revision_id), None
-        )
+        head = next((item for item in unit.revisions if item.id == unit.head_revision_id), None)
         if head is None:
             raise ValueError(f"Knowledge Unit {unit.id} has no head revision")
         proposal = session.get(KnowledgeProposal, head.source_proposal_id)
@@ -3659,8 +3678,13 @@ class KnowledgeService:
                     conversation_title=skilled.get("conversation_title")
                     or parent_provenance.get("conversation_title"),
                     request=skilled.get("request") if conversation_id else None,
+                    reply=skilled.get("reply") if conversation_id else None,
+                    changes=skilled.get("changes"),
                 )
                 sealed = provenance.model_dump()
+                if skilled.get("work") is not None:
+                    # The artifact's work as it was made: sealed with the version, not sent out.
+                    sealed["work"] = skilled["work"]
                 for key in (
                     "skill",
                     "approach",
@@ -3668,6 +3692,8 @@ class KnowledgeService:
                     "conversation_id",
                     "conversation_title",
                     "request",
+                    "reply",
+                    "changes",
                 ):
                     # A version made without a skill keeps the provenance it always had.
                     if sealed.get(key) is None:
@@ -3937,7 +3963,7 @@ class KnowledgeService:
             ):
                 return block
             return None
-        return session.scalar(
+        exact = session.scalar(
             select(ContentBlock)
             .where(
                 ContentBlock.revision_id == revision_id,
@@ -3945,6 +3971,23 @@ class KnowledgeService:
             )
             .limit(1)
         )
+        if exact is not None:
+            return exact
+        # A search passage is often a piece of a block, or runs over several: the block it
+        # starts in.
+        quote = " ".join(citation.quote.split())
+        if len(quote) < 20:
+            return None
+        blocks = session.scalars(
+            select(ContentBlock)
+            .where(ContentBlock.revision_id == revision_id)
+            .order_by(ContentBlock.ordinal)
+        )
+        for block in blocks:
+            text = " ".join(block.content.split())
+            if quote[:60] in text or (len(text) >= 40 and quote.startswith(text[:60])):
+                return block
+        return None
 
     @staticmethod
     def _section_blocks(session: Session, block: ContentBlock) -> list[ContentBlock]:
@@ -4357,11 +4400,973 @@ class KnowledgeService:
             session.flush()
             return self._artifact_out(session, artifact)
 
+    # Conversations of the Artifacts agent (see artifact_workspace) ------------------------------
+
+    @staticmethod
+    def _artifact_conversation_row(
+        session: Session, workspace_id: str, base_id: str, conversation_id: str
+    ) -> ArtifactConversation:
+        row = session.scalar(
+            select(ArtifactConversation).where(
+                ArtifactConversation.id == conversation_id,
+                ArtifactConversation.workspace_id == workspace_id,
+                ArtifactConversation.knowledge_base_id == base_id,
+            )
+        )
+        if row is None:
+            raise LookupError(f"Conversation {conversation_id} was not found")
+        return row
+
+    @staticmethod
+    def _load_workspace(
+        row: ArtifactConversation,
+    ) -> tuple[workspaces.Workspace, workspaces.ConversationBrief]:
+        """A conversation's workspace and its brief, as stored."""
+
+        return workspaces.load_workspace(row.state_json), workspaces.load_brief(row.brief_json)
+
+    @staticmethod
+    def _store_workspace(
+        row: ArtifactConversation,
+        workspace: workspaces.Workspace,
+        brief: workspaces.ConversationBrief,
+        at: datetime | None = None,
+    ) -> None:
+        """Keep the workspace and the brief in the conversation, which counts as changed."""
+
+        row.state_json = workspaces.dump_workspace(workspace)
+        row.brief_json = workspaces.dump_brief(brief)
+        row.updated_at = at or utc_now()
+
+    @staticmethod
+    def _conversation_scope(row: ArtifactConversation) -> OutputScope:
+        try:
+            return OutputScope.model_validate(json.loads(row.scope_json))
+        except ValueError:
+            return OutputScope()
+
+    @staticmethod
+    def _artifact_line_out(line: workspaces.Line | None) -> ArtifactLineOut | None:
+        return ArtifactLineOut(text=line.text, mark=line.mark) if line else None
+
+    @classmethod
+    def _artifact_brief_out(cls, brief: workspaces.ConversationBrief) -> ArtifactBriefOut:
+        return ArtifactBriefOut(
+            goal=cls._artifact_line_out(brief.goal),
+            audience=cls._artifact_line_out(brief.audience),
+            constraints=[cls._artifact_line_out(line) for line in brief.constraints],
+            open=[cls._artifact_line_out(line) for line in brief.open],
+        )
+
+    @classmethod
+    def _artifact_spec_out(cls, spec: workspaces.WorkSpec) -> ArtifactSpecOut:
+        return ArtifactSpecOut(
+            kind=spec.kind,
+            use=cls._artifact_line_out(spec.use),
+            length=cls._artifact_line_out(spec.length),
+            structure=cls._artifact_line_out(spec.structure),
+        )
+
+    @classmethod
+    def _artifact_work_out(
+        cls, work: workspaces.Work, brief: workspaces.ConversationBrief
+    ) -> ArtifactWorkOut:
+        approach = workspaces.approach_state(work, brief)
+        outline = workspaces.outline_state(work)
+        return ArtifactWorkOut(
+            key=work.key,
+            kind=work.spec.kind,
+            title=work.title,
+            version_id=work.version_id,
+            spec=cls._artifact_spec_out(work.spec),
+            approach=ArtifactStepOut(state=approach.state, why=approach.why),
+            outline=ArtifactStepOut(state=outline.state, why=outline.why),
+            parts=[ArtifactPartOut(**part.model_dump()) for part in workspaces.status(work, brief)],
+        )
+
+    @staticmethod
+    def _artifact_message_out(message: ArtifactMessage) -> ArtifactMessageOut:
+        return ArtifactMessageOut(
+            id=message.id,
+            role=message.role,
+            kind=message.kind,
+            text=message.text,
+            payload=json.loads(message.payload_json or "{}"),
+            artifact_id=message.artifact_id,
+            client_request_id=message.client_request_id,
+            created_at=_timestamp(message.created_at),
+        )
+
+    @staticmethod
+    def _artifact_conversation_summary(
+        row: ArtifactConversation, workspace: workspaces.Workspace | None = None
+    ) -> ArtifactConversationSummaryOut:
+        workspace = workspace or workspaces.load_workspace(row.state_json)
+        return ArtifactConversationSummaryOut(
+            id=row.id,
+            title=row.title,
+            updated_at=_timestamp(row.updated_at),
+            artifact_count=len(workspace.works),
+            waiting=workspace.pending is not None,
+        )
+
+    def _artifact_conversation_out(
+        self, session: Session, row: ArtifactConversation
+    ) -> ArtifactConversationOut:
+        workspace, brief = self._load_workspace(row)
+        messages = session.scalars(
+            select(ArtifactMessage)
+            .where(ArtifactMessage.conversation_id == row.id)
+            # A question and its answer can share a second: the user's message comes first.
+            .order_by(ArtifactMessage.created_at, ArtifactMessage.role.desc())
+        ).all()
+        pending = workspace.pending
+        return ArtifactConversationOut(
+            **self._artifact_conversation_summary(row, workspace).model_dump(),
+            scope=self._conversation_scope(row),
+            brief=self._artifact_brief_out(brief),
+            messages=[self._artifact_message_out(message) for message in messages],
+            works=[self._artifact_work_out(work, brief) for work in workspace.works],
+            active=workspace.active,
+            pending=(
+                ArtifactPendingOut(
+                    question=pending.question,
+                    options=pending.options,
+                    message_id=pending.message_id,
+                )
+                if pending
+                else None
+            ),
+            archived=row.archived,
+            created_at=_timestamp(row.created_at),
+        )
+
+    @staticmethod
+    def _owned_versions(
+        session: Session, workspace_id: str, base_id: str
+    ) -> dict[str, list[_OwnedVersion]]:
+        """The library's versions that name a conversation in their provenance, by that
+        conversation, oldest first."""
+
+        owned: dict[str, list[_OwnedVersion]] = {}
+        rows = session.execute(
+            select(
+                Artifact.id,
+                Artifact.lineage_id,
+                Artifact.created_at,
+                Artifact.client_request_id,
+                Artifact.scope_json,
+                Artifact.provenance_json,
+            )
+            .where(Artifact.workspace_id == workspace_id, Artifact.knowledge_base_id == base_id)
+            .order_by(Artifact.created_at, Artifact.version_number)
+        )
+        for row in rows:
+            provenance = json.loads(row.provenance_json)
+            conversation_id = provenance.get("conversation_id")
+            if conversation_id:
+                owned.setdefault(conversation_id, []).append(
+                    _OwnedVersion(
+                        row.id,
+                        row.lineage_id,
+                        row.created_at,
+                        row.client_request_id,
+                        row.scope_json,
+                        provenance.get("conversation_title"),
+                        provenance.get("request"),
+                    )
+                )
+        return owned
+
+    def _add_artifact_turn(
+        self,
+        session: Session,
+        conversation_id: str,
+        *,
+        instruction: str,
+        client_request_id: str | None,
+        asked_at: datetime,
+        answer: str,
+        artifact_id: str | None = None,
+        error: str | None = None,
+    ) -> datetime:
+        """A turn a device (or an earlier version of the app) made, as a user message and the
+        reply to it, a moment later; the reply's time is returned. ``answer`` is the reply's
+        kind. The reply is marked ``imported``, for it was not made by the agent."""
+
+        answered_at = asked_at + timedelta(milliseconds=1)
+        session.add(
+            ArtifactMessage(
+                id=_id("acm"),
+                conversation_id=conversation_id,
+                role="user",
+                kind="message",
+                text=instruction,
+                payload_json="{}",
+                client_request_id=client_request_id,
+                created_at=asked_at,
+            )
+        )
+        session.add(
+            ArtifactMessage(
+                id=_id("acm"),
+                conversation_id=conversation_id,
+                role="assistant",
+                kind=answer,
+                text="",
+                payload_json=json.dumps(
+                    {"imported": True, **({"error": error} if error else {})}, ensure_ascii=False
+                ),
+                artifact_id=artifact_id,
+                created_at=answered_at,
+            )
+        )
+        return answered_at
+
+    @staticmethod
+    def _lineages_by_last_use(versions: list[_OwnedVersion]) -> list[str]:
+        """The lineages of these versions (oldest first), the one worked on last at the end."""
+
+        order: list[str] = []
+        for version in versions:
+            if version.lineage_id in order:
+                order.remove(version.lineage_id)
+            order.append(version.lineage_id)
+        return order
+
+    def _import_lineages(
+        self,
+        session: Session,
+        row: ArtifactConversation,
+        workspace: workspaces.Workspace,
+        brief: workspaces.ConversationBrief,
+        lineage_ids: list[str],
+    ) -> None:
+        """Make a work of the newest version of each lineage that has none yet (see
+        artifact_workspace.import_work). The last lineage becomes the active one. Versions
+        from the old builder cannot be revised, so they are left out."""
+
+        for lineage_id in lineage_ids:
+            if any(work.key == lineage_id for work in workspace.works):
+                continue
+            head = session.scalar(
+                select(Artifact)
+                .where(
+                    Artifact.lineage_id == lineage_id,
+                    Artifact.workspace_id == row.workspace_id,
+                    Artifact.knowledge_base_id == row.knowledge_base_id,
+                )
+                .order_by(Artifact.version_number.desc())
+                .limit(1)
+            )
+            if head is None or head.origin == "legacy":
+                continue
+            workspaces.import_work(
+                self._artifact_out(session, head),
+                self._latest_check_records(session, head.id),
+                workspace,
+                brief,
+            )
+        if lineage_ids and any(work.key == lineage_ids[-1] for work in workspace.works):
+            workspace.active = lineage_ids[-1]
+
+    def _recover_artifact_conversations(
+        self, session: Session, workspace_id: str, base_id: str
+    ) -> None:
+        """Give a conversation a row when versions name it and it has none (the device it
+        lived on is gone, or it never reached the backend), made from what the versions say:
+        the title, the scope of the newest one, a turn for each request, a work for each
+        lineage. A conversation that has a row, archived or not, is left as it is."""
+
+        owned = self._owned_versions(session, workspace_id, base_id)
+        if not owned:
+            return
+        taken = set(session.scalars(select(ArtifactConversation.id)))
+        for conversation_id, versions in owned.items():
+            if conversation_id in taken or len(conversation_id) > 80:
+                continue
+            try:
+                scope = OutputScope.model_validate(json.loads(versions[-1].scope_json))
+            except ValueError:
+                scope = OutputScope()
+            title = next(
+                (v.conversation_title for v in reversed(versions) if v.conversation_title), None
+            )
+            row = ArtifactConversation(
+                id=conversation_id,
+                workspace_id=workspace_id,
+                knowledge_base_id=base_id,
+                title=(title or "Recovered conversation")[:160],
+                scope_json=json.dumps(scope.model_dump()),
+                created_at=versions[0].created_at,
+                updated_at=versions[-1].created_at,
+            )
+            session.add(row)
+            session.flush()
+            for version in versions:
+                if version.request:
+                    self._add_artifact_turn(
+                        session,
+                        row.id,
+                        instruction=version.request,
+                        client_request_id=version.client_request_id or None,
+                        asked_at=version.created_at,
+                        answer="result",
+                        artifact_id=version.id,
+                    )
+            workspace, brief = self._load_workspace(row)
+            self._import_lineages(
+                session, row, workspace, brief, self._lineages_by_last_use(versions)
+            )
+            self._store_workspace(row, workspace, brief, at=versions[-1].created_at)
+
+    def artifact_conversations(
+        self, base_id: str, workspace_id: str
+    ) -> list[ArtifactConversationSummaryOut]:
+        """The library's Artifacts conversations, the latest first. Listing first gives a row to
+        any conversation that versions name and that has none."""
+
+        with self._artifact_conversations_lock, session_scope(self.sessions) as session:
+            self._output_library(session, workspace_id, base_id)
+            self._recover_artifact_conversations(session, workspace_id, base_id)
+            rows = session.scalars(
+                select(ArtifactConversation)
+                .where(
+                    ArtifactConversation.workspace_id == workspace_id,
+                    ArtifactConversation.knowledge_base_id == base_id,
+                    ArtifactConversation.archived.is_(False),
+                )
+                .order_by(ArtifactConversation.updated_at.desc(), ArtifactConversation.id)
+            ).all()
+            return [self._artifact_conversation_summary(row) for row in rows]
+
+    def create_artifact_conversation(
+        self, base_id: str, workspace_id: str, payload: CreateArtifactConversationInput
+    ) -> ArtifactConversationOut:
+        """Start a conversation, under the id the client gives it (a device's conversation
+        keeps its own). Asking again for an id that exists returns that conversation."""
+
+        with self._artifact_conversations_lock, session_scope(self.sessions) as session:
+            self._output_library(session, workspace_id, base_id)
+            scope = payload.scope or OutputScope()
+            self._resolve_output_scope(session, base_id, scope)
+            conversation_id = payload.id or str(uuid4())
+            existing = session.get(ArtifactConversation, conversation_id)
+            if existing is not None:
+                if existing.workspace_id != workspace_id or existing.knowledge_base_id != base_id:
+                    raise ArtifactConflictError("That conversation id is used somewhere else.")
+                return self._artifact_conversation_out(session, existing)
+            now = utc_now()
+            row = ArtifactConversation(
+                id=conversation_id,
+                workspace_id=workspace_id,
+                knowledge_base_id=base_id,
+                title=((payload.title or "").strip() or "New conversation")[:160],
+                scope_json=json.dumps(scope.model_dump()),
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.flush()
+            return self._artifact_conversation_out(session, row)
+
+    def import_artifact_conversations(
+        self, base_id: str, workspace_id: str, payload: ImportArtifactConversationsInput
+    ) -> list[ArtifactConversationSummaryOut]:
+        """Take in conversations a device kept before the backend did, once. A conversation
+        whose id has a row is skipped, so asking again changes nothing; the summaries are of
+        those that were made.
+
+        Each turn becomes a user message and the reply to it. The newest version of each
+        lineage the turns saved (and of any other that names the conversation) becomes a work,
+        and the lineage of the last saved turn is the active one.
+        """
+
+        with self._artifact_conversations_lock, session_scope(self.sessions) as session:
+            self._output_library(session, workspace_id, base_id)
+            owned = self._owned_versions(session, workspace_id, base_id)
+            made: list[ArtifactConversation] = []
+            for imported in payload.conversations:
+                if session.get(ArtifactConversation, imported.id) is not None:
+                    continue
+                made.append(
+                    self._import_artifact_conversation(
+                        session, workspace_id, base_id, imported, owned.get(imported.id, [])
+                    )
+                )
+            return [self._artifact_conversation_summary(row) for row in made]
+
+    def _import_artifact_conversation(
+        self,
+        session: Session,
+        workspace_id: str,
+        base_id: str,
+        imported: ImportedArtifactConversation,
+        owned: list[_OwnedVersion],
+    ) -> ArtifactConversation:
+        started = _device_time(imported.created_at) or utc_now()
+        try:
+            scope = OutputScope.model_validate(imported.scope or {})
+        except ValueError:
+            scope = OutputScope()
+        first = imported.turns[0].instruction if imported.turns else ""
+        row = ArtifactConversation(
+            id=imported.id,
+            workspace_id=workspace_id,
+            knowledge_base_id=base_id,
+            title=((imported.title or "").strip() or first.strip() or "New conversation")[:160],
+            scope_json=json.dumps(scope.model_dump()),
+            created_at=started,
+            updated_at=started,
+        )
+        session.add(row)
+        session.flush()
+        # The turns are in the order they happened; their messages keep that order even when a
+        # device's times are missing or run backwards.
+        last, lineages, used = started, [], set()
+        for turn in imported.turns:
+            asked = max(_device_time(turn.created_at) or started, last + timedelta(milliseconds=1))
+            artifact = (
+                session.scalar(
+                    select(Artifact).where(
+                        Artifact.id == turn.artifact_id,
+                        Artifact.workspace_id == workspace_id,
+                        Artifact.knowledge_base_id == base_id,
+                    )
+                )
+                if turn.status == "saved" and turn.artifact_id
+                else None
+            )
+            if artifact is not None and artifact.lineage_id in lineages:
+                lineages.remove(artifact.lineage_id)  # the lineage worked on last comes last
+            if artifact is not None:
+                lineages.append(artifact.lineage_id)
+            request_id = turn.id if turn.id and turn.id not in used else None
+            if request_id:
+                used.add(request_id)
+            last = self._add_artifact_turn(
+                session,
+                row.id,
+                instruction=turn.instruction,
+                client_request_id=request_id,
+                asked_at=asked,
+                answer={"saved": "result", "failed": "failed"}.get(turn.status, "stopped"),
+                artifact_id=artifact.id if artifact is not None else None,
+                error=turn.error if turn.status == "failed" else None,
+            )
+        # Versions that name the conversation but that no turn reached still belong to it; the
+        # lineage of the last saved turn stays the one worked on last.
+        unreached = [v for v in owned if v.lineage_id not in lineages]
+        lineages = [*self._lineages_by_last_use(unreached), *lineages]
+        workspace, brief = self._load_workspace(row)
+        self._import_lineages(session, row, workspace, brief, lineages)
+        self._store_workspace(row, workspace, brief, at=last)
+        return row
+
+    def artifact_conversation(
+        self, base_id: str, workspace_id: str, conversation_id: str
+    ) -> ArtifactConversationOut:
+        with session_scope(self.sessions) as session:
+            self._output_library(session, workspace_id, base_id)
+            row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
+            return self._artifact_conversation_out(session, row)
+
+    def update_artifact_conversation(
+        self,
+        base_id: str,
+        workspace_id: str,
+        conversation_id: str,
+        payload: UpdateArtifactConversationInput,
+    ) -> ArtifactConversationOut:
+        """Rename a conversation, change what it reads from, or archive it."""
+
+        with session_scope(self.sessions) as session:
+            self._output_library(session, workspace_id, base_id)
+            row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
+            if payload.title is not None:
+                title = payload.title.strip()
+                if not title:
+                    raise ValueError("title must not be blank")
+                row.title = title[:160]
+            if payload.scope is not None:
+                self._resolve_output_scope(session, base_id, payload.scope)
+                row.scope_json = json.dumps(payload.scope.model_dump())
+            if payload.archived is not None:
+                row.archived = payload.archived
+            row.updated_at = utc_now()
+            session.flush()
+            return self._artifact_conversation_out(session, row)
+
+    def edit_artifact_brief(
+        self,
+        base_id: str,
+        workspace_id: str,
+        conversation_id: str,
+        payload: EditArtifactBriefInput,
+    ) -> ArtifactBriefStateOut:
+        """Set the lines the user typed in the Brief panel. They are marked as theirs, so no
+        later guess replaces them. Use, length and structure belong to the artifact being
+        worked on."""
+
+        with session_scope(self.sessions) as session:
+            self._output_library(session, workspace_id, base_id)
+            row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
+            workspace, brief = self._load_workspace(row)
+            work = workspaces.active_work(workspace)
+            spec = payload.spec
+            brief, edited = workspaces.edit_brief(
+                brief,
+                work,
+                goal=payload.goal,
+                audience=payload.audience,
+                constraints=payload.constraints,
+                open=payload.open,
+                use=spec.use if spec else None,
+                length=spec.length if spec else None,
+                structure=spec.structure if spec else None,
+            )
+            if work is not None and edited is not None:
+                work.spec = edited
+            self._store_workspace(row, workspace, brief)
+            session.flush()
+            return ArtifactBriefStateOut(
+                brief=self._artifact_brief_out(brief),
+                spec=self._artifact_spec_out(work.spec) if work is not None else None,
+            )
+
+    # A turn of the Artifacts agent (see artifact_agent) -----------------------------------------
+
+    def artifact_conversation_title(
+        self, base_id: str, workspace_id: str, conversation_id: str, text: str = ""
+    ) -> str:
+        """What a conversation is called, for the top bar; a conversation not yet named takes
+        its first message's words."""
+
+        with session_scope(self.sessions) as session:
+            row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
+            if row.title == NEW_CONVERSATION and text.strip():
+                return " ".join(text.split())[:60]
+            return row.title
+
+    def _earlier_turn(
+        self, session: Session, row: ArtifactConversation, payload: ArtifactTurnInput
+    ) -> ArtifactTurnOut | None:
+        """The result of an earlier try of this same message, if the turn was finished."""
+
+        user = session.scalar(
+            select(ArtifactMessage).where(
+                ArtifactMessage.conversation_id == row.id,
+                ArtifactMessage.client_request_id == payload.client_request_id,
+            )
+        )
+        if user is None:
+            return None
+        if user.text != payload.text or user.kind != payload.kind:
+            raise ArtifactConflictError("clientRequestId was already used for a different message")
+        for reply in session.scalars(
+            select(ArtifactMessage)
+            .where(ArtifactMessage.conversation_id == row.id, ArtifactMessage.role == "assistant")
+            .order_by(ArtifactMessage.created_at)
+        ):
+            found = json.loads(reply.payload_json or "{}")
+            if found.get("to") == user.id:
+                return self._turn_out(session, reply, found)
+        return None
+
+    def _turn_out(
+        self, session: Session, reply: ArtifactMessage, found: dict | None = None
+    ) -> ArtifactTurnOut:
+        found = found if found is not None else json.loads(reply.payload_json or "{}")
+        outcome = {
+            "question": "asked",
+            "answer": "answered",
+            "result": "saved",
+            "reply": "replied",
+            "paused": "paused",
+        }[reply.kind]
+        artifact = (
+            self._artifact_out(session, session.get(Artifact, reply.artifact_id))
+            if reply.kind == "result" and reply.artifact_id
+            else None
+        )
+        asked = found.get("question")
+        return ArtifactTurnOut(
+            outcome=outcome,  # type: ignore[arg-type]
+            reply=reply.text,
+            question=ArtifactQuestionOut(**asked) if asked else None,
+            artifact=artifact,
+            changes=[ArtifactChangeOut(**item) for item in found.get("changes", [])],
+            message=self._artifact_message_out(reply),
+        )
+
+    def artifact_turn(
+        self,
+        base_id: str,
+        workspace_id: str,
+        conversation_id: str,
+        payload: ArtifactTurnInput,
+        events: Callable[[dict], None] | None = None,
+    ) -> ArtifactTurnOut:
+        """One message of the user to the Artifacts agent: it decides what the message needs
+        and does that, in small steps, until it asks, answers, saves a version or replies.
+
+        The workspace of the conversation is brought in line with each artifact's newest
+        version first (a hand edit may have changed it). Searches use the conversation's scope.
+        Whatever ends the turn, the workspace keeps the progress made, except that a version is
+        saved only by a turn that ends with one. Sending the same ``clientRequestId`` again
+        returns the result of the first try. ``events`` hears the progress and may raise to stop.
+        """
+
+        emit = events or (lambda _event: None)
+        limits = OutputLimits()
+        agent_limits = self.artifact_limits
+        with session_scope(self.sessions) as session:
+            self._output_library(session, workspace_id, base_id)
+            row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
+            earlier = self._earlier_turn(session, row, payload)
+            if earlier is not None:
+                return earlier
+        model, effort = self._output_model(payload.model, payload.effort)
+        user_id, reply_id = _id("acm"), _id("acm")
+        emit({"type": "turn", "conversationId": conversation_id, "messageId": user_id})
+        failure: BaseException | None = None
+        result: artifact_agent.TurnResult | None = None
+        with session_scope(self.sessions) as session:
+            library = self._output_library(session, workspace_id, base_id)
+            row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
+            workspace, brief = self._load_workspace(row)
+            began = (
+                brief.model_copy(deep=True),
+                {work.key: work.spec.model_copy(deep=True) for work in workspace.works},
+            )
+            scope = self._conversation_scope(row)
+            resolved = self._resolve_output_scope(session, base_id, scope, strict=False)
+            if not (resolved.source_ids or resolved.units or resolved.sessions):
+                raise ValueError(NOTHING_TO_BUILD_FROM)
+            notes, seeds, inputs = self._output_material(session, resolved, limits)
+            snapshots = self._unit_snapshots(session, resolved.units)
+            tool = self._output_search_tool(
+                session, base_id, resolved.source_ids, False, f"{library.title}: {library.question}"
+            )
+            web, web_reason = self._web_tool(payload.web)
+            reader = self._source_reader(session)
+            versions: dict[str, int] = {}
+            saved: dict[str, str] = {}
+            heads: dict[str, str] = {}
+            for work in list(workspace.works):
+                head = None
+                if not work.key.startswith("draft_"):
+                    head = session.scalar(
+                        select(Artifact)
+                        .where(
+                            Artifact.lineage_id == work.key,
+                            Artifact.workspace_id == workspace_id,
+                            Artifact.knowledge_base_id == base_id,
+                        )
+                        .order_by(Artifact.version_number.desc())
+                        .limit(1)
+                    )
+                if head is None:
+                    continue
+                shown = self._artifact_out(session, head)
+                workspaces.sync(
+                    work, shown, self._latest_check_records(session, head.id), workspace, brief
+                )
+                versions[work.key], saved[work.key], heads[work.key] = (
+                    shown.version_number,
+                    shown.content,
+                    head.id,
+                )
+            history = self._turn_history(session, row.id, agent_limits.history)
+            budget = RunBudget(
+                agent_limits.searches,
+                agent_limits.searches,
+                agent_limits.calls,
+                agent_limits.calls,
+                phase="turn",
+            )
+            gateway = BudgetedGateway(self.models, budget)
+
+            def make_agents(kind: str) -> SkillAgents:
+                return SkillAgents(
+                    gateway,  # type: ignore[arg-type]
+                    skill_for(kind),
+                    limits,
+                    tools=[tool, *([web] if web else [])],
+                    reader=reader,
+                )
+
+            agent = artifact_agent.ArtifactAgent(
+                artifact_agent.TurnContext(
+                    workspace=workspace,
+                    brief=brief,
+                    gateway=gateway,  # type: ignore[arg-type]
+                    budget=budget,
+                    model=model,
+                    effort=effort,
+                    make_agents=make_agents,
+                    notes=notes,
+                    library_tool=tool,
+                    web_tool=web,
+                    web_reason=web_reason or "",
+                    reader=reader,
+                    library=library.title,
+                    kind=payload.kind,
+                    text=payload.text,
+                    focus=payload.focus.model_dump() if payload.focus else None,
+                    history=history,
+                    reply_id=reply_id,
+                    versions=versions,
+                    saved=saved,
+                    seeds=[seed for seed in seeds[: limits.seed]],
+                    emit=emit,
+                    limits=agent_limits,
+                )
+            )
+            try:
+                result = agent.run()
+            except Exception as error:
+                failure = error
+            brief = agent.brief
+        if result is not None and result.save is not None:
+            try:
+                artifact = self._save_turn_version(
+                    base_id,
+                    workspace_id,
+                    conversation_id,
+                    payload,
+                    model,
+                    effort,
+                    result,
+                    workspace,
+                    brief,
+                    scope,
+                    inputs,
+                    snapshots,
+                    heads,
+                    emit,
+                )
+            except Exception as error:
+                result, failure = None, error
+        else:
+            artifact = None
+        if failure is not None:
+            stopped = isinstance(failure, Stopped)
+            error = (
+                ""
+                if stopped
+                else (
+                    str(failure)
+                    if isinstance(failure, (ModelError, ValueError, LookupError))
+                    else "The message could not be handled."
+                )
+            )
+            if not stopped and not isinstance(failure, (ModelError, ValueError, LookupError)):
+                logger.error("An Artifacts turn failed", exc_info=failure)
+            self._store_turn(
+                base_id, workspace_id, conversation_id, payload, user_id, reply_id, workspace,
+                brief, began, kind="stopped" if stopped else "failed", text=error,
+                extra={"error": error} if error else {}, artifact_id=None,
+                steps=[], request_id=None,
+            )  # fmt: skip
+            raise failure
+        assert result is not None
+        kind = {
+            "asked": "question",
+            "answered": "answer",
+            "saved": "result",
+            "replied": "reply",
+            "paused": "paused",
+        }[result.outcome]
+        extra: dict[str, object] = {"steps": result.steps}
+        if result.question:
+            extra["question"] = result.question
+            extra["options"] = result.question["options"]
+        if result.changes:
+            extra["changes"] = result.changes
+        message = self._store_turn(
+            base_id, workspace_id, conversation_id, payload, user_id, reply_id, workspace, brief,
+            began, kind=kind, text=result.reply, extra=extra,
+            artifact_id=artifact.id if artifact else None, steps=result.steps,
+            request_id=payload.client_request_id,
+        )  # fmt: skip
+        return ArtifactTurnOut(
+            outcome=result.outcome,
+            reply=result.reply,
+            question=ArtifactQuestionOut(**result.question) if result.question else None,
+            artifact=artifact,
+            changes=[ArtifactChangeOut(**item) for item in result.changes],
+            message=message,
+        )
+
+    def _turn_history(
+        self, session: Session, conversation_id: str, count: int
+    ) -> list[tuple[str, str]]:
+        """The last exchanges of a conversation, word for word: what the user said and what
+        the agent replied (a question, an answer, a summary of a change)."""
+
+        messages = session.scalars(
+            select(ArtifactMessage)
+            .where(ArtifactMessage.conversation_id == conversation_id)
+            .order_by(ArtifactMessage.created_at, ArtifactMessage.role.desc())
+        ).all()
+        pairs: list[tuple[str, str]] = []
+        asked: str | None = None
+        for message in messages:
+            if message.role == "user":
+                asked = message.text
+            elif asked is not None and message.text.strip():
+                pairs.append((asked, message.text))
+                asked = None
+        return pairs[-count:]
+
+    def _save_turn_version(
+        self,
+        base_id: str,
+        workspace_id: str,
+        conversation_id: str,
+        payload: ArtifactTurnInput,
+        model: ModelInfo,
+        effort: Effort,
+        result: artifact_agent.TurnResult,
+        workspace: workspaces.Workspace,
+        brief: workspaces.ConversationBrief,
+        scope: OutputScope,
+        inputs: dict[str, list[dict[str, object]]],
+        snapshots: list[ArtifactUnitSnapshotOut],
+        heads: dict[str, str],
+        emit: Callable[[dict], None],
+    ) -> ArtifactOut:
+        """Seal the artifact a turn finished as a version, and make its work match it."""
+
+        request = result.save
+        assert request is not None
+        work, built = request.work, request.built
+        kind = work.spec.kind
+        title = self.artifact_conversation_title(base_id, workspace_id, conversation_id)
+        record = work.model_copy(deep=True)
+        record.version_id, record.version_map, record.skipped = None, request.version_map, []
+        parent = heads.get(work.key)
+        emit({"type": "saving"})  # a reader who pressed Stop by now gets nothing saved
+        artifact = self._save_output(
+            workspace_id=workspace_id,
+            base_id=base_id,
+            client_request_id=payload.client_request_id,
+            fingerprint=self._output_fingerprint(
+                workspace_id,
+                base_id,
+                "artifact-turn",
+                {"conversationId": conversation_id, "kind": payload.kind, "text": payload.text},
+            ),
+            parent_id=parent,
+            kind=kind,
+            style=(workspaces._style_of(work) or "auto") if kind == "report" else None,
+            audience=artifact_agent.audience_of(brief),
+            title=built.title,
+            brief=workspaces.render_brief(brief, work),
+            origin="revise" if parent else "build",
+            content=built.content,
+            scope=scope.model_dump(),
+            inputs=inputs,
+            outline=built.outline,
+            citations=[item.model_dump() for item in built.citations],
+            snapshots=snapshots,
+            model=OutputModelOut(ref=model.ref, label=model.display, effort=effort),
+            checks=built.checks,
+            made_by={
+                "generator": "gunther.artifact-agent.v1",
+                "skill": built.skill,
+                "approach": built.approach,
+                "use": (
+                    work.spec.use.text
+                    if work.spec.use and work.spec.use.text in ("talk", "read")
+                    else None
+                ),
+                "conversation_id": conversation_id,
+                "conversation_title": title,
+                "request": payload.text,
+                "reply": request.summary,
+                "changes": request.changes,
+                "work": record.model_dump(mode="json"),
+            },
+        )
+        # The work is now the version: its numbers, its title, and the lineage as its key.
+        was = work.key
+        work.version_id, work.version_map = artifact.id, request.version_map
+        work.title, work.skipped = artifact.title, []
+        work.key = artifact.lineage_id
+        if workspace.active == was:
+            workspace.active = work.key
+        name = "deck" if kind == "slides" else "report"
+        workspace.log.append(f"v{artifact.version_number} ({name}): {request.log}")
+        return artifact
+
+    def _store_turn(
+        self,
+        base_id: str,
+        workspace_id: str,
+        conversation_id: str,
+        payload: ArtifactTurnInput,
+        user_id: str,
+        reply_id: str,
+        workspace: workspaces.Workspace,
+        brief: workspaces.ConversationBrief,
+        began: tuple[workspaces.ConversationBrief, dict[str, workspaces.WorkSpec]],
+        *,
+        kind: str,
+        text: str,
+        extra: dict[str, object],
+        artifact_id: str | None,
+        steps: list,
+        request_id: str | None,
+    ) -> ArtifactMessageOut:
+        """Keep the turn: both messages, the workspace and the brief. What the user typed in the
+        panel while it ran is kept over the turn's version of it. A turn that did not finish
+        keeps its messages without the request id, so that sending it again runs it again."""
+
+        with session_scope(self.sessions) as session:
+            row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
+            stored, now = self._load_workspace(row)
+            brief = workspaces.keep_edits(began[0], brief, now)
+            theirs = {work.key: work.spec for work in stored.works}
+            for work in workspace.works:
+                before = began[1].get(work.key)
+                if before is not None and work.key in theirs:
+                    work.spec = workspaces.keep_spec_edits(before, work.spec, theirs[work.key])
+            asked = utc_now()
+            if row.title == NEW_CONVERSATION:
+                row.title = " ".join(payload.text.split())[:160] or NEW_CONVERSATION
+            focus = payload.focus.model_dump() if payload.focus else None
+            session.add(
+                ArtifactMessage(
+                    id=user_id,
+                    conversation_id=row.id,
+                    role="user",
+                    kind=payload.kind,
+                    text=payload.text,
+                    payload_json=json.dumps({"focus": focus} if focus else {}, ensure_ascii=False),
+                    client_request_id=request_id,
+                    created_at=asked,
+                )
+            )
+            reply = ArtifactMessage(
+                id=reply_id,
+                conversation_id=row.id,
+                role="assistant",
+                kind=kind,
+                text=text,
+                payload_json=json.dumps({"to": user_id, **extra}, ensure_ascii=False),
+                artifact_id=artifact_id,
+                created_at=asked + timedelta(milliseconds=1),
+            )
+            session.add(reply)
+            self._store_workspace(row, workspace, brief, at=asked + timedelta(milliseconds=1))
+            session.flush()
+            return self._artifact_message_out(reply)
+
     @staticmethod
     def _search_tokens(query: str) -> list[str]:
-        raw_tokens = list(
-            dict.fromkeys(re.findall(r"[\w-]+", query.casefold(), re.UNICODE))
-        )
+        raw_tokens = list(dict.fromkeys(re.findall(r"[\w-]+", query.casefold(), re.UNICODE)))
         if len(raw_tokens) <= 1:
             return raw_tokens[:8]
         intent_words = {

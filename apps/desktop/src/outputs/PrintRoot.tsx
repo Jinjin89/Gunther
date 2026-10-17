@@ -1,8 +1,11 @@
 import type { Artifact } from "@gunther/contracts";
+import { lazy, Suspense } from "react";
 import { createPortal } from "react-dom";
 import { AnswerBody, citationNumbers } from "../pages/AnswerBody";
-import { parseSlides, splitDocument, withoutTitle } from "./sections";
-import { SlideFace } from "./SlideFace";
+import { splitDocument, withoutTitle } from "./sections";
+
+// The designed slides and their charts are fetched when a deck is open, not when the app starts.
+const PrintSlides = lazy(() => import("./PrintSlides").then((module) => ({ default: module.PrintSlides })));
 
 /** A4 with room to bind; a deck is a 13⅓ × 7½ in page, which is exactly the 1280 × 720 px the slides are drawn on. */
 const REPORT_PAGE = "@page { size: A4; margin: 18mm 16mm; }";
@@ -44,9 +47,7 @@ export function PrintRoot({ artifact }: { artifact: Artifact }) {
       <style>{deck ? DECK_PAGE : REPORT_PAGE}</style>
       {deck
         ? <div className="outputs-print-deck">
-          {parseSlides(artifact.content).map((slide, index) => <section key={index} className="outputs-print-slide">
-            <SlideFace body={slide.body} title={index === 0} numbers={numbers} />
-          </section>)}
+          <Suspense fallback={null}><PrintSlides artifact={artifact} /></Suspense>
           {artifact.citations.length > 0 && <section className="outputs-print-slide outputs-print-slide-sources"><Sources artifact={artifact} /></section>}
         </div>
         : <article className="outputs-print-report">

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { OutputEvent } from "../api";
-import { applyOutputEvent, type LiveOutputState } from "./liveOutput";
+import type { ArtifactTurnEvent, OutputEvent } from "../api";
+import { applyOutputEvent, EMPTY_LIVE } from "./liveOutput";
 
-const empty: LiveOutputState = { question: null, title: null, sections: [], steps: [], stages: [], approach: null };
-const feed = (...events: OutputEvent[]) => events.reduce(applyOutputEvent, empty);
+const empty = EMPTY_LIVE;
+const feed = (...events: ArtifactTurnEvent[]) => events.reduce(applyOutputEvent, empty);
 
 const outline: OutputEvent = {
   type: "outline",
@@ -80,5 +80,34 @@ describe("an output being built", () => {
       ["reader_test", "failed", "The reader is down"],
     ]);
     expect(state.approach?.question).toBe("How are T and B cells told apart?");
+  });
+
+  it("lists the actions a turn of the Artifacts agent decides on, and updates each by its id", () => {
+    const state = feed(
+      { type: "turn", conversationId: "conv", messageId: "m1" },
+      { type: "decision", actions: [{ id: "a1", do: "search_library", label: "Searching your library" }, { id: "a2", do: "write", label: "Writing slide 4" }] },
+      { type: "action", id: "a1", state: "running", label: "Searching your library", note: "" },
+      { type: "action", id: "a1", state: "done", label: "Searched your library for “cost”", note: "6 found" },
+      { type: "action", id: "a2", state: "running", label: "Writing slide 4", note: "" },
+    );
+    expect(state.turn).toEqual({ conversationId: "conv", messageId: "m1" });
+    expect(state.actions.map((action) => [action.id, action.action, action.state, action.label, action.note])).toEqual([
+      ["a1", "search_library", "done", "Searched your library for “cost”", "6 found"],
+      ["a2", "write", "running", "Writing slide 4", ""],
+    ]);
+    // A later decision adds its actions after these.
+    expect(applyOutputEvent(state, { type: "decision", actions: [{ id: "a3", do: "save", label: "Saving" }] }).actions.map((action) => [action.id, action.state])).toEqual([["a1", "done"], ["a2", "running"], ["a3", "waiting"]]);
+  });
+
+  it("keeps the question that ends a turn, the pieces of a reply, and the brief", () => {
+    const brief = { goal: { text: "Trial results", mark: "you" as const }, audience: null, constraints: [], open: [] };
+    const state = feed(
+      { type: "brief", brief, spec: null },
+      { type: "reply", text: "The Marker " }, { type: "reply", text: "review says so [1]." },
+      { type: "question", text: "Which focus?", options: ["Trial", "Whole debate"] },
+    );
+    expect(state.reply).toBe("The Marker review says so [1].");
+    expect(state.asking).toEqual({ text: "Which focus?", options: ["Trial", "Whole debate"] });
+    expect(state.brief?.brief.goal?.text).toBe("Trial results");
   });
 });

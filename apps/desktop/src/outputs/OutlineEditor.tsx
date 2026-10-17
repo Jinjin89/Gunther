@@ -14,6 +14,7 @@ export const SLIDE_LAYOUTS: Record<string, string> = {
   line_chart: "Line chart",
   cards: "Cards",
   quote: "Quote",
+  figure: "Figure",
   text: "Text",
   takeaways: "Takeaways",
 };

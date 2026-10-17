@@ -14,6 +14,7 @@ from fake_models import (
     FakeProvider,
     agent_replies,
     api_error,
+    gateway,
     is_auditing,
     is_grading,
     is_outlining,
@@ -25,18 +26,23 @@ from fastapi.testclient import TestClient
 from legacy_artifacts import insert_legacy_version
 from sqlalchemy import func, select, text
 
+from gunther.agent import Evidence, Tool
 from gunther.config import Settings
 from gunther.main import create_app
 from gunther.models import Artifact, ArtifactCheck, ArtifactUnitBinding
 from gunther.outputs import (
+    OutputAgents,
+    Pool,
     Spec,
     cited_sentences,
     heading_of,
+    layout_of,
     section_hash,
     shape_section,
     split_document,
     title_of,
     unsource,
+    with_layout,
 )
 
 SIDECAR_TOKEN = "sidecar-token-with-at-least-256-bits-000000000000000000000000"
@@ -254,6 +260,80 @@ def test_the_title_is_the_first_top_level_heading_outside_code() -> None:
     assert title_of("# " + "x" * 200) == "x" * 160
     assert heading_of("\n## The heading\n\ntext") == "The heading"
     assert heading_of("# Title slide") == "Title slide"
+    # A slide's heading is the first line under its marker.
+    assert heading_of("<!-- layout: compare -->\n## The claim\n\ntext") == "The claim"
+    assert heading_of("<!-- layout: title; accent: blue -->\n# Title slide") == "Title slide"
+
+
+# A slide's marker: (text, its layout, its accent, the slide without the marker). The desktop
+# (src/outputs/sections.test.ts) tests the same list.
+MARKER_CASES = [
+    (
+        "<!-- layout: compare -->\n## A claim\n\n| a | b |",
+        "compare",
+        None,
+        "## A claim\n\n| a | b |",
+    ),
+    (
+        "<!-- layout: title; accent: blue -->\n# Deck\n\nOne line",
+        "title",
+        "blue",
+        "# Deck\n\nOne line",
+    ),
+    ("## No marker\n\n- a", None, None, "## No marker\n\n- a"),
+    ("<!--layout:big_number-->\n## Tight\n\n**62%**", "big_number", None, "## Tight\n\n**62%**"),
+    ("\n\n  <!-- layout: text -->\n\n\n## Blank lines", "text", None, "## Blank lines"),
+    ("<!-- layout: text -->\r\n## Windows", "text", None, "## Windows"),
+    ("<!-- layout: text -->", "text", None, ""),
+    # Only the title slide has an accent, and only one of the six.
+    ("<!-- layout: title; accent: pink -->\n# Deck", "title", None, "# Deck"),
+    ("<!-- layout: compare; accent: blue -->\n## A claim", "compare", None, "## A claim"),
+    # Not a marker: not the first line, not the whole line, not a layout, not one line.
+    ("## A\n\n<!-- layout: text -->\n- a", None, None, "## A\n\n<!-- layout: text -->\n- a"),
+    ("<!-- layout: text --> ## A", None, None, "<!-- layout: text --> ## A"),
+    ("<!-- note: layout -->\n## A", None, None, "<!-- note: layout -->\n## A"),
+    ("<!-- layout: Text -->\n## A", None, None, "<!-- layout: Text -->\n## A"),
+    ("<!--\nlayout: text -->\n## A", None, None, "<!--\nlayout: text -->\n## A"),
+    ("```\n<!-- layout: text -->\n```", None, None, "```\n<!-- layout: text -->\n```"),
+]
+
+
+@pytest.mark.parametrize(("text", "layout", "accent", "body"), MARKER_CASES)
+def test_a_slides_marker_says_its_layout_and_is_no_part_of_the_slide(
+    text: str, layout: str | None, accent: str | None, body: str
+) -> None:
+    assert layout_of(text) == (layout, body)
+    # with_layout keeps the accent a title slide had, which shows what the marker carried.
+    first = with_layout(text, "title").splitlines()[0]
+    assert first == "<!-- layout: title" + (f"; accent: {accent}" if accent else "") + " -->"
+
+
+def test_a_marker_is_put_first_and_only_the_title_slide_keeps_an_accent() -> None:
+    assert with_layout("## A\n\n- a", "flow") == "<!-- layout: flow -->\n## A\n\n- a"
+    assert with_layout("<!-- layout: cards -->\n## A", "flow") == "<!-- layout: flow -->\n## A"
+    title = "<!-- layout: title; accent: teal -->\n# T\n\nmessage"
+    assert with_layout(title, "title") == title
+    assert with_layout(title, "text") == "<!-- layout: text -->\n# T\n\nmessage"
+    assert with_layout("# T", "title", "blue") == "<!-- layout: title; accent: blue -->\n# T"
+    assert with_layout("# T", "title", "pink") == "<!-- layout: title -->\n# T"
+    assert with_layout("# T", "compare", "blue") == "<!-- layout: compare -->\n# T"
+    assert with_layout("", "text") == "<!-- layout: text -->"
+
+
+def test_a_deck_keeps_each_slides_marker_with_it_and_the_hash_covers_it() -> None:
+    content = (
+        "<!-- layout: title; accent: blue -->\n# Deck\n\nsub\n\n---\n\n"
+        "<!-- layout: flow -->\n## One\n\n1. a\n2. b"
+    )
+    sections = split_document(content, "slides")[1]
+    assert sections == [
+        "<!-- layout: title; accent: blue -->\n# Deck\n\nsub",
+        "<!-- layout: flow -->\n## One\n\n1. a\n2. b",
+    ]
+    bare = "## One\n\n1. a\n2. b"
+    assert section_hash(sections[1]) != section_hash(bare)
+    assert section_hash(with_layout(bare, "flow")) == section_hash(sections[1])
+    assert title_of(content) == "Deck"
 
 
 def test_what_the_writer_returns_is_shaped_but_not_reworded() -> None:
@@ -269,6 +349,28 @@ def test_what_the_writer_returns_is_shaped_but_not_reworded() -> None:
     assert shape_section("## Deck\n\nsub", deck, "Deck", True) == "# Deck\n\nsub"
 
 
+def test_a_slide_gets_the_marker_of_its_planned_layout_and_never_the_writers() -> None:
+    deck = Spec("slides", "student")
+    planned = "<!-- layout: flow -->\n## Deck\n\n- a"
+    assert shape_section("## Deck\n\n- a", deck, "Deck", False, "flow") == planned
+    # A marker the writer wrote is dropped, and does not keep the real heading from being found.
+    written = "<!-- layout: cards -->\n## Deck\n\n- a\n\n## Stray"
+    assert shape_section(written, deck, "Deck", False, "flow") == planned + "\n\n### Stray"
+    fenced = "```\n<!-- layout: cards -->\n## Deck\n```"
+    assert shape_section(fenced, deck, "Deck", False, "flow") == "<!-- layout: flow -->\n## Deck"
+    # With no planned layout the slide has no marker at all.
+    assert shape_section("<!-- layout: cards -->\n## Deck\n\n- a", deck, "Deck", False) == (
+        "## Deck\n\n- a"
+    )
+    # A rewritten title slide keeps the accent it had.
+    assert shape_section("## Deck\n\nsub", deck, "Deck", True, "title", accent="blue") == (
+        "<!-- layout: title; accent: blue -->\n# Deck\n\nsub"
+    )
+    # A report's sections have none.
+    report = Spec("report", "scientist")
+    assert shape_section("## T\n\ntext", report, "T", False, "flow") == "## T\n\ntext"
+
+
 def test_the_sentences_that_cite_passages_are_found_with_their_numbers() -> None:
     text = "## Heading\n\nOne fact [1]. Two facts [2][3].\n- bullet [4]\nNo cite.\n"
     found = cited_sentences(text)
@@ -281,6 +383,49 @@ def test_the_sentences_that_cite_passages_are_found_with_their_numbers() -> None
     [(_, _, chunk, numbers)] = cited_sentences("A fact. [5]")
     assert (chunk, numbers) == ("A fact. [5]", [5])
     assert unsource("CD3D marks T cells [1][2].\n") == "CD3D marks T cells [?].\n"
+
+
+def test_a_slides_marker_is_no_sentence_and_the_positions_stay_those_of_the_slide() -> None:
+    slide = "<!-- layout: text -->\n## Heading\n\nOne fact [1]. Two facts [2][3]."
+    found = cited_sentences(slide)
+    assert [(slide[begin:end], numbers) for begin, end, _, numbers in found] == [
+        ("One fact [1].", [1]),
+        (" Two facts [2][3].", [2, 3]),
+    ]
+    assert [chunk for _, _, chunk, _ in found] == [slide[begin:end] for begin, end, _, _ in found]
+
+
+def test_the_checker_reads_a_slide_under_its_marker_and_gives_the_marker_back() -> None:
+    slide = (
+        "<!-- layout: text -->\n## T cells\n\n- CD3D marks T cells [1]\n\n"
+        "Note: Close on CD3D [1]."
+    )
+    pool = Pool(10)
+    pool.adopt(Evidence("library", "Markers", "CD3D is a marker of T cells."))
+    tool = Tool("search_library", "the library", lambda query: [], "your library")
+
+    quiet = FakeProvider(output_replies(OUTLINE, REPORT))
+    agents = OutputAgents(gateway(quiet))
+    model = agents.gateway.models[0]
+    draft = agents.check_built(model, slide, tool, pool, lambda event: None, 0)
+    assert draft.text == slide and draft.issues == []
+    assert draft.coverage["status"] == "complete"
+    assert draft.coverage["answerHash"] == section_hash(slide)
+    assert all("layout" not in claim["text"] for claim in draft.coverage["claims"])
+    coverage: dict = {}
+    assert agents.check_unbuilt(model, slide, pool.by_ref(), coverage) == []
+    assert coverage["answerHash"] == section_hash(slide)
+    assert all("layout" not in claim["text"] for claim in coverage["claims"])
+    # Nothing the models were asked had the marker in it.
+    assert quiet.requests and not any("<!--" in str(r["messages"]) for r in quiet.requests)
+
+    # A sentence that loses its number is edited where it is, and the marker stays first.
+    flagging = FakeProvider(output_replies(OUTLINE, REPORT, unsupported=[1]))
+    flagger = OutputAgents(gateway(flagging))
+    flagged = flagger.check_built(model, slide, tool, pool, lambda event: None, 0)
+    assert flagged.text.startswith("<!-- layout: text -->\n## T cells\n\n- CD3D marks T cells [?]")
+    assert "unsupported" in [issue.verdict for issue in flagged.issues]
+    assert not any("<!--" in str(r["messages"]) for r in flagging.requests)
 
 
 # Building --------------------------------------------------------------------------------------
@@ -1371,3 +1516,22 @@ def test_explicit_output_model_and_effort_are_used_and_invalid_models_do_not_run
         assert rejected[-1][0] == "error"
         assert "selected model" in rejected[-1][1]["detail"]
         assert len(fake.requests) == start
+
+
+def test_an_image_the_material_did_not_keep_is_left_out_and_the_rest_stays_as_it_was():
+    from gunther.outputs import drop_unknown_figures
+
+    text = (
+        "## Roofs cool fastest after two\n"
+        "![Surface temperature](gunther-asset:kept_1)\n"
+        "![Invented chart](gunther-asset:made_up)\n"
+        "The gap peaks at two [1]"
+    )
+    shown, left_out = drop_unknown_figures(text, {"kept_1"})
+    assert left_out == ["Invented chart"]
+    assert shown == (
+        "## Roofs cool fastest after two\n"
+        "![Surface temperature](gunther-asset:kept_1)\n\n"
+        "The gap peaks at two [1]"
+    )
+    assert drop_unknown_figures(text, {"kept_1", "made_up"}) == (text, [])

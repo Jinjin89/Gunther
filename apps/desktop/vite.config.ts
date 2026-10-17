@@ -53,6 +53,8 @@ export default defineConfig({
           if (/[\\/](pdfjs-dist|react-pdf|make-cancellable-promise|make-event-props|merge-refs)[\\/]/.test(id)) return "pdf";
           // The slide viewer loads when a deck is opened.
           if (/[\\/](reveal\.js|@revealjs)[\\/]/.test(id)) return "reveal";
+          // So do the slides' charts (visx, and the d3 it is made of).
+          if (/[\\/](@visx|d3-[a-z-]+|internmap)[\\/]/.test(id)) return "charts";
           return "vendor";
         },
       },
