@@ -493,3 +493,11 @@ all report recommendations quoting a number that appears nowhere else cited. Dec
 Conclusion on this machine: V4 Pro meets every measurable target except time; Flash meets time
 with quality close to but not consistently at the bar. A Claude writer is the expected way to
 have both; it can only be measured with the user's key.
+
+**2026-10-22 — Flash with the answer-aware critic and per-part claim fixes** (`*-quality-final-flash-3`):
+ship 97%, strict ship 75% (best of any run), titles-only 93%, hard defects 1 (a closing request
+repeating figures). Quality bar met with Flash. Time alone, same velmora deck: 4.4 / 6.5 /
+7.1 min over three runs (API latency varies run to run); report 4.5–5.1 min (target 6 min:
+met). The deck's 4-minute target is not reliably met on DeepSeek; most of the deck time is the
+memo, storyline and claim checks (≈1 min each), which a faster writing model (Claude) should
+shorten — untested here without a key.
