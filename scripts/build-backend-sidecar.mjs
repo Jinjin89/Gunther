@@ -154,6 +154,8 @@ const result = spawnSync("uv", [
   "--workpath", join(pyinstallerRoot, "build"),
   "--specpath", pyinstallerRoot,
   "--collect-submodules", "uvicorn",
+  // The studio is imported inside functions (service.py); name it so it is never skipped.
+  "--collect-submodules", "gunther.studio",
   "--collect-all", "cryptography",
   "--collect-all", "onnxruntime",
   "--collect-all", "tokenizers",

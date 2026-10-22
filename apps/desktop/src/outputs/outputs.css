@@ -486,3 +486,29 @@
 .outputs-slide-review img { display: block; max-width: 100%; max-height: 400px; object-fit: contain; margin-top: 12px; }
 .outputs-slide-review li { margin: 12px 0; }
 .outputs-slide-review-images { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+
+/* The studio's memo, critic and quality report: compact, no colour of their own. */
+.studio-live, .studio-brief { display: grid; gap: 8px; margin: 8px 0; font-size: var(--gx-text-sm); }
+.studio-stages { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--gx-faint); font-size: var(--gx-text-xs); }
+.studio-stages li { display: inline-flex; align-items: center; gap: 5px; }
+.studio-stages li.is-running { color: var(--gx-ink); }
+.studio-stages small { color: var(--gx-faint); }
+.studio-memo { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--gx-line); border-radius: var(--gx-radius-md); background: var(--gx-surface-2); }
+.studio-answer { margin: 0; color: var(--gx-ink); line-height: 1.5; }
+.studio-insights { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+.studio-insights li strong { font-weight: 600; }
+.studio-insights li small { display: block; color: var(--gx-muted); }
+.studio-refs { display: inline-flex; gap: 4px; }
+.studio-refs small { color: var(--gx-faint); }
+.studio-ref { border: 0; background: none; padding: 0; color: var(--gx-muted); font: inherit; font-size: var(--gx-text-xs); cursor: pointer; text-decoration: underline; }
+.studio-critic { margin: 0; color: var(--gx-muted); font-size: var(--gx-text-xs); }
+.studio-planned { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; color: var(--gx-muted); font-size: var(--gx-text-xs); }
+.studio-planned li { display: flex; align-items: center; gap: 6px; }
+.studio-planned li.is-done { color: var(--gx-ink); }
+.studio-brief h4 { margin: 0; font-size: var(--gx-text-xs); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--gx-faint); }
+.studio-brief h4 small { margin-left: 8px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.studio-brief ul { margin: 4px 0 0; padding-left: 18px; }
+.studio-quality { display: grid; gap: 4px; }
+.studio-quality > p { margin: 0; }
+.outputs-approach.is-studio .outputs-outline-toggle strong { white-space: nowrap; }
+.outputs-approach.is-studio .outputs-outline-toggle small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

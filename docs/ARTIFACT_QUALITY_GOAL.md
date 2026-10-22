@@ -397,3 +397,18 @@ deck (v4) — studio wins storyline, ties the rest; deck (v6) — tie overall, r
 clarity; report (v6) — tie overall, studio wins evidence. Win-or-tie for the studio: 3 of 3
 overall. The judge also caught a real error in the hand-written reference (albedo 0.71 → 0.55
 is a ~22% loss, not "a third"). Claude.ai and Gamma themselves still need the user.
+
+**2026-10-22 — render and look (§4.6) built for decks.** After verify/refit the studio draws every
+slide with the real renderer (`gunther/studio/look.py`; headless Chromium through
+`slide_render.SlideRenderer`, passed in as `StudioAgents(renderer=...)`), measures overflow, type
+below the floor and layouts that fell back to plain text, and shows the pictures to a vision model
+(the photos job, else the writer if it can see). Slides measured wrong, plus slides the eye rates
+"high", get one fix round (at most 4 slides, one writer call): switch layout, cut words, move detail
+to notes; no new numbers, no citation added or dropped, titles keep their numbers. The fixed deck is
+format-checked, claim-checked, drawn again, and a slide that measures worse goes back. No renderer,
+no browser or no vision model: the reason goes to `skipped` and the deck is saved unchanged.
+Renderer fixes made on the way: the capture host now passes the v2 props (`attrs`, deck theme,
+sources) and finds `.dk-face`; v2 type sizes are measured at the stage scale; a stat value may
+carry a citation mark (the Python checker allowed it, the renderer fell back to plain text); Chromium
+gets `--no-sandbox` when run as root. Eval: `--visual-judge REF`.
+

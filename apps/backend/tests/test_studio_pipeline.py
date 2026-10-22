@@ -194,3 +194,155 @@ def test_a_failed_build_resumes_after_its_memo_and_storyline():
     again = [str(r["messages"][0]["content"]) for r in fake.requests[before:]]
     assert not any("lead analyst" in s or "presentation strategist" in s for s in again)
     assert "design: v2" in built.content
+
+
+# Render and look ------------------------------------------------------------------------
+
+
+class FakeRenderer:
+    """Draws nothing; says a slide overflows while it is in a layout from ``crowded``."""
+
+    def __init__(self, folder, crowded=("stats",), fail=None):
+        self.folder, self.crowded, self.fail, self.captures = folder, crowded, fail, 0
+        (folder / "slide.png").write_bytes(
+            bytes.fromhex(
+                "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+                "0000000d49444154789c6360000002000001e221bc330000000049454e44ae426082"
+            )
+        )
+
+    def capture(self, built, use="talk"):
+        if self.fail:
+            raise self.fail
+        self.captures += 1
+        slides = fmt.split_slides(built.content)
+        return {
+            "id": f"snap{self.captures}",
+            "candidateHash": "x",
+            "slides": [
+                {
+                    "index": n,
+                    "image": "slide.png",
+                    "overflow": fmt.parse_slide(text).layout in self.crowded,
+                    "overflowWhy": "li spills",
+                    "smallText": [],
+                }
+                for n, text in enumerate(slides)
+            ],
+        }
+
+    def file(self, _snapshot, name):
+        return self.folder / name
+
+
+POINTS = (
+    "<!-- layout: points -->\n## The trial was large enough to trust the direction\n"
+    "- **412** buildings in six districts [1]\n- **3** summers, 2021–2023 [1]\nNote: Size first."
+)
+
+
+def looking_router(rewrite=POINTS, findings=None):
+    def route(request):
+        system = str(request["messages"][0]["content"])
+        if "demanding presentation designer" in system:
+            return json.dumps({"findings": findings or []})
+        if "A designer looked at these slides" in system:
+            return rewrite
+        return router(request)
+
+    return route
+
+
+def make_with_look(fake, renderer, *models):
+    agents = StudioAgents(gateway(fake, *models), use="talk", renderer=renderer)
+    built = agents.make(
+        models[0] if models else model(), "high",
+        Spec("slides", "collaborator", brief="A 10-minute talk"), pool(), Notes(),
+    )  # fmt: skip
+    return agents, built
+
+
+def test_a_slide_the_renderer_measures_as_overflowing_is_redrawn_once_and_checked(tmp_path):
+    renderer = FakeRenderer(tmp_path)
+    fake = FakeProvider(looking_router())
+    agents, built = make_with_look(fake, renderer)
+    slides = fmt.split_slides(built.content)
+    assert fmt.parse_slide(slides[1]).layout == "points"
+    assert fmt.parse_slide(slides[0]).layout == "title"
+    record = built.skill["look"]
+    assert record["status"] == "fixed" and record["applied"][0]["slide"] == 2
+    assert record["applied"][0]["before"] > record["applied"][0]["after"]
+    assert built.skill["renderCheck"]["id"] == f"snap{renderer.captures}"
+    assert renderer.captures == 2  # before and after
+    assert any(t["step"] == "look" and t["state"] == "done" for t in agents.trail)
+
+
+def test_a_fix_that_adds_a_number_is_dropped(tmp_path):
+    renderer = FakeRenderer(tmp_path)
+    greedy = POINTS.replace("six districts", "six districts, up 99%")
+    agents, built = make_with_look(FakeProvider(looking_router(rewrite=greedy)), renderer)
+    assert fmt.parse_slide(fmt.split_slides(built.content)[1]).layout == "stats"
+    assert built.skill["look"]["rejected"][0]["why"] == "changed a fact"
+
+
+def test_a_fix_that_draws_worse_goes_back_to_the_old_slide(tmp_path):
+    renderer = FakeRenderer(tmp_path, crowded=("stats",))
+    original_capture = renderer.capture
+
+    def capture(built, use="talk"):
+        snapshot = original_capture(built, use)
+        if renderer.captures > 1:  # the redrawn deck: the new layout has tiny type everywhere
+            snapshot["slides"][1]["smallText"] = [{"text": "x", "size": 12, "minimum": 18}] * 20
+        return snapshot
+
+    renderer.capture = capture
+    agents, built = make_with_look(FakeProvider(looking_router()), renderer)
+    assert fmt.parse_slide(fmt.split_slides(built.content)[1]).layout == "stats"
+    assert built.skill["look"]["rejected"][0]["why"] == "drew worse"
+
+
+def test_at_most_the_budgeted_slides_are_changed(tmp_path, monkeypatch):
+    from gunther.studio import look
+
+    monkeypatch.setattr(look, "MAX_FIXED", 1)
+    renderer = FakeRenderer(tmp_path, crowded=("stats", "chart", "table"))
+    agents, built = make_with_look(FakeProvider(looking_router()), renderer)
+    assert len(built.skill["look"]["targets"]) == 1
+    layouts = [fmt.parse_slide(s).layout for s in fmt.split_slides(built.content)]
+    assert layouts.count("points") <= 1 and len(layouts) == 3
+
+
+def test_what_the_eye_finds_is_fixed_by_the_layout_it_names(tmp_path):
+    renderer = FakeRenderer(tmp_path, crowded=())
+    finding = {"slide": 2, "problem": "Two numbers drawn as a list", "severity": "high",
+               "action": "layout", "layout": "points", "fix": "use points"}  # fmt: skip
+    agents, built = make_with_look(FakeProvider(looking_router(findings=[finding])), renderer)
+    assert fmt.parse_slide(fmt.split_slides(built.content)[1]).layout == "points"
+    assert built.skill["look"]["findings"][0]["slide"] == 2
+
+
+def test_with_no_model_that_sees_the_step_says_why_and_the_deck_is_unchanged(tmp_path):
+    renderer = FakeRenderer(tmp_path)
+    blind = model("deepseek-v4-pro")
+    assert not blind.vision
+    agents, built = make_with_look(FakeProvider(looking_router()), renderer, blind)
+    assert fmt.parse_slide(fmt.split_slides(built.content)[1]).layout == "stats"
+    reasons = [s["reason"] for s in agents.skipped if s["step"] == "look"]
+    assert reasons and "can see" in reasons[0]
+
+
+def test_when_the_slides_cannot_be_drawn_the_deck_is_still_saved(tmp_path):
+    from gunther.slide_render import RenderError
+
+    renderer = FakeRenderer(tmp_path, fail=RenderError("no browser"))
+    agents, built = make_with_look(FakeProvider(looking_router()), renderer)
+    assert fmt.parse_slide(fmt.split_slides(built.content)[1]).layout == "stats"
+    reasons = [s["reason"] for s in agents.skipped if s["step"] == "look"]
+    assert reasons and "no browser" in reasons[0]
+    assert "renderCheck" not in built.skill
+
+
+def test_without_a_renderer_the_step_is_skipped():
+    agents, built = make_with_look(FakeProvider(looking_router()), None)
+    assert [s for s in agents.skipped if s["step"] == "look"]
+    assert built.content.startswith("<!-- layout: title")

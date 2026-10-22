@@ -800,6 +800,30 @@ class OutputApproachOut(ApiModel):
     pages: int | None = None
     supplements: list[OutputSupplementOut] = Field(default_factory=list)
     gaps: list[str] = Field(default_factory=list)
+    # The studio method also keeps what it understood and planned (see studio/pipeline.py).
+    method: str | None = None
+    use: str | None = None
+    memo: dict[str, Any] | None = None
+    storyline: dict[str, Any] | None = None
+    reviews: list[dict[str, Any]] | None = None
+    # The memo's source numbers (the pool's) -> the numbers this version's text cites.
+    ref_map: dict[str, int] | None = None
+
+    @model_serializer(mode="wrap")
+    def _without_absent_studio(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data = handler(self)
+        for field, alias in (
+            ("method", "method"),
+            ("use", "use"),
+            ("memo", "memo"),
+            ("storyline", "storyline"),
+            ("reviews", "reviews"),
+            ("ref_map", "refMap"),
+        ):
+            if getattr(self, field) is None:
+                data.pop(field, None)
+                data.pop(alias, None)
+        return data
 
 
 class SkippedStepOut(ApiModel):
@@ -817,6 +841,7 @@ class SkillRunOut(ApiModel):
     outline_review: dict[str, Any] | None = None
     render_check: dict[str, Any] | None = None
     visual_review: dict[str, Any] | None = None
+    trail: list[dict[str, Any]] | None = None
 
     @model_serializer(mode="wrap")
     def _without_absent_review(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
@@ -824,7 +849,11 @@ class SkillRunOut(ApiModel):
         if self.outline_review is None:
             data.pop("outline_review", None)
             data.pop("outlineReview", None)
-        for field, alias in (("render_check", "renderCheck"), ("visual_review", "visualReview")):
+        for field, alias in (
+            ("render_check", "renderCheck"),
+            ("visual_review", "visualReview"),
+            ("trail", "trail"),
+        ):
             if getattr(self, field) is None:
                 data.pop(field, None)
                 data.pop(alias, None)

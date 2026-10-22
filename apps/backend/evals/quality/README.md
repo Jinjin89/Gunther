@@ -19,7 +19,9 @@ Flags: `--sets` (ids from `materials.toml`, default all 7), `--methods skills,st
 `--model REF` (writer; default the Outputs job's model), `--judge REF` (default `deepseek/deepseek-v4-pro`),
 `--effort`, `--jobs N` (builds at once), `--label`, `--reuse` (skip a build whose set definition, brief,
 method, model and a hash of `gunther/` already have a result in an earlier run), `--reseed`,
-`--no-render`, `--no-judge`.
+`--no-render`, `--no-judge`, `--visual-judge REF` (a vision model, e.g. `deepseek/deepseek-flash`,
+scores the rendered slide PNGs 1-10 with a ship / minor edit / rework verdict per slide; it fills the
+report's Visual column, the text judge is unchanged).
 
 Methods: `skills` runs the app with `developer.output_skills = true`; `studio` sets
 `developer.output_method = "studio"`. A studio build whose content is not in the studio format

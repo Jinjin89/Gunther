@@ -118,7 +118,7 @@ class StudioWorkAgents(StudioAgents):
         return []
 
     def record(self) -> dict[str, Any]:
-        return {"name": "studio", "version": 1, "skipped": self.skipped}
+        return {"name": "studio", "version": 1, "skipped": self.skipped, "trail": self.trail}
 
     def review_rendered(self, built, spec, events=None):
         return built

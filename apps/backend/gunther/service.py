@@ -4016,6 +4016,7 @@ class KnowledgeService:
                     limits,
                     use=None if payload.use == "auto" else payload.use,
                     tool=tool,
+                    renderer=self.slide_renderer,
                 )
                 built = studio.make(
                     model, effort, spec, pool, notes, events, fallback_title=fallback_title
@@ -5366,7 +5367,9 @@ class KnowledgeService:
                     spec: Spec, made: Pool, use: str | None, resume=None, checkpoint=None
                 ) -> BuiltOutput:
                     self._studio_reading(session, resolved.source_ids, made)
-                    return StudioAgents(gateway, limits, use=use, tool=tool).make(  # type: ignore[arg-type]
+                    return StudioAgents(
+                        gateway, limits, use=use, tool=tool, renderer=self.slide_renderer
+                    ).make(  # type: ignore[arg-type]
                         model,
                         effort,
                         spec,

@@ -348,6 +348,8 @@ class SlideRenderer:
                         "--disable-sync",
                         "--hide-scrollbars",
                         "--remote-debugging-port=0",
+                        # Chromium refuses to start as root (a container, CI) without this.
+                        *(["--no-sandbox"] if hasattr(os, "geteuid") and os.geteuid() == 0 else []),
                         f"--user-data-dir={profile}",
                         "about:blank",
                     ],

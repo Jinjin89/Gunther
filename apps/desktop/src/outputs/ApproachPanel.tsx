@@ -1,6 +1,7 @@
 import type { Artifact } from "@gunther/contracts";
 import { ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
+import { StudioBrief } from "./StudioBrief";
 
 export const STRUCTURE_LABEL: Record<string, string> = {
   what: "Its parts, the most important first",
@@ -29,10 +30,12 @@ export interface ApproachEdit {
  * how it unfolds, what the web added and what the material cannot answer. Collapsed to one row;
  * "Edit approach" changes the question, answer or purpose, and a rebuild keeps those words.
  */
-export function ApproachPanel({ artifact, busy, onRebuild }: {
+export function ApproachPanel({ artifact, busy, onRebuild, onCite }: {
   artifact: Artifact;
   busy: boolean;
   onRebuild: (approach: ApproachEdit) => void;
+  /** Opens source n (counting from 0) of the version, for the studio's cited insights. */
+  onCite?: (index: number) => void;
 }) {
   const approach = artifact.provenance.approach ?? null;
   const skipped = artifact.provenance.skill?.skipped ?? [];
@@ -45,6 +48,18 @@ export function ApproachPanel({ artifact, busy, onRebuild }: {
   }, [artifact.id]);
 
   if (!approach) return null;
+  if (approach.method === "studio") {
+    return <section className="outputs-outline outputs-approach is-studio" aria-label="How it was made">
+      <header>
+        <button type="button" className="outputs-outline-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
+          <ChevronRight size={14} aria-hidden="true" />
+          <strong>How it was made</strong>
+          <small>{approach.answer}</small>
+        </button>
+      </header>
+      {open && <StudioBrief artifact={artifact} {...(onCite ? { onCite } : {})} />}
+    </section>;
+  }
   const use = artifact.provenance.use;
   const deck = artifact.kind === "slides"
     ? [use === "read" ? "To be read" : use === "talk" ? "For a talk" : "", approach.pages ? `about ${approach.pages} slides` : ""].filter(Boolean).join(", ")

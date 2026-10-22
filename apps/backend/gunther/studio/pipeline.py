@@ -36,6 +36,7 @@ from gunther.outputs import (
 )
 from gunther.studio import format as fmt
 from gunther.studio import prompts as P
+from gunther.studio.look import look
 from gunther.studio.reference import DECK_FORMAT, READ_NOTE, REPORT_FORMAT
 
 logger = logging.getLogger(__name__)
@@ -180,8 +181,12 @@ def _in_context(function):
 class StudioAgents(OutputAgents):
     """Makes a report or a deck with the studio method. Checking reuses OutputAgents."""
 
-    def __init__(self, gateway, limits=None, *, use: str | None = None, tool=None) -> None:
+    def __init__(
+        self, gateway, limits=None, *, use: str | None = None, tool=None, renderer=None
+    ) -> None:
         super().__init__(gateway, limits)
+        # Draws slides with the real renderer for the "look" step; None: that step is skipped.
+        self.renderer = renderer
         self.use = use if use in ("talk", "read") else None
         self.tool = tool
         self.trail: list[dict[str, Any]] = []
@@ -935,6 +940,8 @@ class StudioAgents(OutputAgents):
         state["storyline"] = run.story.model_dump()
         if checkpoint:
             checkpoint(dict(state))
+        looked: dict[str, Any] | None = None
+        snapshot: dict[str, Any] | None = None
         if spec.kind == "slides":
             text = self.write_deck(model, effort, run, pool, material, emit)
             text = self.fix_format(model, effort, run, text, emit)
@@ -949,7 +956,25 @@ class StudioAgents(OutputAgents):
                 for n, d in enumerate(drafts, 1)
             ]
             title = outline[0].heading if outline else (run.story.title or fallback_title)
-            built = self.assemble(spec, title, "", drafts, pool, outline, model, effort)
+
+            def assemble_deck(parts: list[Draft]) -> BuiltOutput:
+                planned = [
+                    Planned(
+                        fmt.parse_slide(d.text).title or f"Slide {n}",
+                        layout=fmt.parse_slide(d.text).layout,
+                    )
+                    for n, d in enumerate(parts, 1)
+                ]
+                return self.assemble(spec, title, "", parts, pool, planned, model, effort)
+
+            built = assemble_deck(drafts)
+            try:
+                built, looked, snapshot = look(
+                    self, built, drafts, model=model, effort=effort, use=run.use, pool=pool,
+                    assemble=assemble_deck, emit=emit, unfence=_unfence,
+                )  # fmt: skip
+            except Exception as error:  # noqa: BLE001 - looking never fails a build
+                logger.warning("The look at the slides failed: %s", error)
         else:
             text = self.write_report(model, effort, run, pool, material, emit)
             preamble, sections = split_document(text, "report")
@@ -980,11 +1005,19 @@ class StudioAgents(OutputAgents):
             "memo": run.memo.model_dump() if run.memo else None,
             "storyline": run.story.model_dump() if run.story else None,
             "reviews": [r.model_dump() for r in run.reviews or []],
+            "ref_map": {str(ref): n for n, ref in enumerate(built.pool_refs, 1)},
         }
         return replace(
             built,
             approach=approach,
-            skill={"name": "studio", "version": 1, "skipped": self.skipped, "trail": self.trail},
+            skill={
+                "name": "studio",
+                "version": 1,
+                "skipped": self.skipped,
+                "trail": self.trail,
+                **({"look": looked} if looked else {}),
+                **({"renderCheck": snapshot} if snapshot else {}),
+            },
         )
 
 

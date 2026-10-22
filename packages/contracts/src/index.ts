@@ -1295,6 +1295,31 @@ export interface OutputApproach {
   supplements: OutputSupplement[];
   /** What the material cannot answer. */
   gaps: string[];
+  /** "studio": made by the studio method, which also keeps what it understood and planned. */
+  method?: "studio" | string;
+  memo?: StudioMemo | null;
+  storyline?: { title: string; subtitle?: string; slides?: Array<{ title: string; layout?: string; job?: string }>; sections?: Array<{ heading: string; job?: string }> } | null;
+  reviews?: StudioReview[] | null;
+  /** The memo's source numbers (as a string) -> the number the text cites them by. */
+  refMap?: Record<string, number> | null;
+}
+
+/** What the studio found worth saying, before it planned. */
+export interface StudioMemo {
+  answer: string;
+  insights: Array<{ claim: string; so_what?: string; refs: number[] }>;
+  facts?: Array<{ fact: string; value?: string; compared_to?: string; refs: number[] }>;
+  tensions?: Array<{ issue: string; refs: number[] }>;
+  questions?: string[];
+  title?: string;
+}
+
+/** The critic's look at a storyline. */
+export interface StudioReview {
+  round?: number;
+  understood: string;
+  verdict: string;
+  problems: Array<{ where?: string; problem: string; fix?: string }>;
 }
 
 /** The skill a version was made by, and the steps that failed and were skipped. */
@@ -1302,6 +1327,8 @@ export interface SkillRun {
   name: string;
   version: number;
   skipped: Array<{ step: string; label: string; reason: string }>;
+  /** The studio's steps, in order, with how long each took. */
+  trail?: Array<{ step: string; state: string; detail: string; seconds: number }>;
   renderCheck?: SlideRenderCheck | null;
   visualReview?: SlideVisualReview | null;
   outlineReview?: {

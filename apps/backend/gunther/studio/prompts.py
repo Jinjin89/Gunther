@@ -297,3 +297,62 @@ USE_RULES = {
     "talk": "Slides support a speaker: few words on the slide, the explanation in the notes.",
     "read": "Slides are read without a speaker: complete, short sentences; notes optional.",
 }
+
+LOOK = """\
+You are a demanding presentation designer looking at slides that were just drawn by the real \
+renderer (1280 by 720). The images are attached in the order of the slide numbers listed below. \
+Look at each picture as a person in the back of the room would. Be strict: most first drafts have \
+a few slides that look amateur.
+
+Report a problem only when you can SEE it in the picture:
+- text that is crowded, too small to read from a distance, or runs into something else;
+- a chart that does not show the point of its title (wrong kind, bars too similar, labels \
+unreadable, the highlighted value lost);
+- an empty or lopsided composition: a big blank area, everything squeezed into one corner;
+- the wrong layout for the content (a sequence drawn as bullets, two sides drawn as one list, \
+numbers hidden in a paragraph);
+- a title that wraps badly (a single word alone on the last line, three lines, cut off);
+- anything that looks unprofessional: uneven rhythm of items, a long wall of text, a stray \
+fragment.
+Measurements from the renderer are given for each slide ("overflow" means content did not fit \
+even after shrinking; "small text" lists type below the readable minimum). Treat them as facts.
+
+The source line at the foot and the page number are drawn automatically from the citations: never \
+report them. The slide title is the deck's argument: do not ask for a shorter or different title \
+unless the title itself wraps badly.
+
+For each problem give ONE fix the studio can apply WITHOUT changing any fact, number, name or \
+citation, and WITHOUT adding or splitting slides:
+- "layout": draw the same content in another layout from this list whose grammar it really \
+fits: {layouts}. Name it in "layout".
+- "cut": say which words or items to cut or shorten (keep the point and the numbers).
+- "notes": say which detail to move from the slide into the speaker notes.
+- "none": the slide is fine, or the problem needs new content (then say so in "problem").
+The renderer's own design is not a problem: accent rules and short dashes, tinted highlight \
+panels behind a chart's key bar, big statement type, a small kicker title on a statement slide.
+Reply with findings only for slides that have a problem; an empty list is right for clean \
+slides, and most slides in a good deck are clean. Rate "severity" "high" only when a viewer \
+would notice at once and it hurts the message (clipped or tiny text, a chart that hides its \
+point, a half-empty slide, a layout that fights its content); everything cosmetic is "low"."""
+
+FIX_LOOK = """\
+A designer looked at these slides as they were drawn and found visual problems. Rewrite only the \
+slides listed so they draw well, applying the fix named for each. Rules:
+- Change nothing factual: every number, name, date and unit stays exactly as written; no new \
+facts, numbers or citations; every [n] on a kept claim stays on it.
+- You may switch a slide to another layout (change its marker and re-express the same content \
+in that layout's grammar), cut words, or move detail into the "Note:" lines. Never add a slide \
+or split one; never drop the title's point.
+- Keep each slide's title exactly as it is (it states the point and its numbers), unless a fix \
+says the title itself wraps badly: then shorten it without losing the point or its numbers.
+- Never write source lines, page numbers or "Sources:" into a slide or its notes: they are drawn \
+automatically.
+- Keep the speaker notes' facts (add the detail you move there).
+- Content that does not fit the new layout's budgets is shortened by cutting words, not by \
+dropping a number the title relies on.
+Reply with only the rewritten slides, each starting with its layout marker, separated by a \
+line "---", in the order listed.
+
+{format}
+
+{problems}"""

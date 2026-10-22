@@ -204,7 +204,8 @@ export function parseDeckSlide(layout: string | null | undefined, body: string, 
     }
     case "stat": {
       const lines = blocks.every((block) => block.t === "line") ? lineText(blocks)?.split("\n") ?? [] : [];
-      const value = /^(?:\*\*|__)(.+?)(?:\*\*|__)\s*$/.exec(lines[0] ?? "");
+      // A citation mark after the bold value is allowed (the format checker allows it); the label cites too.
+      const value = /^(?:\*\*|__)(.+?)(?:\*\*|__)\s*(?:\[[^\]]+\]\s*)*$/.exec(lines[0] ?? "");
       if (!value || lines.length < 2) return fallback();
       return { layout: "stat", title, value: value[1]!.trim(), label: lines[1]!, context: join(...lines.slice(2)) };
     }

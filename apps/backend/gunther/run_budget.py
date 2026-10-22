@@ -96,3 +96,7 @@ class BudgetedGateway:
 
     def complete_json(self, *args: Any, **kwargs: Any) -> Any:
         return self._call("complete_json", *args, **kwargs)
+
+    def for_role(self, role: str) -> Any:
+        finder = getattr(self.gateway, "for_role", None)
+        return finder(role) if finder else None

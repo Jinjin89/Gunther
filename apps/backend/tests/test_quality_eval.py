@@ -127,3 +127,12 @@ def test_summary_rows_and_materials_file() -> None:
     sets = materials.load_sets()
     assert [s.id for s in sets][:2] == ["velmora", "rag-papers"] and len(sets) == 7
     assert all(s.deck.use == "talk" and s.report.kind == "report" for s in sets)
+
+
+def test_the_visual_column_prefers_the_vision_judge_and_falls_back_to_the_text_judge() -> None:
+    builds = [
+        {"set": "a", "label": "deck", "absolute": {"visual": 4, "insight": 5}, "visualJudge": {"score": 8}},
+        {"set": "b", "label": "deck", "absolute": {"visual": 6, "insight": 5}, "visualJudge": {"error": "x"}},
+        {"set": "c", "label": "deck", "absolute": {"insight": 5}},
+    ]
+    assert report.summarize(builds)["scores"]["visual"] == 7.0

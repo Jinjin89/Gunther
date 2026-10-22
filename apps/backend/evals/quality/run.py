@@ -71,6 +71,7 @@ class Options:
     effort: str | None = None
     render: bool = True
     do_judge: bool = True
+    visual_judge: str | None = None
 
 
 @dataclass(frozen=True)
@@ -330,6 +331,25 @@ def lint_build(record: dict[str, Any], material: materials.MaterialSet) -> None:
 # Judge ------------------------------------------------------------------------------------
 
 
+def visual_build(
+    record: dict[str, Any], gateway: Any, model: Any, meter: judging.Meter
+) -> None:
+    """A vision model's score of the rendered slides, and a verdict for each slide."""
+
+    folder = Path(record["dir"])
+    with meter.bucket() as used:
+        result, error = judging.judge_visual(
+            gateway, model, title=record.get("title") or record["label"],
+            pngs=[folder / p for p in record.get("pngs", [])],
+        )  # fmt: skip
+    record["judgeCalls"] = record.get("judgeCalls", 0) + used.calls
+    record["judgeTokens"] = record.get("judgeTokens", 0) + used.tokens
+    if result is None:
+        record["visualJudge"] = {"error": error, "model": model.ref}
+        return
+    record["visualJudge"] = {**result.model_dump(), "model": model.ref}
+
+
 def judge_build(
     record: dict[str, Any], material: materials.MaterialSet, gateway: Any, model: Any,
     meter: judging.Meter,
@@ -570,6 +590,24 @@ def run_quality(
 
                 with ThreadPoolExecutor(max_workers=max(1, options.jobs)) as pool:
                     list(pool.map(judged, good))
+                if options.visual_judge:
+                    looker = live.get(options.visual_judge)
+                    say(f"Looking at the rendered decks with {options.visual_judge} ...")
+
+                    def looked(build: dict[str, Any]) -> None:
+                        if looker is None:
+                            build["visualJudge"] = {"error": "model is not ready"}
+                        else:
+                            try:
+                                visual_build(build, live, looker, meter)
+                            except Exception as error:  # noqa: BLE001
+                                build["visualJudge"] = {"error": f"{type(error).__name__}: {error}"}
+                        (Path(build["dir"]) / "meta.json").write_text(
+                            json.dumps(build, ensure_ascii=False, indent=1), encoding="utf-8"
+                        )
+
+                    with ThreadPoolExecutor(max_workers=max(1, options.jobs)) as pool:
+                        list(pool.map(looked, [b for b in good if b.get("pngs")]))
                 pairs = judge_pairs(builds, by_id, live, live_judge, meter, options.jobs, say)
         judge_usage = {
             "calls": sum(b.get("judgeCalls", 0) for b in builds) + sum(p["calls"] for p in pairs),
@@ -578,7 +616,7 @@ def run_quality(
 
     raw = {
         "label": options.label, "started": started.isoformat(timespec="seconds"),
-        "model": model, "judge": judge_ref, "judgeSeesImages": bool(judge_model and judge_model.vision),
+        "model": model, "judge": judge_ref, "visualJudge": options.visual_judge, "judgeSeesImages": bool(judge_model and judge_model.vision),
         "methods": options.methods, "kinds": options.kinds, "codeHash": code,
         "sets": {
             m.id: {
@@ -632,6 +670,11 @@ def parse(argv: list[str] | None = None) -> Options:
         help="skip a build whose inputs, method, model and code already have a result",
     )  # noqa: E501
     parser.add_argument("--reseed", action="store_true", help="read the sets again")
+    parser.add_argument(
+        "--visual-judge",
+        help="vision model ref (e.g. deepseek/deepseek-flash) that scores the rendered slides "
+        "1-10 and gives each a verdict; fills the report's Visual column",
+    )
     parser.add_argument("--no-render", action="store_true")
     parser.add_argument("--no-judge", action="store_true", help="build and lint only")
     args = parser.parse_args(argv)
@@ -643,7 +686,7 @@ def parse(argv: list[str] | None = None) -> Options:
         seed_only=args.seed_only,
         builds_from=tuple(n for n in args.builds_from.split(",") if n),
         baseline_from=tuple(n for n in args.baseline_from.split(",") if n), reseed=args.reseed, effort=args.effort,
-        render=not args.no_render, do_judge=not args.no_judge,
+        render=not args.no_render, do_judge=not args.no_judge, visual_judge=args.visual_judge,
     )  # fmt: skip
 
 

@@ -891,5 +891,9 @@ if __name__ == "__main__":
         from gunther.slide_render_cli import main as render_smoke
 
         render_smoke(sys.argv[2:])
+    elif sys.argv[1:2] == ["--studio-smoke"]:
+        from gunther.studio.smoke import main as studio_smoke
+
+        sys.exit(studio_smoke(sys.argv[2:]))
     else:
         main()

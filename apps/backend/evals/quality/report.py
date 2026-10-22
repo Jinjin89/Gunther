@@ -45,7 +45,16 @@ def summarize(builds: list[dict[str, Any]]) -> dict[str, Any]:
         if verdicts
         else None,
         "titlesPass": (sum(titled) / len(titled)) if titled else None,
-        "scores": {name: judging.mean([a.get(name) for a in absolutes]) for name in SCORES},
+        "scores": {
+            **{name: judging.mean([a.get(name) for a in absolutes]) for name in SCORES},
+            # The vision judge, when one ran, scores how the slides look.
+            "visual": judging.mean(
+                [
+                    (b.get("visualJudge") or {}).get("score", (b.get("absolute") or {}).get("visual"))
+                    for b in ok
+                ]
+            ),
+        },
         "defects": sum(defect_rules.values()),
         "defectRules": defect_rules,
         "unmeasured": sum(1 for b in ok if not b.get("measured")),
@@ -185,6 +194,17 @@ def render(raw: dict[str, Any]) -> str:
                 for v in b["verdicts"]
             ]
             out.append("")
+        visual = b.get("visualJudge")
+        if visual and visual.get("slides"):
+            out.append(f"Visual ({visual.get('model', '?')}): **{visual['score']}/10**. {visual['summary']}")
+            out += ["", "| # | Looks | Reason |", "|---|---|---|"]
+            out += [
+                f"| {v['index']} | {v['verdict']} | {v['reason'].replace('|', '/')} |"
+                for v in visual["slides"]
+            ]
+            out.append("")
+        elif visual and visual.get("error"):
+            out += [f"Visual judge failed: {visual['error']}", ""]
         if b.get("pngs"):
             out.append("Renders: " + " ".join(f"[{Path(p).stem}]({rel}/{p})" for p in b["pngs"]))
             out.append("")

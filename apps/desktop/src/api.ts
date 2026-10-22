@@ -19,6 +19,8 @@ import type {
   EditOutputRequest,
   OutlineItem,
   OutputApproach,
+  StudioMemo,
+  StudioReview,
   DeckUse,
   ReviseOutputRequest,
   Assertion,
@@ -132,7 +134,11 @@ export type OutputEvent =
   | { type: "outline"; title: string; sections: OutlineItem[] }
   | { type: "section"; index: number; state: "researching" | "writing" | "checking" | "revising" | "done" }
   /** A step of the skill the output follows: understand, structure, write, edit_review, reader_test, revise. */
-  | { type: "stage"; id: string; label: string; state: "running" | "done" | "failed"; detail?: string }
+  | { type: "stage"; id: string; label: string; state: "running" | "done" | "failed"; detail?: string; seconds?: number }
+  /** The studio method: what is worth saying, then the critic's look at the storyline. */
+  | { type: "memo"; memo: StudioMemo }
+  | { type: "storyline"; storyline: NonNullable<OutputApproach["storyline"]> }
+  | { type: "review"; round: number; verdict: string; understood: string; problems: StudioReview["problems"] }
   /** What the skill decided before planning. */
   | { type: "approach"; approach: OutputApproach & { use?: DeckUse | null } }
   | { type: "step"; state: "running" | "done"; tool: AgentStep["tool"]; label: string; query?: string; found?: number; error?: string | null; section: number | null }

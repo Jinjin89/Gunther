@@ -3,6 +3,7 @@ import { BookOpen, Check, ChevronRight, CircleAlert, CircleHelp, ClipboardCheck,
 import { BrandMark } from "../design/BrandMark";
 import { AnswerBody, citationNumbers, withoutMarks } from "../pages/AnswerBody";
 import { LiveSections } from "./LiveSections";
+import { StudioLive } from "./StudioBrief";
 import type { LiveAction, LiveOutputState } from "./liveOutput";
 import { outputActivity } from "./ArtifactAgentPlan";
 
@@ -171,6 +172,7 @@ export function LiveTurn({ live, kind, stopping, onStop, only }: {
   return <>
     <div className="aw-message is-assistant" role="status"><span className="aw-agent-mark"><BrandMark size={17} busy /></span><div className="artifact-reply">
       {live.actions.length > 0 ? <TurnSteps steps={live.actions} /> : <p>{outputActivity(live)}</p>}
+      <StudioLive state={live} />
       {live.reply && <AnswerBody content={withoutMarks(live.reply)} numbers={[]} />}
       {waiting && live.sections.length === 0 && <div className="live-wait"><span><i /><i /><i /></span><small>Working out what to do…</small></div>}
     </div></div>

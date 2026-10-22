@@ -10,15 +10,18 @@ export function measureSlide(face: HTMLElement, use: "talk" | "read") {
     const hidden = element.closest(".outputs-sr-only,[aria-hidden='true']");
     return !(hidden && face.contains(hidden)) && getComputedStyle(element).visibility !== "hidden" && element.getBoundingClientRect().height > 0;
   };
-  const texts = [...face.querySelectorAll<HTMLElement>("h1,h2,h3,p,li,th,td,figcaption,svg text")].filter(element => element.textContent?.trim() && visible(element));
+  // The deck design (v2) scales its whole canvas to fit; type sizes are what is seen on the stage.
+  const deck = face.classList.contains("dk-face");
+  const scale = deck ? parseFloat(face.querySelector<HTMLElement>(".dk-canvas")?.style.getPropertyValue("--dk-fit") ?? "") || 1 : 1;
+  const texts = [...face.querySelectorAll<HTMLElement>("h1,h2,h3,p,li,th,td,figcaption,svg text")].filter(element => element.textContent?.trim() && visible(element) && !(deck && element.closest(".dk-foot")));
   const typography = texts.map(element => {
     const style = getComputedStyle(element);
-    const role = /^H[123]$/.test(element.tagName) ? "heading" : element.closest(".outputs-s-after,.outputs-s-measure") ? "caption" : element.closest("svg") ? "label" : "body";
+    const role = (deck ? /^H[12]$/ : /^H[123]$/).test(element.tagName) ? "heading" : element.closest(".outputs-s-after,.outputs-s-measure") || (deck && element.closest("figcaption,.dk-note")) ? "caption" : element.closest("svg") ? "label" : "body";
     // These are stage-pixel floors, not a penalty for every internal fit below one.
     // Reading pages allow smaller body type; captions and plot labels have their own floor.
     const cjk = /[\u3400-\u9fff]/.test(element.textContent ?? "");
-    const minimum = role === "heading" ? 28 : role === "caption" || role === "label" ? 16 : use === "read" ? (cjk ? 20 : 18) : (cjk ? 24 : 22);
-    const size = parseFloat(style.fontSize);
+    const minimum = deck ? (role === "heading" ? 20 : role === "body" ? 18 : 14) : role === "heading" ? 28 : role === "caption" || role === "label" ? 16 : use === "read" ? (cjk ? 20 : 18) : (cjk ? 24 : 22);
+    const size = parseFloat(style.fontSize) * scale;
     return { role, size, minimum, family: style.fontFamily, blockId: element.closest<HTMLElement>("[data-block-id]")?.dataset.blockId ?? null, bounds: rect(element), text: element.textContent?.slice(0,160) ?? "" };
   });
   const blocks = [...face.querySelectorAll<HTMLElement>("[data-block-id]")].map(element => ({ id: element.dataset.blockId!, bounds: rect(element) }));
@@ -40,9 +43,10 @@ export function measureSlide(face: HTMLElement, use: "talk" | "read") {
     }
   }
   return {
-    fit: parseFloat(face.style.getPropertyValue("--outputs-fit")) || 1,
+    fit: deck ? scale : parseFloat(face.style.getPropertyValue("--outputs-fit")) || 1,
+    overflowWhy: face.dataset.overflowWhy ?? null,
     overflow: face.parentElement?.dataset.overflow === "true" || textOverflow,
-    drawn: face.dataset.drawn ?? "markdown", sceneIssue: face.dataset.sceneIssue || face.parentElement?.dataset.sceneIssue || null,
+    drawn: (deck ? face.dataset.layout : face.dataset.drawn) ?? "markdown", sceneIssue: face.dataset.sceneIssue || face.parentElement?.dataset.sceneIssue || null,
     bounds: { width: stage.width/factor, height: stage.height/factor }, blockBounds: blocks, typography, overlaps,
     smallText: typography.filter(text => text.size < text.minimum - 0.5),
     fonts: [...new Set(typography.map(text => text.family))],

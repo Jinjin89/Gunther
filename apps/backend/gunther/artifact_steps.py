@@ -1395,7 +1395,10 @@ class WorkSteps:
         cited = {citation.url or citation.source_id for citation in built.citations}
         built = replace(
             built,
-            approach=work.approach
+            approach={
+                **(work.approach or {}),
+                "ref_map": {str(ref): n for n, ref in enumerate(built.pool_refs, 1)},
+            }
             if getattr(agents, "studio", False)
             else agents.approach.out(self.pool, cited)
             if agents.approach

@@ -1,4 +1,4 @@
-import type { ArtifactBriefState, OutlineItem, OutputApproach } from "@gunther/contracts";
+import type { ArtifactBriefState, OutlineItem, OutputApproach, StudioMemo, StudioReview } from "@gunther/contracts";
 import { useCallback, useState } from "react";
 import type { ArtifactTurnEvent, OutputEvent } from "../api";
 import type { LiveStep } from "../pages/liveAnswer";
@@ -11,6 +11,8 @@ export interface LiveStage {
   label: string;
   state: "running" | "done" | "failed";
   detail: string | null;
+  /** How long it took, once finished. */
+  seconds: number | null;
 }
 
 /** One section (or slide) of an output being built: where it is and what it says so far. */
@@ -45,6 +47,10 @@ export interface LiveOutputState {
   stages: LiveStage[];
   /** What the skill decided before planning. */
   approach: OutputApproach | null;
+  /** The studio's insight memo, when it arrives. */
+  memo: StudioMemo | null;
+  /** The critic's looks at the storyline, one per round. */
+  reviews: StudioReview[];
   /** A turn of the Artifacts agent: the actions it decided on so far, in order. */
   actions: LiveAction[];
   /** The text of an answer or reply as it is written. */
@@ -57,7 +63,7 @@ export interface LiveOutputState {
   turn: { conversationId: string; messageId: string } | null;
 }
 
-export const EMPTY_LIVE: LiveOutputState = { question: null, title: null, sections: [], steps: [], stages: [], approach: null, actions: [], reply: "", asking: null, brief: null, turn: null };
+export const EMPTY_LIVE: LiveOutputState = { question: null, title: null, sections: [], steps: [], stages: [], approach: null, memo: null, reviews: [], actions: [], reply: "", asking: null, brief: null, turn: null };
 const blank = (): LiveSection => ({ heading: "", goal: "", state: "waiting", text: "", steps: [] });
 
 /** The same step, updated: a running search is replaced by its result. */
@@ -105,10 +111,14 @@ export function applyOutputEvent(state: LiveOutputState, event: ArtifactTurnEven
     case "text":
       return change(event.section, (section) => ({ ...section, text: section.text + event.text }));
     case "stage": {
-      const stage: LiveStage = { id: event.id, label: event.label, state: event.state, detail: event.detail ?? null };
+      const stage: LiveStage = { id: event.id, label: event.label, state: event.state, detail: event.detail ?? null, seconds: event.seconds ?? null };
       const at = state.stages.findIndex((item) => item.id === event.id);
       return { ...state, stages: at === -1 ? [...state.stages, stage] : state.stages.map((item, index) => (index === at ? stage : item)) };
     }
+    case "memo":
+      return { ...state, memo: event.memo };
+    case "review":
+      return { ...state, reviews: [...state.reviews.filter((item) => item.round !== event.round), { round: event.round, verdict: event.verdict, understood: event.understood, problems: event.problems }] };
     case "approach":
       return { ...state, approach: event.approach };
     case "turn":
@@ -126,6 +136,9 @@ export function applyOutputEvent(state: LiveOutputState, event: ArtifactTurnEven
     case "step":
       if (event.section === null) return { ...state, steps: withStep(state.steps, event) };
       return change(event.section, (section) => ({ ...section, steps: withStep(section.steps, event) }));
+    // The studio's storyline arrives again as the outline; any event not known here changes nothing.
+    default:
+      return state;
   }
 }
 

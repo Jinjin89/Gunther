@@ -266,6 +266,47 @@ def judge_absolute(
     return result, error
 
 
+class SlideLook(BaseModel):
+    index: int = Field(description="Slide number, counted from 1")
+    verdict: Verdict
+    reason: str = Field(max_length=300)
+
+
+class VisualJudgment(BaseModel):
+    score: int = Field(ge=1, le=10)
+    slides: list[SlideLook]
+    summary: str = Field(max_length=500)
+
+
+VISUAL_SYSTEM = """You are a demanding presentation designer judging how slides LOOK. The \
+attached images are the rendered slides of one deck, in order (image 1 = slide 1). Judge only \
+what you can see, as a person in the back of the room would: readable type size and contrast; \
+crowded or empty areas; balance and alignment; whether each chart or table shows its point; \
+whether the layout suits the content; titles that wrap badly; anything amateur.
+
+Score the deck 1-10 (5 = adequate, 8 = a top designer would sign off, 10 = rare). Be strict: \
+most generated decks have crowded or flat slides. For EVERY slide give a verdict: "ship" = \
+present as it is; "minor edit" = a quick trim or nudge; "rework" = the layout, density or chart \
+needs redoing. Do not judge the argument or the facts."""
+
+
+def judge_visual(
+    gateway: ModelGateway, model: ModelInfo, *, title: str, pngs: Sequence[Path]
+) -> tuple[VisualJudgment | None, str]:
+    """A vision model's score of how a deck looks, from its rendered slide images."""
+
+    if not model.vision:
+        return None, f"{model.label} cannot see images"
+    if not pngs:
+        return None, "no rendered slides"
+    images = load_images(pngs)
+    listing = ", ".join(f"image {n} = slide {n}" for n in range(1, len(images) + 1))
+    return _ask(
+        gateway, model, VisualJudgment, VISUAL_SYSTEM,
+        f"Deck: {title}\n{listing}.", images,
+    )  # fmt: skip
+
+
 TITLES_ONLY_SYSTEM = (
     "You read only the titles of a {kind}, in order. From them alone, write the core message "
     "the {kind} delivers: the answer or conclusion, in two or three sentences, with the key "
