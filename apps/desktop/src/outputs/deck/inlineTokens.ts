@@ -73,3 +73,27 @@ export function sourceLine(text: string, numbers: number[], sources: string[] | 
 export function sourceDetail(text: string, numbers: number[], sources: string[] | undefined): string {
   return [...new Set(citedIn(text).numbers.map((n) => sources?.[numbers.indexOf(n)]).filter((s): s is string => !!s))].join("\n");
 }
+
+/**
+ * A number with its unit or sign stays on one line: "11.86万亿元", "+38.7%", "5.0%", "2.1 °C". Chinese text
+ * has no spaces to break at, so without this a line can end inside a figure.
+ */
+export const NUMBER_UNIT = /\d{1,2}月\d{1,2}日|\d{4}年\d{1,2}月(?:\d{1,2}日)?|[+\-−~≈≥≤<>＋]?\d[\d,，.]*(?:\s?(?:°C|℃|%|‰)|%|‰|[万亿千百兆]{1,3}[元美欧]?|[元倍个年月日]|季度|小时|个百分点)?/g;
+
+/** Text cut into the stretches that must not break and the rest. */
+export function numberPieces(text: string): Array<{ text: string; keep: boolean }> {
+  const out: Array<{ text: string; keep: boolean }> = [];
+  let last = 0;
+  for (const match of text.matchAll(NUMBER_UNIT)) {
+    if (match[0].length < 2 && !/^[+\-−~≈≥≤<>＋]/.test(match[0])) continue;
+    if ((match.index ?? 0) > last) out.push({ text: text.slice(last, match.index), keep: false });
+    out.push({ text: match[0], keep: true });
+    last = (match.index ?? 0) + match[0].length;
+  }
+  if (last < text.length) out.push({ text: text.slice(last), keep: false });
+  return out;
+}
+
+/** The text with word joiners (U+2060) inside each number-and-unit group, for places that cannot style a span (PowerPoint, Word). */
+export const joinNumbers = (text: string): string =>
+  numberPieces(text).map((piece) => piece.keep ? [...piece.text].join("\u2060") : piece.text).join("");

@@ -1,7 +1,7 @@
 import { Fragment, type ReactNode } from "react";
 import { useSlide } from "../slides/Rich";
 import { scan } from "./parseDeck";
-import { tokens, type Token } from "./inlineTokens";
+import { numberPieces, tokens, type Token } from "./inlineTokens";
 import { sourceAssetUrl } from "../../api";
 
 function Cite({ token }: { token: Extract<Token, { t: "cite" }> }) {
@@ -16,7 +16,7 @@ function Cite({ token }: { token: Extract<Token, { t: "cite" }> }) {
 function render(raw: string): ReactNode[] {
   return tokens(raw).map((token, at) => {
     switch (token.t) {
-      case "text": return <Fragment key={at}>{token.v}</Fragment>;
+      case "text": return <Fragment key={at}>{numberPieces(token.v).map((piece, index) => piece.keep ? <span key={index} className="dk-nb">{piece.text}</span> : piece.text)}</Fragment>;
       case "bold": return <strong key={at}>{render(token.v)}</strong>;
       case "em": return <em key={at}>{render(token.v)}</em>;
       case "code": return <code key={at}>{token.v}</code>;

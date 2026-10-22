@@ -65,3 +65,14 @@ describe("importing a template", () => {
     expect(await plain.file("ppt/slides/slide3.xml")!.async("string")).not.toContain("<p:pic>");
   });
 });
+
+import { joinNumbers, numberPieces } from "./inlineTokens";
+
+describe("figures in running text", () => {
+  it("keeps a number with its unit, sign and date together", () => {
+    const keep = (text: string) => numberPieces(text).filter((p) => p.keep).map((p) => p.text);
+    expect(keep("新增债务11.86万亿元，增长5.0%，+38.7%，9月26日")).toEqual(["11.86万亿元", "5.0%", "+38.7%", "9月26日"]);
+    expect(keep("a 2.1 °C drop")).toEqual(["2.1 °C"]);
+    expect(joinNumbers("5.0%增长")).toBe("5⁠.⁠0⁠%增长");
+  });
+});

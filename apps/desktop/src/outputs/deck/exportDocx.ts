@@ -5,7 +5,7 @@
  * list at the end.
  */
 import { AlignmentType, BorderStyle, Document, HeadingLevel, Packer, Paragraph, ShadingType, Table, TableCell, TableRow, TextRun, WidthType, type ParagraphChild } from "docx";
-import { tokens, type Token } from "./inlineTokens";
+import { joinNumbers, tokens, type Token } from "./inlineTokens";
 import { scan } from "./parseDeck";
 import { parseReport, readBlocks, type ExhibitTable, type ReportBlock } from "./parseReport";
 import { visible } from "./units";
@@ -32,7 +32,7 @@ function runs(raw: string, base: Base = {}): ParagraphChild[] {
   const walk = (parts: Token[], inherit: { bold?: boolean; italics?: boolean }) => {
     for (const token of parts) {
       const style = { font: base.font ?? FONT, size: base.size ?? 22, color: base.color, ...inherit, bold: inherit.bold ?? base.bold, italics: inherit.italics ?? base.italics };
-      if (token.t === "text") out.push(new TextRun(clean({ ...style, text: token.v })));
+      if (token.t === "text") out.push(new TextRun(clean({ ...style, text: joinNumbers(token.v) })));
       else if (token.t === "bold") walk(tokens(token.v), { ...inherit, bold: true });
       else if (token.t === "em") walk(tokens(token.v), { ...inherit, italics: true });
       else if (token.t === "code") out.push(new TextRun(clean({ ...style, text: token.v, font: "Courier New" })));

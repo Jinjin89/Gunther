@@ -55,8 +55,8 @@ export function ReportV2Section({ text, numbers, onCite }: { text: string; numbe
   const body = summary ? rest.join("\n").replace(SUMMARY_MARK, "") : rest.join("\n");
   const context = { numbers, sources: [], onCite };
   return <SlideContext.Provider value={context}>
-    <div className={`rp${summary ? " is-summary" : ""}`} style={deckStyle("paper", null)}>
-      <h2 className="rp-heading">{first.replace(/^##\s*/, "")}</h2>
+    <div className={`rp${summary ? " is-summary" : ""}`} lang={/[\u3400-\u9fff]/.test(text) ? "zh-CN" : undefined} style={deckStyle("paper", null)}>
+      <h2 className="rp-heading"><Inline text={first.replace(/^##\s*/, "")} /></h2>
       <div className={summary ? "rp-summary" : "rp-section"}>
         {readBlocks(body).map((block, at) => <Block key={at} block={block} numbers={numbers} onCite={onCite} />)}
       </div>

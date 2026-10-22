@@ -249,3 +249,7 @@
 .dk-l-title .dk-logo { top: 56px; right: 80px; height: 64px; max-width: 280px; }
 .dk-l-section .dk-logo { top: 40px; height: 40px; }
 .dk-brand .dk-cover h1, .dk-brand .dk-title { font-weight: 700; }
+
+/* Figures stay whole, and Chinese breaks between words where the browser can tell (word-break: auto-phrase). */
+.dk-nb { white-space: nowrap; }
+.dk-face[lang^="zh"], .rp[lang^="zh"] { word-break: auto-phrase; line-break: strict; }

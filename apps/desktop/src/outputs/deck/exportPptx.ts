@@ -5,7 +5,7 @@
  */
 import PptxGenJS from "pptxgenjs";
 import { wrap } from "./measure";
-import { tokens } from "./inlineTokens";
+import { joinNumbers, tokens } from "./inlineTokens";
 import { sourceLine } from "./inlineTokens";
 import { parseDeck, type DeckData, type DeckSlide } from "./parseDeck";
 import type { BrandTheme } from "./brand";
@@ -38,7 +38,7 @@ function runs(raw: string, base: Base, ink: Ink, last = true, extra: Record<stri
   const add = (text: string, options: Record<string, unknown>) => out.push({ text, options: { fontFace: base.font ?? ink.bodyFont, fontSize: pt(base.size), color: hex(base.color), bold: base.bold, italic: base.italic, ...(CJK.test(text) ? { lang: "zh-CN" } : {}), ...options } });
   const walk = (parts: ReturnType<typeof tokens>, inherit: Record<string, unknown>) => {
     for (const token of parts) {
-      if (token.t === "text") add(token.v, inherit);
+      if (token.t === "text") add(joinNumbers(token.v), inherit);
       else if (token.t === "bold") walk(tokens(token.v), { ...inherit, bold: true });
       else if (token.t === "em") walk(tokens(token.v), { ...inherit, italic: true });
       else if (token.t === "code") add(token.v, { ...inherit, fontFace: "Courier New" });

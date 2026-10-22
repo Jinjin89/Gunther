@@ -98,7 +98,7 @@ export function DeckSlide({ body, layout, attrs, theme, accent, first = false, n
 
   const context = useMemo(() => ({ numbers, sources: sources ?? [], onCite }), [numbers, sources, onCite]);
   const style = { ...deckStyle(theme, accent, brand), "--dk-fit": fit } as CSSProperties;
-  return <div ref={face} className={`dk-face dk-theme-${drawn.theme}${drawn.brand ? " dk-brand" : ""} dk-l-${data.layout}`} data-design-version="2" data-theme={drawn.brand ? "brand" : drawn.theme} data-layout={data.layout} data-fit={fit} style={style}>
+  return <div ref={face} className={`dk-face dk-theme-${drawn.theme}${drawn.brand ? " dk-brand" : ""} dk-l-${data.layout}`} lang={/[\u3400-\u9fff]/.test(body) ? "zh-CN" : undefined} data-design-version="2" data-theme={drawn.brand ? "brand" : drawn.theme} data-layout={data.layout} data-fit={fit} style={style}>
     <div ref={canvas} className="dk-canvas">
       <SlideContext.Provider value={context}>
         {!cover && data.layout !== "text" || data.layout === "text" && data.title
