@@ -650,6 +650,13 @@ class StudioAgents(OutputAgents):
                 slides[n - 1] = fixed
                 deck = "\n\n---\n\n".join(slides)
         left = fmt.check_deck(deck, read=read, notes_required=run.use == "talk")
+        if any("units long" in p for _, problems in left for p in problems):
+            slides = fmt.split_slides(deck)
+            for n, problems in left:
+                if any("units long" in p for p in problems):
+                    slides[n - 1] = fmt.trim_to_notes(slides[n - 1], first=n == 1, read=read)
+            deck = "\n\n---\n\n".join(slides)
+            left = fmt.check_deck(deck, read=read, notes_required=run.use == "talk")
         if left:
             self.skipped.append(
                 {

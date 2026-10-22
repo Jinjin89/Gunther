@@ -415,6 +415,12 @@ def check_deck(
                 'Write the point itself as a full sentence (not "Early applications" but what '
                 "the early applications show)."
             )
+        uncited = uncited_lines(slide.body if slide.layout != "title" else slide.body[:1])
+        if uncited:
+            problems.append(
+                f'"{uncited[0][:70]}" states a number without a citation: add the passage '
+                "number after it, or drop the number."
+            )
         if CITE.search(slide.title):
             problems.append(
                 "Take the citation marks out of the title; the body proves it and cites."
@@ -647,3 +653,86 @@ def _overlap(one: str, two: str) -> float:
 
     a, b = bag(one), bag(two)
     return len(a & b) / max(1, min(len(a), len(b)))
+
+
+def _countable(number: str) -> bool:
+    if number.endswith("%"):
+        return True
+    plain = number.replace(",", "").replace("，", "")
+    if re.fullmatch(r"(?:19|20)\d\d", plain):
+        return False  # a year
+    try:
+        value = float(plain)
+    except ValueError:
+        return False
+    return not (value == int(value) and value <= 12)
+
+
+def uncited_lines(lines: list[str]) -> list[str]:
+    """Body lines (a table row is a line) that state a number but cite nothing. A table's
+    header row and a stat value whose label line cites are not counted."""
+
+    found = []
+    for index, line in enumerate(lines):
+        text = line.strip()
+        if not text or text.startswith(("#", "!", "|---", "| ---")) or CITE.search(text):
+            continue
+        following = next((ln.strip() for ln in lines[index + 1 :] if ln.strip()), "")
+        if text.startswith("|") and re.fullmatch(r"\|?[\s:|-]+\|?", following):
+            continue
+        if re.fullmatch(r"\*\*[^*]+\*\*", text) and CITE.search(following):
+            continue
+        plain = re.sub(r"\b[A-Za-z]+[-‑]?\d+[A-Za-z]*\b", "", text)  # names like GPT-4
+        if any(_countable(n) for n in re.findall(r"\d[\d,，.]*%?", plain)):
+            found.append(text)
+    return found
+
+
+def trim_to_notes(text: str, *, first: bool, read: bool = False) -> str:
+    """Last resort for a slide still over a length budget: the trailing clause of its longest
+    over-long line moves into the speaker notes, with its citations, so nothing is lost. Kept
+    only when it leaves the slide with fewer problems."""
+
+    slide = parse_slide(text)
+    before = [p for p in check_slide(slide, first=first, read=read) if "units long" in p]
+    if not before:
+        return text
+    lines = text.split("\n")
+    body = [
+        n
+        for n, ln in enumerate(lines)
+        if ln.strip()
+        and not ln.lstrip().startswith(("<!--", "#", "|", "!"))
+        and not re.match(r"^\s*(Note|Notes|备注)\s*[:：]", ln)
+    ]
+    note_at = next(
+        (n for n, ln in enumerate(lines) if re.match(r"^\s*(Note|Notes|备注)\s*[:：]", ln)), None
+    )
+    for n in sorted(body, key=lambda i: -units(lines[i])):
+        line = lines[n]
+        cuts = [m.start() for m in re.finditer(r"(?:; |；| — | – |, but |，但|。)", line)]
+        cuts = [c for c in cuts if c > len(line) * 0.4]
+        if not cuts:
+            continue
+        cut = cuts[-1]
+        head, tail = line[:cut].rstrip(" ;；—–,，"), line[cut:].lstrip(" ;；—–,，。").strip()
+        if not tail:
+            continue
+        refs = "".join(dict.fromkeys(re.findall(r"\[(?:\d+|\?)\]", line)))
+        if refs and not CITE.search(head):
+            head = head + " " + refs
+        candidate = list(lines)
+        candidate[n] = head
+        tail = tail[0].upper() + tail[1:] if tail[:1].islower() else tail
+        tail = tail if CITE.search(tail) or not refs else tail + " " + refs
+        if note_at is None:
+            candidate.append(f"Note: {tail}")
+        else:
+            candidate[note_at] = candidate[note_at].rstrip() + f" {tail}"
+        fixed = "\n".join(candidate)
+        after = [
+            p for p in check_slide(parse_slide(fixed), first=first, read=read) if "units long" in p
+        ]
+        if len(after) < len(before):
+            return fixed
+    return text

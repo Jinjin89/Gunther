@@ -217,10 +217,12 @@ SLIDE_BUDGETS: dict[str, dict[str, int]] = {}  # filled below, one dict per layo
 
 
 def units(text: str) -> int:
-    """Length in budget units: a CJK character is 2, anything else 1; marks do not count."""
+    """Length in budget units, counted exactly as the contract counts them (a CJK character
+    is 2; citation marks, with the space before them, and emphasis count nothing)."""
 
-    text = CITE.sub("", text).replace("**", "")
-    return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in text.strip())
+    from gunther.studio.format import units as contract_units
+
+    return contract_units(text)
 
 
 def has_cjk(text: str) -> bool:

@@ -142,3 +142,16 @@ def test_a_title_that_announces_content_is_sent_back():
         "## The pilot cut review time by 60%", "## Three findings change the decision"
     )
     assert any("announces" in p for p in dict(fmt.check_deck(deck))[2])
+
+
+def test_a_slide_still_over_budget_moves_its_tail_clause_into_the_notes():
+    long = "Raw cooling electricity fell 18% across the trial buildings, " * 2
+    slide = (
+        "<!-- layout: statement -->\n## Weather explains half of the headline saving\n"
+        f"{long.strip()}; most of the gain sat in a few buildings with large systems [1]\n"
+        "Note: Say it plainly."
+    )
+    trimmed = fmt.trim_to_notes(slide, first=False)
+    body = fmt.parse_slide(trimmed)
+    assert fmt.units(body.body[0]) <= 180 and "[1]" in body.body[0]
+    assert "Most of the gain sat in a few buildings" in body.notes
