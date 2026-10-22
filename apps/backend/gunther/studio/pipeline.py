@@ -779,6 +779,14 @@ class StudioAgents(OutputAgents):
         )
         return drafts
 
+    def _checker(self, model):
+        """Checking a sentence against its passage is a small job: it goes to the model set for
+        analysis (fast, cheap) when one is set; else to the writer's model."""
+
+        for_role = getattr(self.gateway, "for_role", None)
+        chosen = for_role("analysis") if callable(for_role) else None
+        return chosen[0] if chosen else model
+
     def _claims(self, model, text: str, by_ref: dict[int, Evidence]):
         """One claim check per part. A title is checked against the passages its own slide or
         section cites (it states their conclusion). Interpretation and recommendation that
@@ -797,7 +805,7 @@ class StudioAgents(OutputAgents):
                 break
         checked = "\n".join(lines)
         _, check, _, _ = self.ask.check_sentences(
-            model, STUDIO_CHECK, checked, by_ref, limit=self.limits.sentences
+            self._checker(model), STUDIO_CHECK, checked, by_ref, limit=self.limits.sentences
         )
         coverage = (
             check._coverage
@@ -950,6 +958,10 @@ class StudioAgents(OutputAgents):
             if not sections:
                 raise ModelError("The report came back without sections.")
             drafts = self.verify(model, run, sections, pool, emit)
+            # A claim fix may rewrite an exhibit: its caption and rows cite their sources again.
+            drafts = [
+                replace(d, text=fmt.cite_exhibit_rows(fmt.cite_captions(d.text))) for d in drafts
+            ]
             outline = [
                 Planned(re.sub(r"^##\s*", "", d.text.splitlines()[0]).strip()[:160]) for d in drafts
             ]

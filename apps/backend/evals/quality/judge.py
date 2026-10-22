@@ -327,8 +327,10 @@ def judge_pair(
     prompt = (
         f"The request:\n{brief}\n\n=== A ===\n{numbered(kind, first['content'])}\n\n"
         f"=== B ===\n{numbered(kind, second['content'])}\n\n"
-        "Passages from the sources (for checking facts):\n"
-        f"{source_view(first['citations'] or second['citations'])}"
+        "A's sources, by A's citation numbers (for checking A's facts):\n"
+        f"{source_view(first['citations'])}\n\n"
+        "B's sources, by B's citation numbers (for checking B's facts):\n"
+        f"{source_view(second['citations'])}"
     )
     return _ask(gateway, model, Compared, system, prompt)
 

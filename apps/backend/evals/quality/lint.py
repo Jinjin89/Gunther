@@ -440,6 +440,9 @@ def is_topic_title(title: str) -> bool:
         return True
     if has_cjk(clean):
         cjk = [ch for ch in clean if unicodedata.east_asian_width(ch) in ("W", "F")]
+        # A CJK title of ten or more characters, or with a clause break, states a point.
+        if len(cjk) >= 10 or re.search(r"[，；：,;:]", clean):
+            return False
         return len(cjk) < 8 or not (any(ch in CJK_VERBS for ch in cjk) or re.search(r"\d", clean))
     words = re.findall(r"[\w'’%.-]+", clean.lower())
     if len(words) < 4:
@@ -481,6 +484,9 @@ def uncited_numbers(lines: list[str]) -> list[str]:
             continue
         if re.fullmatch(r"\|?[\s:|-]+\|?", stripped):
             continue
+        following = next((ln.strip() for ln in lines[index + 1 :] if ln.strip()), "")
+        if stripped.startswith("|") and re.fullmatch(r"\|?[\s:|-]+\|?", following):
+            continue  # a table's header row names columns; it states no fact
         if CITE.search(stripped):
             continue
         if re.fullmatch(r"\*\*[^*]+\*\*", stripped):  # a stat value takes the next line's mark
@@ -496,7 +502,12 @@ def uncited_numbers(lines: list[str]) -> list[str]:
 
 def meta_hits(text: str) -> list[str]:
     lowered = text.lower()
-    return [phrase for phrase in META_PHRASES if phrase in lowered]
+    # Whole words: "not representative of all cells" is a fair limit, not a disclaimer.
+    return [
+        phrase
+        for phrase in META_PHRASES
+        if re.search(r"(?<![a-z])" + re.escape(phrase) + r"(?![a-z])", lowered)
+    ]
 
 
 # Measure -----------------------------------------------------------------------------------

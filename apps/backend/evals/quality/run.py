@@ -492,7 +492,10 @@ def run_quality(
         target = folder / "builds" / job.material.id / f"{job.label}-{job.method}"
         reusable = find_reusable(results_root, key) if options.reuse else None
         if reusable is None:
-            folders = [*options.builds_from, *(options.baseline_from if job.method == "skills" else ())]
+            folders = [
+                *options.builds_from,
+                *(options.baseline_from if job.method == "skills" else ()),
+            ]
             for name in folders:
                 earlier = results_root / name / "builds" / job.material.id / target.name
                 if (earlier / "content.md").exists():
