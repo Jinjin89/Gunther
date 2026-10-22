@@ -470,7 +470,10 @@ class StudioAgents(OutputAgents):
                 for n, s in enumerate(story.sections, 1)
             ]
         system = P.CRITIC.format(
-            brief=spec.brief or "(none)", audience=spec.audience, story="\n".join(lines)
+            brief=spec.brief or "(none)",
+            audience=spec.audience,
+            story="\n".join(lines),
+            answer=run.memo.answer if run.memo else "(not given)",
         )
         try:
             return self._json(model, Review, system, "Review it now.", "medium")
@@ -896,7 +899,14 @@ class StudioAgents(OutputAgents):
         pieces = [p.strip() for p in re.split(r"\n-{3,}\n", "\n" + text + "\n") if p.strip()]
         if len(pieces) != len(drafts):
             logger.info("Claim fix returned %d parts for %d", len(pieces), len(drafts))
-            return None
+            if len(drafts) == 1:
+                return None
+            # Asked again one part at a time; a part whose fix fails keeps its text.
+            singles = []
+            for draft in drafts:
+                one = self._fix_claims(model, [draft], by_ref)
+                singles.append(one[0] if one else draft.text)
+            return singles
         out = []
         for draft, piece in zip(drafts, pieces, strict=True):
             piece = re.sub(r"\A\s*Part \d+:\s*\n", "", piece)

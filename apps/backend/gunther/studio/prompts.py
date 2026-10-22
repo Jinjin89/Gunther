@@ -148,7 +148,9 @@ Audience: {audience}
 
 Do two things.
 1. Read only the titles below, in order, as the audience would. Write in two sentences \
-what you understood the core message to be.
+what you understood the core message to be. The intended answer is: {answer} — if your \
+retelling misses any part of it, above all the decision or recommendation, the storyline is \
+not ready: say which titles must carry the missing part.
 2. Find what would make this fail in front of the audience: titles that are topics or \
 vague, titles with no specific (number, name, comparison), slides that repeat each other, \
 gaps or jumps in the logic, the answer coming too late, weak opening, weak ending, a \
