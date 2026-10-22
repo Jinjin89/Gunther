@@ -5,7 +5,7 @@ are in units: a Latin character is 1, a CJK character 2; citation marks count no
 DECK_FORMAT = """\
 GUNTHER SLIDE FORMAT
 Slides are separated by a line "---". Each starts with a marker line <!-- layout: ID -->. \
-Content slides then have "## Action title": one sentence, ideally 8–14 words, at most 90 units, no semicolons stacking two points. Speaker notes come last, after \
+Titles never carry citation marks. Content slides then have "## Action title": one sentence, ideally 8–14 words, at most 90 units, no semicolons stacking two points. Speaker notes come last, after \
 a line starting with "Note:". Citations [n] go right after the claim they support, inside \
 any line or table cell.
 

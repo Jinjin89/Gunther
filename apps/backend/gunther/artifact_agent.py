@@ -829,7 +829,7 @@ class TurnContext:
     effort_for_decisions: Effort | None = "low"
     # The studio method (Settings → Developer): ``studio(spec, pool, use)`` makes a whole
     # artifact; ``make_studio_agents(kind)`` gives the agents for working on one it made.
-    studio: Callable[[Any, Pool, str | None], BuiltOutput] | None = None
+    studio: Callable[..., BuiltOutput] | None = None
     make_studio_agents: Callable[[str], Any] | None = None
 
 
@@ -1422,7 +1422,13 @@ class ArtifactAgent:
         made = Pool(1_000_000)
         made.restore(list(self.pool.items))
         use = _fold_use(work)
-        built = c.studio(spec, made, use)
+        resume = (work.approach or {}).get("studio_progress")
+
+        def keep(state: dict[str, Any]) -> None:
+            # Kept in the work (the workspace is saved even when the turn fails).
+            work.approach = {**(work.approach or {}), "studio_progress": state}
+
+        built = c.studio(spec, made, use, resume, keep)
         load_built(work, built, made, self.pool, self.brief)
         name = "deck" if work.spec.kind == "slides" else "report"
         return Outcome(

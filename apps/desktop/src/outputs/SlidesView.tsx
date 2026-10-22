@@ -65,7 +65,7 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
   /** Changes the deck's accent colour. Without it the toolbar has no Accent menu. */
   onAccent?: ((accent: Accent) => void) | undefined;
   /** Changes the deck's visual theme through the version edit path. */
-  onTheme?: ((theme: (typeof THEMES)[number]) => void) | undefined;
+  onTheme?: ((theme: string) => void) | undefined;
   /** The Accent menu is there but cannot be used now (something is being saved, or this is not the latest version). */
   accentDisabled?: boolean;
   /** A small preview (beside the editor): no arrows over the slide, the thumbnails move it. */
@@ -164,6 +164,11 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
       <span aria-live="polite">Slide {Math.min(current, slides.length - 1) + 1} of {slides.length}{changed?.includes(Math.min(current, slides.length - 1)) && <em className="outputs-changed"> · Changed</em>}</span>
       <span className="outputs-slides-tools">
         {onAsk && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => onAsk(Math.min(current, slides.length - 1))}><MessageSquarePlus size={13} />Ask about this slide</button>}
+        {onTheme && canAccent && designVersion === 2 && <select className="outputs-deck-theme" aria-label="Deck theme" value={deckTheme} disabled={accentDisabled} onChange={(event) => onTheme(event.target.value)}>
+          <option value="paper">Paper</option>
+          <option value="ink">Ink</option>
+          <option value="editorial">Editorial</option>
+        </select>}
         {onTheme && canTheme && <SlideStylePicker value={theme} accent={accent} designVersion={designVersion} disabled={accentDisabled} onSelect={onTheme} numbers={numbers} sources={sources} samples={[0, slides.findIndex((_, index) => index > 0)].filter(index => index >= 0).map(index => ({ body: slides[index]!.body, title: index === 0, layout: layouts[index], composition: slides[index]!.composition, scene: slides[index]!.scene }))} />}
         {onAccent && canAccent && (accentDisabled
           ? <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled><Palette size={13} />Accent</button>

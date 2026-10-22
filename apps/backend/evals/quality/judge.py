@@ -26,8 +26,8 @@ Verdict = Literal["ship", "minor edit", "rework"]
 CRITERIA = ("insight", "storyline", "titles", "evidence", "clarity", "correctness")
 PAIR_CRITERIA = ("insight", "storyline", "titles", "evidence", "clarity", "overall")
 MAX_IMAGES = 24
-SOURCE_QUOTE_CHARS = 420
-SOURCE_BUDGET_CHARS = 60_000
+SOURCE_QUOTE_CHARS = 2400  # whole passages: a studio passage is about 1,400 characters
+SOURCE_BUDGET_CHARS = 120_000
 
 
 # Usage -------------------------------------------------------------------------------------

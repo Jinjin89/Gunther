@@ -94,6 +94,8 @@ groups or years), use a chart or a table, not a list. A deck built on numeric ma
 without a single chart or table is unfinished.
 - Vary the layouts naturally; never three slides in a row with the same layout. Use \
 "points" only when nothing else fits, at most twice.
+- Slide 2 never repeats the title slide: it usually gives the answer with its 2–4 \
+findings (summary).
 - First slide: title. Last slide: actions (what to do / decide) or summary (what it means). \
 Use "section" slides only for decks over 12 slides.
 

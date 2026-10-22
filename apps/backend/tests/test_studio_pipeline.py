@@ -1,3 +1,4 @@
+import contextlib
 import json
 import re
 
@@ -109,7 +110,10 @@ def test_a_deck_is_made_in_the_new_format_and_an_unstated_chart_value_becomes_a_
     assert {e["id"] for e in events if e.get("type") == "stage"} >= {"memo", "story", "write"}
     # Few calls: memo, storyline, critic, draft, then checks.
     asked = [str(r["messages"][0]["content"])[:40] for r in fake.requests]
-    assert sum("presentation writer" in str(r["messages"][0]["content"]) for r in fake.requests) == 1
+    writers = [
+        r for r in fake.requests if "presentation writer" in str(r["messages"][0]["content"])
+    ]
+    assert len(writers) == 1
     assert len(asked) <= 10
 
 
@@ -162,3 +166,31 @@ def test_a_conversation_makes_a_studio_deck_in_one_action_and_can_rewrite_one_sl
         again = done(turn(client, base_id, "talk", "Make slide 2 lead with the size"))
         assert again["outcome"] == "saved", again
         assert "Three summers and 412 buildings" in again["artifact"]["content"]
+
+
+def test_a_failed_build_resumes_after_its_memo_and_storyline():
+    from gunther.llm import ModelError
+
+    calls = {"writer": 0}
+
+    def failing(request):
+        system = str(request["messages"][0]["content"])
+        if "presentation writer" in system and calls["writer"] == 0:
+            calls["writer"] += 1
+            raise ModelError("The connection broke")
+        return router(request)
+
+    fake = FakeProvider(failing)
+    saved = {}
+    spec = Spec("slides", "collaborator", brief="A 10-minute talk")
+    agents = StudioAgents(gateway(fake), use="talk")
+    with contextlib.suppress(ModelError):
+        agents.make(model(), "high", spec, pool(), Notes(), checkpoint=saved.update)
+    assert saved["memo"] and saved["storyline"]
+    before = len(fake.requests)
+    built = StudioAgents(gateway(fake), use="talk").make(
+        model(), "high", spec, pool(), Notes(), resume=dict(saved)
+    )
+    again = [str(r["messages"][0]["content"]) for r in fake.requests[before:]]
+    assert not any("lead analyst" in s or "presentation strategist" in s for s in again)
+    assert "design: v2" in built.content

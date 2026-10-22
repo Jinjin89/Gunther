@@ -88,7 +88,7 @@ Line 1 bold value ≤ 16 units; line 2 label ≤ 90; line 3 context (optional) �
 - **0.82** starting albedo of the coating [3]
 Each treated building was matched to an untreated one of the same height and age [1]
 ```
-2–4 items `**value** label`; value ≤ 10 units, label ≤ 60. Optional closing line ≤ 140 (≤ 100 with 4 items).
+2–4 items `**value** label`; value ≤ 10 units, label ≤ 60. Optional closing line ≤ 140.
 
 **`chart`** — numbers drawn as a chart. Options: `chart: bar` (horizontal bars, default),
 `column`, `line`. `unit: <text>` optional.

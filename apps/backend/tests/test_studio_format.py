@@ -95,3 +95,16 @@ def test_report_form_problems():
 def test_copied_labels_are_stripped_but_not_from_notes():
     slide = "<!-- layout: title -->\n# T\nSubtitle: the point\nNote: Verdict: keep"
     assert fmt.strip_labels(slide) == "<!-- layout: title -->\n# T\nthe point\nNote: Verdict: keep"
+
+
+def test_the_desktop_fixtures_keep_the_backend_grammar():
+    from pathlib import Path
+
+    folder = Path(__file__).parents[2] / "desktop/src/outputs/deck/fixtures"
+    for name in ("deck.short.md", "deck.max.md", "deck.zh.md"):
+        slides = fmt.split_slides((folder / name).read_text(encoding="utf-8"))
+        for index, text in enumerate(slides):
+            problems = fmt.check_slide(fmt.parse_slide(text), first=index == 0)
+            # The renderer is tested at 100 units of title; the writer is held to 90.
+            problems = [p for p in problems if not p.startswith("title is")]
+            assert problems == [], (name, index + 1, problems)

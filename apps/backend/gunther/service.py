@@ -3701,6 +3701,9 @@ class KnowledgeService:
                         status="provisional",
                         confidence=1.0,
                         payload=(citation, None),
+                        # The checker reads ``context`` whole (up to 6,000 characters) and
+                        # only the start of ``text``: a fact late in a passage must be seen.
+                        context=snapshot.text,
                     )
                 )
 
@@ -5359,10 +5362,20 @@ class KnowledgeService:
                 from gunther.studio.pipeline import StudioAgents
                 from gunther.studio.work import StudioWorkAgents
 
-                def studio(spec: Spec, made: Pool, use: str | None) -> BuiltOutput:
+                def studio(
+                    spec: Spec, made: Pool, use: str | None, resume=None, checkpoint=None
+                ) -> BuiltOutput:
                     self._studio_reading(session, resolved.source_ids, made)
                     return StudioAgents(gateway, limits, use=use, tool=tool).make(  # type: ignore[arg-type]
-                        model, effort, spec, made, notes, emit, fallback_title=library.title
+                        model,
+                        effort,
+                        spec,
+                        made,
+                        notes,
+                        emit,
+                        fallback_title=library.title,
+                        resume=resume,
+                        checkpoint=checkpoint,
                     )
 
                 def make_studio_agents(kind: str) -> StudioWorkAgents:

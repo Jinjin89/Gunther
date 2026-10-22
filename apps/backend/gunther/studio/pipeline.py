@@ -412,6 +412,14 @@ class StudioAgents(OutputAgents):
             story = self._tidy_deck_story(story)
         self._stage(emit, "story", "Planning the storyline", "done", story.title)
         emit({"type": "storyline", "storyline": story.model_dump()})
+        # The planned titles, as the live outline the app already shows while a build runs.
+        planned = (
+            [{"heading": s.title, "goal": s.job} for s in story.slides]
+            if isinstance(story, DeckStory)
+            else [{"heading": story.summary_heading or "Summary", "goal": ""}]
+            + [{"heading": s.heading, "goal": s.job} for s in story.sections]
+        )
+        emit({"type": "outline", "title": story.title, "sections": planned})
         return story
 
     @staticmethod
@@ -827,18 +835,41 @@ class StudioAgents(OutputAgents):
         events: Events | None = None,
         *,
         fallback_title: str = "",
+        resume: dict[str, Any] | None = None,
+        checkpoint: Any = None,
         **_ignored: Any,
     ) -> BuiltOutput:
+        """``resume``: what an earlier, failed run of the same request finished (its memo and
+        storyline), used when the pool still has the same passages; ``checkpoint(state)`` hears
+        that state after each of those steps, so a failure later does not lose them."""
+
         emit = events or _no_events
         if not pool.items:
             raise ModelError("There is no material to work from: choose some sources first.")
         use = self.use or ("read" if re.search(READ_HINT, spec.brief, re.I) else "talk")
         run = Run(spec, use if spec.kind == "slides" else "", self._language(spec, pool))
         material = self.read(model, run, pool, notes, emit)
-        run.memo = self.memo(model, effort, run, material, emit)
+        saved = resume if resume and resume.get("passages") == len(pool) else {}
+        state: dict[str, Any] = {"passages": len(pool), "kind": spec.kind, "brief": spec.brief}
+        if saved.get("memo") and saved.get("brief") == spec.brief:
+            run.memo = Memo.model_validate(saved["memo"])
+            self._stage(emit, "memo", "Finding what is worth saying", "done", "kept from before")
+        else:
+            run.memo = self.memo(model, effort, run, material, emit)
+        state["memo"] = run.memo.model_dump()
+        if checkpoint:
+            checkpoint(dict(state))
         if run.memo.language:
             run.language = run.memo.language
-        run.story = self.storyline(model, effort, run, material, emit)
+        if saved.get("storyline") and saved.get("memo") == state["memo"]:
+            schema = DeckStory if spec.kind == "slides" else ReportStory
+            run.story = schema.model_validate(saved["storyline"])
+            self._stage(emit, "story", "Planning the storyline", "done", "kept from before")
+        else:
+            run.story = self.storyline(model, effort, run, material, emit)
+        state["storyline"] = run.story.model_dump()
+        if checkpoint:
+            checkpoint(dict(state))
         if spec.kind == "slides":
             text = self.write_deck(model, effort, run, pool, material, emit)
             text = self.fix_format(model, effort, run, text, emit)

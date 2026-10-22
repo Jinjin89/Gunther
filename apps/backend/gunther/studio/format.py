@@ -242,7 +242,7 @@ def check_slide(slide: Slide, *, first: bool, read: bool = False) -> list[str]:
         if len(other) > 1:
             problems.append("At most one closing line after the items.")
         elif other:
-            limit("closing line", other[0], 100 if len(items) >= 4 else 140)
+            limit("closing line", other[0], 140)
     elif layout in ("chart", "table"):
         rows, rest = _table(body)
         if len(rows) < 3:
@@ -341,7 +341,7 @@ def check_slide(slide: Slide, *, first: bool, read: bool = False) -> list[str]:
         if len(who) != 1:
             problems.append('Add one attribution line: "— who, where [n]".')
         else:
-            limit("attribution", who[0], 90)
+            limit("attribution", re.sub(r"^[—–-]+\s*", "", who[0]), 90)
     elif layout == "figure":
         if not body or not IMAGE.match(body[0]):
             problems.append(
@@ -383,9 +383,33 @@ def check_deck(
     slides = split_slides(content)
     if not slides:
         return [(1, ["The deck is empty."])]
-    for index, text in enumerate(slides):
-        slide = parse_slide(text)
+    parsed = [parse_slide(text) for text in slides]
+    points_seen = 0
+    for index in range(len(slides)):
+        slide = parsed[index]
         problems = check_slide(slide, first=index == 0, read=read)
+        if CITE.search(slide.title):
+            problems.append(
+                "Take the citation marks out of the title; the body proves it and cites."
+            )
+        if index > 0 and _same(slide.title, parsed[0].title):
+            problems.append(
+                "This slide repeats the deck title. Give it its own job: usually the answer "
+                "with its 2–4 findings (summary layout)."
+            )
+        if slide.layout == "points":
+            points_seen += 1
+            if points_seen > 2:
+                problems.append(
+                    "The deck already has two points slides. Rewrite this one with the layout "
+                    "its content really has: stats or a chart for numbers, table or compare "
+                    "for comparisons, process or timeline for sequences, statement for one idea."
+                )
+        if index >= 2 and slide.layout == parsed[index - 1].layout == parsed[index - 2].layout:
+            problems.append(
+                f"Three {slide.layout} slides in a row: show this one with a different layout "
+                "that fits its content."
+            )
         if notes_required and slide.layout not in ("title", "section") and not slide.notes:
             problems.append('Add speaker notes after a line starting with "Note:".')
         if index > 0 and slide.layout == "title":
@@ -509,3 +533,10 @@ def strip_labels(slide: str) -> str:
             notes = True
         out.append(line if notes else LABEL.sub("", line))
     return "\n".join(out)
+
+
+def _same(one: str, two: str) -> bool:
+    def norm(text: str) -> str:
+        return re.sub(r"\W+", "", CITE.sub("", text)).casefold()
+
+    return bool(one) and norm(one) == norm(two)

@@ -61,9 +61,12 @@ class Options:
     jobs: int = 2
     label: str = "quality"
     reuse: bool = False
+    seed_only: bool = False
     # Earlier results folders whose skills builds stand in for this run's (the old method's
     # code does not change; rebuilding it costs about 25 minutes an artifact).
     baseline_from: tuple[str, ...] = ()
+    # Earlier results folders whose builds (any method) are judged again as they are.
+    builds_from: tuple[str, ...] = ()
     reseed: bool = False
     effort: str | None = None
     render: bool = True
@@ -467,6 +470,9 @@ def run_quality(
             seeded[material.id] = materials.ensure_set(
                 results_root, material, settings_file, model_client_factory, overrides, say, options.reseed
             )  # fmt: skip
+    if options.seed_only:
+        say(f"Seeded {len(seeded)} set(s); nothing built (--seed-only).")
+        return results_root
 
     started = datetime.now()
     folder = results_root / f"{started:%Y%m%d-%H%M}-quality-{options.label}"
@@ -485,8 +491,9 @@ def run_quality(
         key = build_key(job, model, options.effort, code, info)
         target = folder / "builds" / job.material.id / f"{job.label}-{job.method}"
         reusable = find_reusable(results_root, key) if options.reuse else None
-        if reusable is None and job.method == "skills":
-            for name in options.baseline_from:
+        if reusable is None:
+            folders = [*options.builds_from, *(options.baseline_from if job.method == "skills" else ())]
+            for name in folders:
                 earlier = results_root / name / "builds" / job.material.id / target.name
                 if (earlier / "content.md").exists():
                     reusable = earlier
@@ -604,6 +611,14 @@ def parse(argv: list[str] | None = None) -> Options:
     parser.add_argument("--jobs", type=int, default=2, help="builds at the same time")
     parser.add_argument("--label", default="quality")
     parser.add_argument(
+        "--seed-only", action="store_true", help="read the sets into their libraries and stop"
+    )
+    parser.add_argument(
+        "--builds-from",
+        default="",
+        help="results folders (comma-separated) whose builds of any method are reused (to judge again)",
+    )
+    parser.add_argument(
         "--baseline-from",
         default="",
         help="results folders (comma-separated) whose skills builds are reused as they are",
@@ -622,6 +637,8 @@ def parse(argv: list[str] | None = None) -> Options:
         settings=args.settings, sets=split(args.sets), methods=split(args.methods),
         kinds=split(args.kinds), model=args.model, judge=args.judge, jobs=max(1, args.jobs),
         label=args.label, reuse=args.reuse,
+        seed_only=args.seed_only,
+        builds_from=tuple(n for n in args.builds_from.split(",") if n),
         baseline_from=tuple(n for n in args.baseline_from.split(",") if n), reseed=args.reseed, effort=args.effort,
         render=not args.no_render, do_judge=not args.no_judge,
     )  # fmt: skip

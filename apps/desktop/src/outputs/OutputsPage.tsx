@@ -27,7 +27,8 @@ import { PrintRoot } from "./PrintRoot";
 import { SlideReviewPanel } from "./SlideReviewPanel";
 import { ReportView } from "./ReportView";
 import { describeScope, type ScopeCounts } from "./ScopePicker";
-import { parseSlides, withAccent, withTheme } from "./sections";
+import { type DeckTheme, parseSlides, withAccent, withTheme } from "./sections";
+import { withDeckMarker } from "./deck/marker";
 import { isDeckV2, isReportV2 } from "./deck/detect";
 import { downloadDocx, downloadPptx } from "./deck/download";
 import "./outputs.css";
@@ -356,7 +357,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
   };
   // The deck's accent is part of its Markdown (the title slide's marker), so changing it is an edit.
   const setAccent = (accent: string) => { if (!open) return; const content = withAccent(open.content, accent); if (content !== open.content) void saveEdit(content, `The accent is ${accent}.`); };
-  const setTheme = (theme: string) => { if (!open) return; const content = withTheme(open.content, theme); if (content !== open.content) void saveEdit(content, `The style is ${theme}.`); };
+  const setTheme = (theme: string) => { if (!open) return; const content = parseSlides(open.content)[0]?.designVersion === 2 ? (["paper", "ink", "editorial"].includes(theme) ? withDeckMarker(open.content, { theme: theme as DeckTheme }) : open.content) : withTheme(open.content, theme); if (content !== open.content) void saveEdit(content, `The style is ${theme}.`); };
   const checkAgain = async () => { if (!open || !workspaceId) return; setChecking(true); try { setOpen(await knowledgeApi.checkOutput(base.id, open.id, workspaceId)); onNotify("Checked against the sources."); } catch (reason) { setGeneralError(messageOf(reason)); } finally { setChecking(false); } };
   const copy = async (artifact = open) => { if (!artifact) return; try { await navigator.clipboard.writeText(artifact.content); onNotify(`Version ${artifact.versionNumber} copied as Markdown.`); } catch { onNotify("Clipboard access was unavailable. Download the Markdown file instead."); } };
   const download = (artifact = open) => { if (!artifact) return; const url = URL.createObjectURL(new Blob([artifact.content], { type: "text/markdown;charset=utf-8" })); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${base.id}-${artifact.kind}-v${artifact.versionNumber}.md`; anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); onNotify(`Downloaded version ${artifact.versionNumber} as Markdown.`); };
