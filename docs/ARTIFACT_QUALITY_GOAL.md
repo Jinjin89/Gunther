@@ -453,3 +453,9 @@ after `node scripts/build-backend-sidecar.mjs --without-document-parser`); its s
 `--studio-smoke`. A full release with the parser needs ~40 GB of free disk.
 Stage times (round 8, 14 builds at once): memo ~1 min, storyline + critic 2–3 min, writing
 2–6 min, checking 1.5–4 min, look < 1.5 min.
+
+**2026-10-22 — round 9 (code at dc9ce37).** All seven sets, 14 artifacts: **0 hard defects**,
+ship rate 95% (reports 100%), strict ship 67%, titles-only **100%**, ~10 min per artifact
+with 7 builds at once on DeepSeek V4 Pro. Every §1 target measurable on this machine is now
+met except speed (DeepSeek, not Claude) and the head-to-head with Claude.ai and Gamma
+themselves, which need the user.
