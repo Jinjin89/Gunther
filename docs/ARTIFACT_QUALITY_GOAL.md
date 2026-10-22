@@ -351,3 +351,16 @@ the start of a passage (420 / 900 characters), so facts later in a studio passag
 characters) were called unsupported. Velmora studio: 8/8/8/8/7/7 (insight, storyline, titles,
 evidence, clarity, correctness), every slide or section "ship" or "minor edit".
 Committed `ce0b101`, `7a4c477` (not pushed). Round 2 runs on all seven sets.
+
+## 11. How to try it on the Mac
+
+1. Settings → Models: add a **Claude** provider with an Anthropic API key and choose Claude
+   Opus 5.5 (or Sonnet 5.5) for the **Outputs** job. DeepSeek V4 Pro also works; it is what
+   every measurement here used, and it is slow (about 15–20 minutes an artifact).
+2. Open a library → Outputs → start a conversation: "A 10-minute deck for <audience> on
+   <question>" or "A briefing report for …". The agent starts the artifact and makes it whole
+   (the live outline shows the planned titles); then ask for changes ("make slide 3 lead with
+   the number").
+3. On a deck: the Theme menu (Paper, Ink, Editorial, or **Import template…** for your own
+   .pptx/.potx); Export → **Download PowerPoint**. On a report: Export → **Download Word**.
+4. Settings → Developer → Method: Studio (default) or Skills (earlier), to compare.
