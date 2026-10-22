@@ -209,9 +209,19 @@ class StudioAgents(OutputAgents):
         return result
 
     def _text(self, model, system, prompt, effort, max_tokens=16_000) -> str:
-        completion = self.gateway.complete(
-            model, system=system, messages=prompt, effort=effort, max_tokens=max_tokens
-        )
+        # A thinking model spends its budget thinking first: never ask for less than this.
+        room = max(max_tokens, 16_000)
+        try:
+            completion = self.gateway.complete(
+                model, system=system, messages=prompt, effort=effort, max_tokens=room
+            )
+        except ModelError as error:
+            if "ran out of room" not in str(error) or effort in (None, "off", "low"):
+                raise
+            logger.info("Out of room while thinking; asking again with less thinking")
+            completion = self.gateway.complete(
+                model, system=system, messages=prompt, effort="low", max_tokens=room
+            )
         return completion.text
 
     @staticmethod
