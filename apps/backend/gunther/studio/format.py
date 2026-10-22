@@ -394,6 +394,11 @@ def check_deck(
                 f'"{meta.group(0)}": write about the world, not about the material — state the '
                 "finding or the decision itself."
             )
+        if slide.layout not in ("title", "section") and LABEL_TITLE.search(slide.title):
+            problems.append(
+                "The title announces content instead of stating it. Put the point itself in the "
+                'title (not "Three findings change the decision" but what they are).'
+            )
         if CITE.search(slide.title):
             problems.append(
                 "Take the citation marks out of the title; the body proves it and cites."
@@ -606,3 +611,11 @@ def cite_exhibit_rows(text: str) -> str:
         return "\n".join(out)
 
     return EXHIBIT.sub(fix, text)
+
+
+LABEL_TITLE = re.compile(
+    r"^(?:the )?(?:two|three|four|five|\d+) (?:key )?(?:findings|numbers|things|points|reasons|"
+    r"facts|takeaways|lessons|questions|risks)\b|^(?:key (?:findings|takeaways|points)|next steps|"
+    r"summary|overview|conclusions?)\s*$|^[三四五两]个(?:发现|数字|要点|原因)",
+    re.I,
+)

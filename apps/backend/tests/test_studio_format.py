@@ -133,3 +133,10 @@ def test_uncited_exhibit_rows_cite_the_source_line():
     out = fmt.cite_exhibit_rows(text)
     assert "| GDP | +5.0% [2] |" in out and "| CPI | +0.2% [3] |" in out
     assert "| 指标 | 增速 |" in out
+
+
+def test_a_title_that_announces_content_is_sent_back():
+    deck = GOOD.replace(
+        "## The pilot cut review time by 60%", "## Three findings change the decision"
+    )
+    assert any("announces" in p for p in dict(fmt.check_deck(deck))[2])

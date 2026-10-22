@@ -364,3 +364,22 @@ Committed `ce0b101`, `7a4c477` (not pushed). Round 2 runs on all seven sets.
 3. On a deck: the Theme menu (Paper, Ink, Editorial, or **Import template…** for your own
    .pptx/.potx); Export → **Download PowerPoint**. On a report: Export → **Download Word**.
 4. Settings → Developer → Method: Studio (default) or Skills (earlier), to compare.
+
+**2026-10-22 — round 4, all seven sets (DeepSeek V4 Pro writes and judges, text only).**
+`evals/results/20261022-1205-quality-studio-v4` and `…-v4-new`:
+
+| Target (§1) | Result | Status |
+| --- | --- | --- |
+| Ship rate ≥ 80% | 98–100% of slides/sections "ship" or "minor edit"; strict "ship" 63–75% (old method: 23–33%) | met on this judge |
+| Head-to-head ≥ 60% win or tie | vs the old method: 100% win or tie (overall 2 wins, 1 tie; never a loss on any criterion, rounds 1–4). vs Claude.ai / Gamma: **not run** — needs the user | partly |
+| Titles-only ≥ 90% | 90% (one deck's retelling differed from its own subtitle) | met, barely |
+| Hard defects 0 | 7 → after the last fixes, label titles are sent back and one linter false positive removed; 2 uncited numbers remain possible | not yet 0 |
+| Traceable claims 100% | every claim checked against whole passages; a value not found makes a chart a table | met |
+| Time ≤ 4 / 6 min | ~13 min per artifact on DeepSeek V4 Pro with 4–5 builds at once (was ~25 min with the old method). Claude not measured (no key here) | not met here |
+| Exports | PPTX (native charts, tables, notes, template look) and DOCX; checked through LibreOffice, not in PowerPoint/Word | built |
+| App flow | conversation: start → make → save, then part rewrites (tested with the real model); live storyline outline; theme and template menus | built, not tried on the Mac |
+| Visual quality | judged by eye on renders (gallery 204 slides at short/max/CJK, real decks); no vision judge run | built, model-judged visual score missing |
+
+Not done: the in-pipeline vision critic (render → look → fix); a memo/storyline review pause
+before writing (the outline is shown live instead, matching the earlier "no approval pause"
+decision); Claude provider untested against the real API; the user's Mac trial.
