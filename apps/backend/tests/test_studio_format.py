@@ -29,8 +29,10 @@ Note: Point at 2023.
 ## Green roofs win on stormwater, cool roofs on cost
 ### Cool roof
 - €15–25 per m² [4]
+- Applied in a day or two [4]
 ### Green roof
 - €80–150 per m² [4]
+- Holds 40–60% of rainfall [4]
 Pick green roofs only where stormwater binds [4]
 Note: Two sides.
 """

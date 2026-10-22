@@ -32,7 +32,8 @@ stat (value ≤16, label ≤90, context ≤160 optional):
 Median review time per case, before vs during the pilot [n]
 Two teams over eight weeks; error rates were not tracked [n]
 
-stats (2–4 items; value ≤10, label ≤60; closing line ≤140 optional):
+stats (2–4 items; value ≤10, label ≤60; closing line ≤140 optional; values share one form — \
+all percentages, or all counts with their unit):
 ## Title
 - **412** buildings in six districts [n]
 - **3** summers, 2021–2023 [n]
@@ -55,7 +56,7 @@ table (2–5 columns, 2–7 rows, cells ≤50; bold row = highlighted; takeaway 
 | Upfront | €1.2 m [2] | €0.8 m [2] |
 A costs more upfront but less from year two [2]
 
-compare (exactly two sides: "### name" ≤30, then 1–4 items ≤90 each; verdict line ≤140 \
+compare (exactly two sides: "### name" ≤30, then 2–4 items ≤90 each; verdict line ≤140 \
 optional after both):
 ## Title
 ### Cool roof
@@ -84,7 +85,8 @@ figure (only with a figure listed in the material; copy its reference exactly; t
 ![caption](gunther-asset:ID)
 The gap opens above 30 °C outside [n]
 
-statement (statement ≤180; up to 3 items ≤80 optional):
+statement (statement ≤180, ideally under 120; the title is a short lead-in that does not repeat \
+it; up to 3 items ≤80 optional):
 ## Title
 Coatings lose a third of their reflectivity in 18 months [n]
 

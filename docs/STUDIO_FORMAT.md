@@ -132,7 +132,7 @@ A is dearer to start but cheaper from year two [2][4]
 - Holds 50–70% of rainfall [4]
 Pick green roofs only where stormwater is the binding problem [4]
 ```
-Exactly two `### side` blocks (side name ≤ 30 units), each 1–4 items ≤ 90. Optional verdict line
+Exactly two `### side` blocks (side name ≤ 30 units), each 2–4 items ≤ 90. Optional verdict line
 after both ≤ 140.
 
 **`process`** — ordered steps (2–6).

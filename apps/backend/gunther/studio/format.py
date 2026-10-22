@@ -311,8 +311,11 @@ def check_slide(slide: Slide, *, first: bool, read: bool = False) -> list[str]:
                 limit(f"side {which + 1} name", body[start][4:], 30)
                 chunk = body[start + 1 : end]
                 side_items, side_other = _items(chunk)
-                if not 1 <= len(side_items) <= 4:
-                    problems.append(f"Side {which + 1} needs 1–4 list items.")
+                if not 2 <= len(side_items) <= 4:
+                    problems.append(
+                        f"Side {which + 1} needs 2–4 list items; with less to compare, use "
+                        "another layout (stat, statement or table)."
+                    )
                 for number, item in enumerate(side_items, 1):
                     limit(f"side {which + 1} item {number}", item, 90)
                 if which == 1 and len(side_other) > 1:
@@ -356,6 +359,11 @@ def check_slide(slide: Slide, *, first: bool, read: bool = False) -> list[str]:
             problems.append("Write the statement line under the title.")
         else:
             limit("statement", other[0], 180)
+            if _overlap(slide.title, other[0]) > 0.6:
+                problems.append(
+                    "The title repeats the statement. Make the title a short lead-in (the "
+                    "question or the context) and let the statement carry the point."
+                )
             if len(other) > 1:
                 problems.append("One statement line, then at most three list items.")
         if len(items) > 3:
@@ -619,3 +627,15 @@ LABEL_TITLE = re.compile(
     r"summary|overview|conclusions?)\s*$|^[三四五两]个(?:发现|数字|要点|原因)",
     re.I,
 )
+
+
+def _overlap(one: str, two: str) -> float:
+    """How much of the shorter text's words (or CJK characters) the longer one shares."""
+
+    def bag(text: str) -> set[str]:
+        plain = CITE.sub("", text).casefold()
+        words = set(re.findall(r"[a-z0-9]{3,}", plain))
+        return words | {ch for ch in plain if "\u4e00" <= ch <= "\u9fff"}
+
+    a, b = bag(one), bag(two)
+    return len(a & b) / max(1, min(len(a), len(b)))
