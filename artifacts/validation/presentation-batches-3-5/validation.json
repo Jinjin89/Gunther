@@ -1,0 +1,130 @@
+{
+  "batches": [
+    3,
+    4,
+    5
+  ],
+  "skillVersion": 11,
+  "renderer": "reveal.js/shared SlideFace",
+  "rendererHash": "db7fc6b697746b93e0599978b619fc95a6cccd8abe51236e48315064e156b0cb",
+  "comparisons": {
+    "cases": 15,
+    "statuses": {
+      "clean": 7,
+      "repaired": 5,
+      "needs_review": 3,
+      "unavailable": 0
+    },
+    "calls": 30,
+    "fidelity": true,
+    "pdfs": true,
+    "model": "DeepSeek · Flash",
+    "effort": "medium",
+    "rendererHashes": [
+      "db7fc6b697746b93e0599978b619fc95a6cccd8abe51236e48315064e156b0cb"
+    ]
+  },
+  "fidelity": {
+    "checkedWordingNotesCitations": true,
+    "sourceBindings": true,
+    "sourceAssetHashes": true,
+    "identityOrderCount": true,
+    "candidateMatchesCapturedAndSaved": true
+  },
+  "bounds": {
+    "physicalRequests": 8,
+    "repairCycles": 1,
+    "affectedSlides": 4,
+    "enforced": true
+  },
+  "pdf": {
+    "files": 15,
+    "pages": 45,
+    "allContentChecksPassed": true,
+    "allPagesRasterizedAndInspected": true,
+    "rawCjkExtractionDifferencesRetained": true
+  },
+  "native": {
+    "cases": 9,
+    "slides": 18,
+    "withinThreePixels": 7,
+    "minorDifferences": [
+      {
+        "case": "process-talk",
+        "candidateHash": "aa83014a8967bd56ab145e5e9e8c442ae718e0c977a0a005e529d2e5eb573d95",
+        "slides": 2,
+        "status": "differences",
+        "tolerancePixels": 3,
+        "scope": "macOS WKWebView engine probe, not a full packaged-app interaction test",
+        "differences": [
+          {
+            "slideId": "process-p1",
+            "field": "heading",
+            "text": "Collection precedes the completeness check [1]",
+            "maxPixelDifference": 3.81
+          }
+        ]
+      },
+      {
+        "case": "dense-keynote",
+        "candidateHash": "67f0877610f2df7bb15a76ac89220625da6c9a12dbcd8fe81d6dabbd9de66edd",
+        "slides": 2,
+        "status": "differences",
+        "tolerancePixels": 3,
+        "scope": "macOS WKWebView engine probe, not a full packaged-app interaction test",
+        "differences": [
+          {
+            "slideId": "intake-p2",
+            "field": "body",
+            "text": "In this synthetic intake pilot, median review time was 40 hours before",
+            "maxPixelDifference": 3.5
+          },
+          {
+            "slideId": "intake-p2",
+            "field": "body",
+            "text": "The two-team intake pilot did not measure review quality or error rate",
+            "maxPixelDifference": 3.5
+          }
+        ]
+      }
+    ],
+    "manualFinding": "Small line-box differences without changed wrapping, fitting, source images or clipping.",
+    "scope": "macOS WKWebView engine probe; full installed-app interaction and other OS/architecture combinations unverified"
+  },
+  "tests": {
+    "frontendFull": 793,
+    "backendFull": 1186,
+    "backendSkipped": 2,
+    "finalAffectedBackend": 219,
+    "finalAdditionalReviewAndApi": 34,
+    "nativePassed": 34,
+    "nativeIgnored": 1,
+    "typecheck": true,
+    "webBuild": true,
+    "ruff": true,
+    "diffCheck": true,
+    "notes": [
+      "Full backend rerun used OMP_NUM_THREADS=1 and VECLIB_MAXIMUM_THREADS=1 after a native-library teardown abort in an earlier unconstrained run.",
+      "Later focused checks use ordinary settings.",
+      "Final output-panel checks and production build run after the full frontend suite."
+    ],
+    "finalOutputPanel": 313,
+    "finalNativeTokenLinks": "Full-size images stay inside the app; inspected PDFs use the native download handler."
+  },
+  "packaged": {
+    "id": "3e5e57ec7b8148a8b9523d269ffaf27d",
+    "candidateHash": "ff8f699e233701630b1df28751a9d1f55b86d7a381a8dba1ab025a762a0e80d8",
+    "rendererHash": "db7fc6b697746b93e0599978b619fc95a6cccd8abe51236e48315064e156b0cb",
+    "browser": "HeadlessChrome/156.0.8078.4",
+    "distribution": "bundled:chromium_headless_shell-1248",
+    "elapsedSeconds": 2.333,
+    "wallSeconds": 8.832,
+    "peakProcessTreeRssMiB": 718.2,
+    "memoryMethod": "Sum of sampled process-tree RSS; shared pages may be counted more than once.",
+    "runtimeBytes": 216099309,
+    "nodeRequiredAtRuntime": false,
+    "viteRequiredAtRuntime": false,
+    "input": "synthetic Chinese source packet"
+  },
+  "scope": "Fixed synthetic visual packets, not a full extraction/writing benchmark. Prior six free-outline runs remain separately recorded in batches 0–2."
+}

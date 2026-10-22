@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SlideFace } from "./SlideFace";
-import { fitFor, settleFit } from "./slideFit";
+import { fitFor, overflowsFace, settleFit } from "./slideFit";
 import { SLIDE_LAYOUTS } from "./slides/parseSlide";
 
 describe("how far a slide's type is scaled down", () => {
@@ -21,6 +21,22 @@ describe("how far a slide's type is scaled down", () => {
     expect(fitFor(0, 0.8333)).toBe(1);
     expect(fitFor(Number.NaN, 0.8333)).toBe(1);
     expect(fitFor(1.25, Number.NaN)).toBe(1);
+  });
+});
+
+describe("slide overflow geometry", () => {
+  it("scales CSS padding to the visible face before checking a fit title", () => {
+    const face = { left: 0, right: 720, bottom: 405, width: 720, height: 405 };
+    const text = { left: 63, right: 650, bottom: 355, width: 587, height: 230 };
+    const padding = { left: 112, right: 112, bottom: 76, width: 1280, height: 720 };
+    expect(overflowsFace(face, text, padding, [], false)).toBe(false);
+  });
+
+  it("finds a long unbroken word from intrinsic overflow even when its box stays inside the face", () => {
+    const face = { left: 0, right: 720, bottom: 405, width: 720, height: 405 };
+    const text = { left: 60, right: 660, bottom: 350, width: 600, height: 200 };
+    const padding = { left: 96, right: 96, bottom: 64, width: 1280, height: 720 };
+    expect(overflowsFace(face, text, padding, [], true)).toBe(true);
   });
 });
 
@@ -130,7 +146,7 @@ describe("a slide face", () => {
   it("draws a slide that does not take its layout's form exactly as a slide with no layout, whatever the accent", () => {
     // Each of these layouts asks for something this text does not have.
     const asking = SLIDE_LAYOUTS.filter((layout) => !["text", "takeaways"].includes(layout));
-    expect(asking).toHaveLength(11);
+    expect(asking).toHaveLength(12);
     const body = "## A heading\n\nA short line, and [1] a number";
     const plain = render(<SlideFace body={body} title={false} numbers={[1]} />);
     const reference = plain.container.querySelector(".outputs-slide-face")!;

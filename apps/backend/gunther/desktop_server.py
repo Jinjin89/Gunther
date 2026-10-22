@@ -887,4 +887,9 @@ def _serve(args: argparse.Namespace) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:2] == ["--slide-render-smoke"]:
+        from gunther.slide_render_cli import main as render_smoke
+
+        render_smoke(sys.argv[2:])
+    else:
+        main()

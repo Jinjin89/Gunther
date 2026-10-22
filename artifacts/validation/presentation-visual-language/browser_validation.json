@@ -1,0 +1,1635 @@
+{
+  "scope": "Actual SlideFace renderer in the Codex in-app browser; synthetic samples and the existing layout gallery.",
+  "theme_audits": [
+    {
+      "theme": "classic",
+      "accent": "teal",
+      "pages": [
+        {
+          "case": "0",
+          "cites": 7,
+          "fit": "1",
+          "layout": "two_column",
+          "overflow": []
+        },
+        {
+          "case": "1",
+          "cites": 5,
+          "fit": "0.94",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "2",
+          "cites": 3,
+          "fit": "0.91",
+          "layout": "diagram",
+          "overflow": []
+        },
+        {
+          "case": "3",
+          "cites": 4,
+          "fit": "1",
+          "layout": "cards",
+          "overflow": []
+        },
+        {
+          "case": "4",
+          "cites": 10,
+          "fit": "1",
+          "layout": "compare",
+          "overflow": []
+        },
+        {
+          "case": "5",
+          "cites": 3,
+          "fit": "1",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "6",
+          "cites": 3,
+          "fit": "1",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "7",
+          "cites": 6,
+          "fit": "0.94",
+          "layout": "two_column",
+          "overflow": []
+        },
+        {
+          "case": "8",
+          "cites": 6,
+          "fit": "0.81",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "9",
+          "cites": 3,
+          "fit": "1",
+          "layout": "diagram",
+          "overflow": []
+        },
+        {
+          "case": "10",
+          "cites": 0,
+          "fit": "1",
+          "layout": "title",
+          "overflow": []
+        },
+        {
+          "case": "11",
+          "cites": 1,
+          "fit": "1",
+          "layout": "big_number",
+          "overflow": []
+        },
+        {
+          "case": "12",
+          "cites": 13,
+          "fit": "1",
+          "layout": "compare",
+          "overflow": []
+        },
+        {
+          "case": "13",
+          "cites": 6,
+          "fit": "1",
+          "layout": "two_column",
+          "overflow": []
+        },
+        {
+          "case": "14",
+          "cites": 4,
+          "fit": "1",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "15",
+          "cites": 4,
+          "fit": "1",
+          "layout": "timeline",
+          "overflow": []
+        },
+        {
+          "case": "16",
+          "cites": 5,
+          "fit": "1",
+          "layout": "bar_chart",
+          "overflow": []
+        },
+        {
+          "case": "17",
+          "cites": 7,
+          "fit": "1",
+          "layout": "line_chart",
+          "overflow": []
+        },
+        {
+          "case": "18",
+          "cites": 3,
+          "fit": "1",
+          "layout": "cards",
+          "overflow": []
+        },
+        {
+          "case": "19",
+          "cites": 1,
+          "fit": "1",
+          "layout": "quote",
+          "overflow": []
+        },
+        {
+          "case": "20",
+          "cites": 1,
+          "fit": "1",
+          "layout": "figure",
+          "overflow": []
+        },
+        {
+          "case": "21",
+          "cites": 2,
+          "fit": "1",
+          "layout": "diagram",
+          "overflow": []
+        },
+        {
+          "case": "22",
+          "cites": 3,
+          "fit": "1",
+          "layout": "text",
+          "overflow": []
+        },
+        {
+          "case": "23",
+          "cites": 3,
+          "fit": "1",
+          "layout": "takeaways",
+          "overflow": []
+        },
+        {
+          "case": "24",
+          "cites": 5,
+          "fit": "1",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "25",
+          "cites": 4,
+          "fit": "1",
+          "layout": "cards",
+          "overflow": []
+        }
+      ],
+      "graphMaxWidthDelta": 0.003715066348803475
+    },
+    {
+      "theme": "briefing",
+      "accent": "teal",
+      "pages": [
+        {
+          "case": "0",
+          "cites": 7,
+          "fit": "1",
+          "layout": "two_column",
+          "overflow": []
+        },
+        {
+          "case": "1",
+          "cites": 5,
+          "fit": "0.95",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "2",
+          "cites": 3,
+          "fit": "0.93",
+          "layout": "diagram",
+          "overflow": []
+        },
+        {
+          "case": "3",
+          "cites": 4,
+          "fit": "1",
+          "layout": "cards",
+          "overflow": []
+        },
+        {
+          "case": "4",
+          "cites": 10,
+          "fit": "1",
+          "layout": "compare",
+          "overflow": []
+        },
+        {
+          "case": "5",
+          "cites": 3,
+          "fit": "1",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "6",
+          "cites": 3,
+          "fit": "1",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "7",
+          "cites": 6,
+          "fit": "0.96",
+          "layout": "two_column",
+          "overflow": []
+        },
+        {
+          "case": "8",
+          "cites": 6,
+          "fit": "0.83",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "9",
+          "cites": 3,
+          "fit": "1",
+          "layout": "diagram",
+          "overflow": []
+        },
+        {
+          "case": "10",
+          "cites": 0,
+          "fit": "1",
+          "layout": "title",
+          "overflow": []
+        },
+        {
+          "case": "11",
+          "cites": 1,
+          "fit": "1",
+          "layout": "big_number",
+          "overflow": []
+        },
+        {
+          "case": "12",
+          "cites": 13,
+          "fit": "1",
+          "layout": "compare",
+          "overflow": []
+        },
+        {
+          "case": "13",
+          "cites": 6,
+          "fit": "1",
+          "layout": "two_column",
+          "overflow": []
+        },
+        {
+          "case": "14",
+          "cites": 4,
+          "fit": "1",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "15",
+          "cites": 4,
+          "fit": "1",
+          "layout": "timeline",
+          "overflow": []
+        },
+        {
+          "case": "16",
+          "cites": 5,
+          "fit": "1",
+          "layout": "bar_chart",
+          "overflow": []
+        },
+        {
+          "case": "17",
+          "cites": 7,
+          "fit": "1",
+          "layout": "line_chart",
+          "overflow": []
+        },
+        {
+          "case": "18",
+          "cites": 3,
+          "fit": "1",
+          "layout": "cards",
+          "overflow": []
+        },
+        {
+          "case": "19",
+          "cites": 1,
+          "fit": "1",
+          "layout": "quote",
+          "overflow": []
+        },
+        {
+          "case": "20",
+          "cites": 1,
+          "fit": "1",
+          "layout": "figure",
+          "overflow": []
+        },
+        {
+          "case": "21",
+          "cites": 2,
+          "fit": "1",
+          "layout": "diagram",
+          "overflow": []
+        },
+        {
+          "case": "22",
+          "cites": 3,
+          "fit": "1",
+          "layout": "text",
+          "overflow": []
+        },
+        {
+          "case": "23",
+          "cites": 3,
+          "fit": "1",
+          "layout": "takeaways",
+          "overflow": []
+        },
+        {
+          "case": "24",
+          "cites": 5,
+          "fit": "1",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "25",
+          "cites": 4,
+          "fit": "1",
+          "layout": "cards",
+          "overflow": []
+        }
+      ],
+      "graphMaxWidthDelta": 0.004132439108460062
+    },
+    {
+      "theme": "editorial",
+      "accent": "teal",
+      "pages": [
+        {
+          "case": "0",
+          "cites": 7,
+          "fit": "1",
+          "layout": "two_column",
+          "overflow": []
+        },
+        {
+          "case": "1",
+          "cites": 5,
+          "fit": "0.89",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "2",
+          "cites": 3,
+          "fit": "0.87",
+          "layout": "diagram",
+          "overflow": []
+        },
+        {
+          "case": "3",
+          "cites": 4,
+          "fit": "1",
+          "layout": "cards",
+          "overflow": []
+        },
+        {
+          "case": "4",
+          "cites": 10,
+          "fit": "1",
+          "layout": "compare",
+          "overflow": []
+        },
+        {
+          "case": "5",
+          "cites": 3,
+          "fit": "1",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "6",
+          "cites": 3,
+          "fit": "1",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "7",
+          "cites": 6,
+          "fit": "0.9",
+          "layout": "two_column",
+          "overflow": []
+        },
+        {
+          "case": "8",
+          "cites": 6,
+          "fit": "0.77",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "9",
+          "cites": 3,
+          "fit": "1",
+          "layout": "diagram",
+          "overflow": []
+        },
+        {
+          "case": "10",
+          "cites": 0,
+          "fit": "1",
+          "layout": "title",
+          "overflow": []
+        },
+        {
+          "case": "11",
+          "cites": 1,
+          "fit": "1",
+          "layout": "big_number",
+          "overflow": []
+        },
+        {
+          "case": "12",
+          "cites": 13,
+          "fit": "1",
+          "layout": "compare",
+          "overflow": []
+        },
+        {
+          "case": "13",
+          "cites": 6,
+          "fit": "1",
+          "layout": "two_column",
+          "overflow": []
+        },
+        {
+          "case": "14",
+          "cites": 4,
+          "fit": "1",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "15",
+          "cites": 4,
+          "fit": "1",
+          "layout": "timeline",
+          "overflow": []
+        },
+        {
+          "case": "16",
+          "cites": 5,
+          "fit": "1",
+          "layout": "bar_chart",
+          "overflow": []
+        },
+        {
+          "case": "17",
+          "cites": 7,
+          "fit": "0.98",
+          "layout": "line_chart",
+          "overflow": []
+        },
+        {
+          "case": "18",
+          "cites": 3,
+          "fit": "1",
+          "layout": "cards",
+          "overflow": []
+        },
+        {
+          "case": "19",
+          "cites": 1,
+          "fit": "1",
+          "layout": "quote",
+          "overflow": []
+        },
+        {
+          "case": "20",
+          "cites": 1,
+          "fit": "1",
+          "layout": "figure",
+          "overflow": []
+        },
+        {
+          "case": "21",
+          "cites": 2,
+          "fit": "1",
+          "layout": "diagram",
+          "overflow": []
+        },
+        {
+          "case": "22",
+          "cites": 3,
+          "fit": "1",
+          "layout": "text",
+          "overflow": []
+        },
+        {
+          "case": "23",
+          "cites": 3,
+          "fit": "1",
+          "layout": "takeaways",
+          "overflow": []
+        },
+        {
+          "case": "24",
+          "cites": 5,
+          "fit": "1",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "25",
+          "cites": 4,
+          "fit": "1",
+          "layout": "cards",
+          "overflow": []
+        }
+      ],
+      "graphMaxWidthDelta": 0.005679859834557988
+    },
+    {
+      "theme": "keynote",
+      "accent": "teal",
+      "pages": [
+        {
+          "case": "0",
+          "cites": 7,
+          "fit": "1",
+          "layout": "two_column",
+          "overflow": []
+        },
+        {
+          "case": "1",
+          "cites": 5,
+          "fit": "0.92",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "2",
+          "cites": 3,
+          "fit": "0.9",
+          "layout": "diagram",
+          "overflow": []
+        },
+        {
+          "case": "3",
+          "cites": 4,
+          "fit": "1",
+          "layout": "cards",
+          "overflow": []
+        },
+        {
+          "case": "4",
+          "cites": 10,
+          "fit": "1",
+          "layout": "compare",
+          "overflow": []
+        },
+        {
+          "case": "5",
+          "cites": 3,
+          "fit": "1",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "6",
+          "cites": 3,
+          "fit": "1",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "7",
+          "cites": 6,
+          "fit": "0.93",
+          "layout": "two_column",
+          "overflow": []
+        },
+        {
+          "case": "8",
+          "cites": 6,
+          "fit": "0.8",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "9",
+          "cites": 3,
+          "fit": "1",
+          "layout": "diagram",
+          "overflow": []
+        },
+        {
+          "case": "10",
+          "cites": 0,
+          "fit": "1",
+          "layout": "title",
+          "overflow": []
+        },
+        {
+          "case": "11",
+          "cites": 1,
+          "fit": "1",
+          "layout": "big_number",
+          "overflow": []
+        },
+        {
+          "case": "12",
+          "cites": 13,
+          "fit": "1",
+          "layout": "compare",
+          "overflow": []
+        },
+        {
+          "case": "13",
+          "cites": 6,
+          "fit": "1",
+          "layout": "two_column",
+          "overflow": []
+        },
+        {
+          "case": "14",
+          "cites": 4,
+          "fit": "1",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "15",
+          "cites": 4,
+          "fit": "1",
+          "layout": "timeline",
+          "overflow": []
+        },
+        {
+          "case": "16",
+          "cites": 5,
+          "fit": "1",
+          "layout": "bar_chart",
+          "overflow": []
+        },
+        {
+          "case": "17",
+          "cites": 7,
+          "fit": "1",
+          "layout": "line_chart",
+          "overflow": []
+        },
+        {
+          "case": "18",
+          "cites": 3,
+          "fit": "1",
+          "layout": "cards",
+          "overflow": []
+        },
+        {
+          "case": "19",
+          "cites": 1,
+          "fit": "1",
+          "layout": "quote",
+          "overflow": []
+        },
+        {
+          "case": "20",
+          "cites": 1,
+          "fit": "1",
+          "layout": "figure",
+          "overflow": []
+        },
+        {
+          "case": "21",
+          "cites": 2,
+          "fit": "1",
+          "layout": "diagram",
+          "overflow": []
+        },
+        {
+          "case": "22",
+          "cites": 3,
+          "fit": "1",
+          "layout": "text",
+          "overflow": []
+        },
+        {
+          "case": "23",
+          "cites": 3,
+          "fit": "1",
+          "layout": "takeaways",
+          "overflow": []
+        },
+        {
+          "case": "24",
+          "cites": 5,
+          "fit": "1",
+          "layout": "flow",
+          "overflow": []
+        },
+        {
+          "case": "25",
+          "cites": 4,
+          "fit": "1",
+          "layout": "cards",
+          "overflow": []
+        }
+      ],
+      "graphMaxWidthDelta": 0.0028139002182854256
+    }
+  ],
+  "contrast_audits": [
+    {
+      "theme": "classic",
+      "accent": "ink",
+      "pairs": [
+        {
+          "background": "rgb(26, 26, 24)",
+          "color": "rgb(255, 255, 255)",
+          "name": "origin",
+          "contrast": 17.43
+        },
+        {
+          "background": "rgb(26, 26, 24)",
+          "color": "rgb(255, 255, 255)",
+          "name": "step-number",
+          "contrast": 17.43
+        },
+        {
+          "background": "color(srgb 0.842314 0.842314 0.834471)",
+          "color": "rgb(26, 26, 24)",
+          "name": "peer-heading",
+          "contrast": 12.07
+        },
+        {
+          "background": "color(srgb 0.924 0.924 0.919843)",
+          "color": "rgb(26, 26, 24)",
+          "name": "peer-body",
+          "contrast": 14.69
+        },
+        {
+          "background": "color(srgb 0.924 0.924 0.919843)",
+          "color": "rgb(95, 94, 90)",
+          "name": "card-support",
+          "contrast": 5.47
+        }
+      ]
+    },
+    {
+      "theme": "classic",
+      "accent": "blue",
+      "pairs": [
+        {
+          "background": "rgb(38, 104, 182)",
+          "color": "rgb(255, 255, 255)",
+          "name": "origin",
+          "contrast": 5.62
+        },
+        {
+          "background": "rgb(38, 104, 182)",
+          "color": "rgb(255, 255, 255)",
+          "name": "step-number",
+          "contrast": 5.62
+        },
+        {
+          "background": "color(srgb 0.848431 0.882078 0.91502)",
+          "color": "rgb(26, 26, 24)",
+          "name": "peer-heading",
+          "contrast": 13.17
+        },
+        {
+          "background": "color(srgb 0.926824 0.942353 0.95702)",
+          "color": "rgb(26, 26, 24)",
+          "name": "peer-body",
+          "contrast": 15.26
+        },
+        {
+          "background": "color(srgb 0.926824 0.942353 0.95702)",
+          "color": "rgb(95, 94, 90)",
+          "name": "card-support",
+          "contrast": 5.68
+        }
+      ]
+    },
+    {
+      "theme": "classic",
+      "accent": "teal",
+      "pairs": [
+        {
+          "background": "rgb(2, 128, 102)",
+          "color": "rgb(255, 255, 255)",
+          "name": "origin",
+          "contrast": 4.9
+        },
+        {
+          "background": "rgb(2, 128, 102)",
+          "color": "rgb(255, 255, 255)",
+          "name": "step-number",
+          "contrast": 4.9
+        },
+        {
+          "background": "color(srgb 0.830078 0.894314 0.874235)",
+          "color": "rgb(26, 26, 24)",
+          "name": "peer-heading",
+          "contrast": 13.24
+        },
+        {
+          "background": "color(srgb 0.918353 0.948 0.938196)",
+          "color": "rgb(26, 26, 24)",
+          "name": "peer-body",
+          "contrast": 15.29
+        },
+        {
+          "background": "color(srgb 0.918353 0.948 0.938196)",
+          "color": "rgb(95, 94, 90)",
+          "name": "card-support",
+          "contrast": 5.69
+        }
+      ]
+    },
+    {
+      "theme": "classic",
+      "accent": "red",
+      "pairs": [
+        {
+          "background": "rgb(186, 58, 52)",
+          "color": "rgb(255, 255, 255)",
+          "name": "origin",
+          "contrast": 5.61
+        },
+        {
+          "background": "rgb(186, 58, 52)",
+          "color": "rgb(255, 255, 255)",
+          "name": "step-number",
+          "contrast": 5.61
+        },
+        {
+          "background": "color(srgb 0.923882 0.858627 0.848745)",
+          "color": "rgb(26, 26, 24)",
+          "name": "peer-heading",
+          "contrast": 13.01
+        },
+        {
+          "background": "color(srgb 0.961647 0.931529 0.926431)",
+          "color": "rgb(26, 26, 24)",
+          "name": "peer-body",
+          "contrast": 15.17
+        },
+        {
+          "background": "color(srgb 0.961647 0.931529 0.926431)",
+          "color": "rgb(95, 94, 90)",
+          "name": "card-support",
+          "contrast": 5.65
+        }
+      ]
+    },
+    {
+      "theme": "classic",
+      "accent": "amber",
+      "pairs": [
+        {
+          "background": "rgb(146, 92, 0)",
+          "color": "rgb(255, 255, 255)",
+          "name": "origin",
+          "contrast": 5.6
+        },
+        {
+          "background": "rgb(146, 92, 0)",
+          "color": "rgb(255, 255, 255)",
+          "name": "step-number",
+          "contrast": 5.6
+        },
+        {
+          "background": "color(srgb 0.90349 0.875961 0.822235)",
+          "color": "rgb(26, 26, 24)",
+          "name": "peer-heading",
+          "contrast": 13.2
+        },
+        {
+          "background": "color(srgb 0.952235 0.939529 0.914196)",
+          "color": "rgb(26, 26, 24)",
+          "name": "peer-body",
+          "contrast": 15.27
+        },
+        {
+          "background": "color(srgb 0.952235 0.939529 0.914196)",
+          "color": "rgb(95, 94, 90)",
+          "name": "card-support",
+          "contrast": 5.69
+        }
+      ]
+    },
+    {
+      "theme": "classic",
+      "accent": "violet",
+      "pairs": [
+        {
+          "background": "rgb(116, 85, 184)",
+          "color": "rgb(255, 255, 255)",
+          "name": "origin",
+          "contrast": 5.62
+        },
+        {
+          "background": "rgb(116, 85, 184)",
+          "color": "rgb(255, 255, 255)",
+          "name": "step-number",
+          "contrast": 5.62
+        },
+        {
+          "background": "color(srgb 0.888196 0.872392 0.916039)",
+          "color": "rgb(26, 26, 24)",
+          "name": "peer-heading",
+          "contrast": 13.22
+        },
+        {
+          "background": "color(srgb 0.945176 0.937882 0.95749)",
+          "color": "rgb(26, 26, 24)",
+          "name": "peer-body",
+          "contrast": 15.28
+        },
+        {
+          "background": "color(srgb 0.945176 0.937882 0.95749)",
+          "color": "rgb(95, 94, 90)",
+          "name": "card-support",
+          "contrast": 5.69
+        }
+      ]
+    },
+    {
+      "theme": "briefing",
+      "accent": "ink",
+      "pairs": [
+        {
+          "background": "rgb(26, 26, 24)",
+          "color": "rgb(255, 255, 255)",
+          "name": "origin",
+          "contrast": 17.43
+        },
+        {
+          "background": "rgb(26, 26, 24)",
+          "color": "rgb(255, 255, 255)",
+          "name": "step-number",
+          "contrast": 17.43
+        },
+        {
+          "background": "color(srgb 0.83549 0.845725 0.854941)",
+          "color": "rgb(32, 33, 31)",
+          "name": "peer-heading",
+          "contrast": 11.27
+        },
+        {
+          "background": "color(srgb 0.920314 0.927686 0.934588)",
+          "color": "rgb(32, 33, 31)",
+          "name": "peer-body",
+          "contrast": 13.72
+        },
+        {
+          "background": "color(srgb 0.920314 0.927686 0.934588)",
+          "color": "rgb(92, 91, 86)",
+          "name": "card-support",
+          "contrast": 5.78
+        }
+      ]
+    },
+    {
+      "theme": "briefing",
+      "accent": "blue",
+      "pairs": [
+        {
+          "background": "rgb(38, 104, 182)",
+          "color": "rgb(255, 255, 255)",
+          "name": "origin",
+          "contrast": 5.62
+        },
+        {
+          "background": "rgb(38, 104, 182)",
+          "color": "rgb(255, 255, 255)",
+          "name": "step-number",
+          "contrast": 5.62
+        },
+        {
+          "background": "color(srgb 0.841608 0.88549 0.93549)",
+          "color": "rgb(32, 33, 31)",
+          "name": "peer-heading",
+          "contrast": 12.3
+        },
+        {
+          "background": "color(srgb 0.923137 0.946039 0.971765)",
+          "color": "rgb(32, 33, 31)",
+          "name": "peer-body",
+          "contrast": 14.25
+        },
+        {
+          "background": "color(srgb 0.923137 0.946039 0.971765)",
+          "color": "rgb(92, 91, 86)",
+          "name": "card-support",
+          "contrast": 6
+        }
+      ]
+    },
+    {
+      "theme": "briefing",
+      "accent": "teal",
+      "pairs": [
+        {
+          "background": "rgb(2, 128, 102)",
+          "color": "rgb(255, 255, 255)",
+          "name": "origin",
+          "contrast": 4.9
+        },
+        {
+          "background": "rgb(2, 128, 102)",
+          "color": "rgb(255, 255, 255)",
+          "name": "step-number",
+          "contrast": 4.9
+        },
+        {
+          "background": "color(srgb 0.823255 0.897726 0.894706)",
+          "color": "rgb(32, 33, 31)",
+          "name": "peer-heading",
+          "contrast": 12.37
+        },
+        {
+          "background": "color(srgb 0.914667 0.951686 0.952941)",
+          "color": "rgb(32, 33, 31)",
+          "name": "peer-body",
+          "contrast": 14.28
+        },
+        {
+          "background": "color(srgb 0.914667 0.951686 0.952941)",
+          "color": "rgb(92, 91, 86)",
+          "name": "card-support",
+          "contrast": 6.01
+        }
+      ]
+    },
+    {
+      "theme": "briefing",
+      "accent": "red",
+      "pairs": [
+        {
+          "background": "rgb(186, 58, 52)",
+          "color": "rgb(255, 255, 255)",
+          "name": "origin",
+          "contrast": 5.61
+        },
+        {
+          "background": "rgb(186, 58, 52)",
+          "color": "rgb(255, 255, 255)",
+          "name": "step-number",
+          "contrast": 5.61
+        },
+        {
+          "background": "color(srgb 0.917059 0.862039 0.869216)",
+          "color": "rgb(32, 33, 31)",
+          "name": "peer-heading",
+          "contrast": 12.14
+        },
+        {
+          "background": "color(srgb 0.957961 0.935216 0.941176)",
+          "color": "rgb(32, 33, 31)",
+          "name": "peer-body",
+          "contrast": 14.17
+        },
+        {
+          "background": "color(srgb 0.957961 0.935216 0.941176)",
+          "color": "rgb(92, 91, 86)",
+          "name": "card-support",
+          "contrast": 5.96
+        }
+      ]
+    },
+    {
+      "theme": "briefing",
+      "accent": "amber",
+      "pairs": [
+        {
+          "background": "rgb(146, 92, 0)",
+          "color": "rgb(255, 255, 255)",
+          "name": "origin",
+          "contrast": 5.6
+        },
+        {
+          "background": "rgb(146, 92, 0)",
+          "color": "rgb(255, 255, 255)",
+          "name": "step-number",
+          "contrast": 5.6
+        },
+        {
+          "background": "color(srgb 0.896667 0.879373 0.842706)",
+          "color": "rgb(32, 33, 31)",
+          "name": "peer-heading",
+          "contrast": 12.31
+        },
+        {
+          "background": "color(srgb 0.948549 0.943216 0.928941)",
+          "color": "rgb(32, 33, 31)",
+          "name": "peer-body",
+          "contrast": 14.26
+        },
+        {
+          "background": "color(srgb 0.948549 0.943216 0.928941)",
+          "color": "rgb(92, 91, 86)",
+          "name": "card-support",
+          "contrast": 6
+        }
+      ]
+    },
+    {
+      "theme": "briefing",
+      "accent": "violet",
+      "pairs": [
+        {
+          "background": "rgb(116, 85, 184)",
+          "color": "rgb(255, 255, 255)",
+          "name": "origin",
+          "contrast": 5.62
+        },
+        {
+          "background": "rgb(116, 85, 184)",
+          "color": "rgb(255, 255, 255)",
+          "name": "step-number",
+          "contrast": 5.62
+        },
+        {
+          "background": "color(srgb 0.881373 0.875804 0.93651)",
+          "color": "rgb(32, 33, 31)",
+          "name": "peer-heading",
+          "contrast": 12.34
+        },
+        {
+          "background": "color(srgb 0.94149 0.941569 0.972235)",
+          "color": "rgb(32, 33, 31)",
+          "name": "peer-body",
+          "contrast": 14.27
+        },
+        {
+          "background": "color(srgb 0.94149 0.941569 0.972235)",
+          "color": "rgb(92, 91, 86)",
+          "name": "card-support",
+          "contrast": 6.01
+        }
+      ]
+    },
+    {
+      "theme": "editorial",
+      "accent": "ink",
+      "pairs": [
+        {
+          "background": "rgb(26, 26, 24)",
+          "color": "rgb(255, 255, 255)",
+          "name": "origin",
+          "contrast": 17.43
+        },
+        {
+          "background": "rgb(26, 26, 24)",
+          "color": "rgb(255, 255, 255)",
+          "name": "step-number",
+          "contrast": 17.43
+        },
+        {
+          "background": "color(srgb 0.83549 0.811608 0.766235)",
+          "color": "rgb(41, 37, 31)",
+          "name": "peer-heading",
+          "contrast": 9.82
+        },
+        {
+          "background": "color(srgb 0.916627 0.898196 0.860863)",
+          "color": "rgb(41, 37, 31)",
+          "name": "peer-body",
+          "contrast": 12.13
+        },
+        {
+          "background": "color(srgb 0.916627 0.898196 0.860863)",
+          "color": "rgb(98, 89, 77)",
+          "name": "card-support",
+          "contrast": 5.48
+        }
+      ]
+    },
+    {
+      "theme": "editorial",
+      "accent": "blue",
+      "pairs": [
+        {
+          "background": "rgb(38, 104, 182)",
+          "color": "rgb(255, 255, 255)",
+          "name": "origin",
+          "contrast": 5.62
+        },
+        {
+          "background": "rgb(38, 104, 182)",
+          "color": "rgb(255, 255, 255)",
+          "name": "step-number",
+          "contrast": 5.62
+        },
+        {
+          "background": "color(srgb 0.841608 0.851373 0.846784)",
+          "color": "rgb(41, 37, 31)",
+          "name": "peer-heading",
+          "contrast": 10.74
+        },
+        {
+          "background": "color(srgb 0.919451 0.916549 0.898039)",
+          "color": "rgb(41, 37, 31)",
+          "name": "peer-body",
+          "contrast": 12.61
+        },
+        {
+          "background": "color(srgb 0.919451 0.916549 0.898039)",
+          "color": "rgb(98, 89, 77)",
+          "name": "card-support",
+          "contrast": 5.69
+        }
+      ]
+    },
+    {
+      "theme": "editorial",
+      "accent": "teal",
+      "pairs": [
+        {
+          "background": "rgb(2, 128, 102)",
+          "color": "rgb(255, 255, 255)",
+          "name": "origin",
+          "contrast": 4.9
+        },
+        {
+          "background": "rgb(2, 128, 102)",
+          "color": "rgb(255, 255, 255)",
+          "name": "step-number",
+          "contrast": 4.9
+        },
+        {
+          "background": "color(srgb 0.823255 0.863608 0.806)",
+          "color": "rgb(41, 37, 31)",
+          "name": "peer-heading",
+          "contrast": 10.8
+        },
+        {
+          "background": "color(srgb 0.91098 0.922196 0.879216)",
+          "color": "rgb(41, 37, 31)",
+          "name": "peer-body",
+          "contrast": 12.64
+        },
+        {
+          "background": "color(srgb 0.91098 0.922196 0.879216)",
+          "color": "rgb(98, 89, 77)",
+          "name": "card-support",
+          "contrast": 5.7
+        }
+      ]
+    },
+    {
+      "theme": "editorial",
+      "accent": "red",
+      "pairs": [
+        {
+          "background": "rgb(186, 58, 52)",
+          "color": "rgb(255, 255, 255)",
+          "name": "origin",
+          "contrast": 5.61
+        },
+        {
+          "background": "rgb(186, 58, 52)",
+          "color": "rgb(255, 255, 255)",
+          "name": "step-number",
+          "contrast": 5.61
+        },
+        {
+          "background": "color(srgb 0.917059 0.827922 0.78051)",
+          "color": "rgb(41, 37, 31)",
+          "name": "peer-heading",
+          "contrast": 10.62
+        },
+        {
+          "background": "color(srgb 0.954275 0.905725 0.867451)",
+          "color": "rgb(41, 37, 31)",
+          "name": "peer-body",
+          "contrast": 12.54
+        },
+        {
+          "background": "color(srgb 0.954275 0.905725 0.867451)",
+          "color": "rgb(98, 89, 77)",
+          "name": "card-support",
+          "contrast": 5.66
+        }
+      ]
+    },
+    {
+      "theme": "editorial",
+      "accent": "amber",
+      "pairs": [
+        {
+          "background": "rgb(146, 92, 0)",
+          "color": "rgb(255, 255, 255)",
+          "name": "origin",
+          "contrast": 5.6
+        },
+        {
+          "background": "rgb(146, 92, 0)",
+          "color": "rgb(255, 255, 255)",
+          "name": "step-number",
+          "contrast": 5.6
+        },
+        {
+          "background": "color(srgb 0.896667 0.845255 0.754)",
+          "color": "rgb(41, 37, 31)",
+          "name": "peer-heading",
+          "contrast": 10.78
+        },
+        {
+          "background": "color(srgb 0.944863 0.913725 0.855216)",
+          "color": "rgb(41, 37, 31)",
+          "name": "peer-body",
+          "contrast": 12.63
+        },
+        {
+          "background": "color(srgb 0.944863 0.913725 0.855216)",
+          "color": "rgb(98, 89, 77)",
+          "name": "card-support",
+          "contrast": 5.7
+        }
+      ]
+    },
+    {
+      "theme": "editorial",
+      "accent": "violet",
+      "pairs": [
+        {
+          "background": "rgb(116, 85, 184)",
+          "color": "rgb(255, 255, 255)",
+          "name": "origin",
+          "contrast": 5.62
+        },
+        {
+          "background": "rgb(116, 85, 184)",
+          "color": "rgb(255, 255, 255)",
+          "name": "step-number",
+          "contrast": 5.62
+        },
+        {
+          "background": "color(srgb 0.881373 0.841686 0.847804)",
+          "color": "rgb(41, 37, 31)",
+          "name": "peer-heading",
+          "contrast": 10.79
+        },
+        {
+          "background": "color(srgb 0.937804 0.912078 0.89851)",
+          "color": "rgb(41, 37, 31)",
+          "name": "peer-body",
+          "contrast": 12.63
+        },
+        {
+          "background": "color(srgb 0.937804 0.912078 0.89851)",
+          "color": "rgb(98, 89, 77)",
+          "name": "card-support",
+          "contrast": 5.7
+        }
+      ]
+    },
+    {
+      "theme": "keynote",
+      "accent": "ink",
+      "pairs": [
+        {
+          "background": "rgb(244, 241, 233)",
+          "color": "rgb(23, 26, 32)",
+          "name": "origin",
+          "contrast": 15.44
+        },
+        {
+          "background": "rgb(244, 241, 233)",
+          "color": "rgb(23, 26, 32)",
+          "name": "step-number",
+          "contrast": 15.44
+        },
+        {
+          "background": "color(srgb 0.247216 0.266157 0.296196)",
+          "color": "rgb(244, 241, 233)",
+          "name": "peer-heading",
+          "contrast": 8.7
+        },
+        {
+          "background": "color(srgb 0.164314 0.182039 0.213333)",
+          "color": "rgb(244, 241, 233)",
+          "name": "peer-body",
+          "contrast": 12.01
+        },
+        {
+          "background": "color(srgb 0.164314 0.182039 0.213333)",
+          "color": "rgb(196, 200, 208)",
+          "name": "card-support",
+          "contrast": 8.08
+        }
+      ]
+    },
+    {
+      "theme": "keynote",
+      "accent": "blue",
+      "pairs": [
+        {
+          "background": "rgb(143, 196, 255)",
+          "color": "rgb(23, 26, 32)",
+          "name": "origin",
+          "contrast": 9.55
+        },
+        {
+          "background": "rgb(143, 196, 255)",
+          "color": "rgb(23, 26, 32)",
+          "name": "step-number",
+          "contrast": 9.55
+        },
+        {
+          "background": "color(srgb 0.195725 0.243216 0.307412)",
+          "color": "rgb(244, 241, 233)",
+          "name": "peer-heading",
+          "contrast": 9.61
+        },
+        {
+          "background": "color(srgb 0.140549 0.171451 0.21851)",
+          "color": "rgb(244, 241, 233)",
+          "name": "peer-body",
+          "contrast": 12.51
+        },
+        {
+          "background": "color(srgb 0.140549 0.171451 0.21851)",
+          "color": "rgb(196, 200, 208)",
+          "name": "card-support",
+          "contrast": 8.42
+        }
+      ]
+    },
+    {
+      "theme": "keynote",
+      "accent": "teal",
+      "pairs": [
+        {
+          "background": "rgb(118, 221, 194)",
+          "color": "rgb(23, 26, 32)",
+          "name": "origin",
+          "contrast": 10.7
+        },
+        {
+          "background": "rgb(118, 221, 194)",
+          "color": "rgb(23, 26, 32)",
+          "name": "step-number",
+          "contrast": 10.7
+        },
+        {
+          "background": "color(srgb 0.18298 0.255961 0.276314)",
+          "color": "rgb(244, 241, 233)",
+          "name": "peer-heading",
+          "contrast": 9.44
+        },
+        {
+          "background": "color(srgb 0.134667 0.177333 0.204157)",
+          "color": "rgb(244, 241, 233)",
+          "name": "peer-body",
+          "contrast": 12.42
+        },
+        {
+          "background": "color(srgb 0.134667 0.177333 0.204157)",
+          "color": "rgb(196, 200, 208)",
+          "name": "card-support",
+          "contrast": 8.36
+        }
+      ]
+    },
+    {
+      "theme": "keynote",
+      "accent": "red",
+      "pairs": [
+        {
+          "background": "rgb(255, 158, 150)",
+          "color": "rgb(23, 26, 32)",
+          "name": "origin",
+          "contrast": 8.78
+        },
+        {
+          "background": "rgb(255, 158, 150)",
+          "color": "rgb(23, 26, 32)",
+          "name": "step-number",
+          "contrast": 8.78
+        },
+        {
+          "background": "color(srgb 0.252824 0.223843 0.253882)",
+          "color": "rgb(244, 241, 233)",
+          "name": "peer-heading",
+          "contrast": 9.88
+        },
+        {
+          "background": "color(srgb 0.166902 0.16251 0.193804)",
+          "color": "rgb(244, 241, 233)",
+          "name": "peer-body",
+          "contrast": 12.66
+        },
+        {
+          "background": "color(srgb 0.166902 0.16251 0.193804)",
+          "color": "rgb(196, 200, 208)",
+          "name": "card-support",
+          "contrast": 8.52
+        }
+      ]
+    },
+    {
+      "theme": "keynote",
+      "accent": "amber",
+      "pairs": [
+        {
+          "background": "rgb(255, 210, 122)",
+          "color": "rgb(23, 26, 32)",
+          "name": "origin",
+          "contrast": 12.24
+        },
+        {
+          "background": "rgb(255, 210, 122)",
+          "color": "rgb(23, 26, 32)",
+          "name": "step-number",
+          "contrast": 12.24
+        },
+        {
+          "background": "color(srgb 0.252824 0.250353 0.239608)",
+          "color": "rgb(244, 241, 233)",
+          "name": "peer-heading",
+          "contrast": 9.22
+        },
+        {
+          "background": "color(srgb 0.166902 0.174745 0.187216)",
+          "color": "rgb(244, 241, 233)",
+          "name": "peer-body",
+          "contrast": 12.31
+        },
+        {
+          "background": "color(srgb 0.166902 0.174745 0.187216)",
+          "color": "rgb(196, 200, 208)",
+          "name": "card-support",
+          "contrast": 8.28
+        }
+      ]
+    },
+    {
+      "theme": "keynote",
+      "accent": "violet",
+      "pairs": [
+        {
+          "background": "rgb(196, 168, 255)",
+          "color": "rgb(23, 26, 32)",
+          "name": "origin",
+          "contrast": 8.62
+        },
+        {
+          "background": "rgb(196, 168, 255)",
+          "color": "rgb(23, 26, 32)",
+          "name": "step-number",
+          "contrast": 8.62
+        },
+        {
+          "background": "color(srgb 0.222745 0.228941 0.307412)",
+          "color": "rgb(244, 241, 233)",
+          "name": "peer-heading",
+          "contrast": 9.81
+        },
+        {
+          "background": "color(srgb 0.15302 0.164863 0.21851)",
+          "color": "rgb(244, 241, 233)",
+          "name": "peer-body",
+          "contrast": 12.62
+        },
+        {
+          "background": "color(srgb 0.15302 0.164863 0.21851)",
+          "color": "rgb(196, 200, 208)",
+          "name": "card-support",
+          "contrast": 8.49
+        }
+      ]
+    }
+  ],
+  "citation_interaction": "A diagram citation opened the intended synthetic source index.",
+  "print_path": "Printed DOM retained five expected page layouts, Keynote theme, teal accent, and all citations.",
+  "screenshot": "/Users/keke/.codex/visualizations/2026/10/17/01a14816-efdd-7de3-b38b-3543d0ccbf96/presentation-visual-language.jpg",
+  "limitations": [
+    "No exported PDF was inspected.",
+    "No automated aesthetic score is claimed.",
+    "Missing-asset fallback, rather than a real image file, was exercised for the gallery figure."
+  ]
+}

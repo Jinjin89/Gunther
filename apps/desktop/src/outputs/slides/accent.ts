@@ -35,6 +35,15 @@ export const isAccent = (name: string | null | undefined): name is Accent => ACC
 /** The colour for an accent name; anything else (none, a name from a newer version) is ink. */
 export const accentColour = (name: string | null | undefined): string => (isAccent(name) ? ACCENT_COLOURS[name] : ACCENT_COLOURS.ink);
 
+/** Accent tones that remain visible on the dark Keynote surface. */
+export const themeAccentColour = (name: string | null | undefined, theme: string): string => {
+  if (theme !== "keynote") return accentColour(name);
+  const tones: Record<Accent, string> = {
+    ink: "#f4f1e9", blue: "#8fc4ff", teal: "#76ddc2", red: "#ff9e96", amber: "#ffd27a", violet: "#c4a8ff",
+  };
+  return tones[isAccent(name) ? name : "ink"];
+};
+
 /** WCAG 2.x relative luminance of an `#rrggbb` colour. */
 function luminance(hex: string): number {
   const [r = 0, g = 0, b = 0] = [1, 3, 5].map((at) => {

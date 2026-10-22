@@ -45,6 +45,20 @@ describe("a title slide", () => {
   });
 });
 
+describe("a directed relationship diagram", () => {
+  it("draws the cited edge as a directional connector and leaves one accessible source button", () => {
+    const text = "## Materials determine the next step\n| From | Relationship | To |\n| --- | --- | --- |\n| Collect | complete [1] | Check |\n| Check | missing [2] | Request more |";
+    const { face, inside } = draw("diagram", text, { onCite: vi.fn() });
+    expect(face).toHaveAttribute("data-drawn", "diagram");
+    expect(inside.getByLabelText("Directed relationship diagram")).toBeVisible();
+    expect(inside.getAllByRole("button", { name: "Inspect citation 1" })).toHaveLength(1);
+    expect(face.querySelectorAll(".outputs-s-diagram-node")).toHaveLength(3);
+    expect(face.querySelectorAll(".outputs-s-diagram-lines path[marker-end]")).toHaveLength(2);
+    expect(face.querySelectorAll(".outputs-sr-only button")).toHaveLength(0);
+    expect(inside.getByRole("list", { name: "Diagram relationships" })).toHaveTextContent("Collect — complete — Check");
+  });
+});
+
 describe("a big number", () => {
   it("draws the figure large, with its caption, and the caption's citation opens the evidence", async () => {
     const onCite = vi.fn();
@@ -109,6 +123,64 @@ describe("a flow and a timeline", () => {
     expect(within(list).getAllByRole("listitem").map(said)).toEqual(["1Survey [2]", "2Clean [2]", "3Coat [3]", "4Measure [1]"]);
     expect(face.querySelectorAll(".outputs-s-step-dot[aria-hidden=true]")).toHaveLength(4);
     expect(inside.getByRole("list")).toBe(list);
+  });
+
+  it("separates a bold flow step name from its explanation without losing punctuation or citations", async () => {
+    const onCite = vi.fn();
+    const { face, inside } = draw(
+      "flow",
+      "## Review the evidence\n1. **检查材料**：保留所有限定条件 [3]\n2. **Confirm** — keep the complete citation [2]",
+      { onCite },
+    );
+    const titles = Array.from(face.querySelectorAll(".outputs-s-step-title"));
+    const details = Array.from(face.querySelectorAll(".outputs-s-step-detail"));
+    expect(titles.map(said)).toEqual(["检查材料：", "Confirm —"]);
+    expect(details.map(said)).toEqual(["保留所有限定条件 [3]", "keep the complete citation [2]"]);
+    await userEvent.click(inside.getByRole("button", { name: "Inspect citation 3" }));
+    expect(onCite).toHaveBeenCalledWith(2);
+  });
+
+  it("keeps detail-only and citation-only steps in a named horizontal flow", () => {
+    const { face } = draw(
+      "flow",
+      "## Keep the whole sequence\n1. **Record**: keep the measure [1]\n2. Compare both values [2]\n3. **Confirm** [3]",
+      { onCite: vi.fn() },
+    );
+    expect(face.querySelector(".outputs-s-steps")).toHaveClass("has-named-steps");
+    expect(face.querySelectorAll(".outputs-s-step-title")).toHaveLength(3);
+    expect(face.querySelector(".outputs-s-step-title.is-empty")).toBeInTheDocument();
+    expect(face.querySelector(".outputs-s-step-title")).toHaveTextContent("Record");
+    expect(face.querySelectorAll("button[aria-label^='Inspect citation']")).toHaveLength(3);
+    expect(face).toHaveTextContent("Confirm [3]");
+  });
+
+  it("keeps negative signs with flow explanations and their citations", async () => {
+    const onCite = vi.fn();
+    const { face, inside } = draw(
+      "flow",
+      "## Negative amounts\n1. **Cut** -10% [1]\n2. **Change** –10 [2]\n3. **Subtract** −10% [3]\n4. **Cost** -  ￥10 [4]",
+      { onCite },
+    );
+    expect(Array.from(face.querySelectorAll(".outputs-s-step-title")).map(said)).toEqual([
+      "Cut", "Change", "Subtract", "Cost",
+    ]);
+    expect(Array.from(face.querySelectorAll(".outputs-s-step-detail")).map(said)).toEqual([
+      "-10% [1]", "–10 [2]", "−10% [3]", "-  ￥10 [4]",
+    ]);
+    await userEvent.click(inside.getByRole("button", { name: "Inspect citation 3" }));
+    expect(onCite).toHaveBeenCalledWith(2);
+  });
+
+  it("renders spaced decimal and full-width currency signs as literal flow text", () => {
+    const { face } = draw(
+      "flow",
+      "## Preserve the values\n1. **Decimal** - .5% [1]\n2. **Budget** - ￥ 10 [2]",
+      { onCite: vi.fn() },
+    );
+    expect(Array.from(face.querySelectorAll(".outputs-s-step-detail")).map(said)).toEqual([
+      "- .5% [1]", "- ￥ 10 [2]",
+    ]);
+    expect(face.querySelectorAll("button[aria-label^='Inspect citation']")).toHaveLength(2);
   });
 
   it("run down the slide from five steps, or five events, so that each has room for its words", () => {

@@ -1,0 +1,504 @@
+{
+  "kind": "Seeded seven-page candidate; live model review and repair",
+  "model": "DeepSeek · Flash",
+  "before": [
+    {
+      "heading": "Intake Pilot Decision: The Time Result and Its Limits",
+      "goal": "State the core message and frame the evidence-limits discussion.",
+      "queries": [],
+      "layout": "title",
+      "link": "",
+      "refs": [
+        1
+      ],
+      "cards": [
+        1
+      ],
+      "design": null,
+      "layout_locked": false,
+      "design_locked": false,
+      "design_attempted": false,
+      "id": "p1",
+      "message": "",
+      "question": "",
+      "requires": []
+    },
+    {
+      "heading": "Median review time fell from 40 hours before the pilot to 16 hours during it",
+      "goal": "Present the headline time result with its source.",
+      "queries": [
+        "median review time before after pilot",
+        "review time hours intake",
+        "time outcome pilot"
+      ],
+      "layout": "big_number",
+      "link": "headline result",
+      "refs": [
+        1
+      ],
+      "cards": [
+        1
+      ],
+      "design": null,
+      "layout_locked": false,
+      "design_locked": false,
+      "design_attempted": false,
+      "id": "p2",
+      "message": "",
+      "question": "",
+      "requires": []
+    },
+    {
+      "heading": "The time result comes from two teams observed over eight weeks, using training data",
+      "goal": "Make the scope and provenance of the result explicit.",
+      "queries": [
+        "two-team pilot eight weeks",
+        "synthetic training data pilot",
+        "pilot sample scope"
+      ],
+      "layout": "cards",
+      "link": "what the result covers",
+      "refs": [
+        1
+      ],
+      "cards": [
+        1,
+        2
+      ],
+      "design": null,
+      "layout_locked": false,
+      "design_locked": false,
+      "design_attempted": false,
+      "id": "p3",
+      "message": "",
+      "question": "",
+      "requires": []
+    },
+    {
+      "heading": "The quality limitation must remain in the decision",
+      "cards": [
+        3,
+        4
+      ],
+      "goal": "Retain limits",
+      "id": "p4",
+      "requires": []
+    },
+    {
+      "heading": "Review quality, error rates, and other teams were not measured",
+      "goal": "Separate what the pilot measured from what it did not measure.",
+      "queries": [
+        "review quality error rate pilot",
+        "intake quality measure",
+        "other teams generalization pilot"
+      ],
+      "layout": "two_column",
+      "link": "limit of the time result",
+      "refs": [
+        1,
+        2
+      ],
+      "cards": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "design": null,
+      "layout_locked": false,
+      "design_locked": false,
+      "design_attempted": false,
+      "id": "p5",
+      "message": "",
+      "question": "",
+      "requires": []
+    },
+    {
+      "heading": "A faster review does not establish a quality improvement or an effect in other teams",
+      "goal": "Explain why the missing measures limit what the time gain can support.",
+      "queries": [
+        "speed versus quality review",
+        "sample effect other teams",
+        "pilot external validity"
+      ],
+      "layout": "text",
+      "link": "consequence of the missing measures",
+      "refs": [
+        2
+      ],
+      "cards": [
+        3,
+        4
+      ],
+      "design": null,
+      "layout_locked": false,
+      "design_locked": false,
+      "design_attempted": false,
+      "id": "p6",
+      "message": "",
+      "question": "",
+      "requires": []
+    },
+    {
+      "heading": "Extend only with a quality measure; the time gain alone cannot decide",
+      "goal": "Close with the decision options and the evidence needed to choose among them.",
+      "queries": [
+        "continue expand stop pilot options",
+        "quality measure pilot extension",
+        "decision note intake pilot"
+      ],
+      "layout": "takeaways",
+      "link": "decision from the limitation",
+      "refs": [
+        3,
+        2,
+        1
+      ],
+      "cards": [
+        5,
+        3,
+        1
+      ],
+      "design": null,
+      "layout_locked": false,
+      "design_locked": false,
+      "design_attempted": false,
+      "id": "p7",
+      "message": "",
+      "question": "",
+      "requires": []
+    }
+  ],
+  "after": [
+    {
+      "heading": "Intake Pilot Decision: Time Result, Missing Measures, and the Choice",
+      "goal": "Frame the deck as a decision aid for collaborators: one time result, the measures it lacks, and the three unranked options that follow.",
+      "queries": [],
+      "layout": "title",
+      "link": "",
+      "refs": [
+        1
+      ],
+      "cards": [
+        1
+      ],
+      "design": null,
+      "layout_locked": false,
+      "design_locked": false,
+      "design_attempted": false,
+      "id": "p1",
+      "message": "The pilot cut median review time, but quality and other teams were not measured; three unranked options remain.",
+      "question": "Should we extend the intake pilot?",
+      "requires": []
+    },
+    {
+      "heading": "Median review time fell from 40 hours before the pilot to 16 hours during it",
+      "goal": "State the headline time result with its source so the rest of the deck can interrogate what it supports.",
+      "queries": [
+        "median review time before after pilot",
+        "review time hours intake"
+      ],
+      "layout": "big_number",
+      "link": "headline result",
+      "refs": [
+        1
+      ],
+      "cards": [
+        1
+      ],
+      "design": null,
+      "layout_locked": false,
+      "design_locked": false,
+      "design_attempted": false,
+      "id": "p2",
+      "message": "Median review time was 40 hours before the pilot and 16 hours during the pilot [1].",
+      "question": "How much faster was review during the pilot?",
+      "requires": []
+    },
+    {
+      "heading": "The result comes from two teams over eight weeks and is training data, not an organizational result",
+      "goal": "Make the scope and provenance of the time result explicit before discussing what it cannot support.",
+      "queries": [
+        "two-team pilot eight weeks",
+        "synthetic training data intake"
+      ],
+      "layout": "cards",
+      "link": "what the result covers",
+      "refs": [
+        1
+      ],
+      "cards": [
+        1,
+        2
+      ],
+      "design": null,
+      "layout_locked": false,
+      "design_locked": false,
+      "design_attempted": false,
+      "id": "p3",
+      "message": "The observation covered two teams over eight weeks, and these are training data rather than actual organizational results [1].",
+      "question": "How far does this time result reach?",
+      "requires": [
+        "p2"
+      ]
+    },
+    {
+      "heading": "The pilot measured review time; it did not measure review quality, error rates, or other teams",
+      "goal": "Separate what the pilot measured from what it left unmeasured, keeping both scope limits side by side.",
+      "queries": [
+        "review quality error rate not measured",
+        "other teams generalization pilot"
+      ],
+      "layout": "two_column",
+      "link": "limit of the time result",
+      "refs": [
+        1,
+        2
+      ],
+      "cards": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "design": null,
+      "layout_locked": false,
+      "design_locked": false,
+      "design_attempted": false,
+      "id": "p4",
+      "message": "Measured: median time, two teams, eight weeks, training data [1]. Not measured: review quality, error rates, other teams [2].",
+      "question": "What did the pilot actually measure?",
+      "requires": [
+        "p3"
+      ]
+    },
+    {
+      "heading": "A faster review does not establish a quality improvement or an effect in other teams",
+      "goal": "Explain why the missing measures bound what the time gain can support, without claiming the gain was offset by worse quality.",
+      "queries": [
+        "speed versus quality review",
+        "sample effect other teams"
+      ],
+      "layout": "text",
+      "link": "consequence of the missing measures",
+      "refs": [
+        2
+      ],
+      "cards": [
+        3,
+        4
+      ],
+      "design": null,
+      "layout_locked": false,
+      "design_locked": false,
+      "design_attempted": false,
+      "id": "p5",
+      "message": "Because quality and error rates were not measured, a faster review cannot establish a quality improvement [2]; because only two teams were observed, the sample does not establish an effect in other teams [2].",
+      "question": "Why does the missing quality data matter for the decision?",
+      "requires": [
+        "p4"
+      ]
+    },
+    {
+      "heading": "Three options remain unranked and uncosted; any of them needs a quality measure",
+      "goal": "Close by presenting the three options neutrally, carrying the note's own qualification that they are unranked and unquantified, and naming the information all three lack.",
+      "queries": [
+        "continue expand stop pilot options",
+        "decision note unranked options costs"
+      ],
+      "layout": "takeaways",
+      "link": "decision from the limitation",
+      "refs": [
+        3,
+        2
+      ],
+      "cards": [
+        5,
+        3
+      ],
+      "design": null,
+      "layout_locked": false,
+      "design_locked": false,
+      "design_attempted": false,
+      "id": "p6",
+      "message": "Collaborators can continue measuring the two teams, expand with a quality measure, or stop the pilot; the note does not rank the options or quantify their costs [3]. A quality measure is the information any of these choices lacks [2].",
+      "question": "What are we actually choosing between, and what is missing to choose?",
+      "requires": [
+        "p5"
+      ]
+    }
+  ],
+  "title": "Intake Pilot Decision: Time Result, Missing Measures, and the Choice",
+  "calls": 2,
+  "seconds": 17.43,
+  "allAssignedCardsRetained": true,
+  "review": {
+    "name": "slides",
+    "version": 10,
+    "skipped": [],
+    "outlineReview": {
+      "outlineFingerprint": "27dd8f26165158dc5b8ba88610b6a6aa3a060c352968664e4994c2b954169329",
+      "issues": [
+        {
+          "section": 0,
+          "problem": "The brief requires exactly 6 slides; the outline has 7 (p1–p7). Page 4 (\"The quality limitation must remain in the decision\") adds no content beyond pages 5 and 6, so the deck overshoots by one page without adding an argument.",
+          "fix": "Drop p4 and fold its limit content into p5 (what was/was not measured) and p6 (why that limits the time result), leaving 6 pages: title, time result, scope/provenance, measured vs not measured, consequence of the gap, decision close.",
+          "severity": "error"
+        },
+        {
+          "section": 7,
+          "problem": "The closing heading \"Extend only with a quality measure; the time gain alone cannot decide\" recommends one of the options. C5 states the three options (continue measuring, expand with a quality measure, stop) are unranked and their costs are not quantified, so the evidence does not support singling out expansion.",
+          "fix": "Make the closing page present the three options neutrally as the decision the collaborators face, and state that a quality measure is the information any of those choices lacks — without prescribing which option to take.",
+          "severity": "error"
+        },
+        {
+          "section": 7,
+          "problem": "Card 5's own qualification — that the options are unranked and their costs are not quantified — is not carried by the heading or goal, so the page presents a ranked-sounding recommendation while hiding the stated decision boundary.",
+          "fix": "Add the unranked-options and unquantified-costs qualification to the page's message and goal, drawn from C5.",
+          "severity": "error"
+        },
+        {
+          "section": 7,
+          "problem": "Card 1 (the 40→16 hour median) is assigned again on the closing page, repeating the headline result a third time after p2 and p3 without adding new reasoning.",
+          "fix": "Restrict p7 to C5 plus the quality/other-teams limits (C3, C4); refer back to the time result by page rather than re-arguing it.",
+          "severity": "advice"
+        },
+        {
+          "section": 4,
+          "problem": "The heading \"The quality limitation must remain in the decision\" is a meta-instruction about how to build the deck, not a content claim, and it restates what p5 and p6 already say.",
+          "fix": "If a limits page is kept at all, phrase its heading as the substantive claim (e.g. what the pilot did not measure), and place it once, in p5/p6.",
+          "severity": "advice"
+        },
+        {
+          "section": 2,
+          "problem": "\"fell from 40 hours before the pilot to 16 hours during it\" implies the pilot caused the drop, but C1 only reports a before/during comparison over two teams in training data; no causal attribution is established.",
+          "fix": "Keep the numbers but phrase the comparison as before/during rather than as an effect of the pilot, and let p3/p6 carry the attribution caveat.",
+          "severity": "advice"
+        },
+        {
+          "section": 3,
+          "problem": "The page goal asks to make provenance explicit, but the heading compresses sample (two teams, eight weeks) and provenance (training data, not actual organizational results) into one line; the decision-relevant point — that these are not real organizational results — risks being read as a mere detail.",
+          "fix": "Keep the heading but make the page message state plainly that the numbers are training data, not actual organizational results, so the caveat is not lost behind the sample description.",
+          "severity": "advice"
+        },
+        {
+          "section": 6,
+          "problem": "The brief asks the deck to explain why a decision needs the limitation; p6 explains why the time gain cannot support a quality or cross-team claim, but stops short of linking that to the decision itself, leaving the p7 conclusion to appear without a stated premise.",
+          "fix": "In p6's goal or message, add the step from C3/C5: because quality and other teams were not measured and the option costs are unquantified, any choice among the options needs that missing measure.",
+          "severity": "advice"
+        }
+      ],
+      "coverage": [
+        {
+          "card": 1,
+          "claim": "Median review time was 40 hours before and 16 hours during the pilot.",
+          "refs": [
+            1
+          ],
+          "scope": "In this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight weeks. These are training data, not actual organizational results.",
+          "evidence": "In this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight weeks. These are training data, not actual organizational results.",
+          "slides": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "reason": "",
+          "sourceIdentities": [
+            [
+              "library",
+              "Intake pilot timing log",
+              "9bcf05e19348fe16120b0b2a81473231f070278a4647c3a50aabff170cf08ce8"
+            ]
+          ]
+        },
+        {
+          "card": 2,
+          "claim": "Two teams were observed for eight weeks.",
+          "refs": [
+            1
+          ],
+          "scope": "In this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight weeks. These are training data, not actual organizational results.",
+          "evidence": "In this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight weeks. These are training data, not actual organizational results.",
+          "slides": [
+            3,
+            4
+          ],
+          "reason": "",
+          "sourceIdentities": [
+            [
+              "library",
+              "Intake pilot timing log",
+              "9bcf05e19348fe16120b0b2a81473231f070278a4647c3a50aabff170cf08ce8"
+            ]
+          ]
+        },
+        {
+          "card": 3,
+          "claim": "Review quality and error rates were not measured.",
+          "refs": [
+            2
+          ],
+          "scope": "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish an effect in other teams.",
+          "evidence": "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish an effect in other teams.",
+          "slides": [
+            4,
+            5,
+            6
+          ],
+          "reason": "",
+          "sourceIdentities": [
+            [
+              "library",
+              "Intake pilot scope note",
+              "68eafe53820f27a932f03fe75cc9e8d8a94080b786c33741af5266547a79764d"
+            ]
+          ]
+        },
+        {
+          "card": 4,
+          "claim": "Other teams were not evaluated.",
+          "refs": [
+            2
+          ],
+          "scope": "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish an effect in other teams.",
+          "evidence": "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish an effect in other teams.",
+          "slides": [
+            4,
+            5
+          ],
+          "reason": "",
+          "sourceIdentities": [
+            [
+              "library",
+              "Intake pilot scope note",
+              "68eafe53820f27a932f03fe75cc9e8d8a94080b786c33741af5266547a79764d"
+            ]
+          ]
+        },
+        {
+          "card": 5,
+          "claim": "The decision note offers three unranked options.",
+          "refs": [
+            3
+          ],
+          "scope": "Collaborators can continue measuring the two teams, expand with a quality measure, or stop the pilot. The note does not rank the options or quantify their costs.",
+          "evidence": "Collaborators can continue measuring the two teams, expand with a quality measure, or stop the pilot. The note does not rank the options or quantify their costs.",
+          "slides": [
+            6
+          ],
+          "reason": "",
+          "sourceIdentities": [
+            [
+              "library",
+              "Intake pilot decision note",
+              "41d255bf730b82b6fec52ed45ac7dae7a1a5afded374613f1b5e0deb40e7384e"
+            ]
+          ]
+        }
+      ],
+      "status": "replanned",
+      "repaired": true
+    }
+  }
+}

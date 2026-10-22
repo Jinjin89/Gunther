@@ -1,0 +1,795 @@
+{
+  "id": "figure-read",
+  "synthetic": true,
+  "model": "DeepSeek · Flash",
+  "modelRef": "deepseek/deepseek-flash",
+  "effort": "medium",
+  "vision": true,
+  "theme": "keynote",
+  "use": "read",
+  "inputHash": "30ad3ab4922221327a57e6c5ab9aa5dd061b112fa0028e27329289b76645b0ed",
+  "sourceHash": "4c3c0b78df7728f1c4af50b11345d7596a1192d2402ae4845ff95be1df58360e",
+  "before": {
+    "title": "Reading a source diagram",
+    "content": "<!-- layout: title; theme: keynote; design: v1 -->\n# Reading a source diagram\n\nSynthetic source review. [1]\n\n---\n\n<!-- layout: figure -->\n## The source figure specifies a reading order [1]\n\n![Collection, Review, Archive](gunther-asset:eval-collection)\n\nThe arrows show order; no causal effect or duration was measured. [1][2]",
+    "outline": [
+      {
+        "id": "figure-p1",
+        "heading": "Reading a source diagram",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "title"
+      },
+      {
+        "id": "figure-p2",
+        "heading": "The source figure specifies a reading order [1]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "figure"
+      }
+    ],
+    "citations": [
+      {
+        "id": "figure-source",
+        "kind": "library",
+        "url": null,
+        "source_id": "figure-source",
+        "source_title": "Training collection diagram",
+        "assertion_id": null,
+        "quote": "Figure 1 is an illustrative training diagram: Collection connects to Review, which connects to Archive. The three boxes denote the documented reading order. The diagram gives no duration, volume, or quality measures.",
+        "locator": "Synthetic figure 1 and caption",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 1
+      },
+      {
+        "id": "figure-scope",
+        "kind": "library",
+        "url": null,
+        "source_id": "figure-scope",
+        "source_title": "Figure scope note",
+        "assertion_id": null,
+        "quote": "The arrows in Figure 1 indicate the specified order, not a measured causal effect. The image is the original source illustration and its labels should remain readable.",
+        "locator": "Synthetic figure description",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 2
+      }
+    ],
+    "use": "read"
+  },
+  "after": {
+    "title": "Reading a source diagram",
+    "content": "<!-- layout: title; theme: keynote; design: v1 -->\n# Reading a source diagram\n\nSynthetic source review. [1]\n\n---\n\n<!-- layout: figure -->\n## The source figure specifies a reading order [1]\n\n![Collection, Review, Archive](gunther-asset:eval-collection)\n\nThe arrows show order; no causal effect or duration was measured. [1][2]",
+    "outline": [
+      {
+        "id": "figure-p1",
+        "heading": "Reading a source diagram",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "title"
+      },
+      {
+        "id": "figure-p2",
+        "heading": "The source figure specifies a reading order [1]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "figure"
+      }
+    ],
+    "citations": [
+      {
+        "id": "figure-source",
+        "kind": "library",
+        "url": null,
+        "source_id": "figure-source",
+        "source_title": "Training collection diagram",
+        "assertion_id": null,
+        "quote": "Figure 1 is an illustrative training diagram: Collection connects to Review, which connects to Archive. The three boxes denote the documented reading order. The diagram gives no duration, volume, or quality measures.",
+        "locator": "Synthetic figure 1 and caption",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 1
+      },
+      {
+        "id": "figure-scope",
+        "kind": "library",
+        "url": null,
+        "source_id": "figure-scope",
+        "source_title": "Figure scope note",
+        "assertion_id": null,
+        "quote": "The arrows in Figure 1 indicate the specified order, not a measured causal effect. The image is the original source illustration and its labels should remain readable.",
+        "locator": "Synthetic figure description",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 2
+      }
+    ],
+    "use": "read"
+  },
+  "beforeCapture": {
+    "version": 1,
+    "candidateHash": "30ad3ab4922221327a57e6c5ab9aa5dd061b112fa0028e27329289b76645b0ed",
+    "slides": [
+      {
+        "id": "figure-p1",
+        "index": 0,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "text"
+          }
+        ],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "title",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 118,
+            "minimum": 28,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 185.453125,
+              "width": 990.953125,
+              "height": 240.71875
+            },
+            "text": "Reading a source diagram"
+          },
+          {
+            "role": "body",
+            "size": 36,
+            "minimum": 18,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 466.171875,
+              "width": 972,
+              "height": 50.390625
+            },
+            "text": "Synthetic source review. [1]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-01.png",
+        "resolvedFonts": [
+          "AvenirNext-Bold",
+          "AvenirNext-Regular"
+        ],
+        "contentHash": "5bd4cb758766ee18398f7bcb9b1d5126f4d398dbade9ab96216d1954a0cf83fd",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "ba8a9201918252d051dc7ad4d7a48082934dfcab64c450ef8a28d227ca0afc0c"
+          }
+        ]
+      },
+      {
+        "id": "figure-p2",
+        "index": 1,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "image"
+          },
+          {
+            "id": "b2",
+            "type": "text"
+          }
+        ],
+        "fit": 0.98,
+        "overflow": false,
+        "drawn": "figure",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 54.88,
+            "minimum": 28,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 64,
+              "width": 1096,
+              "height": 62.546875
+            },
+            "text": "The source figure specifies a reading order [1]"
+          },
+          {
+            "role": "caption",
+            "size": 24.5,
+            "minimum": 16,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 565.5625,
+              "width": 1078,
+              "height": 34.296875
+            },
+            "text": "The arrows show order; no causal effect or duration was measured. [1][2]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [
+          {
+            "src": "/api/assets/eval-collection",
+            "loaded": true,
+            "width": 1000,
+            "height": 360
+          }
+        ],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-02.png",
+        "resolvedFonts": [
+          "AvenirNext-Bold",
+          "AvenirNext-Regular"
+        ],
+        "contentHash": "399904d2ceb9e6cb9279e575cdaad4ec825cba3f26efda86a6944e7190ef28d4",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "be24f6a8969fcdf2841d77ae64c665cfa1582c1aa83a75468e47041b92e59338"
+          },
+          {
+            "id": "b2",
+            "hash": "5bab129f2240c5d26680572d6e2a8d974e86230b090abddafba9b76590d333cf"
+          }
+        ]
+      }
+    ],
+    "id": "9d05b8949bf14641a13656da9a370c62",
+    "status": "captured",
+    "contentHash": "36ef5822114458a5900bb3f8df4823ec7d26958a514e5e738d502fbe1522fb04",
+    "rendererHash": "33a5287cd11e443eb3dc13f1b6cb23de507eccd5e2baf99a1267812d6343f6cc",
+    "assetHashes": {
+      "eval-collection": "d2270ccf634182810ed8d9e2643f2a7dd37c19f9bcdeb051639b355111ac7970"
+    },
+    "designHash": "856410019b21ac9337a2253e41cae5332cbf485b39de5227cbc1fa0e1cd526cd",
+    "missingAssets": [],
+    "contact": "contact.png",
+    "pdf": "deck.pdf",
+    "pdfCheck": {
+      "status": "checked",
+      "pages": 3,
+      "slides": [
+        {
+          "id": "figure-p1",
+          "index": 0,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "text"
+            }
+          ],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "title",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 118,
+              "minimum": 28,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 185.453125,
+                "width": 990.953125,
+                "height": 240.71875
+              },
+              "text": "Reading a source diagram"
+            },
+            {
+              "role": "body",
+              "size": 36,
+              "minimum": 18,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 466.171875,
+                "width": 972,
+                "height": 50.390625
+              },
+              "text": "Synthetic source review. [1]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        },
+        {
+          "id": "figure-p2",
+          "index": 1,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "image"
+            },
+            {
+              "id": "b2",
+              "type": "text"
+            }
+          ],
+          "fit": 0.98,
+          "overflow": false,
+          "drawn": "figure",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 54.88,
+              "minimum": 28,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 64,
+                "width": 1096,
+                "height": 62.546875
+              },
+              "text": "The source figure specifies a reading order [1]"
+            },
+            {
+              "role": "caption",
+              "size": 24.5,
+              "minimum": 16,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 565.5625,
+                "width": 1078,
+                "height": 34.296875
+              },
+              "text": "The arrows show order; no causal effect or duration was measured. [1][2]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [
+            {
+              "src": "/api/assets/eval-collection",
+              "loaded": true,
+              "width": 1000,
+              "height": 360
+            }
+          ],
+          "assetFailures": 0,
+          "pending": 0
+        }
+      ],
+      "method": "print-dom-and-exported-pdf-text"
+    },
+    "browser": "HeadlessChrome/156.0.8078.4",
+    "distribution": "bundled:chromium_headless_shell-1248",
+    "elapsedSeconds": 1.433,
+    "files": {
+      "contact.png": "e67e723e0af2627217af071aad4ca6173a4131eb63d3d91d6a6e3dc52fe1fd7f",
+      "slide-02.png": "f6a2701466dfcd068977d2c238b8d9b9945b14e209db605c22fff4c677b9bc4b",
+      "deck.pdf": "9f2aabb5b41c706c362d3c0fa41fc1e5fab9387d826ffe1bd0fb4cc64b22e120",
+      "slide-01.png": "beccccce78cc1abc2b7184411ce4f8e8443553e1550b5206897bad0f0ddb656b"
+    }
+  },
+  "afterCapture": {
+    "version": 1,
+    "candidateHash": "30ad3ab4922221327a57e6c5ab9aa5dd061b112fa0028e27329289b76645b0ed",
+    "slides": [
+      {
+        "id": "figure-p1",
+        "index": 0,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "text"
+          }
+        ],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "title",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 118,
+            "minimum": 28,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 185.453125,
+              "width": 990.953125,
+              "height": 240.71875
+            },
+            "text": "Reading a source diagram"
+          },
+          {
+            "role": "body",
+            "size": 36,
+            "minimum": 18,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 466.171875,
+              "width": 972,
+              "height": 50.390625
+            },
+            "text": "Synthetic source review. [1]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-01.png",
+        "resolvedFonts": [
+          "AvenirNext-Bold",
+          "AvenirNext-Regular"
+        ],
+        "contentHash": "5bd4cb758766ee18398f7bcb9b1d5126f4d398dbade9ab96216d1954a0cf83fd",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "ba8a9201918252d051dc7ad4d7a48082934dfcab64c450ef8a28d227ca0afc0c"
+          }
+        ]
+      },
+      {
+        "id": "figure-p2",
+        "index": 1,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "image"
+          },
+          {
+            "id": "b2",
+            "type": "text"
+          }
+        ],
+        "fit": 0.98,
+        "overflow": false,
+        "drawn": "figure",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 54.88,
+            "minimum": 28,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 64,
+              "width": 1096,
+              "height": 62.546875
+            },
+            "text": "The source figure specifies a reading order [1]"
+          },
+          {
+            "role": "caption",
+            "size": 24.5,
+            "minimum": 16,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 565.5625,
+              "width": 1078,
+              "height": 34.296875
+            },
+            "text": "The arrows show order; no causal effect or duration was measured. [1][2]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [
+          {
+            "src": "/api/assets/eval-collection",
+            "loaded": true,
+            "width": 1000,
+            "height": 360
+          }
+        ],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-02.png",
+        "resolvedFonts": [
+          "AvenirNext-Bold",
+          "AvenirNext-Regular"
+        ],
+        "contentHash": "399904d2ceb9e6cb9279e575cdaad4ec825cba3f26efda86a6944e7190ef28d4",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "be24f6a8969fcdf2841d77ae64c665cfa1582c1aa83a75468e47041b92e59338"
+          },
+          {
+            "id": "b2",
+            "hash": "5bab129f2240c5d26680572d6e2a8d974e86230b090abddafba9b76590d333cf"
+          }
+        ]
+      }
+    ],
+    "id": "16a43a01a6e44ed4b669490a24edc380",
+    "status": "captured",
+    "contentHash": "36ef5822114458a5900bb3f8df4823ec7d26958a514e5e738d502fbe1522fb04",
+    "rendererHash": "33a5287cd11e443eb3dc13f1b6cb23de507eccd5e2baf99a1267812d6343f6cc",
+    "assetHashes": {
+      "eval-collection": "d2270ccf634182810ed8d9e2643f2a7dd37c19f9bcdeb051639b355111ac7970"
+    },
+    "designHash": "856410019b21ac9337a2253e41cae5332cbf485b39de5227cbc1fa0e1cd526cd",
+    "missingAssets": [],
+    "contact": "contact.png",
+    "pdf": "deck.pdf",
+    "pdfCheck": {
+      "status": "checked",
+      "pages": 3,
+      "slides": [
+        {
+          "id": "figure-p1",
+          "index": 0,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "text"
+            }
+          ],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "title",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 118,
+              "minimum": 28,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 185.453125,
+                "width": 990.953125,
+                "height": 240.71875
+              },
+              "text": "Reading a source diagram"
+            },
+            {
+              "role": "body",
+              "size": 36,
+              "minimum": 18,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 466.171875,
+                "width": 972,
+                "height": 50.390625
+              },
+              "text": "Synthetic source review. [1]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        },
+        {
+          "id": "figure-p2",
+          "index": 1,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "image"
+            },
+            {
+              "id": "b2",
+              "type": "text"
+            }
+          ],
+          "fit": 0.98,
+          "overflow": false,
+          "drawn": "figure",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 54.88,
+              "minimum": 28,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 64,
+                "width": 1096,
+                "height": 62.546875
+              },
+              "text": "The source figure specifies a reading order [1]"
+            },
+            {
+              "role": "caption",
+              "size": 24.5,
+              "minimum": 16,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 565.5625,
+                "width": 1078,
+                "height": 34.296875
+              },
+              "text": "The arrows show order; no causal effect or duration was measured. [1][2]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [
+            {
+              "src": "/api/assets/eval-collection",
+              "loaded": true,
+              "width": 1000,
+              "height": 360
+            }
+          ],
+          "assetFailures": 0,
+          "pending": 0
+        }
+      ],
+      "method": "print-dom-and-exported-pdf-text"
+    },
+    "browser": "HeadlessChrome/156.0.8078.4",
+    "distribution": "bundled:chromium_headless_shell-1248",
+    "elapsedSeconds": 1.437,
+    "files": {
+      "contact.png": "e67e723e0af2627217af071aad4ca6173a4131eb63d3d91d6a6e3dc52fe1fd7f",
+      "slide-02.png": "f6a2701466dfcd068977d2c238b8d9b9945b14e209db605c22fff4c677b9bc4b",
+      "deck.pdf": "ff9cc671ed91f5e1a1c82c19554315b3b61753c5e4af4fd56b311bf5d971bbf9",
+      "slide-01.png": "beccccce78cc1abc2b7184411ce4f8e8443553e1550b5206897bad0f0ddb656b"
+    }
+  },
+  "review": {
+    "version": 1,
+    "status": "clean",
+    "model": "deepseek/deepseek-flash",
+    "imageReview": "reviewed",
+    "repairCycles": 0,
+    "repairedSlides": [],
+    "findings": [],
+    "history": [
+      {
+        "snapshotId": "16a43a01a6e44ed4b669490a24edc380",
+        "candidateHash": "30ad3ab4922221327a57e6c5ab9aa5dd061b112fa0028e27329289b76645b0ed"
+      }
+    ],
+    "limits": {
+      "requests": 8,
+      "cycles": 1,
+      "affectedSlides": 4
+    },
+    "candidateHash": "30ad3ab4922221327a57e6c5ab9aa5dd061b112fa0028e27329289b76645b0ed",
+    "calls": 1,
+    "elapsedSeconds": 15.169
+  },
+  "fidelity": {
+    "wordingNotesAndCitations": true,
+    "citationIdentities": true,
+    "poolMapping": true,
+    "pageIdentityAndOrder": true,
+    "theme": true,
+    "designVersion": true
+  }
+}

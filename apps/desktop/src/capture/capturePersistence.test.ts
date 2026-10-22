@@ -72,6 +72,18 @@ describe("shared Capture persistence", () => {
     expect(result.message).toContain("local retry queue");
   });
 
+  it("saves a recording with model analysis queued after durable acceptance", async () => {
+    const result = await persistTextCapture({
+      title: "Lecture transcript", baseId: null, content: "Preserved text",
+      kind: "recording", captureId: "capture-recording", workspaceId: "wsp-primary",
+    });
+    expect(mocks.importSource).toHaveBeenCalledWith({
+      title: "Lecture transcript", content: "Preserved text", kind: "recording",
+    }, "wsp-primary", { deferAnalysis: true });
+    expect(result.savedToService).toBe(true);
+    expect(mocks.removeStoredCapture).toHaveBeenCalledWith("capture-recording");
+  });
+
   it("keeps original asset capture and its destination message in the shared path", async () => {
     const file = new File(["paper"], "paper.pdf", { type: "application/pdf" });
 

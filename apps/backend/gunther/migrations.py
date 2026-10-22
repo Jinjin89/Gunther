@@ -640,6 +640,11 @@ def _create_artifact_conversations(connection: Connection, metadata: MetaData) -
             metadata.tables[name].create(bind=connection, checkfirst=True)
 
 
+def _add_recording_audio_duration(connection: Connection, metadata: MetaData) -> None:
+    if inspect(connection).has_table("recording_sessions"):
+        add_column_if_missing(connection, "recording_sessions", "audio_duration_ms", "INTEGER")
+
+
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
 MIGRATIONS: tuple[Migration, ...] = (
@@ -670,6 +675,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(25, "library_contents", _add_library_contents),
     Migration(26, "drop_transcript_upgrades", _drop_transcript_upgrades),
     Migration(27, "artifact_conversations", _create_artifact_conversations),
+    Migration(28, "recording_audio_duration", _add_recording_audio_duration),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

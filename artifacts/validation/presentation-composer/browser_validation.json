@@ -1,0 +1,677 @@
+{
+  "scope": "Real components in the local browser; all inputs are synthetic.",
+  "themes": [
+    {
+      "theme": "classic",
+      "pages": [
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 0,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 0.9,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b3",
+            "b4",
+            "b1",
+            "b2",
+            "b5"
+          ],
+          "case": 1,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 1,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 2,
+          "cites": 6,
+          "drawn": "composed",
+          "fit": 1,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 3,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "Duplicate content blocks: b1.",
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 4,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "This scene is out of date for the current slide text.",
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 5,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "Scene metadata has an unsupported version or format.",
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 6,
+          "cites": 4,
+          "drawn": null,
+          "fit": 0.55,
+          "issue": "The composed elements do not fit this page at a readable size.",
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 7,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 0.9,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 8,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 1,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 9,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "Scene metadata has an invalid encoding.",
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 10,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "Missing content blocks: b3, b4, b5.",
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 11,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 1,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b3",
+            "b4",
+            "b1",
+            "b2",
+            "b5"
+          ],
+          "case": 12,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 0.76,
+          "issue": null,
+          "overflow": []
+        }
+      ]
+    },
+    {
+      "theme": "briefing",
+      "pages": [
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 0,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 0.91,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b3",
+            "b4",
+            "b1",
+            "b2",
+            "b5"
+          ],
+          "case": 1,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 1,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 2,
+          "cites": 6,
+          "drawn": "composed",
+          "fit": 1,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 3,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "Duplicate content blocks: b1.",
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 4,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "This scene is out of date for the current slide text.",
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 5,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "Scene metadata has an unsupported version or format.",
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 6,
+          "cites": 4,
+          "drawn": null,
+          "fit": 0.55,
+          "issue": "The composed elements do not fit this page at a readable size.",
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 7,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 0.91,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 8,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 1,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 9,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "Scene metadata has an invalid encoding.",
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 10,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "Missing content blocks: b3, b4, b5.",
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 11,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 1,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b3",
+            "b4",
+            "b1",
+            "b2",
+            "b5"
+          ],
+          "case": 12,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 0.78,
+          "issue": null,
+          "overflow": []
+        }
+      ]
+    },
+    {
+      "theme": "editorial",
+      "pages": [
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 0,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 0.86,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b3",
+            "b4",
+            "b1",
+            "b2",
+            "b5"
+          ],
+          "case": 1,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 1,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 2,
+          "cites": 6,
+          "drawn": "composed",
+          "fit": 1,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 3,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "Duplicate content blocks: b1.",
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 4,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "This scene is out of date for the current slide text.",
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 5,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "Scene metadata has an unsupported version or format.",
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 6,
+          "cites": 4,
+          "drawn": null,
+          "fit": 0.55,
+          "issue": "The composed elements do not fit this page at a readable size.",
+          "overflow": [
+            "answer-markdown",
+            "P"
+          ]
+        },
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 7,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 0.86,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 8,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 0.96,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 9,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "Scene metadata has an invalid encoding.",
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 10,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "Missing content blocks: b3, b4, b5.",
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 11,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 1,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b3",
+            "b4",
+            "b1",
+            "b2",
+            "b5"
+          ],
+          "case": 12,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 0.73,
+          "issue": null,
+          "overflow": []
+        }
+      ]
+    },
+    {
+      "theme": "keynote",
+      "pages": [
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 0,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 0.88,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b3",
+            "b4",
+            "b1",
+            "b2",
+            "b5"
+          ],
+          "case": 1,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 1,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 2,
+          "cites": 6,
+          "drawn": "composed",
+          "fit": 1,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 3,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "Duplicate content blocks: b1.",
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 4,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "This scene is out of date for the current slide text.",
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 5,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "Scene metadata has an unsupported version or format.",
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 6,
+          "cites": 4,
+          "drawn": null,
+          "fit": 0.55,
+          "issue": "The composed elements do not fit this page at a readable size.",
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 7,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 0.88,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 8,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 0.98,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 9,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "Scene metadata has an invalid encoding.",
+          "overflow": []
+        },
+        {
+          "blocks": [],
+          "case": 10,
+          "cites": 7,
+          "drawn": null,
+          "fit": 1,
+          "issue": "Missing content blocks: b3, b4, b5.",
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "case": 11,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 1,
+          "issue": null,
+          "overflow": []
+        },
+        {
+          "blocks": [
+            "b3",
+            "b4",
+            "b1",
+            "b2",
+            "b5"
+          ],
+          "case": 12,
+          "cites": 7,
+          "drawn": "composed",
+          "fit": 0.75,
+          "issue": null,
+          "overflow": []
+        }
+      ]
+    }
+  ],
+  "interactions": {
+    "main_and_thumbnails": "Same scene, fit and superscript citation counts; thumbnails have no citation buttons.",
+    "present": "Five composed scenes remained in the actual Present dialog.",
+    "editor": "Scene metadata hidden; opening has no false dirty state. Editing a speaker note retained all five composed pages and all ten main/thumbnail scene renderings.",
+    "print": "Six pages, including five composed scenes, retained theme and citation marks in PrintSlides DOM.",
+    "same_body_different_trees": "Real model returned two distinct trees with identical Markdown and source markers."
+  },
+  "screenshot": "/Users/keke/.codex/visualizations/2026/10/17/01a14816-efdd-7de3-b38b-3543d0ccbf96/presentation-composer.jpg",
+  "limitations": [
+    "No exported PDF was inspected.",
+    "Image error placeholders were tested; real library image aspect ratios were not exhaustively checked.",
+    "The intentionally overfull case keeps complete source and reports density; its text cannot all fit within one slide."
+  ]
+}

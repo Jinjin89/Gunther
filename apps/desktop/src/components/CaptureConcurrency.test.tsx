@@ -36,7 +36,7 @@ vi.mock("./LectureRecorder", async () => {
         props.onStatusChange?.({ ...idle, phase: "stopped", seconds: 65, persistence: "saved" });
         props.onKnowledgeContent(`# ${props.title}\n\n## Transcript\n\nCells divide.`);
       };
-      React.useImperativeHandle(ref, () => ({ start: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop, markMoment: vi.fn(), restore: vi.fn() }));
+      React.useImperativeHandle(ref, () => ({ start: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop, markMoment: vi.fn(), restore: vi.fn(), prepareSave: () => `# ${props.title}\n\n## Transcript\n\nCells divide.` }));
       return React.createElement("div", { "data-testid": "recorder" },
         phase === "idle" && React.createElement("button", {
           type: "button",

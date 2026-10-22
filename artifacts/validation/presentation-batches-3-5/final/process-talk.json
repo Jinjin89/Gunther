@@ -1,0 +1,985 @@
+{
+  "id": "process-talk",
+  "synthetic": true,
+  "model": "DeepSeek · Flash",
+  "modelRef": "deepseek/deepseek-flash",
+  "effort": "medium",
+  "reviewProtocol": "0df98d47f08dbffdac40f702e132009b2fdcbb9a0e49e86005d3e3fcd5079e3e",
+  "vision": true,
+  "theme": "briefing",
+  "use": "talk",
+  "inputHash": "8fa4d70785d993095ec8900dd12a7de72d287703e284bf24ebce0cf7113879e2",
+  "sourceHash": "87d82a7f0a7b2f5ab9b4dab86c2fc83c1c1f701f5133be470b63a27b7c078e01",
+  "before": {
+    "title": "Checking an application",
+    "content": "<!-- layout: title; theme: briefing; design: v1 -->\n# Collection precedes the completeness check [1]\n\n---\n\n<!-- layout: flow -->\n## Collection precedes the completeness check [1]\n\n1. **Collect**: retain the application. [1]\n2. **Check**: determine whether required information is complete. [1]\n\nThe check leads to alternative actions; both outcomes are not consecutive steps. [1]",
+    "outline": [
+      {
+        "id": "process-p1",
+        "heading": "Collection precedes the completeness check [1]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "title"
+      },
+      {
+        "id": "process-p2",
+        "heading": "Collection precedes the completeness check [1]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "flow"
+      }
+    ],
+    "citations": [
+      {
+        "id": "process-record",
+        "kind": "library",
+        "url": null,
+        "source_id": "process-record",
+        "source_title": "Application handling procedure",
+        "assertion_id": null,
+        "quote": "First collect the application, then check whether required information is complete. If it is complete, begin analysis. If it is incomplete, request missing information. These are conditional alternatives, not consecutive outcomes.",
+        "locator": "Synthetic training procedure",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 1
+      },
+      {
+        "id": "process-scope",
+        "kind": "library",
+        "url": null,
+        "source_id": "process-scope",
+        "source_title": "Procedure boundaries",
+        "assertion_id": null,
+        "quote": "The procedure does not specify completion times, acceptance rates, or who is responsible. Requesting missing information does not itself mean the application is rejected.",
+        "locator": "Synthetic procedure note",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 2
+      }
+    ],
+    "use": "talk"
+  },
+  "after": {
+    "title": "Checking an application",
+    "content": "<!-- layout: title; theme: briefing; design: v1 -->\n# Collection precedes the completeness check [1]\n\n---\n\n<!-- layout: composed -->\n<!-- scene: eyJyb290Ijp7ImFsaWduIjoic3RhcnQiLCJjaGlsZHJlbiI6W3siYWxpZ24iOiJzdHJldGNoIiwiYmxvY2tJZCI6ImIxIiwia2luZCI6ImxlYWYiLCJyb2xlIjoibWFpbiIsInNpemUiOiJsYXJnZSIsInZpZXciOiJsaXN0In0seyJhbGlnbiI6InN0YXJ0IiwiYmxvY2tJZCI6ImIyIiwia2luZCI6ImxlYWYiLCJyb2xlIjoiZm9jdXMiLCJzaXplIjoibWVkaXVtIiwidmlldyI6InRleHQifV0sImdhcCI6InRpZ2h0Iiwia2luZCI6ImNvbHVtbiIsInBhZGRpbmciOiJzbWFsbCIsInN1cmZhY2UiOiJub25lIiwid2VpZ2h0cyI6WzIsMV19LCJzb3VyY2VIYXNoIjoiYzcyYTcyMjYzM2RjYmZhZTU4MTg4ZjRhZDJiYjk2ZDVlNGQ0MDFiNDRkMDdmYjAwYjAwMWVhYjcwYjgwY2M3NSIsInZlcnNpb24iOjF9 -->\n## Collection precedes the completeness check [1]\n\n1. **Collect**: retain the application. [1]\n2. **Check**: determine whether required information is complete. [1]\n\nThe check leads to alternative actions; both outcomes are not consecutive steps. [1]",
+    "outline": [
+      {
+        "id": "process-p1",
+        "heading": "Collection precedes the completeness check [1]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "title"
+      },
+      {
+        "id": "process-p2",
+        "heading": "Collection precedes the completeness check [1]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "composed"
+      }
+    ],
+    "citations": [
+      {
+        "id": "process-record",
+        "kind": "library",
+        "url": null,
+        "source_id": "process-record",
+        "source_title": "Application handling procedure",
+        "assertion_id": null,
+        "quote": "First collect the application, then check whether required information is complete. If it is complete, begin analysis. If it is incomplete, request missing information. These are conditional alternatives, not consecutive outcomes.",
+        "locator": "Synthetic training procedure",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 1
+      },
+      {
+        "id": "process-scope",
+        "kind": "library",
+        "url": null,
+        "source_id": "process-scope",
+        "source_title": "Procedure boundaries",
+        "assertion_id": null,
+        "quote": "The procedure does not specify completion times, acceptance rates, or who is responsible. Requesting missing information does not itself mean the application is rejected.",
+        "locator": "Synthetic procedure note",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 2
+      }
+    ],
+    "use": "talk"
+  },
+  "beforeCapture": {
+    "version": 1,
+    "candidateHash": "8fa4d70785d993095ec8900dd12a7de72d287703e284bf24ebce0cf7113879e2",
+    "slides": [
+      {
+        "id": "process-p1",
+        "index": 0,
+        "blocks": [],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "title",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 98,
+            "minimum": 28,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 133.09375,
+              "width": 823,
+              "height": 399.8125
+            },
+            "text": "Collection precedes the completeness check [1]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-01.png",
+        "resolvedFonts": [
+          "AvenirNext-Bold"
+        ],
+        "contentHash": "c5dc1059c6b6f3b64952f7bd2078cd52e79bd5cf78bbf415167684cd45238263",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": []
+      },
+      {
+        "id": "process-p2",
+        "index": 1,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "list"
+          },
+          {
+            "id": "b2",
+            "type": "text"
+          }
+        ],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "flow",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 50,
+            "minimum": 28,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 60,
+              "width": 1104,
+              "height": 57
+            },
+            "text": "Collection precedes the completeness check [1]"
+          },
+          {
+            "role": "body",
+            "size": 32,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 221.84375,
+              "width": 552,
+              "height": 188.3125
+            },
+            "text": "1Collect:retain the application. [1]"
+          },
+          {
+            "role": "body",
+            "size": 33.28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 302.171875,
+              "y": 293.84375,
+              "width": 123.65625,
+              "height": 42.59375
+            },
+            "text": "Collect:"
+          },
+          {
+            "role": "body",
+            "size": 28.8,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 209.515625,
+              "y": 336.4375,
+              "width": 308.953125,
+              "height": 36.859375
+            },
+            "text": "retain the application. [1]"
+          },
+          {
+            "role": "body",
+            "size": 32,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 640,
+              "y": 221.84375,
+              "width": 552,
+              "height": 188.3125
+            },
+            "text": "2Check:determine whether required information is complete. [1]"
+          },
+          {
+            "role": "body",
+            "size": 33.28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 860.421875,
+              "y": 293.84375,
+              "width": 111.140625,
+              "height": 42.59375
+            },
+            "text": "Check:"
+          },
+          {
+            "role": "body",
+            "size": 28.8,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 652,
+              "y": 336.4375,
+              "width": 528,
+              "height": 73.71875
+            },
+            "text": "determine whether required information is complete. [1]"
+          },
+          {
+            "role": "caption",
+            "size": 25,
+            "minimum": 16,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 521,
+              "width": 1100,
+              "height": 35
+            },
+            "text": "The check leads to alternative actions; both outcomes are not consecutive steps. [1]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-02.png",
+        "resolvedFonts": [
+          "AvenirNext-Bold",
+          "AvenirNext-Regular"
+        ],
+        "contentHash": "c72a722633dcbfae58188f4ad2bb96d5e4d401b44d07fb00b001eab70b80cc75",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "874c69c3e05925b9fc90cd615950eb1fb31a65ff9c53b1ce4e501d53cbeae085"
+          },
+          {
+            "id": "b2",
+            "hash": "07cf02727803d47092156db27abfe671c1c414af343ff0382c90fcf5c7ffc085"
+          }
+        ]
+      }
+    ],
+    "use": "talk",
+    "id": "de3466c347bb43339f4391c9d8feabe2",
+    "status": "captured",
+    "contentHash": "e98174856cf79ebdb9b65d3a939a6ba476946b26d08e405edd5c5afde80be7ef",
+    "rendererHash": "db7fc6b697746b93e0599978b619fc95a6cccd8abe51236e48315064e156b0cb",
+    "assetHashes": {},
+    "designHash": "6bb4699f95fb2a43422beb7e67f971e35e5a9b75f1b6ef3c186f3e7779f14bde",
+    "missingAssets": [],
+    "contact": "contact.png",
+    "pdf": "deck.pdf",
+    "pdfCheck": {
+      "status": "checked",
+      "pages": 3,
+      "slides": [
+        {
+          "id": "process-p1",
+          "index": 0,
+          "blocks": [],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "title",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 98,
+              "minimum": 28,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 133.09375,
+                "width": 823,
+                "height": 399.8125
+              },
+              "text": "Collection precedes the completeness check [1]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        },
+        {
+          "id": "process-p2",
+          "index": 1,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "list"
+            },
+            {
+              "id": "b2",
+              "type": "text"
+            }
+          ],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "flow",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 50,
+              "minimum": 28,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 60,
+                "width": 1104,
+                "height": 57
+              },
+              "text": "Collection precedes the completeness check [1]"
+            },
+            {
+              "role": "body",
+              "size": 32,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 221.84375,
+                "width": 552,
+                "height": 188.3125
+              },
+              "text": "1Collect:retain the application. [1]"
+            },
+            {
+              "role": "body",
+              "size": 33.28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 302.171875,
+                "y": 293.84375,
+                "width": 123.65625,
+                "height": 42.59375
+              },
+              "text": "Collect:"
+            },
+            {
+              "role": "body",
+              "size": 28.8,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 209.515625,
+                "y": 336.4375,
+                "width": 308.953125,
+                "height": 36.859375
+              },
+              "text": "retain the application. [1]"
+            },
+            {
+              "role": "body",
+              "size": 32,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 640,
+                "y": 221.84375,
+                "width": 552,
+                "height": 188.3125
+              },
+              "text": "2Check:determine whether required information is complete. [1]"
+            },
+            {
+              "role": "body",
+              "size": 33.28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 860.421875,
+                "y": 293.84375,
+                "width": 111.140625,
+                "height": 42.59375
+              },
+              "text": "Check:"
+            },
+            {
+              "role": "body",
+              "size": 28.8,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 652,
+                "y": 336.4375,
+                "width": 528,
+                "height": 73.71875
+              },
+              "text": "determine whether required information is complete. [1]"
+            },
+            {
+              "role": "caption",
+              "size": 25,
+              "minimum": 16,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 521,
+                "width": 1100,
+                "height": 35
+              },
+              "text": "The check leads to alternative actions; both outcomes are not consecutive steps. [1]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        }
+      ],
+      "method": "print-dom-and-exported-pdf-text",
+      "missingSources": [],
+      "missingText": []
+    },
+    "browser": "HeadlessChrome/156.0.8078.4",
+    "distribution": "bundled:chromium_headless_shell-1248",
+    "elapsedSeconds": 1.293,
+    "files": {
+      "contact.png": "3f38cdd7b5ca744fc4565d8911b9eebd0bd2006e740f9fc54e5fa7d9727da86e",
+      "slide-02.png": "14db7ad43f3d52f3c9e85062ae00ee4fc95497423c4fbae789e810b08e0fbcf9",
+      "deck.pdf": "3a4bf0a85c61e9dab6ec0481f03abe70b82ed5e2a617891fd27192a4e6110cbc",
+      "slide-01.png": "65d0efa65924fde050e794b99a51b78c9528fdb7f21d255c400165172e2d796d"
+    }
+  },
+  "afterCapture": {
+    "version": 1,
+    "candidateHash": "aa83014a8967bd56ab145e5e9e8c442ae718e0c977a0a005e529d2e5eb573d95",
+    "slides": [
+      {
+        "id": "process-p1",
+        "index": 0,
+        "blocks": [],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "title",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 98,
+            "minimum": 28,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 133.09375,
+              "width": 823,
+              "height": 399.8125
+            },
+            "text": "Collection precedes the completeness check [1]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-01.png",
+        "resolvedFonts": [
+          "AvenirNext-Bold"
+        ],
+        "contentHash": "c5dc1059c6b6f3b64952f7bd2078cd52e79bd5cf78bbf415167684cd45238263",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": []
+      },
+      {
+        "id": "process-p2",
+        "index": 1,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "list"
+          },
+          {
+            "id": "b2",
+            "type": "text"
+          }
+        ],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "composed",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [
+          {
+            "id": "b1",
+            "bounds": {
+              "x": 106,
+              "y": 199,
+              "width": 1068,
+              "height": 176.359375
+            }
+          },
+          {
+            "id": "b2",
+            "bounds": {
+              "x": 106,
+              "y": 496.328125,
+              "width": 1068,
+              "height": 84.46875
+            }
+          }
+        ],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 50,
+            "minimum": 28,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 60,
+              "width": 1104,
+              "height": 65
+            },
+            "text": "Collection precedes the completeness check [1]"
+          },
+          {
+            "role": "body",
+            "size": 42,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": "b1",
+            "bounds": {
+              "x": 150.09375,
+              "y": 199,
+              "width": 1023.90625,
+              "height": 50.390625
+            },
+            "text": "Collect: retain the application. [1]"
+          },
+          {
+            "role": "body",
+            "size": 42,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": "b1",
+            "bounds": {
+              "x": 150.09375,
+              "y": 274.578125,
+              "width": 1023.90625,
+              "height": 100.78125
+            },
+            "text": "Check: determine whether required information is complete. [1]"
+          },
+          {
+            "role": "body",
+            "size": 32,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": "b2",
+            "bounds": {
+              "x": 106,
+              "y": 496.328125,
+              "width": 1068,
+              "height": 84.46875
+            },
+            "text": "The check leads to alternative actions; both outcomes are not consecutive steps. [1]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-02.png",
+        "resolvedFonts": [
+          "AvenirNext-Bold"
+        ],
+        "contentHash": "c72a722633dcbfae58188f4ad2bb96d5e4d401b44d07fb00b001eab70b80cc75",
+        "sceneHash": "677a4a242f4f76be6f16a9e89ce7f904ae0467c082643534606b02f3da546688",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "874c69c3e05925b9fc90cd615950eb1fb31a65ff9c53b1ce4e501d53cbeae085"
+          },
+          {
+            "id": "b2",
+            "hash": "07cf02727803d47092156db27abfe671c1c414af343ff0382c90fcf5c7ffc085"
+          }
+        ]
+      }
+    ],
+    "use": "talk",
+    "id": "2e163f03144845d893ea89289038ecd8",
+    "status": "captured",
+    "contentHash": "b23b8a933222c49b6b73b5c257693c2e51880526527b80474f32941ed929ff01",
+    "rendererHash": "db7fc6b697746b93e0599978b619fc95a6cccd8abe51236e48315064e156b0cb",
+    "assetHashes": {},
+    "designHash": "9bf7ee1178ee79c506864c9c4ad16a50e458aae50f05c55b75d8f36ce94f3378",
+    "missingAssets": [],
+    "contact": "contact.png",
+    "pdf": "deck.pdf",
+    "pdfCheck": {
+      "status": "checked",
+      "pages": 3,
+      "slides": [
+        {
+          "id": "process-p1",
+          "index": 0,
+          "blocks": [],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "title",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 98,
+              "minimum": 28,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 133.09375,
+                "width": 823,
+                "height": 399.8125
+              },
+              "text": "Collection precedes the completeness check [1]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        },
+        {
+          "id": "process-p2",
+          "index": 1,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "list"
+            },
+            {
+              "id": "b2",
+              "type": "text"
+            }
+          ],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "composed",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [
+            {
+              "id": "b1",
+              "bounds": {
+                "x": 106,
+                "y": 199,
+                "width": 1068,
+                "height": 176.359375
+              }
+            },
+            {
+              "id": "b2",
+              "bounds": {
+                "x": 106,
+                "y": 496.328125,
+                "width": 1068,
+                "height": 84.46875
+              }
+            }
+          ],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 50,
+              "minimum": 28,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 60,
+                "width": 1104,
+                "height": 65
+              },
+              "text": "Collection precedes the completeness check [1]"
+            },
+            {
+              "role": "body",
+              "size": 42,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": "b1",
+              "bounds": {
+                "x": 150.09375,
+                "y": 199,
+                "width": 1023.90625,
+                "height": 50.390625
+              },
+              "text": "Collect: retain the application. [1]"
+            },
+            {
+              "role": "body",
+              "size": 42,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": "b1",
+              "bounds": {
+                "x": 150.09375,
+                "y": 274.578125,
+                "width": 1023.90625,
+                "height": 100.78125
+              },
+              "text": "Check: determine whether required information is complete. [1]"
+            },
+            {
+              "role": "body",
+              "size": 32,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": "b2",
+              "bounds": {
+                "x": 106,
+                "y": 496.328125,
+                "width": 1068,
+                "height": 84.46875
+              },
+              "text": "The check leads to alternative actions; both outcomes are not consecutive steps. [1]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        }
+      ],
+      "method": "print-dom-and-exported-pdf-text",
+      "missingSources": [],
+      "missingText": []
+    },
+    "browser": "HeadlessChrome/156.0.8078.4",
+    "distribution": "bundled:chromium_headless_shell-1248",
+    "elapsedSeconds": 1.293,
+    "files": {
+      "contact.png": "5392b64de815d815a2bb68fcc938e3b893e3dbec8f5d092d5c8fcc58286e0bc0",
+      "slide-02.png": "2b371b06a00745f96fb952e92e2a46e827134b7a441e329a68af210946729203",
+      "deck.pdf": "a8891f2bf939dc99bf25fc0b15479d3991a249962b08de6df277744253116ebb",
+      "slide-01.png": "65d0efa65924fde050e794b99a51b78c9528fdb7f21d255c400165172e2d796d"
+    }
+  },
+  "review": {
+    "version": 1,
+    "use": "talk",
+    "status": "repaired",
+    "model": "deepseek/deepseek-flash",
+    "imageReview": "reviewed",
+    "repairCycles": 1,
+    "repairedSlides": [
+      "process-p2"
+    ],
+    "findings": [
+      {
+        "slideId": "process-p1",
+        "blockId": null,
+        "severity": "advice",
+        "problem": "The title slide carries the identical headline \"Collection precedes the completeness check [1]\" that opens process-p2, so the deck announces the same claim twice before the process itself begins, weakening the title slide's role in a six-slide teaching sequence.",
+        "correction": "Keep the wording of both claims intact but differentiate the opener's role in the outline (for example, let the title slide state the lesson's scope and let process-p2 carry the thesis), or drop the redundant opener — this is an outline-level decision, not a restyle.",
+        "route": "plan"
+      }
+    ],
+    "history": [
+      {
+        "snapshotId": "1b2844020d5f4e33926cf42221359b13",
+        "candidateHash": "8fa4d70785d993095ec8900dd12a7de72d287703e284bf24ebce0cf7113879e2"
+      },
+      {
+        "snapshotId": "2e163f03144845d893ea89289038ecd8",
+        "candidateHash": "aa83014a8967bd56ab145e5e9e8c442ae718e0c977a0a005e529d2e5eb573d95"
+      }
+    ],
+    "limits": {
+      "requests": 8,
+      "cycles": 1,
+      "affectedSlides": 4
+    },
+    "beforeFindings": [
+      {
+        "slideId": "process-p2",
+        "blockId": "b2",
+        "severity": "error",
+        "problem": "The caption \"The check leads to alternative actions; both outcomes are not consecutive steps. [1]\" is the only thing preventing the 1→2 diagram from being read as the whole linear process, yet it sits 110px below the diagram at 25px in light gray with no visual link to step 2. At that weight it reads as boilerplate and the large numbered flow dominates, so the qualification that restricts the headline's meaning is misleadingly weak.",
+        "correction": "Keep the caption wording and its [1] marker exactly as is, but raise it to body scale (about 28–32px) in the darker body ink and place it directly beside/beneath step 2 as an attached callout, so it is visually bound to the \"Check\" node rather than floating as a footnote at the page edge.",
+        "route": "layout"
+      },
+      {
+        "slideId": "process-p2",
+        "blockId": null,
+        "severity": "advice",
+        "problem": "Alignment is inconsistent: the two-step flow is optically centered (dots at x≈364 and x≈922), while the caption starts flush at x=88 and the heading is left-aligned at x=88, leaving the caption disconnected from what it qualifies and the lower third of the slide empty below y≈556.",
+        "correction": "Left-align the flow block with the heading at x=88 (or align the caption to the flow's left edge) and use the freed vertical space to pull the caption up under the flow, so heading, diagram and qualifier share one column and one vertical rhythm.",
+        "route": "layout"
+      },
+      {
+        "slideId": "process-p1",
+        "blockId": null,
+        "severity": "advice",
+        "problem": "The title slide carries the identical headline \"Collection precedes the completeness check [1]\" that opens process-p2, so the deck announces the same claim twice before the process itself begins, weakening the title slide's role in a six-slide teaching sequence.",
+        "correction": "Keep the wording of both claims intact but differentiate the opener's role in the outline (for example, let the title slide state the lesson's scope and let process-p2 carry the thesis), or drop the redundant opener — this is an outline-level decision, not a restyle.",
+        "route": "plan"
+      }
+    ],
+    "candidateHash": "aa83014a8967bd56ab145e5e9e8c442ae718e0c977a0a005e529d2e5eb573d95",
+    "calls": 3,
+    "elapsedSeconds": 35.6
+  },
+  "fidelity": {
+    "wordingNotesAndCitations": true,
+    "citationIdentities": true,
+    "poolMapping": true,
+    "pageIdentityAndOrder": true,
+    "theme": true,
+    "designVersion": true
+  }
+}

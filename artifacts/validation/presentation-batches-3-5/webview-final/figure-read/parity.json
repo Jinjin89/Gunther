@@ -1,0 +1,9 @@
+{
+  "case": "figure-read",
+  "candidateHash": "96c8a990a0b069cce63462c1f20ab9d6684441137734f39d198fe66afac27785",
+  "slides": 2,
+  "status": "matched",
+  "tolerancePixels": 3,
+  "scope": "macOS WKWebView engine probe, not a full packaged-app interaction test",
+  "differences": []
+}

@@ -1,0 +1,223 @@
+{
+  "model": "DeepSeek · Flash",
+  "skill_version": 9,
+  "synthetic": true,
+  "sources": [
+    {
+      "title": "合成复核流程",
+      "text": "本合成练习按顺序执行三步：先收集材料并保存原始出处，再核对信息并记录条件与缺口，最后交付结果并附上复核记录。这个顺序仅用于训练演示。"
+    },
+    {
+      "title": "合成分组结果",
+      "text": "本合成练习中，甲组完成12份材料，乙组完成18份，丙组完成24份。三组的单位均为份；这些数据仅用于训练，不代表实际绩效。"
+    },
+    {
+      "title": "合成条件分支",
+      "text": "本合成练习先收集输入。提交后进入检查信息阶段。检查信息时，如果信息齐全则开始分析，如果仍有缺项则补充材料。这是两个条件分支，不是经过两种结果的连续顺序。"
+    },
+    {
+      "title": "合成年份序列",
+      "text": "本合成练习按年份记录完成率：2021年12%，2022年18%，2024年30%。年份间隔不均匀，比例均为百分比。这些数据不作实际业务结论。"
+    }
+  ],
+  "pages": [
+    {
+      "index": 1,
+      "content": "<!-- layout: composed -->\n<!-- scene: eyJncmFwaGljcyI6eyJiMiI6ImZsb3ciLCJiMyI6ImJhcl9jaGFydCJ9LCJncmFwaGljc0hhc2giOiI2YzhmMjY5MDRhYzViNDk2N2EyNzUxN2EzYzZmYTFiMmFhOWNlZjkzZjk1MGI1ZmRhYzM0OWU5OTMxMmMxOGEwIiwicm9vdCI6eyJhbGlnbiI6InN0cmV0Y2giLCJjaGlsZHJlbiI6W3siYWxpZ24iOiJzdHJldGNoIiwiY2hpbGRyZW4iOlt7ImFsaWduIjoic3RhcnQiLCJibG9ja0lkIjoiYjEiLCJraW5kIjoibGVhZiIsInJvbGUiOiJzdXBwb3J0Iiwic2l6ZSI6InNtYWxsIiwidmlldyI6InRleHQifSx7ImFsaWduIjoic3RyZXRjaCIsImJsb2NrSWQiOiJiMiIsImtpbmQiOiJsZWFmIiwicm9sZSI6Im1haW4iLCJzaXplIjoibWVkaXVtIiwidmlldyI6ImZsb3cifV0sImdhcCI6Im5vcm1hbCIsImtpbmQiOiJjb2x1bW4iLCJwYWRkaW5nIjoibm9uZSIsInN1cmZhY2UiOiJub25lIiwid2VpZ2h0cyI6WzEsM119LHsiYWxpZ24iOiJzdHJldGNoIiwiY2hpbGRyZW4iOlt7ImFsaWduIjoic3RyZXRjaCIsImJsb2NrSWQiOiJiMyIsImtpbmQiOiJsZWFmIiwicm9sZSI6Im1haW4iLCJzaXplIjoibWVkaXVtIiwidmlldyI6ImJhcl9jaGFydCJ9LHsiYWxpZ24iOiJjZW50ZXIiLCJjaGlsZHJlbiI6W3siYWxpZ24iOiJjZW50ZXIiLCJibG9ja0lkIjoiYjQiLCJraW5kIjoibGVhZiIsInJvbGUiOiJmb2N1cyIsInNpemUiOiJsYXJnZSIsInZpZXciOiJzdGF0In0seyJhbGlnbiI6InN0YXJ0IiwiYmxvY2tJZCI6ImI1Iiwia2luZCI6ImxlYWYiLCJyb2xlIjoic3VwcG9ydCIsInNpemUiOiJzbWFsbCIsInZpZXciOiJ0ZXh0In1dLCJnYXAiOiJub3JtYWwiLCJraW5kIjoicm93IiwicGFkZGluZyI6Im5vbmUiLCJzdXJmYWNlIjoibm9uZSIsIndlaWdodHMiOlsxLDJdfV0sImdhcCI6Im5vcm1hbCIsImtpbmQiOiJjb2x1bW4iLCJwYWRkaW5nIjoibm9uZSIsInN1cmZhY2UiOiJub25lIiwid2VpZ2h0cyI6WzMsMl19XSwiZ2FwIjoid2lkZSIsImtpbmQiOiJyb3ciLCJwYWRkaW5nIjoic21hbGwiLCJzdXJmYWNlIjoibm9uZSIsIndlaWdodHMiOlsxLDFdfSwic291cmNlSGFzaCI6ImQ0NTUxMWZhYTNkODk4OWQyN2RhZDBkZDBkOTQ4MGU3ZWVhNjdkZGY0ZTZjZjA1MDUyYWI2YzhkNTYzMDkxNWQiLCJ2ZXJzaW9uIjoyfQ -->\n## 复核流程与样例结果需要一起阅读\n\n**处理步骤**：保留从输入到交付的记录。[1]\n\n1. **收集材料**：保存原始出处 [1]\n2. **核对信息**：记录条件与缺口 [1]\n3. **交付结果**：附上复核记录 [1]\n\n| 样例组 | 完成数（份） |\n| --- | --- |\n| 甲组 | 12 [2] |\n| 乙组 | 18 [2] |\n| **丙组** | 24 [2] |\n\n**24** [2]\n\n丙组在这份合成练习中完成 24 份材料；该数据不代表实际绩效。[2]\n\nNote: 这是纯合成材料，只用于图形与构图验证。",
+      "graphics": {
+        "b2": "flow",
+        "b3": "bar_chart"
+      },
+      "root": {
+        "kind": "row",
+        "children": [
+          {
+            "kind": "column",
+            "children": [
+              {
+                "kind": "leaf",
+                "blockId": "b1",
+                "view": "text",
+                "size": "small",
+                "align": "start",
+                "role": "support"
+              },
+              {
+                "kind": "leaf",
+                "blockId": "b2",
+                "view": "flow",
+                "size": "medium",
+                "align": "stretch",
+                "role": "main"
+              }
+            ],
+            "weights": [
+              1,
+              3
+            ],
+            "gap": "normal",
+            "padding": "none",
+            "surface": "none",
+            "align": "stretch"
+          },
+          {
+            "kind": "column",
+            "children": [
+              {
+                "kind": "leaf",
+                "blockId": "b3",
+                "view": "bar_chart",
+                "size": "medium",
+                "align": "stretch",
+                "role": "main"
+              },
+              {
+                "kind": "row",
+                "children": [
+                  {
+                    "kind": "leaf",
+                    "blockId": "b4",
+                    "view": "stat",
+                    "size": "large",
+                    "align": "center",
+                    "role": "focus"
+                  },
+                  {
+                    "kind": "leaf",
+                    "blockId": "b5",
+                    "view": "text",
+                    "size": "small",
+                    "align": "start",
+                    "role": "support"
+                  }
+                ],
+                "weights": [
+                  1,
+                  2
+                ],
+                "gap": "normal",
+                "padding": "none",
+                "surface": "none",
+                "align": "center"
+              }
+            ],
+            "weights": [
+              3,
+              2
+            ],
+            "gap": "normal",
+            "padding": "none",
+            "surface": "none",
+            "align": "stretch"
+          }
+        ],
+        "weights": [
+          1,
+          1
+        ],
+        "gap": "wide",
+        "padding": "small",
+        "surface": "none",
+        "align": "stretch"
+      }
+    },
+    {
+      "index": 2,
+      "content": "<!-- layout: composed -->\n<!-- scene: eyJncmFwaGljcyI6eyJiMSI6ImRpYWdyYW0iLCJiMiI6ImxpbmVfY2hhcnQifSwiZ3JhcGhpY3NIYXNoIjoiNmM1MDNkMjJhMWFmMzMwNTIyNTVjMjI0YjM1MjZhYmNiYWIzMzBkNTUyYTY5YzUzNjI0NWQ2ZTk1MjIwYTAzZiIsInJvb3QiOnsiYWxpZ24iOiJzdHJldGNoIiwiY2hpbGRyZW4iOlt7ImFsaWduIjoic3RyZXRjaCIsImNoaWxkcmVuIjpbeyJhbGlnbiI6InN0cmV0Y2giLCJibG9ja0lkIjoiYjEiLCJraW5kIjoibGVhZiIsInJvbGUiOiJtYWluIiwic2l6ZSI6Im1lZGl1bSIsInZpZXciOiJkaWFncmFtIn0seyJhbGlnbiI6InN0cmV0Y2giLCJibG9ja0lkIjoiYjIiLCJraW5kIjoibGVhZiIsInJvbGUiOiJtYWluIiwic2l6ZSI6Im1lZGl1bSIsInZpZXciOiJsaW5lX2NoYXJ0In1dLCJnYXAiOiJ3aWRlIiwia2luZCI6InJvdyIsInBhZGRpbmciOiJub25lIiwic3VyZmFjZSI6Im5vbmUiLCJ3ZWlnaHRzIjpbMywyXX0seyJhbGlnbiI6ImNlbnRlciIsImNoaWxkcmVuIjpbeyJhbGlnbiI6ImNlbnRlciIsImJsb2NrSWQiOiJiNCIsImtpbmQiOiJsZWFmIiwicm9sZSI6ImZvY3VzIiwic2l6ZSI6ImRpc3BsYXkiLCJ2aWV3Ijoic3RhdCJ9LHsiYWxpZ24iOiJzdGFydCIsImJsb2NrSWQiOiJiMyIsImtpbmQiOiJsZWFmIiwicm9sZSI6InN1cHBvcnQiLCJzaXplIjoic21hbGwiLCJ2aWV3IjoidGV4dCJ9XSwiZ2FwIjoibm9ybWFsIiwia2luZCI6InJvdyIsInBhZGRpbmciOiJub25lIiwic3VyZmFjZSI6InNvZnQiLCJ3ZWlnaHRzIjpbMSwzXX1dLCJnYXAiOiJ3aWRlIiwia2luZCI6ImNvbHVtbiIsInBhZGRpbmciOiJub25lIiwic3VyZmFjZSI6Im5vbmUiLCJ3ZWlnaHRzIjpbMywxXX0sInNvdXJjZUhhc2giOiJmNzIwMjZmNzg4ODhkMjBiZmQ5Nzk5ZWNhZWViMzhkMWQzMzNmNWY3NGJmNTE3NGExODhmYjgwN2RkODBiOGZkIiwidmVyc2lvbiI6Mn0 -->\n## 资料条件决定分支，年度数据保留原始比例\n\n| 起点 | 条件或关系 | 终点 |\n| --- | --- | --- |\n| 收集输入 | 提交后 [3] | 检查信息 |\n| 检查信息 | 信息齐全 [3] | 开始分析 |\n| 检查信息 | 仍有缺项 [3] | 补充材料 |\n\n| 年份 | 完成率（%） |\n| --- | --- |\n| 2021 | 12 [4] |\n| 2022 | 18 [4] |\n| 2024 | 30 [4] |\n\n分支与时间序列均来自合成材料，不作实际业务结论。[3][4]\n\n**30%** [4]",
+      "graphics": {
+        "b1": "diagram",
+        "b2": "line_chart"
+      },
+      "root": {
+        "kind": "column",
+        "children": [
+          {
+            "kind": "row",
+            "children": [
+              {
+                "kind": "leaf",
+                "blockId": "b1",
+                "view": "diagram",
+                "size": "medium",
+                "align": "stretch",
+                "role": "main"
+              },
+              {
+                "kind": "leaf",
+                "blockId": "b2",
+                "view": "line_chart",
+                "size": "medium",
+                "align": "stretch",
+                "role": "main"
+              }
+            ],
+            "weights": [
+              3,
+              2
+            ],
+            "gap": "wide",
+            "padding": "none",
+            "surface": "none",
+            "align": "stretch"
+          },
+          {
+            "kind": "row",
+            "children": [
+              {
+                "kind": "leaf",
+                "blockId": "b4",
+                "view": "stat",
+                "size": "display",
+                "align": "center",
+                "role": "focus"
+              },
+              {
+                "kind": "leaf",
+                "blockId": "b3",
+                "view": "text",
+                "size": "small",
+                "align": "start",
+                "role": "support"
+              }
+            ],
+            "weights": [
+              1,
+              3
+            ],
+            "gap": "normal",
+            "padding": "none",
+            "surface": "soft",
+            "align": "center"
+          }
+        ],
+        "weights": [
+          3,
+          1
+        ],
+        "gap": "wide",
+        "padding": "none",
+        "surface": "none",
+        "align": "stretch"
+      }
+    }
+  ],
+  "calls": 5,
+  "seconds": 14.02,
+  "skipped": [],
+  "stages": [
+    {
+      "type": "stage",
+      "id": "compose",
+      "label": "Composing page elements",
+      "state": "running",
+      "detail": "2 composed page(s)"
+    },
+    {
+      "type": "stage",
+      "id": "compose",
+      "label": "Composing page elements",
+      "state": "done"
+    }
+  ],
+  "limitations": "Two prewritten synthetic pages passed to the real composer and its per-block verification. This is not a full real-library generation or aesthetic evaluation."
+}

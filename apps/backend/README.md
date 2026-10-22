@@ -66,6 +66,10 @@ tests/                      API、迁移、安全、恢复与完整性测试
 - `/api/recordings/live` 实时 PCM；
 - `auto` 优先本机 SenseVoice，显式配置后才可在线回退。
 
+Capture 入库使用 `POST /api/sources?deferAnalysis=true`：事务内先保存正文、可读索引及 `extract_assertions` 任务，立即返回；知识提取在现有模型任务队列中执行，重启后可继续。提取结果与任务完成在同一事务内提交，取消、租约失效、正文变化或移入 Trash 后不会发布迟到结果。未指定该参数的导入保留同步提取行为。
+
+迁移 28 为 Recording 增加独立的 `audio_duration_ms`，保留原始 `duration_seconds` 计时估计。`measure_recording` 后台任务校验已保存音频并统计解码样本；缺失的旧任务会由 backfill 补齐。Recording API、Source 元数据、Library contents 与磁盘导出优先采用实测时长；正文及其索引版本不因此重写，失败时保留估计并记录任务错误。
+
 SenseVoice 是独立本机服务，不在 backend package 内。
 
 ### Evidence 与 user approval

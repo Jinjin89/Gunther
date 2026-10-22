@@ -100,7 +100,7 @@ const recoverStoredCaptures = (workspaceId: string | null) => {
               content: capture.content,
               kind: capture.kind as CreateSourceInput["kind"],
               ...(capture.baseId ? { knowledgeBaseId: capture.baseId } : {}),
-            }, workspaceId);
+            }, workspaceId, { deferAnalysis: true });
           }
           removeStoredCapture(capture.id);
           recovered += 1;

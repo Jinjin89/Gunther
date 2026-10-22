@@ -1,0 +1,22 @@
+{
+  "case": "dense-keynote",
+  "candidateHash": "67f0877610f2df7bb15a76ac89220625da6c9a12dbcd8fe81d6dabbd9de66edd",
+  "slides": 2,
+  "status": "differences",
+  "tolerancePixels": 3,
+  "scope": "macOS WKWebView engine probe, not a full packaged-app interaction test",
+  "differences": [
+    {
+      "slideId": "intake-p2",
+      "field": "body",
+      "text": "In this synthetic intake pilot, median review time was 40 hours before",
+      "maxPixelDifference": 3.5
+    },
+    {
+      "slideId": "intake-p2",
+      "field": "body",
+      "text": "The two-team intake pilot did not measure review quality or error rate",
+      "maxPixelDifference": 3.5
+    }
+  ]
+}

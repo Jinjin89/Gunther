@@ -66,6 +66,13 @@ describe("the slide viewer", () => {
     expect(screen.queryByText("Not re-checked")).not.toBeInTheDocument();
   });
 
+  it("keeps citation numbering in thumbnails without adding citation buttons", async () => {
+    await show(deck());
+    const thumbnail = screen.getByRole("button", { name: "Go to slide 2" }).querySelector(".outputs-thumb-frame");
+    expect(thumbnail?.querySelector("sup")?.textContent).toBe("[1]");
+    expect(thumbnail?.querySelector('button[aria-label="Inspect citation 1"]')).toBeNull();
+  });
+
   it("opens the evidence of a number on a slide", async () => {
     const user = userEvent.setup();
     const { onCite } = await show(deck());

@@ -7,7 +7,7 @@ import pytest
 
 from gunther.agent import Evidence
 from gunther.schemas import ConversationCitationOut
-from gunther.skill_checks import Context, Page, layout_shape, run_checks, units
+from gunther.skill_checks import Context, Page, diagram_problem, layout_shape, run_checks, units
 from gunther.skillbook import (
     SKILLS_DIR,
     SkillError,
@@ -23,7 +23,12 @@ def test_the_report_and_slides_skills_load_with_every_step_described() -> None:
     skills = builtin_skills()
     assert {skill.kind for skill in skills.values()} == {"report", "slides"}
     for skill in skills.values():
-        assert [step.does for step in skill.steps][:3] == ["understand", "structure", "write"]
+        expected = (
+            ["understand", "structure", "outline_review", "design", "write", "compose"]
+            if skill.kind == "slides"
+            else ["understand", "structure", "write"]
+        )
+        assert [step.does for step in skill.steps][: len(expected)] == expected
         for step in skill.steps:
             assert step.instructions.startswith(f"## {step.id}")
     assert skill_for("slides").step("reader_test").preamble is False
@@ -31,15 +36,60 @@ def test_the_report_and_slides_skills_load_with_every_step_described() -> None:
 
 def test_the_slides_skill_knows_the_figure_layout_and_checks_how_each_slide_is_shaped() -> None:
     slides = skill_for("slides")
-    assert slides.version == 3
-    assert "figure" in slides.layouts
+    assert slides.version == 11
+    assert slides.steps[-1].does == "visual_review"
+    assert {"figure", "diagram"} <= set(slides.layouts)
+    assert slides.step("design") is not None
+    assert slides.step("compose") is not None
+    assert "scene.md" in slides.step("compose").references
     assert "layout_shape" in slides.step("write").checks
     assert "layout_shape" in slides.step("edit_review").checks
+    for step_id in ("design", "write", "edit_review", "revise"):
+        instructions = slides.instructions(slides.step(step_id), layout="flow")
+        assert "# Visual design method" in instructions
+        assert "peers at equal visual" in instructions
+    assert {"repeated_heading", "slide_links"} <= set(slides.step("structure").checks)
+    assert {"repeated_heading", "slide_links"} <= set(slides.step("edit_review").checks)
     assert slides.check_params["layout_run"] == {"max_run": 2, "max_text": 2}
     # A figure slide reads its own section, and the report skill has no such check.
     text = slides.instructions(slides.step("write"), layout="figure")
     assert "## figure" in text and "gunther-asset:" in text and "## quote" not in text
     assert not any("layout_shape" in step.checks for step in skill_for("report").steps)
+
+
+def test_slide_links_and_repeated_headings_are_recorded_as_review_findings() -> None:
+    context = Context("slides")
+    pages = [
+        Page(0, "Title", "title", "# Title\n\nSubhead"),
+        Page(1, "Same claim", "text", "## Same claim\n- evidence", ""),
+        Page(2, "Same claim", "text", "## Same claim\n- more evidence", "contrast"),
+    ]
+    found = run_checks(["slide_links", "repeated_heading"], pages, {}, context)
+    assert [(item.check, item.index) for item in found] == [
+        ("slide_link", 1),
+        ("repeated_heading", 2),
+    ]
+    assert "No planned relationship" in found[0].message
+    assert "check whether the slides make distinct points" in found[1].message
+
+
+def test_diagram_layout_requires_a_cited_small_dag_and_a_readable_placement() -> None:
+    branch = (
+        "## Material status controls the next step\n"
+        "| Start | Relationship | End |\n| --- | --- | --- |\n"
+        "| Collect materials | complete [1] | Check materials |\n"
+        "| Check materials | complete [1] | Analyze |\n"
+        "| Check materials | missing [1] | Request more |"
+    )
+    assert diagram_problem(branch) is None
+    cycle = branch + "\n| Analyze | loops back [1] | Collect materials |"
+    assert "cycle" in (diagram_problem(cycle) or "")
+    uncited = branch.replace("missing [1]", "missing")
+    assert "numbered source citation" in (diagram_problem(uncited) or "")
+    long = branch.replace("Collect materials", "Review the available evidence with all limitations")
+    assert "too long" in (diagram_problem(long) or "")
+    page = Page(1, "Claim", "diagram", branch)
+    assert not layout_shape([page], {}, Context("slides"))
 
 
 def test_a_step_reads_the_preamble_its_section_and_its_references() -> None:
@@ -133,7 +183,7 @@ def test_an_ask_skill_reads_budgets_and_a_checklist(tmp_path: Path) -> None:
     ask_folder(
         tmp_path,
         GOOD
-        + 'frame = true\n[budgets.standard]\nsearches = 8\nsub_questions = [3, 5]\n'
+        + "frame = true\n[budgets.standard]\nsearches = 8\nsub_questions = [3, 5]\n"
         + "[budgets.deep]\nsearches = 14\nreads = 6\ncalls = 30\n",
         "Preamble.\n\n## frame\nSplit it.\n\n" + GOOD_TEXT.split("\n\n", 1)[1],
     )

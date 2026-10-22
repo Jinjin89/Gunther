@@ -67,37 +67,72 @@ The steps (`SkillAgents.make`):
    `layout_run`) run on it; if they find something the model gets one more try. A deck's first
    slide is always `title` and its last `takeaways`. A `figure` slide whose cards' passages
    have no figure kept with them becomes a `text` slide, and the version says so.
-3. **write.** Sections with fewer than two passages are researched as in "One build", and may
+3. **design (slides only).** One bounded call designs the pages from the outline, material
+   cards and shared evidence. Each page keeps its intent, visual explanation, composition,
+   emphasis and note guidance. The designer may suggest a supported layout, while keeping
+   the page identity, order, evidence and explicit user choices. One repair is allowed for an
+   invalid response. Failure records a skipped design and keeps the original plan; later
+   writing chunks do not retry the same failed plan. Reports go straight to writing.
+4. **write.** Sections with fewer than two passages are researched as in "One build", and may
    then use the step's tools; each section is written from its cards' passages with the skill's
    instructions and its layout's reference, then checked. A deck's slide starts with a
    **layout marker**, a line `<!-- layout: compare -->` (the title slide's may also say
-   `; accent: blue`): code writes it from the plan, the model never does, and neither the
+   `; accent: blue; theme: editorial`): code writes it from the plan, the model never does, and neither the
    Checker nor the models that read the deck see it. The slide's body must take the form its
    layout asks for (`layout_shape`: a table for `compare`, 2 to 6 numeric rows for a chart, an
    ordered list for `flow` and so on); one that does not is written again once with the problem
    named, and drawn as `text` if it still does not (`provenance.skill.skipped`, "Slide 3 drawn
    as text"). The section hash covers the marker, and the desktop reads it the same way
    (`sections.ts`); a deck made before markers falls back to its outline's layouts.
-4. **edit_review.** Code checks (`heading_length`, `filler_phrases`, `density`, `table_size`,
+5. **compose.** After the body has passed the Checker, each `composed` slide receives one
+   bounded scene call (and at most one structural repair). Python splits its title, content
+   blocks, fenced examples and `Note:` footer into an exact numbered inventory. The response
+   contains only a nested row/column tree that references those block ids; it carries no prose.
+   Code rejects unknown, duplicate, missing or type-mismatched blocks, excessive depth/size and
+   unsupported values. Graphic views are offered only for an ordered 2–6 item list, a valid
+   cited DAG table, or a two-column table with 2–6 numeric rows and one unit. Code grants a
+   graphic view only after checking that exact block against its own citations and coverage.
+   Every chart row must have a supported claim bound to its label, value and row citations. A
+   failed block returns to its complete original list/table and records the reason, while the
+   rest of the page keeps its scene. A structural failure keeps the checked Markdown and records
+   a skipped step.
+   The version stores a base64url scene comment directly after the layout marker. Version 1
+   remains readable with only the original six block views. Version 2 stores `sourceHash`, a
+   citation-sensitive `graphicsHash`, code-written per-block graphic licenses and the element
+   tree. Its source hash covers visible Markdown while ignoring citation numbers and speaker
+   notes; the graphics hash retains citation markers. Code carries a graphic license across
+   citation renumbering only when the caller supplies the exact reference map and the visible
+   source still matches. A manual citation edit invalidates the license. An unchanged valid
+   scene is reused; an explicit re-composition request makes one new call even when the body
+   returned `UNCHANGED`.
+6. **edit_review.** Code checks (`heading_length`, `filler_phrases`, `density`, `table_size`,
    `chart_numbers_cited`, `layout_run`, `layout_shape`; settings in `skill.toml`; `text` is the
    last resort, so `layout_run.max_text` keeps it to 2 slides and never two in a row), then an
    editor lists problems per section. Nothing is changed.
-5. **reader_test.** A fresh reader, who gets no preamble and no approach, reads the text without
+7. **reader_test.** A fresh reader, who gets no preamble and no approach, reads the text without
    numbers (a talk's speaker notes as what the speaker says) and says what it understood, what
    was unclear, where it jumped and what it would ask.
-6. **revise.** One call picks at most `revise_max` sections, each with an instruction; each is
+8. **revise.** One call picks at most `revise_max` sections, each with an instruction; each is
    rewritten (or answered `UNCHANGED`) and checked again. One round only. Revision receives
    the argument and neighboring sections. New numeric facts are refused; other edits
    require an explicit fidelity verdict preserving factual assertions and citation bindings.
 
-understand, structure and write failing fail the build (nothing is saved). edit_review,
+understand, structure and write failing fail the build (nothing is saved). design, edit_review,
 reader_test and revise failing are **skipped and recorded**: the live view marks the step, and
 the version lists it under Approach → Skipped (`provenance.skill.skipped`).
 
 What a version made by a skill keeps, sealed in its provenance: `skill` (name, version, skipped
 steps), `approach` (web supplements only when the text cites them) and a deck's `use`. Outline
-items keep their `layout`. Revising such a version ("Ask Gunther to change…") uses the skill's
+items keep their `layout`, `link`, page `design` and explicit choice flags. Revising such a
+version ("Ask Gunther to change…") uses the skill's
 revise instructions and its approach; edits and revisions carry the approach on.
+
+A `composed` slide's scene is presentation metadata, not body evidence. The service, Checker,
+outline and writer omit it from visible Markdown. A trusted code citation map can rebind its
+version-2 graphic hash; any body or manual citation change makes graphic licenses stale until
+recomposition. Manual Markdown editing hides
+the scene payload behind a short per-slide retained marker and restores it to the same page on
+preview/save; inserted, deleted or duplicated markers are not silently attached to another page.
 
 On the page, **Approach** sits above the outline: question, answer, who it is for, structure,
 deck, web supplements, gaps and skipped steps. *Edit approach* changes the question, answer or
@@ -233,14 +268,16 @@ them: they have no citations or scope to edit.
   inside the page, thumbnails to jump by, the presenter's notes under the deck, and **Present**,
   which fills the app's window with the deck (a layer of the page; the screen and the window's
   size are left alone, and Esc or ✕ leaves). Reveal's pop-up notes window is not used. Only the
-  core `reveal.css` is imported; the look is Gunther's (white paper and black ink, also in the
-  dark theme).
+  core `reveal.css` is imported; the deck's visual theme controls its appearance independently
+  of the application's light or dark mode.
 - A deck gets the whole width of the page (a report keeps its reading column), and its stage is
   never taller than the window.
 - A slide is drawn on a 1280 × 720 canvas. When its text is too long for it, the type and
-  spacing are scaled down together (`slideFit.ts`, down to 55%) instead of running off the
-  slide. The scale depends only on the slide's text, so the deck, its thumbnails and the printed
-  page agree.
+  spacing are scaled down together (`slideFit.ts`, down to 55%). Extreme content can still
+  overflow. The viewer warns when text is substantially reduced or remains outside the content
+  bounds, with suggestions to split the slide or move detail to notes. These messages are outside
+  the slide and do not print. The fit cache includes the content and visual theme, so the deck,
+  its thumbnails and the printed page agree.
 - **Each layout has its own drawing** (`apps/desktop/src/outputs/slides/`): `parseSlide.ts`
   reads a slide's body for its layout's form (the rules of the service's `layout_shape`, with
   the same cases in `parseSlide.test.ts` and `tests/test_skillbook.py`) and one component per
@@ -248,7 +285,10 @@ them: they have no citations or scope to edit.
   `two_column`, numbered circles for `flow`, dots on a line for `timeline`, bars or a line for
   the charts, cards, a quote with a hanging mark, the managed image for `figure`, and large
   numerals for `takeaways`. Every piece of text is the slide's own Markdown, drawn by
-  `AnswerBody`, so a citation stays a number that opens its evidence. A slide with no layout, or
+  `AnswerBody`, so a citation stays a number that opens its evidence. The composed renderer
+  (`scene.ts`, `ComposedSlide.tsx`) validates the source hash and renders only exact block
+  references; stale or invalid trees fall back to the complete Markdown body with an outside-canvas
+  update notice. A slide with no layout, or
   whose body does not take its layout's form, is drawn as its text, as before layouts; a table
   that cannot be a chart (a value that is not a number, rows in different units, fewer than two
   or more than six rows) is drawn as the table it is. A chart draws only what the table says:
@@ -260,6 +300,39 @@ them: they have no citations or scope to edit.
   marker (`<!-- layout: title; accent: blue -->`) and applies to every slide. The Accent menu in
   the slides toolbar saves a change as an edit version (`withAccent` in `sections.ts`), for the
   latest version only.
+- **Style** offers Classic, Briefing, Editorial and Keynote, with visual samples. The choice
+  changes typography, paper, ink, spacing and cover treatment. It saves a new edit version by
+  changing only the title marker's optional `theme` field; the accent, words, citations and notes
+  are retained. Decks without a theme and unknown theme IDs render as Classic. The shared theme is used by
+  preview, thumbnails, Present, edit preview and printing. Dark themes use corresponding light
+  accent tones and contrasting text on colored marks. Rewrites, reopened work and rebuilds retain
+  the chosen theme. The first release's selector is available after a deck exists.
+- **Story relationships** are kept as an optional `link` in outline items. Slides after the first
+  describe how they follow the preceding slide; these relationships reach the writer and editor,
+  survive saving/reopening, and can be changed in the outline editor. Missing links and repeated
+  headings are recorded as structural review findings, not proof of semantic correctness.
+- **Page design** is a collapsible, editable part of the outline. It records what a page should
+  communicate, how to show it, what to emphasize and what belongs in notes. Compatible layouts
+  support `standard`, `split` and `spotlight` compositions, stored in each slide's marker.
+  Theme changes, edits and printing retain these choices. Design prose guides writing and
+  editing; it is never evidence. Automatically generated design prose omits temporary citation
+  numbers, while the outline's source and card bindings retain the provenance.
+- **Visual language** gives content roles a shared treatment across themes: equal groups,
+  supporting text, structure, connections and local focus. The Slides skill's
+  `references/visual-design.md` guides design, writing and editing through hierarchy, grouping,
+  reading order and density. Peer columns stay aligned row by row; cards retain equal weight;
+  flow steps can separate existing bold names from their explanations, with matching rows
+  across two to four steps and a vertical sequence for five or six. Diagram origins identify
+  the reading entrance without adding relationships or preferring a destination. Surfaces and
+  lines derive from the chosen Theme and Accent. Design prose is realized through supported
+  layouts, compositions and Markdown; it does not execute arbitrary positioning instructions.
+- **Relationship diagrams** use a three-column Markdown table in start / relationship / end
+  order, with a source citation on each relationship. Native nodes and arrows render supported
+  small directed acyclic graphs: 2–6 nodes, 1–8 edges, up to three layers and three nodes per
+  layer, with readable labels and no overlapping relationship labels or skipped layers.
+  Conditions and directions must be supported by evidence; a source need not itself contain
+  a drawing. Invalid or unverified graphs retain the complete table/text and record a fallback.
+  The linear `flow` layout remains available for ordinary sequences.
 - **Export PDF** prints a layout made for paper (`PrintRoot.tsx`): a report on A4 with
   superscript numbers and a list of sources; a deck as one 13⅓ × 7½ in page per slide, no
   notes, with a final page of sources. macOS's web view ignores `window.print()`, so the app

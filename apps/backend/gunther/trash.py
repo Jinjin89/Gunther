@@ -16,7 +16,6 @@ deleted the same way.
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -50,15 +49,12 @@ from gunther.models import (
     WebSnapshot,
     utc_now,
 )
+from gunther.recording_metadata import recording_ids
 from gunther.schemas import TrashItemKind, TrashItemOut
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_RETENTION_DAYS = 30
-
-# A recording source names its audio in its text; the audio file has no other link.
-RECORDING_REFERENCE = re.compile(r"Local recording:\s*(rec_[a-f0-9]{24})")
-
 
 class TrashConflict(ValueError):
     """The item cannot move to Trash yet, for example while it is still recording."""
@@ -66,10 +62,6 @@ class TrashConflict(ValueError):
 
 def _timestamp(value: datetime) -> str:
     return f"{value.isoformat(timespec='milliseconds')}Z"
-
-
-def recording_ids(content: str) -> set[str]:
-    return set(RECORDING_REFERENCE.findall(content))
 
 
 def trashed_library_ids():

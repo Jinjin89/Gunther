@@ -5,7 +5,7 @@
 
 name = "slides"
 kind = "slides"
-version = 3
+version = 11
 title = "Slides"
 description = "Plan and write a deck, for a talk or for reading, from the chosen material."
 
@@ -14,7 +14,7 @@ structures = ["what", "why", "how", "guide", "which", "change", "learn"]
 # Page layouts (ids in references/layouts.md). The first page is "title", the last "takeaways".
 layouts = [
   "title", "big_number", "compare", "two_column", "flow", "timeline",
-  "bar_chart", "line_chart", "cards", "quote", "figure", "text", "takeaways",
+  "bar_chart", "line_chart", "cards", "quote", "figure", "diagram", "text", "composed", "takeaways",
 ]
 # What the deck is for. "auto": the understand step reads the brief; with no hint, "talk".
 uses = ["talk", "read"]
@@ -39,7 +39,21 @@ does = "structure"
 label = "Planning the story"
 effort = "medium"
 references = ["story.md", "layouts.md"]
-checks = ["page_count", "first_and_last", "layout_run"]
+checks = ["page_count", "first_and_last", "layout_run", "repeated_heading", "slide_links"]
+
+[[steps]]
+id = "outline_review"
+does = "outline_review"
+label = "Reviewing the argument"
+effort = "medium"
+references = ["story.md"]
+
+[[steps]]
+id = "design"
+does = "design"
+label = "Designing slides"
+effort = "medium"
+references = ["layouts.md", "visual-design.md"]
 
 [[steps]]
 id = "write"
@@ -49,18 +63,26 @@ effort = "job"  # the Outputs job's effort from Settings → Models
 tools = ["search_library", "read_source"]
 tool_calls = 2
 # "{layout}": only this page's layout section is loaded.
-references = ["layouts.md#{layout}", "writing.md"]
+references = ["layouts.md#{layout}", "writing.md", "visual-design.md"]
 # A page whose body does not take its layout's form is written again once, then drawn as text.
 checks = ["layout_shape"]
+
+[[steps]]
+id = "compose"
+does = "compose"
+label = "Composing page elements"
+effort = "medium"
+references = ["scene.md"]
 
 [[steps]]
 id = "edit_review"
 does = "edit_review"
 label = "Reading it through as an editor"
 effort = "low"
-references = ["writing.md"]
+references = ["writing.md", "visual-design.md"]
 checks = [
   "heading_length", "density", "table_size", "chart_numbers_cited", "layout_run", "layout_shape",
+  "repeated_heading", "slide_links",
 ]
 
 [[steps]]
@@ -75,7 +97,14 @@ id = "revise"
 does = "revise"
 label = "Revising"
 effort = "job"
-references = ["layouts.md#{layout}", "writing.md"]
+references = ["layouts.md#{layout}", "writing.md", "visual-design.md"]
+
+[[steps]]
+id = "visual_review"
+does = "visual_review"
+label = "Review rendered slides"
+effort = "medium"
+preamble = false
 
 [checks.layout_run]
 max_run = 2  # the same layout at most twice in a row ("title" and "takeaways" excepted)

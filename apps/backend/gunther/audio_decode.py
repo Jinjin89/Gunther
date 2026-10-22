@@ -10,6 +10,8 @@ came out: the container's duration and time stamps are not trusted (a file from
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from fractions import Fraction
 from pathlib import Path
 
 import av
@@ -24,6 +26,37 @@ BLOCK_BYTES = 1_000 * BYTES_PER_MS
 
 class AudioUnreadable(Exception):
     """The audio file could not be decoded; the message is plain words for the user."""
+
+
+def audio_duration_ms(path: Path, *, stopping: Callable[[], bool] | None = None) -> int:
+    """Count decoded samples without trusting container metadata or writing a PCM copy."""
+
+    counts: dict[int, int] = {}
+    try:
+        before = path.stat()
+        with av.open(str(path)) as container:
+            stream = next((item for item in container.streams if item.type == "audio"), None)
+            if stream is None:
+                raise AudioUnreadable("The audio file couldn't be read: it has no sound.")
+            for frame in container.decode(stream):
+                if stopping and stopping():
+                    raise RuntimeError("Worker is stopping")
+                if frame.sample_rate <= 0:
+                    raise AudioUnreadable("The audio sample rate is unavailable.")
+                counts[frame.sample_rate] = counts.get(frame.sample_rate, 0) + frame.samples
+        after = path.stat()
+    except (av.error.FFmpegError, OSError) as error:
+        raise AudioUnreadable("The audio file couldn't be read.") from error
+    if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+        after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns
+    ):
+        raise AudioUnreadable("The audio file changed while its duration was being measured.")
+    duration = sum(
+        (Fraction(samples * 1_000, rate) for rate, samples in counts.items()), Fraction()
+    )
+    if duration <= 0:
+        raise AudioUnreadable("The audio file couldn't be read: it has no sound.")
+    return round(duration)
 
 
 def decode_to_copy(path: Path, directory: Path, recording_id: str) -> int:

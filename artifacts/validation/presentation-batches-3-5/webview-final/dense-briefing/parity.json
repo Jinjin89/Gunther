@@ -1,0 +1,9 @@
+{
+  "case": "dense-briefing",
+  "candidateHash": "daa2642be41db94be278fe68f0f006d1a0f00a721ddc5f605f8cb49957cc1a87",
+  "slides": 2,
+  "status": "matched",
+  "tolerancePixels": 3,
+  "scope": "macOS WKWebView engine probe, not a full packaged-app interaction test",
+  "differences": []
+}

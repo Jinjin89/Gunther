@@ -1,7 +1,7 @@
 """Leased, restart-safe processing. Publication and job completion commit together.
 
-Summaries written by a model (``digest`` jobs) run in a lane of their own, so a
-slow model never holds up reading and indexing what was just captured.
+Summaries and assertion extraction run in a lane of their own, so a slow model
+never holds up reading and indexing what was just captured.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from sqlalchemy import and_, or_, select, update
 
 from gunther import digest, papers, vector_index
 from gunther.asset_service import AssetService, _decode_text, _read_prefix, extract_asset_content
+from gunther.audio_decode import audio_duration_ms
 from gunther.database import session_scope
 from gunther.document_parser import DoclingParser
 from gunther.document_structure import organize_document, pdf_metadata
@@ -30,12 +31,14 @@ from gunther.models import (
     BlockEmbedding,
     ContentBlock,
     ProcessingJob,
+    RecordingSession,
     Source,
     SourceIndexHead,
     SourceRevision,
     utc_now,
 )
 from gunther.portable_documents import archive_document, html_document, pdf_raster_images
+from gunther.recording_service import RecordingService
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +47,7 @@ POLL_STEP_SECONDS = 0.5
 MAX_RETRY_SECONDS = 60.0
 FAILURE_LOG_EVERY = 30
 # Jobs that may wait on a model over the network.
-AI_KINDS = ("digest",)
+AI_KINDS = ("digest", "extract_assertions")
 
 
 def retry_delay_seconds(failures: int) -> float:
@@ -140,12 +143,14 @@ class ProcessingWorker:
         assets: AssetService,
         document_parser: DoclingParser | None = None,
         digest_writer: digest.DigestWriter | None = None,
+        recordings_dir: Path | None = None,
     ):
         self.index = index
         self.sessions = index.sessions
         self.assets = assets
         self.document_parser = document_parser
         self.digest_writer = digest_writer
+        self.recordings_dir = recordings_dir
         self.stopping = Event()
 
     def claim(self, ai: bool | None = None) -> tuple[str, str] | None:
@@ -229,6 +234,15 @@ class ProcessingWorker:
                     request = digest.prepare(
                         session, source, job.revision_id, asset_path=image_path
                     )
+                elif kind == "extract_assertions":
+                    source_title, source_content = source.title, source.content
+                    source_hash = source.content_hash
+                elif kind == "measure_recording":
+                    recording_id = job.dedupe_key.split(":")[1]
+                    recording = session.get(RecordingSession, recording_id)
+                    if recording is None or recording.status != "completed":
+                        raise ValueError("Completed recording is unavailable")
+                    recording_file, recording_size = recording.file_name, recording.byte_size
                 elif kind == "summarize":
                     revision_id = job.revision_id
                     model_id = job.model_id
@@ -402,6 +416,17 @@ class ProcessingWorker:
                         raise ValueError("Embedding provider returned an invalid vector")
             elif kind == "digest":
                 result = self.digest_writer.write(request) if self.digest_writer else None
+            elif kind == "extract_assertions":
+                extraction = self.assets.knowledge_service.extractor.extract(
+                    source_title, source_content
+                )
+            elif kind == "measure_recording":
+                if self.recordings_dir is None:
+                    raise ValueError("Recording storage is unavailable")
+                path, _, _ = RecordingService(
+                    self.sessions, self.recordings_dir, self.assets.storage_budget
+                ).download(recording_id)
+                measured_ms = audio_duration_ms(path, stopping=self.stopping.is_set)
             else:
                 raise ValueError("Processing provider is not configured")
 
@@ -444,6 +469,20 @@ class ProcessingWorker:
                     )
                 elif kind == "digest":
                     digest.publish(session, source, request, result)
+                elif kind == "extract_assertions":
+                    if source.trashed_at is None and source.content_hash == source_hash:
+                        self.assets.knowledge_service.store_source_extraction(
+                            session, source, extraction
+                        )
+                elif kind == "measure_recording":
+                    recording = session.get(RecordingSession, recording_id)
+                    if (
+                        recording is not None and recording.status == "completed"
+                        and recording.file_name == recording_file
+                        and recording.byte_size == recording_size
+                    ):
+                        recording.audio_duration_ms = measured_ms
+                        recording.updated_at = utc_now()
                 elif kind == "summarize":
                     papers.publish(
                         session,

@@ -53,13 +53,32 @@ export function SourceItem({ source: initial, bases, nav, onResolved, onOpenBase
   const [source, setSource] = useState(initial);
   useEffect(() => setSource(initial), [initial]);
   useEffect(() => onTitle(source.title), [onTitle, source.title]);
+  useEffect(() => {
+    if (!source.recordingDurationPending) return;
+    let alive = true;
+    let timer: number;
+    const check = async () => {
+      try {
+        const next = await knowledgeApi.source(source.id);
+        if (alive) setSource(next);
+      } catch {
+        if (alive) timer = window.setTimeout(() => void check(), 2500);
+      }
+    };
+    timer = window.setTimeout(() => void check(), 2500);
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [source]);
 
   const view = sourceView(source.kind, source.content, source.asset?.mediaType, Boolean(source.asset));
   // Pasted text keeps the identity of the kind it was captured as.
   const identity = view === "text" && source.kind !== "note"
     ? { ...VIEW_IDENTITY[source.kind === "link" ? "web" : source.kind === "image" ? "image" : source.kind === "table" ? "table" : "document"], label: SOURCE_KIND_LABEL[source.kind] }
     : VIEW_IDENTITY[view];
-  const recording = useMemo(() => (view === "recording" ? parseRecordingContent(source.content) : null), [source.content, view]);
+  const recording = useMemo(() => {
+    if (view !== "recording") return null;
+    const parsed = parseRecordingContent(source.content);
+    return { ...parsed, durationSeconds: source.recordingDurationSeconds ?? parsed.durationSeconds };
+  }, [source.content, source.recordingDurationSeconds, view]);
   const web = useMemo(() => (view === "web" ? parseWebContent(source.content) : null), [source.content, view]);
   const research = useMemo(() => (view === "research" ? parseResearchContent(source.content) : null), [source.content, view]);
   const file = useMemo(() => (view === "document" || view === "image" ? parseFileContent(source.content) : null), [source.content, view]);

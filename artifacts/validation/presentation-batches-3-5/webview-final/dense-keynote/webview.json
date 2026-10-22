@@ -1,0 +1,171 @@
+{
+  "candidateHash" : "67f0877610f2df7bb15a76ac89220625da6c9a12dbcd8fe81d6dabbd9de66edd",
+  "slides" : [
+    {
+      "assetFailures" : 0,
+      "blockBounds" : [
+
+      ],
+      "blocks" : [
+        {
+          "id" : "b1",
+          "type" : "text"
+        }
+      ],
+      "bounds" : {
+        "height" : 720,
+        "width" : 1280
+      },
+      "drawn" : "title",
+      "fit" : 1,
+      "fonts" : [
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "id" : "intake-p1",
+      "images" : [
+
+      ],
+      "index" : 0,
+      "overflow" : false,
+      "overlaps" : [
+
+      ],
+      "pending" : 0,
+      "sceneIssue" : null,
+      "smallText" : [
+
+      ],
+      "typography" : [
+        {
+          "blockId" : null,
+          "bounds" : {
+            "height" : 120,
+            "width" : 990.953125,
+            "x" : 92,
+            "y" : 221
+          },
+          "family" : "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+          "minimum" : 28,
+          "role" : "heading",
+          "size" : 118,
+          "text" : "The intake pilot"
+        },
+        {
+          "blockId" : null,
+          "bounds" : {
+            "height" : 100,
+            "width" : 972,
+            "x" : 92,
+            "y" : 381
+          },
+          "family" : "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+          "minimum" : 22,
+          "role" : "body",
+          "size" : 36,
+          "text" : "A shorter review cycle, with an unanswered quality question. [1][2]"
+        }
+      ]
+    },
+    {
+      "assetFailures" : 0,
+      "blockBounds" : [
+        {
+          "bounds" : {
+            "height" : 160.125,
+            "width" : 1036.5,
+            "x" : 121.75,
+            "y" : 279.8125
+          },
+          "id" : "b1"
+        },
+        {
+          "bounds" : {
+            "height" : 160.140625,
+            "width" : 1036.5,
+            "x" : 121.75,
+            "y" : 464.109375
+          },
+          "id" : "b2"
+        }
+      ],
+      "blocks" : [
+        {
+          "id" : "b1",
+          "type" : "text"
+        },
+        {
+          "id" : "b2",
+          "type" : "text"
+        }
+      ],
+      "bounds" : {
+        "height" : 720,
+        "width" : 1280
+      },
+      "drawn" : "composed",
+      "fit" : 0.93000000000000005,
+      "fonts" : [
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "id" : "intake-p2",
+      "images" : [
+
+      ],
+      "index" : 1,
+      "overflow" : false,
+      "overlaps" : [
+
+      ],
+      "pending" : 0,
+      "sceneIssue" : null,
+      "smallText" : [
+
+      ],
+      "typography" : [
+        {
+          "blockId" : null,
+          "bounds" : {
+            "height" : 134,
+            "width" : 1096,
+            "x" : 92,
+            "y" : 64
+          },
+          "family" : "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+          "minimum" : 28,
+          "role" : "heading",
+          "size" : 52.080002,
+          "text" : "The pilot measured time; quality remains unknown [1][2]"
+        },
+        {
+          "blockId" : "b1",
+          "bounds" : {
+            "height" : 184,
+            "width" : 1036.5,
+            "x" : 121.75,
+            "y" : 279.8125
+          },
+          "family" : "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+          "minimum" : 22,
+          "role" : "body",
+          "size" : 39.060001,
+          "text" : "In this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight wee"
+        },
+        {
+          "blockId" : "b2",
+          "bounds" : {
+            "height" : 184,
+            "width" : 1036.5,
+            "x" : 121.75,
+            "y" : 464.109375
+          },
+          "family" : "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+          "minimum" : 22,
+          "role" : "body",
+          "size" : 39.060001,
+          "text" : "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish a"
+        }
+      ]
+    }
+  ],
+  "version" : 1
+}

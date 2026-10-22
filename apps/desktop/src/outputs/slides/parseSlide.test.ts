@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { type ChartShape, parseSlide, plainText, SLIDE_LAYOUTS, type TableShape, unitOf, units, valueOf } from "./parseSlide";
+import graphicsContract from "../../../../../artifacts/validation/presentation-graphics-composer/contract_cases.json";
+import { type ChartShape, parseGraphicBlock, parseSlide, plainText, SLIDE_LAYOUTS, type TableShape, unitOf, units, valueOf } from "./parseSlide";
 
 const TABLE = "| Item | Share (%) |\n| --- | --- |\n";
 
@@ -63,9 +64,19 @@ describe("a slide that takes the form its layout asks for", () => {
     if (!fits && shape) expect(layout.endsWith("_chart")).toBe(true);
   });
 
-  it("is plain text for a layout that is none of the thirteen", () => {
-    expect(SLIDE_LAYOUTS).toHaveLength(13);
+  it("is plain text for a layout that is none of the fourteen", () => {
+    expect(SLIDE_LAYOUTS).toHaveLength(14);
     for (const layout of [null, undefined, "", "hero", "Text", "bar chart"]) expect(parseSlide(layout, "## T\n\nwords")).toBeNull();
+  });
+});
+
+describe("the shared graphics contract", () => {
+  it.each(Object.entries(graphicsContract.cases))("matches allowed source views for %s", (_name, fixture) => {
+    const views = ["flow", "diagram", "bar_chart", "line_chart"] as const;
+    for (const view of views) {
+      const parsed = parseGraphicBlock(view, fixture.markdown);
+      expect(Boolean(parsed), `${view} support`).toBe(fixture.allowedViews.includes(view));
+    }
   });
 });
 
@@ -124,7 +135,36 @@ describe("what each layout holds, as the slide wrote it", () => {
 
   it("reads a flow, a timeline and cards from their lists", () => {
     expect(parseSlide("flow", "## Clean first\n1. Deduplicate [2]\n2. Pre-label [3]\n3. Review the disputed ones [3]")).toMatchObject({
-      layout: "flow", title: "Clean first", steps: ["Deduplicate [2]", "Pre-label [3]", "Review the disputed ones [3]"],
+      layout: "flow", title: "Clean first", steps: [
+        { title: null, detail: "Deduplicate [2]" },
+        { title: null, detail: "Pre-label [3]" },
+        { title: null, detail: "Review the disputed ones [3]" },
+      ],
+    });
+    expect(parseSlide("flow", "## Labeled\n1. **准备**：检查材料 [3]\n2. **Confirm** — retain every citation [2]")).toMatchObject({
+      steps: [
+        { title: "**准备**：", detail: "检查材料 [3]" },
+        { title: "**Confirm** —", detail: "retain every citation [2]" },
+      ],
+    });
+    expect(parseSlide("flow", "## Reference only\n1. **Read** [3]\n2. **Review** [2]")).toMatchObject({
+      steps: [{ title: "**Read** [3]", detail: "" }, { title: "**Review** [2]", detail: "" }],
+    });
+    expect(parseSlide("flow", "## Negative amounts\n1. **Cut** -10% [1]\n2. **Change** –10 [2]\n3. **Subtract** −10% [3]\n4. **Cost** -$10 [4]\n5. **Rounded** - 10% [5]")).toMatchObject({
+      steps: [
+        { title: "**Cut**", detail: "-10% [1]" },
+        { title: "**Change**", detail: "–10 [2]" },
+        { title: "**Subtract**", detail: "−10% [3]" },
+        { title: "**Cost**", detail: "-$10 [4]" },
+        { title: "**Rounded**", detail: "- 10% [5]" },
+      ],
+    });
+    expect(parseSlide("flow", "## Spaced values\n1. **Change** -  10% [6]\n2. **Cost** -  ￥ 10 [7]\n3. **Decimal** - .5% [8]")).toMatchObject({
+      steps: [
+        { title: "**Change**", detail: "-  10% [6]" },
+        { title: "**Cost**", detail: "-  ￥ 10 [7]" },
+        { title: "**Decimal**", detail: "- .5% [8]" },
+      ],
     });
     expect(parseSlide("timeline", "## Growth came from abroad\n- **2016** First product [1]\n- **2020**：Entered Europe [4]\n- **2023** - Six in ten dollars [6]")).toMatchObject({
       layout: "timeline",
@@ -139,8 +179,14 @@ describe("what each layout holds, as the slide wrote it", () => {
     expect(parseSlide("cards", "## H\n- __A__: one\n- **B**: two")).toBeNull();
   });
 
+  it("preserves ordered-list markers when a list is rendered as a flow", () => {
+    expect(parseSlide("flow", "## Resume\n3. Continue [1]\n8. Publish [2]")).toMatchObject({
+      steps: [{ number: 3, detail: "Continue [1]" }, { number: 8, detail: "Publish [2]" }],
+    });
+  });
+
   it("keeps a sentence under a list", () => {
-    expect(parseSlide("flow", "## H\n1. a\n2. b\n\nThen it repeats.")).toMatchObject({ steps: ["a", "b"], after: "Then it repeats." });
+    expect(parseSlide("flow", "## H\n1. a\n2. b\n\nThen it repeats.")).toMatchObject({ steps: [{ detail: "a" }, { detail: "b" }], after: "Then it repeats." });
   });
 
   it("reads a quote, however its lines are marked, and who said it", () => {
@@ -254,6 +300,17 @@ describe("a chart", () => {
     const twice = parseSlide("line_chart", "## H\n| Year | Users |\n| --- | --- |\n| 2020 | 1 |\n| 2020 | 2 |") as ChartShape;
     expect(twice.points.map((point) => point.x)).toEqual([null, null]);
   });
+
+  it("does not permit charts to silently drop extra table columns", () => {
+    const source = "| Quarter | Change | Region |\n| --- | --- | --- |\n| Q1 | -3 [1] | West |\n| Q2 | 2 [2] | East |";
+    expect(parseGraphicBlock("bar_chart", source)).toBeNull();
+    expect(parseGraphicBlock("line_chart", source)).toBeNull();
+  });
+
+  it("keeps attached prose with its source table instead of drawing only the table", () => {
+    const source = "| Year | Change |\n| --- | --- |\n| 2020 | 1 [1] |\n| 2021 | 2 [2] |\nMeaning stays attached.";
+    expect(parseGraphicBlock("line_chart", source)).toBeNull();
+  });
 });
 
 describe("the pieces", () => {
@@ -282,5 +339,42 @@ describe("the pieces", () => {
     expect(unitOf("Users")).toBeNull();
     expect(unitOf("Users ()")).toBeNull();
     expect(plainText("**Labour** costs \\[sic] [3] `code`")).toBe("Labour costs [sic] code");
+  });
+});
+
+describe("a directed relationship diagram", () => {
+  const branch = [
+    "## Materials determine the next step",
+    "| Start | Relationship | End |",
+    "| --- | --- | --- |",
+    "| Collect materials | complete [1] | Check materials |",
+    "| Check materials | complete [1] | Analyze |",
+    "| Check materials | missing [1] | Request more |",
+  ].join("\n");
+
+  it("keeps nodes and cited directed edges in a three-layer DAG", () => {
+    const shape = parseSlide("diagram", branch);
+    expect(shape?.layout).toBe("diagram");
+    expect(shape && "nodes" in shape ? shape.nodes.map((node) => node.key) : []).toEqual([
+      "collect materials", "check materials", "analyze", "request more",
+    ]);
+    expect(shape && "layers" in shape ? shape.layers : []).toEqual([
+      ["collect materials"], ["check materials"], ["analyze", "request more"],
+    ]);
+    expect(shape && "edges" in shape ? shape.edges.map((edge) => [edge.fromKey, edge.toKey, edge.refs]) : []).toEqual([
+      ["collect materials", "check materials", [1]],
+      ["check materials", "analyze", [1]],
+      ["check materials", "request more", [1]],
+    ]);
+  });
+
+  it.each([
+    ["a cycle", "| A | relation | B |\n| --- | --- | --- |\n| A | feeds [1] | B |\n| B | feeds [1] | A |"],
+    ["an uncited edge", "| A | relation | B |\n| --- | --- | --- |\n| A | leads to | B |"],
+    ["a long node label", "| A | relation | B |\n| --- | --- | --- |\n| Review the available evidence with all limitations | leads to [1] | B |"],
+  ])("falls back to the full comparison table for %s", (_name, table) => {
+    const result = parseSlide("diagram", `## A claim\n${table}`);
+    expect(result?.layout).toBe("compare");
+    expect(result && "rows" in result ? result.rows.length : 0).toBeGreaterThan(0);
   });
 });

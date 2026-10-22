@@ -50,8 +50,16 @@ from gunther.artifact_workspace import (
     store_pool,
     sync,
 )
-from gunther.outputs import layout_of, section_hash, split_document
+from gunther.outputs import _marked, layout_of, section_hash, split_document
 from gunther.schemas import ConversationCitationOut
+from gunther.slide_scene import (
+    SceneEnvelope,
+    SceneGroup,
+    SceneLeaf,
+    graphics_hash,
+    source_hash,
+    with_scene,
+)
 
 _edits = itertools.count(1)
 
@@ -83,10 +91,23 @@ def made(kind: str = "slides") -> tuple[ConversationBrief, Work]:
         ],
         outline=[
             ItemRec(id="p1", heading="The trial", layout="title"),
-            ItemRec(id="p2", heading="Heat fell", goal="The result", layout="big_number",
-                    cards=["C1"], refs=[1]),
-            ItemRec(id="p3", heading="Labour costs most", goal="The cost", layout="bar_chart",
-                    cards=["C2"], refs=[2], link="because"),
+            ItemRec(
+                id="p2",
+                heading="Heat fell",
+                goal="The result",
+                layout="big_number",
+                cards=["C1"],
+                refs=[1],
+            ),
+            ItemRec(
+                id="p3",
+                heading="Labour costs most",
+                goal="The cost",
+                layout="bar_chart",
+                cards=["C2"],
+                refs=[2],
+                link="because",
+            ),
         ],
         version_id="art_1",
         version_map=[1, 2],
@@ -578,9 +599,10 @@ def test_a_use_or_structure_the_skill_does_not_have_is_refused() -> None:
     assert refused.notes[1].startswith("“a poem” is not a structure")
     report = made("report")[1]
     report.approach = None
-    assert "A report has no use" in apply_brief_updates(
-        brief, report, [update("use", "talk")], ""
-    ).notes[0]
+    assert (
+        "A report has no use"
+        in apply_brief_updates(brief, report, [update("use", "talk")], "").notes[0]
+    )
 
 
 def test_updates_with_no_text_are_left_out_and_nothing_is_changed_in_place() -> None:
@@ -809,10 +831,58 @@ def hand_edit(client, base_id: str, artifact_id: str, content: str) -> str:
     return response.json()["id"]
 
 
-def test_a_saved_deck_becomes_a_work_that_is_up_to_date(tmp_path: Path) -> None:
+def test_import_work_restores_a_composed_scene_after_citation_mapping(tmp_path: Path) -> None:
     with a_deck(tmp_path) as client:
         base_id, _ = library(client)
         saved = built(build(client, base_id, body(kind="slides")))
+        version, checks = version_of(client, base_id, saved["id"])
+
+    sections = split_document(version.content, "slides")[1]
+    page_body = (
+        "<!-- layout: composed -->\n## A mixed result\n\n"
+        "| Group | Rate (%) |\n| --- | --- |\n| A | 72% [1] |\n| B | 68% [2] |\n\n"
+        "Measured within the study group [2]."
+    )
+    tree = SceneGroup(
+        kind="row",
+        weights=[2, 1],
+        children=[
+            SceneLeaf(kind="leaf", blockId="b1", view="bar_chart"),
+            SceneLeaf(kind="leaf", blockId="b2", view="text"),
+        ],
+    )
+    composed = with_scene(
+        page_body,
+        SceneEnvelope(
+            version=2,
+            sourceHash=source_hash(page_body),
+            graphicsHash=graphics_hash(page_body),
+            graphics={"b1": "bar_chart"},
+            root=tree,
+        ),
+    )
+    sections[1] = composed
+    outline = list(version.outline)
+    outline[1] = outline[1].model_copy(update={"heading": "A mixed result", "layout": "composed"})
+    restored_version = version.model_copy(
+        update={"content": "\n\n---\n\n".join(sections), "outline": outline}
+    )
+    state, brief = Workspace(), ConversationBrief()
+
+    work = import_work(restored_version, checks, state, brief)
+
+    assert _marked(work.parts["p2"].text).scene is not None
+    assert source_hash(work.parts["p2"].text) == source_hash(composed)
+    imported_scene = _marked(work.parts["p2"].text).scene
+    assert imported_scene is not None and imported_scene.graphics == {"b1": "bar_chart"}
+    assert imported_scene.graphics_hash == graphics_hash(work.parts["p2"].text)
+    assert work.outline[1].layout == "composed"
+
+
+def test_a_saved_deck_becomes_a_work_that_is_up_to_date(tmp_path: Path) -> None:
+    with a_deck(tmp_path) as client:
+        base_id, _ = library(client)
+        saved = built(build(client, base_id, body(kind="slides", theme="editorial")))
         version, checks = version_of(client, base_id, saved["id"])
 
     state, brief = Workspace(), ConversationBrief()
@@ -824,6 +894,7 @@ def test_a_saved_deck_becomes_a_work_that_is_up_to_date(tmp_path: Path) -> None:
         version.title,
     )
     assert work.spec.kind == "slides" and work.spec.use == Line(text="talk", mark="guessed")
+    assert work.spec.theme == "editorial"
     assert work.spec.structure is not None and work.spec.structure.text == "what"
     assert work.approach is not None and work.approach["question"] == APPROACH["question"]
     assert work.cards == [] and work.next_card == 1
@@ -835,6 +906,7 @@ def test_a_saved_deck_becomes_a_work_that_is_up_to_date(tmp_path: Path) -> None:
     ]
     assert work.next_item == 4
     assert [item.goal for item in work.outline] == [outline.goal for outline in version.outline]
+    assert work.outline[1].link == version.outline[1].link
     # The parts are the sections, each with the Checker's findings for its text.
     sections = split_document(version.content, "slides")[1]
     assert [work.parts[item.id].text for item in work.outline] == sections
@@ -1157,9 +1229,7 @@ def test_a_head_numbered_differently_is_read_by_what_it_cites(tmp_path: Path) ->
     extra = version.citations[0].model_copy(
         update={"source_id": "src_new", "block_id": "blk_new", "quote": "A new passage"}
     )
-    newer = flipped.model_copy(
-        update={"id": "art_newer", "citations": [*flipped.citations, extra]}
-    )
+    newer = flipped.model_copy(update={"id": "art_newer", "citations": [*flipped.citations, extra]})
     sync(work, newer, {}, state, brief)
     assert work.version_map == [2, 1, 3] and [item["ref"] for item in state.pool] == [1, 2, 3]
 

@@ -453,7 +453,7 @@ class LibraryFolders:
                     recording = {
                         "id": recording_id,
                         "file": file_name,
-                        "durationSeconds": session_row.duration_seconds,
+                        "durationSeconds": session_row.effective_duration_seconds,
                     }
                     break
                 snapshot = snapshots.get(source.id)

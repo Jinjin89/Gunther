@@ -85,6 +85,21 @@ describe("desktop knowledge API contract", () => {
     });
   });
 
+  it("can save sources before model analysis and cancel optional transcript requests", async () => {
+    const capture = { title: "Recording", content: "Saved transcript", kind: "recording" as const };
+    await knowledgeApi.importSource(capture, "wsp-primary", { deferAnalysis: true });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/sources?deferAnalysis=true");
+    expect(new Headers(fetchMock.mock.calls[0]?.[1].headers).get("X-Gunther-Workspace-Id")).toBe("wsp-primary");
+
+    const controller = new AbortController();
+    await knowledgeApi.relistenRecording("recording", {
+      startMs: 0, endMs: 60_000, pass: "minute", context: { terms: [], before: "" },
+    }, controller.signal);
+    await knowledgeApi.groupParagraphs("recording", { sentences: ["Saved transcript"], before: "", pass: "live" }, controller.signal);
+    expect(fetchMock.mock.calls[1]?.[1].signal).toBe(controller.signal);
+    expect(fetchMock.mock.calls[2]?.[1].signal).toBe(controller.signal);
+  });
+
   it("validates and sends immutable web capture requests through the dedicated endpoint", async () => {
     fetchMock.mockResolvedValueOnce(response({
       asset: {},

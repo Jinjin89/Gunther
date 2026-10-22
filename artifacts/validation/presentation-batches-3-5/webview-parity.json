@@ -1,0 +1,103 @@
+[
+  {
+    "case": "intake-talk",
+    "candidateHash": "0402914eb2429f6ddd7501151606b8b6edbff31f5addc2e0de5442436222787d",
+    "slides": 2,
+    "status": "matched",
+    "tolerancePixels": 3,
+    "scope": "macOS WKWebView engine probe, not a full packaged-app interaction test",
+    "differences": []
+  },
+  {
+    "case": "reading-zh-read",
+    "candidateHash": "ff8f699e233701630b1df28751a9d1f55b86d7a381a8dba1ab025a762a0e80d8",
+    "slides": 2,
+    "status": "matched",
+    "tolerancePixels": 3,
+    "scope": "macOS WKWebView engine probe, not a full packaged-app interaction test",
+    "differences": []
+  },
+  {
+    "case": "numeric-talk",
+    "candidateHash": "ed2acc6357fbf76f970ef019eecdaafe743a97258819c68be8df06109ce7700e",
+    "slides": 2,
+    "status": "matched",
+    "tolerancePixels": 3,
+    "scope": "macOS WKWebView engine probe, not a full packaged-app interaction test",
+    "differences": []
+  },
+  {
+    "case": "process-talk",
+    "candidateHash": "aa83014a8967bd56ab145e5e9e8c442ae718e0c977a0a005e529d2e5eb573d95",
+    "slides": 2,
+    "status": "differences",
+    "tolerancePixels": 3,
+    "scope": "macOS WKWebView engine probe, not a full packaged-app interaction test",
+    "differences": [
+      {
+        "slideId": "process-p1",
+        "field": "heading",
+        "text": "Collection precedes the completeness check [1]",
+        "maxPixelDifference": 3.81
+      }
+    ]
+  },
+  {
+    "case": "conflict-read",
+    "candidateHash": "fb5fba54792c47401fc1f5f8549f8275cb9ad68133d4bb1b184a89f375ce3209",
+    "slides": 2,
+    "status": "matched",
+    "tolerancePixels": 3,
+    "scope": "macOS WKWebView engine probe, not a full packaged-app interaction test",
+    "differences": []
+  },
+  {
+    "case": "figure-read",
+    "candidateHash": "96c8a990a0b069cce63462c1f20ab9d6684441137734f39d198fe66afac27785",
+    "slides": 2,
+    "status": "matched",
+    "tolerancePixels": 3,
+    "scope": "macOS WKWebView engine probe, not a full packaged-app interaction test",
+    "differences": []
+  },
+  {
+    "case": "dense-briefing",
+    "candidateHash": "daa2642be41db94be278fe68f0f006d1a0f00a721ddc5f605f8cb49957cc1a87",
+    "slides": 2,
+    "status": "matched",
+    "tolerancePixels": 3,
+    "scope": "macOS WKWebView engine probe, not a full packaged-app interaction test",
+    "differences": []
+  },
+  {
+    "case": "dense-editorial",
+    "candidateHash": "52b5952fc122e86626856975dff620d7c7f95da462265b43c66db0d887ad9cf7",
+    "slides": 2,
+    "status": "matched",
+    "tolerancePixels": 3,
+    "scope": "macOS WKWebView engine probe, not a full packaged-app interaction test",
+    "differences": []
+  },
+  {
+    "case": "dense-keynote",
+    "candidateHash": "67f0877610f2df7bb15a76ac89220625da6c9a12dbcd8fe81d6dabbd9de66edd",
+    "slides": 2,
+    "status": "differences",
+    "tolerancePixels": 3,
+    "scope": "macOS WKWebView engine probe, not a full packaged-app interaction test",
+    "differences": [
+      {
+        "slideId": "intake-p2",
+        "field": "body",
+        "text": "In this synthetic intake pilot, median review time was 40 hours before",
+        "maxPixelDifference": 3.5
+      },
+      {
+        "slideId": "intake-p2",
+        "field": "body",
+        "text": "The two-team intake pilot did not measure review quality or error rate",
+        "maxPixelDifference": 3.5
+      }
+    ]
+  }
+]

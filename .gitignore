@@ -32,6 +32,8 @@ apps/backend/.pyinstaller/
 # Fetched by `npm run models:fetch`; bundled into the desktop build.
 apps/backend/models/
 tools/document-parser/.build/
+tools/slide-browser/.cache/
+apps/desktop/render-dist/
 coverage/
 .coverage
 *.log

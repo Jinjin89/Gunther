@@ -70,7 +70,7 @@ export async function persistTextCapture(input: TextCaptureInput): Promise<Captu
         content,
         kind: kind as CreateSourceInput["kind"],
         ...(baseId ? { knowledgeBaseId: baseId } : {}),
-      }, workspaceId);
+      }, workspaceId, { deferAnalysis: true });
       removeStoredCapture(captureId);
       savedToService = true;
       filedToRequestedBase = true;

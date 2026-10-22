@@ -1,0 +1,69 @@
+{
+  "backendAffectedFinal": {
+    "passed": 335,
+    "failed": 0
+  },
+  "backendFullIntegration": {
+    "passed": 1153,
+    "failedAssertionsSinceFixed": 3,
+    "skipped": 2
+  },
+  "backendFailedCaseRecheck": {
+    "passed": 3,
+    "failed": 0
+  },
+  "frontendFull": {
+    "files": 90,
+    "passed": 789,
+    "failed": 0
+  },
+  "frontendAffectedFinal": {
+    "files": 17,
+    "passed": 308,
+    "failed": 0
+  },
+  "typecheck": "passed",
+  "ruff": "passed",
+  "productionBuild": "passed with existing chunk-size warning",
+  "pdfVisualInspection": "all 9 pages inspected",
+  "captureFeasibility": {
+    "compiledHostBytes": 1013311,
+    "compiledCaptureSeconds": 4.38,
+    "browserTreeRssMiB": 1050,
+    "browser": "155.0.8059.80",
+    "samples": 21,
+    "usesInstalledChrome": true,
+    "platformFonts": [
+      "Avenir Next",
+      "Avenir Next Medium",
+      "Iowan Old Style",
+      "PingFang SC",
+      "Songti SC"
+    ],
+    "sourceAssetLoaded": true,
+    "packagedTauriWebViewParity": "Not asserted; later capture integration",
+    "rssNote": "Sum of browser process RSS; shared pages may be counted more than once."
+  },
+  "scope": "Batches 0\u20132. The automatic screenshot-review loop remains a later batch.",
+  "backendFinalPlannerAndCompatibility": {
+    "passed": 151,
+    "failed": 0
+  },
+  "frontendFocusedFinal": {
+    "passed": 92,
+    "failed": 0
+  },
+  "platformFontFamilies": [
+    "Avenir Next",
+    "Avenir Next Medium",
+    "Iowan Old Style",
+    "PingFang SC",
+    "Songti SC"
+  ],
+  "realStylePicker": {
+    "passed": true,
+    "realPreviews": 8,
+    "citationNavigation": "Confirmed original scope note in the live preview"
+  },
+  "sourceAssetIsolation": "The evaluation host uses its own managed asset route; no image fallback in final captures."
+}

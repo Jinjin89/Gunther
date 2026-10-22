@@ -1,0 +1,812 @@
+{
+  "id": "reading-zh-talk",
+  "synthetic": true,
+  "model": "DeepSeek · Flash",
+  "modelRef": "deepseek/deepseek-flash",
+  "effort": "medium",
+  "reviewProtocol": "0df98d47f08dbffdac40f702e132009b2fdcbb9a0e49e86005d3e3fcd5079e3e",
+  "vision": true,
+  "theme": "editorial",
+  "use": "talk",
+  "inputHash": "ff8f699e233701630b1df28751a9d1f55b86d7a381a8dba1ab025a762a0e80d8",
+  "sourceHash": "165777749c0077f502c7bb95918a79b2540648e0a76435901e02a02c724bcc75",
+  "before": {
+    "title": "社区阅读讨论",
+    "content": "<!-- layout: title; theme: editorial; design: v1 -->\n# 两种阅读安排尚未形成统一决定 [1][2]\n\n---\n\n<!-- layout: text -->\n## 两种阅读安排尚未形成统一决定 [1][2]\n\n- **共同选书**：方便讨论同一段落。 [1]\n- **自主选书**：照顾不同兴趣。 [1]\n- **证据范围**：讨论意见没有测量学习效果。 [1][2]",
+    "outline": [
+      {
+        "id": "reading-zh-p1",
+        "heading": "两种阅读安排尚未形成统一决定 [1][2]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "title"
+      },
+      {
+        "id": "reading-zh-p2",
+        "heading": "两种阅读安排尚未形成统一决定 [1][2]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "text"
+      }
+    ],
+    "citations": [
+      {
+        "id": "reading-notes",
+        "kind": "library",
+        "url": null,
+        "source_id": "reading-notes",
+        "source_title": "阅读小组讨论记录",
+        "assertion_id": null,
+        "quote": "这份合成课堂材料记录了两种阅读安排。一组希望每周选择同一本书，以便讨论同一段落；另一组希望自主选书，以便照顾不同兴趣。记录只反映讨论意见，没有测量阅读量或学习效果。",
+        "locator": "合成课堂材料，讨论正文",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 1
+      },
+      {
+        "id": "reading-scope",
+        "kind": "library",
+        "url": null,
+        "source_id": "reading-scope",
+        "source_title": "讨论记录说明",
+        "assertion_id": null,
+        "quote": "参与者并未形成统一决定。两种安排也可以在不同时段交替使用，但记录没有检验这种安排的效果。应保留分歧和未测量的限制。",
+        "locator": "合成课堂材料，范围说明",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 2
+      }
+    ],
+    "use": "talk"
+  },
+  "after": {
+    "title": "社区阅读讨论",
+    "content": "<!-- layout: title; theme: editorial; design: v1 -->\n# 两种阅读安排尚未形成统一决定 [1][2]\n\n---\n\n<!-- layout: text -->\n## 两种阅读安排尚未形成统一决定 [1][2]\n\n- **共同选书**：方便讨论同一段落。 [1]\n- **自主选书**：照顾不同兴趣。 [1]\n- **证据范围**：讨论意见没有测量学习效果。 [1][2]",
+    "outline": [
+      {
+        "id": "reading-zh-p1",
+        "heading": "两种阅读安排尚未形成统一决定 [1][2]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "title"
+      },
+      {
+        "id": "reading-zh-p2",
+        "heading": "两种阅读安排尚未形成统一决定 [1][2]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "text"
+      }
+    ],
+    "citations": [
+      {
+        "id": "reading-notes",
+        "kind": "library",
+        "url": null,
+        "source_id": "reading-notes",
+        "source_title": "阅读小组讨论记录",
+        "assertion_id": null,
+        "quote": "这份合成课堂材料记录了两种阅读安排。一组希望每周选择同一本书，以便讨论同一段落；另一组希望自主选书，以便照顾不同兴趣。记录只反映讨论意见，没有测量阅读量或学习效果。",
+        "locator": "合成课堂材料，讨论正文",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 1
+      },
+      {
+        "id": "reading-scope",
+        "kind": "library",
+        "url": null,
+        "source_id": "reading-scope",
+        "source_title": "讨论记录说明",
+        "assertion_id": null,
+        "quote": "参与者并未形成统一决定。两种安排也可以在不同时段交替使用，但记录没有检验这种安排的效果。应保留分歧和未测量的限制。",
+        "locator": "合成课堂材料，范围说明",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 2
+      }
+    ],
+    "use": "talk"
+  },
+  "beforeCapture": {
+    "version": 1,
+    "candidateHash": "ff8f699e233701630b1df28751a9d1f55b86d7a381a8dba1ab025a762a0e80d8",
+    "slides": [
+      {
+        "id": "reading-zh-p1",
+        "index": 0,
+        "blocks": [],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "title",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 112,
+            "minimum": 28,
+            "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 161.65625,
+              "width": 809.75,
+              "height": 342.703125
+            },
+            "text": "两种阅读安排尚未形成统一决定 [1][2]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-01.png",
+        "resolvedFonts": [
+          "IowanOldStyle-Roman",
+          "STSongti-SC-Regular"
+        ],
+        "contentHash": "4f442674cc2a8a03c36cf2631c619801910bf9376334931064b03cb69869c5bd",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": []
+      },
+      {
+        "id": "reading-zh-p2",
+        "index": 1,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "list"
+          }
+        ],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "text",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 56,
+            "minimum": 28,
+            "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 60,
+              "width": 1096,
+              "height": 63.828125
+            },
+            "text": "两种阅读安排尚未形成统一决定 [1][2]"
+          },
+          {
+            "role": "body",
+            "size": 34,
+            "minimum": 24,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 127.6875,
+              "y": 155.828125,
+              "width": 916.3125,
+              "height": 46.234375
+            },
+            "text": "共同选书：方便讨论同一段落。 [1]"
+          },
+          {
+            "role": "body",
+            "size": 34,
+            "minimum": 24,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 127.6875,
+              "y": 222.453125,
+              "width": 916.3125,
+              "height": 46.234375
+            },
+            "text": "自主选书：照顾不同兴趣。 [1]"
+          },
+          {
+            "role": "body",
+            "size": 34,
+            "minimum": 24,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 127.6875,
+              "y": 289.078125,
+              "width": 916.3125,
+              "height": 46.234375
+            },
+            "text": "证据范围：讨论意见没有测量学习效果。 [1][2]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-02.png",
+        "resolvedFonts": [
+          "IowanOldStyle-Roman",
+          "STSongti-SC-Regular"
+        ],
+        "contentHash": "8eb4eeb30b59a3b5fd7d693faad4959296969a3cce271ffb216ddc801e790a63",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "8bc7cda8f1c958bc77be820176595e9308c7a574dfbea4d6eb66d9b8b8c7056d"
+          }
+        ]
+      }
+    ],
+    "use": "talk",
+    "id": "a5cfb5ee21ba4deea619420c99176501",
+    "status": "captured",
+    "contentHash": "bd69b20f73950327cd15f2ba7a0425378048b7d66eff777229cbcc7432264b61",
+    "rendererHash": "db7fc6b697746b93e0599978b619fc95a6cccd8abe51236e48315064e156b0cb",
+    "assetHashes": {},
+    "designHash": "de0be09bd4fe38b705714b6d78ad41acc59be7c1f8d78343f0159b2fcd611e3a",
+    "missingAssets": [],
+    "contact": "contact.png",
+    "pdf": "deck.pdf",
+    "pdfCheck": {
+      "status": "checked",
+      "pages": 3,
+      "slides": [
+        {
+          "id": "reading-zh-p1",
+          "index": 0,
+          "blocks": [],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "title",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 112,
+              "minimum": 28,
+              "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 161.65625,
+                "width": 809.75,
+                "height": 342.703125
+              },
+              "text": "两种阅读安排尚未形成统一决定 [1][2]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        },
+        {
+          "id": "reading-zh-p2",
+          "index": 1,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "list"
+            }
+          ],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "text",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 56,
+              "minimum": 28,
+              "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 60,
+                "width": 1096,
+                "height": 63.828125
+              },
+              "text": "两种阅读安排尚未形成统一决定 [1][2]"
+            },
+            {
+              "role": "body",
+              "size": 34,
+              "minimum": 24,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 127.6875,
+                "y": 155.828125,
+                "width": 916.3125,
+                "height": 46.234375
+              },
+              "text": "共同选书：方便讨论同一段落。 [1]"
+            },
+            {
+              "role": "body",
+              "size": 34,
+              "minimum": 24,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 127.6875,
+                "y": 222.453125,
+                "width": 916.3125,
+                "height": 46.234375
+              },
+              "text": "自主选书：照顾不同兴趣。 [1]"
+            },
+            {
+              "role": "body",
+              "size": 34,
+              "minimum": 24,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 127.6875,
+                "y": 289.078125,
+                "width": 916.3125,
+                "height": 46.234375
+              },
+              "text": "证据范围：讨论意见没有测量学习效果。 [1][2]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        }
+      ],
+      "method": "print-dom-and-exported-pdf-text",
+      "missingSources": [],
+      "missingText": [],
+      "glyphEquivalence": "Unicode Equivalent_Unified_Ideograph 17.0.0",
+      "extractionDifferences": [
+        "证据范围：讨论意见没有测量学习效果。 [1][2]"
+      ],
+      "extractedTextHash": "5734c2af64c9645338d1bb4f527e9e6c634c152a11f2aed8bf29c3ff3dc6fdfd"
+    },
+    "browser": "HeadlessChrome/156.0.8078.4",
+    "distribution": "bundled:chromium_headless_shell-1248",
+    "elapsedSeconds": 1.375,
+    "files": {
+      "contact.png": "4fc8b6ae8f6da0c9178c298ceff6b31c8af7affdd84be5ea3612f724f141c5c1",
+      "slide-02.png": "55ce8509de0507a79bdb7214f3d68ae411e2cdb06273b10db3077c53dc205328",
+      "deck.pdf": "183cf015e71288691bdaa09305e2f8f3603cb895d7237262d43ed29417c4b88d",
+      "slide-01.png": "64a7c698709d42b700466ac7eb7f30e0fb8911ff4024b942539e5d4cd76d6c18"
+    }
+  },
+  "afterCapture": {
+    "version": 1,
+    "candidateHash": "ff8f699e233701630b1df28751a9d1f55b86d7a381a8dba1ab025a762a0e80d8",
+    "slides": [
+      {
+        "id": "reading-zh-p1",
+        "index": 0,
+        "blocks": [],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "title",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 112,
+            "minimum": 28,
+            "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 161.65625,
+              "width": 809.75,
+              "height": 342.703125
+            },
+            "text": "两种阅读安排尚未形成统一决定 [1][2]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-01.png",
+        "resolvedFonts": [
+          "IowanOldStyle-Roman",
+          "STSongti-SC-Regular"
+        ],
+        "contentHash": "4f442674cc2a8a03c36cf2631c619801910bf9376334931064b03cb69869c5bd",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": []
+      },
+      {
+        "id": "reading-zh-p2",
+        "index": 1,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "list"
+          }
+        ],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "text",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 56,
+            "minimum": 28,
+            "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 60,
+              "width": 1096,
+              "height": 63.828125
+            },
+            "text": "两种阅读安排尚未形成统一决定 [1][2]"
+          },
+          {
+            "role": "body",
+            "size": 34,
+            "minimum": 24,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 127.6875,
+              "y": 155.828125,
+              "width": 916.3125,
+              "height": 46.234375
+            },
+            "text": "共同选书：方便讨论同一段落。 [1]"
+          },
+          {
+            "role": "body",
+            "size": 34,
+            "minimum": 24,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 127.6875,
+              "y": 222.453125,
+              "width": 916.3125,
+              "height": 46.234375
+            },
+            "text": "自主选书：照顾不同兴趣。 [1]"
+          },
+          {
+            "role": "body",
+            "size": 34,
+            "minimum": 24,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 127.6875,
+              "y": 289.078125,
+              "width": 916.3125,
+              "height": 46.234375
+            },
+            "text": "证据范围：讨论意见没有测量学习效果。 [1][2]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-02.png",
+        "resolvedFonts": [
+          "IowanOldStyle-Roman",
+          "STSongti-SC-Regular"
+        ],
+        "contentHash": "8eb4eeb30b59a3b5fd7d693faad4959296969a3cce271ffb216ddc801e790a63",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "8bc7cda8f1c958bc77be820176595e9308c7a574dfbea4d6eb66d9b8b8c7056d"
+          }
+        ]
+      }
+    ],
+    "use": "talk",
+    "id": "09a4a852e57b49b3ae2cff2abc8fe054",
+    "status": "captured",
+    "contentHash": "bd69b20f73950327cd15f2ba7a0425378048b7d66eff777229cbcc7432264b61",
+    "rendererHash": "db7fc6b697746b93e0599978b619fc95a6cccd8abe51236e48315064e156b0cb",
+    "assetHashes": {},
+    "designHash": "de0be09bd4fe38b705714b6d78ad41acc59be7c1f8d78343f0159b2fcd611e3a",
+    "missingAssets": [],
+    "contact": "contact.png",
+    "pdf": "deck.pdf",
+    "pdfCheck": {
+      "status": "checked",
+      "pages": 3,
+      "slides": [
+        {
+          "id": "reading-zh-p1",
+          "index": 0,
+          "blocks": [],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "title",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 112,
+              "minimum": 28,
+              "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 161.65625,
+                "width": 809.75,
+                "height": 342.703125
+              },
+              "text": "两种阅读安排尚未形成统一决定 [1][2]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        },
+        {
+          "id": "reading-zh-p2",
+          "index": 1,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "list"
+            }
+          ],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "text",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 56,
+              "minimum": 28,
+              "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 60,
+                "width": 1096,
+                "height": 63.828125
+              },
+              "text": "两种阅读安排尚未形成统一决定 [1][2]"
+            },
+            {
+              "role": "body",
+              "size": 34,
+              "minimum": 24,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 127.6875,
+                "y": 155.828125,
+                "width": 916.3125,
+                "height": 46.234375
+              },
+              "text": "共同选书：方便讨论同一段落。 [1]"
+            },
+            {
+              "role": "body",
+              "size": 34,
+              "minimum": 24,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 127.6875,
+                "y": 222.453125,
+                "width": 916.3125,
+                "height": 46.234375
+              },
+              "text": "自主选书：照顾不同兴趣。 [1]"
+            },
+            {
+              "role": "body",
+              "size": 34,
+              "minimum": 24,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 127.6875,
+                "y": 289.078125,
+                "width": 916.3125,
+                "height": 46.234375
+              },
+              "text": "证据范围：讨论意见没有测量学习效果。 [1][2]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        }
+      ],
+      "method": "print-dom-and-exported-pdf-text",
+      "missingSources": [],
+      "missingText": [],
+      "glyphEquivalence": "Unicode Equivalent_Unified_Ideograph 17.0.0",
+      "extractionDifferences": [
+        "证据范围：讨论意见没有测量学习效果。 [1][2]"
+      ],
+      "extractedTextHash": "5734c2af64c9645338d1bb4f527e9e6c634c152a11f2aed8bf29c3ff3dc6fdfd"
+    },
+    "browser": "HeadlessChrome/156.0.8078.4",
+    "distribution": "bundled:chromium_headless_shell-1248",
+    "elapsedSeconds": 1.442,
+    "files": {
+      "contact.png": "4fc8b6ae8f6da0c9178c298ceff6b31c8af7affdd84be5ea3612f724f141c5c1",
+      "slide-02.png": "55ce8509de0507a79bdb7214f3d68ae411e2cdb06273b10db3077c53dc205328",
+      "deck.pdf": "2605b293452d99312ac8b27f45413cfbc230bf50d9cb9e02edcb64b8a817e519",
+      "slide-01.png": "64a7c698709d42b700466ac7eb7f30e0fb8911ff4024b942539e5d4cd76d6c18"
+    }
+  },
+  "review": {
+    "version": 1,
+    "use": "talk",
+    "status": "clean",
+    "model": "deepseek/deepseek-flash",
+    "imageReview": "reviewed",
+    "repairCycles": 0,
+    "repairedSlides": [],
+    "findings": [
+      {
+        "slideId": "reading-zh-p1",
+        "blockId": null,
+        "severity": "advice",
+        "problem": "The 112 px serif title wraps into three lines and splits the word 安排 across lines 1–2 (“两种阅读安 / 排尚未形成 / 统一决定”). Because the line box is only ~810 px wide, the block also leaves the entire right half of the 1280×720 stage empty, so the opener reads as a narrow column pinned to the left rather than a deliberate title composition.",
+        "correction": "Keep the wording and both [1][2] markers exactly as they are; reduce the heading size to about 84–92 px (or widen the title column toward ~1,050 px) so 安排 stays on one line and the title sets in two balanced lines that use more of the stage width.",
+        "route": "layout"
+      },
+      {
+        "slideId": "reading-zh-p2",
+        "blockId": null,
+        "severity": "advice",
+        "problem": "The heading and three bullets occupy only y≈60–335 of the 720 px stage, ending roughly 385 px short of the bottom edge. On a reading-handout page this reads as a page that stopped early rather than intentional breathing room, and the large empty band competes with the 34 px body text for attention.",
+        "correction": "Redistribute the existing content vertically without changing any text: either add more space between the bullets so the list fills more of the column, or shift the heading-plus-list group down so the top and bottom margins balance.",
+        "route": "layout"
+      },
+      {
+        "slideId": "reading-zh-p2",
+        "blockId": null,
+        "severity": "advice",
+        "problem": "The third item, 证据范围：讨论意见没有测量学习效果。 [1][2], is the limiting qualification that constrains the headline, yet it is set identically to the two substantive claims above it and reads as a third co-equal bullet. The page therefore does not visually distinguish the claims from their evidence limit, which is the point of this page.",
+        "correction": "Give the third item a distinct but at-least-equal treatment — for example a thin rule above it, a light panel behind it, or a note label — at the same 34 px size and full contrast, keeping the sentence and its [1][2] markers unchanged and in place.",
+        "route": "layout"
+      }
+    ],
+    "history": [
+      {
+        "snapshotId": "09a4a852e57b49b3ae2cff2abc8fe054",
+        "candidateHash": "ff8f699e233701630b1df28751a9d1f55b86d7a381a8dba1ab025a762a0e80d8"
+      }
+    ],
+    "limits": {
+      "requests": 8,
+      "cycles": 1,
+      "affectedSlides": 4
+    },
+    "candidateHash": "ff8f699e233701630b1df28751a9d1f55b86d7a381a8dba1ab025a762a0e80d8",
+    "calls": 1,
+    "elapsedSeconds": 12.181
+  },
+  "fidelity": {
+    "wordingNotesAndCitations": true,
+    "citationIdentities": true,
+    "poolMapping": true,
+    "pageIdentityAndOrder": true,
+    "theme": true,
+    "designVersion": true
+  }
+}

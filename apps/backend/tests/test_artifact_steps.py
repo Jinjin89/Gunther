@@ -31,7 +31,9 @@ from gunther.agent import Evidence, Tool
 from gunther.artifact_steps import REPLACER, PassageNotFound, WorkSteps
 from gunther.artifact_workspace import (
     ConversationBrief,
+    ItemRec,
     Line,
+    PartRec,
     Work,
     Workspace,
     WorkSpec,
@@ -51,6 +53,7 @@ from gunther.outputs import (
     Planned,
     Pool,
     Spec,
+    _marked,
     layout_of,
     section_hash,
     split_document,
@@ -58,6 +61,15 @@ from gunther.outputs import (
 from gunther.schemas import ConversationCitationOut
 from gunther.skill_runner import SkillAgents
 from gunther.skillbook import skill_for
+from gunther.slide_scene import (
+    SceneEnvelope,
+    SceneGroup,
+    SceneLeaf,
+    scene_marker,
+    source_hash,
+    split_blocks,
+    with_scene,
+)
 
 # A small library, and a work to make from it -----------------------------------------------------
 
@@ -551,8 +563,21 @@ def six_slides(title: str) -> dict[str, Any]:
         "title": title,
         "sections": [
             {"heading": title, "layout": "title", "cards": []},
-            *({"heading": f"Slide about {name}", "layout": name, "cards": [1]} for name in layouts),
-            {"heading": "Takeaways", "layout": "takeaways", "cards": [1, 2]},
+            *(
+                {
+                    "heading": f"Slide about {name}",
+                    "layout": name,
+                    "cards": [1],
+                    "link": "continues the previous point",
+                }
+                for name in layouts
+            ),
+            {
+                "heading": "Takeaways",
+                "layout": "takeaways",
+                "cards": [1, 2],
+                "link": "draws together the sequence",
+            },
         ],
     }
 
@@ -576,6 +601,273 @@ def test_a_decks_title_slide_keeps_its_id_when_the_title_changes() -> None:
     assert steps.work.title == "Cool roofs cut heat"
     assert [item.id for item in steps.work.outline] == ["p1", "p2", "p3", "p4", "p5", "p6"]
     assert steps.work.outline[0].heading == "Cool roofs cut heat"
+
+
+def test_a_new_title_created_by_plan_whole_keeps_the_decks_theme() -> None:
+    first = six_slides("Cool roofs")
+    renamed = six_slides("Cool roofs cut heat")
+    replaced = six_slides("Cool roofs reduce indoor heat")
+    replaced["sections"][0]["cards"] = [1]
+    replies = answering(
+        deck_replies(),
+        "structure",
+        "Return the outline",
+        first,
+        renamed,
+        replaced,
+    )
+    steps = steps_for(FakeProvider(replies), "slides")
+    steps.understand()
+    steps.plan_whole()
+    steps.write(["p1"])
+    steps.set_theme("editorial")
+
+    steps.plan_whole()
+    assert steps.work.spec.theme == "editorial"
+    steps.plan_whole()
+    new_title = steps.work.outline[0].id
+    assert new_title != "p1" and "p1" not in steps.work.parts
+    steps.write([new_title])
+    assert _marked(steps.work.parts[new_title].text).theme == "editorial"
+
+
+def test_a_locked_layout_survives_whole_deck_replanning_and_design() -> None:
+    first = six_slides("Cool roofs")
+    changed = six_slides("Cool roofs cut heat")
+    changed["sections"][1]["layout"] = "text"
+    replies = answering(deck_replies(), "structure", "Return the outline", first, changed)
+    steps = steps_for(FakeProvider(replies), "slides")
+    steps.understand()
+    steps.plan_whole()
+    steps.plan_item("p2", layout="compare")
+
+    steps.plan_whole()
+
+    page = steps.work.outline[1]
+    assert page.layout == "compare" and page.layout_locked
+    assert page.design and page.design["layout"] == "compare"
+    assert page.design["composition"] == "standard"
+
+
+def test_an_existing_legacy_slide_rewrite_does_not_trigger_design() -> None:
+    fake = FakeProvider(deck_replies())
+    steps = steps_for(fake, "slides")
+    title = "# Deck\n\nCore message"
+    slide = "## Existing slide\n\nA short sourced statement [1]"
+    steps.work.approach = {"question": "Q", "answer": "A", "purpose": "P", "structure": "what"}
+    steps.work.outline = [
+        ItemRec(id="p1", heading="Deck", layout="title", layout_locked=True),
+        ItemRec(id="p2", heading="Existing slide", layout="text"),
+        ItemRec(id="p3", heading="Takeaways", layout="takeaways", layout_locked=True),
+    ]
+    steps.work.parts = {
+        item_id: PartRec(text=text, inputs="legacy")
+        for item_id, text in (
+            ("p1", title),
+            ("p2", slide),
+            ("p3", "## Takeaways\n\n- Keep it short"),
+        )
+    }
+
+    steps.write(["p2"], "Keep the wording")
+
+    assert not [request for request in fake.requests if skill_step(request) == "design"]
+
+
+def test_recomposing_unchanged_unchecked_text_keeps_it_unchecked() -> None:
+    body = (
+        "<!-- layout: composed -->\n## Measure\n\n**72%** [1]\n\n"
+        "Measured within the sample [1]."
+    )
+    first = SceneGroup(
+        kind="row",
+        weights=[1, 1],
+        children=[
+            SceneLeaf(kind="leaf", blockId="b1", view="stat"),
+            SceneLeaf(kind="leaf", blockId="b2", view="text"),
+        ],
+    )
+    second = {
+        "root": {
+            "kind": "column",
+            "weights": [1, 1],
+            "children": [
+                {"kind": "leaf", "blockId": "b1", "view": "stat"},
+                {"kind": "leaf", "blockId": "b2", "view": "text"},
+            ],
+        }
+    }
+    body = with_scene(
+        body,
+        SceneEnvelope(version=1, sourceHash=source_hash(body), root=first),
+    )
+    fake = FakeProvider(
+        skill_replies(
+            SLIDES_APPROACH,
+            SLIDES_OUTLINE,
+            SLIDES,
+            rewrite=lambda _index, _prompt: "UNCHANGED",
+            compose=second,
+        )
+    )
+    agents = agents_for(fake, "slides")
+    steps = WorkSteps(
+        agents,
+        Work(
+            key="draft_scene",
+            spec=WorkSpec(kind="slides"),
+            outline=[
+                ItemRec(
+                    id="p1",
+                    heading="Measure",
+                    layout="composed",
+                    layout_locked=True,
+                    design={"composition": "standard"},
+                    design_locked=True,
+                )
+            ],
+            parts={"p1": PartRec(text=body, inputs="old-scene")},
+        ),
+        ConversationBrief(),
+        Pool(40),
+        Notes(),
+        agents.gateway.models[0],
+        None,
+    )
+
+    steps.write(["p1"], "Rearrange this page into a tall stack.")
+
+    part = steps.work.parts["p1"]
+    assert scene_marker(part.text)[0] is not None
+    assert part.issues is None and part.checked is None
+    assert [skill_step(request) for request in fake.requests].count("compose") == 1
+
+
+def test_review_composition_failure_is_saved_as_a_work_skip(tmp_path: Path) -> None:
+    body = "<!-- layout: composed -->\n## Measure\n\n**72%** [1]\n\nMeasured within the sample [1]."
+    _, blocks = split_blocks(body)
+    valid = SceneGroup(
+        kind="row",
+        weights=[1, 1],
+        children=[
+            SceneLeaf(kind="leaf", blockId="b1", view="stat"),
+            SceneLeaf(kind="leaf", blockId="b2", view="text"),
+        ],
+    )
+    stored = with_scene(
+        body,
+        SceneEnvelope(version=1, sourceHash=source_hash(body), root=valid),
+    )
+    invalid = {
+        "root": {
+            "kind": "row",
+            "weights": [1, 1],
+            "children": [
+                {"kind": "leaf", "blockId": "b1", "view": "stat"},
+                {"kind": "leaf", "blockId": "b1", "view": "stat"},
+            ],
+        }
+    }
+    answers = iter((invalid, invalid))
+    fake = FakeProvider(
+        skill_replies(
+            SLIDES_APPROACH,
+            SLIDES_OUTLINE,
+            SLIDES,
+            compose=lambda _request: json.dumps(next(answers)),
+        )
+    )
+    agents = agents_for(fake, "slides")
+
+    def revised(_model, _effort, _spec, _planned, _pool, _notes, drafts, _emit, **_kwargs):
+        drafts[1] = Draft(
+            stored.replace("Measured within", "Measured and reviewed"),
+            [],
+            {"status": "complete"},
+        )
+
+    agents.polish = revised
+    steps = WorkSteps(
+        agents,
+        Work(
+            key="draft_review",
+            spec=WorkSpec(kind="slides"),
+            outline=[
+                ItemRec(id="p1", heading="Deck", layout="title", layout_locked=True),
+                ItemRec(
+                    id="p2",
+                    heading="Measure",
+                    layout="composed",
+                    layout_locked=True,
+                    design={"composition": "standard"},
+                    design_locked=True,
+                ),
+                ItemRec(id="p3", heading="Takeaways", layout="takeaways", layout_locked=True),
+            ],
+            parts={
+                "p1": PartRec(
+                    text="# Deck\n\nCore",
+                    inputs="old",
+                    issues=[],
+                    checked=section_hash("# Deck\n\nCore"),
+                ),
+                "p2": PartRec(
+                    text=stored,
+                    inputs="old",
+                    issues=[],
+                    checked=section_hash(stored),
+                    coverage={"status": "complete"},
+                ),
+                "p3": PartRec(
+                    text="## Takeaways\n\n- Keep the scope [1]",
+                    inputs="old",
+                    issues=[],
+                    checked=section_hash("## Takeaways\n\n- Keep the scope [1]"),
+                ),
+            },
+        ),
+        ConversationBrief(),
+        Pool(40),
+        Notes(),
+        agents.gateway.models[0],
+        None,
+    )
+
+    steps.review(["p2"])
+
+    assert len([request for request in fake.requests if skill_step(request) == "compose"]) == 2
+    assert any(note["step"] == "compose" for note in steps.work.skipped)
+    assert blocks and steps.work.parts["p2"].checked == section_hash(steps.work.parts["p2"].text)
+
+
+def test_a_failed_design_is_attempted_once_and_stays_visible_before_writing() -> None:
+    failed = {
+        "pages": [
+            {
+                "index": 99,
+                "heading": "Wrong",
+                "intent": "Explain",
+                "visual": "Show",
+                "composition": "standard",
+            }
+        ],
+    }
+    fake = FakeProvider(
+        skill_replies(SLIDES_APPROACH, SLIDES_OUTLINE, SLIDES, gather=SEARCH, design=failed)
+    )
+    steps = steps_for(
+        fake,
+        "slides",
+        passages=[Evidence("library", "Markers", "CD3D marks T cells. CD19 marks B cells.")],
+    )
+    steps.understand()
+    steps.plan_whole()
+    assert [item.design_attempted for item in steps.work.outline] == [True] * len(
+        steps.work.outline
+    )
+    assert any(note["step"] == "design" for note in steps.work.skipped)
+    steps.write([item.id for item in steps.work.outline])
+    assert len([request for request in fake.requests if skill_step(request) == "design"]) == 2
 
 
 def test_the_skill_must_be_the_works_own() -> None:

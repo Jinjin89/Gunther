@@ -148,7 +148,7 @@ class RecordingService:
             next_expected_sequence=recording.next_sequence,
             transcript=recording.transcript,
             transcript_segments=_segments_from(recording.transcript_segments_json),
-            duration_seconds=recording.duration_seconds,
+            duration_seconds=recording.effective_duration_seconds,
             moments=moments,
             recording_context=recording.recording_context,  # type: ignore[arg-type]
             knowledge_base_id=recording.knowledge_base_id,

@@ -1,0 +1,1349 @@
+{
+  "date": "2026-10-17",
+  "synthetic": true,
+  "themes": [
+    {
+      "theme": "briefing",
+      "cases": [
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 346,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 416
+            },
+            {
+              "actual": "bar_chart",
+              "height": 351,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12份 [2]乙组18份 [2]丙组24份 [2]",
+              "view": "bar_chart",
+              "width": 602
+            }
+          ],
+          "issue": null,
+          "label": "流程 + 柱状图 + 数字100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "diagram",
+              "height": 367,
+              "overflow": [],
+              "text": "收集输入检查信息开始分析补充材料提交后 [3]信息齐全 [3]仍有缺项 [3]收集输入 — 提交后 — 检查信息; sources 3检查信息 — 信息齐全 — 开始分析; sources 3检查信息 — 仍有缺项 — 补充材料; sources 3",
+              "view": "diagram",
+              "width": 606
+            },
+            {
+              "actual": "line_chart",
+              "height": 392,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 424
+            }
+          ],
+          "issue": null,
+          "label": "关系图 + 折线图 + 说明85%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "bar_chart",
+              "height": 494,
+              "overflow": [],
+              "text": "阶段时长差值（min）提前完成12 min [5]需要补充−6 min [5]无变化0 min [5]",
+              "view": "bar_chart",
+              "width": 632
+            }
+          ],
+          "issue": null,
+          "label": "负数与单位 + 文字100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 346,
+              "overflow": [],
+              "text": "\n收集材料：保存原始出处 [1]\n核对信息：记录条件与缺口 [1]\n交付结果：附上复核记录 [1]\n",
+              "view": "flow",
+              "width": 416
+            },
+            {
+              "actual": "source",
+              "height": 351,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12 [2]乙组18 [2]丙组24 [2]",
+              "view": "bar_chart",
+              "width": 602
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b2 (its verified graphic permission is unavailable); b3 (its verified graphic permission is unavailable).",
+          "label": "没有许可 · 原始列表与表格100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 346,
+              "overflow": [],
+              "text": "\n收集材料：保存原始出处 [1]\n核对信息：记录条件与缺口 [1]\n交付结果：附上复核记录 [1]\n",
+              "view": "flow",
+              "width": 416
+            },
+            {
+              "actual": "source",
+              "height": 351,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12 [6]乙组18 [6]丙组24 [6]",
+              "view": "bar_chart",
+              "width": 602
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b2 (its verified graphic permission is unavailable); b3 (its verified graphic permission is unavailable).",
+          "label": "手动改引用 · 图形许可失效100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 346,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 416
+            },
+            {
+              "actual": "bar_chart",
+              "height": 351,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12份 [6]乙组18份 [6]丙组24份 [6]",
+              "view": "bar_chart",
+              "width": 602
+            }
+          ],
+          "issue": null,
+          "label": "可信重编号 · 重新绑定许可100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 494,
+              "overflow": [],
+              "text": "组别数值限定条件甲组12 [2]演示范围一 [2]乙组18 [2]演示范围二 [2]",
+              "view": "bar_chart",
+              "width": 642
+            },
+            {
+              "actual": "flow",
+              "height": 351,
+              "overflow": [],
+              "text": "1收集材料 [1]2核对信息 [1]3交付结果 [1]",
+              "view": "flow",
+              "width": 428
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b1 (its verified graphic permission is unavailable).",
+          "label": "多列数据 · 保留限定列100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 375,
+              "overflow": [],
+              "text": "起点关系终点阶段甲返回 [3]阶段乙阶段乙返回 [3]阶段甲",
+              "view": "diagram",
+              "width": 535
+            },
+            {
+              "actual": "line_chart",
+              "height": 375,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 535
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b1 (its verified graphic permission is unavailable).",
+          "label": "循环关系 · 仅该块回退100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 375,
+              "overflow": [],
+              "text": "起点关系终点阶段甲返回 [3]阶段乙阶段乙返回 [3]阶段甲",
+              "view": "diagram",
+              "width": 535
+            },
+            {
+              "actual": "line_chart",
+              "height": 375,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 535
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b1 (the source block does not meet this graphic's structure requirements).",
+          "label": "错误许可也不能画循环100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 494,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 178
+            },
+            {
+              "actual": "source",
+              "height": 494,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12 [2]乙组18 [2]丙组24 [2]",
+              "view": "bar_chart",
+              "width": 178
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b3 (the available area is too small for complete labels).",
+          "label": "窄区域 · 自动调整或原文回退100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [],
+          "issue": null,
+          "label": "旧版 scene · 原有组合仍可读100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 324,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 509
+            },
+            {
+              "actual": "bar_chart",
+              "height": 259,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12份 [2]乙组18份 [2]丙组24份 [2]",
+              "view": "bar_chart",
+              "width": 509
+            }
+          ],
+          "issue": null,
+          "label": "真实模型 · 流程与柱状图混排100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "diagram",
+              "height": 357,
+              "overflow": [],
+              "text": "收集输入检查信息开始分析补充材料提交后 [3]信息齐全 [3]仍有缺项 [3]收集输入 — 提交后 — 检查信息; sources 3检查信息 — 信息齐全 — 开始分析; sources 3检查信息 — 仍有缺项 — 补充材料; sources 3",
+              "view": "diagram",
+              "width": 636
+            },
+            {
+              "actual": "line_chart",
+              "height": 357,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 424
+            }
+          ],
+          "issue": null,
+          "label": "真实模型 · 关系与折线图混排85%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 346,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 416
+            },
+            {
+              "actual": "bar_chart",
+              "height": 351,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12份 [2]乙组18份 [2]丙组24份 [2]",
+              "view": "bar_chart",
+              "width": 602
+            }
+          ],
+          "issue": null,
+          "label": "强调区域 · 流程与图表对比度100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "diagram",
+              "height": 367,
+              "overflow": [],
+              "text": "收集输入检查信息开始分析补充材料提交后 [3]信息齐全 [3]仍有缺项 [3]收集输入 — 提交后 — 检查信息; sources 3检查信息 — 信息齐全 — 开始分析; sources 3检查信息 — 仍有缺项 — 补充材料; sources 3",
+              "view": "diagram",
+              "width": 606
+            },
+            {
+              "actual": "line_chart",
+              "height": 392,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 424
+            }
+          ],
+          "issue": null,
+          "label": "强调区域 · 关系图与引用对比度85%"
+        }
+      ]
+    },
+    {
+      "theme": "classic",
+      "cases": [
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 336,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 412
+            },
+            {
+              "actual": "bar_chart",
+              "height": 342,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12份 [2]乙组18份 [2]丙组24份 [2]",
+              "view": "bar_chart",
+              "width": 598
+            }
+          ],
+          "issue": null,
+          "label": "流程 + 柱状图 + 数字100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "diagram",
+              "height": 358,
+              "overflow": [],
+              "text": "收集输入检查信息开始分析补充材料提交后 [3]信息齐全 [3]仍有缺项 [3]收集输入 — 提交后 — 检查信息; sources 3检查信息 — 信息齐全 — 开始分析; sources 3检查信息 — 仍有缺项 — 补充材料; sources 3",
+              "view": "diagram",
+              "width": 601
+            },
+            {
+              "actual": "line_chart",
+              "height": 382,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 421
+            }
+          ],
+          "issue": null,
+          "label": "关系图 + 折线图 + 说明85%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "bar_chart",
+              "height": 482,
+              "overflow": [],
+              "text": "阶段时长差值（min）提前完成12 min [5]需要补充−6 min [5]无变化0 min [5]",
+              "view": "bar_chart",
+              "width": 628
+            }
+          ],
+          "issue": null,
+          "label": "负数与单位 + 文字100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 336,
+              "overflow": [],
+              "text": "\n收集材料：保存原始出处 [1]\n核对信息：记录条件与缺口 [1]\n交付结果：附上复核记录 [1]\n",
+              "view": "flow",
+              "width": 412
+            },
+            {
+              "actual": "source",
+              "height": 342,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12 [2]乙组18 [2]丙组24 [2]",
+              "view": "bar_chart",
+              "width": 598
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b2 (its verified graphic permission is unavailable); b3 (its verified graphic permission is unavailable).",
+          "label": "没有许可 · 原始列表与表格100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 336,
+              "overflow": [],
+              "text": "\n收集材料：保存原始出处 [1]\n核对信息：记录条件与缺口 [1]\n交付结果：附上复核记录 [1]\n",
+              "view": "flow",
+              "width": 412
+            },
+            {
+              "actual": "source",
+              "height": 342,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12 [6]乙组18 [6]丙组24 [6]",
+              "view": "bar_chart",
+              "width": 598
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b2 (its verified graphic permission is unavailable); b3 (its verified graphic permission is unavailable).",
+          "label": "手动改引用 · 图形许可失效100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 336,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 412
+            },
+            {
+              "actual": "bar_chart",
+              "height": 342,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12份 [6]乙组18份 [6]丙组24份 [6]",
+              "view": "bar_chart",
+              "width": 598
+            }
+          ],
+          "issue": null,
+          "label": "可信重编号 · 重新绑定许可100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 482,
+              "overflow": [],
+              "text": "组别数值限定条件甲组12 [2]演示范围一 [2]乙组18 [2]演示范围二 [2]",
+              "view": "bar_chart",
+              "width": 637
+            },
+            {
+              "actual": "flow",
+              "height": 342,
+              "overflow": [],
+              "text": "1收集材料 [1]2核对信息 [1]3交付结果 [1]",
+              "view": "flow",
+              "width": 425
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b1 (its verified graphic permission is unavailable).",
+          "label": "多列数据 · 保留限定列100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 365,
+              "overflow": [],
+              "text": "起点关系终点阶段甲返回 [3]阶段乙阶段乙返回 [3]阶段甲",
+              "view": "diagram",
+              "width": 531
+            },
+            {
+              "actual": "line_chart",
+              "height": 365,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 531
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b1 (its verified graphic permission is unavailable).",
+          "label": "循环关系 · 仅该块回退100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 365,
+              "overflow": [],
+              "text": "起点关系终点阶段甲返回 [3]阶段乙阶段乙返回 [3]阶段甲",
+              "view": "diagram",
+              "width": 531
+            },
+            {
+              "actual": "line_chart",
+              "height": 365,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 531
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b1 (the source block does not meet this graphic's structure requirements).",
+          "label": "错误许可也不能画循环100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 482,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 177
+            },
+            {
+              "actual": "source",
+              "height": 482,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12 [2]乙组18 [2]丙组24 [2]",
+              "view": "bar_chart",
+              "width": 177
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b3 (the available area is too small for complete labels).",
+          "label": "窄区域 · 自动调整或原文回退100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [],
+          "issue": null,
+          "label": "旧版 scene · 原有组合仍可读100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 315,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 505
+            },
+            {
+              "actual": "bar_chart",
+              "height": 252,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12份 [2]乙组18份 [2]丙组24份 [2]",
+              "view": "bar_chart",
+              "width": 505
+            }
+          ],
+          "issue": null,
+          "label": "真实模型 · 流程与柱状图混排100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "diagram",
+              "height": 348,
+              "overflow": [],
+              "text": "收集输入检查信息开始分析补充材料提交后 [3]信息齐全 [3]仍有缺项 [3]收集输入 — 提交后 — 检查信息; sources 3检查信息 — 信息齐全 — 开始分析; sources 3检查信息 — 仍有缺项 — 补充材料; sources 3",
+              "view": "diagram",
+              "width": 631
+            },
+            {
+              "actual": "line_chart",
+              "height": 348,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 421
+            }
+          ],
+          "issue": null,
+          "label": "真实模型 · 关系与折线图混排85%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 336,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 412
+            },
+            {
+              "actual": "bar_chart",
+              "height": 342,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12份 [2]乙组18份 [2]丙组24份 [2]",
+              "view": "bar_chart",
+              "width": 598
+            }
+          ],
+          "issue": null,
+          "label": "强调区域 · 流程与图表对比度100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "diagram",
+              "height": 358,
+              "overflow": [],
+              "text": "收集输入检查信息开始分析补充材料提交后 [3]信息齐全 [3]仍有缺项 [3]收集输入 — 提交后 — 检查信息; sources 3检查信息 — 信息齐全 — 开始分析; sources 3检查信息 — 仍有缺项 — 补充材料; sources 3",
+              "view": "diagram",
+              "width": 601
+            },
+            {
+              "actual": "line_chart",
+              "height": 382,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 421
+            }
+          ],
+          "issue": null,
+          "label": "强调区域 · 关系图与引用对比度85%"
+        }
+      ]
+    },
+    {
+      "theme": "editorial",
+      "cases": [
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 316,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 399
+            },
+            {
+              "actual": "bar_chart",
+              "height": 323,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12份 [2]乙组18份 [2]丙组24份 [2]",
+              "view": "bar_chart",
+              "width": 579
+            }
+          ],
+          "issue": null,
+          "label": "流程 + 柱状图 + 数字100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "diagram",
+              "height": 337,
+              "overflow": [],
+              "text": "收集输入检查信息开始分析补充材料提交后 [3]信息齐全 [3]仍有缺项 [3]收集输入 — 提交后 — 检查信息; sources 3检查信息 — 信息齐全 — 开始分析; sources 3检查信息 — 仍有缺项 — 补充材料; sources 3",
+              "view": "diagram",
+              "width": 582
+            },
+            {
+              "actual": "line_chart",
+              "height": 362,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 408
+            }
+          ],
+          "issue": null,
+          "label": "关系图 + 折线图 + 说明85%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "bar_chart",
+              "height": 456,
+              "overflow": [],
+              "text": "阶段时长差值（min）提前完成12 min [5]需要补充−6 min [5]无变化0 min [5]",
+              "view": "bar_chart",
+              "width": 608
+            }
+          ],
+          "issue": null,
+          "label": "负数与单位 + 文字100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 316,
+              "overflow": [],
+              "text": "\n收集材料：保存原始出处 [1]\n核对信息：记录条件与缺口 [1]\n交付结果：附上复核记录 [1]\n",
+              "view": "flow",
+              "width": 399
+            },
+            {
+              "actual": "source",
+              "height": 323,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12 [2]乙组18 [2]丙组24 [2]",
+              "view": "bar_chart",
+              "width": 579
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b2 (its verified graphic permission is unavailable); b3 (its verified graphic permission is unavailable).",
+          "label": "没有许可 · 原始列表与表格100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 316,
+              "overflow": [],
+              "text": "\n收集材料：保存原始出处 [1]\n核对信息：记录条件与缺口 [1]\n交付结果：附上复核记录 [1]\n",
+              "view": "flow",
+              "width": 399
+            },
+            {
+              "actual": "source",
+              "height": 323,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12 [6]乙组18 [6]丙组24 [6]",
+              "view": "bar_chart",
+              "width": 579
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b2 (its verified graphic permission is unavailable); b3 (its verified graphic permission is unavailable).",
+          "label": "手动改引用 · 图形许可失效100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 316,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 399
+            },
+            {
+              "actual": "bar_chart",
+              "height": 323,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12份 [6]乙组18份 [6]丙组24份 [6]",
+              "view": "bar_chart",
+              "width": 579
+            }
+          ],
+          "issue": null,
+          "label": "可信重编号 · 重新绑定许可100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 456,
+              "overflow": [],
+              "text": "组别数值限定条件甲组12 [2]演示范围一 [2]乙组18 [2]演示范围二 [2]",
+              "view": "bar_chart",
+              "width": 618
+            },
+            {
+              "actual": "flow",
+              "height": 323,
+              "overflow": [],
+              "text": "1收集材料 [1]2核对信息 [1]3交付结果 [1]",
+              "view": "flow",
+              "width": 412
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b1 (its verified graphic permission is unavailable).",
+          "label": "多列数据 · 保留限定列100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 344,
+              "overflow": [],
+              "text": "起点关系终点阶段甲返回 [3]阶段乙阶段乙返回 [3]阶段甲",
+              "view": "diagram",
+              "width": 515
+            },
+            {
+              "actual": "line_chart",
+              "height": 344,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 515
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b1 (its verified graphic permission is unavailable).",
+          "label": "循环关系 · 仅该块回退100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 344,
+              "overflow": [],
+              "text": "起点关系终点阶段甲返回 [3]阶段乙阶段乙返回 [3]阶段甲",
+              "view": "diagram",
+              "width": 515
+            },
+            {
+              "actual": "line_chart",
+              "height": 344,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 515
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b1 (the source block does not meet this graphic's structure requirements).",
+          "label": "错误许可也不能画循环100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 456,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 171
+            },
+            {
+              "actual": "source",
+              "height": 456,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12 [2]乙组18 [2]丙组24 [2]",
+              "view": "bar_chart",
+              "width": 171
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b3 (the available area is too small for complete labels).",
+          "label": "窄区域 · 自动调整或原文回退100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [],
+          "issue": null,
+          "label": "旧版 scene · 原有组合仍可读100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 296,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 489
+            },
+            {
+              "actual": "bar_chart",
+              "height": 237,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12份 [2]乙组18份 [2]丙组24份 [2]",
+              "view": "bar_chart",
+              "width": 489
+            }
+          ],
+          "issue": null,
+          "label": "真实模型 · 流程与柱状图混排100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "diagram",
+              "height": 329,
+              "overflow": [],
+              "text": "收集输入检查信息开始分析补充材料提交后 [3]信息齐全 [3]仍有缺项 [3]收集输入 — 提交后 — 检查信息; sources 3检查信息 — 信息齐全 — 开始分析; sources 3检查信息 — 仍有缺项 — 补充材料; sources 3",
+              "view": "diagram",
+              "width": 612
+            },
+            {
+              "actual": "line_chart",
+              "height": 329,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 408
+            }
+          ],
+          "issue": null,
+          "label": "真实模型 · 关系与折线图混排85%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 316,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 399
+            },
+            {
+              "actual": "bar_chart",
+              "height": 323,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12份 [2]乙组18份 [2]丙组24份 [2]",
+              "view": "bar_chart",
+              "width": 579
+            }
+          ],
+          "issue": null,
+          "label": "强调区域 · 流程与图表对比度100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "diagram",
+              "height": 337,
+              "overflow": [],
+              "text": "收集输入检查信息开始分析补充材料提交后 [3]信息齐全 [3]仍有缺项 [3]收集输入 — 提交后 — 检查信息; sources 3检查信息 — 信息齐全 — 开始分析; sources 3检查信息 — 仍有缺项 — 补充材料; sources 3",
+              "view": "diagram",
+              "width": 582
+            },
+            {
+              "actual": "line_chart",
+              "height": 362,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 408
+            }
+          ],
+          "issue": null,
+          "label": "强调区域 · 关系图与引用对比度85%"
+        }
+      ]
+    },
+    {
+      "theme": "keynote",
+      "cases": [
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 330,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 405
+            },
+            {
+              "actual": "bar_chart",
+              "height": 336,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12份 [2]乙组18份 [2]丙组24份 [2]",
+              "view": "bar_chart",
+              "width": 589
+            }
+          ],
+          "issue": null,
+          "label": "流程 + 柱状图 + 数字100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "diagram",
+              "height": 351,
+              "overflow": [],
+              "text": "收集输入检查信息开始分析补充材料提交后 [3]信息齐全 [3]仍有缺项 [3]收集输入 — 提交后 — 检查信息; sources 3检查信息 — 信息齐全 — 开始分析; sources 3检查信息 — 仍有缺项 — 补充材料; sources 3",
+              "view": "diagram",
+              "width": 591
+            },
+            {
+              "actual": "line_chart",
+              "height": 376,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 415
+            }
+          ],
+          "issue": null,
+          "label": "关系图 + 折线图 + 说明85%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "bar_chart",
+              "height": 474,
+              "overflow": [],
+              "text": "阶段时长差值（min）提前完成12 min [5]需要补充−6 min [5]无变化0 min [5]",
+              "view": "bar_chart",
+              "width": 618
+            }
+          ],
+          "issue": null,
+          "label": "负数与单位 + 文字100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 330,
+              "overflow": [],
+              "text": "\n收集材料：保存原始出处 [1]\n核对信息：记录条件与缺口 [1]\n交付结果：附上复核记录 [1]\n",
+              "view": "flow",
+              "width": 405
+            },
+            {
+              "actual": "source",
+              "height": 336,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12 [2]乙组18 [2]丙组24 [2]",
+              "view": "bar_chart",
+              "width": 589
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b2 (its verified graphic permission is unavailable); b3 (its verified graphic permission is unavailable).",
+          "label": "没有许可 · 原始列表与表格100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 330,
+              "overflow": [],
+              "text": "\n收集材料：保存原始出处 [1]\n核对信息：记录条件与缺口 [1]\n交付结果：附上复核记录 [1]\n",
+              "view": "flow",
+              "width": 405
+            },
+            {
+              "actual": "source",
+              "height": 336,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12 [6]乙组18 [6]丙组24 [6]",
+              "view": "bar_chart",
+              "width": 589
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b2 (its verified graphic permission is unavailable); b3 (its verified graphic permission is unavailable).",
+          "label": "手动改引用 · 图形许可失效100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 330,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 405
+            },
+            {
+              "actual": "bar_chart",
+              "height": 336,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12份 [6]乙组18份 [6]丙组24份 [6]",
+              "view": "bar_chart",
+              "width": 589
+            }
+          ],
+          "issue": null,
+          "label": "可信重编号 · 重新绑定许可100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 474,
+              "overflow": [],
+              "text": "组别数值限定条件甲组12 [2]演示范围一 [2]乙组18 [2]演示范围二 [2]",
+              "view": "bar_chart",
+              "width": 628
+            },
+            {
+              "actual": "flow",
+              "height": 336,
+              "overflow": [],
+              "text": "1收集材料 [1]2核对信息 [1]3交付结果 [1]",
+              "view": "flow",
+              "width": 418
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b1 (its verified graphic permission is unavailable).",
+          "label": "多列数据 · 保留限定列100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 359,
+              "overflow": [],
+              "text": "起点关系终点阶段甲返回 [3]阶段乙阶段乙返回 [3]阶段甲",
+              "view": "diagram",
+              "width": 523
+            },
+            {
+              "actual": "line_chart",
+              "height": 359,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 523
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b1 (its verified graphic permission is unavailable).",
+          "label": "循环关系 · 仅该块回退100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "source",
+              "height": 359,
+              "overflow": [],
+              "text": "起点关系终点阶段甲返回 [3]阶段乙阶段乙返回 [3]阶段甲",
+              "view": "diagram",
+              "width": 523
+            },
+            {
+              "actual": "line_chart",
+              "height": 359,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 523
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b1 (the source block does not meet this graphic's structure requirements).",
+          "label": "错误许可也不能画循环100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 474,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 174
+            },
+            {
+              "actual": "source",
+              "height": 474,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12 [2]乙组18 [2]丙组24 [2]",
+              "view": "bar_chart",
+              "width": 174
+            }
+          ],
+          "issue": "Graphic elements fell back to their source content: b3 (the available area is too small for complete labels).",
+          "label": "窄区域 · 自动调整或原文回退100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [],
+          "issue": null,
+          "label": "旧版 scene · 原有组合仍可读100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 309,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 497
+            },
+            {
+              "actual": "bar_chart",
+              "height": 247,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12份 [2]乙组18份 [2]丙组24份 [2]",
+              "view": "bar_chart",
+              "width": 497
+            }
+          ],
+          "issue": null,
+          "label": "真实模型 · 流程与柱状图混排100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "diagram",
+              "height": 342,
+              "overflow": [],
+              "text": "收集输入检查信息开始分析补充材料提交后 [3]信息齐全 [3]仍有缺项 [3]收集输入 — 提交后 — 检查信息; sources 3检查信息 — 信息齐全 — 开始分析; sources 3检查信息 — 仍有缺项 — 补充材料; sources 3",
+              "view": "diagram",
+              "width": 622
+            },
+            {
+              "actual": "line_chart",
+              "height": 342,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 415
+            }
+          ],
+          "issue": null,
+          "label": "真实模型 · 关系与折线图混排85%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "flow",
+              "height": 330,
+              "overflow": [],
+              "text": "1收集材料：保存原始出处 [1]2核对信息：记录条件与缺口 [1]3交付结果：附上复核记录 [1]",
+              "view": "flow",
+              "width": 405
+            },
+            {
+              "actual": "bar_chart",
+              "height": 336,
+              "overflow": [],
+              "text": "样例组完成数（份）甲组12份 [2]乙组18份 [2]丙组24份 [2]",
+              "view": "bar_chart",
+              "width": 589
+            }
+          ],
+          "issue": null,
+          "label": "强调区域 · 流程与图表对比度100%"
+        },
+        {
+          "drawn": "composed",
+          "graphics": [
+            {
+              "actual": "diagram",
+              "height": 351,
+              "overflow": [],
+              "text": "收集输入检查信息开始分析补充材料提交后 [3]信息齐全 [3]仍有缺项 [3]收集输入 — 提交后 — 检查信息; sources 3检查信息 — 信息齐全 — 开始分析; sources 3检查信息 — 仍有缺项 — 补充材料; sources 3",
+              "view": "diagram",
+              "width": 591
+            },
+            {
+              "actual": "line_chart",
+              "height": 376,
+              "overflow": [],
+              "text": "年份完成率（%）202120222024202112% [4]202218% [4]202430% [4]",
+              "view": "line_chart",
+              "width": 415
+            }
+          ],
+          "issue": null,
+          "label": "强调区域 · 关系图与引用对比度85%"
+        }
+      ]
+    }
+  ],
+  "geometry": {
+    "line": [
+      {
+        "x": 24,
+        "y": 142.98125
+      },
+      {
+        "x": 146.171875,
+        "y": 99.9875
+      },
+      {
+        "x": 390.515625,
+        "y": 14
+      }
+    ],
+    "negative": [
+      {
+        "bar": "left: 33.3333%; width: 66.6667%;",
+        "label": "提前完成",
+        "value": "12 min [5]",
+        "zero": "108.18px"
+      },
+      {
+        "bar": "left: 0%; width: 33.3333%;",
+        "label": "需要补充",
+        "value": "−6 min [5]",
+        "zero": "108.18px"
+      },
+      {
+        "bar": "left: 33.3333%; width: 0%;",
+        "label": "无变化",
+        "value": "0 min [5]",
+        "zero": "108.18px"
+      }
+    ]
+  },
+  "checks": {
+    "citationOpenedSource2": true,
+    "productMainAndThumbs": true,
+    "presentEnteredAndLeft": true,
+    "printComponentFourPages": true
+  },
+  "limitations": "Browser checks use synthetic local demo materials and actual SlideFace, SlidesView and PrintSlides components. Print component was inspected in-browser; an exported PDF was not checked."
+}

@@ -1,0 +1,9 @@
+{
+  "case": "conflict-read",
+  "candidateHash": "fb5fba54792c47401fc1f5f8549f8275cb9ad68133d4bb1b184a89f375ce3209",
+  "slides": 2,
+  "status": "matched",
+  "tolerancePixels": 3,
+  "scope": "macOS WKWebView engine probe, not a full packaged-app interaction test",
+  "differences": []
+}

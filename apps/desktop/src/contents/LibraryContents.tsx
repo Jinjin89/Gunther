@@ -114,7 +114,7 @@ export function LibraryContents({ baseId, library, toolbarEnd, afterList, onOpen
   useEffect(() => { if (contents) onLoaded?.(contents.sources.length); }, [contents, onLoaded]);
 
   // Sources still being read change on their own: look again until they are done.
-  const reading = contents?.sources.some((source) => source.processing === "reading") ?? false;
+  const reading = contents?.sources.some((source) => source.processing === "reading" || source.durationPending) ?? false;
   useEffect(() => {
     if (!reading) return;
     const timer = window.setTimeout(() => void load(), POLL_MS);

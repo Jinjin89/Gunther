@@ -1,0 +1,7 @@
+{
+  "OUTLINE": "Return the outline of {what} as one JSON object.\n- Each section: a heading that states its claim (at most 160 characters), a one-sentence goal, the numbers of the material cards it uses, and up to 3 short searches that would find more evidence for it in the library.\n- {shape}\nReply with the JSON object only.",
+  "SHAPES": {
+    "report": "{low} to {high} sections. layout is empty. link says how a section follows the one before it (cause, next step, contrast, addition or limit).",
+    "slides": "{low} to {high} slides. layout is one of {layouts}; the first slide is \"title\" and the last \"takeaways\". For every slide after the first, link says how it follows the previous slide (for example: consequence, next step, contrast, addition or limit). Use a short phrase grounded in the planned story; do not invent a relationship."
+  }
+}

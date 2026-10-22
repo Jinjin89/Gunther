@@ -1,0 +1,211 @@
+{
+  "candidateHash" : "ed2acc6357fbf76f970ef019eecdaafe743a97258819c68be8df06109ce7700e",
+  "slides" : [
+    {
+      "assetFailures" : 0,
+      "blockBounds" : [
+
+      ],
+      "blocks" : [
+
+      ],
+      "bounds" : {
+        "height" : 720,
+        "width" : 1280
+      },
+      "drawn" : "title",
+      "fit" : 1,
+      "fonts" : [
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "id" : "numeric-p1",
+      "images" : [
+
+      ],
+      "index" : 0,
+      "overflow" : false,
+      "overlaps" : [
+
+      ],
+      "pending" : 0,
+      "sceneIssue" : null,
+      "smallText" : [
+
+      ],
+      "typography" : [
+        {
+          "blockId" : null,
+          "bounds" : {
+            "height" : 360,
+            "width" : 990.953125,
+            "x" : 92,
+            "y" : 154
+          },
+          "family" : "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+          "minimum" : 28,
+          "role" : "heading",
+          "size" : 118,
+          "text" : "Recorded balances cross zero [1]"
+        }
+      ]
+    },
+    {
+      "assetFailures" : 0,
+      "blockBounds" : [
+
+      ],
+      "blocks" : [
+        {
+          "id" : "b1",
+          "type" : "text"
+        },
+        {
+          "id" : "b2",
+          "type" : "table"
+        },
+        {
+          "id" : "b3",
+          "type" : "text"
+        }
+      ],
+      "bounds" : {
+        "height" : 720,
+        "width" : 1280
+      },
+      "drawn" : "line_chart",
+      "fit" : 0.91000000000000003,
+      "fonts" : [
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "id" : "numeric-p2",
+      "images" : [
+
+      ],
+      "index" : 1,
+      "overflow" : false,
+      "overlaps" : [
+
+      ],
+      "pending" : 0,
+      "sceneIssue" : null,
+      "smallText" : [
+
+      ],
+      "typography" : [
+        {
+          "blockId" : null,
+          "bounds" : {
+            "height" : 58,
+            "width" : 1096,
+            "x" : 92,
+            "y" : 64
+          },
+          "family" : "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+          "minimum" : 28,
+          "role" : "heading",
+          "size" : 50.959999000000003,
+          "text" : "Recorded balances cross zero [1]"
+        },
+        {
+          "blockId" : null,
+          "bounds" : {
+            "height" : 34,
+            "width" : 923.640625,
+            "x" : 92,
+            "y" : 151.109375
+          },
+          "family" : "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+          "minimum" : 22,
+          "role" : "body",
+          "size" : 26.389999,
+          "text" : "Net balance in units. [1]"
+        },
+        {
+          "blockId" : null,
+          "bounds" : {
+            "height" : 24,
+            "width" : 1096,
+            "x" : 92,
+            "y" : 201.5
+          },
+          "family" : "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+          "minimum" : 16,
+          "role" : "caption",
+          "size" : 20.02,
+          "text" : "Balance (units)"
+        },
+        {
+          "blockId" : null,
+          "bounds" : {
+            "height" : 40,
+            "width" : 156.640625,
+            "x" : 866.40625,
+            "y" : 267.34375
+          },
+          "family" : "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+          "minimum" : 22,
+          "role" : "body",
+          "size" : 40.040000999999997,
+          "text" : "12 units"
+        },
+        {
+          "blockId" : null,
+          "bounds" : {
+            "height" : 30,
+            "width" : 80.53125,
+            "x" : 102.703125,
+            "y" : 549.421875
+          },
+          "family" : "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+          "minimum" : 22,
+          "role" : "body",
+          "size" : 25.48,
+          "text" : "2021 [1]"
+        },
+        {
+          "blockId" : null,
+          "bounds" : {
+            "height" : 30,
+            "width" : 80.53125,
+            "x" : 337.171875,
+            "y" : 549.421875
+          },
+          "family" : "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+          "minimum" : 22,
+          "role" : "body",
+          "size" : 25.48,
+          "text" : "2022 [1]"
+        },
+        {
+          "blockId" : null,
+          "bounds" : {
+            "height" : 30,
+            "width" : 80.53125,
+            "x" : 806.125,
+            "y" : 549.421875
+          },
+          "family" : "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+          "minimum" : 22,
+          "role" : "body",
+          "size" : 25.48,
+          "text" : "2024 [1]"
+        },
+        {
+          "blockId" : null,
+          "bounds" : {
+            "height" : 31,
+            "width" : 1001,
+            "x" : 92,
+            "y" : 620.390625
+          },
+          "family" : "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+          "minimum" : 16,
+          "role" : "caption",
+          "size" : 22.75,
+          "text" : "Three observations; no forecast or causal effect was established. [1][2]"
+        }
+      ]
+    }
+  ],
+  "version" : 1
+}

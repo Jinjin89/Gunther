@@ -13,9 +13,11 @@ export function PrintSlides({ artifact }: { artifact: Artifact }) {
   const layouts = slideLayouts(artifact);
   const slides = parseSlides(artifact.content);
   const accent = slides[0]?.accent ?? null;
+  const theme = slides[0]?.theme ?? "classic";
+  const designVersion = slides[0]?.designVersion ?? 0;
   return <>
     {slides.map((slide, index) => <section key={index} className="outputs-print-slide">
-      <SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} numbers={numbers} />
+      <SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} theme={theme} designVersion={designVersion} composition={slide.composition} scene={slide.scene} numbers={numbers} />
     </section>)}
   </>;
 }

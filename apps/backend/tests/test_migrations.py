@@ -26,6 +26,7 @@ from gunther.models import (
     KnowledgeSession,
     KnowledgeUnit,
     KnowledgeUnitRevision,
+    RecordingSession,
     SessionMessage,
     Source,
 )
@@ -82,6 +83,7 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (25, "library_contents"),
             (26, "drop_transcript_upgrades"),
             (27, "artifact_conversations"),
+            (28, "recording_audio_duration"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
@@ -1169,7 +1171,34 @@ def test_v20_database_gains_session_briefs_without_losing_conversations(tmp_path
             assert connection.execute(
                 text("SELECT title, brief_json FROM knowledge_sessions WHERE id = 'ses_old'")
             ).one() == ("Kept", "{}")
-        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 27
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 28
+    finally:
+        engine.dispose()
+
+
+def test_v27_recordings_keep_the_timer_estimate_when_audio_duration_is_added(
+    tmp_path: Path,
+) -> None:
+    engine = make_engine(tmp_path)
+    try:
+        run_migrations(engine, Base.metadata, MIGRATIONS[:27])
+        sessions = create_session_factory(engine)
+        with session_scope(sessions) as session:
+            session.add(RecordingSession(
+                id="rec_0123456789abcdef01234567", title="Kept recording",
+                file_name="kept.webm", status="completed", duration_seconds=17,
+            ))
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "ALTER TABLE recording_sessions DROP COLUMN audio_duration_ms"
+            )
+        history = run_migrations(engine, Base.metadata)
+        assert run_migrations(engine, Base.metadata) == history
+        with session_scope(sessions) as session:
+            recording = session.get(RecordingSession, "rec_0123456789abcdef01234567")
+            assert recording.duration_seconds == 17
+            assert recording.audio_duration_ms is None
+            assert recording.effective_duration_seconds == 17
     finally:
         engine.dispose()
 
@@ -1201,7 +1230,7 @@ def test_v22_database_gains_transcript_segments_without_losing_recordings(tmp_pa
                     "WHERE id = 'rec_old'"
                 )
             ).one() == ("[00:00] Hello", None)
-        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 27
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 28
     finally:
         engine.dispose()
 
@@ -1235,7 +1264,7 @@ def test_v25_database_loses_the_upgrade_table_and_keeps_its_recordings(tmp_path:
             assert connection.execute(
                 text("SELECT transcript FROM recording_sessions WHERE id = 'rec_old'")
             ).scalar_one() == "[00:00] Hello"
-        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 27
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 28
     finally:
         engine.dispose()
 
@@ -1288,10 +1317,11 @@ def test_v24_database_gets_one_place_per_source_and_a_shared_order(tmp_path: Pat
                     f"('{link}', '{topic}', '{source}', '{created}')"
                 )
         history = run_migrations(engine, Base.metadata)
-        assert [item.name for item in history[-3:]] == [
+        assert [item.name for item in history[-4:]] == [
             "library_contents",
             "drop_transcript_upgrades",
             "artifact_conversations",
+            "recording_audio_duration",
         ]
         assert run_migrations(engine, Base.metadata) == history
         with engine.connect() as connection:

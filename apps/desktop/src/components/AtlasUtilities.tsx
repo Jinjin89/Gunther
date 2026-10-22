@@ -363,7 +363,7 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
     if (!saving) return;
     const isRecording = saving === "recording";
     const saveTitle = isRecording ? recordingTitleText : title;
-    const saveText = isRecording ? recordingContent : content;
+    const saveText = isRecording ? recorderRef.current?.prepareSave() ?? "" : content;
     const saveBaseId = isRecording ? recordingBaseId : targetBaseId;
     const normalizedUrl = saving === "link" ? normalizedWebUrl(linkUrl) : null;
     if (saving === "link" && !normalizedUrl) {

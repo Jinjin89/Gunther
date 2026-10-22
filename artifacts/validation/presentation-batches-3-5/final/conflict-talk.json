@@ -1,0 +1,1766 @@
+{
+  "id": "conflict-talk",
+  "synthetic": true,
+  "model": "DeepSeek · Flash",
+  "modelRef": "deepseek/deepseek-flash",
+  "effort": "medium",
+  "reviewProtocol": "0df98d47f08dbffdac40f702e132009b2fdcbb9a0e49e86005d3e3fcd5079e3e",
+  "vision": true,
+  "theme": "editorial",
+  "use": "talk",
+  "inputHash": "fb5fba54792c47401fc1f5f8549f8275cb9ad68133d4bb1b184a89f375ce3209",
+  "sourceHash": "9f0ae80396df5b829463624cee7684d359b1bab082462f35a2197b55b5eb9c91",
+  "before": {
+    "title": "Results that disagree",
+    "content": "<!-- layout: title; theme: editorial; design: v1 -->\n# The reported changes come from different settings [1][2]\n\n---\n\n<!-- layout: compare -->\n## The reported changes come from different settings [1][2]\n\n| Record | Setting | Reported change |\n| --- | --- | --- |\n| Study A | Supervised laboratory [1] | 12% [1] |\n| Study B | Field use [2] | 3% [2] |\n\nThe records do not isolate the difference or support a pooled estimate. [3]",
+    "outline": [
+      {
+        "id": "conflict-p1",
+        "heading": "The reported changes come from different settings [1][2]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "title"
+      },
+      {
+        "id": "conflict-p2",
+        "heading": "The reported changes come from different settings [1][2]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "compare"
+      }
+    ],
+    "citations": [
+      {
+        "id": "conflict-a",
+        "kind": "library",
+        "url": null,
+        "source_id": "conflict-a",
+        "source_title": "Training study A",
+        "assertion_id": null,
+        "quote": "In synthetic study A, the reported change was 12% in a supervised laboratory setting. It did not evaluate field use.",
+        "locator": "Synthetic study A results",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 1
+      },
+      {
+        "id": "conflict-b",
+        "kind": "library",
+        "url": null,
+        "source_id": "conflict-b",
+        "source_title": "Training study B",
+        "assertion_id": null,
+        "quote": "In synthetic study B, the reported change was 3% during field use. It did not use the laboratory supervision from study A.",
+        "locator": "Synthetic study B results",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 2
+      },
+      {
+        "id": "conflict-limit",
+        "kind": "library",
+        "url": null,
+        "source_id": "conflict-limit",
+        "source_title": "Comparison constraints",
+        "assertion_id": null,
+        "quote": "The two studies used different settings. Their records do not isolate the reason for the difference. They do not support a pooled estimate or a declaration that one method is better.",
+        "locator": "Synthetic synthesis note",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 3
+      }
+    ],
+    "use": "talk"
+  },
+  "after": {
+    "title": "Results that disagree",
+    "content": "<!-- layout: title; theme: editorial; design: v1 -->\n# The reported changes come from different settings [1][2]\n\n---\n\n<!-- layout: compare -->\n## The reported changes come from different settings [1][2]\n\n| Record | Setting | Reported change |\n| --- | --- | --- |\n| Study A | Supervised laboratory [1] | 12% [1] |\n| Study B | Field use [2] | 3% [2] |\n\nThe records do not isolate the difference or support a pooled estimate. [3]",
+    "outline": [
+      {
+        "id": "conflict-p1",
+        "heading": "The reported changes come from different settings [1][2]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "title"
+      },
+      {
+        "id": "conflict-p2",
+        "heading": "The reported changes come from different settings [1][2]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "compare"
+      }
+    ],
+    "citations": [
+      {
+        "id": "conflict-a",
+        "kind": "library",
+        "url": null,
+        "source_id": "conflict-a",
+        "source_title": "Training study A",
+        "assertion_id": null,
+        "quote": "In synthetic study A, the reported change was 12% in a supervised laboratory setting. It did not evaluate field use.",
+        "locator": "Synthetic study A results",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 1
+      },
+      {
+        "id": "conflict-b",
+        "kind": "library",
+        "url": null,
+        "source_id": "conflict-b",
+        "source_title": "Training study B",
+        "assertion_id": null,
+        "quote": "In synthetic study B, the reported change was 3% during field use. It did not use the laboratory supervision from study A.",
+        "locator": "Synthetic study B results",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 2
+      },
+      {
+        "id": "conflict-limit",
+        "kind": "library",
+        "url": null,
+        "source_id": "conflict-limit",
+        "source_title": "Comparison constraints",
+        "assertion_id": null,
+        "quote": "The two studies used different settings. Their records do not isolate the reason for the difference. They do not support a pooled estimate or a declaration that one method is better.",
+        "locator": "Synthetic synthesis note",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 3
+      }
+    ],
+    "use": "talk"
+  },
+  "beforeCapture": {
+    "version": 1,
+    "candidateHash": "fb5fba54792c47401fc1f5f8549f8275cb9ad68133d4bb1b184a89f375ce3209",
+    "slides": [
+      {
+        "id": "conflict-p1",
+        "index": 0,
+        "blocks": [],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "title",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 112,
+            "minimum": 28,
+            "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 104.53125,
+              "width": 809.75,
+              "height": 456.9375
+            },
+            "text": "The reported changes come from different settings [1][2]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-01.png",
+        "resolvedFonts": [
+          "IowanOldStyle-Roman"
+        ],
+        "contentHash": "bd0a4b6762f5dcc64e00c6f746f889320639064df22dfff8c66b22203be7c97b",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": []
+      },
+      {
+        "id": "conflict-p2",
+        "index": 1,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "table"
+          },
+          {
+            "id": "b2",
+            "type": "text"
+          }
+        ],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "compare",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 56,
+            "minimum": 28,
+            "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 60,
+              "width": 1096,
+              "height": 127.65625
+            },
+            "text": "The reported changes come from different settings [1][2]"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 223.65625,
+              "width": 187.765625,
+              "height": 72.390625
+            },
+            "text": "Record"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 241.65625,
+              "width": 167.765625,
+              "height": 36.390625
+            },
+            "text": "Record"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 279.765625,
+              "y": 223.65625,
+              "width": 509.578125,
+              "height": 72.390625
+            },
+            "text": "Setting"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 279.765625,
+              "y": 241.65625,
+              "width": 489.578125,
+              "height": 36.390625
+            },
+            "text": "Setting"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 789.34375,
+              "y": 223.65625,
+              "width": 398.65625,
+              "height": 72.390625
+            },
+            "text": "Reported change"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 789.34375,
+              "y": 241.65625,
+              "width": 378.65625,
+              "height": 36.390625
+            },
+            "text": "Reported change"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 296.046875,
+              "width": 187.765625,
+              "height": 72.890625
+            },
+            "text": "Study A"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 314.046875,
+              "width": 167.765625,
+              "height": 36.390625
+            },
+            "text": "Study A"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 279.765625,
+              "y": 296.046875,
+              "width": 509.578125,
+              "height": 72.890625
+            },
+            "text": "Supervised laboratory [1]"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 279.765625,
+              "y": 314.046875,
+              "width": 489.578125,
+              "height": 36.390625
+            },
+            "text": "Supervised laboratory [1]"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 789.34375,
+              "y": 296.046875,
+              "width": 398.65625,
+              "height": 72.890625
+            },
+            "text": "12% [1]"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 789.34375,
+              "y": 314.046875,
+              "width": 378.65625,
+              "height": 36.390625
+            },
+            "text": "12% [1]"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 368.9375,
+              "width": 187.765625,
+              "height": 73.390625
+            },
+            "text": "Study B"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 387.4375,
+              "width": 167.765625,
+              "height": 36.390625
+            },
+            "text": "Study B"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 279.765625,
+              "y": 368.9375,
+              "width": 509.578125,
+              "height": 73.390625
+            },
+            "text": "Field use [2]"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 279.765625,
+              "y": 387.4375,
+              "width": 489.578125,
+              "height": 36.390625
+            },
+            "text": "Field use [2]"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 789.34375,
+              "y": 368.9375,
+              "width": 398.65625,
+              "height": 73.390625
+            },
+            "text": "3% [2]"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 789.34375,
+              "y": 387.4375,
+              "width": 378.65625,
+              "height": 36.390625
+            },
+            "text": "3% [2]"
+          },
+          {
+            "role": "caption",
+            "size": 25,
+            "minimum": 16,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 474.828125,
+              "width": 1096,
+              "height": 35
+            },
+            "text": "The records do not isolate the difference or support a pooled estimate. [3]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-02.png",
+        "resolvedFonts": [
+          "AvenirNext-Bold",
+          "AvenirNext-Medium",
+          "AvenirNext-Regular",
+          "IowanOldStyle-Roman"
+        ],
+        "contentHash": "d6fca04546338ae4819fd1de075980fbba68b34adfc762eb236fa3dffd134212",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "2c2a2aef05418bea11e6b28f7e153d6de47f8ab6040c6eec5ad3bee1801f6baa"
+          },
+          {
+            "id": "b2",
+            "hash": "64fc10177300cde2d3e366231a94c938737cc77b636871a83608262ef25e6b30"
+          }
+        ]
+      }
+    ],
+    "use": "talk",
+    "id": "4daedb67ece64615a4861d4405789299",
+    "status": "captured",
+    "contentHash": "58cf2232d550657a8645d181cc4028c39e87dcf87d2a38a6b8939ab69881483d",
+    "rendererHash": "db7fc6b697746b93e0599978b619fc95a6cccd8abe51236e48315064e156b0cb",
+    "assetHashes": {},
+    "designHash": "6361b7a913cdb233afea8e0e2da4de48f9be458e8bb19a35315a4958634b9603",
+    "missingAssets": [],
+    "contact": "contact.png",
+    "pdf": "deck.pdf",
+    "pdfCheck": {
+      "status": "checked",
+      "pages": 3,
+      "slides": [
+        {
+          "id": "conflict-p1",
+          "index": 0,
+          "blocks": [],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "title",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 112,
+              "minimum": 28,
+              "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 104.53125,
+                "width": 809.75,
+                "height": 456.9375
+              },
+              "text": "The reported changes come from different settings [1][2]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        },
+        {
+          "id": "conflict-p2",
+          "index": 1,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "table"
+            },
+            {
+              "id": "b2",
+              "type": "text"
+            }
+          ],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "compare",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 56,
+              "minimum": 28,
+              "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 60,
+                "width": 1096,
+                "height": 127.65625
+              },
+              "text": "The reported changes come from different settings [1][2]"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 223.65625,
+                "width": 187.765625,
+                "height": 72.390625
+              },
+              "text": "Record"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 241.65625,
+                "width": 167.765625,
+                "height": 36.390625
+              },
+              "text": "Record"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 279.765625,
+                "y": 223.65625,
+                "width": 509.578125,
+                "height": 72.390625
+              },
+              "text": "Setting"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 279.765625,
+                "y": 241.65625,
+                "width": 489.578125,
+                "height": 36.390625
+              },
+              "text": "Setting"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 789.34375,
+                "y": 223.65625,
+                "width": 398.65625,
+                "height": 72.390625
+              },
+              "text": "Reported change"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 789.34375,
+                "y": 241.65625,
+                "width": 378.65625,
+                "height": 36.390625
+              },
+              "text": "Reported change"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 296.046875,
+                "width": 187.765625,
+                "height": 72.890625
+              },
+              "text": "Study A"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 314.046875,
+                "width": 167.765625,
+                "height": 36.390625
+              },
+              "text": "Study A"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 279.765625,
+                "y": 296.046875,
+                "width": 509.578125,
+                "height": 72.890625
+              },
+              "text": "Supervised laboratory [1]"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 279.765625,
+                "y": 314.046875,
+                "width": 489.578125,
+                "height": 36.390625
+              },
+              "text": "Supervised laboratory [1]"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 789.34375,
+                "y": 296.046875,
+                "width": 398.65625,
+                "height": 72.890625
+              },
+              "text": "12% [1]"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 789.34375,
+                "y": 314.046875,
+                "width": 378.65625,
+                "height": 36.390625
+              },
+              "text": "12% [1]"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 368.9375,
+                "width": 187.765625,
+                "height": 73.390625
+              },
+              "text": "Study B"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 387.4375,
+                "width": 167.765625,
+                "height": 36.390625
+              },
+              "text": "Study B"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 279.765625,
+                "y": 368.9375,
+                "width": 509.578125,
+                "height": 73.390625
+              },
+              "text": "Field use [2]"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 279.765625,
+                "y": 387.4375,
+                "width": 489.578125,
+                "height": 36.390625
+              },
+              "text": "Field use [2]"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 789.34375,
+                "y": 368.9375,
+                "width": 398.65625,
+                "height": 73.390625
+              },
+              "text": "3% [2]"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 789.34375,
+                "y": 387.4375,
+                "width": 378.65625,
+                "height": 36.390625
+              },
+              "text": "3% [2]"
+            },
+            {
+              "role": "caption",
+              "size": 25,
+              "minimum": 16,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 474.828125,
+                "width": 1096,
+                "height": 35
+              },
+              "text": "The records do not isolate the difference or support a pooled estimate. [3]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        }
+      ],
+      "method": "print-dom-and-exported-pdf-text",
+      "missingSources": [],
+      "missingText": []
+    },
+    "browser": "HeadlessChrome/156.0.8078.4",
+    "distribution": "bundled:chromium_headless_shell-1248",
+    "elapsedSeconds": 1.269,
+    "files": {
+      "contact.png": "84fab077f551c17e76a689abb44c336bd7e41447617b8a70107bcc21cd2d783b",
+      "slide-02.png": "4f382a7eea46e2fb0441862ba4152f1fe158d8e9c2502b3dfcb2a4b199ec97c2",
+      "deck.pdf": "b80cdc28359a68a4056168fefe363dff99a1f89e8d34beebdcd60f2ebc770f87",
+      "slide-01.png": "d0701e5409fa35066a06ddd9dc9dcaa66c265109ad6966b0d0a514ac14bd3fca"
+    }
+  },
+  "afterCapture": {
+    "version": 1,
+    "candidateHash": "fb5fba54792c47401fc1f5f8549f8275cb9ad68133d4bb1b184a89f375ce3209",
+    "slides": [
+      {
+        "id": "conflict-p1",
+        "index": 0,
+        "blocks": [],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "title",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 112,
+            "minimum": 28,
+            "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 104.53125,
+              "width": 809.75,
+              "height": 456.9375
+            },
+            "text": "The reported changes come from different settings [1][2]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-01.png",
+        "resolvedFonts": [
+          "IowanOldStyle-Roman"
+        ],
+        "contentHash": "bd0a4b6762f5dcc64e00c6f746f889320639064df22dfff8c66b22203be7c97b",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": []
+      },
+      {
+        "id": "conflict-p2",
+        "index": 1,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "table"
+          },
+          {
+            "id": "b2",
+            "type": "text"
+          }
+        ],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "compare",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 56,
+            "minimum": 28,
+            "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 60,
+              "width": 1096,
+              "height": 127.65625
+            },
+            "text": "The reported changes come from different settings [1][2]"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 223.65625,
+              "width": 187.765625,
+              "height": 72.390625
+            },
+            "text": "Record"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 241.65625,
+              "width": 167.765625,
+              "height": 36.390625
+            },
+            "text": "Record"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 279.765625,
+              "y": 223.65625,
+              "width": 509.578125,
+              "height": 72.390625
+            },
+            "text": "Setting"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 279.765625,
+              "y": 241.65625,
+              "width": 489.578125,
+              "height": 36.390625
+            },
+            "text": "Setting"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 789.34375,
+              "y": 223.65625,
+              "width": 398.65625,
+              "height": 72.390625
+            },
+            "text": "Reported change"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 789.34375,
+              "y": 241.65625,
+              "width": 378.65625,
+              "height": 36.390625
+            },
+            "text": "Reported change"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 296.046875,
+              "width": 187.765625,
+              "height": 72.890625
+            },
+            "text": "Study A"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 314.046875,
+              "width": 167.765625,
+              "height": 36.390625
+            },
+            "text": "Study A"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 279.765625,
+              "y": 296.046875,
+              "width": 509.578125,
+              "height": 72.890625
+            },
+            "text": "Supervised laboratory [1]"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 279.765625,
+              "y": 314.046875,
+              "width": 489.578125,
+              "height": 36.390625
+            },
+            "text": "Supervised laboratory [1]"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 789.34375,
+              "y": 296.046875,
+              "width": 398.65625,
+              "height": 72.890625
+            },
+            "text": "12% [1]"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 789.34375,
+              "y": 314.046875,
+              "width": 378.65625,
+              "height": 36.390625
+            },
+            "text": "12% [1]"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 368.9375,
+              "width": 187.765625,
+              "height": 73.390625
+            },
+            "text": "Study B"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 387.4375,
+              "width": 167.765625,
+              "height": 36.390625
+            },
+            "text": "Study B"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 279.765625,
+              "y": 368.9375,
+              "width": 509.578125,
+              "height": 73.390625
+            },
+            "text": "Field use [2]"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 279.765625,
+              "y": 387.4375,
+              "width": 489.578125,
+              "height": 36.390625
+            },
+            "text": "Field use [2]"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 789.34375,
+              "y": 368.9375,
+              "width": 398.65625,
+              "height": 73.390625
+            },
+            "text": "3% [2]"
+          },
+          {
+            "role": "body",
+            "size": 28,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 789.34375,
+              "y": 387.4375,
+              "width": 378.65625,
+              "height": 36.390625
+            },
+            "text": "3% [2]"
+          },
+          {
+            "role": "caption",
+            "size": 25,
+            "minimum": 16,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 474.828125,
+              "width": 1096,
+              "height": 35
+            },
+            "text": "The records do not isolate the difference or support a pooled estimate. [3]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-02.png",
+        "resolvedFonts": [
+          "AvenirNext-Bold",
+          "AvenirNext-Medium",
+          "AvenirNext-Regular",
+          "IowanOldStyle-Roman"
+        ],
+        "contentHash": "d6fca04546338ae4819fd1de075980fbba68b34adfc762eb236fa3dffd134212",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "2c2a2aef05418bea11e6b28f7e153d6de47f8ab6040c6eec5ad3bee1801f6baa"
+          },
+          {
+            "id": "b2",
+            "hash": "64fc10177300cde2d3e366231a94c938737cc77b636871a83608262ef25e6b30"
+          }
+        ]
+      }
+    ],
+    "use": "talk",
+    "id": "5576765e45b2445ebb23b3be8d01766e",
+    "status": "captured",
+    "contentHash": "58cf2232d550657a8645d181cc4028c39e87dcf87d2a38a6b8939ab69881483d",
+    "rendererHash": "db7fc6b697746b93e0599978b619fc95a6cccd8abe51236e48315064e156b0cb",
+    "assetHashes": {},
+    "designHash": "6361b7a913cdb233afea8e0e2da4de48f9be458e8bb19a35315a4958634b9603",
+    "missingAssets": [],
+    "contact": "contact.png",
+    "pdf": "deck.pdf",
+    "pdfCheck": {
+      "status": "checked",
+      "pages": 3,
+      "slides": [
+        {
+          "id": "conflict-p1",
+          "index": 0,
+          "blocks": [],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "title",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 112,
+              "minimum": 28,
+              "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 104.53125,
+                "width": 809.75,
+                "height": 456.9375
+              },
+              "text": "The reported changes come from different settings [1][2]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        },
+        {
+          "id": "conflict-p2",
+          "index": 1,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "table"
+            },
+            {
+              "id": "b2",
+              "type": "text"
+            }
+          ],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "compare",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 56,
+              "minimum": 28,
+              "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 60,
+                "width": 1096,
+                "height": 127.65625
+              },
+              "text": "The reported changes come from different settings [1][2]"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 223.65625,
+                "width": 187.765625,
+                "height": 72.390625
+              },
+              "text": "Record"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 241.65625,
+                "width": 167.765625,
+                "height": 36.390625
+              },
+              "text": "Record"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 279.765625,
+                "y": 223.65625,
+                "width": 509.578125,
+                "height": 72.390625
+              },
+              "text": "Setting"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 279.765625,
+                "y": 241.65625,
+                "width": 489.578125,
+                "height": 36.390625
+              },
+              "text": "Setting"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 789.34375,
+                "y": 223.65625,
+                "width": 398.65625,
+                "height": 72.390625
+              },
+              "text": "Reported change"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 789.34375,
+                "y": 241.65625,
+                "width": 378.65625,
+                "height": 36.390625
+              },
+              "text": "Reported change"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 296.046875,
+                "width": 187.765625,
+                "height": 72.890625
+              },
+              "text": "Study A"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 314.046875,
+                "width": 167.765625,
+                "height": 36.390625
+              },
+              "text": "Study A"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 279.765625,
+                "y": 296.046875,
+                "width": 509.578125,
+                "height": 72.890625
+              },
+              "text": "Supervised laboratory [1]"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 279.765625,
+                "y": 314.046875,
+                "width": 489.578125,
+                "height": 36.390625
+              },
+              "text": "Supervised laboratory [1]"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 789.34375,
+                "y": 296.046875,
+                "width": 398.65625,
+                "height": 72.890625
+              },
+              "text": "12% [1]"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 789.34375,
+                "y": 314.046875,
+                "width": 378.65625,
+                "height": 36.390625
+              },
+              "text": "12% [1]"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 368.9375,
+                "width": 187.765625,
+                "height": 73.390625
+              },
+              "text": "Study B"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 387.4375,
+                "width": 167.765625,
+                "height": 36.390625
+              },
+              "text": "Study B"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 279.765625,
+                "y": 368.9375,
+                "width": 509.578125,
+                "height": 73.390625
+              },
+              "text": "Field use [2]"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 279.765625,
+                "y": 387.4375,
+                "width": 489.578125,
+                "height": 36.390625
+              },
+              "text": "Field use [2]"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 789.34375,
+                "y": 368.9375,
+                "width": 398.65625,
+                "height": 73.390625
+              },
+              "text": "3% [2]"
+            },
+            {
+              "role": "body",
+              "size": 28,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 789.34375,
+                "y": 387.4375,
+                "width": 378.65625,
+                "height": 36.390625
+              },
+              "text": "3% [2]"
+            },
+            {
+              "role": "caption",
+              "size": 25,
+              "minimum": 16,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 474.828125,
+                "width": 1096,
+                "height": 35
+              },
+              "text": "The records do not isolate the difference or support a pooled estimate. [3]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        }
+      ],
+      "method": "print-dom-and-exported-pdf-text",
+      "missingSources": [],
+      "missingText": []
+    },
+    "browser": "HeadlessChrome/156.0.8078.4",
+    "distribution": "bundled:chromium_headless_shell-1248",
+    "elapsedSeconds": 1.277,
+    "files": {
+      "contact.png": "84fab077f551c17e76a689abb44c336bd7e41447617b8a70107bcc21cd2d783b",
+      "slide-02.png": "4f382a7eea46e2fb0441862ba4152f1fe158d8e9c2502b3dfcb2a4b199ec97c2",
+      "deck.pdf": "8f72addcbc72a32e6344b58da153ea1b1808a0d14fb9180a22e6ee0e1d1247dd",
+      "slide-01.png": "d0701e5409fa35066a06ddd9dc9dcaa66c265109ad6966b0d0a514ac14bd3fca"
+    }
+  },
+  "review": {
+    "version": 1,
+    "use": "talk",
+    "status": "clean",
+    "model": "deepseek/deepseek-flash",
+    "imageReview": "reviewed",
+    "repairCycles": 0,
+    "repairedSlides": [],
+    "findings": [
+      {
+        "slideId": "conflict-p2",
+        "blockId": "b2",
+        "severity": "advice",
+        "problem": "The sentence that guards against a pooled or winner reading (\"The records do not isolate the difference or support a pooled estimate. [3]\") is the smallest and lightest text on the slide at 25 px in gray, sitting under a headline that places 12% and 3% side by side. It stays legible, but the qualification is visually subordinate to the numbers it is meant to constrain.",
+        "correction": "Give the guard sentence body-level prominence while keeping the wording and [3] exactly as written: raise it to the 28 px body size in full-ink text, or keep it at its current size inside a tinted band directly beneath the table so it reads as part of the comparison rather than as fine print.",
+        "route": "layout"
+      },
+      {
+        "slideId": "conflict-p2",
+        "blockId": "b1",
+        "severity": "advice",
+        "problem": "The table and its caption end around y = 510 on the 720 px stage, leaving roughly the bottom third of the slide empty while the heading starts at y = 60, so the composition is top-heavy and the two table rows are cramped together.",
+        "correction": "Use the free vertical space: increase row height and inter-row padding in the table (scene/style row spacing, no text change) so the table and its caption occupy the middle of the content area and the bottom margin balances the top margin.",
+        "route": "layout"
+      },
+      {
+        "slideId": "conflict-p2",
+        "blockId": "b1",
+        "severity": "advice",
+        "problem": "The Setting column is about 510 px wide for labels such as \"Supervised laboratory [1]\" and \"Field use [2]\", which pushes the \"Reported change\" column out to x = 789 and opens a wide empty gap between each setting and its value, weakening the row-by-row pairing of scope and number.",
+        "correction": "Narrow the Setting column and bring the value column closer to the text it belongs to (column-width metadata only), so each record's setting and reported change read as one line rather than two separated fragments.",
+        "route": "layout"
+      }
+    ],
+    "history": [
+      {
+        "snapshotId": "5576765e45b2445ebb23b3be8d01766e",
+        "candidateHash": "fb5fba54792c47401fc1f5f8549f8275cb9ad68133d4bb1b184a89f375ce3209"
+      }
+    ],
+    "limits": {
+      "requests": 8,
+      "cycles": 1,
+      "affectedSlides": 4
+    },
+    "candidateHash": "fb5fba54792c47401fc1f5f8549f8275cb9ad68133d4bb1b184a89f375ce3209",
+    "calls": 1,
+    "elapsedSeconds": 18.018
+  },
+  "fidelity": {
+    "wordingNotesAndCitations": true,
+    "citationIdentities": true,
+    "poolMapping": true,
+    "pageIdentityAndOrder": true,
+    "theme": true,
+    "designVersion": true
+  }
+}

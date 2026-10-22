@@ -11,6 +11,26 @@ import { useSyncExternalStore } from "react";
 const SMALLEST = 0.55;
 const KEPT = 400;
 
+export interface FaceBox { left: number; right: number; bottom: number; width: number; height: number; top?: number }
+
+/** Compare scaled browser boxes with CSS padding and catch intrinsic overflow such as an unbroken word. */
+export function overflowsFace(
+  face: FaceBox,
+  text: FaceBox,
+  padding: { left: number; right: number; bottom: number; width: number; height: number },
+  descendants: FaceBox[],
+  intrinsicOverflow: boolean,
+): boolean {
+  const scaleX = padding.width > 0 ? face.width / padding.width : 1;
+  const scaleY = padding.height > 0 ? face.height / padding.height : 1;
+  const left = face.left + padding.left * scaleX;
+  const right = face.right - padding.right * scaleX;
+  const bottom = face.bottom - padding.bottom * scaleY;
+  return text.left < left - 1 || text.right > right + 1 || text.bottom > bottom + 1
+    || descendants.some((box) => box.width > 0 && (box.left < left - 1 || box.right > right + 1 || (box.top ?? face.bottom - face.height) < (face.top ?? face.bottom - face.height) + 1 || box.bottom > bottom + 1))
+    || intrinsicOverflow;
+}
+
 const fits = new Map<string, number>();
 const watchers = new Set<() => void>();
 

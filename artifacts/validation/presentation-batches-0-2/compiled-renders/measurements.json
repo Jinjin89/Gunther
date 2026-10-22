@@ -1,0 +1,1792 @@
+{
+  "design": 1,
+  "browser": "155.0.8059.80",
+  "slides": [
+    {
+      "theme": "briefing",
+      "packet": "intake",
+      "index": 0,
+      "fit": 1,
+      "overflow": false,
+      "text": "The intake pilot\n\nA shorter review cycle, with an unanswered quality question. [1][2]",
+      "citations": [
+        "[1]",
+        "[2]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        98,
+        34
+      ],
+      "missingImages": 0,
+      "assetImages": [],
+      "debugOverflow": [
+        {
+          "tag": "H1",
+          "class": "",
+          "text": "The intake pilot",
+          "client": [
+            823,
+            100
+          ],
+          "scroll": [
+            823,
+            116
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Bold",
+          "isCustomFont": false,
+          "glyphCount": 16
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Regular",
+          "isCustomFont": false,
+          "glyphCount": 61
+        }
+      ],
+      "file": "briefing-intake-0.png",
+      "textHash": "8c83f02fcf6cbd3eb4e5f018f555db7836872917324f4bbbbb509581fa8e8bba"
+    },
+    {
+      "theme": "briefing",
+      "packet": "intake",
+      "index": 1,
+      "fit": 1,
+      "overflow": false,
+      "text": "Review time fell from 40 to 16 hours [1]\n\nMedian review time, hours. [1]\n\nMedian (hours)\n\nBefore\n\n40 hours [1]\n\nDuring the pilot\n\n16 hours [1]\n\nTwo teams, eight weeks. Quality and error rates were not measured. [1][2]",
+      "citations": [
+        "[1]",
+        "[1]",
+        "[1]",
+        "[1]",
+        "[1]",
+        "[2]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        50,
+        29,
+        22,
+        29,
+        38,
+        29,
+        38,
+        25
+      ],
+      "missingImages": 0,
+      "assetImages": [],
+      "debugOverflow": [
+        {
+          "tag": "H2",
+          "class": "",
+          "text": "Review time fell from 40 to 16 hours [1]",
+          "client": [
+            1104,
+            57
+          ],
+          "scroll": [
+            1104,
+            62
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "outputs-s-plot",
+          "text": "40 hours [1]",
+          "client": [
+            603,
+            72
+          ],
+          "scroll": [
+            820,
+            72
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "outputs-s-bar-value",
+          "text": "40 hours [1]",
+          "client": [
+            201,
+            38
+          ],
+          "scroll": [
+            201,
+            45
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "answer-markdown",
+          "text": "40 hours [1]",
+          "client": [
+            201,
+            38
+          ],
+          "scroll": [
+            201,
+            45
+          ]
+        },
+        {
+          "tag": "P",
+          "class": "",
+          "text": "40 hours [1]",
+          "client": [
+            201,
+            38
+          ],
+          "scroll": [
+            201,
+            45
+          ]
+        },
+        {
+          "tag": "BUTTON",
+          "class": "",
+          "text": "[1]",
+          "client": [
+            29,
+            19
+          ],
+          "scroll": [
+            29,
+            22
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "outputs-s-bar-value",
+          "text": "16 hours [1]",
+          "client": [
+            201,
+            38
+          ],
+          "scroll": [
+            201,
+            45
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "answer-markdown",
+          "text": "16 hours [1]",
+          "client": [
+            201,
+            38
+          ],
+          "scroll": [
+            201,
+            45
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Bold",
+          "isCustomFont": false,
+          "glyphCount": 37
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Regular",
+          "isCustomFont": false,
+          "glyphCount": 14
+        },
+        {
+          "familyName": "Avenir Next Medium",
+          "postScriptName": "AvenirNext-Medium",
+          "isCustomFont": false,
+          "glyphCount": 6
+        }
+      ],
+      "file": "briefing-intake-1.png",
+      "textHash": "c2cebc049c6fb2b998d18736456034449aeaa9dd326acb431b70ce58046e2193"
+    },
+    {
+      "theme": "briefing",
+      "packet": "reading-zh",
+      "index": 0,
+      "fit": 1,
+      "overflow": false,
+      "text": "两种阅读安排尚未形成统一决定 [1][2]\n共同选书：方便讨论同一段落。 [1]\n自主选书：照顾不同兴趣。 [1]\n证据范围：讨论意见没有测量学习效果。 [1][2]",
+      "citations": [
+        "[1]",
+        "[2]",
+        "[1]",
+        "[1]",
+        "[1]",
+        "[2]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        50
+      ],
+      "missingImages": 0,
+      "assetImages": [],
+      "debugOverflow": [
+        {
+          "tag": "H2",
+          "class": "",
+          "text": "两种阅读安排尚未形成统一决定 [1][2]",
+          "client": [
+            1104,
+            57
+          ],
+          "scroll": [
+            1104,
+            62
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "PingFang SC",
+          "postScriptName": "PingFangSC-Semibold",
+          "isCustomFont": false,
+          "glyphCount": 14
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Bold",
+          "isCustomFont": false,
+          "glyphCount": 1
+        }
+      ],
+      "file": "briefing-reading-zh-0.png",
+      "textHash": "93298a643dead8918a31e693e9642ec98adfeda3234530363e38f887921787f4"
+    },
+    {
+      "theme": "briefing",
+      "packet": "numeric",
+      "index": 0,
+      "fit": 0.93,
+      "overflow": false,
+      "text": "Recorded balances cross zero [1]\n\nNet balance in units. [1]\n\nBalance (units)\n\n12 units\n\n2021 [1]\n\n2022 [1]\n\n2024 [1]\n\nRecorded balances cross zero\nYear\tBalance (units)\n2021\t-8 units\n2022\t4 units\n2024\t12 units\n\nThree observations; no forecast or causal effect was established. [1][2]",
+      "citations": [
+        "[1]",
+        "[1]",
+        "[1]",
+        "[1]",
+        "[1]",
+        "[1]",
+        "[2]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        46.5,
+        26.97,
+        20.46,
+        40.92,
+        26.04,
+        26.04,
+        26.04,
+        29.76,
+        29.76,
+        29.76,
+        23.25
+      ],
+      "missingImages": 0,
+      "assetImages": [],
+      "debugOverflow": [
+        {
+          "tag": "H2",
+          "class": "",
+          "text": "Recorded balances cross zero [1]",
+          "client": [
+            1081,
+            53
+          ],
+          "scroll": [
+            1081,
+            58
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "outputs-s-end",
+          "text": "12 units",
+          "client": [
+            160,
+            41
+          ],
+          "scroll": [
+            160,
+            48
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "answer-markdown",
+          "text": "12 units",
+          "client": [
+            160,
+            41
+          ],
+          "scroll": [
+            160,
+            48
+          ]
+        },
+        {
+          "tag": "P",
+          "class": "",
+          "text": "12 units",
+          "client": [
+            160,
+            41
+          ],
+          "scroll": [
+            160,
+            48
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Bold",
+          "isCustomFont": false,
+          "glyphCount": 8
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Regular",
+          "isCustomFont": false,
+          "glyphCount": 15
+        }
+      ],
+      "file": "briefing-numeric-0.png",
+      "textHash": "17bb190ba7f6939ad433257afd2c1700fdd1dc28692be6f7ee3384efb68785c9"
+    },
+    {
+      "theme": "briefing",
+      "packet": "process",
+      "index": 0,
+      "fit": 1,
+      "overflow": false,
+      "text": "Collection precedes the completeness check [1]\n1\n\nCollect:\n\nretain the application. [1]\n\n2\n\nCheck:\n\ndetermine whether required information is complete. [1]\n\nThe check leads to alternative actions; both outcomes are not consecutive steps. [1]",
+      "citations": [
+        "[1]",
+        "[1]",
+        "[1]",
+        "[1]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        50,
+        33.28,
+        28.8,
+        33.28,
+        28.8,
+        25
+      ],
+      "missingImages": 0,
+      "assetImages": [],
+      "debugOverflow": [
+        {
+          "tag": "H2",
+          "class": "",
+          "text": "Collection precedes the completeness check [1]",
+          "client": [
+            1104,
+            57
+          ],
+          "scroll": [
+            1104,
+            62
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Bold",
+          "isCustomFont": false,
+          "glyphCount": 6
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Regular",
+          "isCustomFont": false,
+          "glyphCount": 24
+        }
+      ],
+      "file": "briefing-process-0.png",
+      "textHash": "82d41093e134e9259a7a4c20b7db7142fec25bc46fc6c04ee363bb2f691d1b43"
+    },
+    {
+      "theme": "briefing",
+      "packet": "conflict",
+      "index": 0,
+      "fit": 1,
+      "overflow": false,
+      "text": "The reported changes come from different settings [1][2]\n\nRecord\n\n\t\n\nSetting\n\n\t\n\nReported change\n\n\n\n\nStudy A\n\n\t\n\nSupervised laboratory [1]\n\n\t\n\n12% [1]\n\n\n\n\nStudy B\n\n\t\n\nField use [2]\n\n\t\n\n3% [2]\n\nThe records do not isolate the difference or support a pooled estimate. [3]",
+      "citations": [
+        "[1]",
+        "[2]",
+        "[1]",
+        "[1]",
+        "[2]",
+        "[2]",
+        "[3]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        50,
+        28,
+        28,
+        28,
+        0,
+        28,
+        28,
+        28,
+        28,
+        28,
+        28,
+        28,
+        28,
+        28,
+        28,
+        25
+      ],
+      "missingImages": 0,
+      "assetImages": [],
+      "debugOverflow": [
+        {
+          "tag": "H2",
+          "class": "",
+          "text": "The reported changes come from different settings ",
+          "client": [
+            1104,
+            114
+          ],
+          "scroll": [
+            1104,
+            119
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Bold",
+          "isCustomFont": false,
+          "glyphCount": 15
+        }
+      ],
+      "file": "briefing-conflict-0.png",
+      "textHash": "a9639330df48445e6ca8cbbd67a7192ee51665c576a6b0e7385f7c1280d2fbfd"
+    },
+    {
+      "theme": "briefing",
+      "packet": "figure",
+      "index": 0,
+      "fit": 1,
+      "overflow": false,
+      "text": "The source figure specifies a reading order [1]\n\nThe arrows show order; no causal effect or duration was measured. [1][2]",
+      "citations": [
+        "[1]",
+        "[1]",
+        "[2]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        50,
+        25
+      ],
+      "missingImages": 0,
+      "assetImages": [
+        {
+          "alt": "Collection, Review, Archive",
+          "assetPath": "/api/assets/eval-collection",
+          "width": 1000,
+          "height": 360
+        }
+      ],
+      "debugOverflow": [
+        {
+          "tag": "H2",
+          "class": "",
+          "text": "The source figure specifies a reading order [1]",
+          "client": [
+            1104,
+            57
+          ],
+          "scroll": [
+            1104,
+            62
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Bold",
+          "isCustomFont": false,
+          "glyphCount": 44
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Regular",
+          "isCustomFont": false,
+          "glyphCount": 66
+        }
+      ],
+      "file": "briefing-figure-0.png",
+      "textHash": "f124c29160624e3fe21782ad277bce14f86d2086112dc07e5e963ac792cbedec"
+    },
+    {
+      "theme": "editorial",
+      "packet": "intake",
+      "index": 0,
+      "fit": 1,
+      "overflow": false,
+      "text": "The intake pilot\n\nA shorter review cycle, with an unanswered quality question. [1][2]",
+      "citations": [
+        "[1]",
+        "[2]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        112,
+        32
+      ],
+      "missingImages": 0,
+      "assetImages": [],
+      "debugOverflow": [
+        {
+          "tag": "H1",
+          "class": "",
+          "text": "The intake pilot",
+          "client": [
+            810,
+            114
+          ],
+          "scroll": [
+            810,
+            133
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "Iowan Old Style",
+          "postScriptName": "IowanOldStyle-Roman",
+          "isCustomFont": false,
+          "glyphCount": 16
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Regular",
+          "isCustomFont": false,
+          "glyphCount": 60
+        }
+      ],
+      "file": "editorial-intake-0.png",
+      "textHash": "8c83f02fcf6cbd3eb4e5f018f555db7836872917324f4bbbbb509581fa8e8bba"
+    },
+    {
+      "theme": "editorial",
+      "packet": "intake",
+      "index": 1,
+      "fit": 1,
+      "overflow": false,
+      "text": "Review time fell from 40 to 16 hours [1]\n\nMedian review time, hours. [1]\n\nMedian (hours)\n\nBefore\n\n40 hours [1]\n\nDuring the pilot\n\n16 hours [1]\n\nTwo teams, eight weeks. Quality and error rates were not measured. [1][2]",
+      "citations": [
+        "[1]",
+        "[1]",
+        "[1]",
+        "[1]",
+        "[1]",
+        "[2]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        56,
+        29,
+        22,
+        29,
+        43,
+        29,
+        43,
+        25
+      ],
+      "missingImages": 0,
+      "assetImages": [],
+      "debugOverflow": [
+        {
+          "tag": "H2",
+          "class": "",
+          "text": "Review time fell from 40 to 16 hours [1]",
+          "client": [
+            1096,
+            64
+          ],
+          "scroll": [
+            1096,
+            69
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "outputs-s-plot",
+          "text": "40 hours [1]",
+          "client": [
+            595,
+            72
+          ],
+          "scroll": [
+            827,
+            72
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "outputs-s-bar-value",
+          "text": "40 hours [1]",
+          "client": [
+            216,
+            43
+          ],
+          "scroll": [
+            216,
+            51
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "answer-markdown",
+          "text": "40 hours [1]",
+          "client": [
+            216,
+            43
+          ],
+          "scroll": [
+            216,
+            51
+          ]
+        },
+        {
+          "tag": "P",
+          "class": "",
+          "text": "40 hours [1]",
+          "client": [
+            216,
+            43
+          ],
+          "scroll": [
+            216,
+            51
+          ]
+        },
+        {
+          "tag": "BUTTON",
+          "class": "",
+          "text": "[1]",
+          "client": [
+            34,
+            22
+          ],
+          "scroll": [
+            34,
+            25
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "outputs-s-bar-value",
+          "text": "16 hours [1]",
+          "client": [
+            216,
+            43
+          ],
+          "scroll": [
+            216,
+            51
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "answer-markdown",
+          "text": "16 hours [1]",
+          "client": [
+            216,
+            43
+          ],
+          "scroll": [
+            216,
+            51
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "Iowan Old Style",
+          "postScriptName": "IowanOldStyle-Roman",
+          "isCustomFont": false,
+          "glyphCount": 37
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Regular",
+          "isCustomFont": false,
+          "glyphCount": 14
+        },
+        {
+          "familyName": "Avenir Next Medium",
+          "postScriptName": "AvenirNext-Medium",
+          "isCustomFont": false,
+          "glyphCount": 6
+        }
+      ],
+      "file": "editorial-intake-1.png",
+      "textHash": "c2cebc049c6fb2b998d18736456034449aeaa9dd326acb431b70ce58046e2193"
+    },
+    {
+      "theme": "editorial",
+      "packet": "reading-zh",
+      "index": 0,
+      "fit": 1,
+      "overflow": false,
+      "text": "两种阅读安排尚未形成统一决定 [1][2]\n共同选书：方便讨论同一段落。 [1]\n自主选书：照顾不同兴趣。 [1]\n证据范围：讨论意见没有测量学习效果。 [1][2]",
+      "citations": [
+        "[1]",
+        "[2]",
+        "[1]",
+        "[1]",
+        "[1]",
+        "[2]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif"
+      ],
+      "textSizes": [
+        56
+      ],
+      "missingImages": 0,
+      "assetImages": [],
+      "debugOverflow": [
+        {
+          "tag": "H2",
+          "class": "",
+          "text": "两种阅读安排尚未形成统一决定 [1][2]",
+          "client": [
+            1096,
+            64
+          ],
+          "scroll": [
+            1096,
+            69
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "Iowan Old Style",
+          "postScriptName": "IowanOldStyle-Roman",
+          "isCustomFont": false,
+          "glyphCount": 1
+        },
+        {
+          "familyName": "Songti SC",
+          "postScriptName": "STSongti-SC-Regular",
+          "isCustomFont": false,
+          "glyphCount": 14
+        }
+      ],
+      "file": "editorial-reading-zh-0.png",
+      "textHash": "93298a643dead8918a31e693e9642ec98adfeda3234530363e38f887921787f4"
+    },
+    {
+      "theme": "editorial",
+      "packet": "numeric",
+      "index": 0,
+      "fit": 0.92,
+      "overflow": false,
+      "text": "Recorded balances cross zero [1]\n\nNet balance in units. [1]\n\nBalance (units)\n\n12 units\n\n2021 [1]\n\n2022 [1]\n\n2024 [1]\n\nRecorded balances cross zero\nYear\tBalance (units)\n2021\t-8 units\n2022\t4 units\n2024\t12 units\n\nThree observations; no forecast or causal effect was established. [1][2]",
+      "citations": [
+        "[1]",
+        "[1]",
+        "[1]",
+        "[1]",
+        "[1]",
+        "[1]",
+        "[2]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        51.52,
+        26.68,
+        20.24,
+        40.48,
+        25.76,
+        25.76,
+        25.76,
+        29.44,
+        29.44,
+        29.44,
+        23
+      ],
+      "missingImages": 0,
+      "assetImages": [],
+      "debugOverflow": [
+        {
+          "tag": "H2",
+          "class": "",
+          "text": "Recorded balances cross zero [1]",
+          "client": [
+            1032,
+            59
+          ],
+          "scroll": [
+            1032,
+            64
+          ]
+        },
+        {
+          "tag": "BUTTON",
+          "class": "",
+          "text": "[1]",
+          "client": [
+            40,
+            29
+          ],
+          "scroll": [
+            40,
+            32
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "outputs-s-end",
+          "text": "12 units",
+          "client": [
+            158,
+            40
+          ],
+          "scroll": [
+            158,
+            47
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "answer-markdown",
+          "text": "12 units",
+          "client": [
+            158,
+            40
+          ],
+          "scroll": [
+            158,
+            47
+          ]
+        },
+        {
+          "tag": "P",
+          "class": "",
+          "text": "12 units",
+          "client": [
+            158,
+            40
+          ],
+          "scroll": [
+            158,
+            47
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "Iowan Old Style",
+          "postScriptName": "IowanOldStyle-Roman",
+          "isCustomFont": false,
+          "glyphCount": 29
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Regular",
+          "isCustomFont": false,
+          "glyphCount": 15
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Bold",
+          "isCustomFont": false,
+          "glyphCount": 8
+        }
+      ],
+      "file": "editorial-numeric-0.png",
+      "textHash": "17bb190ba7f6939ad433257afd2c1700fdd1dc28692be6f7ee3384efb68785c9"
+    },
+    {
+      "theme": "editorial",
+      "packet": "process",
+      "index": 0,
+      "fit": 1,
+      "overflow": false,
+      "text": "Collection precedes the completeness check [1]\n1\n\nCollect:\n\nretain the application. [1]\n\n2\n\nCheck:\n\ndetermine whether required information is complete. [1]\n\nThe check leads to alternative actions; both outcomes are not consecutive steps. [1]",
+      "citations": [
+        "[1]",
+        "[1]",
+        "[1]",
+        "[1]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        56,
+        33.28,
+        28.8,
+        33.28,
+        28.8,
+        25
+      ],
+      "missingImages": 0,
+      "assetImages": [],
+      "debugOverflow": [
+        {
+          "tag": "H2",
+          "class": "",
+          "text": "Collection precedes the completeness check [1]",
+          "client": [
+            1096,
+            64
+          ],
+          "scroll": [
+            1096,
+            69
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "Iowan Old Style",
+          "postScriptName": "IowanOldStyle-Roman",
+          "isCustomFont": false,
+          "glyphCount": 43
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Bold",
+          "isCustomFont": false,
+          "glyphCount": 6
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Regular",
+          "isCustomFont": false,
+          "glyphCount": 24
+        }
+      ],
+      "file": "editorial-process-0.png",
+      "textHash": "82d41093e134e9259a7a4c20b7db7142fec25bc46fc6c04ee363bb2f691d1b43"
+    },
+    {
+      "theme": "editorial",
+      "packet": "conflict",
+      "index": 0,
+      "fit": 1,
+      "overflow": false,
+      "text": "The reported changes come from different settings [1][2]\n\nRecord\n\n\t\n\nSetting\n\n\t\n\nReported change\n\n\n\n\nStudy A\n\n\t\n\nSupervised laboratory [1]\n\n\t\n\n12% [1]\n\n\n\n\nStudy B\n\n\t\n\nField use [2]\n\n\t\n\n3% [2]\n\nThe records do not isolate the difference or support a pooled estimate. [3]",
+      "citations": [
+        "[1]",
+        "[2]",
+        "[1]",
+        "[1]",
+        "[2]",
+        "[2]",
+        "[3]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        56,
+        28,
+        28,
+        28,
+        0,
+        28,
+        28,
+        28,
+        28,
+        28,
+        28,
+        28,
+        28,
+        28,
+        28,
+        25
+      ],
+      "missingImages": 0,
+      "assetImages": [],
+      "debugOverflow": [
+        {
+          "tag": "H2",
+          "class": "",
+          "text": "The reported changes come from different settings ",
+          "client": [
+            1096,
+            128
+          ],
+          "scroll": [
+            1096,
+            133
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "Iowan Old Style",
+          "postScriptName": "IowanOldStyle-Roman",
+          "isCustomFont": false,
+          "glyphCount": 49
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Bold",
+          "isCustomFont": false,
+          "glyphCount": 15
+        }
+      ],
+      "file": "editorial-conflict-0.png",
+      "textHash": "a9639330df48445e6ca8cbbd67a7192ee51665c576a6b0e7385f7c1280d2fbfd"
+    },
+    {
+      "theme": "editorial",
+      "packet": "figure",
+      "index": 0,
+      "fit": 1,
+      "overflow": false,
+      "text": "The source figure specifies a reading order [1]\n\nThe arrows show order; no causal effect or duration was measured. [1][2]",
+      "citations": [
+        "[1]",
+        "[1]",
+        "[2]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        56,
+        25
+      ],
+      "missingImages": 0,
+      "assetImages": [
+        {
+          "alt": "Collection, Review, Archive",
+          "assetPath": "/api/assets/eval-collection",
+          "width": 1000,
+          "height": 360
+        }
+      ],
+      "debugOverflow": [
+        {
+          "tag": "H2",
+          "class": "",
+          "text": "The source figure specifies a reading order [1]",
+          "client": [
+            1096,
+            64
+          ],
+          "scroll": [
+            1096,
+            69
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "Iowan Old Style",
+          "postScriptName": "IowanOldStyle-Roman",
+          "isCustomFont": false,
+          "glyphCount": 44
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Regular",
+          "isCustomFont": false,
+          "glyphCount": 66
+        }
+      ],
+      "file": "editorial-figure-0.png",
+      "textHash": "f124c29160624e3fe21782ad277bce14f86d2086112dc07e5e963ac792cbedec"
+    },
+    {
+      "theme": "keynote",
+      "packet": "intake",
+      "index": 0,
+      "fit": 1,
+      "overflow": false,
+      "text": "The intake pilot\n\nA shorter review cycle, with an unanswered quality question. [1][2]",
+      "citations": [
+        "[1]",
+        "[2]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        118,
+        36
+      ],
+      "missingImages": 0,
+      "assetImages": [],
+      "debugOverflow": [
+        {
+          "tag": "H1",
+          "class": "",
+          "text": "The intake pilot",
+          "client": [
+            991,
+            120
+          ],
+          "scroll": [
+            991,
+            140
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Bold",
+          "isCustomFont": false,
+          "glyphCount": 16
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Regular",
+          "isCustomFont": false,
+          "glyphCount": 60
+        }
+      ],
+      "file": "keynote-intake-0.png",
+      "textHash": "8c83f02fcf6cbd3eb4e5f018f555db7836872917324f4bbbbb509581fa8e8bba"
+    },
+    {
+      "theme": "keynote",
+      "packet": "intake",
+      "index": 1,
+      "fit": 1,
+      "overflow": false,
+      "text": "Review time fell from 40 to 16 hours [1]\n\nMedian review time, hours. [1]\n\nMedian (hours)\n\nBefore\n\n40 hours [1]\n\nDuring the pilot\n\n16 hours [1]\n\nTwo teams, eight weeks. Quality and error rates were not measured. [1][2]",
+      "citations": [
+        "[1]",
+        "[1]",
+        "[1]",
+        "[1]",
+        "[1]",
+        "[2]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        56,
+        29,
+        22,
+        29,
+        42,
+        29,
+        42,
+        25
+      ],
+      "missingImages": 0,
+      "assetImages": [],
+      "debugOverflow": [
+        {
+          "tag": "H2",
+          "class": "",
+          "text": "Review time fell from 40 to 16 hours [1]",
+          "client": [
+            1096,
+            64
+          ],
+          "scroll": [
+            1096,
+            69
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "outputs-s-plot",
+          "text": "40 hours [1]",
+          "client": [
+            595,
+            72
+          ],
+          "scroll": [
+            833,
+            72
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "outputs-s-bar-value",
+          "text": "40 hours [1]",
+          "client": [
+            222,
+            42
+          ],
+          "scroll": [
+            222,
+            49
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "answer-markdown",
+          "text": "40 hours [1]",
+          "client": [
+            222,
+            42
+          ],
+          "scroll": [
+            222,
+            49
+          ]
+        },
+        {
+          "tag": "P",
+          "class": "",
+          "text": "40 hours [1]",
+          "client": [
+            222,
+            42
+          ],
+          "scroll": [
+            222,
+            49
+          ]
+        },
+        {
+          "tag": "BUTTON",
+          "class": "",
+          "text": "[1]",
+          "client": [
+            32,
+            21
+          ],
+          "scroll": [
+            32,
+            25
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "outputs-s-bar-value",
+          "text": "16 hours [1]",
+          "client": [
+            222,
+            42
+          ],
+          "scroll": [
+            222,
+            49
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "answer-markdown",
+          "text": "16 hours [1]",
+          "client": [
+            222,
+            42
+          ],
+          "scroll": [
+            222,
+            49
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Bold",
+          "isCustomFont": false,
+          "glyphCount": 37
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Regular",
+          "isCustomFont": false,
+          "glyphCount": 14
+        },
+        {
+          "familyName": "Avenir Next Medium",
+          "postScriptName": "AvenirNext-Medium",
+          "isCustomFont": false,
+          "glyphCount": 6
+        }
+      ],
+      "file": "keynote-intake-1.png",
+      "textHash": "c2cebc049c6fb2b998d18736456034449aeaa9dd326acb431b70ce58046e2193"
+    },
+    {
+      "theme": "keynote",
+      "packet": "reading-zh",
+      "index": 0,
+      "fit": 1,
+      "overflow": false,
+      "text": "两种阅读安排尚未形成统一决定 [1][2]\n共同选书：方便讨论同一段落。 [1]\n自主选书：照顾不同兴趣。 [1]\n证据范围：讨论意见没有测量学习效果。 [1][2]",
+      "citations": [
+        "[1]",
+        "[2]",
+        "[1]",
+        "[1]",
+        "[1]",
+        "[2]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        56
+      ],
+      "missingImages": 0,
+      "assetImages": [],
+      "debugOverflow": [
+        {
+          "tag": "H2",
+          "class": "",
+          "text": "两种阅读安排尚未形成统一决定 [1][2]",
+          "client": [
+            1096,
+            64
+          ],
+          "scroll": [
+            1096,
+            69
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "PingFang SC",
+          "postScriptName": "PingFangSC-Semibold",
+          "isCustomFont": false,
+          "glyphCount": 14
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Bold",
+          "isCustomFont": false,
+          "glyphCount": 1
+        }
+      ],
+      "file": "keynote-reading-zh-0.png",
+      "textHash": "93298a643dead8918a31e693e9642ec98adfeda3234530363e38f887921787f4"
+    },
+    {
+      "theme": "keynote",
+      "packet": "numeric",
+      "index": 0,
+      "fit": 0.91,
+      "overflow": false,
+      "text": "Recorded balances cross zero [1]\n\nNet balance in units. [1]\n\nBalance (units)\n\n12 units\n\n2021 [1]\n\n2022 [1]\n\n2024 [1]\n\nRecorded balances cross zero\nYear\tBalance (units)\n2021\t-8 units\n2022\t4 units\n2024\t12 units\n\nThree observations; no forecast or causal effect was established. [1][2]",
+      "citations": [
+        "[1]",
+        "[1]",
+        "[1]",
+        "[1]",
+        "[1]",
+        "[1]",
+        "[2]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        50.96,
+        26.39,
+        20.02,
+        40.04,
+        25.48,
+        25.48,
+        25.48,
+        29.12,
+        29.12,
+        29.12,
+        22.75
+      ],
+      "missingImages": 0,
+      "assetImages": [],
+      "debugOverflow": [
+        {
+          "tag": "H2",
+          "class": "",
+          "text": "Recorded balances cross zero [1]",
+          "client": [
+            1096,
+            58
+          ],
+          "scroll": [
+            1096,
+            64
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "outputs-s-end",
+          "text": "12 units",
+          "client": [
+            157,
+            40
+          ],
+          "scroll": [
+            157,
+            47
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "answer-markdown",
+          "text": "12 units",
+          "client": [
+            157,
+            40
+          ],
+          "scroll": [
+            157,
+            47
+          ]
+        },
+        {
+          "tag": "P",
+          "class": "",
+          "text": "12 units",
+          "client": [
+            157,
+            40
+          ],
+          "scroll": [
+            157,
+            47
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Bold",
+          "isCustomFont": false,
+          "glyphCount": 8
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Regular",
+          "isCustomFont": false,
+          "glyphCount": 15
+        }
+      ],
+      "file": "keynote-numeric-0.png",
+      "textHash": "17bb190ba7f6939ad433257afd2c1700fdd1dc28692be6f7ee3384efb68785c9"
+    },
+    {
+      "theme": "keynote",
+      "packet": "process",
+      "index": 0,
+      "fit": 1,
+      "overflow": false,
+      "text": "Collection precedes the completeness check [1]\n1\n\nCollect:\n\nretain the application. [1]\n\n2\n\nCheck:\n\ndetermine whether required information is complete. [1]\n\nThe check leads to alternative actions; both outcomes are not consecutive steps. [1]",
+      "citations": [
+        "[1]",
+        "[1]",
+        "[1]",
+        "[1]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        56,
+        33.28,
+        28.8,
+        33.28,
+        28.8,
+        25
+      ],
+      "missingImages": 0,
+      "assetImages": [],
+      "debugOverflow": [
+        {
+          "tag": "H2",
+          "class": "",
+          "text": "Collection precedes the completeness check [1]",
+          "client": [
+            1096,
+            128
+          ],
+          "scroll": [
+            1096,
+            133
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Bold",
+          "isCustomFont": false,
+          "glyphCount": 6
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Regular",
+          "isCustomFont": false,
+          "glyphCount": 24
+        }
+      ],
+      "file": "keynote-process-0.png",
+      "textHash": "82d41093e134e9259a7a4c20b7db7142fec25bc46fc6c04ee363bb2f691d1b43"
+    },
+    {
+      "theme": "keynote",
+      "packet": "conflict",
+      "index": 0,
+      "fit": 1,
+      "overflow": false,
+      "text": "The reported changes come from different settings [1][2]\n\nRecord\n\n\t\n\nSetting\n\n\t\n\nReported change\n\n\n\n\nStudy A\n\n\t\n\nSupervised laboratory [1]\n\n\t\n\n12% [1]\n\n\n\n\nStudy B\n\n\t\n\nField use [2]\n\n\t\n\n3% [2]\n\nThe records do not isolate the difference or support a pooled estimate. [3]",
+      "citations": [
+        "[1]",
+        "[2]",
+        "[1]",
+        "[1]",
+        "[2]",
+        "[2]",
+        "[3]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        56,
+        28,
+        28,
+        28,
+        0,
+        28,
+        28,
+        28,
+        28,
+        28,
+        28,
+        28,
+        28,
+        28,
+        28,
+        25
+      ],
+      "missingImages": 0,
+      "assetImages": [],
+      "debugOverflow": [
+        {
+          "tag": "H2",
+          "class": "",
+          "text": "The reported changes come from different settings ",
+          "client": [
+            1096,
+            128
+          ],
+          "scroll": [
+            1096,
+            133
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Bold",
+          "isCustomFont": false,
+          "glyphCount": 15
+        }
+      ],
+      "file": "keynote-conflict-0.png",
+      "textHash": "a9639330df48445e6ca8cbbd67a7192ee51665c576a6b0e7385f7c1280d2fbfd"
+    },
+    {
+      "theme": "keynote",
+      "packet": "figure",
+      "index": 0,
+      "fit": 0.97,
+      "overflow": false,
+      "text": "The source figure specifies a reading order [1]\n\nThe arrows show order; no causal effect or duration was measured. [1][2]",
+      "citations": [
+        "[1]",
+        "[1]",
+        "[2]"
+      ],
+      "size": {
+        "width": 1280,
+        "height": 720
+      },
+      "fonts": [
+        "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+      ],
+      "textSizes": [
+        54.32,
+        24.25
+      ],
+      "missingImages": 0,
+      "assetImages": [
+        {
+          "alt": "Collection, Review, Archive",
+          "assetPath": "/api/assets/eval-collection",
+          "width": 1000,
+          "height": 360
+        }
+      ],
+      "debugOverflow": [
+        {
+          "tag": "H2",
+          "class": "",
+          "text": "The source figure specifies a reading order [1]",
+          "client": [
+            1096,
+            62
+          ],
+          "scroll": [
+            1096,
+            67
+          ]
+        }
+      ],
+      "platformFonts": [
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Bold",
+          "isCustomFont": false,
+          "glyphCount": 44
+        },
+        {
+          "familyName": "Avenir Next",
+          "postScriptName": "AvenirNext-Regular",
+          "isCustomFont": false,
+          "glyphCount": 66
+        }
+      ],
+      "file": "keynote-figure-0.png",
+      "textHash": "f124c29160624e3fe21782ad277bce14f86d2086112dc07e5e963ac792cbedec"
+    }
+  ],
+  "errors": [],
+  "seconds": 4.38,
+  "peakBrowserMiB": 1050
+}

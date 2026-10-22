@@ -376,6 +376,9 @@ def skill_replies(
     editor: Reply | None = None,
     reader: Reply | None = None,
     revision: dict[str, Any] | None = None,
+    design: Reply | None = None,
+    outline_review: Reply | None = None,
+    compose: Reply | None = None,
     rewrite: Any = None,
     relevant: list[int] | None = None,
     replacer: Reply | None = None,
@@ -430,6 +433,72 @@ def skill_replies(
             return json.dumps(approach)
         if step == "structure":
             return json.dumps(outline)
+        if step == "outline_review":
+            return (
+                answer(outline_review, request)
+                if outline_review is not None
+                else json.dumps({"issues": [], "omitted": []})
+            )
+        if step == "design":
+            if design is not None:
+                return answer(design, request)
+            match = re.search(
+                r"Requested page evidence and material cards:\n(\[.*?\])\nShared material cards",
+                prompt,
+                re.S,
+            )
+            pages = json.loads(match.group(1)) if match else []
+            return json.dumps(
+                {
+                    "pages": [
+                        {
+                            "index": page["index"],
+                            "heading": page["heading"],
+                            "intent": page.get("goal") or page["heading"],
+                            "visual": "Use the assigned content in a clear visual hierarchy.",
+                            "composition": "standard",
+                            "emphasis": "",
+                            "notes": "",
+                            "layout": page.get("layout", ""),
+                        }
+                        for page in pages
+                    ]
+                }
+            )
+        if step == "compose":
+            if compose is not None:
+                return answer(compose, request)
+            match = re.search(
+                r"Content blocks .*?:\n(\[.*?\])(?:\n|$)",
+                prompt,
+                re.S,
+            )
+            blocks = json.loads(match.group(1)) if match else []
+
+            def arrange(items: list[dict[str, Any]]) -> dict[str, Any]:
+                if len(items) > 4:
+                    children = [
+                        arrange(items[start : start + 4]) for start in range(0, len(items), 4)
+                    ]
+                    return {
+                        "kind": "column",
+                        "weights": [1] * len(children),
+                        "children": children,
+                    }
+                return {
+                    "kind": "row",
+                    "weights": [1] * len(items),
+                    "children": [
+                        {
+                            "kind": "leaf",
+                            "blockId": block["id"],
+                            "view": block["type"],
+                        }
+                        for block in items
+                    ],
+                }
+
+            return json.dumps({"root": arrange(blocks)})
         if step == "edit_review":
             return answer(editor if editor is not None else {"issues": []}, request)
         if step == "reader_test":

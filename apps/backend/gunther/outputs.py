@@ -55,7 +55,22 @@ from gunther.agent import (
 from gunther.llm import ModelError, ModelGateway, ModelInfo, Turn
 from gunther.model_profiles import Effort
 from gunther.schemas import ConversationCitationOut
-from gunther.skill_checks import CHARTS, Context, Page, chart_numbers_cited, figures_of
+from gunther.skill_checks import (
+    CHARTS,
+    Context,
+    Page,
+    chart_numbers_cited,
+    diagram_edge_rows,
+    diagram_problem,
+    figures_of,
+)
+from gunther.slide_scene import (
+    SCENE_HEADER,
+    SceneEnvelope,
+    decode_scene,
+    rebind_graphics_hash,
+    with_scene_line,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +109,11 @@ def drop_unknown_figures(text: str, kept: set[str]) -> tuple[str, list[str]]:
     return shown.strip("\n"), left_out
 
 
-VALUE_IN = re.compile(r"(?<!\w)[+-]?\d[\d,]*(?:\.\d+)?%?")
+VALUE_IN = re.compile(r"(?<![A-Za-z0-9_.+\-−–—])[+\-−–—]?\d[\d,]*(?:\.\d+)?%?")
+
+
+def _normalized_chart_value(value: str) -> str:
+    return value.replace("−", "-").replace("–", "-").replace("—", "-").replace(",", "")
 
 
 def chart_unverified(
@@ -117,20 +136,20 @@ def chart_unverified(
     layout, body = layout_of(text)
     page = Page(index, heading_of(body), layout or "bar_chart", body)
     problems = [
-        item.message
-        for item in chart_numbers_cited([page], {}, Context("slides", evidence=by_ref))
+        item.message for item in chart_numbers_cited([page], {}, Context("slides", evidence=by_ref))
     ]
     if problems:
         return problems, problems[0]
     values = {
-        value.replace(",", "").rstrip("%")
+        _normalized_chart_value(value).rstrip("%")
         for line in page.body
         if line.strip().startswith("|")
         for value in VALUE_IN.findall(CITATION_GROUP.sub("", line))
     }
 
     def about_values(claim: str) -> bool:
-        return bool({v.replace(",", "").rstrip("%") for v in VALUE_IN.findall(claim)} & values)
+        normalized = {_normalized_chart_value(v).rstrip("%") for v in VALUE_IN.findall(claim)}
+        return bool(normalized & values)
 
     for issue in issues or ():
         if about_values(issue.claim):
@@ -141,6 +160,71 @@ def chart_unverified(
     if any(claim.get("verdict") != "supported" for claim in claims):
         return [], "Its verification is incomplete: not every value was found supported."
     return [], None
+
+
+def chart_rows_coverage_reason(text: str, coverage: Mapping[str, Any] | None) -> str | None:
+    """Require complete, block-local coverage for every chart row.
+
+    The general Checker can group or paraphrase claims, so a complete page status and one
+    supported numeric claim are not enough to license a multi-row chart. Each row needs a
+    supported claim that binds its label, numeric value and cited passages.
+    """
+    if not coverage or coverage.get("status") != "complete":
+        return "The Checker did not complete coverage of this chart's rows."
+    layout, body = layout_of(text)
+    page = Page(0, heading_of(body), layout or "bar_chart", body)
+    table_lines = [line.strip() for line in page.body if line.strip().startswith("|")]
+    if len(table_lines) < 4:
+        return "The chart does not contain the required numeric rows."
+    rows = [
+        [cell.strip() for cell in line.strip("|").split("|")]
+        for line in table_lines[2:]
+    ]
+    claims = coverage.get("claims", [])
+
+    def clean(value: str) -> str:
+        value = CITATION_GROUP.sub("", value)
+        value = re.sub(r"[*_`|]", " ", value)
+        return " ".join(value.split()).casefold()
+
+    for row in rows:
+        if len(row) != 2:
+            return "Every chart row must contain exactly one label and one value."
+        label = clean(row[0])
+        values = {
+            _normalized_chart_value(value).rstrip("%")
+            for value in VALUE_IN.findall(CITATION_GROUP.sub("", row[1]))
+        }
+        refs = set(_numbers(row[1]))
+        if not label or not values or not refs:
+            return "Every chart row needs a label, a numeric value and its own citation."
+
+        def supports_row(
+            claim: Mapping[str, Any],
+            label: str = label,
+            values: set[str] = values,
+            refs: set[int] = refs,
+        ) -> bool:
+            claim_text = clean(str(claim.get("text", "")))
+            claim_value_text = claim_text.replace(label, " ", 1)
+            claim_values = {
+                _normalized_chart_value(value).rstrip("%")
+                for value in VALUE_IN.findall(claim_value_text)
+            }
+            claim_refs = set(claim.get("refs", []))
+            return (
+                label in claim_text
+                and bool(values & claim_values)
+                and refs.issubset(claim_refs)
+                and claim.get("verdict") == "supported"
+            )
+
+        if not any(supports_row(claim) for claim in claims):
+            return (
+                "One or more chart rows lack a supported Checker claim bound to that row's "
+                "label, value and citation."
+            )
+    return None
 
 
 def figure_lines(item: Evidence) -> list[str]:
@@ -186,11 +270,42 @@ class OutputLimits:
 FENCE = re.compile(r"^\s*(```|~~~)")
 KINDS = ("report", "slides")
 ACCENTS = ("ink", "blue", "teal", "red", "amber", "violet")
-# At the start of a slide, after any blank lines: the whole marker line.
+THEMES = ("classic", "briefing", "editorial", "keynote")
+# At the start of a slide, after any blank lines: its layout and keyed metadata.
 LAYOUT_MARK = re.compile(
     r"[ \t\r\n]*<!--[ \t]*layout:[ \t]*(?P<layout>[a-z][a-z0-9_]*)[ \t]*"
-    r"(?:;[ \t]*accent:[ \t]*(?P<accent>[a-z]+)[ \t]*)?-->[ \t]*(?:\r?\n|\Z)"
+    r"(?P<attrs>(?:;[ \t]*[a-z][a-z0-9_]*:[ \t]*[a-z][a-z0-9_-]*[ \t]*)*)"
+    r"-->[ \t]*(?:\r?\n|\Z)"
 )
+MARK_ATTR = re.compile(r";[ \t]*(?P<key>[a-z][a-z0-9_]*):[ \t]*(?P<value>[a-z][a-z0-9_-]*)[ \t]*")
+COMPOSITIONS = ("standard", "split", "spotlight")
+COMPOSITION_LAYOUTS = {
+    "standard": frozenset(
+        (
+            "title",
+            "big_number",
+            "compare",
+            "two_column",
+            "flow",
+            "timeline",
+            "bar_chart",
+            "line_chart",
+            "cards",
+            "quote",
+            "figure",
+            "diagram",
+            "text",
+            "takeaways",
+            "composed",
+        )
+    ),
+    "split": frozenset(("big_number", "quote", "figure")),
+    "spotlight": frozenset(("big_number", "quote", "text")),
+}
+
+
+def marker_attributes(attrs: str) -> dict[str, str]:
+    return {match.group("key"): match.group("value") for match in MARK_ATTR.finditer(attrs)}
 
 
 def _lines(content: str) -> list[tuple[str, bool]]:
@@ -245,19 +360,46 @@ class Marked(NamedTuple):
     line: str  # the marker line as it was written; empty when there is none
     layout: str | None
     accent: str | None  # only the title slide has one, and only one of ACCENTS
+    theme: str | None  # only the title slide has one, and only one of THEMES
+    composition: str
     body: str  # the slide without the marker line, and without the blank lines after it
+    scene_line: str
+    scene: SceneEnvelope | None
+    design_version: int = 0
 
 
 def _marked(text: str) -> Marked:
     found = LAYOUT_MARK.match(text)
     if found is None:
-        return Marked("", None, None, text)
-    layout, accent = found.group("layout"), found.group("accent")
+        return Marked("", None, None, None, "standard", text, "", None)
+    layout = found.group("layout")
+    attrs = marker_attributes(found.group("attrs"))
+    accent, theme = attrs.get("accent"), attrs.get("theme")
+    composition = attrs.get("composition", "standard")
+    if composition not in COMPOSITIONS or layout not in COMPOSITION_LAYOUTS[composition]:
+        composition = "standard"
+    body = re.sub(r"\A(?:[ \t]*\r?\n)+", "", text[found.end() :])
+    scene_line = ""
+    scene = None
+    scene_candidate = body.splitlines()[0] if body.splitlines() else ""
+    scene_match = SCENE_HEADER.fullmatch(scene_candidate)
+    if scene_match:
+        scene_line = scene_candidate.strip()
+        scene = decode_scene(scene_line)
+        body = re.sub(r"\A(?:[ \t]*\r?\n)+", "", body[len(scene_candidate) :])
+    marker_line = found.group(0).strip()
+    if scene_line:
+        marker_line = f"{marker_line}\n{scene_line}"
     return Marked(
-        found.group(0).strip(),
+        marker_line,
         layout,
         accent if layout == "title" and accent in ACCENTS else None,
-        re.sub(r"\A(?:[ \t]*\r?\n)+", "", text[found.end() :]),
+        theme if layout == "title" and theme in THEMES else None,
+        composition,
+        body,
+        scene_line,
+        scene,
+        1 if layout == "title" and attrs.get("design") == "v1" else 0,
     )
 
 
@@ -269,14 +411,48 @@ def layout_of(text: str) -> tuple[str | None, str]:
     return marked.layout, marked.body
 
 
-def with_layout(text: str, layout: str, accent: str | None = None) -> str:
+def with_layout(
+    text: str,
+    layout: str,
+    accent: str | None = None,
+    theme: str | None = None,
+    composition: str | None = None,
+    design_version: int | None = None,
+) -> str:
     """The slide with the marker for ``layout`` as its first line, in place of any it had. The
     title slide keeps the accent it had, or takes ``accent``; no other slide has one."""
 
     marked = _marked(text)
+    found = LAYOUT_MARK.match(text)
+    attrs = marker_attributes(found.group("attrs")) if found else {}
     kept = (accent or marked.accent) if layout == "title" else None
-    line = f"<!-- layout: {layout}" + (f"; accent: {kept}" if kept in ACCENTS else "") + " -->"
-    return f"{line}\n{marked.body}" if marked.body else line
+    kept_theme = (theme or marked.theme) if layout == "title" else None
+    kept_composition = composition or marked.composition
+    if kept_composition not in COMPOSITIONS or layout not in COMPOSITION_LAYOUTS[kept_composition]:
+        kept_composition = "standard"
+    values: dict[str, str] = {}
+    if kept in ACCENTS and (kept != "ink" or design_version == 1 or marked.design_version == 1):
+        values["accent"] = kept
+    if kept_theme in THEMES and kept_theme != "classic":
+        values["theme"] = kept_theme
+    if kept_composition != "standard":
+        values["composition"] = kept_composition
+    values.update(
+        {
+            key: value
+            for key, value in attrs.items()
+            if key not in {"accent", "theme", "composition"}
+        }
+    )
+    if layout == "title" and design_version is not None:
+        if design_version == 1:
+            values["design"] = "v1"
+        else:
+            values.pop("design", None)
+    suffix = "".join(f"; {key}: {value}" for key, value in values.items())
+    line = f"<!-- layout: {layout}{suffix} -->"
+    prefix = f"{line}\n{marked.scene_line}" if marked.scene_line else line
+    return f"{prefix}\n{marked.body}" if marked.body else prefix
 
 
 def unmarked(text: str, spec: Spec) -> str:
@@ -357,6 +533,8 @@ class Spec:
     style: str | None = None  # a report's; slides have none
     brief: str = ""
     title: str | None = None  # asked for; otherwise the planner's
+    theme: str | None = None  # a slides deck's visual theme; never a report structure
+    design_version: int | None = None
 
 
 @dataclass(frozen=True)
@@ -391,6 +569,19 @@ class Planned:
     link: str = ""
     refs: tuple[int, ...] = ()
     cards: tuple[int, ...] = ()
+    design: dict[str, str] | None = None
+    layout_locked: bool = False
+    design_locked: bool = False
+    design_attempted: bool = False
+    id: str = ""
+    message: str = ""
+    question: str = ""
+    requires: tuple[str, ...] = ()
+
+    def planning_metadata(self) -> dict[str, Any]:
+        from gunther.slide_planning import outline_metadata
+
+        return outline_metadata(self)
 
 
 @dataclass(frozen=True)
@@ -418,6 +609,7 @@ class PlannedSection(BaseModel):
     heading: str
     goal: str = ""
     queries: list[str] = Field(default_factory=list)
+    link: str = ""
 
 
 class Outline(BaseModel):
@@ -455,7 +647,8 @@ SHAPES = {
     "slides": (
         "A deck has 6 to {slides} slides. The first is the title slide (no searches) "
         'and the last is headed "Takeaways" (in the deck\'s language); every other '
-        "slide makes one point."
+        "slide makes one point. For each later slide, link says how it follows the previous "
+        "one, grounded in the planned story; the first slide has no prior link."
     ),
 }
 
@@ -577,9 +770,12 @@ def _brief_block(spec: Spec) -> list[str]:
     return [f"Brief: {spec.brief or '(none)'}"]
 
 
-def _outline_text(outline: Sequence[Planned]) -> str:
+def _outline_text(outline: Sequence[Planned], kind: str) -> str:
+    unit = "slide" if kind == "slides" else "section"
     return "\n".join(
-        f"{index}. {item.heading}" + (f": {item.goal}" if item.goal else "")
+        f"{index}. {item.heading}"
+        + (f": {item.goal}" if item.goal else "")
+        + (f"\n   Follows the previous {unit}: {item.link}" if item.link else "")
         for index, item in enumerate(outline, start=1)
     )
 
@@ -603,6 +799,10 @@ def shape_section(
     layout: str | None = None,
     *,
     accent: str | None = None,
+    theme: str | None = None,
+    composition: str | None = None,
+    scene_line: str | None = None,
+    design_version: int | None = None,
 ) -> str:
     """The section as the rules want it: its own heading first, no stray section starts.
 
@@ -633,7 +833,15 @@ def shape_section(
         shaped = mark + re.sub(r"^#+\s*", "", first) + body[len(first) :]
     else:
         shaped = f"{mark}{heading}\n\n{body}" if body else f"{mark}{heading}"
-    return with_layout(shaped, layout, accent) if spec.kind == "slides" and layout else shaped
+    chosen_layout = layout or ("title" if title_slide and spec.theme else None)
+    shaped = (
+        with_layout(shaped, chosen_layout, accent, theme or spec.theme, composition, design_version)
+        if spec.kind == "slides" and chosen_layout
+        else shaped
+    )
+    if spec.kind == "slides" and chosen_layout == "composed" and scene_line:
+        shaped = with_scene_line(shaped, scene_line)
+    return shaped
 
 
 # Checking -------------------------------------------------------------------------------------
@@ -706,6 +914,65 @@ class Draft:
     coverage: dict[str, Any] | None = None
 
 
+def diagram_fallback_reason(draft: Draft) -> str | None:
+    """Only draw a diagram when every cited edge received a supported Checker verdict."""
+    marked = _marked(draft.text)
+    if marked.layout != "diagram":
+        return None
+    if problem := diagram_problem(draft.text):
+        return problem
+    if not draft.coverage or draft.coverage.get("status") != "complete":
+        return "The Checker did not complete coverage of this diagram's relationships."
+
+    claims = draft.coverage.get("claims", [])
+
+    def clean(value: str) -> str:
+        value = CITATION_GROUP.sub("", value)
+        value = re.sub(r"[*_`|]", " ", value)
+        return " ".join(value.split()).casefold()
+
+    for row in diagram_edge_rows(draft.text):
+        expected = clean(" ".join(row))
+        row_refs = set(_numbers(row[1]))
+        matched = [
+            claim
+            for claim in claims
+            if expected
+            and expected in clean(str(claim.get("text", "")))
+            and row_refs.issubset(set(claim.get("refs", [])))
+        ]
+        if not matched or any(claim.get("verdict") != "supported" for claim in matched):
+            return (
+                "One or more relationship claims were unsupported, unverified, or "
+                "unchecked by the Checker."
+            )
+    return None
+
+
+def diagram_as_text(draft: Draft) -> Draft:
+    """Keep every relation row, citation and note when a diagram cannot be trusted or laid out."""
+    if _marked(draft.text).layout != "diagram":
+        return draft
+    return Draft(
+        with_layout(draft.text, "text"),
+        draft.issues,
+        draft.coverage,
+    )
+
+
+def fallback_unverified_diagram(draft: Draft, index: int, skipped: list[dict[str, Any]]) -> Draft:
+    if reason := diagram_fallback_reason(draft):
+        skipped.append(
+            {
+                "step": "layout",
+                "label": f"Slide {index + 1} shown as a table/text",
+                "reason": reason,
+            }
+        )
+        return diagram_as_text(draft)
+    return draft
+
+
 def _no_events(_event: dict[str, Any]) -> None:
     return None
 
@@ -749,6 +1016,7 @@ class OutputAgents:
                 tuple(" ".join(q.split())[:300] for q in item.queries if q.strip())[
                     : self.limits.queries
                 ],
+                link=" ".join(item.link.split())[:200],
             )
             for item in outline.sections
             if item.heading.strip()
@@ -788,8 +1056,14 @@ class OutputAgents:
             left = len([other for other in searching if other >= index])
             allowance = min(self.limits.per_section, max(0, pool.limit - len(pool)) // left)
             mine[index] = self._research_section(
-                model, f"{item.heading}: {item.goal}".strip(": "), item.queries, tool, pool,
-                allowance, emit, index,
+                model,
+                f"{item.heading}: {item.goal}".strip(": "),
+                item.queries,
+                tool,
+                pool,
+                allowance,
+                emit,
+                index,
             )
         return mine
 
@@ -807,8 +1081,15 @@ class OutputAgents:
         found: list[Evidence] = []
         for query in queries:
             label = f"Searched {tool.where} for “{query}”"
-            emit({"type": "step", "state": "running", "tool": tool.name, "label": label,
-                  "section": section})
+            emit(
+                {
+                    "type": "step",
+                    "state": "running",
+                    "tool": tool.name,
+                    "label": label,
+                    "section": section,
+                }
+            )
             try:
                 results = tool.run(query)
             except ToolFailure as error:
@@ -872,12 +1153,27 @@ class OutputAgents:
             *_brief_block(spec),
             "",
             f"The whole {spec.kind}:",
-            _outline_text(outline),
+            _outline_text(outline, spec.kind),
             "",
             f"Write section {index + 1} of {len(outline)}: {item.heading}",
         ]
         if item.goal:
             lines.append(f"Goal: {item.goal}")
+        if item.link:
+            unit = "slide" if spec.kind == "slides" else "section"
+            lines.append(f"Transition from the previous {unit}: {item.link}")
+        if item.design:
+            lines += [
+                "",
+                "Page-design directions (presentation guidance, not evidence):",
+                f"Intent: {item.design.get('intent', '')}",
+                f"Visual explanation: {item.design.get('visual', '')}",
+                f"Composition: {item.design.get('composition', 'standard')}",
+                f"Emphasis in existing content: {item.design.get('emphasis', '')}",
+                f"Speaker-note guidance: {item.design.get('notes', '')}",
+                "Do not turn design rationale into a factual claim; spoken facts must come "
+                "from the pool.",
+            ]
         lines += _notes_block(notes)
         lines += ["", *self._pool_lines(pool, passages)]
         if before:
@@ -905,6 +1201,13 @@ class OutputAgents:
             title_slide,
             item.layout or None,
             accent=_marked(current).accent if current is not None else None,
+            theme=_marked(current).theme if current is not None else spec.theme,
+            composition=(item.design or {}).get("composition")
+            or (_marked(current).composition if current is not None else None),
+            scene_line=_marked(current).scene_line if current is not None else None,
+            design_version=_marked(current).design_version
+            if current is not None
+            else spec.design_version,
         )
 
     # Checker ------------------------------------------------------------------------------
@@ -915,6 +1218,8 @@ class OutputAgents:
         text: str,
         by_ref: dict[int, Evidence],
         coverage: dict[str, Any] | None = None,
+        *,
+        diagram: bool = False,
     ) -> list[tuple[int, int, str, list[int]]]:
         """The cited sentences whose passages do not state them. A model that cannot
         answer finds none. A number with no passage behind it counts as unsupported."""
@@ -954,7 +1259,17 @@ class OutputAgents:
                 verdict, _ = self.gateway.complete_json(
                     model,
                     Unsupported,
-                    system=SUPPORT,
+                    system=(
+                        SUPPORT
+                        + (
+                            "\n\nDiagram interpretation: each relation row asserts a directed "
+                            "From → Relationship/condition → To claim. Source wording may differ, "
+                            "but must support relation and direction. Do not infer from ordering "
+                            "or accept a row because its entities alone appear in the source."
+                            if diagram
+                            else ""
+                        )
+                    ),
                     prompt="\n".join(lines),
                     effort="off",
                 )
@@ -1049,7 +1364,9 @@ class OutputAgents:
             for _, _, claim in leads_in(text, 40)
         ]
         coverage: dict[str, Any] = {}
-        flagged = self._unsupported(model, text, pool.by_ref(), coverage)
+        flagged = self._unsupported(
+            model, text, pool.by_ref(), coverage, diagram=marked.layout == "diagram"
+        )
         issues += [
             Issue(_plain(chunk)[:300], "unsupported", "The sources it cites do not state this.")
             for _, _, chunk, _ in flagged
@@ -1101,7 +1418,14 @@ class OutputAgents:
         marker is no claim; the hash is that of the whole slide, marker included."""
         _, check, _, _ = self.ask.check_sentences(
             model,
-            "Verify this output section",
+            (
+                "Verify this output section. For a diagram, interpret each row as a directed "
+                "From → Relationship/condition → To assertion. The source need not use the same "
+                "literal node labels or mention a drawn arrow, but it must support the concepts, "
+                "direction, and relation. Do not accept a relation inferred from ordering alone."
+                if _marked(text).layout == "diagram"
+                else "Verify this output section"
+            ),
             layout_of(text)[1],
             by_ref,
             limit=self.limits.sentences,
@@ -1153,7 +1477,9 @@ class OutputAgents:
             Issue(claim, "unverified", "From the model's own knowledge; no source was found.")
             for _, _, claim in leads_in(text, 40)
         ]
-        for _, _, chunk, refs in self._unsupported(model, text, by_ref):
+        for _, _, chunk, refs in self._unsupported(
+            model, text, by_ref, diagram=_marked(whole).layout == "diagram"
+        ):
             missing = [ref for ref in refs if ref not in by_ref]
             note = (
                 "Its number has no source in the list."
@@ -1203,7 +1529,14 @@ class OutputAgents:
         final = []
         for draft in drafts:
             text, _ = check_citations(draft.text, set(by_ref))
-            final.append(renumber_citations(text, used))
+            renumbered = renumber_citations(text, used)
+            final.append(
+                rebind_graphics_hash(
+                    text,
+                    renumbered,
+                    {ref: number for number, ref in enumerate(used, start=1)},
+                )
+            )
         content = join_document(preamble, final, spec.kind)
         citations = [
             by_ref[ref].payload[0].model_copy(update={"ref": number})
@@ -1242,7 +1575,13 @@ class OutputAgents:
             content=content,
             outline=[
                 {"heading": item.heading, "goal": item.goal}
+                | item.planning_metadata()
                 | ({"layout": item.layout} if item.layout else {})
+                | ({"link": item.link} if item.link else {})
+                | ({"design": item.design} if item.design else {})
+                | ({"layoutLocked": True} if item.layout_locked else {})
+                | ({"designLocked": True} if item.design_locked else {})
+                | ({"designAttempted": True} if item.design_attempted else {})
                 for item in outline
             ],
             citations=citations,
@@ -1291,12 +1630,17 @@ class OutputAgents:
             )
             title = " ".join(title.split())[:160]
         if spec.kind == "slides":
-            planned[0] = replace(planned[0], heading=title)
+            planned[0] = replace(planned[0], heading=title, link="")
         emit(
             {
                 "type": "outline",
                 "title": title,
-                "sections": [{"heading": item.heading, "goal": item.goal} for item in planned],
+                "sections": [
+                    {"heading": item.heading, "goal": item.goal}
+                    | ({"layout": item.layout} if item.layout else {})
+                    | ({"link": item.link} if item.link else {})
+                    for item in planned
+                ],
             }
         )
         passages = self.research(model, spec, planned, tool, pool, emit)
@@ -1316,7 +1660,8 @@ class OutputAgents:
                 emit,
             )
             emit({"type": "section", "index": index, "state": "checking"})
-            drafts.append(self.check_built(model, written, tool, pool, emit, index))
+            draft = self.check_built(model, written, tool, pool, emit, index)
+            drafts.append(fallback_unverified_diagram(draft, index, self.skipped))
             emit({"type": "section", "index": index, "state": "done"})
         preamble = ""
         if spec.kind == "report":
@@ -1412,8 +1757,27 @@ class OutputAgents:
                 emit({"type": "section", "index": index, "state": "done"})
                 continue
             emit({"type": "section", "index": index, "state": "checking"})
-            drafts[index] = self.check_built(model, written, tool, pool, emit, index)
+            drafts[index] = fallback_unverified_diagram(
+                self.check_built(model, written, tool, pool, emit, index), index, self.skipped
+            )
             emit({"type": "section", "index": index, "state": "done"})
+        compose_pages = getattr(self, "compose_pages", None)
+        composed_indexes = [
+            index for index in indexes if planned[index].layout == "composed"
+        ]
+        if spec.kind == "slides" and callable(compose_pages) and composed_indexes:
+            drafts = compose_pages(
+                model,
+                effort,
+                spec,
+                planned,
+                drafts,
+                emit,
+                indices=composed_indexes,
+                force=True,
+                instructions={index: instruction for index in composed_indexes},
+                pool=pool,
+            )
         for index, draft in enumerate(drafts):
             if planned[index].layout in CHARTS and draft.coverage is None:
                 # Older saved checks have no coverage record. Verify the unchanged

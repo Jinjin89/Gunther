@@ -192,6 +192,26 @@ describe("source pages", () => {
     expect(screen.queryByText("Welcome back.")).not.toBeInTheDocument();
   });
 
+  it("refreshes a recording's measured duration and uses it instead of the saved timer estimate", async () => {
+    vi.useFakeTimers();
+    try {
+      const recording = source({
+        kind: "recording", recordingDurationSeconds: 60, recordingDurationPending: true,
+        content: "# Lecture\n\nDuration: 01:00 · Captured: today · Local recording: rec_0123456789abcdef01234567\n\n## Transcript\n\n[00:00] Words.",
+      });
+      api.source.mockResolvedValueOnce(recording).mockResolvedValue({
+        ...recording, recordingDurationSeconds: 120, recordingDurationPending: false,
+      });
+      renderPage();
+      await act(async () => { await Promise.resolve(); });
+      expect(screen.getByRole("slider", { name: "Position" })).toHaveAttribute("max", "60");
+      await act(async () => { vi.advanceTimersByTime(2500); });
+      expect(screen.getByRole("slider", { name: "Position" })).toHaveAttribute("max", "120");
+      await act(async () => { vi.advanceTimersByTime(5000); });
+      expect(api.source).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("presents a web snapshot as a site card, your context and the captured text", async () => {
     api.source.mockResolvedValue(source({
       kind: "link",

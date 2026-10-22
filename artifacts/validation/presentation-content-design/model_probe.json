@@ -1,0 +1,230 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-17",
+  "purpose": "Small synthetic validation of the slide design, diagram writing, repair, and semantic verification paths. No user library data was used.",
+  "model": "DeepSeek · Flash",
+  "designStage": {
+    "pages": 6,
+    "pagesWithDesign": 6,
+    "layouts": [
+      "title",
+      "diagram",
+      "big_number",
+      "quote",
+      "cards",
+      "takeaways"
+    ]
+  },
+  "evidence": [
+    {
+      "ref": 1,
+      "title": "Synthetic review procedure",
+      "text": "In this synthetic example procedure, review the evidence first. If the required information is complete, prepare a recommendation. If required information is missing, request the missing material. These are conditional alternatives, not a sequence through both outcomes."
+    }
+  ],
+  "verifiedSlide": "<!-- layout: diagram -->\n## Missing information changes the next step\n\nIn this synthetic example procedure, both arrows leave the same review step and only one outcome applies at a time [1]. The condition on each arrow is whether the required information is complete or missing [1].\n\n| From | Relationship | To |\n| --- | --- | --- |\n| Review the evidence | if complete [1] | Prepare a recommendation |\n| Review the evidence | if missing [1] | Request missing material |\n\nNote: Start by pointing at the single left-hand node, \"Review the evidence\" — this is the synthetic example procedure from the previous slide, and every path starts here [1]. Then trace the two separate arrows: one leaves the review when the required information is complete and leads to preparing a recommendation; the other leaves the same review when required information is missing and leads to requesting the missing material [1]. Say plainly that \"conditional\" means only one of these applies at a time — the source calls them conditional alternatives, not a sequence through both outcomes [1]. Pause after that, so the two arrows are read side by side rather than as step one and step two. The sources do not say what happens after a request for missing material, so do not sketch a third step. Transition: the next slide gives one illustrative training result from this procedure.",
+  "renderedLayout": "diagram",
+  "coverage": {
+    "status": "complete",
+    "considered": 12,
+    "checked": 12,
+    "unchecked": 0,
+    "claims": [
+      {
+        "id": "840763ba4c3b27da566f",
+        "n": 1,
+        "start": 0,
+        "end": 45,
+        "text": "## Missing information changes the next step",
+        "refs": [],
+        "verdict": "nonfactual",
+        "reason": "",
+        "evidence": []
+      },
+      {
+        "id": "fe276ce89ce7ce50b99c",
+        "n": 2,
+        "start": 46,
+        "end": 165,
+        "text": "In this synthetic example procedure, both arrows leave the same review step and only one outcome applies at a time [1].",
+        "refs": [
+          1
+        ],
+        "verdict": "inference",
+        "reason": "Source doesn't mention arrows leaving the same step or 'only one at a time' as an explicit claim",
+        "evidence": [
+          [
+            "library",
+            "Synthetic review procedure",
+            "966729d8677fc900f1cfc3eca0e55f359e008f537f1987889b7e4fbd2ffa8b3e"
+          ]
+        ]
+      },
+      {
+        "id": "3fe8b0c093cca433aabc",
+        "n": 3,
+        "start": 165,
+        "end": 257,
+        "text": "The condition on each arrow is whether the required information is complete or missing [1].",
+        "refs": [
+          1
+        ],
+        "verdict": "supported",
+        "reason": "",
+        "evidence": [
+          [
+            "library",
+            "Synthetic review procedure",
+            "966729d8677fc900f1cfc3eca0e55f359e008f537f1987889b7e4fbd2ffa8b3e"
+          ]
+        ]
+      },
+      {
+        "id": "d2f1e5cddd5e645d1010",
+        "n": 4,
+        "start": 259,
+        "end": 288,
+        "text": "| From | Relationship | To |",
+        "refs": [],
+        "verdict": "nonfactual",
+        "reason": "",
+        "evidence": []
+      },
+      {
+        "id": "71dd8742d68319b5faf5",
+        "n": 5,
+        "start": 308,
+        "end": 377,
+        "text": "| Review the evidence | if complete [1] | Prepare a recommendation |",
+        "refs": [
+          1
+        ],
+        "verdict": "supported",
+        "reason": "",
+        "evidence": [
+          [
+            "library",
+            "Synthetic review procedure",
+            "966729d8677fc900f1cfc3eca0e55f359e008f537f1987889b7e4fbd2ffa8b3e"
+          ]
+        ]
+      },
+      {
+        "id": "25a92985bd2c955b0988",
+        "n": 6,
+        "start": 377,
+        "end": 445,
+        "text": "| Review the evidence | if missing [1] | Request missing material |",
+        "refs": [
+          1
+        ],
+        "verdict": "supported",
+        "reason": "",
+        "evidence": [
+          [
+            "library",
+            "Synthetic review procedure",
+            "966729d8677fc900f1cfc3eca0e55f359e008f537f1987889b7e4fbd2ffa8b3e"
+          ]
+        ]
+      },
+      {
+        "id": "35465cd317e5b4c0a57b",
+        "n": 7,
+        "start": 446,
+        "end": 620,
+        "text": "Note: Start by pointing at the single left-hand node, \"Review the evidence\" — this is the synthetic example procedure from the previous slide, and every path starts here [1].",
+        "refs": [
+          1
+        ],
+        "verdict": "partly",
+        "reason": "Source doesn't mention a left-hand node, drawing, or previous slide",
+        "evidence": [
+          [
+            "library",
+            "Synthetic review procedure",
+            "966729d8677fc900f1cfc3eca0e55f359e008f537f1987889b7e4fbd2ffa8b3e"
+          ]
+        ]
+      },
+      {
+        "id": "77a7c88e6ed6adab1f38",
+        "n": 8,
+        "start": 620,
+        "end": 881,
+        "text": "Then trace the two separate arrows: one leaves the review when the required information is complete and leads to preparing a recommendation; the other leaves the same review when required information is missing and leads to requesting the missing material [1].",
+        "refs": [
+          1
+        ],
+        "verdict": "supported",
+        "reason": "",
+        "evidence": [
+          [
+            "library",
+            "Synthetic review procedure",
+            "966729d8677fc900f1cfc3eca0e55f359e008f537f1987889b7e4fbd2ffa8b3e"
+          ]
+        ]
+      },
+      {
+        "id": "64b22a04bdb278a96ae2",
+        "n": 9,
+        "start": 881,
+        "end": 1046,
+        "text": "Say plainly that \"conditional\" means only one of these applies at a time — the source calls them conditional alternatives, not a sequence through both outcomes [1].",
+        "refs": [
+          1
+        ],
+        "verdict": "supported",
+        "reason": "",
+        "evidence": [
+          [
+            "library",
+            "Synthetic review procedure",
+            "966729d8677fc900f1cfc3eca0e55f359e008f537f1987889b7e4fbd2ffa8b3e"
+          ]
+        ]
+      },
+      {
+        "id": "520f0de72dcb9c36f6c9",
+        "n": 10,
+        "start": 1046,
+        "end": 1142,
+        "text": "Pause after that, so the two arrows are read side by side rather than as step one and step two.",
+        "refs": [],
+        "verdict": "nonfactual",
+        "reason": "",
+        "evidence": []
+      },
+      {
+        "id": "fa0d0fcda0b012dd4ab3",
+        "n": 11,
+        "start": 1142,
+        "end": 1247,
+        "text": "The sources do not say what happens after a request for missing material, so do not sketch a third step.",
+        "refs": [],
+        "verdict": "unsourced",
+        "reason": "",
+        "evidence": []
+      },
+      {
+        "id": "ccd12960eb7ef667e595",
+        "n": 12,
+        "start": 1247,
+        "end": 1334,
+        "text": "Transition: the next slide gives one illustrative training result from this procedure.",
+        "refs": [],
+        "verdict": "nonfactual",
+        "reason": "",
+        "evidence": []
+      }
+    ],
+    "answerHash": "25444fa1f73831dc9201bfc9871e79f5c912e7a72e5f6ec816d40086bc244d4e"
+  },
+  "skipped": [],
+  "limits": [
+    "This is one synthetic case, not a blind quality benchmark.",
+    "The isolated probe exercised design, writing, bounded layout repair, and semantic coverage; automated integration tests cover saving and reopening.",
+    "Only the diagram relationship claims are the subject of this check; see individual coverage verdicts."
+  ]
+}

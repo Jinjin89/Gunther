@@ -14,12 +14,28 @@
  *   covers it. A slide without one (an older deck) takes its outline's layout (see slideLayouts).
  */
 import type { Artifact, OutputKind, OutputSection } from "@gunther/contracts";
+import { decodeScene, visibleMarkdown } from "./slides/scene";
 
 const FENCE = /^\s*(```|~~~)/;
 /** The colours a title slide's marker may name (the same list as ACCENTS in outputs.py). */
 export const ACCENTS = ["ink", "blue", "teal", "red", "amber", "violet"] as const;
-/** At the start of a slide, after any blank lines: the whole marker line. */
-const LAYOUT_MARK = /^[ \t\r\n]*<!--[ \t]*layout:[ \t]*([a-z][a-z0-9_]*)[ \t]*(?:;[ \t]*accent:[ \t]*([a-z]+)[ \t]*)?-->[ \t]*(?:\r?\n|$)/;
+export const THEMES = ["classic", "briefing", "editorial", "keynote"] as const;
+export type SlideTheme = (typeof THEMES)[number];
+export const COMPOSITIONS = ["standard", "split", "spotlight"] as const;
+export type SlideComposition = (typeof COMPOSITIONS)[number];
+export const COMPOSITION_LAYOUTS: Record<SlideComposition, readonly string[]> = {
+  standard: ["title", "big_number", "compare", "two_column", "flow", "timeline", "bar_chart", "line_chart", "cards", "quote", "figure", "diagram", "text", "takeaways", "composed"],
+  split: ["big_number", "quote", "figure"],
+  spotlight: ["big_number", "quote", "text"],
+};
+export const compositionFor = (layout: string | null | undefined, value: string | null | undefined): SlideComposition =>
+  COMPOSITIONS.includes(value as SlideComposition)
+    && COMPOSITION_LAYOUTS[value as SlideComposition].includes(layout ?? "")
+    ? value as SlideComposition
+    : "standard";
+/** At the start of a slide, after any blank lines: layout plus extensible keyed metadata. */
+const LAYOUT_MARK = /^[ \t\r\n]*<!--[ \t]*layout:[ \t]*([a-z][a-z0-9_]*)[ \t]*(?:;[ \t]*([a-z][a-z0-9_]*):[ \t]*([a-z][a-z0-9_-]*)[ \t]*)*-->[ \t]*(?:\r?\n|$)/;
+const MARKER_ATTR = /;[ \t]*([a-z][a-z0-9_]*):[ \t]*([a-z][a-z0-9_-]*)[ \t]*/g;
 
 /** Each line of a document, and whether it is inside a code fence. */
 function lines(content: string): Array<{ line: string; fenced: boolean }> {
@@ -68,20 +84,46 @@ export async function sectionHash(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+function markerAttrs(marker: string): Record<string, string> {
+  return Object.fromEntries([...marker.matchAll(MARKER_ATTR)].map((match) => [match[1] ?? "", match[2] ?? ""]));
+}
+
+function markerLine(layout: string, attrs: Record<string, string>): string {
+  const parts = Object.entries(attrs).filter(([key, value]) => key && value);
+  return `<!-- layout: ${layout}${parts.map(([key, value]) => `; ${key}: ${value}`).join("")} -->`;
+}
+
 /**
  * A slide's layout and accent from its marker, and the slide without the marker. Only the title
  * slide has an accent, and only one of the six colours. A slide with no marker has no layout and
  * is given back as it is.
  */
-export function layoutOf(text: string): { layout: string | null; accent: string | null; body: string } {
+export function layoutOf(text: string): { layout: string | null; accent: string | null; theme: SlideTheme | null; composition: SlideComposition; body: string; scene?: ReturnType<typeof decodeScene>; designVersion?: number } {
   const found = LAYOUT_MARK.exec(text);
   const layout = found?.[1];
-  if (!found || !layout) return { layout: null, accent: null, body: text };
-  const accent = found[2];
+  if (!found || !layout) return { layout: null, accent: null, theme: null, composition: "standard", body: text };
+  const attrs = markerAttrs(found[0]);
+  const accent = attrs.accent;
+  const theme = attrs.theme;
+  const composition = compositionFor(layout, attrs.composition);
+  let body = text.slice(found[0].length).replace(/^(?:[ \t]*\r?\n)+/, "");
+  let scene: ReturnType<typeof decodeScene> | undefined;
+  const sceneLine = /^<!--[ \t]*scene:[ \t]*([^\r\n]*?)\s*-->[ \t]*(?:\r?\n|$)/.exec(body);
+  if (sceneLine) {
+    scene = decodeScene(sceneLine[1]);
+    body = body.slice(sceneLine[0].length).replace(/^(?:[ \t]*\r?\n)+/, "");
+  } else if (/^<!--[ \t]*scene:/i.test(body)) {
+    scene = { scene: null, issue: "Scene metadata has an invalid marker." };
+    body = body.replace(/^[^\r\n]*(?:\r?\n|$)/, "").replace(/^(?:[ \t]*\r?\n)+/, "");
+  }
   return {
     layout,
     accent: layout === "title" && accent !== undefined && ACCENTS.some((name) => name === accent) ? accent : null,
-    body: text.slice(found[0].length).replace(/^(?:[ \t]*\r?\n)+/, ""),
+    theme: layout === "title" && theme !== undefined && THEMES.some((name) => name === theme) ? theme as SlideTheme : null,
+    composition,
+    body,
+    ...(scene ? { scene } : {}),
+    ...(layout === "title" && attrs.design === "v1" ? { designVersion: 1 } : {}),
   };
 }
 
@@ -94,17 +136,37 @@ export function layoutOf(text: string): { layout: string | null; accent: string 
  */
 export function withAccent(content: string, accent: string): string {
   if (!ACCENTS.some((name) => name === accent) || content.trim() === "") return content;
-  const line = (suffix: string) => `<!-- layout: title${accent === "ink" ? "" : `; accent: ${accent}`} -->${suffix}`;
   const found = LAYOUT_MARK.exec(content);
   if (!found) {
     if (accent === "ink") return content;
     const lead = /^[ \t\r\n]*/.exec(content)?.[0] ?? "";
-    return `${lead}${line("\n")}${content.slice(lead.length)}`;
+    return `${lead}${markerLine("title", { accent })}\n${content.slice(lead.length)}`;
   }
   if (found[1] !== "title") return content;
+  const attrs = markerAttrs(found[0]);
+  if (accent === "ink" && attrs.design !== "v1") delete attrs.accent; else attrs.accent = accent;
   const lead = /^[ \t\r\n]*/.exec(found[0])?.[0] ?? "";
   const end = /\r?\n$/.exec(found[0])?.[0] ?? "";
-  return `${lead}${line(end)}${content.slice(found[0].length)}`;
+  return `${lead}${markerLine("title", attrs)}${end}${content.slice(found[0].length)}`;
+}
+
+/** Change only the title marker's visual theme, retaining its accent and all slide content. */
+export function withTheme(content: string, theme: string): string {
+  if (!THEMES.some((name) => name === theme) || content.trim() === "") return content;
+  const found = LAYOUT_MARK.exec(content);
+  if (theme === "classic" && !found) return content;
+  if (found && found[1] !== "title") return content;
+  const attrs = found ? markerAttrs(found[0]) : {};
+  if (theme === "classic" && found?.[1] === "title" && (!attrs.theme || attrs.theme === "classic")) return content;
+  if (theme === "classic") delete attrs.theme; else attrs.theme = theme;
+  if (theme !== "classic") attrs.design = "v1";
+  if (!found) {
+    const lead = /^[ \t\r\n]*/.exec(content)?.[0] ?? "";
+    return `${lead}${markerLine("title", attrs)}\n${content.slice(lead.length)}`;
+  }
+  const lead = /^[ \t\r\n]*/.exec(found[0])?.[0] ?? "";
+  const end = /\r?\n$/.exec(found[0])?.[0] ?? "";
+  return `${lead}${markerLine("title", attrs)}${end}${content.slice(found[0].length)}`;
 }
 
 /** The first line of a section without its "#" marks, and under a slide's marker. */
@@ -134,6 +196,54 @@ export function splitNotes(slide: string): { body: string; notes: string } {
   return { body, notes: [first.slice("Note:".length).trim(), ...rest].join("\n").trim() };
 }
 
+/** Remove only scene metadata in its reserved header position, for an ordinary Markdown editor. */
+export function withoutSceneMarkers(content: string): string {
+  return splitDocument(content, "slides").sections.map((section) => {
+    const marker = LAYOUT_MARK.exec(section);
+    if (!marker) return section;
+    const rest = section.slice(marker[0].length);
+    const sceneLine = /^[ \t]*<!--[ \t]*scene:[^\r\n]*-->[ \t]*(?:\r?\n|$)/.exec(rest);
+    return sceneLine ? section.slice(0, marker[0].length) + rest.slice(sceneLine[0].length).replace(/^(?:[ \t]*\r?\n)+/, "") : section;
+  }).join("\n\n---\n\n");
+}
+
+/** Restore metadata only when its page still has the same verified source fingerprint. */
+export async function restoreUnchangedScenes(original: string, draft: string): Promise<string> {
+  const oldPages = splitDocument(original, "slides").sections;
+  const newPages = splitDocument(draft, "slides").sections;
+  const previous = await Promise.all(oldPages.map(async (page) => {
+    const layout = LAYOUT_MARK.exec(page);
+    if (!layout) return null;
+    const rest = page.slice(layout[0].length);
+    const line = /^[ \t]*<!--[ \t]*scene:[^\r\n]*-->[ \t]*$/.exec(rest.split(/\r?\n/, 1)[0] ?? "");
+    if (!line) return null;
+    return { hash: await sectionHash(visibleMarkdown(page)), line: line[0] };
+  }));
+  const hashes = await Promise.all(newPages.map((page) => sectionHash(visibleMarkdown(page))));
+  const matched = new Array<string | undefined>(newPages.length);
+  const used = new Set<number>();
+  // Preserve a scene in place first. Repeated source text may intentionally have different trees.
+  for (let index = 0; index < newPages.length && index < previous.length; index += 1) {
+    const old = previous[index];
+    if (old && old.hash === hashes[index]) { matched[index] = old.line; used.add(index); }
+  }
+  // Then recover moved pages from the remaining same-source records.
+  for (let index = 0; index < newPages.length; index += 1) {
+    if (matched[index]) continue;
+    const found = previous.findIndex((old, oldIndex) => !used.has(oldIndex) && old?.hash === hashes[index]);
+    if (found >= 0) { matched[index] = previous[found]?.line; used.add(found); }
+  }
+  const restored = newPages.map((page, index) => {
+    const line = matched[index];
+    if (!line) return page;
+    const layout = LAYOUT_MARK.exec(page);
+    if (!layout) return page;
+    const tail = page.slice(layout[0].length).replace(/^(?:[ \t]*\r?\n)+/, "");
+    return `${layout[0]}${line}\n${tail}`;
+  });
+  return restored.join("\n\n---\n\n");
+}
+
 /** A slide as the viewer needs it: its heading, how it is drawn, what it shows, and what the presenter says. */
 export interface ParsedSlide {
   heading: string;
@@ -141,6 +251,12 @@ export interface ParsedSlide {
   layout: string | null;
   /** The title slide's accent colour, from its marker. */
   accent: string | null;
+  /** The title slide's visual theme; missing and unknown names use Classic. */
+  theme: SlideTheme | null;
+  composition: SlideComposition;
+  designVersion?: number;
+  /** Decoded scene metadata and a decoding diagnostic, when a marker is present. */
+  scene?: ReturnType<typeof decodeScene>;
   /** What the slide shows, heading included, without the marker. */
   body: string;
   notes: string;
@@ -148,8 +264,8 @@ export interface ParsedSlide {
 
 export function parseSlides(content: string): ParsedSlide[] {
   return splitDocument(content, "slides").sections.map((text) => {
-    const { layout, accent, body } = layoutOf(text);
-    return { heading: headingOf(body), layout, accent, ...splitNotes(body) };
+    const { layout, accent, theme, composition, body, scene, designVersion } = layoutOf(text);
+    return { heading: headingOf(body), layout, accent, theme, composition, ...(designVersion ? { designVersion } : {}), ...(scene ? { scene } : {}), ...splitNotes(body) };
   });
 }
 

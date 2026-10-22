@@ -8,10 +8,20 @@ from fake_models import FakeProvider, api_error, gateway, skill_replies, skill_s
 from test_outputs import app_for, body, build, built, library, revise, versions, workspace
 
 from gunther.agent import Evidence
-from gunther.outputs import Pool, Spec, layout_of, split_document
+from gunther.outputs import Draft, OutputAgents, Planned, Pool, Spec, layout_of, split_document
 from gunther.schemas import ConversationCitationOut
-from gunther.skill_runner import Approach, Card, SkillAgents
+from gunther.skill_runner import Approach, Card, SkillAgents, _scene_leaves
 from gunther.skillbook import skill_for
+from gunther.slide_scene import (
+    SceneEnvelope,
+    SceneGroup,
+    SceneLeaf,
+    decode_scene,
+    graphics_hash,
+    scene_marker,
+    source_hash,
+    with_scene,
+)
 
 APPROACH = {
     "question": "How are T and B cells told apart?",
@@ -91,6 +101,8 @@ def test_a_report_follows_its_skill_from_the_approach_to_a_revision(tmp_path: Pa
     assert {"understand", "structure", "write", "edit_review", "reader_test", "revise"} <= set(
         steps
     )
+    assert "design" not in steps
+    assert "compose" not in steps
     writing = next(r for r in fake.requests if skill_step(r) == "write")
     system = str(writing["messages"][0]["content"])
     # Gunther's rules come first, then the skill's preamble, its step and its references.
@@ -118,8 +130,18 @@ SLIDES_OUTLINE = {
     "title": "Markers",
     "sections": [
         {"heading": "Markers", "layout": "compare", "cards": []},
-        {"heading": "CD3D and CD19 set T and B cells apart", "layout": "compare", "cards": [1, 2]},
-        {"heading": "Use both in every panel", "layout": "text", "cards": [1]},
+        {
+            "heading": "CD3D and CD19 set T and B cells apart",
+            "layout": "compare",
+            "cards": [1, 2],
+            "link": "introduces the distinction named in the title",
+        },
+        {
+            "heading": "Use both in every panel",
+            "layout": "text",
+            "cards": [1],
+            "link": "applies both markers after the comparison",
+        },
     ],
 }
 SLIDES = [
@@ -134,15 +156,50 @@ def test_a_deck_writes_each_slide_by_its_own_layout(tmp_path: Path) -> None:
     fake = FakeProvider(skill_replies(SLIDES_APPROACH, SLIDES_OUTLINE, SLIDES, gather=SEARCH))
     with app_for(tmp_path, fake, skills=True) as client:
         base_id, _ = library(client)
-        version = built(build(client, base_id, body(kind="slides")))
+        version = built(build(client, base_id, body(kind="slides", theme="editorial")))
+        rebuilt = built(
+            build(
+                client,
+                base_id,
+                body(
+                    kind="slides",
+                    supersedesArtifactId=version["id"],
+                    outline=[
+                        {
+                            key: value
+                            for key, value in item.items()
+                            if key not in {"layoutLocked", "designLocked", "designAttempted"}
+                        }
+                        for item in version["outline"]
+                    ],
+                ),
+            )
+        )
 
     # The first slide is the title and the last the takeaways, whatever was planned.
     assert [item.get("layout") for item in version["outline"]] == ["title", "compare", "takeaways"]
     assert version["provenance"]["use"] == "talk"
-    assert version["provenance"]["skill"] == {"name": "slides", "version": 3, "skipped": []}
+    assert version["provenance"]["skill"]["version"] == 11
+    assert version["provenance"]["skill"]["skipped"] == []
+    assert version["provenance"]["skill"]["outlineReview"]["coverage"]
+    steps = [skill_step(request) for request in fake.requests]
+    assert steps.index("structure") < steps.index("design") < steps.index("write")
+    designer = next(request for request in fake.requests if skill_step(request) == "design")
+    assert "presentation directions, never" in str(designer["messages"][0]["content"])
+    writes = [request for request in fake.requests if skill_step(request) == "write"]
+    assert "Page-design fields are presentation directions, not evidence" in str(
+        writes[0]["messages"][0]["content"]
+    )
     # Every slide starts with the marker of its layout. Code wrote it: no model was shown one,
     # and the sections are the slides under their markers.
     slides = split_document(version["content"], "slides")[1]
+    assert "theme: editorial" in slides[0]
+    assert version["outline"][1]["link"] == "introduces the distinction named in the title"
+    rebuilt_slides = split_document(rebuilt["content"], "slides")[1]
+    assert "theme: editorial" in rebuilt_slides[0]
+    assert rebuilt["outline"][1]["link"] == version["outline"][1]["link"]
+    assert all(item["layoutLocked"] and item["designLocked"] for item in rebuilt["outline"])
+    assert len([request for request in fake.requests if skill_step(request) == "design"]) == 1
     assert [layout_of(slide)[0] for slide in slides] == ["title", "compare", "takeaways"]
     assert slides[1].startswith("<!-- layout: compare -->\n## CD3D and CD19 set T and B cells")
     assert [section["heading"] for section in version["sections"]] == [
@@ -157,6 +214,420 @@ def test_a_deck_writes_each_slide_by_its_own_layout(tmp_path: Path) -> None:
     assert "## compare" in second and "## flow" not in second
     assert "Layout: compare" in str(writes[1]["messages"][-1]["content"])
     assert "## takeaways" in str(writes[2]["messages"][0]["content"])
+
+
+def test_a_composed_slide_is_checked_then_saved_with_its_block_scene(tmp_path: Path) -> None:
+    outline = [
+        {"heading": "Markers", "goal": "Name the subject", "layout": "title"},
+        {
+            "heading": "The sample reports a 72% measure",
+            "goal": "Explain the result",
+            "layout": "composed",
+        },
+        {"heading": "Takeaways", "goal": "Close the story", "layout": "takeaways"},
+    ]
+    written = [
+        "# Markers\n\nTwo markers tell cells apart",
+        "## The sample reports a 72% measure\n\n**72%** [1]\n\n"
+        "The measurement is from the reported sample [1].",
+        "## Takeaways\n\n- The measurement is bounded to the sample [1]",
+    ]
+    root = {
+        "root": {
+            "kind": "row",
+            "weights": [2, 1],
+            "children": [
+                {
+                    "kind": "leaf",
+                    "blockId": "b1",
+                    "view": "stat",
+                    "size": "display",
+                    "align": "center",
+                    "role": "focus",
+                },
+                {
+                    "kind": "leaf",
+                    "blockId": "b2",
+                    "view": "text",
+                    "role": "support",
+                },
+            ],
+        }
+    }
+    fake = FakeProvider(
+        skill_replies(SLIDES_APPROACH, SLIDES_OUTLINE, written, gather=SEARCH, compose=root)
+    )
+    with app_for(tmp_path, fake, skills=True) as client:
+        base_id, _ = library(client)
+        version = built(build(client, base_id, body(kind="slides", outline=outline)))
+
+    pages = split_document(version["content"], "slides")[1]
+    assert [layout_of(page)[0] for page in pages] == ["title", "composed", "takeaways"]
+    assert pages[1].splitlines()[0] == "<!-- layout: composed -->"
+    assert pages[1].splitlines()[1].startswith("<!-- scene: ")
+    scene = decode_scene(scene_marker(pages[1])[1])
+    assert scene is not None
+    assert scene.root.model_dump(by_alias=True, exclude_defaults=True) == root["root"]
+    assert version["sections"][1]["checked"]
+    calls = [skill_step(request) for request in fake.requests]
+    assert calls.index("write") < calls.index("compose")
+    checker_calls = [request for request in fake.requests if skill_step(request) is None]
+    assert checker_calls
+    assert not any("scene:" in str(request["messages"]) for request in checker_calls)
+
+
+def test_a_design_failure_is_recorded_and_keeps_the_outline_and_original_layouts(
+    tmp_path: Path,
+) -> None:
+    bad_design = {
+        "pages": [
+            {
+                "index": 14,
+                "heading": "Wrong page",
+                "intent": "Explain the claim",
+                "visual": "Use the assigned card",
+                "composition": "standard",
+                "emphasis": "",
+                "notes": "",
+                "layout": "text",
+            }
+        ],
+    }
+    fake = FakeProvider(
+        skill_replies(SLIDES_APPROACH, SLIDES_OUTLINE, SLIDES, gather=SEARCH, design=bad_design)
+    )
+    with app_for(tmp_path, fake, skills=True) as client:
+        base_id, _ = library(client)
+        version = built(build(client, base_id, body(kind="slides")))
+
+    design_calls = [request for request in fake.requests if skill_step(request) == "design"]
+    assert len(design_calls) == 2  # one response and at most one repair
+    assert version["provenance"]["skill"]["skipped"][0]["step"] == "design"
+    assert [item["layout"] for item in version["outline"]] == ["title", "compare", "takeaways"]
+    assert not any(item.get("design") for item in version["outline"])
+    assert [layout_of(slide)[0] for slide in split_document(version["content"], "slides")[1]] == [
+        "title",
+        "compare",
+        "takeaways",
+    ]
+
+
+def test_one_design_call_shares_each_source_excerpt_once_for_a_fourteen_page_deck() -> None:
+    marker = "SINGLE_SHARED_SOURCE_EXCERPT_7f6a"
+    fake = FakeProvider(skill_replies(SLIDES_APPROACH, SLIDES_OUTLINE, SLIDES, gather=SEARCH))
+    agents = SkillAgents(gateway(fake), skill_for("slides"), use="talk")
+    planned = [
+        Planned(
+            "Deck title" if index == 0 else "Takeaways" if index == 13 else f"Claim {index}",
+            "A bounded goal",
+            layout="title" if index == 0 else "takeaways" if index == 13 else "text",
+            refs=(1,),
+        )
+        for index in range(14)
+    ]
+    pool = Pool(40)
+    pool.adopt(Evidence("library", "Source", marker))
+
+    designed = agents.design_pages(
+        agents.gateway.models[0], "off", Spec("slides", "scientist"), planned, pool, lambda _: None
+    )
+
+    assert len(designed) == 14 and all(item.design for item in designed)
+    assert len([request for request in fake.requests if skill_step(request) == "design"]) == 1
+    prompt = str(fake.requests[0]["messages"][-1]["content"])
+    assert prompt.count(marker) == 1
+    assert len(prompt) < 30_000
+
+
+def test_composer_can_choose_two_trees_for_the_same_checked_body() -> None:
+    body = (
+        "<!-- layout: composed -->\n## A measured result\n\n**72%** [1]\n\n"
+        "Measured within the study group [2].\n\n> The condition held throughout [1]\n— Source [1]"
+    )
+    first = {
+        "root": {
+            "kind": "row",
+            "weights": [2, 1],
+            "children": [
+                {"kind": "leaf", "blockId": "b1", "view": "stat", "size": "display"},
+                {
+                    "kind": "column",
+                    "weights": [1, 1],
+                    "children": [
+                        {"kind": "leaf", "blockId": "b2", "view": "text"},
+                        {"kind": "leaf", "blockId": "b3", "view": "quote"},
+                    ],
+                },
+            ],
+        }
+    }
+    second = {
+        "root": {
+            "kind": "column",
+            "weights": [1, 1],
+            "children": [
+                {
+                    "kind": "row",
+                    "weights": [1, 2],
+                    "children": [
+                        {"kind": "leaf", "blockId": "b1", "view": "stat"},
+                        {"kind": "leaf", "blockId": "b2", "view": "text"},
+                    ],
+                },
+                {"kind": "leaf", "blockId": "b3", "view": "quote", "role": "support"},
+            ],
+        }
+    }
+    outputs = iter((first, second))
+    fake = FakeProvider(
+        skill_replies(
+            SLIDES_APPROACH,
+            SLIDES_OUTLINE,
+            SLIDES,
+            compose=lambda _request: json.dumps(next(outputs)),
+        )
+    )
+    agents = SkillAgents(gateway(fake), skill_for("slides"), use="talk")
+    plan = [Planned("A measured result", layout="composed", goal="Explain the finding")]
+
+    trees = []
+    for _ in range(2):
+        draft = Draft(body, [], {"status": "complete"})
+        composed = agents.compose_pages(
+            agents.gateway.models[0],
+            "off",
+            Spec("slides", "scientist"),
+            plan,
+            [draft],
+            lambda _: None,
+            force=True,
+        )[0]
+        _, marker = scene_marker(composed.text)
+        scene = decode_scene(marker)
+        assert scene is not None
+        trees.append(scene)
+
+    assert trees[0].source_hash == trees[1].source_hash
+    assert trees[0].root != trees[1].root
+    assert len([request for request in fake.requests if skill_step(request) == "compose"]) == 2
+
+
+def test_composer_gets_one_repair_for_a_structurally_invalid_tree() -> None:
+    body = "<!-- layout: composed -->\n## Message\n\n**72%** [1]\n\nMeasured [2]."
+    bad = {
+        "root": {
+            "kind": "row",
+            "weights": [1, 1],
+            "children": [
+                {"kind": "leaf", "blockId": "b1", "view": "stat"},
+                {"kind": "leaf", "blockId": "b1", "view": "stat"},
+            ],
+        }
+    }
+    good = {
+        "root": {
+            "kind": "row",
+            "weights": [1, 1],
+            "children": [
+                {"kind": "leaf", "blockId": "b1", "view": "stat"},
+                {"kind": "leaf", "blockId": "b2", "view": "text"},
+            ],
+        }
+    }
+    replies = iter((bad, good))
+    fake = FakeProvider(
+        skill_replies(
+            SLIDES_APPROACH,
+            SLIDES_OUTLINE,
+            SLIDES,
+            compose=lambda _request: json.dumps(next(replies)),
+        )
+    )
+    agents = SkillAgents(gateway(fake), skill_for("slides"), use="talk")
+    plan = [Planned("Message", layout="composed")]
+    result = agents.compose_pages(
+        agents.gateway.models[0],
+        "off",
+        Spec("slides", "scientist"),
+        plan,
+        [Draft(body, [], {"status": "complete"})],
+        lambda _: None,
+        force=True,
+    )[0]
+
+    assert decode_scene(scene_marker(result.text)[1]) is not None
+    assert len([request for request in fake.requests if skill_step(request) == "compose"]) == 2
+    assert agents.skipped == []
+
+
+def test_unverified_graphic_falls_back_inside_its_block_and_keeps_other_elements() -> None:
+    body = (
+        "<!-- layout: composed -->\n## Quarterly change\n\n"
+        "| Quarter | Change (points) |\n| --- | --- |\n"
+        "| Q1 | −3.5 points [1] |\n| Q2 | +2 points [2]\n\n"
+        "The two periods moved in opposite directions [1][2]."
+    )
+    response = {
+        "root": {
+            "kind": "row",
+            "weights": [2, 1],
+            "children": [
+                {"kind": "leaf", "blockId": "b1", "view": "bar_chart"},
+                {"kind": "leaf", "blockId": "b2", "view": "text"},
+            ],
+        }
+    }
+    fake = FakeProvider(
+        skill_replies(
+            SLIDES_APPROACH,
+            SLIDES_OUTLINE,
+            SLIDES,
+            compose=lambda _request: json.dumps(response),
+        )
+    )
+    agents = SkillAgents(gateway(fake), skill_for("slides"), use="talk")
+    result = agents.compose_pages(
+        agents.gateway.models[0],
+        "off",
+        Spec("slides", "scientist"),
+        [Planned("Quarterly change", layout="composed")],
+        [Draft(body, [], {"status": "complete"})],
+        lambda _: None,
+        force=True,
+    )[0]
+    scene = decode_scene(scene_marker(result.text)[1])
+    assert scene is not None and scene.graphics == {}
+    assert [leaf.view for leaf in _scene_leaves(scene.root)] == ["table", "text"]
+    assert "Slide 1, block b1 kept as table" in agents.skipped[0]["label"]
+
+
+def test_assemble_citation_renumbering_keeps_the_scene_source_fingerprint() -> None:
+    fake = FakeProvider(skill_replies(SLIDES_APPROACH, SLIDES_OUTLINE, SLIDES))
+    agents = OutputAgents(gateway(fake))
+    pool = Pool(10)
+    evidence = []
+    for number in range(1, 4):
+        citation = ConversationCitationOut(
+            id=f"cit_{number}",
+            source_id=f"src_{number}",
+            source_title=f"Source {number}",
+            quote=f"Evidence passage {number}.",
+            locator="note",
+            status="provisional",
+            confidence=0.0,
+            source_revision_id=f"rev_{number}",
+            block_id=f"blk_{number}",
+        )
+        evidence.append(
+            Evidence(
+                "library",
+                f"Source {number}",
+                f"Evidence passage {number}.",
+                ref=number,
+                payload=(citation, None),
+            )
+        )
+    pool.restore(evidence)
+    body = (
+        "<!-- layout: composed -->\n## The sample reports a 72% measure\n\n"
+        "| Group | Rate (%) |\n| --- | --- |\n| A | 72% [3] |\n| B | 68% [3] |\n\n"
+        "The measurement is from the reported sample [3]."
+    )
+    root = SceneGroup(
+        kind="row",
+        weights=[2, 1],
+        children=[
+            SceneLeaf(kind="leaf", blockId="b1", view="bar_chart"),
+            SceneLeaf(kind="leaf", blockId="b2", view="text"),
+        ],
+    )
+    draft = Draft(
+        with_scene(
+            body,
+            SceneEnvelope(
+                version=2,
+                sourceHash=source_hash(body),
+                graphicsHash=graphics_hash(body),
+                graphics={"b1": "bar_chart"},
+                root=root,
+            ),
+        ),
+        [],
+        {"status": "complete", "claims": []},
+    )
+
+    built = agents.assemble(
+        Spec("slides", "scientist"),
+        "Markers",
+        "",
+        [draft],
+        pool,
+        [Planned("The sample reports a 72% measure", layout="composed")],
+        agents.gateway.models[0],
+        "off",
+    )
+
+    final_page = split_document(built.content, "slides")[1][0]
+    assert "[1]" in final_page and "[3]" not in final_page
+    final_scene = decode_scene(scene_marker(final_page)[1])
+    assert final_scene is not None
+    assert final_scene.source_hash == source_hash(final_page)
+    assert final_scene.graphics == {"b1": "bar_chart"}
+    assert final_scene.graphics_hash == graphics_hash(final_page)
+
+
+def test_auto_design_guidance_has_no_pool_citations_but_keeps_planned_evidence() -> None:
+    fake = FakeProvider(
+        skill_replies(
+            SLIDES_APPROACH,
+            SLIDES_OUTLINE,
+            SLIDES,
+            design={
+                "pages": [
+                    {
+                        "index": 2,
+                        "heading": "Middle claim",
+                        "intent": "Connect the claim to the study [3]",
+                        "visual": "Show the result as a line [3]",
+                        "composition": "standard",
+                        "emphasis": "The observed change [3]",
+                        "notes": "Transition from this evidence [3]",
+                        "layout": "text",
+                    }
+                ]
+            },
+        )
+    )
+    agents = SkillAgents(gateway(fake), skill_for("slides"), use="talk")
+    agents.cards = [
+        Card(claim="The source reports a change", refs=[3], evidence="A change was measured.")
+    ]
+    planned = [
+        Planned("Deck title", layout="title"),
+        Planned(
+            "Middle claim", "Explain the measured change", layout="text", refs=(3,), cards=(1,)
+        ),
+        Planned("Takeaways", layout="takeaways"),
+    ]
+    pool = Pool(10)
+    pool.adopt(Evidence("library", "First", "First source passage."))
+    pool.adopt(Evidence("library", "Second", "Second source passage."))
+    pool.adopt(Evidence("library", "Third", "A change was measured."))
+
+    designed = agents.design_pages(
+        agents.gateway.models[0], "off", Spec("slides", "scientist"), planned, pool, lambda _: None,
+        indices=[1],
+    )
+
+    page = designed[1]
+    assert page.refs == (3,) and page.cards == (1,)
+    assert agents.cards[0].refs == [3]
+    assert page.design is not None
+    assert all(
+        "[3]" not in page.design[field] for field in ("intent", "visual", "emphasis", "notes")
+    )
+    prompt = str(fake.requests[0]["messages"][0]["content"])
+    assert "Do not put citation markers" in prompt
 
 
 def test_what_the_person_wrote_is_kept_and_a_style_fixes_the_structure(tmp_path: Path) -> None:
@@ -309,8 +780,18 @@ RATES_OUTLINE = {
     "title": "Rates",
     "sections": [
         {"heading": "Rates", "layout": "title", "cards": []},
-        {"heading": "CD3D is the more common marker", "layout": "bar_chart", "cards": [1]},
-        {"heading": "Use both markers in every panel", "layout": "takeaways", "cards": [1]},
+        {
+            "heading": "CD3D is the more common marker",
+            "layout": "bar_chart",
+            "cards": [1],
+            "link": "moves from the two-marker comparison to prevalence",
+        },
+        {
+            "heading": "Use both markers in every panel",
+            "layout": "takeaways",
+            "cards": [1],
+            "link": "turn the comparison into a practice",
+        },
     ],
 }
 RATES_TITLE = "# Rates\n\nTwo cohort rates"
@@ -455,7 +936,7 @@ def test_a_revision_takes_a_slides_layout_from_its_marker_and_keeps_the_titles_a
         first = built(build(client, base_id, body(kind="slides")))
         # The person changed this slide's layout, and picked an accent for the title slide, by hand.
         typed = first["content"].replace("<!-- layout: compare -->", "<!-- layout: cards -->")
-        typed = typed.replace("<!-- layout: title -->", "<!-- layout: title; accent: blue -->")
+        typed = typed.replace("layout: title", "layout: title; accent: blue", 1)
         assert typed.count("layout: cards") == 1 and "accent: blue" in typed
         second = client.post(
             f"/api/knowledge-bases/{base_id}/artifacts/{first['id']}/edits",
@@ -472,7 +953,7 @@ def test_a_revision_takes_a_slides_layout_from_its_marker_and_keeps_the_titles_a
     # The slide was rewritten as the layout it now has; the others are as they were.
     assert middle[1].startswith("<!-- layout: cards -->\n## CD3D and CD19 set T and B cells apart")
     assert (middle[0], middle[2]) == (old[0], old[2])
-    assert last[0] == "<!-- layout: title; accent: blue -->\n# Markers\n\nA new message"
+    assert last[0] == "<!-- layout: title; accent: blue; design: v1 -->\n# Markers\n\nA new message"
     assert (last[1], last[2]) == (middle[1], middle[2])
     asked = written_again(fake)
     assert "Layout: cards" in str(asked[0]["messages"][-1]["content"])

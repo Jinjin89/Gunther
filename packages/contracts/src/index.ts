@@ -105,6 +105,9 @@ export interface SourceSummary {
   entityCount: number;
   asset?: Asset | null;
   processing?: SourceProcessing;
+  /** Saved audio's duration, when available; overrides the original capture's timer estimate. */
+  recordingDurationSeconds?: number | null;
+  recordingDurationPending?: boolean;
 }
 
 export interface SourceProcessing {
@@ -207,6 +210,7 @@ export interface ContentsSource {
   kind: SourceKind;
   createdAt: string;
   durationSeconds: number | null;
+  durationPending?: boolean;
   authors: string | null;
   year: number | null;
   pages: number | null;
@@ -1296,6 +1300,34 @@ export interface SkillRun {
   name: string;
   version: number;
   skipped: Array<{ step: string; label: string; reason: string }>;
+  renderCheck?: SlideRenderCheck | null;
+  visualReview?: SlideVisualReview | null;
+  outlineReview?: {
+    outlineFingerprint: string;
+    status?: string;
+    repaired?: boolean;
+    requirements?: Array<{ requirement: string; basis: "brief" | "inferred"; cards: number[]; slides: number[]; reason: string }>;
+    issues: Array<{ section: number; problem: string; fix: string; severity: string }>;
+    coverage: Array<{ card: number; claim: string; refs: number[]; scope: string; slides: number[]; reason: string }>;
+  } | null;
+}
+
+export interface SlideRenderCheck {
+  version: number; status: "captured" | "unavailable" | "stale";
+  candidateHash: string; id?: string; reason?: string; contact?: string; pdf?: string;
+  slides?: Array<{ id: string; index: number; image: string; fit: number; overflow: boolean; resolvedFonts: string[] }>;
+  pdfCheck?: { status: string; pages: number };
+}
+export interface SlideVisualFinding {
+  slideId: string; blockId: string | null; severity: "error" | "advice";
+  problem: string; correction: string; route: "layout" | "write" | "plan";
+}
+export interface SlideVisualReview {
+  version: number; candidateHash: string;
+  status: "clean" | "repaired" | "needs_review" | "unavailable" | "stale";
+  imageReview: string; reason?: string; calls: number; repairCycles: number;
+  repairedSlides: string[]; findings: SlideVisualFinding[];
+  history: Array<{ snapshotId: string; candidateHash: string }>;
 }
 
 /** What an output is built from: the whole library, or a hand-picked mix. */
@@ -1306,11 +1338,34 @@ export interface OutputScope {
   sessionIds: string[];
 }
 
+export interface SlideDesign {
+  intent: string;
+  visual: string;
+  composition: "standard" | "split" | "spotlight";
+  emphasis: string;
+  notes: string;
+  layout?: string | null;
+}
+
 export interface OutlineItem {
   heading: string;
   goal: string;
+  id?: string;
+  message?: string;
+  question?: string;
+  requires?: string[];
   /** A slide's layout, when a skill planned it (compare, flow, bar_chart, …). */
   layout?: string | null;
+  /** How this slide follows the preceding slide, when planned. */
+  link?: string | null;
+  /** A page's editable content design, when one has been prepared. */
+  design?: SlideDesign | null;
+  /** True when the person chose this layout explicitly. */
+  layoutLocked?: boolean;
+  /** True when the person chose this page design explicitly. */
+  designLocked?: boolean;
+  /** True after one design attempt, including a recorded failure. */
+  designAttempted?: boolean;
 }
 
 /** What the Checker found in a sentence. */
@@ -1380,6 +1435,9 @@ export interface BuildOutputRequest {
   kind: OutputKind;
   /** Reports only; an overview when left out. */
   style?: OutputStyle;
+  /** Slides only: the visual theme to retain when rebuilding an existing deck. */
+  theme?: "classic" | "briefing" | "editorial" | "keynote";
+  designVersion?: 0 | 1;
   audience: ArtifactAudience;
   brief?: string;
   title?: string;

@@ -580,7 +580,7 @@ describe("reading, versions and editing", () => {
     const user = userEvent.setup(); const build = vi.spyOn(knowledgeApi, "buildOutputStream").mockResolvedValue(version(2)); await setup({ history: [version()] }); await showControls(user);
     await user.click(screen.getByRole("button", { name: /Outline/ })); await user.click(screen.getByRole("button", { name: "Edit outline" }));
     await user.clear(screen.getByRole("textbox", { name: "Heading 2" })); await user.type(screen.getByRole("textbox", { name: "Heading 2" }), "Plasma cells"); await user.click(screen.getByRole("button", { name: "Move 2 up" })); await user.click(screen.getByRole("button", { name: "Rebuild with this outline" }));
-    expect(build.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ supersedesArtifactId: "art_1", outline: [{ heading: "Plasma cells", goal: "" }, { heading: "T cells", goal: "How T cells are told apart" }] }));
+    expect(build.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ supersedesArtifactId: "art_1", outline: [{ heading: "Plasma cells", goal: "", layoutLocked: false, designLocked: false, designAttempted: false }, { heading: "T cells", goal: "How T cells are told apart", layoutLocked: false, designLocked: false, designAttempted: false }] }));
   });
   it("retains the skill's approach and rebuilds with the edited question", async () => {
     const user = userEvent.setup(); const first = version(1, { provenance: { ...version().provenance, skill: { name: "report", version: 1, skipped: [] }, approach: { question: "Which marker?", answer: "CD3D", purpose: "Scientists", structure: "which", structureReason: "A choice", pages: null, supplements: [], gaps: [] } } });
@@ -608,6 +608,17 @@ describe("reading, versions and editing", () => {
     expect(edit.mock.calls[0]?.[1]).toBe("art_1"); expect(edit.mock.calls[0]?.[2].content).toBe("<!-- layout: title; accent: blue -->\n# Deck\n\nOne line\n\n---\n\n<!-- layout: takeaways -->\n## Done\n\n- A point [1]");
     expect(await screen.findByRole("heading", { level: 2, name: "Deck v2" })).toBeVisible(); expect(onNotify).toHaveBeenCalledWith("Saved as version 2. The accent is blue.");
   });
+  it("saves a deck's Style choice as a new version without changing slide content", async () => {
+    const original = accentDeck();
+    const styled = "<!-- layout: title; theme: editorial; design: v1 -->\n# Deck\n\nOne line\n\n---\n\n<!-- layout: takeaways -->\n## Done\n\n- A point [1]";
+    const user = userEvent.setup();
+    const edit = vi.spyOn(knowledgeApi, "editOutput").mockResolvedValue(accentDeck(2, { origin: "edit", content: styled }));
+    await setup({ history: [original] });
+    await user.click(await screen.findByRole("button", { name: "Slide style" }));
+    await user.click(screen.getByRole("button", { name: /Editorial/ }));
+    await waitFor(() => expect(edit).toHaveBeenCalledOnce());
+    expect(edit.mock.calls[0]?.[2].content).toBe(styled);
+  });
   it("saves nothing when the deck already has the accent that was chosen", async () => {
     const user = userEvent.setup(); const edit = vi.spyOn(knowledgeApi, "editOutput");
     await setup({ history: [accentDeck(1, { content: "<!-- layout: title; accent: teal -->\n# Deck" })] });
@@ -619,9 +630,11 @@ describe("reading, versions and editing", () => {
     await setup({ history: [accentDeck(2), accentDeck(1)] });
     // Version 2 is the latest.
     expect(await screen.findByRole("button", { name: "Accent colour" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Slide style" })).toBeEnabled();
     await user.selectOptions(screen.getByRole("combobox", { name: "Artifact versions" }), "art_1");
     expect(await screen.findByRole("button", { name: "Accent" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Accent colour" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Slide style" })).toBeDisabled();
   });
   it("does not offer the accent for a version from the old builder", async () => {
     await setup({ history: [accentDeck(1, { origin: "legacy" })] });

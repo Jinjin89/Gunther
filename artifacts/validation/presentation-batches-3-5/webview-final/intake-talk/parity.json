@@ -1,0 +1,9 @@
+{
+  "case": "intake-talk",
+  "candidateHash": "0402914eb2429f6ddd7501151606b8b6edbff31f5addc2e0de5442436222787d",
+  "slides": 2,
+  "status": "matched",
+  "tolerancePixels": 3,
+  "scope": "macOS WKWebView engine probe, not a full packaged-app interaction test",
+  "differences": []
+}

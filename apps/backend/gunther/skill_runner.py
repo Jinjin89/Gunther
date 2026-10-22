@@ -25,11 +25,13 @@ structure or write fails the build, as in outputs.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -39,6 +41,8 @@ from gunther.model_profiles import Effort
 from gunther.outputs import (
     AUDIENCES,
     CARRY_CHARS,
+    COMPOSITION_LAYOUTS,
+    COMPOSITIONS,
     REVISION,
     UNCHANGED,
     Draft,
@@ -52,6 +56,10 @@ from gunther.outputs import (
     _marked,
     _notes_block,
     _origin,
+    chart_rows_coverage_reason,
+    chart_unverified,
+    diagram_fallback_reason,
+    fallback_unverified_diagram,
     figure_lines,
     heading_of,
     layout_of,
@@ -62,8 +70,37 @@ from gunther.outputs import (
 )
 from gunther.skill_checks import Context, Finding, Page, figures_of, run_checks
 from gunther.skillbook import Skill, SkillStep
+from gunther.slide_planning import (
+    OutlineReview,
+    coverage_record,
+    outline_problems,
+    requested_pages,
+)
+from gunther.slide_scene import (
+    MAX_BLOCKS,
+    MAX_DEPTH,
+    MAX_NODES,
+    SceneEnvelope,
+    SceneGroup,
+    SceneLeaf,
+    SceneRequest,
+    allowed_views,
+    graphics_hash,
+    split_blocks,
+    validate_scene,
+    with_scene,
+)
+from gunther.slide_scene import (
+    source_hash as scene_source_hash,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _scene_leaves(root: SceneGroup | SceneLeaf) -> list[SceneLeaf]:
+    if isinstance(root, SceneLeaf):
+        return [root]
+    return [leaf for child in root.children for leaf in _scene_leaves(child)]
 
 # The first line of every step's instructions, so a trace (and a test) can tell them apart.
 MARK = "Gunther skill step: {id}"
@@ -96,7 +133,8 @@ Reply with the JSON object only."""
 
 OUTLINE = """\
 Return the outline of {what} as one JSON object.
-- Each section: a heading that states its claim (at most 160 characters), a one-sentence \
+- Each section: a specific heading naming its content or supported message (at most 160 \
+characters), a one-sentence \
 goal, the numbers of the material cards it uses, and up to 3 short searches that would \
 find more evidence for it in the library.
 - {shape}
@@ -105,8 +143,19 @@ Reply with the JSON object only."""
 SHAPES = {
     "report": "{low} to {high} sections. layout is empty. link says how a section follows "
     "the one before it (cause, next step, contrast, addition or limit).",
-    "slides": "{low} to {high} slides. layout is one of {layouts}; the first slide is "
-    '"title" and the last "takeaways". link is empty.',
+    "slides": "{low} to {high} slides unless the user states an exact supported count. "
+    "First plan the audience questions, supported messages, and prerequisites. "
+    "Each page has a stable id (p1, p2, ...), message (the supported meaning), question "
+    "(what it answers), and optional requires (earlier page ids). Keep goal for the page's job. "
+    "Assign supporting cards for every factual message, including covers and summaries. "
+    "Distinguish observations, interpretations, and proposed actions. Missing evidence "
+    "limits knowledge; it does not establish a negative result or mandate a decision. "
+    "A definition or question title is allowed. layout is provisional, from {layouts}; "
+    "the first slide is "
+    '"title" and the last "takeaways". For every slide after the first, link says how it '
+    "follows the previous slide (for example: consequence, next step, contrast, "
+    "addition or limit). "
+    "Use a short phrase grounded in the planned story; do not invent a relationship.",
 }
 
 WRITE = """\
@@ -120,6 +169,8 @@ number; Gunther will look for a source. Never present it as sourced.
 cite each side.
 - The notes are the user's own earlier work. They shape what you write, but are never \
 cited and never passed off as sources.
+- Page-design fields are presentation directions, not evidence. Follow them as guidance; do not \
+  repeat design rationale as a fact or cite it. Spoken factual notes must come from the pool.
 - The skill's examples show the form only; their numbers are not your sources.
 - Reuse a retained source figure when it explains the point, with its exact image reference
   and pool citation. Image contents and plotted values are not independently verified.
@@ -134,6 +185,21 @@ FORMS = {
     "title": 'Write "# {heading}" and one line under it: the core message. Cite any '
     "factual message with [n]; a topic-only title needs no citation. No notes.",
 }
+
+DESIGN = """\
+Design the requested slides in this deck, after the outline and before writing any slide.
+Return one page entry for each requested one, in the requested order, with its exact index
+and heading. Keep all headings, page order, links, and material assignments. Do not add facts,
+causes, comparisons, or relationships. Base intent, visual, emphasis, and speaker-note guidance
+on the supplied outline and material only. These fields are presentation directions, never
+evidence or factual claims. Do not put citation markers such as [3] in these fields; the outline's
+evidence assignments already retain provenance. Do not assert how an audience behaves or what an
+unsupported outcome will be. Phrase notes as instructions, such as what to emphasize or how to
+transition, rather than as factual narration. Pick a composition and an allowed layout that fit.
+Use split only for big_number, quote, or figure; use spotlight only for big_number, quote, or text.
+When layout_locked is true, return that same layout or leave the suggestion empty.
+Use "standard" when another composition does not clearly help.
+Reply with JSON only."""
 
 EDITOR = """\
 Read the whole of {what} as its editor. Do not rewrite it. List the problems, each with \
@@ -214,11 +280,30 @@ class PlannedPage(BaseModel):
     link: str = ""
     cards: list[int] = Field(default_factory=list)
     queries: list[str] = Field(default_factory=list)
+    id: str = Field(default="", max_length=64, pattern=r"^(?:[A-Za-z][A-Za-z0-9_-]*)?$")
+    message: str = Field(default="", max_length=600)
+    question: str = Field(default="", max_length=400)
+    requires: list[str] = Field(default_factory=list, max_length=14)
 
 
 class PlannedStructure(BaseModel):
     title: str = ""
     sections: list[PlannedPage] = Field(min_length=1)
+
+
+class DesignedPage(BaseModel):
+    index: int = Field(ge=1, le=14)
+    heading: str = Field(min_length=1, max_length=160)
+    intent: str = Field(min_length=1, max_length=400)
+    visual: str = Field(min_length=1, max_length=600)
+    composition: Literal["standard", "split", "spotlight"]
+    emphasis: str = Field(default="", max_length=400)
+    notes: str = Field(default="", max_length=400)
+    layout: str = Field(default="", max_length=40)
+
+
+class DesignedDeck(BaseModel):
+    pages: list[DesignedPage] = Field(min_length=1, max_length=14)
 
 
 class EditorIssue(BaseModel):
@@ -422,6 +507,7 @@ class SkillAgents(OutputAgents):
         reader: Reader | None = None,
         use: str | None = None,
         approach: Approach | None = None,
+        slide_renderer=None,
     ) -> None:
         super().__init__(gateway, limits)
         self.skill = skill
@@ -432,6 +518,19 @@ class SkillAgents(OutputAgents):
         self.approach = approach
         self.cards: list[Card] = []
         self.skipped: list[dict[str, str]] = []
+        self.outline_review: dict[str, Any] | None = None
+        self.slide_renderer = slide_renderer
+
+    def review_rendered(self, built, spec, events=None):
+        step = self.skill.step("visual_review")
+        if spec.kind != "slides" or step is None:
+            return built
+        from gunther.slide_review import review_deck
+
+        return review_deck(built, self.slide_renderer, self.gateway, built.model,
+                           self._effort(step, built.effort),
+                           brief=spec.brief, use=self.use or "talk", emit=events or _no_events,
+                           instructions=self.skill.instructions(step))
 
     # Plumbing ----------------------------------------------------------------------------
 
@@ -468,7 +567,10 @@ class SkillAgents(OutputAgents):
         self._stage(emit, step, "failed", str(error))
 
     def record(self) -> dict[str, Any]:
-        return {"name": self.skill.name, "version": self.skill.version, "skipped": self.skipped}
+        record = {"name": self.skill.name, "version": self.skill.version, "skipped": self.skipped}
+        if self.outline_review is not None:
+            record["outlineReview"] = self.outline_review
+        return record
 
     def _what(self, spec: Spec) -> str:
         return "a slide deck" if spec.kind == "slides" else "a report"
@@ -761,7 +863,7 @@ class SkillAgents(OutputAgents):
     def _planned(self, plan: PlannedStructure, spec: Spec) -> list[Planned]:
         layouts = self.skill.layouts
         planned = []
-        for item in plan.sections:
+        for position, item in enumerate(plan.sections):
             if not item.heading.strip():
                 continue
             refs: list[int] = []
@@ -784,12 +886,19 @@ class SkillAgents(OutputAgents):
                     link=_line(item.link, 200),
                     refs=tuple(refs),
                     cards=tuple(numbers),
+                    id=(item.id or f"p{position + 1}") if spec.kind == "slides" else "",
+                    message=_line(item.message, 600),
+                    question=_line(item.question, 400),
+                    requires=tuple(item.requires),
                 )
             )
         return planned
 
     def _pages(self, planned: Sequence[Planned]) -> list[Page]:
-        return [Page(index, item.heading, item.layout) for index, item in enumerate(planned)]
+        return [
+            Page(index, item.heading, item.layout, link=item.link)
+            for index, item in enumerate(planned)
+        ]
 
     def _page(self, spec: Spec, planned: Sequence[Planned], index: int, text: str) -> Page:
         """A section as the code checks see it: its heading and body, without a slide's marker,
@@ -798,7 +907,8 @@ class SkillAgents(OutputAgents):
         layout = layout_of(text)[0] if spec.kind == "slides" else None
         body = unmarked(text, spec)
         plan = planned[index].layout if index < len(planned) else ""
-        return Page(index, heading_of(body), layout or plan, body)
+        link = planned[index].link if index < len(planned) else ""
+        return Page(index, heading_of(body), layout or plan, body, link)
 
     def _figures_text(self, pool: Pool) -> list[str]:
         """The cards whose passages come with a figure, so a figure slide can be planned."""
@@ -869,6 +979,8 @@ class SkillAgents(OutputAgents):
             prompt="\n".join(lines),
             effort=effort_now,
         )
+        if spec.kind == "slides" and self.skill.step("outline_review"):
+            return self._review_outline(model, effort, spec, pool, emit, plan, lines, rules)
         planned = self._planned(plan, spec)
         context = Context(spec.kind, self.use, self.skill.limits)
         found = run_checks(step.checks, self._pages(planned), self.skill.check_params, context)
@@ -890,23 +1002,615 @@ class SkillAgents(OutputAgents):
         if not planned:
             raise ModelError(f"{model.display} planned no sections.")
         if len(planned) > high:
+            if spec.kind == "slides":
+                self.outline_review = {
+                    "status": "incomplete",
+                    "candidate": plan.model_dump(),
+                    "problems": [f"The outline still exceeds {high} slides."],
+                }
+                raise ModelError(
+                    "The outline still exceeds the slide limit; no pages were removed."
+                )
             planned = [*planned[: high - 1], planned[-1]]
         title = _line(spec.title or plan.title, 160) or planned[0].heading
         if spec.kind == "slides":
             planned[0] = replace(planned[0], heading=title, layout="title", queries=())
+            planned[0] = replace(planned[0], link="")
             if len(planned) > 1:
                 planned[-1] = replace(planned[-1], layout="takeaways")
             planned = self._unfigured(planned, pool)
         self._stage(emit, step, "done")
         return title, planned
 
+    def _review_outline(
+        self, model: ModelInfo, effort: Effort | None, spec: Spec, pool: Pool,
+        emit: Events, plan: PlannedStructure, lines: list[str], rules: str,
+    ) -> tuple[str, list[Planned]]:
+        """Review once and replan once, preserving the evidence a candidate already used."""
+        step = self.skill.step("outline_review")
+        structure = self.skill.step("structure")
+        assert step is not None and structure is not None
+        _, high = self._bounds(spec)
+        exact = requested_pages(spec.brief)
+        if exact is not None and not 1 <= exact <= high:
+            raise ModelError(f"The requested {exact} slides exceed the supported 1–{high} range.")
+        for i, page in enumerate(plan.sections, 1):
+            if not page.id:
+                page.id = f"p{i}"
+        original = plan.model_dump()
+        protected = {n for p in plan.sections for n in p.cards if 1 <= n <= len(self.cards)}
+        problems = outline_problems(plan.sections, len(self.cards), high, exact)
+        self._stage(emit, structure, "done", "Drafted the outline")
+        self._stage(emit, step, "running")
+        review = OutlineReview()
+        reviewed = False
+        try:
+            review, _ = self.gateway.complete_json(
+                model,
+                OutlineReview,
+                system=self.system(
+                    step,
+                    "Review the proposed outline using only the brief and evidence cards. "
+                    "Return issues (section: 0 for whole deck or 1-based page, problem, fix, "
+                    "severity: error or advice), and omitted (card number, reason) for every "
+                    "unassigned card. Also return requirements: content requirements with "
+                    "requirement, basis (brief for an explicit request, inferred otherwise), "
+                    "supporting card numbers, and reason. Keep inferred priorities distinct. "
+                    "Return factual_pages: stable page ids with factual messages, including "
+                    "cover subtitles and summaries. These pages need supporting card assignments. "
+                    "Distinguish observations, interpretations, and explicit proposals. "
+                    "Missing evidence is not a negative finding or a policy mandate. "
+                    "Report unsupported messages, lost qualifications, "
+                    "missing required content, repeated reasoning, and unexplained prerequisites. "
+                    "Do not invent evidence, rewrite pages, or treat a topic title as an error. "
+                    "A partial or disputed conclusion is valid. JSON only.",
+                ),
+                prompt="\n".join(
+                    [
+                        *lines,
+                        "",
+                        "Proposed outline:",
+                        json.dumps(original, ensure_ascii=False),
+                        "Mechanical findings:",
+                        *problems,
+                    ]
+                ),
+                effort=self._effort(step, effort),
+            )
+            if any(issue.section > len(plan.sections) for issue in review.issues):
+                raise ModelError("Outline review named a page that does not exist.")
+            used = {n for p in plan.sections for n in p.cards}
+            page_by_id = {page.id: page for page in plan.sections}
+            if any(key not in page_by_id for key in review.factual_pages):
+                raise ModelError("The outline review named an unknown factual page.")
+            for key in review.factual_pages:
+                if not page_by_id[key].cards:
+                    problems.append(f"Factual page {key} needs supporting evidence cards.")
+            if any(item.card in used or item.card > len(self.cards) for item in review.omitted):
+                raise ModelError("Outline review misidentified an omitted material card.")
+            requirement_cards = {n for item in review.requirements for n in item.cards}
+            if any(not 1 <= n <= len(self.cards) for n in requirement_cards):
+                raise ModelError("A content requirement refers to an unknown evidence card.")
+            required = {
+                n for item in review.requirements if item.basis == "brief" for n in item.cards
+            }
+            protected |= required
+            if missing := sorted(required - used):
+                problems.append(f"Explicit content requirements need evidence cards {missing}.")
+            reviewed = True
+        except ModelError as error:
+            review = OutlineReview()
+            self._skip(emit, step, error)
+        repairs = [
+            *problems,
+            *(
+                f"Slide {issue.section}: {issue.problem} {issue.fix}"
+                for issue in review.issues
+                if issue.severity == "error"
+            ),
+        ]
+        if repairs:
+            try:
+                plan, _ = self.gateway.complete_json(
+                    model,
+                    PlannedStructure,
+                    system=self.system(
+                        structure,
+                        rules + "\nReplan the complete outline. "
+                        "Preserve every previously assigned evidence card, including limitations, "
+                        "by moving or merging it when needed. Never truncate a list of pages. "
+                        "Keep stable page ids for surviving ideas and adjust prerequisites.",
+                    ),
+                    prompt="\n".join(
+                        [
+                            *lines,
+                            "",
+                            "Previous candidate:",
+                            json.dumps(original, ensure_ascii=False),
+                            "Problems to repair:",
+                            *repairs,
+                        ]
+                    ),
+                    effort=self._effort(structure, effort),
+                )
+            except ModelError as error:
+                self.outline_review = {
+                    "status": "incomplete",
+                    "candidate": original,
+                    "problems": repairs,
+                }
+                raise ModelError(f"Outline repair did not complete: {error}") from error
+            for i, page in enumerate(plan.sections, 1):
+                if not page.id:
+                    page.id = f"p{i}"
+            problems = outline_problems(plan.sections, len(self.cards), high, exact, protected)
+            for page in plan.sections:
+                if page.id in review.factual_pages and not page.cards:
+                    problems.append(f"Factual page {page.id} still has no supporting cards.")
+        if problems:
+            self.outline_review = {
+                "status": "incomplete",
+                "candidate": plan.model_dump(),
+                "problems": problems,
+            }
+            raise ModelError("Outline constraint remains unresolved: " + " ".join(problems))
+        planned = self._planned(plan, spec)
+        title = _line(spec.title or plan.title, 160) or planned[0].heading
+        planned[0] = replace(planned[0], heading=title, layout="title", queries=(), link="")
+        if len(planned) > 1:
+            planned[-1] = replace(planned[-1], layout="takeaways")
+        planned = self._unfigured(planned, pool)
+        self.outline_review = {
+            **coverage_record(planned, self.cards, review),
+            "status": "reviewed"
+            if reviewed and not repairs
+            else "replanned"
+            if reviewed
+            else "unavailable",
+            "repaired": bool(repairs),
+            "constraints": {
+                "requestedPages": exact,
+                "actualPages": len(planned),
+                "maximum": high,
+                "use": self.use,
+            },
+        }
+        for entry in self.outline_review["coverage"]:
+            entry["sourceIdentities"] = [
+                pool.by_ref()[ref].key for ref in entry["refs"] if ref in pool.by_ref()
+            ]
+            if not entry["slides"] and not entry["reason"]:
+                entry["reason"] = (
+                    "Unassigned; the review did not establish why this card can be omitted."
+                )
+                self.outline_review["status"] = "needs_review"
+        if reviewed:
+            self._stage(
+                emit,
+                step,
+                "done",
+                "Replanned with evidence retained"
+                if repairs
+                else "Reviewed the reasoning and evidence coverage",
+            )
+        return title, planned
+
+    def design_pages(
+        self,
+        model: ModelInfo,
+        effort: Effort | None,
+        spec: Spec,
+        planned: Sequence[Planned],
+        pool: Pool,
+        emit: Events,
+        *,
+        indices: Sequence[int] | None = None,
+    ) -> list[Planned]:
+        """Design selected slides without changing their identity, order, links, or evidence."""
+        if spec.kind != "slides" or (step := self.skill.step("design")) is None:
+            return list(planned)
+        targets = [
+            at
+            for at in (range(len(planned)) if indices is None else indices)
+            if 0 <= at < len(planned) and not planned[at].design_locked
+        ]
+        if not targets:
+            self._stage(emit, step, "done", "Kept existing page designs")
+            return list(planned)
+
+        def attempted(values: Sequence[Planned]) -> list[Planned]:
+            updated = list(values)
+            for at in targets:
+                updated[at] = replace(updated[at], design_attempted=True)
+            return updated
+
+        self._stage(emit, step, "running", f"{len(targets)} page(s)")
+        pages = []
+        shared_refs: list[int] = []
+        shared_cards: list[int] = []
+        for at in targets:
+            item = planned[at]
+            shared_refs.extend(ref for ref in item.refs if ref not in shared_refs)
+            shared_cards.extend(number for number in item.cards if number not in shared_cards)
+            pages.append(
+                {
+                    "index": at + 1,
+                    "heading": item.heading,
+                    "goal": item.goal,
+                    "link": item.link,
+                    "layout": item.layout,
+                    "layout_locked": item.layout_locked,
+                    "cards": [f"C{number}" for number in item.cards],
+                }
+            )
+        shared_evidence = self._pool_lines(pool, shared_refs)
+        card_numbers = shared_cards[:40]
+        shared_cards_text = [
+            f"C{number}. {self.cards[number - 1].claim}"
+            + "".join(f" [{ref}]" for ref in self.cards[number - 1].refs)
+            + (f" Role: {self.cards[number - 1].role}" if self.cards[number - 1].role else "")
+            + (f" Limits: {self.cards[number - 1].scope}" if self.cards[number - 1].scope else "")
+            + (f" Units: {self.cards[number - 1].units}" if self.cards[number - 1].units else "")
+            for number in card_numbers
+            if 1 <= number <= len(self.cards)
+        ]
+        prompt = "\n".join(
+            [
+                f"Brief: {spec.brief or '(none)'}",
+                f"Audience: {AUDIENCES.get(spec.audience, spec.audience)}",
+                f"Deck use: {self.use or 'talk'}",
+                "All pages in order (only requested indexes may be returned):",
+                self._outline_text(planned, "slides", include_design=False),
+                "Requested page evidence and material cards:",
+                json.dumps(pages, ensure_ascii=False),
+                "Shared material cards (each listed once):",
+                *shared_cards_text,
+                "Shared source excerpts (each listed once):",
+                *shared_evidence,
+                *self._figures_text(pool),
+            ]
+        )
+        rules = DESIGN
+        # A repair may fix a malformed response once. It never asks the model to replace the
+        # outline, so the existing plan remains the safe fallback.
+        try:
+            result, _ = self.gateway.complete_json(
+                model,
+                DesignedDeck,
+                system=self.system(step, rules),
+                prompt=prompt,
+                effort=self._effort(step, effort),
+            )
+        except ModelError as error:
+            self._skip(emit, step, error)
+            return attempted(planned)
+
+        def validate(deck: DesignedDeck) -> str | None:
+            if len(deck.pages) != len(targets):
+                return f"Expected {len(targets)} designed pages; received {len(deck.pages)}."
+            for page, at in zip(deck.pages, targets, strict=True):
+                item = planned[at]
+                if page.index != at + 1 or page.heading.strip() != item.heading:
+                    return f"Page {at + 1} must keep its requested index and heading."
+                layout = page.layout or item.layout
+                if page.layout and page.layout not in self.skill.layouts:
+                    return f"Page {at + 1} suggested an unsupported layout."
+                if item.layout_locked and page.layout and page.layout != item.layout:
+                    return f"Page {at + 1} tried to change a user-chosen layout."
+                effective_layout = item.layout if item.layout_locked else layout
+                if at == 0 and not item.layout_locked and effective_layout != "title":
+                    return "The title page must keep the title layout."
+                if (
+                    at == len(planned) - 1
+                    and not item.layout_locked
+                    and effective_layout != "takeaways"
+                ):
+                    return "The final page must keep the takeaways layout."
+                if (
+                    page.composition not in COMPOSITIONS
+                    or effective_layout not in COMPOSITION_LAYOUTS[page.composition]
+                ):
+                    return f"Page {at + 1} chose a composition that does not fit its layout."
+                if not page.intent.strip() or not page.visual.strip():
+                    return f"Page {at + 1} is missing its intent or visual explanation."
+            return None
+
+        problem = validate(result)
+        if problem:
+            try:
+                result, _ = self.gateway.complete_json(
+                    model,
+                    DesignedDeck,
+                    system=self.system(step, rules),
+                    prompt=prompt
+                    + f"\n\nRepair this response to match the constraints. Problem: {problem}",
+                    effort=self._effort(step, effort),
+                )
+            except ModelError as error:
+                self._skip(emit, step, error)
+                return attempted(planned)
+            problem = validate(result)
+        if problem:
+            self._skip(emit, step, ModelError(problem))
+            return attempted(planned)
+
+        updated = list(planned)
+        for page, at in zip(result.pages, targets, strict=True):
+            item = updated[at]
+            layout = page.layout if page.layout and not item.layout_locked else item.layout
+
+            def guidance(value: str) -> str:
+                return " ".join(CITATION_GROUP.sub("", value).split())
+
+            design = {
+                "intent": guidance(page.intent),
+                "visual": guidance(page.visual),
+                "composition": page.composition,
+                "emphasis": guidance(page.emphasis),
+                "notes": guidance(page.notes),
+                "layout": layout,
+            }
+            updated[at] = replace(item, layout=layout, design=design, design_attempted=True)
+        self._stage(emit, step, "done")
+        return updated
+
+    def compose_pages(
+        self,
+        model: ModelInfo,
+        effort: Effort | None,
+        spec: Spec,
+        planned: Sequence[Planned],
+        drafts: Sequence[Draft],
+        emit: Events,
+        *,
+        indices: Sequence[int] | None = None,
+        force: bool = False,
+        instructions: dict[int, str] | None = None,
+        pool: Pool | None = None,
+    ) -> list[Draft]:
+        """Compose checked composed-layout pages from exact Markdown block references."""
+        results = list(drafts)
+        if spec.kind != "slides" or (step := self.skill.step("compose")) is None:
+            return results
+        targets = [
+            at
+            for at in (range(min(len(planned), len(results))) if indices is None else indices)
+            if 0 <= at < min(len(planned), len(results))
+            and ((layout_of(results[at].text)[0] or planned[at].layout) == "composed")
+        ]
+        if not targets:
+            return results
+
+        self._stage(emit, step, "running", f"{len(targets)} composed page(s)")
+        rules = (
+            "Return only the scene tree requested by the skill. The numbered Markdown blocks "
+            "are the entire content inventory; do not write prose or facts."
+        )
+        for at in targets:
+            draft = results[at]
+            heading, blocks = split_blocks(draft.text)
+            current_scene = _marked(draft.text).scene
+            allowed = {block.id: allowed_views(block) for block in blocks}
+            valid_current = (
+                current_scene is not None
+                and current_scene.source_hash == scene_source_hash(draft.text)
+                and (
+                    current_scene.version == 1
+                    or current_scene.graphics_hash == graphics_hash(draft.text)
+                )
+                and validate_scene(
+                    current_scene.root,
+                    blocks,
+                    allowed,
+                    current_scene.graphics if current_scene.version == 2 else {},
+                )
+                is None
+                and not (
+                    current_scene.version == 1
+                    and any(
+                        node.view in {"flow", "diagram", "bar_chart", "line_chart"}
+                        for node in _scene_leaves(current_scene.root)
+                    )
+                )
+            )
+            if valid_current and not force and not (instructions or {}).get(at):
+                continue
+            if not blocks or len(blocks) < 2:
+                self._skip(
+                    emit,
+                    step,
+                    ModelError("A composed page needs at least two supported content blocks."),
+                )
+                continue
+
+            graphic_reasons = {
+                "flow": "ordered numbered list with 2–6 steps",
+                "diagram": "a valid cited 3-column DAG relation table",
+                "bar_chart": "a cited 2-column table with 2–6 numeric rows and one unit",
+                "line_chart": "a cited 2-column table with 2–6 numeric rows and one unit",
+            }
+            prompt_blocks = [
+                {
+                    **block.model_dump(),
+                    "allowedViews": allowed[block.id],
+                    "graphicReasons": {
+                        view: graphic_reasons[view]
+                        for view in allowed[block.id]
+                        if view in graphic_reasons
+                    },
+                }
+                for block in blocks
+            ]
+            prompt = "\n".join(
+                [
+                    f"Brief: {spec.brief or '(none)'}",
+                    f"Audience: {AUDIENCES.get(spec.audience, spec.audience)}",
+                    f"Slide: {at + 1} of {len(planned)}",
+                    f"Heading: {heading or planned[at].heading}",
+                    f"Goal: {planned[at].goal}",
+                    f"Design intent: {(planned[at].design or {}).get('intent', '')}",
+                    f"Visual direction: {(planned[at].design or {}).get('visual', '')}",
+                    f"Emphasis guidance: {(planned[at].design or {}).get('emphasis', '')}",
+                    f"Requested re-composition: {(instructions or {}).get(at, '') or '(none)'}",
+                    "Canvas budget: 1280x720; the body below the fixed heading is about 1000x460. "
+                    "Text sizes are approximately 25, 32, 42 and 68 px; display stat digits "
+                    "grow about 1.55x. Nested weights multiply, so a 1/3 child inside a 1/3 "
+                    "parent gets about one ninth of the width.",
+                    f"Bounds: {MAX_BLOCKS} blocks, {MAX_NODES} nodes, depth {MAX_DEPTH}.",
+                    "Content blocks (exact source Markdown; citations remain in each block):",
+                    json.dumps(prompt_blocks, ensure_ascii=False),
+                ]
+            )
+
+            try:
+                response, _ = self.gateway.complete_json(
+                    model,
+                    SceneRequest,
+                    system=self.system(step, rules),
+                    prompt=prompt,
+                    effort=self._effort(step, effort),
+                )
+            except ModelError as error:
+                self._skip(emit, step, error)
+                continue
+
+            problem = validate_scene(response.root, blocks, allowed)
+            if problem:
+                try:
+                    response, _ = self.gateway.complete_json(
+                        model,
+                        SceneRequest,
+                        system=self.system(step, rules),
+                        prompt=(
+                            prompt
+                            + f"\n\nRepair the scene tree only. Problem: {problem}"
+                        ),
+                        effort=self._effort(step, effort),
+                    )
+                except ModelError as error:
+                    self._skip(emit, step, error)
+                    continue
+                problem = validate_scene(response.root, blocks, allowed)
+            if problem:
+                self._skip(emit, step, ModelError(problem))
+                continue
+
+            licenses: dict[str, str] = {}
+            fallback_reasons: dict[str, str] = {}
+            for leaf in _scene_leaves(response.root):
+                if leaf.view not in {"flow", "diagram", "bar_chart", "line_chart"}:
+                    continue
+                block = next(block for block in blocks if block.id == leaf.block_id)
+                if leaf.view == "flow":
+                    # A flow is a view of an already ordered list; the scene cannot change its
+                    # items or their order, so the existing slide check remains authoritative.
+                    licenses[leaf.block_id] = leaf.view
+                    continue
+                reason: str | None = None
+                if pool is None:
+                    reason = "Source evidence was not available for block-level verification."
+                else:
+                    # Skill checks treat the first line as a page heading. Give them a
+                    # synthetic heading so no source table row disappears from validation.
+                    check_text = with_layout(
+                        f"## Graphic block\n\n{block.markdown}", leaf.view
+                    )
+                    block_issues = []
+                    try:
+                        block_coverage = self._full_coverage(
+                            model, check_text, pool.by_ref(), block_issues
+                        )
+                        if leaf.view == "diagram":
+                            reason = diagram_fallback_reason(
+                                Draft(check_text, block_issues, block_coverage)
+                            )
+                        else:
+                            _problems, reason = chart_unverified(
+                                check_text,
+                                block_issues,
+                                block_coverage,
+                                pool.by_ref(),
+                                at,
+                            )
+                            if reason is None:
+                                reason = chart_rows_coverage_reason(
+                                    check_text, block_coverage
+                                )
+                    except ModelError as error:
+                        reason = str(error)
+                if reason is None:
+                    licenses[leaf.block_id] = leaf.view
+                else:
+                    fallback_reasons[leaf.block_id] = reason
+                    self.skipped.append(
+                        {
+                            "step": step.id,
+                            "label": (
+                                f"Slide {at + 1}, block {leaf.block_id} kept as "
+                                f"{block.type}"
+                            ),
+                            "reason": reason,
+                        }
+                    )
+
+            if fallback_reasons:
+                original_types = {block.id: block.type for block in blocks}
+
+                def fallback_unlicensed(
+                    node,
+                    fallback_reasons: dict[str, str] = fallback_reasons,
+                    original_types: dict[str, str] = original_types,
+                ):
+                    if isinstance(node, SceneLeaf):
+                        if node.block_id in fallback_reasons:
+                            return node.model_copy(
+                                update={"view": original_types[node.block_id]}
+                            )
+                        return node
+                    return node.model_copy(
+                        update={"children": [fallback_unlicensed(child) for child in node.children]}
+                    )
+
+                response = response.model_copy(
+                    update={"root": fallback_unlicensed(response.root)}
+                )
+
+            envelope = SceneEnvelope(
+                version=2,
+                sourceHash=scene_source_hash(draft.text),
+                graphicsHash=graphics_hash(draft.text),
+                graphics=licenses,
+                root=response.root,
+            )
+            content = with_scene(draft.text, envelope)
+            coverage = dict(draft.coverage) if draft.coverage else None
+            if coverage is not None:
+                coverage["answerHash"] = section_hash(content)
+            results[at] = Draft(content, draft.issues, coverage)
+        self._stage(emit, step, "done")
+        return results
+
     # 3. Write ------------------------------------------------------------------------------
 
-    def _outline_text(self, outline: Sequence[Planned]) -> str:
+    def _outline_text(
+        self, outline: Sequence[Planned], kind: str, *, include_design: bool = True
+    ) -> str:
+        unit = "slide" if kind == "slides" else "section"
         return "\n".join(
             f"{index}. {item.heading}"
             + (f" [{item.layout}]" if item.layout else "")
             + (f": {item.goal}" if item.goal else "")
+            + (f"\n   Message: {item.message}" if item.message else "")
+            + (f"\n   Audience question: {item.question}" if item.question else "")
+            + (f"\n   Requires: {', '.join(item.requires)}" if item.requires else "")
+            + (f"\n   Follows the previous {unit}: {item.link}" if item.link else "")
+            + (
+                f"\n   Design: {item.design.get('intent', '')}; "
+                f"{item.design.get('visual', '')}; composition "
+                f"{item.design.get('composition', 'standard')}"
+                if include_design and item.design
+                else ""
+            )
             for index, item in enumerate(outline, start=1)
         )
 
@@ -963,16 +1667,30 @@ class SkillAgents(OutputAgents):
             f"Audience: {AUDIENCES.get(spec.audience, spec.audience)}",
             "",
             f"The whole {spec.kind}:",
-            self._outline_text(outline),
+            self._outline_text(outline, spec.kind),
             "",
             f"Write section {index + 1} of {len(outline)}: {item.heading}",
         ]
         if item.goal:
             lines.append(f"Goal: {item.goal}")
         if item.link:
-            lines.append(f"How it follows the one before: {item.link}")
+            lines.append(f"Transition from the previous slide: {item.link}")
+        if item.message:
+            lines.append(f"Supported slide message: {item.message}")
+        if item.question:
+            lines.append(f"Audience question: {item.question}")
         if layout:
             lines.append(f"Layout: {layout}")
+        if item.design:
+            lines += [
+                "",
+                "Page design (guidance only; keep claims and citations grounded in material):",
+                f"Intent: {item.design.get('intent', '')}",
+                f"Visual explanation: {item.design.get('visual', '')}",
+                f"Composition: {item.design.get('composition', 'standard')}",
+                f"Emphasis in existing content: {item.design.get('emphasis', '')}",
+                f"Speaker-note guidance: {item.design.get('notes', '')}",
+            ]
         cards = [
             number
             for number, card in enumerate(self.cards, start=1)
@@ -1026,6 +1744,15 @@ class SkillAgents(OutputAgents):
             title_slide,
             layout or None,
             accent=_marked(current).accent if current is not None else None,
+            theme=_marked(current).theme if current is not None else spec.theme,
+            composition=(item.design or {}).get("composition")
+            or (_marked(current).composition if current is not None else None),
+            scene_line=_marked(current).scene_line if current is not None else None,
+            design_version=(
+                _marked(current).design_version if current is not None
+                else spec.design_version if spec.design_version is not None
+                else 1 if self.skill.kind == "slides" and self.skill.version >= 10 else None
+            ) if title_slide else None,
         )
 
     def _misfit(
@@ -1167,7 +1894,14 @@ class SkillAgents(OutputAgents):
                 self.skill.check_params,
                 Context(spec.kind, self.use, self.skill.limits, pool.by_ref()),
             )
-            prompt = [f"The approach:\n{approach}", "", self._document(spec, drafts)]
+            prompt = [f"The approach:\n{approach}"]
+            if spec.kind == "slides":
+                prompt += [
+                    "",
+                    "Planned slide relationships:",
+                    self._outline_text(planned, spec.kind),
+                ]
+            prompt += ["", self._document(spec, drafts)]
             if found:
                 prompt += ["", "Gunther's checks found:"]
                 prompt += [
@@ -1212,7 +1946,14 @@ class SkillAgents(OutputAgents):
             return drafts
         self._stage(emit, step, "running")
         most = int(self.skill.limits.get("revise_max", 4))
-        prompt = [f"The approach:\n{approach}", "", self._document(spec, drafts)]
+        prompt = [f"The approach:\n{approach}"]
+        if spec.kind == "slides":
+            prompt += [
+                "",
+                "Planned slide relationships:",
+                self._outline_text(planned, spec.kind),
+            ]
+        prompt += ["", self._document(spec, drafts)]
         if found:
             prompt += ["", "Gunther's checks found:"]
             prompt += [
@@ -1356,9 +2097,15 @@ class SkillAgents(OutputAgents):
                 changed += 1
                 if tool is not None:
                     emit({"type": "section", "index": index, "state": "checking"})
-                    drafts[index] = self.check_built(model, written, tool, pool, emit, index)
+                    drafts[index] = fallback_unverified_diagram(
+                        self.check_built(model, written, tool, pool, emit, index),
+                        index,
+                        self.skipped,
+                    )
                 else:
-                    drafts[index] = Draft(written, None)
+                    drafts[index] = fallback_unverified_diagram(
+                        Draft(written, None), index, self.skipped
+                    )
             emit({"type": "section", "index": index, "state": "done"})
         self._stage(emit, step, "done", f"{changed} changed")
         return drafts
@@ -1429,6 +2176,9 @@ class SkillAgents(OutputAgents):
                     layout=(item.layout if item.layout in self.skill.layouts else "text")
                     if spec.kind == "slides"
                     else "",
+                    layout_locked=item.layout_locked
+                    or (spec.kind == "slides" and bool(item.layout)),
+                    design_locked=item.design_locked or item.design is not None,
                 )
                 for index, item in enumerate(outline)
             ]
@@ -1439,14 +2189,44 @@ class SkillAgents(OutputAgents):
             )
             title = _line(title, 160)
             if spec.kind == "slides":
-                planned[0] = replace(planned[0], heading=title, layout="title")
+                first_layout = (
+                    planned[0].layout if planned[0].layout_locked and planned[0].layout else "title"
+                )
+                planned[0] = replace(planned[0], heading=title, layout=first_layout)
+                planned[0] = replace(planned[0], link="")
+                if len(planned) > 1 and not (planned[-1].layout_locked and planned[-1].layout):
+                    planned[-1] = replace(planned[-1], layout="takeaways")
+        if spec.kind == "slides":
+            planned = [
+                replace(item, id=item.id or f"p_{uuid4().hex}") for item in planned
+            ]
+            problems = outline_problems(
+                planned, len(self.cards), self._bounds(spec)[1], requested_pages(spec.brief)
+            )
+            if problems:
+                raise ModelError("Outline constraints: " + " ".join(problems))
+            planned = self.design_pages(
+                model,
+                effort,
+                spec,
+                planned,
+                pool,
+                emit,
+                indices=range(len(planned)),
+            )
         emit(
             {
                 "type": "outline",
                 "title": title,
                 "sections": [
                     {"heading": item.heading, "goal": item.goal}
+                    | item.planning_metadata()
                     | ({"layout": item.layout} if item.layout else {})
+                    | ({"link": item.link} if item.link else {})
+                    | ({"design": item.design} if item.design else {})
+                    | ({"layoutLocked": True} if item.layout_locked else {})
+                    | ({"designLocked": True} if item.design_locked else {})
+                    | ({"designAttempted": True} if item.design_attempted else {})
                     for item in planned
                 ],
             }
@@ -1513,10 +2293,17 @@ class SkillAgents(OutputAgents):
                 written,
             )
             emit({"type": "section", "index": index, "state": "checking"})
-            drafts.append(self.check_built(model, written, tool, pool, emit, index))
+            drafts.append(
+                fallback_unverified_diagram(
+                    self.check_built(model, written, tool, pool, emit, index),
+                    index,
+                    self.skipped,
+                )
+            )
             emit({"type": "section", "index": index, "state": "done"})
         self._stage(emit, write_step, "done")
         drafts = self.polish(model, effort, spec, planned, pool, notes, drafts, emit)
+        drafts = self.compose_pages(model, effort, spec, planned, drafts, emit, pool=pool)
         self.skipped.extend(self.final_notes(spec, planned, drafts, pool))
         preamble = ""
         if spec.kind == "report":
@@ -1527,4 +2314,5 @@ class SkillAgents(OutputAgents):
         built = self.assemble(spec, title, preamble, drafts, pool, planned, model, effort)
         cited = {citation.url or citation.source_id for citation in built.citations}
         assert self.approach is not None
-        return replace(built, approach=self.approach.out(pool, cited), skill=self.record())
+        built = replace(built, approach=self.approach.out(pool, cited), skill=self.record())
+        return self.review_rendered(built, spec, emit)

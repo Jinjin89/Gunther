@@ -1,0 +1,19 @@
+{
+  "baseCommit": "6d6d7e6820e5e8b34b6938b9f387ad8c0e8b8780",
+  "workingTree": true,
+  "files": {
+    "apps/backend/gunther/skill_runner.py": "0ee1f9c4c1bb425c7d19360ffacc45c6ba95a350396a20e51e8a835f4fceeb52",
+    "apps/backend/gunther/outputs.py": "082a61a7b8846868f3978d14b90fcf39249d976be0db994831093d4c7dc1f67b",
+    "apps/backend/gunther/artifact_workspace.py": "2aa712e54f383df20bc0b1d955aa4ea8d297e4f5564be7748d01e7dff99e5e7b",
+    "apps/backend/gunther/artifact_steps.py": "d4751bf7d87c33a0bf4898f281b2eb1d6dc3571e39af02feafdf801e2c9c1a98",
+    "apps/backend/gunther/schemas.py": "e9bf00823df3c4bc128159983bc351cf2111e3625f5ee842ee4690c037ca797c",
+    "apps/backend/gunther/skills/slides/SKILL.md": "4314466d48db08a11f9f1f69f3f6358b8cbe51003aafadd66d23cf753c1110e6",
+    "apps/backend/gunther/skills/slides/skill.toml": "fbfb47ccacdf108e3d6959ddb801272c316966b61cfc04d151374bd573c954c7",
+    "apps/backend/gunther/skills/slides/references/story.md": "1f3d62ba449ae4a0d630a43463497db99ec39c17352caee129dbcaf66df612a8",
+    "apps/backend/gunther/skills/slides/references/writing.md": "afb5c853a4a27a0a9b6edf5311ff54c98a1df4e6d34e639ca9df7d2b966121c1",
+    "apps/desktop/src/outputs/slides/themes.ts": "6d7710ecb65733d67b3ef721ac6cce1ba2c4ffea2cc3c56229736ec0700ea39d",
+    "apps/desktop/src/outputs/slides/slides.css": "1a3d27e8e7572509a722fe2e2b5d3c137a33787c04675f8665b81940176b6988",
+    "apps/desktop/src/outputs/outputs.css": "052f243186a6f8172900929f0c02fb378d6ecc7a06a8aebee3d45dbad69b285f",
+    "apps/desktop/src/outputs/SlideFace.tsx": "ccfe76e1d69f852d08af513f77eed80bd2ba526beb75c95065770fa96a55d45b"
+  }
+}

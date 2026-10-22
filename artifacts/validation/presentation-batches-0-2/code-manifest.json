@@ -1,0 +1,28 @@
+{
+  "workingTree": true,
+  "skillVersion": 10,
+  "files": {
+    "apps/backend/gunther/skill_runner.py": "18c684192b6472fab6281597640a2910a5397c4e3889a4a41e886d5617af486f",
+    "apps/backend/gunther/outputs.py": "28d65ebf9582b63ce374197f3e271b9ae6a830f09cfc1f73e92ecea29fa1c9c3",
+    "apps/backend/gunther/artifact_workspace.py": "7d173092f797d1972e03281bf41516d9b61aced1cd0dcdfd4804ed81fb268401",
+    "apps/backend/gunther/artifact_steps.py": "22d5e65eeebab602a9261293bbf85f40d2bf45f341ce2322c151bc80d714c753",
+    "apps/backend/gunther/schemas.py": "777302357ca9b5bd1d4017c0913714482efbed087423484d59d9a48e81c8d585",
+    "apps/backend/gunther/skills/slides/SKILL.md": "7bfed4379f2fd381c9448f6cbedaa40b328c7b353ddadb697d6f2e87496be5bb",
+    "apps/backend/gunther/skills/slides/skill.toml": "28dcba1449a05e12ae81b99973968422adc7184cd901e4a0bf1b7378dd95cc84",
+    "apps/backend/gunther/skills/slides/references/story.md": "19052e8053de09aeb562dd9fcd7738d21b8775d2ab7806b04d96e7ad91529946",
+    "apps/backend/gunther/skills/slides/references/writing.md": "467270efab50196a903a83aa2498e9bb2dd1af8178f317dc6f12572d4c003b88",
+    "apps/desktop/src/outputs/slides/themes.ts": "6d7710ecb65733d67b3ef721ac6cce1ba2c4ffea2cc3c56229736ec0700ea39d",
+    "apps/desktop/src/outputs/slides/slides.css": "1a3d27e8e7572509a722fe2e2b5d3c137a33787c04675f8665b81940176b6988",
+    "apps/desktop/src/outputs/outputs.css": "4ededfd6b200e5c71011f5fdbbaaa97fb29d484f826da55c7388a0f198829890",
+    "apps/desktop/src/outputs/SlideFace.tsx": "9af694777614d3c9b12775d72b097a288eee07f65e2d563ada7099ea537c987b",
+    "apps/backend/gunther/slide_planning.py": "2e39c0d0c771579a4b667746b0d40ebb4b124c178a1d3218e3fd737c374465d2",
+    "apps/backend/gunther/service.py": "51b61580ba9974988b05f4062d8dea8cde5ccf1d0e89731ff9223ca2dfc288d8",
+    "apps/desktop/src/outputs/slides/design.css": "57d4e72bd2c1d85fb1a2e21c62e2bb73c83df5917ada58c9bec607eaaa62f537",
+    "apps/desktop/src/outputs/SlideStylePicker.tsx": "b29609069de4d785df596cb973d88c02303b167eb0c63a6eb4520cbe59c06a1b",
+    "apps/desktop/src/outputs/OutlineEditor.tsx": "d0fe0d0761ad5c425e475b2bb3da746cbcc1aac09d1c60b406ff4a51cd3f85fa",
+    "apps/desktop/evals/slides/capture.mjs": "b16ba39babe7a32a72696aea888818f35115e345d6c2cdfad19361756fb516f7",
+    "apps/desktop/evals/slides/main.tsx": "16bdb5724ccac1ff9d199ff4ffc09ddb43913abbb4f626c7a47bfb79a64b77e3",
+    "apps/desktop/evals/slides/source-figure.svg": "d2270ccf634182810ed8d9e2643f2a7dd37c19f9bcdeb051639b355111ac7970",
+    "packages/contracts/src/index.ts": "adb9ee6450d3589318b0a6b20df4bc269aba461b8c2ca7d82aad649286ec5340"
+  }
+}

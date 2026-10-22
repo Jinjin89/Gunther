@@ -1,0 +1,18 @@
+{
+  "compiledHostBytes": 1013311,
+  "compiledCaptureSeconds": 4.38,
+  "browserTreeRssMiB": 1050,
+  "browser": "155.0.8059.80",
+  "samples": 21,
+  "usesInstalledChrome": true,
+  "platformFonts": [
+    "Avenir Next",
+    "Avenir Next Medium",
+    "Iowan Old Style",
+    "PingFang SC",
+    "Songti SC"
+  ],
+  "sourceAssetLoaded": true,
+  "packagedTauriWebViewParity": "Not asserted; later capture integration",
+  "rssNote": "Sum of browser process RSS; shared pages may be counted more than once."
+}

@@ -1,0 +1,1024 @@
+{
+  "id": "dense-editorial",
+  "synthetic": true,
+  "model": "DeepSeek · Flash",
+  "modelRef": "deepseek/deepseek-flash",
+  "effort": "medium",
+  "reviewProtocol": "0df98d47f08dbffdac40f702e132009b2fdcbb9a0e49e86005d3e3fcd5079e3e",
+  "vision": true,
+  "theme": "editorial",
+  "use": "talk",
+  "inputHash": "ba9fa8f2abee49eaa63c246a4a3bd7b03f570682046668dfd4c467dc73491249",
+  "sourceHash": "aa66a180cbb6a3d98eb9c788649f187f3435d3f2196ce51420d3cc2d75f4ff3d",
+  "before": {
+    "title": "The intake pilot",
+    "content": "<!-- layout: title; theme: editorial; design: v1 -->\n# The intake pilot\n\nA shorter review cycle, with an unanswered quality question. [1][2]\n\n---\n\n<!-- layout: composed -->\n<!-- scene: eyJyb290Ijp7ImFsaWduIjoic3RyZXRjaCIsImNoaWxkcmVuIjpbeyJhbGlnbiI6InN0YXJ0IiwiYmxvY2tJZCI6ImIxIiwia2luZCI6ImxlYWYiLCJyb2xlIjoibWFpbiIsInNpemUiOiJtZWRpdW0iLCJ2aWV3IjoidGV4dCJ9LHsiYWxpZ24iOiJzdGFydCIsImJsb2NrSWQiOiJiMiIsImtpbmQiOiJsZWFmIiwicm9sZSI6Im1haW4iLCJzaXplIjoic21hbGwiLCJ2aWV3IjoidGV4dCJ9XSwiZ2FwIjoid2lkZSIsImtpbmQiOiJyb3ciLCJwYWRkaW5nIjoibWVkaXVtIiwic3VyZmFjZSI6Im5vbmUiLCJ3ZWlnaHRzIjpbMSw0XX0sInNvdXJjZUhhc2giOiIzOGIzN2IwNjdkZWMyYjcyMjE0MWVhZjcyYmM0NzFhN2JjNGQwOTJlYTMwNmFiZDdjZTNjNjM2ZTljNmJmZTI3IiwidmVyc2lvbiI6MX0 -->\n## The pilot measured time; quality remains unknown [1][2]\n\nIn this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight weeks. These are training data, not actual organizational results. [1]\n\nThe two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish an effect in other teams. [2]",
+    "outline": [
+      {
+        "id": "intake-p1",
+        "heading": "The intake pilot",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "title"
+      },
+      {
+        "id": "intake-p2",
+        "heading": "The pilot measured time; quality remains unknown [1][2]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "composed"
+      }
+    ],
+    "citations": [
+      {
+        "id": "intake-timing",
+        "kind": "library",
+        "url": null,
+        "source_id": "intake-timing",
+        "source_title": "Intake pilot timing log",
+        "assertion_id": null,
+        "quote": "In this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight weeks. These are training data, not actual organizational results.",
+        "locator": "Synthetic training record, timing",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 1
+      },
+      {
+        "id": "intake-limits",
+        "kind": "library",
+        "url": null,
+        "source_id": "intake-limits",
+        "source_title": "Intake pilot scope note",
+        "assertion_id": null,
+        "quote": "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish an effect in other teams.",
+        "locator": "Synthetic training record, limitations",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 2
+      },
+      {
+        "id": "intake-options",
+        "kind": "library",
+        "url": null,
+        "source_id": "intake-options",
+        "source_title": "Intake pilot decision note",
+        "assertion_id": null,
+        "quote": "Collaborators can continue measuring the two teams, expand with a quality measure, or stop the pilot. The note does not rank the options or quantify their costs.",
+        "locator": "Synthetic training record, options",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 3
+      }
+    ],
+    "use": "talk"
+  },
+  "after": {
+    "title": "The intake pilot",
+    "content": "<!-- layout: title; theme: editorial; design: v1 -->\n# The intake pilot\n\nA shorter review cycle, with an unanswered quality question. [1][2]\n\n---\n\n<!-- layout: composed -->\n<!-- scene: eyJyb290Ijp7ImFsaWduIjoic3RyZXRjaCIsImNoaWxkcmVuIjpbeyJhbGlnbiI6InN0YXJ0IiwiYmxvY2tJZCI6ImIxIiwia2luZCI6ImxlYWYiLCJyb2xlIjoibWFpbiIsInNpemUiOiJtZWRpdW0iLCJ2aWV3IjoidGV4dCJ9LHsiYWxpZ24iOiJzdGFydCIsImJsb2NrSWQiOiJiMiIsImtpbmQiOiJsZWFmIiwicm9sZSI6Im1haW4iLCJzaXplIjoibWVkaXVtIiwidmlldyI6InRleHQifV0sImdhcCI6IndpZGUiLCJraW5kIjoicm93IiwicGFkZGluZyI6Im1lZGl1bSIsInN1cmZhY2UiOiJub25lIiwid2VpZ2h0cyI6WzEsMV19LCJzb3VyY2VIYXNoIjoiMzhiMzdiMDY3ZGVjMmI3MjIxNDFlYWY3MmJjNDcxYTdiYzRkMDkyZWEzMDZhYmQ3Y2UzYzYzNmU5YzZiZmUyNyIsInZlcnNpb24iOjF9 -->\n## The pilot measured time; quality remains unknown [1][2]\n\nIn this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight weeks. These are training data, not actual organizational results. [1]\n\nThe two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish an effect in other teams. [2]",
+    "outline": [
+      {
+        "id": "intake-p1",
+        "heading": "The intake pilot",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "title"
+      },
+      {
+        "id": "intake-p2",
+        "heading": "The pilot measured time; quality remains unknown [1][2]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "composed"
+      }
+    ],
+    "citations": [
+      {
+        "id": "intake-timing",
+        "kind": "library",
+        "url": null,
+        "source_id": "intake-timing",
+        "source_title": "Intake pilot timing log",
+        "assertion_id": null,
+        "quote": "In this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight weeks. These are training data, not actual organizational results.",
+        "locator": "Synthetic training record, timing",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 1
+      },
+      {
+        "id": "intake-limits",
+        "kind": "library",
+        "url": null,
+        "source_id": "intake-limits",
+        "source_title": "Intake pilot scope note",
+        "assertion_id": null,
+        "quote": "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish an effect in other teams.",
+        "locator": "Synthetic training record, limitations",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 2
+      },
+      {
+        "id": "intake-options",
+        "kind": "library",
+        "url": null,
+        "source_id": "intake-options",
+        "source_title": "Intake pilot decision note",
+        "assertion_id": null,
+        "quote": "Collaborators can continue measuring the two teams, expand with a quality measure, or stop the pilot. The note does not rank the options or quantify their costs.",
+        "locator": "Synthetic training record, options",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 3
+      }
+    ],
+    "use": "talk"
+  },
+  "beforeCapture": {
+    "version": 1,
+    "candidateHash": "ba9fa8f2abee49eaa63c246a4a3bd7b03f570682046668dfd4c467dc73491249",
+    "slides": [
+      {
+        "id": "intake-p1",
+        "index": 0,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "text"
+          }
+        ],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "title",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 112,
+            "minimum": 28,
+            "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 228.09375,
+              "width": 809.75,
+              "height": 114.234375
+            },
+            "text": "The intake pilot"
+          },
+          {
+            "role": "body",
+            "size": 32,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 382.328125,
+              "width": 800,
+              "height": 89.59375
+            },
+            "text": "A shorter review cycle, with an unanswered quality question. [1][2]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-01.png",
+        "resolvedFonts": [
+          "AvenirNext-Regular",
+          "IowanOldStyle-Roman"
+        ],
+        "contentHash": "fd5a48b0fdf3ac854aa288cd8b0d5ef599ca7a4524b84e31ef8dd22dd2e1676b",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "e78e5293bf6ceba8ae6f17f48cf233ea4548b07bcb44144ede637c3d6a2605b8"
+          }
+        ]
+      },
+      {
+        "id": "intake-p2",
+        "index": 1,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "text"
+          },
+          {
+            "id": "b2",
+            "type": "text"
+          }
+        ],
+        "fit": 0.72,
+        "overflow": false,
+        "drawn": "composed",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [
+          {
+            "id": "b1",
+            "bounds": {
+              "x": 115.03125,
+              "y": 228.140625,
+              "width": 203.9375,
+              "height": 404.828125
+            }
+          },
+          {
+            "id": "b2",
+            "bounds": {
+              "x": 349.203125,
+              "y": 228.140625,
+              "width": 815.765625,
+              "height": 404.828125
+            }
+          }
+        ],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 40.32,
+            "minimum": 28,
+            "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 60,
+              "width": 807.265625,
+              "height": 104.8125
+            },
+            "text": "The pilot measured time; quality remains unknown [1][2]"
+          },
+          {
+            "role": "body",
+            "size": 23.04,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": "b1",
+            "bounds": {
+              "x": 115.03125,
+              "y": 228.140625,
+              "width": 203.9375,
+              "height": 425.90625
+            },
+            "text": "In this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight wee"
+          },
+          {
+            "role": "body",
+            "size": 18,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": "b2",
+            "bounds": {
+              "x": 349.203125,
+              "y": 228.140625,
+              "width": 815.765625,
+              "height": 47.5
+            },
+            "text": "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish a"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [
+          {
+            "role": "body",
+            "size": 18,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": "b2",
+            "bounds": {
+              "x": 349.203125,
+              "y": 228.140625,
+              "width": 815.765625,
+              "height": 47.5
+            },
+            "text": "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish a"
+          }
+        ],
+        "fonts": [
+          "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-02.png",
+        "resolvedFonts": [
+          "AvenirNext-Regular",
+          "IowanOldStyle-Roman"
+        ],
+        "contentHash": "38b37b067dec2b722141eaf72bc471a7bc4d092ea306abd7ce3c636e9c6bfe27",
+        "sceneHash": "a4702c077adf3ac834f8cfee8adcef6541fd1e084aed0620c8f9028a45ae761a",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "c0c3acba0b87ce11b00464e4531bffdda66af5a3c0a1d845c8756c0723cc084a"
+          },
+          {
+            "id": "b2",
+            "hash": "f3b2a553366e7a49a89da2d2de9d443ccdd64fd413598bd6bc31811fff204e7e"
+          }
+        ]
+      }
+    ],
+    "use": "talk",
+    "id": "5b1a902db6c54c5eb67e4a2c8a78a244",
+    "status": "captured",
+    "contentHash": "84f9f8fca374019a069b463e52ba902ea08f29c70ddbd2e95758f76ba637f8ea",
+    "rendererHash": "db7fc6b697746b93e0599978b619fc95a6cccd8abe51236e48315064e156b0cb",
+    "assetHashes": {},
+    "designHash": "671f076e039e75abdaf120c5a0e1cf2684ea2194399afe48eff994dfb779b7f7",
+    "missingAssets": [],
+    "contact": "contact.png",
+    "pdf": "deck.pdf",
+    "pdfCheck": {
+      "status": "checked",
+      "pages": 3,
+      "slides": [
+        {
+          "id": "intake-p1",
+          "index": 0,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "text"
+            }
+          ],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "title",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 112,
+              "minimum": 28,
+              "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 228.09375,
+                "width": 809.75,
+                "height": 114.234375
+              },
+              "text": "The intake pilot"
+            },
+            {
+              "role": "body",
+              "size": 32,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 382.328125,
+                "width": 800,
+                "height": 89.59375
+              },
+              "text": "A shorter review cycle, with an unanswered quality question. [1][2]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        },
+        {
+          "id": "intake-p2",
+          "index": 1,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "text"
+            },
+            {
+              "id": "b2",
+              "type": "text"
+            }
+          ],
+          "fit": 0.72,
+          "overflow": false,
+          "drawn": "composed",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [
+            {
+              "id": "b1",
+              "bounds": {
+                "x": 115.03125,
+                "y": 228.140625,
+                "width": 203.9375,
+                "height": 404.828125
+              }
+            },
+            {
+              "id": "b2",
+              "bounds": {
+                "x": 349.203125,
+                "y": 228.140625,
+                "width": 815.765625,
+                "height": 404.828125
+              }
+            }
+          ],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 40.32,
+              "minimum": 28,
+              "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 60,
+                "width": 807.265625,
+                "height": 104.8125
+              },
+              "text": "The pilot measured time; quality remains unknown [1][2]"
+            },
+            {
+              "role": "body",
+              "size": 23.04,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": "b1",
+              "bounds": {
+                "x": 115.03125,
+                "y": 228.140625,
+                "width": 203.9375,
+                "height": 425.90625
+              },
+              "text": "In this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight wee"
+            },
+            {
+              "role": "body",
+              "size": 18,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": "b2",
+              "bounds": {
+                "x": 349.203125,
+                "y": 228.140625,
+                "width": 815.765625,
+                "height": 47.5
+              },
+              "text": "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish a"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [
+            {
+              "role": "body",
+              "size": 18,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": "b2",
+              "bounds": {
+                "x": 349.203125,
+                "y": 228.140625,
+                "width": 815.765625,
+                "height": 47.5
+              },
+              "text": "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish a"
+            }
+          ],
+          "fonts": [
+            "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        }
+      ],
+      "method": "print-dom-and-exported-pdf-text",
+      "missingSources": [],
+      "missingText": []
+    },
+    "browser": "HeadlessChrome/156.0.8078.4",
+    "distribution": "bundled:chromium_headless_shell-1248",
+    "elapsedSeconds": 1.3,
+    "files": {
+      "contact.png": "2830b41997ab836e0f3d512a96e8726e4be0a38f5d48b17ea2c46b97a95016bf",
+      "slide-02.png": "055e6e6c431b06c714c0184a4e36a08a40b63773c4aac0aabd8cb5ff351fa9f1",
+      "deck.pdf": "128079a1097798b89734760ec8bcd4b8170a5367db80126d677bc6ae102da948",
+      "slide-01.png": "0969ee44f6a1ec2a8926da2809b8f80b0e5c670311589c9a91d75b58825c4d81"
+    }
+  },
+  "afterCapture": {
+    "version": 1,
+    "candidateHash": "52b5952fc122e86626856975dff620d7c7f95da462265b43c66db0d887ad9cf7",
+    "slides": [
+      {
+        "id": "intake-p1",
+        "index": 0,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "text"
+          }
+        ],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "title",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 112,
+            "minimum": 28,
+            "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 228.09375,
+              "width": 809.75,
+              "height": 114.234375
+            },
+            "text": "The intake pilot"
+          },
+          {
+            "role": "body",
+            "size": 32,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 382.328125,
+              "width": 800,
+              "height": 89.59375
+            },
+            "text": "A shorter review cycle, with an unanswered quality question. [1][2]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-01.png",
+        "resolvedFonts": [
+          "AvenirNext-Regular",
+          "IowanOldStyle-Roman"
+        ],
+        "contentHash": "fd5a48b0fdf3ac854aa288cd8b0d5ef599ca7a4524b84e31ef8dd22dd2e1676b",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "e78e5293bf6ceba8ae6f17f48cf233ea4548b07bcb44144ede637c3d6a2605b8"
+          }
+        ]
+      },
+      {
+        "id": "intake-p2",
+        "index": 1,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "text"
+          },
+          {
+            "id": "b2",
+            "type": "text"
+          }
+        ],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "composed",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [
+          {
+            "id": "b1",
+            "bounds": {
+              "x": 124,
+              "y": 293.59375,
+              "width": 495,
+              "height": 330.40625
+            }
+          },
+          {
+            "id": "b2",
+            "bounds": {
+              "x": 661,
+              "y": 293.59375,
+              "width": 495,
+              "height": 330.40625
+            }
+          }
+        ],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 56,
+            "minimum": 28,
+            "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 60,
+              "width": 1096,
+              "height": 145.59375
+            },
+            "text": "The pilot measured time; quality remains unknown [1][2]"
+          },
+          {
+            "role": "body",
+            "size": 32,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": "b1",
+            "bounds": {
+              "x": 124,
+              "y": 293.59375,
+              "width": 495,
+              "height": 295.640625
+            },
+            "text": "In this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight wee"
+          },
+          {
+            "role": "body",
+            "size": 32,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": "b2",
+            "bounds": {
+              "x": 661,
+              "y": 293.59375,
+              "width": 495,
+              "height": 253.40625
+            },
+            "text": "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish a"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-02.png",
+        "resolvedFonts": [
+          "AvenirNext-Regular",
+          "IowanOldStyle-Roman"
+        ],
+        "contentHash": "38b37b067dec2b722141eaf72bc471a7bc4d092ea306abd7ce3c636e9c6bfe27",
+        "sceneHash": "80a9db0311fcc73033d0577614ddd97f2849a68b741001976867ba4b6f1c870e",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "c0c3acba0b87ce11b00464e4531bffdda66af5a3c0a1d845c8756c0723cc084a"
+          },
+          {
+            "id": "b2",
+            "hash": "f3b2a553366e7a49a89da2d2de9d443ccdd64fd413598bd6bc31811fff204e7e"
+          }
+        ]
+      }
+    ],
+    "use": "talk",
+    "id": "6b250423fa4b46d4a468ed5f3465d5ed",
+    "status": "captured",
+    "contentHash": "e26b55179cb2bda64b4f1b041fbb7af2dfecfeca05885d9932422c656f0b8f88",
+    "rendererHash": "db7fc6b697746b93e0599978b619fc95a6cccd8abe51236e48315064e156b0cb",
+    "assetHashes": {},
+    "designHash": "671f076e039e75abdaf120c5a0e1cf2684ea2194399afe48eff994dfb779b7f7",
+    "missingAssets": [],
+    "contact": "contact.png",
+    "pdf": "deck.pdf",
+    "pdfCheck": {
+      "status": "checked",
+      "pages": 3,
+      "slides": [
+        {
+          "id": "intake-p1",
+          "index": 0,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "text"
+            }
+          ],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "title",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 112,
+              "minimum": 28,
+              "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 228.09375,
+                "width": 809.75,
+                "height": 114.234375
+              },
+              "text": "The intake pilot"
+            },
+            {
+              "role": "body",
+              "size": 32,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 382.328125,
+                "width": 800,
+                "height": 89.59375
+              },
+              "text": "A shorter review cycle, with an unanswered quality question. [1][2]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        },
+        {
+          "id": "intake-p2",
+          "index": 1,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "text"
+            },
+            {
+              "id": "b2",
+              "type": "text"
+            }
+          ],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "composed",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [
+            {
+              "id": "b1",
+              "bounds": {
+                "x": 124,
+                "y": 293.59375,
+                "width": 495,
+                "height": 330.40625
+              }
+            },
+            {
+              "id": "b2",
+              "bounds": {
+                "x": 661,
+                "y": 293.59375,
+                "width": 495,
+                "height": 330.40625
+              }
+            }
+          ],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 56,
+              "minimum": 28,
+              "family": "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 60,
+                "width": 1096,
+                "height": 145.59375
+              },
+              "text": "The pilot measured time; quality remains unknown [1][2]"
+            },
+            {
+              "role": "body",
+              "size": 32,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": "b1",
+              "bounds": {
+                "x": 124,
+                "y": 293.59375,
+                "width": 495,
+                "height": 295.640625
+              },
+              "text": "In this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight wee"
+            },
+            {
+              "role": "body",
+              "size": 32,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": "b2",
+              "bounds": {
+                "x": 661,
+                "y": 293.59375,
+                "width": 495,
+                "height": 253.40625
+              },
+              "text": "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish a"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Iowan Old Style\", \"Palatino Linotype\", \"Songti SC\", \"Noto Serif CJK SC\", Georgia, serif",
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        }
+      ],
+      "method": "print-dom-and-exported-pdf-text",
+      "missingSources": [],
+      "missingText": []
+    },
+    "browser": "HeadlessChrome/156.0.8078.4",
+    "distribution": "bundled:chromium_headless_shell-1248",
+    "elapsedSeconds": 1.302,
+    "files": {
+      "contact.png": "6dbd2bfa90367f16c4639f9b950e755d7fa40a15a99b0b9d1aeaa43af690e6c7",
+      "slide-02.png": "a36c9f68c76300ed891fb772287639d1d92ec09c998aca497266757b70bfd73b",
+      "deck.pdf": "052b3dcf4558a4f8943f2af79d1a3bea68e7dc262faaba988c10845a2f99731b",
+      "slide-01.png": "0969ee44f6a1ec2a8926da2809b8f80b0e5c670311589c9a91d75b58825c4d81"
+    }
+  },
+  "review": {
+    "version": 1,
+    "use": "talk",
+    "status": "repaired",
+    "model": "deepseek/deepseek-flash",
+    "imageReview": "reviewed",
+    "repairCycles": 1,
+    "repairedSlides": [
+      "intake-p2"
+    ],
+    "findings": [
+      {
+        "slideId": "intake-p2",
+        "blockId": null,
+        "severity": "advice",
+        "problem": "The two body columns (32 px, ending around y=560) sit high on the 720 px stage, leaving roughly 150 px of empty canvas along the bottom while the headline-to-body gap is small. The page reads top-heavy and the left/right column footings are ragged (7 lines vs 5 lines).",
+        "correction": "Keep all wording, numbers, units, qualifications and source markers exactly as they are; only adjust layout so the body block is optically centered in the space below the headline (or grow the top gap and add a small bottom margin), and align both column endings to a common baseline so the empty band is distributed rather than pooling at the bottom.",
+        "route": "layout"
+      }
+    ],
+    "history": [
+      {
+        "snapshotId": "c15f45be944a4bcd947040d5fb525ef5",
+        "candidateHash": "ba9fa8f2abee49eaa63c246a4a3bd7b03f570682046668dfd4c467dc73491249"
+      },
+      {
+        "snapshotId": "6b250423fa4b46d4a468ed5f3465d5ed",
+        "candidateHash": "52b5952fc122e86626856975dff620d7c7f95da462265b43c66db0d887ad9cf7"
+      }
+    ],
+    "limits": {
+      "requests": 8,
+      "cycles": 1,
+      "affectedSlides": 4
+    },
+    "beforeFindings": [
+      {
+        "slideId": "intake-p2",
+        "blockId": "b2",
+        "severity": "error",
+        "problem": "Body text is 18.0px; the body floor is 22px.",
+        "correction": "Allocate more room and increase type; keep values and qualifications intact.",
+        "route": "layout"
+      },
+      {
+        "slideId": "intake-p2",
+        "blockId": "b2",
+        "severity": "error",
+        "problem": "The right-hand explanatory paragraph is set at 18px, below the 22px minimum for body text, so the required qualification (no quality or error-rate measurement, no effect in other teams) is the smallest, hardest-to-read text on the slide while the headline claims it prominently.",
+        "correction": "Recompose the two-column layout so this paragraph sets at 22px or larger: widen the right column and shorten the left one, letting b2 run to a normal measure. Keep the wording, the two-team qualification and the [2] marker exactly as written.",
+        "route": "layout"
+      },
+      {
+        "slideId": "intake-p2",
+        "blockId": "b1",
+        "severity": "advice",
+        "problem": "The left column is only about 204px wide at 23px type, so the result sentence is broken into a ragged ten-line strip ('40 hours / before the pilot / and 16 hours / during the pilot') and the right column ends after two lines, leaving roughly half the slide empty and the two columns visually unbalanced.",
+        "correction": "Give b1 a wider measure (about 300-360px) and let b2 occupy a correspondingly adjusted right column of equal height, so both blocks read as a paired comparison rather than a tall strip beside a short stub. Do not change text or move source markers.",
+        "route": "layout"
+      }
+    ],
+    "candidateHash": "52b5952fc122e86626856975dff620d7c7f95da462265b43c66db0d887ad9cf7",
+    "calls": 3,
+    "elapsedSeconds": 25.571
+  },
+  "fidelity": {
+    "wordingNotesAndCitations": true,
+    "citationIdentities": true,
+    "poolMapping": true,
+    "pageIdentityAndOrder": true,
+    "theme": true,
+    "designVersion": true
+  }
+}

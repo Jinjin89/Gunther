@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-CITE = re.compile(r"\[(?:\d+(?:\s*[,，、]\s*\d+)*|\?)\]")
+CITE = re.compile(r"\[(?:[ipd]:)?(?:\d+(?:\s*[,，、]\s*\d+)*|\?)\]")
 CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿가-힯]")
 WORD = re.compile(r"[A-Za-z0-9][\w'’.%-]*")
 ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.*)$")
@@ -56,6 +56,7 @@ class Page:
     # The whole section, heading and speaker notes included. A deck's layout marker is not
     # part of it: it is the line that says how the slide is drawn, and is given as ``layout``.
     text: str = ""
+    link: str = ""
 
     @property
     def body(self) -> list[str]:
@@ -115,6 +116,47 @@ def first_and_last(pages: Sequence[Page], _: Mapping[str, Any], __: Context) -> 
             Finding("first_and_last", len(pages) - 1, "The last slide should be the takeaways.")
         )
     return found
+
+
+def repeated_heading(
+    pages: Sequence[Page], _: Mapping[str, Any], context: Context
+) -> list[Finding]:
+    """Flag exact repeated slide headings for a human review; similarity is not logic."""
+    if context.kind != "slides":
+        return []
+    seen: dict[str, int] = {}
+    found = []
+    for page in pages:
+        heading = " ".join(page.heading.casefold().split())
+        if not heading:
+            continue
+        if heading in seen:
+            found.append(
+                Finding(
+                    "repeated_heading",
+                    page.index,
+                    f"This repeats the heading on slide {seen[heading] + 1}; "
+                    "check whether the slides make distinct points.",
+                )
+            )
+        else:
+            seen[heading] = page.index
+    return found
+
+
+def slide_links(pages: Sequence[Page], _: Mapping[str, Any], context: Context) -> list[Finding]:
+    """Report absent planned transitions without claiming that present links are sound."""
+    if context.kind != "slides":
+        return []
+    return [
+        Finding(
+            "slide_link",
+            page.index,
+            "No planned relationship to the previous slide is recorded; review the transition.",
+        )
+        for page in pages[1:]
+        if not page.link.strip()
+    ]
 
 
 def layout_run(pages: Sequence[Page], params: Mapping[str, Any], _: Context) -> list[Finding]:
@@ -244,6 +286,143 @@ def _table(page: Page) -> tuple[list[str], list[list[str]]] | None:
     return cells[0], [row for row in cells[2:] if any(row)]
 
 
+def diagram_edge_rows(text: str) -> list[list[str]]:
+    table = _table(Page(0, "", "diagram", text))
+    return table[1] if table else []
+
+
+DIAGRAM_CITES = re.compile(r"\[(?:[ipd]:)?(\d+(?:\s*[,，、]\s*\d+)*)\]")
+
+
+def _diagram_width(text: str) -> float:
+    plain = re.sub(
+        r"\\(.)", r"\1", CITE.sub("", text).replace("**", "").replace("__", "").replace("`", "")
+    )
+    return sum(
+        1.0 if CJK.fullmatch(char) else 0.28 if char.isspace() else 0.58 if char.isalnum() else 0.4
+        for char in plain
+    )
+
+
+def diagram_problem(text: str) -> str | None:
+    """Validate a small evidence-labeled DAG described as a three-column Markdown table."""
+    page = Page(0, "", "diagram", text)
+    table = _table(page)
+    if table is None:
+        return "A diagram needs one Markdown table with a header and at least one edge."
+    header, rows = table
+
+    def normalize(value: str) -> str:
+        plain = re.sub(
+            r"\\(.)",
+            r"\1",
+            CITE.sub("", value).replace("**", "").replace("__", "").replace("`", ""),
+        )
+        return re.sub(r"\s+", " ", plain.strip()).casefold()
+
+    normalized_headers = [normalize(cell) for cell in header]
+    if (
+        len(header) != 3
+        or any(not label for label in normalized_headers)
+        or len(set(normalized_headers)) != 3
+    ):
+        return (
+            "A diagram table needs three distinct, named columns in start, relationship, end order."
+        )
+    if not 1 <= len(rows) <= 8 or any(len(row) != 3 for row in rows):
+        return f"A diagram supports 1 to 8 complete edge rows; this table has {len(rows)}."
+    nodes: list[str] = []
+    adjacency: dict[str, set[str]] = {}
+    indegree: dict[str, int] = {}
+    edges: set[tuple[str, str]] = set()
+    edge_rows: list[tuple[str, str, str]] = []
+    for row in rows:
+        source, relation, target = row
+        if CITE.search(source) or CITE.search(target):
+            return (
+                "Diagram node labels cannot carry citations; cite each relationship cell instead."
+            )
+        source_key, target_key = normalize(source), normalize(target)
+        relation_text = normalize(relation)
+        if not source_key or not target_key or not relation_text:
+            return "Every diagram edge needs a readable start, relationship, and end label."
+        if (
+            units(source) > 24
+            or units(target) > 24
+            or units(relation) > 18
+            or _diagram_width(source) > 15
+            or _diagram_width(target) > 15
+            or _diagram_width(relation) > 13.5
+        ):
+            return (
+                "A diagram label is too long to fit safely; use the original table or split "
+                "the graph."
+            )
+        refs = [
+            int(number)
+            for group in DIAGRAM_CITES.findall(relation)
+            for number in re.findall(r"\d+", group)
+        ]
+        if not refs:
+            return "Every diagram relationship needs at least one numbered source citation."
+        if source_key == target_key:
+            return "A diagram cannot contain a self edge."
+        edge = (source_key, target_key)
+        if edge in edges:
+            return "A diagram cannot repeat the same directed edge."
+        edges.add(edge)
+        edge_rows.append((source_key, relation, target_key))
+        for node in (source_key, target_key):
+            if node not in indegree:
+                nodes.append(node)
+                indegree[node] = 0
+                adjacency[node] = set()
+        adjacency[source_key].add(target_key)
+        indegree[target_key] += 1
+    if not 2 <= len(nodes) <= 6:
+        return f"A diagram supports 2 to 6 distinct nodes; this table has {len(nodes)}."
+    ready = [node for node in nodes if indegree[node] == 0]
+    rank = {node: 0 for node in ready}
+    visited = 0
+    while ready:
+        node = ready.pop(0)
+        visited += 1
+        for target in adjacency[node]:
+            rank[target] = max(rank.get(target, 0), rank[node] + 1)
+            indegree[target] -= 1
+            if indegree[target] == 0:
+                ready.append(target)
+    if visited != len(nodes):
+        return "This relationship table contains a cycle; keep it as a table or rewrite its edges."
+    layers: dict[int, int] = {}
+    for value in rank.values():
+        layers[value] = layers.get(value, 0) + 1
+    if len(layers) > 3 or max(layers.values(), default=0) > 3:
+        return "This graph is too deep or wide to lay out clearly; split it or keep the table."
+    by_rank = {level: [node for node in nodes if rank[node] == level] for level in layers}
+    centers = {
+        node: 210 + (index - (len(by_rank[rank[node]]) - 1) / 2) * 140
+        for node in nodes
+        for index in [by_rank[rank[node]].index(node)]
+    }
+    lanes: dict[int, list[float]] = {}
+    for source, _, target in edge_rows:
+        gap = rank[target] - rank[source]
+        if gap != 1:
+            return (
+                "A relationship skips a graph layer; keep the table or describe one edge at a time."
+            )
+        center = (centers[source] + centers[target]) / 2
+        lane = rank[source]
+        if any(abs(center - prior) < 64 for prior in lanes.get(lane, [])):
+            return (
+                "Relationship labels would overlap in this graph; keep the table or split "
+                "the diagram."
+            )
+        lanes.setdefault(lane, []).append(center)
+    return None
+
+
 def table_size(pages: Sequence[Page], params: Mapping[str, Any], _: Context) -> list[Finding]:
     columns, rows = int(params.get("max_columns", 5)), int(params.get("max_rows", 6))
     found = []
@@ -303,11 +482,23 @@ def chart_numbers_cited(
                     for n in refs
                     if n in context.evidence
                 )
-                pattern = r"(?<!\w)[+-]?\d[\d,]*(?:\.\d+)?%?"
-                source_values = {v.replace(",", "") for v in re.findall(pattern, passages)}
+                # Permit CJK text immediately before a value while avoiding a partial match
+                # inside an ASCII identifier such as ``rate12``.
+                pattern = r"(?<![A-Za-z0-9_.+\-−–—])[+\-−–—]?\d[\d,]*(?:\.\d+)?%?"
+
+                def normalized(value: str) -> str:
+                    return (
+                        value.replace("−", "-")
+                        .replace("–", "-")
+                        .replace("—", "-")
+                        .replace(",", "")
+                    )
+
+                source_values = {normalized(v) for v in re.findall(pattern, passages)}
                 header_unit = "%" if any("%" in cell for cell in table[0][1:]) else ""
                 values = [
-                    v.replace(",", "") for v in re.findall(pattern, CITE.sub("", " ".join(row[1:])))
+                    normalized(v)
+                    for v in re.findall(pattern, CITE.sub("", " ".join(row[1:])))
                 ]
                 missing = [
                     v
@@ -351,6 +542,9 @@ def _misfit(page: Page, context: Context) -> str | None:
     """Why a page does not take the form its layout asks for, or None when it does."""
 
     layout, body = page.layout, page.body
+    if layout == "composed":
+        # The bounded scene validator checks this layout after the body has been fact-checked.
+        return None
     if layout == "title":
         # The title stays the title: a missing message line is no reason to draw it as text.
         first = next((line for line in page.text.splitlines() if line.strip()), "")
@@ -373,6 +567,9 @@ def _misfit(page: Page, context: Context) -> str | None:
                 f"A “{layout}” slide is a table: a header row, a line of dashes under it, "
                 "then the rows."
             )
+    elif layout == "diagram":
+        if problem := diagram_problem(page.text):
+            return problem
     elif layout in CHARTS:
         rows = _rows(page)
         if rows is None:
@@ -391,16 +588,12 @@ def _misfit(page: Page, context: Context) -> str | None:
     elif layout == "flow":
         steps = [line for line in body if ORDERED.match(line)]
         if not 2 <= len(steps) <= 6:
-            return (
-                f"A “flow” slide is a numbered list of 2 to 6 steps; this one has {len(steps)}."
-            )
+            return f"A “flow” slide is a numbered list of 2 to 6 steps; this one has {len(steps)}."
     elif layout in ("timeline", "cards"):
         items = [match.group(1) for line in body if (match := ITEM.match(line))]
         most = 7 if layout == "timeline" else 6
         if not 2 <= len(items) <= most:
-            return (
-                f"A “{layout}” slide is a list of 2 to {most} lines; this one has {len(items)}."
-            )
+            return f"A “{layout}” slide is a list of 2 to {most} lines; this one has {len(items)}."
         if any(not BOLD_START.match(item) for item in items):
             what = "the time" if layout == "timeline" else "a name"
             return f"In a “{layout}” slide every line starts with {what} in bold, like **…**."
@@ -441,6 +634,27 @@ def layout_shape(pages: Sequence[Page], _: Mapping[str, Any], context: Context) 
     for page in pages:
         if problem := _misfit(page, context):
             found.append(Finding("layout_shape", page.index, problem))
+            continue
+        if page.layout == "diagram" and context.evidence is not None:
+            table = _table(page)
+            missing = sorted(
+                {
+                    int(number)
+                    for row in (table[1] if table else [])
+                    for group in DIAGRAM_CITES.findall(" ".join(row[1:2]))
+                    for number in re.findall(r"\d+", group)
+                    if int(number) not in context.evidence
+                }
+            )
+            if missing:
+                found.append(
+                    Finding(
+                        "layout_shape",
+                        page.index,
+                        "Diagram relationships refer to unavailable source number(s): "
+                        f"{', '.join(map(str, missing))}.",
+                    )
+                )
     return found
 
 
@@ -448,6 +662,8 @@ CHECKS: dict[str, Check] = {
     "section_count": section_count,
     "page_count": page_count,
     "first_and_last": first_and_last,
+    "repeated_heading": repeated_heading,
+    "slide_links": slide_links,
     "layout_run": layout_run,
     "heading_length": heading_length,
     "filler_phrases": filler_phrases,

@@ -887,7 +887,7 @@ def test_the_view_has_its_headings_in_order_and_the_numbers_the_user_sees() -> N
     cut = f"Note: {words}"[:149].rstrip() + "…"
     expected = f"""\
 Library: Cells. Web: off.
-slides skill: understand → plan → write → review. Layouts: title, big_number, compare, two_column, flow, timeline, bar_chart, line_chart, cards, quote, figure, text, takeaways. Uses: talk, read
+slides skill: understand → plan → write → review. Layouts: title, big_number, compare, two_column, flow, timeline, bar_chart, line_chart, cards, quote, figure, diagram, text, composed, takeaways. Uses: talk, read
 Brief (you said = the user's words; edited = the user typed it; guessed = yours):
 - goal: Explain the Velmora trial (you said)
 - audience: lab members (you said)
@@ -1223,7 +1223,7 @@ def test_a_title_and_an_accent_are_set_by_code_and_a_slide_can_be_moved_and_remo
         # The accent is code only: no model was asked for it. The title slide had to be
         # written again for its new heading, and it kept the accent.
         slides = split_document(end["artifact"]["content"], "slides")[1]
-        assert slides[0].startswith("<!-- layout: title; accent: blue -->\n# Telling T and B cells")
+        assert slides[0].startswith("<!-- layout: title; accent: blue; design: v1 -->\n# Telling T and B cells")
         assert end["artifact"]["title"] == "Telling T and B cells apart"
         stored, _ = kept(client, "talk")
         assert stored.works[0].title == "Telling T and B cells apart"
@@ -1231,12 +1231,14 @@ def test_a_title_and_an_accent_are_set_by_code_and_a_slide_can_be_moved_and_remo
         # rules; the person asked for it to move).
         assert {(c["what"], c["was"]) for c in end["changes"]} >= {("rewritten", 1), ("moved", 3)}
         assert works_text(client, "talk")[1] == before[2]
-        accent_calls = [
-            r
+        writer_prompts = [
+            str(r["messages"][-1]["content"])
             for r in fake.requests[start:]
-            if not is_orchestrating(r) and "accent" in str(r["messages"])
+            if not is_orchestrating(r)
+            and "Write section " in str(r["messages"][-1]["content"])
         ]
-        assert accent_calls == []
+        assert len(writer_prompts) == 1
+        assert "Write section 1 of 3: Telling T and B cells apart" in writer_prompts[0]
 
 
 def test_a_slide_is_removed_by_code_alone(tmp_path: Path) -> None:

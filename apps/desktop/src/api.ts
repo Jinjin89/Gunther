@@ -283,6 +283,8 @@ export const recordingAssetUrl = (id: string) =>
   withQueryToken(`${apiBase}/recordings/${encodeURIComponent(id)}`);
 export const sourceAssetUrl = (id: string) =>
   withQueryToken(`${apiBase}/assets/${encodeURIComponent(id)}`);
+export const artifactRenderUrl = (baseId: string, artifactId: string, workspaceId: string, snapshot: string, name: string) =>
+  withQueryToken(`${apiBase}/knowledge-bases/${encodeURIComponent(baseId)}/artifacts/${encodeURIComponent(artifactId)}/renders/${encodeURIComponent(snapshot)}/${encodeURIComponent(name)}?workspace_id=${encodeURIComponent(workspaceId)}`);
 
 async function uploadRecording(blob: Blob, title: string, expectedWorkspaceId?: string): Promise<RecordingSession> {
   await waitForDesktopBackend();
@@ -738,8 +740,8 @@ export const knowledgeApi = {
   renameSource: (id: string, title: string) => request<SourceSummary>(`/sources/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ title }) }),
   assertions: (status?: Assertion["status"]) =>
     request<Assertion[]>(`/assertions${status ? `?status=${status}` : ""}`),
-  importSource: (payload: CreateSourceInput, expectedWorkspaceId?: string) =>
-    request<ImportResult>("/sources", {
+  importSource: (payload: CreateSourceInput, expectedWorkspaceId?: string, options?: { deferAnalysis?: boolean }) =>
+    request<ImportResult>(options?.deferAnalysis ? "/sources?deferAnalysis=true" : "/sources", {
       method: "POST",
       body: JSON.stringify(payload),
     }, expectedWorkspaceId),
@@ -824,17 +826,17 @@ export const knowledgeApi = {
     endMs: number;
     pass: "minute" | "retry" | "final";
     context: { terms: string[]; before: string; after?: string };
-  }) =>
+  }, signal?: AbortSignal) =>
     request<{
       text: string;
       sentences: { start_ms: number; end_ms: number; text: string }[];
       model: string;
       provider: string;
       missing: [number, number][];
-    }>(`/recordings/${encodeURIComponent(id)}/relisten`, { method: "POST", body: JSON.stringify(body) }),
+    }>(`/recordings/${encodeURIComponent(id)}/relisten`, { method: "POST", body: JSON.stringify(body), signal: signal ?? null }),
   /** Where paragraphs start among these sentences, by content (the Analysis model). Whole numbers only: no text comes back. */
-  groupParagraphs: (id: string, body: { sentences: string[]; before: string; pass: "live" | "regroup" }) =>
-    request<{ starts: number[]; model: string }>(`/recordings/${encodeURIComponent(id)}/paragraphs`, { method: "POST", body: JSON.stringify(body) }),
+  groupParagraphs: (id: string, body: { sentences: string[]; before: string; pass: "live" | "regroup" }, signal?: AbortSignal) =>
+    request<{ starts: number[]; model: string }>(`/recordings/${encodeURIComponent(id)}/paragraphs`, { method: "POST", body: JSON.stringify(body), signal: signal ?? null }),
   /** How transcribing a recording again stands. */
   transcribeAgainStatus: (recordingId: string) => request<TranscribeAgainStatus>(`/recordings/${encodeURIComponent(recordingId)}/transcribe-again`),
   /** Hear a recording's saved audio again with the Recording model and replace its transcript. */
@@ -1005,6 +1007,8 @@ export const knowledgeApi = {
   editOutput: (baseId: string, artifactId: string, payload: EditOutputRequest, workspaceId: string) =>
     request<Artifact>(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/edits`, { method: "POST", body: JSON.stringify(payload) }, workspaceId),
   /** Have the Checker look at the sections it has not checked as they read now. */
+  reviewSlidesStream: async (baseId: string, artifactId: string, payload: { clientRequestId: string; model?: string; effort?: string }, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal): Promise<Artifact> =>
+    (await streamOutput(outputsPath(baseId) + "/artifacts/" + encodeURIComponent(artifactId) + "/visual-review/stream", { method: "POST", body: JSON.stringify(payload) }, workspaceId, event => onEvent(event as OutputEvent), signal)) as Artifact,
   checkOutput: (baseId: string, artifactId: string, workspaceId: string) =>
     request<Artifact>(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/check`, { method: "POST" }, workspaceId),
   updateProposal: (id: string, payload: UpdateKnowledgeProposalInput) =>

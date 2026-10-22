@@ -107,6 +107,7 @@ from gunther.schemas import (
     RecordingCheckpointInput,
     RecordingSessionOut,
     RenameSourceInput,
+    ReviewSlidesInput,
     ReviseOutputInput,
     SourceDetailOut,
     SourceKind,
@@ -1129,9 +1130,13 @@ def knowledge_base_sources(knowledge_base_id: str, request: Request) -> list[Sou
     response_model=ImportResultOut,
     status_code=status.HTTP_201_CREATED,
 )
-def create_source(payload: CreateSourceInput, request: Request) -> ImportResultOut:
+def create_source(
+    payload: CreateSourceInput,
+    request: Request,
+    defer_analysis: Annotated[bool, Query(alias="deferAnalysis")] = False,
+) -> ImportResultOut:
     try:
-        return _service(request).import_source(payload)
+        return _service(request).import_source(payload, defer_analysis=defer_analysis)
     except LookupError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -1512,6 +1517,32 @@ def artifacts(
 
 
 @router.get(
+    "/knowledge-bases/{knowledge_base_id}/artifacts/{artifact_id}/renders/{snapshot_id}/{name}",
+    response_class=FileResponse,
+)
+def artifact_render(knowledge_base_id: str, artifact_id: str, snapshot_id: str, name: str,
+                    request: Request, workspace_id: Annotated[str, Query(min_length=1,
+                                                                       max_length=40)]):
+    service = _service(request)
+    try:
+        shown = service.get_artifact(knowledge_base_id, artifact_id, workspace_id)
+        skill = getattr(shown.provenance, "skill", None)
+        render = skill.render_check if skill else None
+        visual = skill.visual_review if skill else None
+        allowed = {render.get("id")} if render else set()
+        allowed.update(item.get("snapshotId") for item in (visual or {}).get("history", []))
+        if snapshot_id not in allowed or service.slide_renderer is None:
+            raise LookupError("Slide render not found.")
+        path = service.slide_renderer.file(snapshot_id, name)
+        return FileResponse(path, media_type="application/pdf" if name.endswith(".pdf")
+                            else "image/png", headers={"Cache-Control": "private, no-store"})
+    except ArtifactIntegrityError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.get(
     "/knowledge-bases/{knowledge_base_id}/artifacts/{artifact_id}",
     response_model=ArtifactOut,
 )
@@ -1675,6 +1706,18 @@ async def build_output_stream(
         _OUTPUT_WORDS["build", payload.kind],
         service.library_title(knowledge_base_id),
     )
+
+
+@router.post("/knowledge-bases/{knowledge_base_id}/artifacts/{artifact_id}/visual-review/stream")
+async def review_slides_stream(knowledge_base_id: str, artifact_id: str,
+                               payload: ReviewSlidesInput, request: Request,
+                               workspace_id: WorkspaceHeader) -> StreamingResponse:
+    service = _service(request)
+    return _output_run(request, knowledge_base_id, "Review rendered slides",
+        lambda hear: service.review_slides(knowledge_base_id, workspace_id, artifact_id,
+                                           payload, hear),
+        ("Reviewing rendered slides", "Slide review saved", "Couldn't review slides"),
+        service.library_title(knowledge_base_id))
 
 
 @router.post("/knowledge-bases/{knowledge_base_id}/artifacts/{artifact_id}/revise/stream")

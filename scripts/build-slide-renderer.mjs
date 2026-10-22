@@ -1,0 +1,13 @@
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve, relative } from "node:path";
+const root = resolve(import.meta.dirname, "..");
+const desktop = join(root, "apps/desktop");
+const result = spawnSync(process.execPath, [join(root, "node_modules/vite/bin/vite.js"), "build", "--config", "render-slides/vite.config.ts"], { cwd: desktop, stdio: "inherit" });
+if (result.status !== 0) process.exit(result.status ?? 1);
+const dist = join(desktop, "render-dist");
+const walk = path => readdirSync(path, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? walk(join(path, entry.name)) : [join(path, entry.name)]);
+const files = Object.fromEntries(walk(dist).sort().map(path => [relative(dist, path), createHash("sha256").update(readFileSync(path)).digest("hex")]));
+const rendererHash = createHash("sha256").update(JSON.stringify(files)).digest("hex");
+writeFileSync(join(dist, "manifest.json"), JSON.stringify({ version: 1, rendererHash, entry: "render-slides/index.html", files }, null, 2));

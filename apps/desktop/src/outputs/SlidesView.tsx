@@ -2,14 +2,16 @@ import type { Artifact, ConversationCitation } from "@gunther/contracts";
 import { Deck, Slide } from "@revealjs/react";
 import type { RevealApi } from "reveal.js";
 import { Check, Circle, type LucideIcon, Maximize2, MessageSquarePlus, Palette, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { citationNumbers } from "../pages/AnswerBody";
 import { ArtifactMenu } from "./ArtifactMenu";
 import { SectionStatus } from "./ReportView";
 import { SlideFace } from "./SlideFace";
-import { ACCENTS, parseSlides, slideLayouts } from "./sections";
-import { ACCENT_COLOURS, ACCENT_LABELS, type Accent, isAccent } from "./slides/accent";
+import { SlideStylePicker } from "./SlideStylePicker";
+import { ACCENTS, THEMES, parseSlides, slideLayouts } from "./sections";
+import { ACCENT_COLOURS, ACCENT_LABELS, type Accent, isAccent, themeAccentColour } from "./slides/accent";
+import { slideThemeStyle } from "./slides/themes";
 import "reveal.js/reveal.css";
 
 /** Reveal's settings: a 16:9 deck inside its box, moved by keys only while it has focus. */
@@ -48,7 +50,7 @@ const SWATCHES = Object.fromEntries(ACCENTS.map((name) => {
  * not the screen's full-screen mode: the window keeps its size, and a person who wants the
  * whole screen can use the window's own button).
  */
-export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, onAccent, accentDisabled = false, compact = false }: {
+export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, onAccent, onTheme, accentDisabled = false, compact = false }: {
   artifact: Artifact;
   onCite: (citation: ConversationCitation, index: number) => void;
   /** The slide in view (counted from 0), told on every change: the part a message is about when nothing is chosen. */
@@ -61,6 +63,8 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
   changed?: readonly number[] | undefined;
   /** Changes the deck's accent colour. Without it the toolbar has no Accent menu. */
   onAccent?: ((accent: Accent) => void) | undefined;
+  /** Changes the deck's visual theme through the version edit path. */
+  onTheme?: ((theme: (typeof THEMES)[number]) => void) | undefined;
   /** The Accent menu is there but cannot be used now (something is being saved, or this is not the latest version). */
   accentDisabled?: boolean;
   /** A small preview (beside the editor): no arrows over the slide, the thumbnails move it. */
@@ -71,6 +75,8 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
   const layer = useRef<HTMLDivElement>(null);
   const [current, setCurrent] = useState(0);
   const [presenting, setPresenting] = useState(false);
+  const [fitNotes, setFitNotes] = useState<Record<number, { fit: number; overflow: boolean }>>({});
+  const [sceneIssues, setSceneIssues] = useState<Record<number, string>>({});
   const numbers = useMemo(() => citationNumbers(artifact.citations), [artifact.citations]);
   const sources = useMemo(() => artifact.citations.map((citation) => [citation.sourceTitle, citation.locator].filter(Boolean).join(" · ")), [artifact.citations]);
   const slides = useMemo(() => parseSlides(artifact.content), [artifact.content]);
@@ -78,11 +84,28 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
   // The title slide's colour is the whole deck's. Only a title slide holds one, so a deck that opens
   // with another layout has nowhere to keep it.
   const accent = slides[0]?.accent ?? null;
+  const theme = slides[0]?.theme ?? "classic";
+  const designVersion = slides[0]?.designVersion ?? 0;
   const canAccent = !slides[0]?.layout || slides[0].layout === "title";
+  const canTheme = canAccent;
+  const reportFit = useCallback((index: number, fit: number, overflow: boolean) => setFitNotes((previous) => {
+    const old = previous[index];
+    if (old?.fit === fit && old.overflow === overflow) return previous;
+    return { ...previous, [index]: { fit, overflow } };
+  }), []);
   const cite = useCallback((index: number) => {
     const citation = artifact.citations[index];
     if (citation) onCite(citation, index);
   }, [artifact.citations, onCite]);
+  const reportSceneIssue = useCallback((index: number, issue: string | null) => setSceneIssues((previous) => {
+    if (!issue && previous[index] === undefined) return previous;
+    if (issue && previous[index] === issue) return previous;
+    const next = { ...previous };
+    if (issue) next[index] = issue; else delete next[index];
+    return next;
+  }), []);
+  const fitCallbacks = useMemo(() => slides.map((_, index) => (fit: number, overflow: boolean) => reportFit(index, fit, overflow)), [slides, reportFit]);
+  const sceneCallbacks = useMemo(() => slides.map((_, index) => (issue: string | null) => reportSceneIssue(index, issue)), [slides, reportSceneIssue]);
 
   // A new version is a new deck, from its first slide.
   useEffect(() => setCurrent(0), [artifact.id]);
@@ -136,6 +159,7 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
       <span aria-live="polite">Slide {Math.min(current, slides.length - 1) + 1} of {slides.length}{changed?.includes(Math.min(current, slides.length - 1)) && <em className="outputs-changed"> · Changed</em>}</span>
       <span className="outputs-slides-tools">
         {onAsk && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => onAsk(Math.min(current, slides.length - 1))}><MessageSquarePlus size={13} />Ask about this slide</button>}
+        {onTheme && canTheme && <SlideStylePicker value={theme} accent={accent} designVersion={designVersion} disabled={accentDisabled} onSelect={onTheme} numbers={numbers} sources={sources} samples={[0, slides.findIndex((_, index) => index > 0)].filter(index => index >= 0).map(index => ({ body: slides[index]!.body, title: index === 0, layout: layouts[index], composition: slides[index]!.composition, scene: slides[index]!.scene }))} />}
         {onAccent && canAccent && (accentDisabled
           ? <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled><Palette size={13} />Accent</button>
           : <ArtifactMenu label="Accent colour" triggerLabel="Accent colour" triggerClass="gx-btn gx-btn-quiet gx-btn-sm" trigger={<><Palette size={13} />Accent</>}
@@ -143,7 +167,7 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
         <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => setPresenting(true)}><Maximize2 size={13} />Present</button>
       </span>
     </div>
-    <div ref={stage} className="outputs-stage">
+    <div ref={stage} className={`outputs-stage theme-${theme}`} data-theme={theme} style={{ ...slideThemeStyle(theme), "--outputs-accent": themeAccentColour(accent, theme) } as CSSProperties}>
       <Deck
         key={artifact.id}
         deckRef={deck}
@@ -153,14 +177,24 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
         onSlideChange={(event: Event) => setCurrent(indexOf(event))}
       >
         {slides.map((slide, index) => <Slide key={index}>
-          <SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} numbers={numbers} sources={sources} onCite={cite} />
+          <SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} theme={theme} designVersion={designVersion} composition={slide.composition} scene={slide.scene} numbers={numbers} sources={sources} onCite={cite} onSceneIssue={sceneCallbacks[index]} onFitChange={fitCallbacks[index]} />
         </Slide>)}
       </Deck>
     </div>
+    {sceneIssues[Math.min(current, slides.length - 1)] && <p className="outputs-scene-note" role="status">
+      {sceneIssues[Math.min(current, slides.length - 1)]!.startsWith("Graphic elements fell back")
+        ? `Some graphic elements use their complete source content: ${sceneIssues[Math.min(current, slides.length - 1)]}`
+        : `Composed layout unavailable: ${sceneIssues[Math.min(current, slides.length - 1)]} The complete slide text is shown.`}
+    </p>}
+    {fitNotes[Math.min(current, slides.length - 1)] && (fitNotes[Math.min(current, slides.length - 1)]!.overflow || fitNotes[Math.min(current, slides.length - 1)]!.fit < 0.8) && <p className="outputs-fit-note" role="status">
+      {fitNotes[Math.min(current, slides.length - 1)]!.overflow
+        ? "Some content still extends beyond this slide. Consider splitting it, shortening the text, or moving detail to speaker notes."
+        : "This slide needed noticeably smaller text to fit. Consider splitting it, shortening the text, or moving detail to speaker notes."}
+    </p>}
     {/* On the document body, not here: the page's entrance animation leaves a transform on it, and a
         fixed layer inside a transformed element fills that element, not the window. */}
     {presenting && createPortal(
-      <div ref={layer} className="outputs-stage is-presenting" role="dialog" aria-modal="true" aria-label="Presenting" tabIndex={-1}>
+      <div ref={layer} className={`outputs-stage is-presenting theme-${theme}`} data-theme={theme} style={{ ...slideThemeStyle(theme), "--outputs-accent": themeAccentColour(accent, theme) } as CSSProperties} role="dialog" aria-modal="true" aria-label="Presenting" tabIndex={-1}>
         <button type="button" className="outputs-leave gx-icon-button" onClick={leave} aria-label="Leave Present"><X size={16} /></button>
         <Deck
           className="outputs-reveal"
@@ -169,7 +203,7 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
           onSlideChange={(event: Event) => go(indexOf(event))}
         >
           {slides.map((slide, index) => <Slide key={index}>
-            <SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} numbers={numbers} />
+            <SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} theme={theme} designVersion={designVersion} composition={slide.composition} scene={slide.scene} numbers={numbers} />
           </Slide>)}
         </Deck>
       </div>,
@@ -178,7 +212,7 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
     <ol className="outputs-thumbs" aria-label="Slides">
       {slides.map((slide, index) => <li key={index}>
         <button type="button" className={index === current ? "is-active" : ""} aria-label={`Go to slide ${index + 1}`} aria-current={index === current ? "true" : undefined} onClick={() => go(index)}>
-          <span className="outputs-thumb-frame"><span className="outputs-thumb-scale"><SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} numbers={[]} /></span></span>
+          <span className="outputs-thumb-frame"><span className="outputs-thumb-scale"><SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} theme={theme} designVersion={designVersion} composition={slide.composition} scene={slide.scene} numbers={numbers} /></span></span>
           <small>{index + 1}{changed?.includes(index) && <em className="outputs-changed">Changed</em>}</small>
         </button>
       </li>)}

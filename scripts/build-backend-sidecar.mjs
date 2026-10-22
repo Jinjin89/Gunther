@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readdirSync, statSync, mkdirSync, chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, statSync, mkdirSync, chmodSync, existsSync, readFileSync, writeFileSync, cpSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -8,6 +8,20 @@ import { fileURLToPath } from "node:url";
 // A folder, not --onefile: one-file helpers unpack ~200 MB on every launch.
 const root = resolve(import.meta.dirname, "..");
 const backendRoot = join(root, "apps", "backend");
+// Compile the exact shared slide renderer before freezing the helper. The worker speaks
+// CDP directly, so the installed application never needs Node, Vite or Playwright.
+if (!process.argv.includes("--if-missing")) {
+  const renderBuild = spawnSync(process.execPath, [join(root, "scripts/build-slide-renderer.mjs")], { cwd: root, stdio: "inherit" });
+  if (renderBuild.status !== 0) process.exit(renderBuild.status ?? 1);
+}
+const renderDir = join(root, "apps/desktop/render-dist");
+const slideBrowserDir = join(root, "tools/slide-browser/.cache");
+const withSlideBrowser = !process.argv.includes("--without-slide-browser")
+  && (!process.argv.includes("--if-missing") || existsSync(join(slideBrowserDir, "manifest.json")));
+if (withSlideBrowser && !existsSync(join(slideBrowserDir, "manifest.json"))) {
+  const prepared = spawnSync(process.execPath, [join(root, "scripts/prepare-slide-browser.mjs")], { cwd: root, stdio: "inherit" });
+  if (prepared.status !== 0) process.exit(prepared.status ?? 1);
+}
 const pyinstallerRoot = join(backendRoot, ".pyinstaller");
 const isMac = process.platform === "darwin";
 const frozenName = isMac ? "GuntherBackend" : "gunther-backend";
@@ -22,7 +36,7 @@ const parserDir = join(root, "tools", "document-parser", ".build", "bundle");
 const withParser = !process.argv.includes("--without-document-parser")
   && (!process.argv.includes("--if-missing") || existsSync(join(parserDir, "manifest.json")));
 const variantFile = join(pyinstallerRoot, "build-variant.json");
-const variant = JSON.stringify({ withParser });
+const variant = JSON.stringify({ withParser, withSlideBrowser });
 const helperEntitlements = join(root, "apps", "desktop", "src-tauri", "HelperEntitlements.plist");
 // Same variable Tauri reads to sign the outer app; notarization needs both signed alike.
 const signingIdentity = isMac ? process.env.APPLE_SIGNING_IDENTITY?.trim() : undefined;
@@ -42,6 +56,8 @@ const inputs = [
   join(backendRoot, "gunther"),
   join(backendRoot, "pyproject.toml"),
   join(backendRoot, "uv.lock"),
+  renderDir,
+  ...(withSlideBrowser ? [slideBrowserDir] : []),
   modelDir,
   ...(withParser ? [parserDir, join(root, "tools", "document-parser")] : []),
   fileURLToPath(import.meta.url),
@@ -144,11 +160,13 @@ const result = spawnSync("uv", [
   "--collect-all", "sqlite_vec",
   "--collect-all", "PIL",
   "--collect-all", "av",
+  ...(existsSync(join(renderDir, "manifest.json")) ? ["--add-data", `${renderDir}:slide-renderer`] : []),
   ...(withParser ? ["--add-data", `${parserDir}:document-parser`] : []),
   "--add-data", `${modelDir}:models/multilingual-e5-small`,
   "--add-data", `${vadDir}:models/silero-vad`,
   // Skills are files the backend reads at run time (gunther/skillbook.py).
   "--add-data", `${join(backendRoot, "gunther", "skills")}:gunther/skills`,
+  "--add-data", `${join(backendRoot, "gunther", "data")}:gunther/data`,
   ...(isMac ? ["--add-binary", `${visionBinary}:.`] : []),
   join(backendRoot, "gunther", "desktop_server.py"),
 ], {
@@ -161,5 +179,39 @@ const result = spawnSync("uv", [
 });
 
 if (result.status !== 0) process.exit(result.status ?? 1);
+// Chromium is an independent runtime: PyInstaller must not rewrite its dylib install
+// names/rpaths. Ship it as a separate resource and sign it in place after collection.
+if (withSlideBrowser) {
+  const resourceRoot = isMac ? join(completedOutput, "Contents/Resources") : join(completedOutput, "_internal");
+  const browserDestination = join(resourceRoot, "slide-browser");
+  rmSync(browserDestination, { recursive: true, force: true });
+  mkdirSync(browserDestination, { recursive: true });
+  const manifest = JSON.parse(readFileSync(join(slideBrowserDir, "manifest.json"), "utf8"));
+  const revisionFolder = manifest.executable.split(/[\\/]/)[0];
+  cpSync(join(slideBrowserDir, revisionFolder), join(browserDestination, revisionFolder), { recursive: true });
+  if (isMac) {
+    const signTree = (folder) => {
+      for (const entry of readdirSync(folder, { withFileTypes: true })) {
+        const path = join(folder, entry.name);
+        if (entry.isDirectory()) { signTree(path); continue; }
+        const magic = readFileSync(path).subarray(0,4).toString("hex");
+        if (!["cffaedfe", "cefaedfe", "cafebabe", "bebafeca"].includes(magic)) continue;
+        const signed = spawnSync("codesign", ["--force", "--sign", signingIdentity || "-",
+          ...(signingIdentity ? ["--options", "runtime", "--timestamp", "--entitlements", helperEntitlements] : []),
+          path], { stdio: "inherit" });
+        if (signed.status !== 0) process.exit(signed.status ?? 1);
+      }
+    };
+    signTree(browserDestination);
+  }
+  manifest.sha256 = createHash("sha256").update(readFileSync(join(browserDestination, manifest.executable))).digest("hex");
+  writeFileSync(join(browserDestination, "manifest.json"), JSON.stringify(manifest, null, 2));
+  if (isMac) {
+    const signed = spawnSync("codesign", ["--force", "--sign", signingIdentity || "-",
+      ...(signingIdentity ? ["--options", "runtime", "--timestamp", "--entitlements", helperEntitlements] : []),
+      completedOutput], { stdio: "inherit" });
+    if (signed.status !== 0) process.exit(signed.status ?? 1);
+  }
+}
 writeFileSync(variantFile, variant);
 process.stdout.write(`Built Gunther backend helper: ${completedOutput}\n`);

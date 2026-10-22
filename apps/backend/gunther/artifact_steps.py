@@ -51,6 +51,9 @@ from gunther.model_profiles import Effort
 from gunther.outputs import (
     ACCENTS,
     CITATION_GROUP,
+    COMPOSITION_LAYOUTS,
+    COMPOSITIONS,
+    THEMES,
     UNSOURCED,
     BuiltOutput,
     Draft,
@@ -63,6 +66,7 @@ from gunther.outputs import (
     _marked,
     _notes_block,
     _plain,
+    fallback_unverified_diagram,
     heading_of,
     section_hash,
     shape_section,
@@ -186,6 +190,10 @@ class WorkSteps:
         approach is asked for again (``asking``) it is left for the model to choose."""
 
         agents, work = self.agents, self.work
+        if self._deck and work.spec.design_version is None and work.outline:
+            first = work.parts.get(work.outline[0].id)
+            if first is not None:
+                work.spec.design_version = _marked(first.text).design_version
         line = work.spec.use
         use = _fold(line.text) if line and not (asking and line.mark == "guessed") else None
         agents.use = use if use in agents.skill.uses else None
@@ -204,6 +212,7 @@ class WorkSteps:
         ]
         self._number = {card.id: number for number, card in enumerate(work.cards, start=1)}
         agents.approach = self._approach()
+        agents.outline_review = work.outline_review
         return spec_of(self.brief, work)
 
     def _ref_of(self, supplement: dict[str, Any]) -> int | None:
@@ -325,11 +334,19 @@ class WorkSteps:
             Planned(
                 heading=item.heading,
                 goal=item.goal,
+                id=item.id if self._deck else "",
+                message=item.message,
+                question=item.question,
+                requires=tuple(item.requires),
                 queries=tuple(item.queries),
                 layout=item.layout,
                 link=item.link,
                 refs=tuple(item.refs),
                 cards=tuple(self._number[card] for card in item.cards if card in self._number),
+                design=item.design,
+                layout_locked=item.layout_locked,
+                design_locked=item.design_locked,
+                design_attempted=item.design_attempted,
             )
             for item in self.work.outline
         ]
@@ -363,21 +380,80 @@ class WorkSteps:
         self.work.parts[item.id] = PartRec(
             text=draft.text,
             inputs=inputs,
-            checked=section_hash(draft.text),
-            issues=[issue.out() for issue in draft.issues or []],
+            checked=section_hash(draft.text) if draft.issues is not None else None,
+            issues=[issue.out() for issue in draft.issues] if draft.issues is not None else None,
             coverage=draft.coverage,
         )
+
+    def _compose_page(
+        self,
+        at: int,
+        draft: Draft,
+        spec: Spec,
+        *,
+        instruction: str | None = None,
+        force: bool = False,
+    ) -> Draft:
+        """Compose one checked composed page, retaining every other page's current scene."""
+        if not self._deck or self.work.outline[at].layout != "composed":
+            return draft
+        planned = self._planned()
+        drafts = [
+            self._draft(item) if item.id in self.work.parts else Draft(f"## {item.heading}")
+            for item in self.work.outline
+        ]
+        drafts[at] = draft
+        updated = self.agents.compose_pages(
+            self.model,
+            self.effort,
+            spec,
+            planned,
+            drafts,
+            self.emit,
+            indices=[at],
+            force=force or bool(instruction),
+            instructions={at: instruction or ""},
+            pool=self.pool,
+        )
+        return updated[at]
 
     def _announce(self) -> None:
         """Tell the reader of the events what the outline is now."""
 
+        if self.work.outline_review:
+            from gunther.slide_planning import planning_fingerprint
+
+            if self.work.outline_review.get("outlineFingerprint") != planning_fingerprint(
+                self._planned()
+            ):
+                self.work.outline_review = None
+                self.agents.outline_review = None
         self.emit(
             {
                 "type": "outline",
                 "title": self.work.title,
                 "sections": [
                     {"heading": item.heading, "goal": item.goal}
+                    | (
+                        {
+                            key: value
+                            for key, value in {
+                                "id": item.id,
+                                "message": item.message,
+                                "question": item.question,
+                                "requires": item.requires,
+                            }.items()
+                            if value
+                        }
+                        if self._deck
+                        else {}
+                    )
                     | ({"layout": item.layout} if item.layout else {})
+                    | ({"link": item.link} if item.link else {})
+                    | ({"design": item.design} if item.design else {})
+                    | ({"layoutLocked": True} if item.layout_locked else {})
+                    | ({"designLocked": True} if item.design_locked else {})
+                    | ({"designAttempted": True} if item.design_attempted else {})
                     for item in self.work.outline
                 ],
             }
@@ -462,16 +538,62 @@ class WorkSteps:
             title, planned = self.agents.structure(
                 self.model, self.effort, spec, self.emit, pool=self.pool
             )
+            planned = self._carry_design_choices(planned)
+            planned = self.agents.design_pages(
+                self.model, self.effort, spec, planned, self.pool, self.emit
+            )
         work.outline = self._matched(planned)
+        work.outline_review = self.agents.outline_review
         kept = {item.id for item in work.outline}
         work.parts = {key: part for key, part in work.parts.items() if key in kept}
         work.title = title
         work.outline_inputs = digest_outline_inputs(work)
         self._announce()
 
+    def _carry_design_choices(self, planned: Sequence[Planned]) -> list[Planned]:
+        """Mark matched user choices before the design step validates or suggests layouts."""
+        work = self.work
+        card_ids = {number: card for card, number in self._number.items()}
+        available = list(work.outline)
+        carried: list[Planned] = []
+        for item in planned:
+            wanted = sorted(card_ids[number] for number in item.cards if number in card_ids)
+            was = next(
+                (old for old in available if _fold(old.heading) == _fold(item.heading)), None
+            )
+            if was is None:
+                was = next(
+                    (
+                        old
+                        for old in available
+                        if sorted(old.cards) == wanted and old.layout == item.layout
+                    ),
+                    None,
+                )
+            if was is not None:
+                available.remove(was)
+                carried.append(
+                    replace(
+                        item,
+                        layout=was.layout if was.layout_locked else item.layout,
+                        layout_locked=was.layout_locked,
+                        design=was.design if was.design_locked else item.design,
+                        design_locked=was.design_locked,
+                        design_attempted=item.design_attempted,
+                    )
+                )
+            else:
+                carried.append(item)
+        return carried
+
     def _matched(self, planned: Sequence[Planned]) -> list[ItemRec]:
         """The new outline's parts, each with the id of the part it continues, or a new one."""
 
+        from gunther.slide_planning import dependency_problems
+
+        problems = dependency_problems(planned)
+        if problems:
+            raise ValueError(" ".join(problems))
         work = self.work
         card_ids = {number: card for card, number in self._number.items()}
         wanted = [[card_ids[n] for n in item.cards if n in card_ids] for item in planned]
@@ -494,6 +616,7 @@ class WorkSteps:
         )
         taken = {item.id for item in work.outline}
         items: list[ItemRec] = []
+        identities: dict[str, str] = {}
         for at, item in enumerate(planned):
             was = found[at]
             if was is not None:
@@ -506,13 +629,23 @@ class WorkSteps:
                     id=item_id,
                     heading=item.heading,
                     goal=item.goal,
-                    layout=item.layout,
+                    message=item.message,
+                    question=item.question,
+                    layout=was.layout if was and was.layout_locked else item.layout,
                     link=item.link,
+                    design=was.design if was and was.design_locked else item.design,
+                    layout_locked=was.layout_locked if was else item.layout_locked,
+                    design_locked=was.design_locked if was else item.design_locked,
+                    design_attempted=item.design_attempted,
                     cards=wanted[at],
                     refs=list(item.refs),
                     queries=list(item.queries),
                 )
             )
+            if item.id:
+                identities[item.id] = item_id
+        for item, planned_item in zip(items, planned, strict=True):
+            item.requires = [identities[key] for key in planned_item.requires if key in identities]
         return items
 
     def _layout(self, layout: str | None) -> str:
@@ -558,6 +691,7 @@ class WorkSteps:
             heading=heading,
             goal=goal,
             layout=layout,
+            layout_locked=bool(layout),
             queries=[f"{heading} {goal}".strip()],
         )
         outline.insert(at, item)
@@ -568,6 +702,8 @@ class WorkSteps:
         """Take a part out of the outline, with its text. A deck keeps its title slide."""
 
         at = self._at(item_id)
+        if any(item_id in item.requires for item in self.work.outline):
+            raise ValueError("This page is a prerequisite; update its dependent pages first.")
         if self._deck and at == 0:
             raise ValueError("The title slide stays: a deck cannot lose it.")
         del self.work.outline[at]
@@ -599,6 +735,11 @@ class WorkSteps:
             ):
                 to = len(rest) - 1
         rest.insert(to, item)
+        from gunther.slide_planning import dependency_problems
+
+        problems = dependency_problems(rest)
+        if problems:
+            raise ValueError(" ".join(problems))
         work.outline = rest
         self._announce()
 
@@ -608,25 +749,43 @@ class WorkSteps:
         heading: str | None = None,
         goal: str | None = None,
         layout: str | None = None,
+        design: dict[str, str] | None = None,
     ) -> ItemRec:
         """Change a part's heading, goal or layout (what is not given stays). Its text, if
         any, is then out of date until it is written again. Returns the part."""
 
         work = self.work
         at = self._at(item_id)
-        if heading is None and goal is None and layout is None:
-            raise ValueError("Say what to change: the heading, the goal or the layout.")
-        update: dict[str, str] = {}
+        if heading is None and goal is None and layout is None and design is None:
+            raise ValueError("Say what to change: the heading, goal, layout or page design.")
+        update: dict[str, Any] = {}
         if heading is not None:
             update["heading"] = _line(heading, 160)
             if not update["heading"]:
                 raise ValueError("A heading cannot be empty.")
         if goal is not None:
             update["goal"] = _line(goal, 400)
+        if goal is not None and goal != work.outline[at].goal:
+            update["message"] = ""
         if layout is not None:
             update["layout"] = self._layout(layout)
-            if self._deck and (at == 0) != (update["layout"] == "title"):
+            update["layout_locked"] = True
+            update["design_attempted"] = False
+            if self._deck and at == 0 and layout != "title":
                 raise ValueError("A deck has one title slide, and it stays first.")
+            if self._deck and at != 0 and layout == "title":
+                raise ValueError("A deck has one title slide, and it stays first.")
+        if design is not None:
+            composition = design.get("composition", "standard")
+            actual_layout = update.get("layout", work.outline[at].layout)
+            if (
+                composition not in COMPOSITIONS
+                or actual_layout not in COMPOSITION_LAYOUTS[composition]
+            ):
+                raise ValueError("The composition does not fit this slide's layout.")
+            update["design"] = dict(design)
+            update["design_locked"] = True
+            update["design_attempted"] = False
         item = work.outline[at].model_copy(update=update)
         work.outline[at] = item
         if self._deck and at == 0 and "heading" in update:
@@ -656,6 +815,38 @@ class WorkSteps:
         spec = self._load()
         step = self.agents.skill.step("write")
         assert step is not None
+        if self._deck and self.agents.skill.step("design"):
+            targets = [
+                at
+                for at in positions
+                if work.outline[at].design is None
+                and not work.outline[at].design_locked
+                and not work.outline[at].design_attempted
+                and (work.outline[at].id not in work.parts or work.outline[at].layout_locked)
+            ]
+            if targets:
+                planned_for_design = self._planned()
+                with self._noting():
+                    designed = self.agents.design_pages(
+                        self.model,
+                        self.effort,
+                        spec,
+                        planned_for_design,
+                        self.pool,
+                        self.emit,
+                        indices=targets,
+                    )
+                for at in targets:
+                    old = work.outline[at]
+                    new = designed[at]
+                    work.outline[at] = old.model_copy(
+                        update={
+                            "layout": new.layout,
+                            "design": new.design,
+                            "design_attempted": new.design_attempted,
+                        }
+                    )
+                self._announce()
         planned = self._planned()
         wrote: list[str] = []
         with self._noting():
@@ -690,6 +881,21 @@ class WorkSteps:
                 )
                 if rewriting and section_hash(text) == section_hash(part.text):
                     # Nothing to change: the part, its stamp and its check stay as they were.
+                    if self._deck and item.layout == "composed" and instruction:
+                        composed = self._compose_page(
+                            index,
+                            self._draft(item),
+                            spec,
+                            instruction=instruction,
+                            force=True,
+                        )
+                        if section_hash(composed.text) != section_hash(part.text):
+                            self._keep_part(
+                                item,
+                                composed,
+                                digest_part_inputs(self.brief, work, item),
+                            )
+                            wrote.append(item.id)
                     self.emit({"type": "section", "index": index, "state": "done"})
                     continue
                 text = self.agents.fit(
@@ -706,7 +912,18 @@ class WorkSteps:
                     text,
                 )
                 self.emit({"type": "section", "index": index, "state": "checking"})
-                draft = self.agents.check_built(self.model, text, tool, self.pool, self.emit, index)
+                draft = fallback_unverified_diagram(
+                    self.agents.check_built(self.model, text, tool, self.pool, self.emit, index),
+                    index,
+                    self.agents.skipped,
+                )
+                draft = self._compose_page(
+                    index,
+                    draft,
+                    spec,
+                    instruction=instruction if rewriting else None,
+                    force=rewriting and bool(instruction),
+                )
                 heading = heading_of(draft.text)
                 if rewriting and heading and _fold(heading) != _fold(item.heading):
                     # A heading the instruction changed (translated, shortened) is the plan's now.
@@ -852,6 +1069,9 @@ class WorkSteps:
             self._deck and at == 0,
             layout if self._deck else None,
             accent=marked.accent if marked else None,
+            theme=marked.theme if marked else None,
+            composition=marked.composition if marked else (item.design or {}).get("composition"),
+            scene_line=marked.scene_line if marked else None,
         )
         with self._noting():
             if self._deck:
@@ -873,7 +1093,11 @@ class WorkSteps:
                     shaped,
                 )
             self.emit({"type": "section", "index": at, "state": "checking"})
-            draft = self._check_changed(part, shaped, tool, at)
+        with self._noting():
+            draft = fallback_unverified_diagram(
+                self._check_changed(part, shaped, tool, at), at, self.agents.skipped
+            )
+            draft = self._compose_page(at, draft, spec, instruction=instruction, force=True)
         was_current = part.inputs == digest_part_inputs(self.brief, work, item)
         heading = heading_of(draft.text)
         if heading and _fold(heading) != _fold(item.heading):
@@ -987,6 +1211,24 @@ class WorkSteps:
         if was_checked:
             part.checked = section_hash(part.text)
 
+    def set_theme(self, theme: str) -> None:
+        """Set the deck's visual theme in the title marker while retaining its accent."""
+        if not self._deck:
+            raise ValueError("Only a deck has a visual theme.")
+        if theme not in THEMES:
+            raise ValueError(f"“{theme}” is not a theme; choose one of {', '.join(THEMES)}.")
+        work = self.work
+        first = work.outline[0].id if work.outline else None
+        part = work.parts.get(first) if first else None
+        if part is None:
+            raise ValueError("The title slide is not written yet.")
+        was_checked = part.checked == section_hash(part.text)
+        part.text = with_layout(part.text, "title", theme=theme, design_version=1)
+        work.spec.theme = theme
+        work.spec.design_version = 1
+        if was_checked:
+            part.checked = section_hash(part.text)
+
     # 5. Review ------------------------------------------------------------------------------
 
     def review(self, item_ids: Sequence[str] | None = None) -> list[str]:
@@ -1015,8 +1257,19 @@ class WorkSteps:
                 only=only,
             )
         revised: list[str] = []
-        for item, was, now in zip(work.outline, before, drafts, strict=True):
+        for at, (item, was, now) in enumerate(zip(work.outline, before, drafts, strict=True)):
             if now is not was and section_hash(now.text) != section_hash(was.text):
+                with self._noting():
+                    now = self._compose_page(
+                        at,
+                        now,
+                        spec,
+                        instruction=(
+                            "Recompose this revised page to fit its updated, checked content."
+                        ),
+                        force=True,
+                    )
+                drafts[at] = now
                 self._keep_part(item, now, work.parts[item.id].inputs)
                 revised.append(item.id)
         return revised
@@ -1053,4 +1306,37 @@ class WorkSteps:
             approach=agents.approach.out(self.pool, cited) if agents.approach else None,
             skill={**agents.record(), "skipped": [*work.skipped, *final]},
         )
+        inspected = agents.review_rendered(built, spec, self.emit)
+        if inspected.content != built.content:
+            # Carry layout metadata back into the workspace's pool-numbered drafts. The
+            # repair cannot alter wording; assembly alone owns visible citation numbering.
+            from gunther.outputs import _marked, split_document
+            from gunther.slide_scene import rebind_graphics_hash, with_scene_line
+
+            final_pages = split_document(inspected.content, "slides")[1]
+            for at, item in enumerate(work.outline):
+                part = work.parts[item.id]
+                changed = _marked(final_pages[at])
+                current = _marked(part.text)
+                if changed.layout != current.layout or changed.line != current.line:
+                    was_fresh = part.inputs == digest_part_inputs(self.brief, work, item)
+                    text = with_layout(part.text, changed.layout or "text",
+                                       composition=changed.composition)
+                    if changed.scene_line:
+                        rebound = rebind_graphics_hash(
+                            final_pages[at], with_scene_line(text, changed.scene_line),
+                            {number: ref for number, ref in enumerate(built.pool_refs, 1)},
+                        )
+                        text = rebound
+                    part.text = text
+                    if part.checked:
+                        part.checked = section_hash(text)
+                    if part.coverage:
+                        part.coverage = {**part.coverage, "answerHash": section_hash(text)}
+                    item.layout = changed.layout or item.layout
+                    if was_fresh:
+                        part.inputs = digest_part_inputs(self.brief, work, item)
+            built = inspected
+        else:
+            built = inspected
         return built, list(built.pool_refs)

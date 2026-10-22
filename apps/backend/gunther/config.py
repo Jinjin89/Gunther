@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     # Answers read aloud are kept here as audio (see tts_service); deleting it only
     # makes them be spoken again.
     speech_dir: Path = PROJECT_ROOT / "data" / "speech"
+    # Capture caches contain private slide images; they are rebuildable, separate from originals.
+    slide_render_dir: Path | None = None
+    slide_browser_path: Path | None = None
+    slide_review_enabled: bool = True
     # Items rest in Trash this long before they are deleted for good.
     trash_retention_days: int = Field(default=30, ge=1, le=3650)
     # The language model that reads captures, answers Ask and writes topic
@@ -126,7 +130,8 @@ class Settings(BaseSettings):
             raise ValueError("Use a short model revision or content fingerprint")
         return value
 
-    @field_validator("embedding_model_path", "docling_python", "docling_artifacts_path")
+    @field_validator("embedding_model_path", "docling_python", "docling_artifacts_path",
+                     "slide_render_dir", "slide_browser_path")
     @classmethod
     def validate_local_model_path(cls, value: Path | None) -> Path | None:
         if value is not None and not value.is_absolute():

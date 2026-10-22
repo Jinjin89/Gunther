@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from gunther import listen_copy
-from gunther.audio_decode import AudioUnreadable, decode_to_copy
+from gunther.audio_decode import AudioUnreadable, audio_duration_ms, decode_to_copy
 from gunther.qwen_stream import BYTES_PER_MS
 
 
@@ -47,6 +47,7 @@ def test_a_saved_recording_becomes_a_16_khz_copy_of_the_same_length(
     tmp_path: Path, name: str, container: str, codec: str, rate: int
 ) -> None:
     source = encode(tmp_path / name, container, codec, 3.0, rate)
+    assert abs(audio_duration_ms(source) - 3_000) <= 50
     total_ms = decode_to_copy(source, tmp_path / "copies", "rec_x")
     assert abs(total_ms - 3_000) <= 50
     pcm_path, _ = listen_copy.copy_paths(tmp_path / "copies", "rec_x")

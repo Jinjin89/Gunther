@@ -1,0 +1,1368 @@
+{
+  "model": "DeepSeek · Flash",
+  "effort": "high",
+  "skillVersion": 9,
+  "synthetic": true,
+  "scope": "Outline planning from fixed source-backed cards, not a full extraction or writing run.",
+  "packets": [
+    {
+      "id": "intake",
+      "inputHash": "46ba6b93cf488856a71e0a5fba2d7b86c2e69f4bda0babd8a4c197868175585d",
+      "sources": [
+        {
+          "id": "intake-timing",
+          "title": "Intake pilot timing log",
+          "locator": "Synthetic training record, timing",
+          "text": "In this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight weeks. These are training data, not actual organizational results."
+        },
+        {
+          "id": "intake-limits",
+          "title": "Intake pilot scope note",
+          "locator": "Synthetic training record, limitations",
+          "text": "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish an effect in other teams."
+        },
+        {
+          "id": "intake-options",
+          "title": "Intake pilot decision note",
+          "locator": "Synthetic training record, options",
+          "text": "Collaborators can continue measuring the two teams, expand with a quality measure, or stop the pilot. The note does not rank the options or quantify their costs."
+        }
+      ],
+      "cards": [
+        {
+          "claim": "Median review time was 40 hours before and 16 hours during the pilot.",
+          "refs": [
+            1
+          ],
+          "evidence": "In this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight weeks. These are training data, not actual organizational results.",
+          "scope": "In this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight weeks. These are training data, not actual organizational results.",
+          "type": "data",
+          "role": "support"
+        },
+        {
+          "claim": "Two teams were observed for eight weeks.",
+          "refs": [
+            1
+          ],
+          "evidence": "In this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight weeks. These are training data, not actual organizational results.",
+          "scope": "In this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight weeks. These are training data, not actual organizational results.",
+          "type": "view",
+          "role": "support"
+        },
+        {
+          "claim": "Review quality and error rates were not measured.",
+          "refs": [
+            2
+          ],
+          "evidence": "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish an effect in other teams.",
+          "scope": "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish an effect in other teams.",
+          "type": "view",
+          "role": "support"
+        },
+        {
+          "claim": "Other teams were not evaluated.",
+          "refs": [
+            2
+          ],
+          "evidence": "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish an effect in other teams.",
+          "scope": "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish an effect in other teams.",
+          "type": "view",
+          "role": "support"
+        },
+        {
+          "claim": "The decision note offers three unranked options.",
+          "refs": [
+            3
+          ],
+          "evidence": "Collaborators can continue measuring the two teams, expand with a quality measure, or stop the pilot. The note does not rank the options or quantify their costs.",
+          "scope": "Collaborators can continue measuring the two teams, expand with a quality measure, or stop the pilot. The note does not rank the options or quantify their costs.",
+          "type": "view",
+          "role": "limitation or decision boundary"
+        }
+      ],
+      "title": "Intake Pilot Decision: The Time Result and Its Limits",
+      "outline": [
+        {
+          "heading": "Intake Pilot Decision: The Time Result and Its Limits",
+          "goal": "State the core message and frame the evidence-limits discussion.",
+          "queries": [],
+          "layout": "title",
+          "link": "",
+          "refs": [
+            1
+          ],
+          "cards": [
+            1
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "p1",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "Median review time fell from 40 hours before the pilot to 16 hours during it",
+          "goal": "Present the headline time result with its source.",
+          "queries": [
+            "median review time before after pilot",
+            "review time hours intake",
+            "time outcome pilot"
+          ],
+          "layout": "big_number",
+          "link": "headline result",
+          "refs": [
+            1
+          ],
+          "cards": [
+            1
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "p2",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "The time result comes from two teams observed over eight weeks, using training data",
+          "goal": "Make the scope and provenance of the result explicit.",
+          "queries": [
+            "two-team pilot eight weeks",
+            "synthetic training data pilot",
+            "pilot sample scope"
+          ],
+          "layout": "cards",
+          "link": "what the result covers",
+          "refs": [
+            1
+          ],
+          "cards": [
+            1,
+            2
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "p3",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "Review quality, error rates, and other teams were not measured",
+          "goal": "Separate what the pilot measured from what it did not measure.",
+          "queries": [
+            "review quality error rate pilot",
+            "intake quality measure",
+            "other teams generalization pilot"
+          ],
+          "layout": "two_column",
+          "link": "limit of the time result",
+          "refs": [
+            1,
+            2
+          ],
+          "cards": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "p4",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "A faster review does not establish a quality improvement or an effect in other teams",
+          "goal": "Explain why the missing measures limit what the time gain can support.",
+          "queries": [
+            "speed versus quality review",
+            "sample effect other teams",
+            "pilot external validity"
+          ],
+          "layout": "text",
+          "link": "consequence of the missing measures",
+          "refs": [
+            2
+          ],
+          "cards": [
+            3,
+            4
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "p5",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "Extend only with a quality measure; the time gain alone cannot decide",
+          "goal": "Close with the decision options and the evidence needed to choose among them.",
+          "queries": [
+            "continue expand stop pilot options",
+            "quality measure pilot extension",
+            "decision note intake pilot"
+          ],
+          "layout": "takeaways",
+          "link": "decision from the limitation",
+          "refs": [
+            3,
+            2,
+            1
+          ],
+          "cards": [
+            5,
+            3,
+            1
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "p6",
+          "message": "",
+          "question": "",
+          "requires": []
+        }
+      ],
+      "review": {
+        "name": "slides",
+        "version": 9,
+        "skipped": []
+      },
+      "calls": 1,
+      "seconds": 8.19
+    },
+    {
+      "id": "reading-zh",
+      "inputHash": "e566fc4e1bbfdbec66f724a13f1ca223760d0bb510924b7554d556fa3228cd71",
+      "sources": [
+        {
+          "id": "reading-notes",
+          "title": "阅读小组讨论记录",
+          "locator": "合成课堂材料，讨论正文",
+          "text": "这份合成课堂材料记录了两种阅读安排。一组希望每周选择同一本书，以便讨论同一段落；另一组希望自主选书，以便照顾不同兴趣。记录只反映讨论意见，没有测量阅读量或学习效果。"
+        },
+        {
+          "id": "reading-scope",
+          "title": "讨论记录说明",
+          "locator": "合成课堂材料，范围说明",
+          "text": "参与者并未形成统一决定。两种安排也可以在不同时段交替使用，但记录没有检验这种安排的效果。应保留分歧和未测量的限制。"
+        }
+      ],
+      "cards": [
+        {
+          "claim": "共同选书方便讨论同一段落。",
+          "refs": [
+            1
+          ],
+          "evidence": "这份合成课堂材料记录了两种阅读安排。一组希望每周选择同一本书，以便讨论同一段落；另一组希望自主选书，以便照顾不同兴趣。记录只反映讨论意见，没有测量阅读量或学习效果。",
+          "scope": "这份合成课堂材料记录了两种阅读安排。一组希望每周选择同一本书，以便讨论同一段落；另一组希望自主选书，以便照顾不同兴趣。记录只反映讨论意见，没有测量阅读量或学习效果。",
+          "type": "view",
+          "role": "support"
+        },
+        {
+          "claim": "自主选书照顾不同兴趣。",
+          "refs": [
+            1
+          ],
+          "evidence": "这份合成课堂材料记录了两种阅读安排。一组希望每周选择同一本书，以便讨论同一段落；另一组希望自主选书，以便照顾不同兴趣。记录只反映讨论意见，没有测量阅读量或学习效果。",
+          "scope": "这份合成课堂材料记录了两种阅读安排。一组希望每周选择同一本书，以便讨论同一段落；另一组希望自主选书，以便照顾不同兴趣。记录只反映讨论意见，没有测量阅读量或学习效果。",
+          "type": "view",
+          "role": "support"
+        },
+        {
+          "claim": "讨论记录没有测量学习效果。",
+          "refs": [
+            1
+          ],
+          "evidence": "这份合成课堂材料记录了两种阅读安排。一组希望每周选择同一本书，以便讨论同一段落；另一组希望自主选书，以便照顾不同兴趣。记录只反映讨论意见，没有测量阅读量或学习效果。",
+          "scope": "这份合成课堂材料记录了两种阅读安排。一组希望每周选择同一本书，以便讨论同一段落；另一组希望自主选书，以便照顾不同兴趣。记录只反映讨论意见，没有测量阅读量或学习效果。",
+          "type": "view",
+          "role": "support"
+        },
+        {
+          "claim": "参与者没有形成统一决定。",
+          "refs": [
+            2
+          ],
+          "evidence": "参与者并未形成统一决定。两种安排也可以在不同时段交替使用，但记录没有检验这种安排的效果。应保留分歧和未测量的限制。",
+          "scope": "参与者并未形成统一决定。两种安排也可以在不同时段交替使用，但记录没有检验这种安排的效果。应保留分歧和未测量的限制。",
+          "type": "view",
+          "role": "limitation or decision boundary"
+        }
+      ],
+      "title": "同一本书还是各自选书：一份只有偏好、没有效果证据的课堂记录",
+      "outline": [
+        {
+          "heading": "同一本书还是各自选书：一份只有偏好、没有效果证据的课堂记录",
+          "goal": "点明讲义要处理的分歧，并预告核心信息：记录里只有偏好，没有效果证据。",
+          "queries": [],
+          "layout": "title",
+          "link": "",
+          "refs": [],
+          "cards": [],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "s1",
+          "message": "这份课堂记录里只有两种偏好，没有哪种安排更有效的证据。",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "分歧的起点是目标不同：一边要共同段落，一边要各自兴趣",
+          "goal": "说明两种安排各自想解决什么问题，让读者看到分歧来自优先级而非事实之争。",
+          "queries": [
+            "共同选书 课堂讨论 效果",
+            "自主选书 阅读兴趣 实证研究",
+            "阅读安排 讨论质量 测量"
+          ],
+          "layout": "compare",
+          "link": "开场：先交代分歧从哪里来",
+          "refs": [
+            1
+          ],
+          "cards": [
+            1,
+            2
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "s2",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "共同选书的依据是讨论便利，局限是没有任何效果测量",
+          "goal": "把第一种主张的依据和局限分开摆清楚：依据只是讨论中的理由，记录没有测量阅读量或学习效果。",
+          "queries": [
+            "同读一本书 讨论 学习效果 研究",
+            "共同阅读 阅读量 测量"
+          ],
+          "layout": "two_column",
+          "link": "先看第一种主张的依据与局限",
+          "refs": [
+            1
+          ],
+          "cards": [
+            1,
+            3
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "s3",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "自主选书的依据是兴趣差异，局限同样是没有任何效果测量",
+          "goal": "用与上一页相同的维度检查第二种主张，说明它的证据性质与第一种相同。",
+          "queries": [
+            "自主选书 兴趣 阅读效果 研究",
+            "自选阅读 学习效果 证据"
+          ],
+          "layout": "two_column",
+          "link": "对照第二种主张，维度保持一致",
+          "refs": [
+            1
+          ],
+          "cards": [
+            2,
+            3
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "s4",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "记录没有形成统一决定，交替使用也没有被检验",
+          "goal": "指出这份记录的实际状态：参与者未达成统一决定，折中的交替安排同样缺少效果检验。",
+          "queries": [
+            "阅读安排 交替 效果 检验",
+            "课堂阅读 决策 分歧 记录"
+          ],
+          "layout": "cards",
+          "link": "两种主张都没有定论，于是记录停在分歧上",
+          "refs": [
+            1,
+            2
+          ],
+          "cards": [
+            3,
+            4
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "s5",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "先分清偏好与证据：保留分歧，再补阅读量和学习效果的测量",
+          "goal": "收束为可带走的要点：这份材料能证明的是分歧存在，要判定优劣需先定义并测量阅读量与学习效果。",
+          "queries": [
+            "阅读量 学习效果 测量 方法",
+            "课堂阅读 效果 评估 指标"
+          ],
+          "layout": "takeaways",
+          "link": "由记录的空白得出下一步",
+          "refs": [
+            1,
+            2
+          ],
+          "cards": [
+            3,
+            4
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "s6",
+          "message": "",
+          "question": "",
+          "requires": []
+        }
+      ],
+      "review": {
+        "name": "slides",
+        "version": 9,
+        "skipped": []
+      },
+      "calls": 1,
+      "seconds": 21.59
+    },
+    {
+      "id": "numeric",
+      "inputHash": "fe7be6c8aa44c9b68d53122424866b7cef02e19f17afe229867fa8def9250c96",
+      "sources": [
+        {
+          "id": "numeric-log",
+          "title": "Net balance training log",
+          "locator": "Synthetic series table",
+          "text": "Synthetic net balances in units were -8 in 2021, 4 in 2022, and 12 in 2024. The year intervals are one year then two years. The records do not identify what caused the changes."
+        },
+        {
+          "id": "numeric-scope",
+          "title": "Series interpretation note",
+          "locator": "Synthetic scope note",
+          "text": "The three observations are not a forecast. A straight segment between recorded values does not establish an intermediate observation or a constant annual rate."
+        }
+      ],
+      "cards": [
+        {
+          "claim": "The recorded balances were -8, 4, and 12 units.",
+          "refs": [
+            1
+          ],
+          "evidence": "Synthetic net balances in units were -8 in 2021, 4 in 2022, and 12 in 2024. The year intervals are one year then two years. The records do not identify what caused the changes.",
+          "scope": "Synthetic net balances in units were -8 in 2021, 4 in 2022, and 12 in 2024. The year intervals are one year then two years. The records do not identify what caused the changes.",
+          "type": "data",
+          "role": "support"
+        },
+        {
+          "claim": "The year intervals were unequal.",
+          "refs": [
+            1
+          ],
+          "evidence": "Synthetic net balances in units were -8 in 2021, 4 in 2022, and 12 in 2024. The year intervals are one year then two years. The records do not identify what caused the changes.",
+          "scope": "Synthetic net balances in units were -8 in 2021, 4 in 2022, and 12 in 2024. The year intervals are one year then two years. The records do not identify what caused the changes.",
+          "type": "view",
+          "role": "support"
+        },
+        {
+          "claim": "No cause was identified.",
+          "refs": [
+            1
+          ],
+          "evidence": "Synthetic net balances in units were -8 in 2021, 4 in 2022, and 12 in 2024. The year intervals are one year then two years. The records do not identify what caused the changes.",
+          "scope": "Synthetic net balances in units were -8 in 2021, 4 in 2022, and 12 in 2024. The year intervals are one year then two years. The records do not identify what caused the changes.",
+          "type": "view",
+          "role": "support"
+        },
+        {
+          "claim": "The observations do not establish a forecast.",
+          "refs": [
+            2
+          ],
+          "evidence": "The three observations are not a forecast. A straight segment between recorded values does not establish an intermediate observation or a constant annual rate.",
+          "scope": "The three observations are not a forecast. A straight segment between recorded values does not establish an intermediate observation or a constant annual rate.",
+          "type": "view",
+          "role": "limitation or decision boundary"
+        }
+      ],
+      "title": "Three recorded balances, read as recorded",
+      "outline": [
+        {
+          "heading": "Three recorded balances, read as recorded",
+          "goal": "State the core message: three synthetic balances in units, with unequal year gaps and no measured cause.",
+          "queries": [],
+          "layout": "title",
+          "link": "",
+          "refs": [
+            1
+          ],
+          "cards": [
+            1,
+            2,
+            3
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "title",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "The record holds exactly three balances: -8, 4 and 12 units",
+          "goal": "Show the three recorded values, keeping the negative sign and the unit.",
+          "queries": [
+            "net balance negative value units record",
+            "three observations synthetic series"
+          ],
+          "layout": "bar_chart",
+          "link": "spells out the title's message with the recorded numbers",
+          "refs": [
+            1
+          ],
+          "cards": [
+            1
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "values",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "The gaps between records are one year, then two years",
+          "goal": "Place each recorded value on its year so the unequal spacing is visible.",
+          "queries": [
+            "unequal year intervals 2021 2022 2024",
+            "time between recorded observations"
+          ],
+          "layout": "timeline",
+          "link": "adds the timing that the bare values leave out",
+          "refs": [
+            1
+          ],
+          "cards": [
+            2,
+            1
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "intervals",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "Nothing in the records says what caused the balances to change",
+          "goal": "Make clear that no causal explanation was measured, so the values describe but do not explain.",
+          "queries": [
+            "no causal explanation measured",
+            "records describe without explanation"
+          ],
+          "layout": "text",
+          "link": "limits what the timed values can be taken to mean",
+          "refs": [
+            1
+          ],
+          "cards": [
+            3,
+            1
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "no-cause",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "A line drawn between the points adds no intermediate observation and no forecast",
+          "goal": "Rule out reading a constant annual rate, an in-between value, or a projection from the three observations.",
+          "queries": [
+            "observations are not a forecast",
+            "straight segment constant annual rate"
+          ],
+          "layout": "cards",
+          "link": "next limit: what the gaps cannot be filled with",
+          "refs": [
+            2,
+            1
+          ],
+          "cards": [
+            4,
+            2
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "no-forecast",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "Report the three values as recorded: units, years, and no cause",
+          "goal": "Close with the reading students should keep: values with units and dates, unequal gaps, and no causal or forecast claim.",
+          "queries": [
+            "report values as recorded units and years",
+            "synthetic data reporting limits"
+          ],
+          "layout": "takeaways",
+          "link": "consequence for how the series should be read and quoted",
+          "refs": [
+            1,
+            2
+          ],
+          "cards": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "takeaways",
+          "message": "",
+          "question": "",
+          "requires": []
+        }
+      ],
+      "review": {
+        "name": "slides",
+        "version": 9,
+        "skipped": []
+      },
+      "calls": 1,
+      "seconds": 9.33
+    },
+    {
+      "id": "process",
+      "inputHash": "2cf9c2dd08b01f9afa2de04c47c301765cb586415bbebbc9743cf12a3ebc4550",
+      "sources": [
+        {
+          "id": "process-record",
+          "title": "Application handling procedure",
+          "locator": "Synthetic training procedure",
+          "text": "First collect the application, then check whether required information is complete. If it is complete, begin analysis. If it is incomplete, request missing information. These are conditional alternatives, not consecutive outcomes."
+        },
+        {
+          "id": "process-scope",
+          "title": "Procedure boundaries",
+          "locator": "Synthetic procedure note",
+          "text": "The procedure does not specify completion times, acceptance rates, or who is responsible. Requesting missing information does not itself mean the application is rejected."
+        }
+      ],
+      "cards": [
+        {
+          "claim": "Collect before checking completeness.",
+          "refs": [
+            1
+          ],
+          "evidence": "First collect the application, then check whether required information is complete. If it is complete, begin analysis. If it is incomplete, request missing information. These are conditional alternatives, not consecutive outcomes.",
+          "scope": "First collect the application, then check whether required information is complete. If it is complete, begin analysis. If it is incomplete, request missing information. These are conditional alternatives, not consecutive outcomes.",
+          "type": "view",
+          "role": "support"
+        },
+        {
+          "claim": "Complete information leads to analysis.",
+          "refs": [
+            1
+          ],
+          "evidence": "First collect the application, then check whether required information is complete. If it is complete, begin analysis. If it is incomplete, request missing information. These are conditional alternatives, not consecutive outcomes.",
+          "scope": "First collect the application, then check whether required information is complete. If it is complete, begin analysis. If it is incomplete, request missing information. These are conditional alternatives, not consecutive outcomes.",
+          "type": "view",
+          "role": "support"
+        },
+        {
+          "claim": "Incomplete information leads to a request for missing information.",
+          "refs": [
+            1
+          ],
+          "evidence": "First collect the application, then check whether required information is complete. If it is complete, begin analysis. If it is incomplete, request missing information. These are conditional alternatives, not consecutive outcomes.",
+          "scope": "First collect the application, then check whether required information is complete. If it is complete, begin analysis. If it is incomplete, request missing information. These are conditional alternatives, not consecutive outcomes.",
+          "type": "view",
+          "role": "support"
+        },
+        {
+          "claim": "The two branches are alternatives.",
+          "refs": [
+            1
+          ],
+          "evidence": "First collect the application, then check whether required information is complete. If it is complete, begin analysis. If it is incomplete, request missing information. These are conditional alternatives, not consecutive outcomes.",
+          "scope": "First collect the application, then check whether required information is complete. If it is complete, begin analysis. If it is incomplete, request missing information. These are conditional alternatives, not consecutive outcomes.",
+          "type": "view",
+          "role": "support"
+        },
+        {
+          "claim": "No completion time or rejection outcome is established.",
+          "refs": [
+            2
+          ],
+          "evidence": "The procedure does not specify completion times, acceptance rates, or who is responsible. Requesting missing information does not itself mean the application is rejected.",
+          "scope": "The procedure does not specify completion times, acceptance rates, or who is responsible. Requesting missing information does not itself mean the application is rejected.",
+          "type": "view",
+          "role": "limitation or decision boundary"
+        }
+      ],
+      "title": "The Conditional Review Process: Collect, Check Completeness, Then Take One Branch",
+      "outline": [
+        {
+          "heading": "The Conditional Review Process: Collect, Check Completeness, Then Take One Branch",
+          "goal": "State the core message on the title slide: one fixed sequence plus a conditional split, not a chain of four steps.",
+          "queries": [],
+          "layout": "title",
+          "link": "",
+          "refs": [
+            1
+          ],
+          "cards": [
+            1,
+            4
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "p1",
+          "message": "Frame the deck as teaching one procedure for a student: collect, check, branch. The two branches are alternatives, not consecutive steps.",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "The application is collected before completeness is checked",
+          "goal": "Establish the fixed, non-negotiable order of the first two actions.",
+          "queries": [
+            "collect application first",
+            "order of review steps",
+            "completeness check after collection"
+          ],
+          "layout": "flow",
+          "link": "opening step of the process",
+          "refs": [
+            1
+          ],
+          "cards": [
+            1
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "p2",
+          "message": "Walk through the two actions that come before any condition is evaluated. Emphasise that completeness cannot be judged until the application exists.",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "The completeness check is the condition that decides which single branch applies",
+          "goal": "Introduce the condition before showing or naming either outcome, so the branch is understood as conditional.",
+          "queries": [
+            "completeness condition branching",
+            "required information complete",
+            "missing information request"
+          ],
+          "layout": "diagram",
+          "link": "next step after collection",
+          "refs": [
+            1
+          ],
+          "cards": [
+            2,
+            3,
+            4
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "p3",
+          "message": "Present the condition first, then the two labelled outcomes as alternatives of the same check. Stress that only one outcome occurs per application.",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "A common misreading treats the two branches as consecutive steps rather than alternatives",
+          "goal": "Correct the sequence error by contrasting the misreading with the documented reading.",
+          "queries": [
+            "conditional alternatives versus sequence",
+            "if-then procedure misreading",
+            "mutually exclusive outcomes"
+          ],
+          "layout": "two_column",
+          "link": "contrast with the branch just shown",
+          "refs": [
+            1
+          ],
+          "cards": [
+            4,
+            2,
+            3
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "p4",
+          "message": "Left column: what students often assume (complete, then later also request missing information). Right column: what the procedure documents (one or the other).",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "The procedure does not specify completion times, acceptance rates, or who is responsible, and a request is not a rejection",
+          "goal": "Set the limits of the documented evidence so students do not infer outcomes the source does not support.",
+          "queries": [
+            "procedure unspecified completion time",
+            "request missing information not rejection",
+            "responsibility undefined in procedure"
+          ],
+          "layout": "cards",
+          "link": "limit on what the branches establish",
+          "refs": [
+            2
+          ],
+          "cards": [
+            5
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "p5",
+          "message": "Three short limits: no times, no rates and no owner, plus the explicit point that requesting missing information is not itself a rejection.",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "Learn the condition first, then apply one branch per application",
+          "goal": "Close with the action the student should take when applying the procedure.",
+          "queries": [
+            "apply conditional process correctly",
+            "check condition before branching",
+            "limits of documented procedure"
+          ],
+          "layout": "takeaways",
+          "link": "consequence of the evidence and its limits",
+          "refs": [
+            1,
+            2
+          ],
+          "cards": [
+            1,
+            4,
+            5
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "p6",
+          "message": "Lock in the order (collect, check) and the rule (one branch), and note that anything beyond the document is an assumption.",
+          "question": "",
+          "requires": []
+        }
+      ],
+      "review": {
+        "name": "slides",
+        "version": 9,
+        "skipped": []
+      },
+      "calls": 1,
+      "seconds": 6.3
+    },
+    {
+      "id": "conflict",
+      "inputHash": "d3b0977d62f8c92b925a8ca4792a4fe556c879135a446abf803d3a76948b6a21",
+      "sources": [
+        {
+          "id": "conflict-a",
+          "title": "Training study A",
+          "locator": "Synthetic study A results",
+          "text": "In synthetic study A, the reported change was 12% in a supervised laboratory setting. It did not evaluate field use."
+        },
+        {
+          "id": "conflict-b",
+          "title": "Training study B",
+          "locator": "Synthetic study B results",
+          "text": "In synthetic study B, the reported change was 3% during field use. It did not use the laboratory supervision from study A."
+        },
+        {
+          "id": "conflict-limit",
+          "title": "Comparison constraints",
+          "locator": "Synthetic synthesis note",
+          "text": "The two studies used different settings. Their records do not isolate the reason for the difference. They do not support a pooled estimate or a declaration that one method is better."
+        }
+      ],
+      "cards": [
+        {
+          "claim": "Study A reported 12% in a supervised laboratory.",
+          "refs": [
+            1
+          ],
+          "evidence": "In synthetic study A, the reported change was 12% in a supervised laboratory setting. It did not evaluate field use.",
+          "scope": "In synthetic study A, the reported change was 12% in a supervised laboratory setting. It did not evaluate field use.",
+          "type": "data",
+          "role": "support"
+        },
+        {
+          "claim": "Study B reported 3% in field use.",
+          "refs": [
+            2
+          ],
+          "evidence": "In synthetic study B, the reported change was 3% during field use. It did not use the laboratory supervision from study A.",
+          "scope": "In synthetic study B, the reported change was 3% during field use. It did not use the laboratory supervision from study A.",
+          "type": "data",
+          "role": "support"
+        },
+        {
+          "claim": "The settings differ.",
+          "refs": [
+            3
+          ],
+          "evidence": "The two studies used different settings. Their records do not isolate the reason for the difference. They do not support a pooled estimate or a declaration that one method is better.",
+          "scope": "The two studies used different settings. Their records do not isolate the reason for the difference. They do not support a pooled estimate or a declaration that one method is better.",
+          "type": "view",
+          "role": "support"
+        },
+        {
+          "claim": "The records do not isolate why or support pooling.",
+          "refs": [
+            3
+          ],
+          "evidence": "The two studies used different settings. Their records do not isolate the reason for the difference. They do not support a pooled estimate or a declaration that one method is better.",
+          "scope": "The two studies used different settings. Their records do not isolate the reason for the difference. They do not support a pooled estimate or a declaration that one method is better.",
+          "type": "view",
+          "role": "limitation or decision boundary"
+        }
+      ],
+      "title": "Comparing two synthetic records with different settings, without pooling",
+      "outline": [
+        {
+          "heading": "Comparing two synthetic records with different settings, without pooling",
+          "goal": "State the core comparison and make clear that the two records cover different scopes.",
+          "queries": [],
+          "layout": "title",
+          "link": "",
+          "refs": [
+            1,
+            2,
+            3
+          ],
+          "cards": [
+            1,
+            2,
+            3
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "p1",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "Synthetic studies A and B report 12% in a supervised laboratory and 3% during field use, under different settings",
+          "goal": "Compare the two records side by side without merging their estimates.",
+          "queries": [
+            "supervised laboratory versus field use",
+            "study A field use not evaluated",
+            "study B laboratory supervision"
+          ],
+          "layout": "compare",
+          "link": "scope contrast from the title",
+          "refs": [
+            1,
+            2,
+            3
+          ],
+          "cards": [
+            1,
+            2,
+            3
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "p2",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "Synthetic Study A's 12% is confined to a supervised laboratory and does not cover field use",
+          "goal": "Preserve Study A's scope so its estimate is not read as a field result.",
+          "queries": [
+            "Study A supervised laboratory",
+            "Study A field use",
+            "12% synthetic study"
+          ],
+          "layout": "big_number",
+          "link": "zooms into the first record",
+          "refs": [
+            1
+          ],
+          "cards": [
+            1
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "p3",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "Synthetic Study B's 3% is confined to field use and does not include Study A's laboratory supervision",
+          "goal": "Preserve Study B's scope so its estimate is not read as a laboratory result.",
+          "queries": [
+            "Study B field use",
+            "Study B laboratory supervision",
+            "3% synthetic study"
+          ],
+          "layout": "big_number",
+          "link": "contrast with Study A's laboratory scope",
+          "refs": [
+            2
+          ],
+          "cards": [
+            2
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "p4",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "The settings differ, so the records do not isolate the reason for the gap or support pooling or a winner",
+          "goal": "State the disagreement and the limits without selecting a winner or pooling the two results.",
+          "queries": [
+            "reason for difference",
+            "pooled estimate not supported",
+            "one method better"
+          ],
+          "layout": "cards",
+          "link": "limit that follows from the two separate scopes",
+          "refs": [
+            3
+          ],
+          "cards": [
+            3,
+            4
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "p5",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "Report synthetic Study A's 12% and Study B's 3% separately with their settings, and do not pool or rank them",
+          "goal": "Close with the reporting action that keeps both scopes and the disagreement intact.",
+          "queries": [
+            "separate reporting of estimates",
+            "setting-specific estimates",
+            "no pooled estimate"
+          ],
+          "layout": "takeaways",
+          "link": "next step in reporting the two records",
+          "refs": [
+            1,
+            2,
+            3
+          ],
+          "cards": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "p6",
+          "message": "",
+          "question": "",
+          "requires": []
+        }
+      ],
+      "review": {
+        "name": "slides",
+        "version": 9,
+        "skipped": []
+      },
+      "calls": 1,
+      "seconds": 14.35
+    },
+    {
+      "id": "figure",
+      "inputHash": "a8962c092b97ce351cdf3b189d32a84e223fca40d8395e073470e3523d7c5982",
+      "sources": [
+        {
+          "id": "figure-source",
+          "title": "Training collection diagram",
+          "locator": "Synthetic figure 1 and caption",
+          "text": "Figure 1 is an illustrative training diagram: Collection connects to Review, which connects to Archive. The three boxes denote the documented reading order. The diagram gives no duration, volume, or quality measures.",
+          "figure": {
+            "assetId": "eval-collection",
+            "caption": "Collection, Review, Archive; synthetic source figure."
+          }
+        },
+        {
+          "id": "figure-scope",
+          "title": "Figure scope note",
+          "locator": "Synthetic figure description",
+          "text": "The arrows in Figure 1 indicate the specified order, not a measured causal effect. The image is the original source illustration and its labels should remain readable."
+        }
+      ],
+      "cards": [
+        {
+          "claim": "The diagram shows Collection, Review, and Archive in that order.",
+          "refs": [
+            1
+          ],
+          "evidence": "Figure 1 is an illustrative training diagram: Collection connects to Review, which connects to Archive. The three boxes denote the documented reading order. The diagram gives no duration, volume, or quality measures.",
+          "scope": "Figure 1 is an illustrative training diagram: Collection connects to Review, which connects to Archive. The three boxes denote the documented reading order. The diagram gives no duration, volume, or quality measures.",
+          "type": "view",
+          "role": "support"
+        },
+        {
+          "claim": "It specifies reading order, not a causal effect.",
+          "refs": [
+            2
+          ],
+          "evidence": "The arrows in Figure 1 indicate the specified order, not a measured causal effect. The image is the original source illustration and its labels should remain readable.",
+          "scope": "The arrows in Figure 1 indicate the specified order, not a measured causal effect. The image is the original source illustration and its labels should remain readable.",
+          "type": "view",
+          "role": "support"
+        },
+        {
+          "claim": "It provides no measured duration, volume, or quality.",
+          "refs": [
+            1
+          ],
+          "evidence": "Figure 1 is an illustrative training diagram: Collection connects to Review, which connects to Archive. The three boxes denote the documented reading order. The diagram gives no duration, volume, or quality measures.",
+          "scope": "Figure 1 is an illustrative training diagram: Collection connects to Review, which connects to Archive. The three boxes denote the documented reading order. The diagram gives no duration, volume, or quality measures.",
+          "type": "view",
+          "role": "limitation or decision boundary"
+        }
+      ],
+      "title": "Figure 1: A Three-Step Training Sequence, Not Evidence of Effect",
+      "outline": [
+        {
+          "heading": "Figure 1: A Three-Step Training Sequence, Not Evidence of Effect",
+          "goal": "State the deck's one message: the diagram documents a reading order and nothing more.",
+          "queries": [],
+          "layout": "title",
+          "link": "",
+          "refs": [
+            1,
+            2
+          ],
+          "cards": [
+            1,
+            2
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "title",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "Collection, Review and Archive are the three boxes, connected in that single direction",
+          "goal": "Show the whole diagram on one slide so the audience can read it before anything is said about it.",
+          "queries": [
+            "Collection Review Archive documented reading order",
+            "training diagram three boxes order"
+          ],
+          "layout": "flow",
+          "link": "delivers the sequence the title promises",
+          "refs": [
+            1
+          ],
+          "cards": [
+            1
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "order",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "The arrows mark the specified order; they do not measure a causal effect",
+          "goal": "Separate what the connections assert from what a reader might assume they prove.",
+          "queries": [
+            "arrows specify order not causal effect",
+            "specified sequence versus measured effect"
+          ],
+          "layout": "two_column",
+          "link": "contrast: what the reader may and may not take from those arrows",
+          "refs": [
+            2
+          ],
+          "cards": [
+            2
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "arrows",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "The diagram gives no duration, no volume and no quality measure",
+          "goal": "Name the three quantities the figure is silent on, so no one fills them in from imagination.",
+          "queries": [
+            "diagram gives no duration volume quality measures",
+            "limits of illustrative training diagram"
+          ],
+          "layout": "cards",
+          "link": "limit that follows from the arrows being only order",
+          "refs": [
+            1
+          ],
+          "cards": [
+            3
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "gaps",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "An extension would add measurement to the three boxes, not more arrows between them",
+          "goal": "Place the figure as supplied beside what an extension would have to supply, so the gap is visible as a comparison.",
+          "queries": [
+            "extension adding measurement to training diagram",
+            "what a training study must report duration volume quality"
+          ],
+          "layout": "compare",
+          "link": "next step: what would have to change to support a stronger claim",
+          "refs": [
+            1
+          ],
+          "cards": [
+            1,
+            3
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "extension",
+          "message": "",
+          "question": "",
+          "requires": []
+        },
+        {
+          "heading": "Read Figure 1 as an order, and test any extension before claiming an effect",
+          "goal": "Close with the reading rule and the single next action.",
+          "queries": [
+            "reading original source illustration labels readable",
+            "documented reading order training"
+          ],
+          "layout": "takeaways",
+          "link": "conclusion drawn from the comparison",
+          "refs": [
+            1,
+            2
+          ],
+          "cards": [
+            1,
+            2,
+            3
+          ],
+          "design": null,
+          "layout_locked": false,
+          "design_locked": false,
+          "design_attempted": false,
+          "id": "takeaways",
+          "message": "",
+          "question": "",
+          "requires": []
+        }
+      ],
+      "review": {
+        "name": "slides",
+        "version": 9,
+        "skipped": []
+      },
+      "calls": 1,
+      "seconds": 7.79
+    }
+  ]
+}

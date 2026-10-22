@@ -18,6 +18,7 @@ const OWN: Record<string, string> = {
   cards: ".outputs-s-cards",
   quote: ".outputs-s-quote blockquote",
   figure: ".outputs-s-picture",
+  diagram: ".outputs-s-diagram svg",
   text: ".outputs-s-body",
   takeaways: ".outputs-s-takeaways",
 };

@@ -1,0 +1,29 @@
+[
+  {
+    "theme": "briefing",
+    "pages": 3,
+    "sizePoints": [
+      960.0,
+      540.0
+    ],
+    "textAndSourcesPresent": true
+  },
+  {
+    "theme": "editorial",
+    "pages": 3,
+    "sizePoints": [
+      960.0,
+      540.0
+    ],
+    "textAndSourcesPresent": true
+  },
+  {
+    "theme": "keynote",
+    "pages": 3,
+    "sizePoints": [
+      960.0,
+      540.0
+    ],
+    "textAndSourcesPresent": true
+  }
+]

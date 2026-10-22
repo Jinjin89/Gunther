@@ -14,11 +14,13 @@ export function FigureSlide({ shape }: { shape: FigureShape }) {
   useEffect(() => setMissing(false), [shape.assetId]);
   return <div className={`outputs-s ${layoutClass(shape.layout)}`}>
     <Heading text={shape.title} />
-    <figure className="outputs-s-picture">
-      {missing
-        ? <figcaption className="outputs-s-missing" role="img" aria-label={shape.alt}>{shape.alt || "The figure could not be loaded."}</figcaption>
-        : <img src={sourceAssetUrl(shape.assetId)} alt={shape.alt} onError={() => setMissing(true)} />}
-    </figure>
-    <div className="outputs-s-after"><Rich text={shape.line} /></div>
+    <div className="outputs-s-figure-composition">
+      <figure className="outputs-s-picture">
+        {missing
+          ? <figcaption className="outputs-s-missing" role="img" aria-label={shape.alt}>{shape.alt || "The figure could not be loaded."}</figcaption>
+          : <img src={sourceAssetUrl(shape.assetId)} alt={shape.alt} onError={() => setMissing(true)} />}
+      </figure>
+      <div className="outputs-s-after"><Rich text={shape.line} /></div>
+    </div>
   </div>;
 }

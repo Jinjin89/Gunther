@@ -70,7 +70,10 @@ class BudgetedGateway:
         self.gateway, self.budget = gateway, budget
 
     def _call(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        parent = REQUEST_ADMISSION.get()
         self.budget.admit_model()
+        if parent is not None:
+            parent()
         first = True
 
         def request() -> None:
@@ -79,6 +82,8 @@ class BudgetedGateway:
                 first = False  # already admitted above
             else:
                 self.budget.admit_model()
+                if parent is not None:
+                    parent()
 
         token = REQUEST_ADMISSION.set(request)
         try:

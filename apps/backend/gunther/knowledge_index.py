@@ -27,11 +27,13 @@ from gunther.documents import ParsedDocument, text_document
 from gunther.models import (
     ContentBlock,
     ProcessingJob,
+    RecordingSession,
     Source,
     SourceIndexHead,
     SourcePaper,
     SourceRevision,
 )
+from gunther.recording_metadata import recording_ids
 
 # Parser versions are part of a revision's fingerprint. v2 reflows PDF lines into
 # paragraphs and makes passage-sized blocks; v1 revisions are parsed again.
@@ -256,6 +258,24 @@ class KnowledgeIndex:
     def add_source(self, session: Session, source: Source) -> None:
         document = text_document(source.content)
         self.publish(session, source, document.chunks(), document=document)
+        self.queue_recording_duration(session, source)
+
+    @staticmethod
+    def queue_recording_duration(session: Session, source: Source) -> None:
+        if source.kind not in {"recording", "course"}:
+            return
+        ids = recording_ids(source.content[:2_000])
+        for recording_id in ids:
+            recording = session.get(RecordingSession, recording_id)
+            if (
+                recording is not None
+                and recording.status == "completed"
+                and recording.audio_duration_ms is None
+            ):
+                enqueue(
+                    session, source.id, "measure_recording",
+                    f"measure_recording:{recording.id}:v1",
+                )
 
     def backfill(self, limit: int = 50) -> int:
         """Bounded startup batches; every commit is independently restartable."""
@@ -273,6 +293,25 @@ class KnowledgeIndex:
             ).all()
             for source in sources:
                 self.add_source(session, source)
+            # Previously saved timer estimates can be wrong. Measure existing audio
+            # once, through the same durable jobs as newly filed recordings.
+            recordings = session.scalars(
+                select(Source)
+                .join(RecordingSession, func.substr(Source.content, 1, 2_000).contains(
+                    "Local recording: " + RecordingSession.id
+                ))
+                .where(
+                    Source.kind.in_(("recording", "course")), Source.trashed_at.is_(None),
+                    RecordingSession.status == "completed",
+                    RecordingSession.audio_duration_ms.is_(None),
+                    ("measure_recording:" + RecordingSession.id + ":v1").not_in(
+                        select(ProcessingJob.dedupe_key)
+                    ),
+                )
+                .limit(limit)
+            ).all()
+            for source in recordings:
+                self.queue_recording_duration(session, source)
             # Files parsed before passages existed are parsed again, once.
             for source_id in session.scalars(
                 select(SourceIndexHead.source_id)

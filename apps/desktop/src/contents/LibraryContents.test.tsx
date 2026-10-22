@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ContentsSource, KnowledgeTopic, LibraryContents as Contents } from "@gunther/contracts";
@@ -46,6 +46,21 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe("Library contents", () => {
+  it("refreshes duration estimates until audio measurement finishes", async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = { ...base, sources: base.sources.map((item) => item.id === "rec1" ? { ...item, durationSeconds: 60, durationPending: true } : item) };
+      const measured = { ...base, sources: base.sources.map((item) => item.id === "rec1" ? { ...item, durationSeconds: 120, durationPending: false } : item) };
+      const load = vi.spyOn(knowledgeApi, "contents").mockResolvedValueOnce(pending).mockResolvedValue(measured);
+      render(<LibraryContents {...props()} />);
+      await act(async () => { await Promise.resolve(); });
+      expect(within(rowOf("Lecture 1 recording")).getByText("1:00")).toBeVisible();
+      await act(async () => { vi.advanceTimersByTime(2500); });
+      expect(within(rowOf("Lecture 1 recording")).getByText("2:00")).toBeVisible();
+      await act(async () => { vi.advanceTimersByTime(5000); });
+      expect(load).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
+  });
   it("shows headings, rows with their details, and Not placed yet last, newest first", async () => {
     await show();
     expect(screen.getByRole("heading", { name: "Lecture 1" })).toBeVisible();

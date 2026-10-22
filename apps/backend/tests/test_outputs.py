@@ -31,10 +31,14 @@ from gunther.config import Settings
 from gunther.main import create_app
 from gunther.models import Artifact, ArtifactCheck, ArtifactUnitBinding
 from gunther.outputs import (
+    Draft,
     OutputAgents,
     Pool,
     Spec,
+    _marked,
     cited_sentences,
+    diagram_as_text,
+    diagram_fallback_reason,
     heading_of,
     layout_of,
     section_hash,
@@ -108,6 +112,7 @@ def app_for(tmp_path: Path, fake: FakeProvider, *, skills: bool = False, **overr
         deepseek_api_key="sk-test-0000000000001234",
         stt_provider="compatible",
         processing_worker_enabled=False,
+        slide_review_enabled=overrides.pop("slide_review_enabled", False),
         auth_token=SIDECAR_TOKEN,
         service_settings_file=tmp_path / "service-settings.json",
         **overrides,
@@ -320,6 +325,70 @@ def test_a_marker_is_put_first_and_only_the_title_slide_keeps_an_accent() -> Non
     assert with_layout("", "text") == "<!-- layout: text -->"
 
 
+def test_a_theme_survives_layout_and_accent_rewrites() -> None:
+    title = "<!-- layout: title; accent: teal; theme: editorial -->\n# T\n\nmessage"
+    assert _marked(title).theme == "editorial"
+    assert with_layout(title, "title") == title
+    assert (
+        with_layout(title, "title", "blue")
+        == "<!-- layout: title; accent: blue; theme: editorial -->\n# T\n\nmessage"
+    )
+    assert with_layout(title, "text") == "<!-- layout: text -->\n# T\n\nmessage"
+    assert _marked("<!-- layout: title; theme: future -->\n# T").theme is None
+
+
+def test_a_composition_marker_is_per_slide_and_survives_accent_theme_and_body_rewrites() -> None:
+    quote = "<!-- layout: quote; composition: split -->\n## T\n\n> Exact words\n\n— Speaker [1]"
+    assert _marked(quote).composition == "split"
+    assert with_layout(quote, "quote", composition="spotlight").startswith(
+        "<!-- layout: quote; composition: spotlight -->"
+    )
+    title = "<!-- layout: title; theme: editorial -->\n# Deck"
+    assert with_layout(title, "title", "blue", composition="standard").startswith(
+        "<!-- layout: title; accent: blue; theme: editorial -->"
+    )
+    assert (
+        _marked("<!-- layout: compare; composition: split -->\n## Table").composition == "standard"
+    )
+
+
+def test_a_diagram_draws_only_when_every_relationship_is_exactly_supported() -> None:
+    text = (
+        "<!-- layout: diagram -->\n## A leads to B\n"
+        "| From | Relationship | To |\n| --- | --- | --- |\n| A | leads to [1] | B |"
+    )
+    supported = Draft(
+        text,
+        [],
+        {
+            "status": "complete",
+            "claims": [{"text": "A | leads to | B", "refs": [1], "verdict": "supported"}],
+        },
+    )
+    assert diagram_fallback_reason(supported) is None
+    unsupported = Draft(
+        text,
+        [],
+        {
+            "status": "complete",
+            "claims": [{"text": "A | leads to | B", "refs": [1], "verdict": "not"}],
+        },
+    )
+    assert diagram_fallback_reason(unsupported)
+    assert "| A | leads to [1] | B |" in diagram_as_text(unsupported).text
+    unrelated = Draft(
+        text,
+        [],
+        {
+            "status": "complete",
+            "claims": [{"text": "Next process runs", "refs": [1], "verdict": "supported"}],
+        },
+    )
+    assert diagram_fallback_reason(unrelated)
+    incomplete = Draft(text, [], {"status": "partial", "claims": []})
+    assert diagram_fallback_reason(incomplete)
+
+
 def test_a_deck_keeps_each_slides_marker_with_it_and_the_hash_covers_it() -> None:
     content = (
         "<!-- layout: title; accent: blue -->\n# Deck\n\nsub\n\n---\n\n"
@@ -397,8 +466,7 @@ def test_a_slides_marker_is_no_sentence_and_the_positions_stay_those_of_the_slid
 
 def test_the_checker_reads_a_slide_under_its_marker_and_gives_the_marker_back() -> None:
     slide = (
-        "<!-- layout: text -->\n## T cells\n\n- CD3D marks T cells [1]\n\n"
-        "Note: Close on CD3D [1]."
+        "<!-- layout: text -->\n## T cells\n\n- CD3D marks T cells [1]\n\nNote: Close on CD3D [1]."
     )
     pool = Pool(10)
     pool.adopt(Evidence("library", "Markers", "CD3D is a marker of T cells."))

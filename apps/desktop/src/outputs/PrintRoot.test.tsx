@@ -43,6 +43,17 @@ describe("printing a deck", () => {
     for (const face of paper.querySelectorAll<HTMLElement>(".outputs-slide-face")) expect(face.style.getPropertyValue("--outputs-accent")).toBe("#028066");
   });
 
+  it("prints a themed deck with the selected paper, text and accent tokens", async () => {
+    render(<PrintRoot artifact={deck("<!-- layout: title; accent: red; theme: keynote -->\n# Deck\n\n---\n\n<!-- layout: flow -->\n## Steps\n\n1. Start\n2. Finish")} />);
+    await waitFor(() => expect(faces()).toEqual(["title", "flow"]));
+    const paper = document.getElementById("print-root")!;
+    for (const face of paper.querySelectorAll<HTMLElement>(".outputs-slide-face")) {
+      expect(face.dataset.theme).toBe("keynote");
+      expect(face.style.getPropertyValue("--outputs-slide-paper")).toBe("#171a20");
+      expect(face.style.getPropertyValue("--outputs-accent")).toBe("#ff9e96");
+    }
+  });
+
   it("takes the outline's layouts for a deck made before markers, when they line up", async () => {
     const outline = [{ heading: "Deck", goal: "", layout: "title" }, { heading: "One", goal: "", layout: "flow" }];
     render(<PrintRoot artifact={deck("# Deck\n\n---\n\n## One\n\n1. a\n2. b", outline)} />);

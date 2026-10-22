@@ -1,0 +1,8 @@
+{
+  "extends": "../tsconfig.app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "../node_modules/.tmp/preview.tsbuildinfo",
+    "noEmit": true
+  },
+  "include": ["./*.tsx", "../src/vite-env.d.ts"]
+}

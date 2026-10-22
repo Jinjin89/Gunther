@@ -269,6 +269,7 @@ def create_app(
             local_ocr,
             storage_budget,
         ),
+        recordings_dir=active_settings.recordings_dir,
         document_parser=(
             DoclingParser(
                 active_settings.docling_python,
@@ -278,6 +279,15 @@ def create_app(
             else DoclingParser.bundled()
         ),
     )
+
+    from gunther.slide_render import SlideRenderer
+
+    knowledge_service.slide_renderer = SlideRenderer(
+        active_settings.slide_render_dir or active_settings.speech_dir.parent / "slide-renders",
+        AssetService(sessions, active_settings.assets_dir, knowledge_service, local_ocr,
+                     storage_budget).download,
+        browser=active_settings.slide_browser_path,
+    ) if active_settings.slide_review_enabled else None
 
     trash_service = TrashService(
         sessions,

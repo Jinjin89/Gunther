@@ -30,7 +30,18 @@ from gunther.skill_checks import CHECKS
 
 SKILLS_DIR = Path(__file__).resolve().parent / "skills"
 
-STEP_KINDS = ("understand", "structure", "write", "edit_review", "reader_test", "revise")
+STEP_KINDS = (
+    "understand",
+    "structure",
+    "outline_review",
+    "design",
+    "write",
+    "compose",
+    "edit_review",
+    "reader_test",
+    "revise",
+    "visual_review",
+)
 TOOLS = ("search_library", "search_web", "read_source")
 EFFORTS = ("off", "low", "medium", "high", "max", "job")
 USES = ("talk", "read")
@@ -205,8 +216,22 @@ def load_skill(root: Path) -> Skill:
     order = [step.does for step in steps]
     if len(set(order)) != len(order):
         raise SkillError(f"{where}: a kind of step appears twice")
-    if order[:3] != ["understand", "structure", "write"]:
-        raise SkillError(f"{where}: the steps must start understand, structure, write")
+    if order[:2] != ["understand", "structure"]:
+        raise SkillError(f"{where}: the steps must start understand, structure")
+    if manifest["kind"] == "slides":
+        next_step = 3 if order[2:3] == ["outline_review"] else 2
+        if len(order) <= next_step or order[next_step] not in ("design", "write"):
+            raise SkillError(f"{where}: Slides must place optional design before write")
+        if order[next_step] == "design" and order[next_step + 1:next_step + 2] != ["write"]:
+            raise SkillError(f"{where}: Slides design must be followed by write")
+        if "compose" in order and order.index("compose") != order.index("write") + 1:
+            raise SkillError(f"{where}: Slides compose must immediately follow write")
+        if "visual_review" in order and order[-1] != "visual_review":
+            raise SkillError(f"{where}: Slides visual_review must be last")
+    elif order[2:3] != ["write"] or any(
+        step in order for step in ("outline_review", "design", "compose", "visual_review")
+    ):
+        raise SkillError(f"{where}: Reports must go from structure to write without design")
 
     sectioned = {key for body in files.values() for key in split_sections(body)[1]}
     structures = _strings(manifest.get("structures", []), f"{where}: structures")
@@ -383,8 +408,7 @@ def load_ask_skill(root: Path) -> AskSkill:
         )
     # Each section without its heading line.
     bodies = {
-        key: body.split("\n", 1)[1].strip() if "\n" in body else ""
-        for key, body in found.items()
+        key: body.split("\n", 1)[1].strip() if "\n" in body else "" for key, body in found.items()
     }
     checklist = tuple(
         match.group(1)

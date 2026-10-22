@@ -24,9 +24,10 @@ import { useLiveOutput } from "./liveOutput";
 import { MaterialSelectionPanel } from "./MaterialSelectionPanel";
 import { OutlineEditor } from "./OutlineEditor";
 import { PrintRoot } from "./PrintRoot";
+import { SlideReviewPanel } from "./SlideReviewPanel";
 import { ReportView } from "./ReportView";
 import { describeScope, type ScopeCounts } from "./ScopePicker";
-import { withAccent } from "./sections";
+import { parseSlides, withAccent, withTheme } from "./sections";
 import "./outputs.css";
 
 export interface OutputsPageProps {
@@ -308,7 +309,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
     } finally { if (!abort.signal.aborted && jobRef.current === context) { live.stop(); jobRef.current = null; setJob(null); setStopping(false); } }
   };
   /** The old builder, for the Approach and Outline panels: a new version from the words changed there. */
-  const rebuild = async (request: BuildOutputRequest, instruction: string) => {
+  const rebuild = async (request: BuildOutputRequest, instruction: string, runner = knowledgeApi.buildOutputStream) => {
     if (!workspaceId || building) return;
     followController.current?.abort();
     const abort = new AbortController(); controller.current = abort;
@@ -316,7 +317,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
     jobRef.current = context; setJob(context); setGeneralError(null); setStopping(false); setSettingsOpen(false);
     live.start();
     try {
-      const artifact = await knowledgeApi.buildOutputStream(base.id, request, workspaceId, live.hear, abort.signal);
+      const artifact = await runner(base.id, request, workspaceId, live.hear, abort.signal);
       if (abort.signal.aborted) return;
       await finishBuild(artifact, context.conversationId);
     } catch (reason) {
@@ -329,9 +330,16 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
   const requestFor = (extra: Partial<BuildOutputRequest> = {}): BuildOutputRequest => {
     const kind = open?.kind ?? "report";
     const style = open?.style && outputStyles.includes(open.style as OutputStyle) ? open.style as OutputStyle : null;
-    return { clientRequestId: artifactRequestId(), kind, audience: open?.audience ?? "scientist", ...(kind === "report" ? style ? { style } : {} : open?.provenance.use ? { use: open.provenance.use } : {}), scope: active.scope, conversationId: active.id, conversationTitle: active.title, ...(choice.model ? { model: choice.model, effort: choice.effort } : {}), ...(web.enabled ? { web: true } : {}), ...extra };
+    return { clientRequestId: artifactRequestId(), kind, audience: open?.audience ?? "scientist", ...(kind === "report" ? style ? { style } : {} : { ...(open?.provenance.use ? { use: open.provenance.use } : {}), theme: parseSlides(open?.content ?? "")[0]?.theme ?? "classic", ...(open ? { designVersion: parseSlides(open.content)[0]?.designVersion === 1 ? 1 : 0 } : {}) }), scope: active.scope, conversationId: active.id, conversationTitle: active.title, ...(choice.model ? { model: choice.model, effort: choice.effort } : {}), ...(web.enabled ? { web: true } : {}), ...extra };
   };
   const send = (text: string) => void sendTurn({ kind: pending ? "answer" : "message", text });
+  const reviewSlides = () => {
+    if (!open) return;
+    const target = open.id;
+    const request = requestFor();
+    void rebuild(request, "Review rendered slides", (id, payload, workspace, hear, signal) =>
+      knowledgeApi.reviewSlidesStream(id, target, { clientRequestId: payload.clientRequestId, ...(choice.model ? { model: choice.model, effort: choice.effort } : {}) }, workspace, hear, signal));
+  };
   const retry = (message: ArtifactConversationMessage) => {
     const asked = messages.slice(0, messages.findIndex((item) => item.id === message.id)).reverse().find((item) => item.role === "user");
     if (!asked) return;
@@ -346,6 +354,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
   };
   // The deck's accent is part of its Markdown (the title slide's marker), so changing it is an edit.
   const setAccent = (accent: string) => { if (!open) return; const content = withAccent(open.content, accent); if (content !== open.content) void saveEdit(content, `The accent is ${accent}.`); };
+  const setTheme = (theme: string) => { if (!open) return; const content = withTheme(open.content, theme); if (content !== open.content) void saveEdit(content, `The style is ${theme}.`); };
   const checkAgain = async () => { if (!open || !workspaceId) return; setChecking(true); try { setOpen(await knowledgeApi.checkOutput(base.id, open.id, workspaceId)); onNotify("Checked against the sources."); } catch (reason) { setGeneralError(messageOf(reason)); } finally { setChecking(false); } };
   const copy = async (artifact = open) => { if (!artifact) return; try { await navigator.clipboard.writeText(artifact.content); onNotify(`Version ${artifact.versionNumber} copied as Markdown.`); } catch { onNotify("Clipboard access was unavailable. Download the Markdown file instead."); } };
   const download = (artifact = open) => { if (!artifact) return; const url = URL.createObjectURL(new Blob([artifact.content], { type: "text/markdown;charset=utf-8" })); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${base.id}-${artifact.kind}-v${artifact.versionNumber}.md`; anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); onNotify(`Downloaded version ${artifact.versionNumber} as Markdown.`); };
@@ -413,13 +422,14 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
       <aside className="artifact-saved-artifacts" aria-label="Saved artifacts"><ul className="aw-artifact-tray">{activeGroups.map((items) => { const item = items[0]!; return <li className="artifact-tray-entry" key={item.lineageId}><button type="button" className={`aw-artifact-card${open?.lineageId === item.lineageId ? " is-active" : ""}`} aria-current={open?.lineageId === item.lineageId ? "page" : undefined} aria-label={`Preview ${item.title}`} disabled={editing || saving || opening} onClick={() => void openVersion(item)}><span className="aw-file-icon">{item.kind === "slides" ? <Presentation size={19} /> : <FileDown size={19} />}</span><strong>{item.title}</strong><small>{kindLabel(item.kind)}<span>v{item.versionNumber}</span></small></button>{artifactMenu(item)}</li>; })}</ul>{activeGroups.length === 0 && <p className="outputs-hint">No artifacts yet.</p>}</aside>
       <ArtifactAgentPlan live={activeLive} latest={lastReply} stopping={stopping} onStop={() => void stop()} />
       <div className="aw-controls-brief"><ArtifactBriefPanel state={briefState} disabled={building} error={briefError} onEdit={(change) => void editBrief(change)} /></div>
-      {open && <div ref={outlinePanel} className="aw-controls-outline"><ApproachPanel artifact={open} busy={busy || !latest || !changeable} onRebuild={(approach) => runRebuild({ approach }, "Rebuild with the updated approach")} /><OutlineEditor key={open.id} outline={open.outline} label={open.kind === "slides" ? "slides" : "sections"} max={open.kind === "slides" ? 14 : 8} busy={busy || !latest || !changeable} onRebuild={(outline) => runRebuild({ outline }, "Rebuild with the updated outline")} /></div>}
+      {open && <div ref={outlinePanel} className="aw-controls-outline"><ApproachPanel artifact={open} busy={busy || !latest || !changeable} onRebuild={(approach) => runRebuild({ approach }, "Rebuild with the updated approach")} /><OutlineEditor key={open.id} review={open.provenance.skill?.outlineReview} outline={open.outline} label={open.kind === "slides" ? "slides" : "sections"} max={open.kind === "slides" ? 14 : 8} busy={busy || !latest || !changeable} onRebuild={(outline) => runRebuild({ outline }, "Rebuild with the updated outline")} /></div>}
       {versionsOpen && <section className="artifacts-version-list" aria-label="Artifact version history">{versions.map((item) => <button type="button" key={item.id} disabled={item.id === open?.id} className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => void openVersion(item)}>v{item.versionNumber} · {item.title}</button>)}</section>}
     </div>
     {controlsExpanded ? <PreviewHeightHandle value={controlsHeight} onChange={setControlsHeight} /> : activeLive && <button type="button" className="aw-compact-agent" aria-label="Show agent plan" onClick={() => setControlsExpanded(true)}><LoaderCircle className="spin" size={11} /><span>{outputActivity(activeLive)}</span><ChevronRight size={12} /></button>}
     {open ? <div className={`aw-preview-scroll${open.kind === "slides" ? " is-slides" : ""}`}>
+      {workspaceId && <SlideReviewPanel key={open.id} artifact={open} baseId={base.id} workspaceId={workspaceId} disabled={busy || !latest || !changeable || noModel} onReview={reviewSlides} onFollowUp={send} />}
       <div className="artifact-reading-actions">{changeable && latest && !editing && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={busy} onClick={() => setEditing(true)}><Pencil size={12} />Edit</button>}{open.sections.some((section) => !section.checked) && changeable && latest && !editing && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={busy || noModel} onClick={() => void checkAgain()}><ShieldCheck size={12} />Check again</button>}</div>
-      {editing ? <EditPane key={open.id} artifact={open} saving={saving} onSave={(content) => void saveEdit(content)} onCancel={() => { setEditing(false); setGeneralError(null); }} onCite={cite} /> : open.kind === "slides" ? <div className="aw-deck"><h2 className="outputs-title">{open.title}</h2><LazySlidesView artifact={open} onCite={cite} onSlide={setOnScreen} onAsk={changeable && latest ? (index) => setPointing({ section: index }) : undefined} goTo={jump} changed={changed} onAccent={changeable ? setAccent : undefined} accentDisabled={busy || !latest} /></div> : <article className="aw-paper outputs-document is-saved" aria-label="Document preview"><h2 className="outputs-title">{open.title}</h2><p className="outputs-doc-meta">{[describe(open), new Date(open.createdAt).toLocaleDateString(), open.modelLabel ?? (open.origin === "edit" ? "typed by hand" : "")].filter(Boolean).join(" · ")}</p><ReportView artifact={open} onCite={cite} onAsk={changeable && latest ? (section, quote) => setPointing({ section, quote }) : undefined} goTo={jump} changed={changed} /><footer className="outputs-doc-foot"><ShieldCheck size={14} />{open.origin === "legacy" ? `From ${open.unitCount} accepted knowledge units` : `Built from ${describeScope(open.inputs)}`} · seal {open.manifestHash.slice(0, 12)}…</footer></article>}
+      {editing ? <EditPane key={open.id} artifact={open} saving={saving} onSave={(content) => void saveEdit(content)} onCancel={() => { setEditing(false); setGeneralError(null); }} onCite={cite} /> : open.kind === "slides" ? <div className="aw-deck"><h2 className="outputs-title">{open.title}</h2><LazySlidesView artifact={open} onCite={cite} onSlide={setOnScreen} onAsk={changeable && latest ? (index) => setPointing({ section: index }) : undefined} goTo={jump} changed={changed} onAccent={changeable ? setAccent : undefined} onTheme={changeable ? setTheme : undefined} accentDisabled={busy || !latest} /></div> : <article className="aw-paper outputs-document is-saved" aria-label="Document preview"><h2 className="outputs-title">{open.title}</h2><p className="outputs-doc-meta">{[describe(open), new Date(open.createdAt).toLocaleDateString(), open.modelLabel ?? (open.origin === "edit" ? "typed by hand" : "")].filter(Boolean).join(" · ")}</p><ReportView artifact={open} onCite={cite} onAsk={changeable && latest ? (section, quote) => setPointing({ section, quote }) : undefined} goTo={jump} changed={changed} /><footer className="outputs-doc-foot"><ShieldCheck size={14} />{open.origin === "legacy" ? `From ${open.unitCount} accepted knowledge units` : `Built from ${describeScope(open.inputs)}`} · seal {open.manifestHash.slice(0, 12)}…</footer></article>}
     </div> : <div className="aw-preview-empty"><ListChecks size={30} /><h3>Your artifacts live here.</h3><p>Documents and slide decks from this conversation appear here. Create them through the conversation.</p></div>}
   </>;
   return <div className={`outputs-page page-enter${open?.kind === "slides" ? " is-deck" : ""}`}>

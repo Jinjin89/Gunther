@@ -3,6 +3,7 @@ import { BigNumberSlide } from "./BigNumberSlide";
 import { CardsSlide } from "./CardsSlide";
 import { CompareSlide, TwoColumnSlide } from "./CompareSlide";
 import { FigureSlide } from "./FigureSlide";
+import { DiagramSlide } from "./DiagramSlide";
 import { FlowSlide } from "./FlowSlide";
 import { LineChartSlide } from "./LineChartSlide";
 import type { SlideShape } from "./parseSlide";
@@ -27,6 +28,7 @@ export function Drawing({ shape }: { shape: SlideShape }) {
     case "cards": return <CardsSlide shape={shape} />;
     case "quote": return <QuoteSlide shape={shape} />;
     case "figure": return <FigureSlide shape={shape} />;
+    case "diagram": return <DiagramSlide shape={shape} />;
     case "text": return <TextSlide shape={shape} />;
     case "takeaways": return <TakeawaysSlide shape={shape} />;
   }

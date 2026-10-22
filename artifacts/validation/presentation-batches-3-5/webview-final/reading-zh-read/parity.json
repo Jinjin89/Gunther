@@ -1,0 +1,9 @@
+{
+  "case": "reading-zh-read",
+  "candidateHash": "ff8f699e233701630b1df28751a9d1f55b86d7a381a8dba1ab025a762a0e80d8",
+  "slides": 2,
+  "status": "matched",
+  "tolerancePixels": 3,
+  "scope": "macOS WKWebView engine probe, not a full packaged-app interaction test",
+  "differences": []
+}

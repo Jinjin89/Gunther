@@ -86,12 +86,19 @@ export interface ChartShape extends Frame {
 
 export interface FlowShape extends Frame {
   layout: "flow";
-  steps: Raw[];
+  steps: Array<{ number: number; title: Raw | null; detail: Raw }>;
 }
 
 export interface TimelineShape extends Frame {
   layout: "timeline";
   events: Array<{ when: Raw; what: Raw }>;
+}
+
+export interface DiagramShape extends Frame {
+  layout: "diagram";
+  nodes: Array<{ key: string; label: Raw }>;
+  edges: Array<{ fromKey: string; from: Raw; relationship: Raw; toKey: string; to: Raw; refs: number[] }>;
+  layers: string[][];
 }
 
 export interface CardsShape extends Frame {
@@ -131,12 +138,14 @@ export interface TakeawaysShape extends Frame {
 
 export type SlideShape =
   | TitleShape | BigNumberShape | TableShape | ChartShape | FlowShape | TimelineShape
-  | CardsShape | QuoteShape | FigureShape | TextShape | TakeawaysShape;
+  | DiagramShape | CardsShape | QuoteShape | FigureShape | TextShape | TakeawaysShape;
+export type GraphicShape = FlowShape | DiagramShape | ChartShape;
+export type GraphicLayout = GraphicShape["layout"];
 
 /** The layouts a slide can be drawn in: the names a marker carries. */
 export const SLIDE_LAYOUTS = [
   "title", "big_number", "compare", "two_column", "flow", "timeline", "bar_chart", "line_chart",
-  "cards", "quote", "figure", "text", "takeaways",
+  "cards", "quote", "figure", "diagram", "text", "takeaways",
 ] as const;
 
 // What counts as a citation in a table cell: [3], [1, 2], [?], and the marks the Checker adds,
@@ -280,6 +289,94 @@ function tableShape(slide: Slide, found: TableRead, layout: "compare" | "two_col
   return { layout, ...around(slide, found.start, found.end), head: found.head, rows: found.rows, align: found.align };
 }
 
+const DIAGRAM_CITE = /\[(?:[ipd]:)?(\d+(?:\s*[,，、]\s*\d+)*)\]/g;
+const diagramWidth = (text: string) => [...plainText(text)].reduce(
+  (width, char) => width + (/^[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]$/.test(char) ? 1 : /\s/.test(char) ? 0.28 : /[A-Za-z0-9]/.test(char) ? 0.58 : 0.4),
+  0,
+);
+
+function diagramShape(slide: Slide): DiagramShape | TableShape | null {
+  const found = readTable(slide);
+  if (!found) return null;
+  const fallback = () => tableShape(slide, found, "compare");
+  const headers = found.head.map((cell) => plainText(cell).replace(/\s+/g, " ").toLocaleLowerCase());
+  if (headers.length !== 3 || headers.some((header) => !header) || new Set(headers).size !== 3) return fallback();
+  if (!found.rows.length || found.rows.length > 8 || found.rows.some((row) => row.length !== 3)) return fallback();
+
+  const nodes: string[] = [];
+  const keys: string[] = [];
+  const adjacency = new Map<string, Set<string>>();
+  const indegree = new Map<string, number>();
+  const edges: DiagramShape["edges"] = [];
+  const uniqueEdges = new Set<string>();
+  const nodeKey = (raw: string) => plainText(raw).replace(/\s+/g, " ").toLocaleLowerCase();
+  const addNode = (raw: string, key: string) => {
+    MARK.lastIndex = 0;
+    const cited = MARK.test(raw);
+    MARK.lastIndex = 0;
+    if (!key || units(raw) > 24 || diagramWidth(raw) > 15 || cited) return false;
+    if (!indegree.has(key)) {
+      nodes.push(raw.trim());
+      keys.push(key);
+      adjacency.set(key, new Set());
+      indegree.set(key, 0);
+    }
+    return true;
+  };
+  for (const [fromRaw = "", relationship, toRaw = ""] of found.rows) {
+    const rel = relationship ?? "";
+    const from = nodeKey(fromRaw);
+    const to = nodeKey(toRaw);
+    if (!addNode(fromRaw, from) || !addNode(toRaw, to)) return fallback();
+    const refs = [...rel.matchAll(DIAGRAM_CITE)].flatMap((match) => (match[1]?.match(/\d+/g) ?? []).map(Number));
+    if (!refs.length || !plainText(rel) || units(rel) > 18 || diagramWidth(rel) > 13.5 || from === to) return fallback();
+    const edgeKey = `${from}\u0000${to}`;
+    if (uniqueEdges.has(edgeKey)) return fallback();
+    uniqueEdges.add(edgeKey);
+    adjacency.get(from)?.add(to);
+    indegree.set(to, (indegree.get(to) ?? 0) + 1);
+    edges.push({ fromKey: from, from: fromRaw.trim(), relationship: rel.trim(), toKey: to, to: toRaw.trim(), refs });
+  }
+  if (nodes.length < 2 || nodes.length > 6) return fallback();
+  const ready = keys.filter((key) => indegree.get(key) === 0);
+  const ranks = new Map(ready.map((key) => [key, 0]));
+  let visited = 0;
+  while (ready.length) {
+    const node = ready.shift() as string;
+    visited += 1;
+    for (const target of adjacency.get(node) ?? []) {
+      ranks.set(target, Math.max(ranks.get(target) ?? 0, (ranks.get(node) ?? 0) + 1));
+      indegree.set(target, (indegree.get(target) ?? 0) - 1);
+      if (indegree.get(target) === 0) ready.push(target);
+    }
+  }
+  if (visited !== nodes.length) return fallback();
+  const layerCount = Math.max(...ranks.values()) + 1;
+  const layers = Array.from({ length: layerCount }, (_, rank) => keys.filter((key) => ranks.get(key) === rank));
+  if (layers.length > 3 || layers.some((layer) => layer.length > 3)) return fallback();
+  const y = new Map<string, number>();
+  for (const layer of layers) layer.forEach((node, index) => y.set(node, 210 + (index - (layer.length - 1) / 2) * 140));
+  const lanes = new Map<number, number[]>();
+  for (const edge of edges) {
+    const from = edge.fromKey;
+    const to = edge.toKey;
+    const rank = ranks.get(from) ?? 0;
+    if ((ranks.get(to) ?? 0) - rank !== 1) return fallback();
+    const center = ((y.get(from) ?? 210) + (y.get(to) ?? 210)) / 2;
+    const previous = lanes.get(rank) ?? [];
+    if (previous.some((at) => Math.abs(at - center) < 64)) return fallback();
+    previous.push(center);
+    lanes.set(rank, previous);
+  }
+  return {
+    layout: "diagram",
+    ...around(slide, found.start, found.end),
+    nodes: nodes.map((label, index) => ({ label, key: keys[index] ?? nodeKey(label) })),
+    edges,
+    layers,
+  };
+}
+
 /** A unit the header names that can go after a number; "10k" and "$M" say what the number counts and stay in the header. */
 function attachable(unit: string | null): string | null {
   return unit && !/\d|[$€£¥￥]/.test(unit) ? unit : null;
@@ -332,6 +429,37 @@ function boldStart(body: string, item: ListItem): { bold: Raw; text: Raw } | nul
   if (strong?.type !== "strong" || startOf(strong) !== startOf(paragraph) || !body.startsWith("**", startOf(strong))) return null;
   const last = item.children.at(-1) ?? paragraph;
   return { bold: innerOf(body, strong), text: body.slice(endOf(strong), endOf(last)).replace(LEAD_SEPARATOR, "").trim() };
+}
+
+/** Split a flow item's existing bold start from its explanation using Markdown offsets. */
+function flowStep(body: string, item: ListItem): { title: Raw | null; detail: Raw } {
+  const raw = innerOf(body, item);
+  const paragraph = item.children[0];
+  const strong = paragraph?.type === "paragraph" ? paragraph.children[0] : null;
+  if (
+    paragraph?.type !== "paragraph"
+    || strong?.type !== "strong"
+    || startOf(strong) !== startOf(paragraph)
+    || !body.startsWith("**", startOf(strong))
+  ) return { title: null, detail: raw };
+
+  const titleEnd = endOf(strong);
+  const itemEnd = endOf(item.children.at(-1) ?? paragraph);
+  const tail = body.slice(titleEnd, itemEnd);
+  const punctuation = /^([ \t]*(?::|：|,|，)[ \t]*)([\s\S]*)$/.exec(tail);
+  const dash = /^([ \t]+(?:—|–|-)[ \t]+)([\s\S]*)$/.exec(tail);
+  const dashTail = dash?.[2] ?? "";
+  const valuePrefix = /^[\p{Sc}\p{N}.．+\-−–—]/u.test(dashTail.trimStart());
+  const separator = punctuation ?? (dash && !valuePrefix ? dash : null);
+  const between = separator?.[1] ?? /^[ \t]*/.exec(tail)?.[0] ?? "";
+  const detail = separator?.[2] ?? tail.slice(between.length);
+  const citationOnly = detail
+    .replace(/\[(?:(?:[ipd]:)?\d+(?:\s*[,，、]\s*\d+)*|\?)\]/g, "")
+    .trim() === "";
+  return {
+    title: body.slice(startOf(strong), titleEnd) + (citationOnly ? tail : between.trimEnd()),
+    detail: citationOnly ? "" : detail,
+  };
 }
 
 /** The first list of the slide (an ordered one, if asked) when it has between `least` and `most` items. */
@@ -391,7 +519,10 @@ const READERS: Record<(typeof SLIDE_LAYOUTS)[number], Reader> = {
 
   flow(slide) {
     const found = listOf(slide, true, 2, 6);
-    return found && { layout: "flow", ...found.frame, steps: found.items.map((item) => innerOf(slide.body, item)) };
+    return found && { layout: "flow", ...found.frame, steps: found.items.map((item, index) => {
+      const marker = /^\s*(\d+)[.)][ \t]+/.exec(rawOf(slide.body, item));
+      return { number: Number(marker?.[1] ?? index + 1), ...flowStep(slide.body, item) };
+    }) };
   },
 
   timeline(slide) {
@@ -428,6 +559,10 @@ const READERS: Record<(typeof SLIDE_LAYOUTS)[number], Reader> = {
     };
   },
 
+  diagram(slide) {
+    return diagramShape(slide);
+  },
+
   figure(slide) {
     const image = firstLine(slide);
     const found = image && IMAGE.exec(image.line);
@@ -448,7 +583,7 @@ const READERS: Record<(typeof SLIDE_LAYOUTS)[number], Reader> = {
 
 /**
  * What a slide body holds for a layout, or null when it does not take that form (or the layout is
- * none of the thirteen). Every slide a skill makes was checked by the service for its form, but a
+ * none of the fourteen). Every slide a skill makes was checked by the service for its form, but a
  * slide typed by hand has not been.
  */
 export function parseSlide(layout: string | null | undefined, body: string): SlideShape | null {
@@ -463,4 +598,29 @@ export function parseSlide(layout: string | null | undefined, body: string): Sli
     from: heading ? endOf(heading) : 0,
     first: heading ? 1 : 0,
   });
+}
+
+/** Parse one list/table block as an element graphic, with strict source shape requirements. */
+export function parseGraphicBlock(layout: GraphicLayout, body: string): GraphicShape | null {
+  const blocks = markdown(body).children;
+  const slide: Slide = { body, blocks, title: null, from: 0, first: 0 };
+  if (layout === "flow") {
+    if (blocks.length !== 1) return null;
+    const list = blocks.find((block): block is List => block.type === "list" && block.ordered === true);
+    if (!list || list.children.length < 2 || list.children.length > 6) return null;
+    const shape = READERS.flow(slide);
+    return shape?.layout === "flow" && !shape.lead && !shape.after ? shape : null;
+  }
+  if (blocks.length !== 1 || blocks[0]?.type !== "table") return null;
+  if (body.replace(/\r\n?/g, "\n").split("\n").some((line) => line.trim() && !line.includes("|"))) return null;
+  const table = readTable(slide);
+  if (!table) return null;
+  if (layout === "diagram") {
+    if (table.head.length !== 3 || table.rows.some((row) => row.length !== 3) || table.rows.length < 1 || table.rows.length > 8) return null;
+    const shape = READERS.diagram(slide);
+    return shape?.layout === "diagram" && !shape.lead && !shape.after ? shape : null;
+  }
+  if (table.head.length !== 2 || table.rows.some((row) => row.length !== 2) || table.rows.length < 2 || table.rows.length > 6) return null;
+  const shape = READERS[layout](slide);
+  return shape?.layout === layout && !shape.lead && !shape.after ? shape : null;
 }

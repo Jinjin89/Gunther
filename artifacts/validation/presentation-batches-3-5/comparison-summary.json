@@ -1,0 +1,17 @@
+{
+  "cases": 15,
+  "statuses": {
+    "clean": 7,
+    "repaired": 5,
+    "needs_review": 3,
+    "unavailable": 0
+  },
+  "calls": 30,
+  "fidelity": true,
+  "pdfs": true,
+  "model": "DeepSeek \u00b7 Flash",
+  "effort": "medium",
+  "rendererHashes": [
+    "db7fc6b697746b93e0599978b619fc95a6cccd8abe51236e48315064e156b0cb"
+  ]
+}

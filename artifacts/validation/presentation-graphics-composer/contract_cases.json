@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "cases": {
+    "ordered_flow": {
+      "markdown": "1. Gather samples [1]\n2. Check labels [2]\n3. Publish results [3]",
+      "allowedViews": ["list", "flow"]
+    },
+    "unordered_list": {
+      "markdown": "- Gather samples [1]\n- Check labels [2]",
+      "allowedViews": ["list"]
+    },
+    "diagram": {
+      "markdown": "| From | Relation | To |\n| --- | --- | --- |\n| Intake | feeds [1] | Review |\n| Review | produces [2] | Report |",
+      "allowedViews": ["table", "diagram"]
+    },
+    "diagram_one_edge": {
+      "markdown": "| From | Relation | To |\n| --- | --- | --- |\n| Intake | feeds [1] | Review |",
+      "allowedViews": ["table", "diagram"]
+    },
+    "chart_first_negative_row": {
+      "markdown": "| Quarter | Change (points) |\n| --- | --- |\n| Q1 | −3.5 points [1] |\n| Q2 | +2 points [2]",
+      "allowedViews": ["table", "bar_chart", "line_chart"]
+    },
+    "chart_extra_column": {
+      "markdown": "| Quarter | Change (points) | Region |\n| --- | --- | --- |\n| Q1 | -3 points [1] | West |\n| Q2 | 2 points [2] | East",
+      "allowedViews": ["table", "diagram"]
+    },
+    "chart_mixed_units": {
+      "markdown": "| Quarter | Change |\n| --- | --- |\n| Q1 | -3% [1] |\n| Q2 | 2 points [2]",
+      "allowedViews": ["table"]
+    },
+    "table_with_attached_text": {
+      "markdown": "| Quarter | Rate (%) |\n| --- | --- |\n| Q1 | 12% [1] |\n| Q2 | 15% [2]\nThe later group also included an additional condition [2].",
+      "allowedViews": ["table"]
+    }
+  }
+}

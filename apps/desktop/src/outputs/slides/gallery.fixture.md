@@ -114,6 +114,16 @@ Look at the gap after week four; the study says it opens there [4]
 
 ---
 
+<!-- layout: diagram -->
+## A reflective roof follows a short evidence-backed process
+
+| From | Relationship | To |
+| --- | --- | --- |
+| Clean and prime the surface | Before coating [2] | Apply reflective coating |
+| Apply reflective coating | After the first summer [1] | Measure roof temperatures |
+
+---
+
 <!-- layout: text -->
 ## A cool roof is not a free lunch
 

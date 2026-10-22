@@ -33,6 +33,7 @@ from gunther.models import (
     TopicSourceLink,
     WebSnapshot,
 )
+from gunther.recording_metadata import recording_timing
 
 
 class TopicConflict(ValueError):
@@ -447,12 +448,16 @@ class TopicService:
 
         # Only the head of a recording's text holds its "Duration:" line.
         durations: dict[str, int] = {}
+        duration_pending: dict[str, bool] = {}
         for source_id, head in session.execute(
             select(Source.id, func.substr(Source.content, 1, 2000))
             .join(KnowledgeBaseSource, KnowledgeBaseSource.source_id == Source.id)
-            .where(member, Source.trashed_at.is_(None), Source.kind == "recording")
+            .where(member, Source.trashed_at.is_(None), Source.kind.in_(("recording", "course")))
         ):
-            seconds = _duration_seconds(head or "")
+            seconds, pending = recording_timing(session, head or "")
+            duration_pending[source_id] = pending
+            if seconds is None:
+                seconds = _duration_seconds(head or "")
             if seconds is not None:
                 durations[source_id] = seconds
 
@@ -518,6 +523,7 @@ class TopicService:
                     "kind": kind,
                     "createdAt": created_at.isoformat(),
                     "durationSeconds": durations.get(source_id),
+                    "durationPending": duration_pending.get(source_id, False),
                     "authors": _short_authors(authors),
                     "year": year,
                     "pages": pages if isinstance(pages, int) and pages > 0 else None,

@@ -1,0 +1,15 @@
+{
+  "markdown": "## A small plan\n\n**72%** [p:1]\n\nThe source measured a change with its original scope [2].\n\n- **Group A**: values stay together [3]\n- **Group B**: both values remain visible [4]\n\n| Item | Value |\n| --- | --- |\n| First | 10 [1] |\n| Second | 12 [2] |\n\n> Keep the full quotation and its condition.\n— Source note [3]\n\n![Figure 1: measured values](gunther-asset:ast_scene_fixture)\n\n~~~text\n[9] is an example in this code sample.\n~~~\n\nNote: Presenter-only context [7].",
+  "heading": "A small plan",
+  "blocks": [
+    { "id": "b1", "type": "stat", "markdown": "**72%** [p:1]" },
+    { "id": "b2", "type": "text", "markdown": "The source measured a change with its original scope [2]." },
+    { "id": "b3", "type": "list", "markdown": "- **Group A**: values stay together [3]\n- **Group B**: both values remain visible [4]" },
+    { "id": "b4", "type": "table", "markdown": "| Item | Value |\n| --- | --- |\n| First | 10 [1] |\n| Second | 12 [2] |" },
+    { "id": "b5", "type": "quote", "markdown": "> Keep the full quotation and its condition.\n— Source note [3]" },
+    { "id": "b6", "type": "image", "markdown": "![Figure 1: measured values](gunther-asset:ast_scene_fixture)" },
+    { "id": "b7", "type": "text", "markdown": "~~~text\n[9] is an example in this code sample.\n~~~" }
+  ],
+  "renumbered": "## A small plan\n\n**72%** [p:9]\n\nThe source measured a change with its original scope [6].\n\n- **Group A**: values stay together [8]\n- **Group B**: both values remain visible [4]\n\n| Item | Value |\n| --- | --- |\n| First | 10 [1] |\n| Second | 12 [5] |\n\n> Keep the full quotation and its condition.\n— Source note [3]\n\n![Figure 1: measured values](gunther-asset:ast_scene_fixture)\n\n~~~text\n[9] is an example in this code sample.\n~~~\n\nNote: Presenter-only context [12].",
+  "noteChanged": "## A small plan\n\n**72%** [p:9]\n\nThe source measured a change with its original scope [6].\n\n- **Group A**: values stay together [8]\n- **Group B**: both values remain visible [4]\n\n| Item | Value |\n| --- | --- |\n| First | 10 [1] |\n| Second | 12 [5] |\n\n> Keep the full quotation and its condition.\n— Source note [3]\n\n![Figure 1: measured values](gunther-asset:ast_scene_fixture)\n\n~~~text\n[9] is an example in this code sample.\n~~~\n\nNote: Different presenter note [23]."
+}

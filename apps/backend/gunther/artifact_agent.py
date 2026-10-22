@@ -1479,11 +1479,14 @@ class ArtifactAgent:
         steps = self._steps(work)
         first = work.outline[0].id if work.outline else ""
         accent = _marked(work.parts[first].text).accent if first in work.parts else None
+        theme = _marked(work.parts[first].text).theme if first in work.parts else None
         existing = {i for i in m.ids if i in work.parts}
         instruction = act.instruction.strip() or None
         wrote = steps.write(m.ids, instruction)
         if accent and first in wrote and work.spec.kind == "slides":
             steps.set_accent(accent)
+        if theme and first in wrote and work.spec.kind == "slides":
+            steps.set_theme(theme)
         for item_id in wrote:
             self._touch(work, item_id, "rewritten", instruction or "written from its plan")
         where = self._where(work, wrote)

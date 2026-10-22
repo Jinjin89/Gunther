@@ -31,9 +31,10 @@ from pydantic import BaseModel, Field, ValidationError
 
 from gunther.agent import ANY_CITATION, Evidence, sentence_spans
 from gunther.brief import _quoted
-from gunther.outputs import Pool, Spec, heading_of, layout_of, section_hash, split_document
+from gunther.outputs import Pool, Spec, _marked, heading_of, layout_of, section_hash, split_document
 from gunther.schemas import ArtifactOut, ConversationCitationOut
 from gunther.skillbook import skill_for
+from gunther.slide_scene import rebind_graphics_hash
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,8 @@ class WorkSpec(BaseModel):
     use: Line | None = None  # decks: "talk" | "read"
     length: Line | None = None  # "10 minutes", "about 12 slides", "3 pages"
     structure: Line | None = None  # a structure id of the kind's skill
+    theme: str | None = None  # slide visual theme, kept apart from report structure
+    design_version: int | None = None
 
 
 class CardRec(BaseModel):
@@ -98,8 +101,15 @@ class ItemRec(BaseModel):
     id: str  # "p1", "p2"…: stable, never reused
     heading: str
     goal: str = ""
+    message: str = ""
+    question: str = ""
+    requires: list[str] = Field(default_factory=list)
     layout: str = ""  # decks
     link: str = ""  # reports: how it follows the one before
+    design: dict[str, str] | None = None
+    layout_locked: bool = False
+    design_locked: bool = False
+    design_attempted: bool = False
     cards: list[str] = Field(default_factory=list)  # card ids
     refs: list[int] = Field(default_factory=list)  # pool numbers planned for it
     queries: list[str] = Field(default_factory=list)
@@ -128,6 +138,7 @@ class Work(BaseModel):
     cards: list[CardRec] = Field(default_factory=list)
     outline: list[ItemRec] = Field(default_factory=list)
     outline_inputs: str = ""
+    outline_review: dict | None = None
     parts: dict[str, PartRec] = Field(default_factory=dict)  # by item id
     version_id: str | None = None  # the version this work matches
     version_map: list[int] = Field(default_factory=list)  # version number n → version_map[n-1]
@@ -272,7 +283,12 @@ def _translate(text: str, version_map: Sequence[int]) -> tuple[str, list[int]]:
         ]
         return lead + "".join(kept) if kept else ""
 
-    return _GROUP.sub(replace, text), dropped
+    translated = _GROUP.sub(replace, text)
+    return rebind_graphics_hash(
+        text,
+        translated,
+        {number: mapped for number, mapped in enumerate(version_map, start=1)},
+    ), dropped
 
 
 def pool_numbered(text: str, version_map: Sequence[int]) -> str:
@@ -496,7 +512,7 @@ def digest_outline_inputs(work: Work) -> str:
 
 
 def digest_part_inputs(brief: ConversationBrief, work: Work, item: ItemRec) -> str:
-    """What a part is written from: its outline item (heading, goal, layout, link), the
+    """What a part is written from: its outline item (heading, goal, layout, link, design), the
     contents of its cards, and the audience (a scientist when the brief has none), kind and use."""
 
     cards = {card.id: card for card in work.cards}
@@ -507,6 +523,16 @@ def digest_part_inputs(brief: ConversationBrief, work: Work, item: ItemRec) -> s
                 "goal": item.goal,
                 "layout": item.layout,
                 "link": item.link,
+                "design": item.design,
+            }
+            | {
+                key: value
+                for key, value in {
+                    "message": item.message,
+                    "question": item.question,
+                    "requires": item.requires,
+                }.items()
+                if value
             },
             "cards": [
                 cards[card_id].model_dump() if card_id in cards else {"missing": card_id}
@@ -979,6 +1005,8 @@ def spec_of(brief: ConversationBrief, work: Work) -> Spec:
         audience=_audience(brief),
         style=_style_of(work),
         brief=render_brief(brief, work),
+        theme=work.spec.theme,
+        design_version=work.spec.design_version,
     )
 
 
@@ -1067,6 +1095,11 @@ def _spec_of_version(version: ArtifactOut) -> WorkSpec:
 
     skill = skill_for(version.kind)
     spec = WorkSpec(kind=version.kind)
+    if version.kind == "slides":
+        first = split_document(version.content, version.kind)[1]
+        if first:
+            spec.theme = _marked(first[0]).theme
+            spec.design_version = _marked(first[0]).design_version
     use = getattr(version.provenance, "use", None)
     if use:
         spec.use = Line(text=use, mark="guessed")
@@ -1123,11 +1156,23 @@ def import_work(
     for position, section in enumerate(sections):
         plan = planned[position] if planned else None
         text, dropped = _translate(section, version_map)
+        marked = _marked(section) if kind == "slides" else None
+        design = plan.design.model_dump() if plan and plan.design else None
+        if marked and marked.composition != "standard":
+            design = {**(design or {}), "composition": marked.composition}
         item = ItemRec(
-            id=f"p{work.next_item}",
+            id=plan.id if plan and plan.id else f"p{work.next_item}",
             heading=heading_of(section) or (plan.heading if plan else ""),
             goal=plan.goal if plan else "",
+            message=plan.message if plan else "",
+            question=plan.question if plan else "",
+            requires=list(plan.requires) if plan else [],
             layout=_layout_of(kind, position, section, plan.layout if plan else None),
+            link=plan.link if plan else "",
+            design=design,
+            layout_locked=plan.layout_locked if plan else False,
+            design_locked=plan.design_locked if plan else False,
+            design_attempted=plan.design_attempted if plan else False,
             refs=_cited(text),
         )
         work.next_item += 1

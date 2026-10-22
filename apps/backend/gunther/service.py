@@ -38,7 +38,7 @@ from gunther.artifact_workspace import evidence_from_citation
 from gunther.conversation import GroundingClaim, KnowledgeResponder
 from gunther.database import session_scope
 from gunther.extraction import CandidateAssertion, ExtractionResult, Extractor
-from gunther.knowledge_index import KnowledgeIndex
+from gunther.knowledge_index import KnowledgeIndex, enqueue
 from gunther.llm import ModelError, ModelGateway, ModelInfo, Turn
 from gunther.model_profiles import Effort
 from gunther.models import (
@@ -86,11 +86,13 @@ from gunther.outputs import (
     Planned,
     Pool,
     Spec,
+    _marked,
     heading_of,
     section_hash,
     split_document,
     title_of,
 )
+from gunther.recording_metadata import recording_timing
 from gunther.run_budget import BudgetedGateway, RunBudget
 from gunther.schemas import (
     ArtifactBriefOut,
@@ -472,6 +474,7 @@ class KnowledgeService:
         # Settings → Developer: outputs are made by following a skill (see skill_runner);
         # off, by the agents in outputs alone.
         self.output_skills = True
+        self.slide_renderer = None
         # Let Ask pick a skill itself from the message (settings.ask_auto_skills).
         self.auto_skills = False
         # (plan effort, check effort) for Ask's own steps; the exam sets it, nothing else.
@@ -631,6 +634,10 @@ class KnowledgeService:
             for entity_id in (assertion.subject_entity_id, assertion.object_entity_id)
         }
         asset = session.get(Asset, source.asset_id) if source.asset_id else None
+        duration, duration_pending = (
+            recording_timing(session, source.content)
+            if source.kind in {"recording", "course"} else (None, False)
+        )
         return SourceSummaryOut(
             id=source.id,
             title=source.title,
@@ -639,6 +646,8 @@ class KnowledgeService:
             assertion_count=len(assertions),
             entity_count=len(entity_ids),
             processing=self.index.processing(session, source.id),
+            recording_duration_seconds=duration,
+            recording_duration_pending=duration_pending,
             asset=(
                 AssetOut(
                     id=asset.id,
@@ -882,6 +891,7 @@ class KnowledgeService:
         *,
         initialize_source: Callable[[Session, Source], None] | None = None,
         defer_processing: bool = False,
+        defer_analysis: bool = False,
     ) -> ImportResultOut:
         content = payload.content.strip()
         content_hash = source_fingerprint(payload.title, payload.kind, content)
@@ -893,6 +903,7 @@ class KnowledgeService:
                 content_hash,
                 initialize_source=initialize_source,
                 defer_processing=defer_processing,
+                defer_analysis=defer_analysis,
             )
 
     def _import_source(
@@ -903,6 +914,7 @@ class KnowledgeService:
         *,
         initialize_source: Callable[[Session, Source], None] | None = None,
         defer_processing: bool = False,
+        defer_analysis: bool = False,
     ) -> ImportResultOut:
 
         with session_scope(self.sessions) as session:
@@ -921,7 +933,7 @@ class KnowledgeService:
 
         extraction = (
             ExtractionResult(assertions=[], mode=self.extractor.mode)
-            if defer_processing
+            if defer_processing or defer_analysis
             else self.extractor.extract(payload.title, content)
         )
 
@@ -945,49 +957,14 @@ class KnowledgeService:
                 if not defer_processing and session.get(SourceIndexHead, source.id) is None:
                     self.index.add_source(session, source)
 
-                created_entities = 0
-                fragments: dict[str, Fragment] = {}
-                for candidate in extraction.assertions:
-                    subject, subject_created = self._find_or_create_entity(
-                        session, candidate.subject_label, candidate.subject_type
+                if defer_analysis:
+                    # Commit the source, its readable index and the analysis job together.
+                    # Saving a capture must never wait for a model over the network.
+                    enqueue(
+                        session, source.id, "extract_assertions",
+                        f"extract_assertions:{source.id}:{source.content_hash}",
                     )
-                    object_entity, object_created = self._find_or_create_entity(
-                        session, candidate.object_label, candidate.object_type
-                    )
-                    created_entities += int(subject_created) + int(object_created)
-
-                    fragment = fragments.get(candidate.evidence_quote)
-                    if fragment is None:
-                        fragment = Fragment(
-                            id=_id("frg"),
-                            source_id=source.id,
-                            locator=self._locator(content, candidate.evidence_quote),
-                            content=candidate.evidence_quote,
-                        )
-                        fragments[candidate.evidence_quote] = fragment
-                        session.add(fragment)
-
-                    assertion = self._create_assertion(source, subject, object_entity, candidate)
-                    session.add(assertion)
-                    session.flush()
-                    session.add(
-                        EvidenceLink(
-                            id=_id("evd"),
-                            assertion_id=assertion.id,
-                            fragment_id=fragment.id,
-                            stance="supports",
-                        )
-                    )
-                    session.add(
-                        Revision(
-                            id=_id("rev"),
-                            target_type="assertion",
-                            target_id=assertion.id,
-                            action="created",
-                            actor=f"extractor:{extraction.mode}",
-                            reason="Imported from source evidence",
-                        )
-                    )
+                created_entities = self.store_source_extraction(session, source, extraction)
 
                 session.flush()
                 return ImportResultOut(
@@ -1011,6 +988,48 @@ class KnowledgeService:
                     existing,
                     payload.knowledge_base_id,
                 )
+
+    def store_source_extraction(
+        self, session: Session, source: Source, extraction: ExtractionResult
+    ) -> int:
+        """Publish assertions and their exact evidence inside the caller's transaction."""
+
+        created_entities = 0
+        fragments: dict[str, Fragment] = {}
+        for candidate in extraction.assertions:
+            subject, subject_created = self._find_or_create_entity(
+                session, candidate.subject_label, candidate.subject_type
+            )
+            object_entity, object_created = self._find_or_create_entity(
+                session, candidate.object_label, candidate.object_type
+            )
+            created_entities += int(subject_created) + int(object_created)
+            fragment = fragments.get(candidate.evidence_quote)
+            if fragment is None:
+                fragment = Fragment(
+                    id=_id("frg"), source_id=source.id,
+                    locator=self._locator(source.content, candidate.evidence_quote),
+                    content=candidate.evidence_quote,
+                )
+                fragments[candidate.evidence_quote] = fragment
+                session.add(fragment)
+            assertion = self._create_assertion(source, subject, object_entity, candidate)
+            session.add(assertion)
+            session.flush()
+            session.add(
+                EvidenceLink(
+                    id=_id("evd"), assertion_id=assertion.id,
+                    fragment_id=fragment.id, stance="supports",
+                )
+            )
+            session.add(
+                Revision(
+                    id=_id("rev"), target_type="assertion", target_id=assertion.id,
+                    action="created", actor=f"extractor:{extraction.mode}",
+                    reason="Imported from source evidence",
+                )
+            )
+        return created_entities
 
     @staticmethod
     def _create_assertion(
@@ -3256,7 +3275,17 @@ class KnowledgeService:
             )
             if artifact is None:
                 raise LookupError(f"Artifact {artifact_id} was not found")
-            return self._artifact_out(session, artifact)
+            shown = self._artifact_out(session, artifact)
+            skill = getattr(shown.provenance, "skill", None)
+            if (skill and skill.render_check and skill.render_check.get("status") == "captured"
+                    and self.slide_renderer
+                    and not self.slide_renderer.current(skill.render_check)):
+                reason = "The renderer or source figures changed after this review."
+                skill.render_check = {**skill.render_check, "status": "stale", "reason": reason}
+                if skill.visual_review:
+                    skill.visual_review = {
+                        **skill.visual_review, "status": "stale", "reason": reason}
+            return shown
 
     def library_title(self, base_id: str) -> str:
         """A library's title, or its id when there is none."""
@@ -3311,7 +3340,7 @@ class KnowledgeService:
     def _output_request_fields(payload: BuildOutputInput | ReviseOutputInput) -> dict:
         fields = payload.model_dump(mode="json", exclude={"client_request_id"})
         # Requests made before the conversation UI retain their original fingerprint.
-        for name in ("model", "effort", "conversation_id", "conversation_title"):
+        for name in ("model", "effort", "conversation_id", "conversation_title", "theme"):
             if fields.get(name) is None:
                 fields.pop(name, None)
         return fields
@@ -3646,6 +3675,11 @@ class KnowledgeService:
                         f"The output is larger than the {MAX_OUTPUT_BYTES:,}-byte limit"
                     )
                 skilled = made_by or {}
+                if kind == "slides" and isinstance(skilled.get("skill"), dict):
+                    from gunther.slide_review import invalidate_reviews
+
+                    skilled = {**skilled, "skill": invalidate_reviews(
+                        skilled["skill"], content, outline, citations, skilled.get("use"))}
                 parent_provenance = json.loads(parent.provenance_json) if parent else {}
                 conversation_id = skilled.get("conversation_id") or parent_provenance.get(
                     "conversation_id"
@@ -3816,7 +3850,6 @@ class KnowledgeService:
         skilled = self.output_skills
         # Without a skill there is nothing to choose a structure: "auto" is an overview.
         style = "overview" if not skilled and payload.style == "auto" else payload.style
-        spec = Spec(payload.kind, payload.audience, style, payload.brief, payload.title)
         with session_scope(self.sessions) as session:
             library = self._output_library(session, workspace_id, base_id)
             parent = (
@@ -3825,6 +3858,24 @@ class KnowledgeService:
                 )
                 if payload.supersedes_artifact_id
                 else None
+            )
+            parent_theme = None
+            if parent and payload.kind == "slides":
+                parent_sections = split_document(parent.content, "slides")[1]
+                if parent_sections:
+                    parent_theme = _marked(parent_sections[0]).theme
+            theme = payload.theme or parent_theme
+            design_version = payload.design_version
+            if design_version is None and parent and payload.kind == "slides" and parent_sections:
+                design_version = _marked(parent_sections[0]).design_version
+            spec = Spec(
+                payload.kind,
+                payload.audience,
+                style,
+                payload.brief,
+                payload.title,
+                theme,
+                design_version,
             )
             if parent and payload.conversation_id:
                 owner = json.loads(parent.provenance_json).get("conversation_id")
@@ -3845,7 +3896,26 @@ class KnowledgeService:
             )
             outline = (
                 [
-                    Planned(item.heading, item.goal, layout=item.layout or "")
+                    Planned(
+                        item.heading,
+                        item.goal,
+                        layout=item.layout or "",
+                        link=item.link or "",
+                        id=item.id,
+                        message=item.message,
+                        question=item.question,
+                        requires=tuple(item.requires),
+                        design=item.design.model_dump() if item.design else None,
+                        layout_locked=item.layout_locked
+                        or (
+                            item.layout is not None and "layout_locked" not in item.model_fields_set
+                        ),
+                        design_locked=item.design_locked
+                        or (
+                            item.design is not None and "design_locked" not in item.model_fields_set
+                        ),
+                        design_attempted=item.design_attempted,
+                    )
                     for item in payload.outline
                 ]
                 if payload.outline
@@ -3862,6 +3932,7 @@ class KnowledgeService:
                     tools=[tool, *([web] if web else [])],
                     reader=self._source_reader(session),
                     use=None if payload.use == "auto" else payload.use,
+                    slide_renderer=self.slide_renderer,
                 )
                 built = agents.make(
                     model,
@@ -3933,9 +4004,14 @@ class KnowledgeService:
         skill = provenance.get("skill")
         if not isinstance(skill, dict):
             return None
+        from gunther.schemas import SkillRunOut
+
+        skill = SkillRunOut.model_validate(skill).model_dump(mode="json", by_alias=True)
         return {
             "generator": provenance.get("generator"),
-            "skill": {"name": skill.get("name"), "version": skill.get("version"), "skipped": []},
+            "skill": {"name": skill.get("name"), "version": skill.get("version"), "skipped": [],
+                      **{key: skill[key] for key in ("renderCheck", "visualReview")
+                         if key in skill}},
             "approach": provenance.get("approach"),
             "use": provenance.get("use"),
             "library_supplements": provenance.get("library_supplements", False),
@@ -4208,16 +4284,44 @@ class KnowledgeService:
                     approach=Approach.saved_as(saved, use if isinstance(use, str) else None)
                     if isinstance(saved, dict)
                     else None,
+                    slide_renderer=self.slide_renderer,
                 )
             else:
                 agents = OutputAgents(self.models, limits)
             built = agents.revise(
                 model,
                 effort,
-                Spec(parent.kind, parent.audience, parent.style, parent.brief),
+                Spec(
+                    parent.kind,
+                    parent.audience,
+                    parent.style,
+                    parent.brief,
+                    theme=_marked(split_document(parent.content, "slides")[1][0]).theme
+                    if parent.kind == "slides" and split_document(parent.content, "slides")[1]
+                    else None,
+                ),
                 parent.content,
                 [
-                    Planned(item["heading"], item.get("goal", ""), layout=item.get("layout") or "")
+                    Planned(
+                        item["heading"],
+                        item.get("goal", ""),
+                        layout=item.get("layout") or "",
+                        link=item.get("link") or "",
+                        id=item.get("id", ""),
+                        message=item.get("message", ""),
+                        question=item.get("question", ""),
+                        requires=tuple(item.get("requires") or ()),
+                        design=item.get("design"),
+                        layout_locked=bool(
+                            item.get("layoutLocked", item.get("layout_locked", False))
+                        ),
+                        design_locked=bool(
+                            item.get("designLocked", item.get("design_locked", False))
+                        ),
+                        design_attempted=bool(
+                            item.get("designAttempted", item.get("design_attempted", False))
+                        ),
+                    )
                     for item in json.loads(parent.outline_json)
                 ],
                 carried,
@@ -4237,6 +4341,11 @@ class KnowledgeService:
                 previous = records.get(check["hash"], {})
                 if "coverage" not in check and previous.get("coverage"):
                     check["coverage"] = previous["coverage"]
+            if isinstance(agents, SkillAgents) and parent.kind == "slides":
+                built = replace(built, skill=agents.record())
+                built = agents.review_rendered(built, Spec("slides", parent.audience,
+                                               brief=parent.brief), events)
+                made_by = {**(made_by or {}), "skill": built.skill}
             made_by = {
                 **(made_by or {}),
                 "conversation_id": payload.conversation_id,
@@ -4273,6 +4382,54 @@ class KnowledgeService:
             made_by=made_by,
             **fields,
         )
+
+    def review_slides(
+        self, base_id, workspace_id, artifact_id, payload, events=None,
+    ) -> ArtifactOut:
+        """Review the current renders without running the writer. Seal a new version."""
+        from gunther.outputs import BuiltOutput
+        from gunther.slide_review import review_deck
+
+        fingerprint = self._output_fingerprint(workspace_id, base_id, "visual-review",
+            {"artifactId": artifact_id, **self._output_request_fields(payload)})
+        earlier = self._earlier_output(workspace_id, payload.client_request_id, fingerprint)
+        if earlier is not None:
+            return earlier
+        model, effort = self._output_model(payload.model, payload.effort)
+        with session_scope(self.sessions) as session:
+            self._output_library(session, workspace_id, base_id)
+            parent = self._output_version(session, workspace_id, base_id, artifact_id, latest=True)
+            self._require_agent_output(parent)
+            if parent.kind != "slides":
+                raise ValueError("Rendered-slide review is only available for decks.")
+            provenance = json.loads(parent.provenance_json)
+            made_by = self._made_by(parent) or {}
+            previous_skill = provenance.get("skill") or {}
+            skill = skill_for("slides")
+            use = provenance.get("use") or "talk"
+            built = BuiltOutput(parent.title, parent.content, json.loads(parent.outline_json),
+                [ConversationCitationOut.model_validate(c)
+                 for c in json.loads(parent.citations_json)],
+                list(self._latest_check_records(session, parent.id).values()), model, effort,
+                skill={**previous_skill, "name": "slides", "version": skill.version})
+            fields = {
+                "kind": parent.kind, "style": parent.style, "audience": parent.audience,
+                "brief": parent.brief, "scope": json.loads(parent.scope_json),
+                "inputs": json.loads(parent.inputs_json),
+                "snapshots": [ArtifactUnitSnapshotOut.model_validate(s)
+                              for s in json.loads(parent.revision_snapshot_json)],
+            }
+        built = review_deck(built, self.slide_renderer, self.models, model, "medium",
+                            brief=fields["brief"], use=use, emit=events or (lambda _: None),
+                            instructions=skill.instructions(skill.step("visual_review")))
+        if events:
+            events({"type": "saving"})
+        return self._save_output(workspace_id=workspace_id, base_id=base_id,
+            client_request_id=payload.client_request_id, fingerprint=fingerprint,
+            parent_id=artifact_id, title=built.title, origin="revise", content=built.content,
+            outline=built.outline, citations=[c.model_dump() for c in built.citations],
+            model=OutputModelOut(ref=model.ref, label=model.display, effort="medium"),
+            checks=built.checks, made_by={**made_by, "skill": built.skill, "use": use}, **fields)
 
     def edit_output(
         self,
@@ -5094,6 +5251,7 @@ class KnowledgeService:
                     limits,
                     tools=[tool, *([web] if web else [])],
                     reader=reader,
+                    slide_renderer=self.slide_renderer,
                 )
 
             agent = artifact_agent.ArtifactAgent(

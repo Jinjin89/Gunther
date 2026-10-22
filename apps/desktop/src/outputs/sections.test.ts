@@ -1,6 +1,6 @@
 import type { Artifact, OutlineItem } from "@gunther/contracts";
 import { describe, expect, it } from "vitest";
-import { headingOf, joinDocument, layoutOf, parseSlides, sectionHash, slideLayouts, splitDocument, splitNotes, titleOf, withAccent, withDraft } from "./sections";
+import { headingOf, joinDocument, layoutOf, parseSlides, restoreUnchangedScenes, sectionHash, slideLayouts, splitDocument, splitNotes, titleOf, withAccent, withDraft, withTheme, withoutSceneMarkers } from "./sections";
 
 // The same cases as tests/test_outputs.py: the service and the app split a document alike.
 
@@ -28,7 +28,7 @@ const MARKER_CASES: Array<[string, string | null, string | null, string]> = [
 
 describe("a slide's marker", () => {
   it.each(MARKER_CASES)("is read from %j", (text, layout, accent, body) => {
-    expect(layoutOf(text)).toEqual({ layout, accent, body });
+    expect(layoutOf(text)).toEqual({ layout, accent, theme: null, composition: "standard", body });
   });
 
   it("stays with its slide when a deck is split and put back, and the hash covers it", async () => {
@@ -39,6 +39,51 @@ describe("a slide's marker", () => {
     expect(await sectionHash(sections[1] ?? "")).not.toBe(await sectionHash("## One\n\n1. a\n2. b"));
     expect(await sectionHash(sections[1] ?? "")).toBe(await sectionHash("  <!-- layout: flow -->\r\n## One\r\n\r\n1. a\r\n2. b\n"));
     expect(titleOf(content)).toBe("Deck");
+  });
+
+  it("reads per-slide composition from unordered keyed metadata", () => {
+    const deck = [
+      "<!-- layout: title; theme: editorial -->\n# Title",
+      "<!-- layout: big_number; composition: spotlight -->\n## Claim\n\n**62%**\n\nCompared with [1]",
+      "<!-- layout: quote; composition: split -->\n## Quote\n\n> Words [1]\n\n— Source [1]",
+    ].join("\n\n---\n\n");
+    expect(parseSlides(deck).map((slide) => [slide.theme, slide.composition])).toEqual([
+      ["editorial", "standard"], [null, "spotlight"], [null, "split"],
+    ]);
+    expect(layoutOf("<!-- layout: compare; composition: split -->\n## Table").composition).toBe("standard");
+  });
+
+  it("consumes malformed scene metadata at the header while leaving Markdown examples alone", () => {
+    const parsed = layoutOf("<!-- layout: composed -->\n<!-- scene: malformed! -->\n## Heading\n\nText\n\n```md\n<!-- scene: example -->\n```");
+    expect(parsed.scene?.issue).toContain("invalid encoding");
+    expect(parsed.body).toContain("## Heading");
+    expect(parsed.body).toContain("<!-- scene: example -->");
+    expect(parsed.body).not.toContain("malformed!");
+  });
+
+  it("keeps the same-position tree when identical source pages have different compositions", async () => {
+    const page = "<!-- layout: composed -->\n## Same\n\nOne\n\nTwo";
+    const envelope = (firstBlock: "b1" | "b2") => btoa(JSON.stringify({
+      version: 1,
+      sourceHash: "a".repeat(64),
+      root: {
+        kind: "row",
+        children: [firstBlock, firstBlock === "b1" ? "b2" : "b1"].map((blockId) => ({ kind: "leaf", blockId, view: "text", size: "medium", align: "start", role: "main" })),
+        weights: [1, 1], gap: "normal", padding: "small", surface: "none", align: "stretch",
+      },
+    })).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+    const firstPayload = envelope("b1");
+    const secondPayload = envelope("b2");
+    const marked = (payload: string) => page.replace("<!-- layout: composed -->", `<!-- layout: composed -->\n<!-- scene: ${payload} -->`);
+    const original = `${marked(firstPayload)}\n\n---\n\n${marked(secondPayload)}`;
+    const editable = withoutSceneMarkers(original);
+    const changed = editable.replace("One", "Changed one");
+    expect(editable).not.toContain(firstPayload);
+    const restored = await restoreUnchangedScenes(original, changed);
+    const parsed = parseSlides(restored);
+    expect(parsed[0]?.scene).toBeUndefined();
+    expect(parsed[1]?.scene?.scene?.root.kind).toBe("row");
+    expect(parsed[1]?.scene?.scene?.root.kind === "row" && parsed[1]?.scene?.scene?.root.children[0]?.kind === "leaf" ? parsed[1].scene.scene.root.children[0].blockId : null).toBe("b2");
   });
 });
 
@@ -81,8 +126,8 @@ describe("a deck's slides", () => {
 describe("parsing a deck", () => {
   it("gives each slide its heading, how it is drawn, what it shows and what is said", () => {
     expect(parseSlides("# Deck\n\nsub\n\n---\n\n## One\n\n- a\n\nNote: Say a.")).toEqual([
-      { heading: "Deck", layout: null, accent: null, body: "# Deck\n\nsub", notes: "" },
-      { heading: "One", layout: null, accent: null, body: "## One\n\n- a", notes: "Say a." },
+      { heading: "Deck", layout: null, accent: null, theme: null, composition: "standard", body: "# Deck\n\nsub", notes: "" },
+      { heading: "One", layout: null, accent: null, theme: null, composition: "standard", body: "## One\n\n- a", notes: "Say a." },
     ]);
     expect(parseSlides("")).toEqual([]);
   });
@@ -90,8 +135,8 @@ describe("parsing a deck", () => {
   it("takes the marker off a slide's body and keeps it out of the heading and the notes", () => {
     const content = "<!-- layout: title; accent: blue -->\n# Deck\n\nsub\n\n---\n\n<!-- layout: flow -->\n## One\n\n1. a\n2. b\n\nNote: Say a.";
     expect(parseSlides(content)).toEqual([
-      { heading: "Deck", layout: "title", accent: "blue", body: "# Deck\n\nsub", notes: "" },
-      { heading: "One", layout: "flow", accent: null, body: "## One\n\n1. a\n2. b", notes: "Say a." },
+      { heading: "Deck", layout: "title", accent: "blue", theme: null, composition: "standard", body: "# Deck\n\nsub", notes: "" },
+      { heading: "One", layout: "flow", accent: null, theme: null, composition: "standard", body: "## One\n\n1. a\n2. b", notes: "Say a." },
     ]);
   });
 });
@@ -156,6 +201,18 @@ describe("a deck's accent", () => {
     expect(withAccent(title, "")).toBe(title);
     expect(withAccent("", "blue")).toBe("");
     expect(withAccent("\n \n", "blue")).toBe("\n \n");
+  });
+
+  it("round trips themes while preserving the accent and slide text", () => {
+    const content = "<!-- layout: title; accent: teal -->\n# Deck\n\nMessage\n\nNote: Keep this";
+    const editorial = withTheme(content, "editorial");
+    expect(layoutOf(editorial)).toMatchObject({ designVersion: 1, body: layoutOf(content).body });
+    expect(layoutOf(editorial)).toMatchObject({ accent: "teal", theme: "editorial" });
+    expect(layoutOf(withAccent(editorial, "ink"))).toMatchObject({ accent: "ink", designVersion: 1, body: layoutOf(content).body });
+    expect(withAccent(editorial, "red")).toContain("accent: red; theme: editorial");
+    expect(layoutOf(withTheme(withAccent(editorial, "red"), "classic"))).toMatchObject({ accent: "red", theme: null, designVersion: 1, body: layoutOf(content).body });
+    expect(withTheme("<!-- layout: title; theme: unknown -->\n# Deck", "briefing")).toContain("theme: briefing");
+    expect(withTheme("# Old deck\n\nPlain slide", "classic")).toBe("# Old deck\n\nPlain slide");
   });
 });
 

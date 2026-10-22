@@ -1,0 +1,32 @@
+{
+  "sourcePackets": 6,
+  "model": "DeepSeek \u00b7 Flash",
+  "baselineRequests": 6,
+  "afterRequests": 15,
+  "overLimitRequests": 2,
+  "renderedSamples": 21,
+  "unchangedWordingAndCitationMarkers": true,
+  "layoutWhitespaceExcluded": true,
+  "sourcePacketsAndAssignedEvidencePreserved": true,
+  "compiledAndDevelopmentContentMatch": true,
+  "compiledAndDevelopmentFontsMatch": true,
+  "overflows": 0,
+  "missingAssets": 0,
+  "pdfChecks": [
+    {
+      "theme": "briefing",
+      "pages": 3,
+      "textAndSourcesPresent": true
+    },
+    {
+      "theme": "editorial",
+      "pages": 3,
+      "textAndSourcesPresent": true
+    },
+    {
+      "theme": "keynote",
+      "pages": 3,
+      "textAndSourcesPresent": true
+    }
+  ]
+}

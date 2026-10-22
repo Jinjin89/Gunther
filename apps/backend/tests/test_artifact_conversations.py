@@ -658,8 +658,8 @@ def test_migration_27_creates_the_conversation_tables_on_a_new_database(tmp_path
     engine = make_engine(tmp_path)
     try:
         history = run_migrations(engine, Base.metadata)
-        assert (history[-1].version, history[-1].name) == (27, "artifact_conversations")
-        assert LATEST_SCHEMA_VERSION == 27 and get_schema_version(engine) == 27
+        assert (27, "artifact_conversations") in [(item.version, item.name) for item in history]
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
         inspector = inspect(engine)
         assert {c["name"] for c in inspector.get_columns("artifact_conversations")} == {
             "id", "workspace_id", "knowledge_base_id", "title", "scope_json", "brief_json",
@@ -710,7 +710,7 @@ def test_migration_27_adds_the_tables_to_a_database_made_by_the_last_version(
 
         history = run_migrations(engine, Base.metadata)
         assert run_migrations(engine, Base.metadata) == history
-        assert get_schema_version(engine) == 27
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
         inspector = inspect(engine)
         assert inspector.has_table("artifact_conversations")
         assert inspector.has_table("artifact_messages")

@@ -1,0 +1,1200 @@
+{
+  "id": "intake-talk",
+  "synthetic": true,
+  "model": "DeepSeek · Flash",
+  "modelRef": "deepseek/deepseek-flash",
+  "effort": "medium",
+  "reviewProtocol": "eebc6470d723a5de15a7b9c74a77081cd9654c29bcf9ba883bf8f7619461d6ff",
+  "vision": true,
+  "theme": "briefing",
+  "use": "talk",
+  "inputHash": "6e1fa632f1fa5269c9b6a65d1d55ebc1c529da61516d9166b1c48ca4b8a28b71",
+  "sourceHash": "aa66a180cbb6a3d98eb9c788649f187f3435d3f2196ce51420d3cc2d75f4ff3d",
+  "before": {
+    "title": "The intake pilot",
+    "content": "<!-- layout: title; theme: briefing; design: v1 -->\n# The intake pilot\n\nA shorter review cycle, with an unanswered quality question. [1][2]\n\n---\n\n<!-- layout: bar_chart -->\n## Review time fell from 40 to 16 hours [1]\n\nMedian review time, hours. [1]\n\n| Stage | Median (hours) |\n| --- | --- |\n| Before | 40 [1] |\n| **During the pilot** | 16 [1] |\n\nTwo teams, eight weeks. Quality and error rates were not measured. [1][2]",
+    "outline": [
+      {
+        "id": "intake-p1",
+        "heading": "The intake pilot",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "title"
+      },
+      {
+        "id": "intake-p2",
+        "heading": "Review time fell from 40 to 16 hours [1]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "bar_chart"
+      }
+    ],
+    "citations": [
+      {
+        "id": "intake-timing",
+        "kind": "library",
+        "url": null,
+        "source_id": "intake-timing",
+        "source_title": "Intake pilot timing log",
+        "assertion_id": null,
+        "quote": "In this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight weeks. These are training data, not actual organizational results.",
+        "locator": "Synthetic training record, timing",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 1
+      },
+      {
+        "id": "intake-limits",
+        "kind": "library",
+        "url": null,
+        "source_id": "intake-limits",
+        "source_title": "Intake pilot scope note",
+        "assertion_id": null,
+        "quote": "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish an effect in other teams.",
+        "locator": "Synthetic training record, limitations",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 2
+      },
+      {
+        "id": "intake-options",
+        "kind": "library",
+        "url": null,
+        "source_id": "intake-options",
+        "source_title": "Intake pilot decision note",
+        "assertion_id": null,
+        "quote": "Collaborators can continue measuring the two teams, expand with a quality measure, or stop the pilot. The note does not rank the options or quantify their costs.",
+        "locator": "Synthetic training record, options",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 3
+      }
+    ],
+    "use": "talk"
+  },
+  "after": {
+    "title": "The intake pilot",
+    "content": "<!-- layout: title; theme: briefing; design: v1 -->\n# The intake pilot\n\nA shorter review cycle, with an unanswered quality question. [1][2]\n\n---\n\n<!-- layout: bar_chart -->\n## Review time fell from 40 to 16 hours [1]\n\nMedian review time, hours. [1]\n\n| Stage | Median (hours) |\n| --- | --- |\n| Before | 40 [1] |\n| **During the pilot** | 16 [1] |\n\nTwo teams, eight weeks. Quality and error rates were not measured. [1][2]",
+    "outline": [
+      {
+        "id": "intake-p1",
+        "heading": "The intake pilot",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "title"
+      },
+      {
+        "id": "intake-p2",
+        "heading": "Review time fell from 40 to 16 hours [1]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "bar_chart"
+      }
+    ],
+    "citations": [
+      {
+        "id": "intake-timing",
+        "kind": "library",
+        "url": null,
+        "source_id": "intake-timing",
+        "source_title": "Intake pilot timing log",
+        "assertion_id": null,
+        "quote": "In this synthetic intake pilot, median review time was 40 hours before the pilot and 16 hours during the pilot. The observation covered two teams over eight weeks. These are training data, not actual organizational results.",
+        "locator": "Synthetic training record, timing",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 1
+      },
+      {
+        "id": "intake-limits",
+        "kind": "library",
+        "url": null,
+        "source_id": "intake-limits",
+        "source_title": "Intake pilot scope note",
+        "assertion_id": null,
+        "quote": "The two-team intake pilot did not measure review quality or error rates. A faster review cannot establish a quality improvement. The sample does not establish an effect in other teams.",
+        "locator": "Synthetic training record, limitations",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 2
+      },
+      {
+        "id": "intake-options",
+        "kind": "library",
+        "url": null,
+        "source_id": "intake-options",
+        "source_title": "Intake pilot decision note",
+        "assertion_id": null,
+        "quote": "Collaborators can continue measuring the two teams, expand with a quality measure, or stop the pilot. The note does not rank the options or quantify their costs.",
+        "locator": "Synthetic training record, options",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 3
+      }
+    ],
+    "use": "talk"
+  },
+  "beforeCapture": {
+    "version": 1,
+    "candidateHash": "6e1fa632f1fa5269c9b6a65d1d55ebc1c529da61516d9166b1c48ca4b8a28b71",
+    "slides": [
+      {
+        "id": "intake-p1",
+        "index": 0,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "text"
+          }
+        ],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "title",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 98,
+            "minimum": 28,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 256.234375,
+              "width": 823,
+              "height": 99.953125
+            },
+            "text": "The intake pilot"
+          },
+          {
+            "role": "body",
+            "size": 34,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 396.1875,
+              "width": 1000,
+              "height": 47.59375
+            },
+            "text": "A shorter review cycle, with an unanswered quality question. [1][2]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-01.png",
+        "resolvedFonts": [
+          "AvenirNext-Bold",
+          "AvenirNext-Regular"
+        ],
+        "contentHash": "fd5a48b0fdf3ac854aa288cd8b0d5ef599ca7a4524b84e31ef8dd22dd2e1676b",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "e78e5293bf6ceba8ae6f17f48cf233ea4548b07bcb44144ede637c3d6a2605b8"
+          }
+        ]
+      },
+      {
+        "id": "intake-p2",
+        "index": 1,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "text"
+          },
+          {
+            "id": "b2",
+            "type": "table"
+          },
+          {
+            "id": "b3",
+            "type": "text"
+          }
+        ],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "bar_chart",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 50,
+            "minimum": 28,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 60,
+              "width": 1104,
+              "height": 57
+            },
+            "text": "Review time fell from 40 to 16 hours [1]"
+          },
+          {
+            "role": "body",
+            "size": 29,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 149,
+              "width": 1015,
+              "height": 37.6875
+            },
+            "text": "Median review time, hours. [1]"
+          },
+          {
+            "role": "caption",
+            "size": 22,
+            "minimum": 16,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 204.6875,
+              "width": 1104,
+              "height": 26.390625
+            },
+            "text": "Median (hours)"
+          },
+          {
+            "role": "body",
+            "size": 29,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 277.671875,
+              "width": 223.140625,
+              "height": 34.796875
+            },
+            "text": "Before"
+          },
+          {
+            "role": "body",
+            "size": 38,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 958,
+              "y": 276.078125,
+              "width": 197.15625,
+              "height": 38
+            },
+            "text": "40 hours [1]"
+          },
+          {
+            "role": "body",
+            "size": 29,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 379.671875,
+              "width": 223.140625,
+              "height": 34.796875
+            },
+            "text": "During the pilot"
+          },
+          {
+            "role": "body",
+            "size": 38,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 596.28125,
+              "y": 378.078125,
+              "width": 197.15625,
+              "height": 38
+            },
+            "text": "16 hours [1]"
+          },
+          {
+            "role": "caption",
+            "size": 25,
+            "minimum": 16,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 465.078125,
+              "width": 1100,
+              "height": 35
+            },
+            "text": "Two teams, eight weeks. Quality and error rates were not measured. [1][2]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-02.png",
+        "resolvedFonts": [
+          "AvenirNext-Bold",
+          "AvenirNext-Medium",
+          "AvenirNext-Regular"
+        ],
+        "contentHash": "67f2344901868012aef04f3772c6c8a3a06a679ed0151d4e0d0db0204e423c76",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "821e9cf6ffb11af40ac90a1474a6242656b44143710c14ea8a21684d5384e364"
+          },
+          {
+            "id": "b2",
+            "hash": "aa0361bce2f711f8b4abf1c015328269ff63866e44c77b3900b00e51dd5bb686"
+          },
+          {
+            "id": "b3",
+            "hash": "511f8419c485d1601cc1ce7b9009f3fba31a2b1d0c3a612a0b9836a86cf4f59e"
+          }
+        ]
+      }
+    ],
+    "use": "talk",
+    "id": "f771ce4f94034d32809e3cba3b52d638",
+    "status": "captured",
+    "contentHash": "b4b63cd68645fe362c66ebcc0de04c30d42aeb16bae61fa5ad44113db8f0129e",
+    "rendererHash": "db7fc6b697746b93e0599978b619fc95a6cccd8abe51236e48315064e156b0cb",
+    "assetHashes": {},
+    "designHash": "aa5568d91b5623001a7cb341da499a8963a2b9a56303a6e62e84693b2f1556d6",
+    "missingAssets": [],
+    "contact": "contact.png",
+    "pdf": "deck.pdf",
+    "pdfCheck": {
+      "status": "checked",
+      "pages": 3,
+      "slides": [
+        {
+          "id": "intake-p1",
+          "index": 0,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "text"
+            }
+          ],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "title",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 98,
+              "minimum": 28,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 256.234375,
+                "width": 823,
+                "height": 99.953125
+              },
+              "text": "The intake pilot"
+            },
+            {
+              "role": "body",
+              "size": 34,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 396.1875,
+                "width": 1000,
+                "height": 47.59375
+              },
+              "text": "A shorter review cycle, with an unanswered quality question. [1][2]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        },
+        {
+          "id": "intake-p2",
+          "index": 1,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "text"
+            },
+            {
+              "id": "b2",
+              "type": "table"
+            },
+            {
+              "id": "b3",
+              "type": "text"
+            }
+          ],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "bar_chart",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 50,
+              "minimum": 28,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 60,
+                "width": 1104,
+                "height": 57
+              },
+              "text": "Review time fell from 40 to 16 hours [1]"
+            },
+            {
+              "role": "body",
+              "size": 29,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 149,
+                "width": 1015,
+                "height": 37.6875
+              },
+              "text": "Median review time, hours. [1]"
+            },
+            {
+              "role": "caption",
+              "size": 22,
+              "minimum": 16,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 204.6875,
+                "width": 1104,
+                "height": 26.390625
+              },
+              "text": "Median (hours)"
+            },
+            {
+              "role": "body",
+              "size": 29,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 277.671875,
+                "width": 223.140625,
+                "height": 34.796875
+              },
+              "text": "Before"
+            },
+            {
+              "role": "body",
+              "size": 38,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 958,
+                "y": 276.078125,
+                "width": 197.15625,
+                "height": 38
+              },
+              "text": "40 hours [1]"
+            },
+            {
+              "role": "body",
+              "size": 29,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 379.671875,
+                "width": 223.140625,
+                "height": 34.796875
+              },
+              "text": "During the pilot"
+            },
+            {
+              "role": "body",
+              "size": 38,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 596.28125,
+                "y": 378.078125,
+                "width": 197.15625,
+                "height": 38
+              },
+              "text": "16 hours [1]"
+            },
+            {
+              "role": "caption",
+              "size": 25,
+              "minimum": 16,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 465.078125,
+                "width": 1100,
+                "height": 35
+              },
+              "text": "Two teams, eight weeks. Quality and error rates were not measured. [1][2]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        }
+      ],
+      "method": "print-dom-and-exported-pdf-text",
+      "missingSources": [],
+      "missingText": []
+    },
+    "browser": "HeadlessChrome/156.0.8078.4",
+    "distribution": "bundled:chromium_headless_shell-1248",
+    "elapsedSeconds": 1.354,
+    "files": {
+      "contact.png": "c86b276ea62f58b91a20496390afc2fd19da0cabe3ed01b113ed029083059ded",
+      "slide-02.png": "8f2fe27b52c8fe75eac030a4a9a7823d306a1d12f6fcb41c75628d53a556b999",
+      "deck.pdf": "2626fb0aa2bbf28ec8e27bc51c36e267e763b9eded90298276c62e96c8253ca2",
+      "slide-01.png": "dd3c76c8084d73c8b70dd16179a7e1d6319f4abd816a6fff6a82ba96544dfff6"
+    }
+  },
+  "afterCapture": {
+    "version": 1,
+    "candidateHash": "6e1fa632f1fa5269c9b6a65d1d55ebc1c529da61516d9166b1c48ca4b8a28b71",
+    "slides": [
+      {
+        "id": "intake-p1",
+        "index": 0,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "text"
+          }
+        ],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "title",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 98,
+            "minimum": 28,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 256.234375,
+              "width": 823,
+              "height": 99.953125
+            },
+            "text": "The intake pilot"
+          },
+          {
+            "role": "body",
+            "size": 34,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 396.1875,
+              "width": 1000,
+              "height": 47.59375
+            },
+            "text": "A shorter review cycle, with an unanswered quality question. [1][2]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-01.png",
+        "resolvedFonts": [
+          "AvenirNext-Bold",
+          "AvenirNext-Regular"
+        ],
+        "contentHash": "fd5a48b0fdf3ac854aa288cd8b0d5ef599ca7a4524b84e31ef8dd22dd2e1676b",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "e78e5293bf6ceba8ae6f17f48cf233ea4548b07bcb44144ede637c3d6a2605b8"
+          }
+        ]
+      },
+      {
+        "id": "intake-p2",
+        "index": 1,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "text"
+          },
+          {
+            "id": "b2",
+            "type": "table"
+          },
+          {
+            "id": "b3",
+            "type": "text"
+          }
+        ],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "bar_chart",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 50,
+            "minimum": 28,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 60,
+              "width": 1104,
+              "height": 57
+            },
+            "text": "Review time fell from 40 to 16 hours [1]"
+          },
+          {
+            "role": "body",
+            "size": 29,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 149,
+              "width": 1015,
+              "height": 37.6875
+            },
+            "text": "Median review time, hours. [1]"
+          },
+          {
+            "role": "caption",
+            "size": 22,
+            "minimum": 16,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 204.6875,
+              "width": 1104,
+              "height": 26.390625
+            },
+            "text": "Median (hours)"
+          },
+          {
+            "role": "body",
+            "size": 29,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 277.671875,
+              "width": 223.140625,
+              "height": 34.796875
+            },
+            "text": "Before"
+          },
+          {
+            "role": "body",
+            "size": 38,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 958,
+              "y": 276.078125,
+              "width": 197.15625,
+              "height": 38
+            },
+            "text": "40 hours [1]"
+          },
+          {
+            "role": "body",
+            "size": 29,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 379.671875,
+              "width": 223.140625,
+              "height": 34.796875
+            },
+            "text": "During the pilot"
+          },
+          {
+            "role": "body",
+            "size": 38,
+            "minimum": 22,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 596.28125,
+              "y": 378.078125,
+              "width": 197.15625,
+              "height": 38
+            },
+            "text": "16 hours [1]"
+          },
+          {
+            "role": "caption",
+            "size": 25,
+            "minimum": 16,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 88,
+              "y": 465.078125,
+              "width": 1100,
+              "height": 35
+            },
+            "text": "Two teams, eight weeks. Quality and error rates were not measured. [1][2]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-02.png",
+        "resolvedFonts": [
+          "AvenirNext-Bold",
+          "AvenirNext-Medium",
+          "AvenirNext-Regular"
+        ],
+        "contentHash": "67f2344901868012aef04f3772c6c8a3a06a679ed0151d4e0d0db0204e423c76",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "821e9cf6ffb11af40ac90a1474a6242656b44143710c14ea8a21684d5384e364"
+          },
+          {
+            "id": "b2",
+            "hash": "aa0361bce2f711f8b4abf1c015328269ff63866e44c77b3900b00e51dd5bb686"
+          },
+          {
+            "id": "b3",
+            "hash": "511f8419c485d1601cc1ce7b9009f3fba31a2b1d0c3a612a0b9836a86cf4f59e"
+          }
+        ]
+      }
+    ],
+    "use": "talk",
+    "id": "759f5849436a442b9f5054d3a0ee75d8",
+    "status": "captured",
+    "contentHash": "b4b63cd68645fe362c66ebcc0de04c30d42aeb16bae61fa5ad44113db8f0129e",
+    "rendererHash": "db7fc6b697746b93e0599978b619fc95a6cccd8abe51236e48315064e156b0cb",
+    "assetHashes": {},
+    "designHash": "aa5568d91b5623001a7cb341da499a8963a2b9a56303a6e62e84693b2f1556d6",
+    "missingAssets": [],
+    "contact": "contact.png",
+    "pdf": "deck.pdf",
+    "pdfCheck": {
+      "status": "checked",
+      "pages": 3,
+      "slides": [
+        {
+          "id": "intake-p1",
+          "index": 0,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "text"
+            }
+          ],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "title",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 98,
+              "minimum": 28,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 256.234375,
+                "width": 823,
+                "height": 99.953125
+              },
+              "text": "The intake pilot"
+            },
+            {
+              "role": "body",
+              "size": 34,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 396.1875,
+                "width": 1000,
+                "height": 47.59375
+              },
+              "text": "A shorter review cycle, with an unanswered quality question. [1][2]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        },
+        {
+          "id": "intake-p2",
+          "index": 1,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "text"
+            },
+            {
+              "id": "b2",
+              "type": "table"
+            },
+            {
+              "id": "b3",
+              "type": "text"
+            }
+          ],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "bar_chart",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 50,
+              "minimum": 28,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 60,
+                "width": 1104,
+                "height": 57
+              },
+              "text": "Review time fell from 40 to 16 hours [1]"
+            },
+            {
+              "role": "body",
+              "size": 29,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 149,
+                "width": 1015,
+                "height": 37.6875
+              },
+              "text": "Median review time, hours. [1]"
+            },
+            {
+              "role": "caption",
+              "size": 22,
+              "minimum": 16,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 204.6875,
+                "width": 1104,
+                "height": 26.390625
+              },
+              "text": "Median (hours)"
+            },
+            {
+              "role": "body",
+              "size": 29,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 277.671875,
+                "width": 223.140625,
+                "height": 34.796875
+              },
+              "text": "Before"
+            },
+            {
+              "role": "body",
+              "size": 38,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 958,
+                "y": 276.078125,
+                "width": 197.15625,
+                "height": 38
+              },
+              "text": "40 hours [1]"
+            },
+            {
+              "role": "body",
+              "size": 29,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 379.671875,
+                "width": 223.140625,
+                "height": 34.796875
+              },
+              "text": "During the pilot"
+            },
+            {
+              "role": "body",
+              "size": 38,
+              "minimum": 22,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 596.28125,
+                "y": 378.078125,
+                "width": 197.15625,
+                "height": 38
+              },
+              "text": "16 hours [1]"
+            },
+            {
+              "role": "caption",
+              "size": 25,
+              "minimum": 16,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 88,
+                "y": 465.078125,
+                "width": 1100,
+                "height": 35
+              },
+              "text": "Two teams, eight weeks. Quality and error rates were not measured. [1][2]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        }
+      ],
+      "method": "print-dom-and-exported-pdf-text",
+      "missingSources": [],
+      "missingText": []
+    },
+    "browser": "HeadlessChrome/156.0.8078.4",
+    "distribution": "bundled:chromium_headless_shell-1248",
+    "elapsedSeconds": 1.317,
+    "files": {
+      "contact.png": "c86b276ea62f58b91a20496390afc2fd19da0cabe3ed01b113ed029083059ded",
+      "slide-02.png": "8f2fe27b52c8fe75eac030a4a9a7823d306a1d12f6fcb41c75628d53a556b999",
+      "deck.pdf": "1abc511aee0e0b4a42a7d52e3bb73c90f29bc750bc30b894cbd095a9d73b0c19",
+      "slide-01.png": "dd3c76c8084d73c8b70dd16179a7e1d6319f4abd816a6fff6a82ba96544dfff6"
+    }
+  },
+  "review": {
+    "version": 1,
+    "use": "talk",
+    "status": "needs_review",
+    "model": "deepseek/deepseek-flash",
+    "imageReview": "reviewed",
+    "repairCycles": 0,
+    "repairedSlides": [],
+    "findings": [
+      {
+        "slideId": "intake-p2",
+        "blockId": null,
+        "severity": "error",
+        "problem": "The deck is only two slides against a six-slide brief. It gives the time result and names the unmeasured quality/error rates, but it never explains why that gap matters for the extend/stop decision or what evidence would resolve it. The audience is left with a result and a caveat, not a decision case.",
+        "correction": "Add the missing decision-framing sequence: explain why unmeasured quality/error rates mean the 40→16 hour saving cannot by itself justify extension, and what evidence would be needed. The outline planner should add the remaining slides; do not compress this into p2.",
+        "route": "plan"
+      },
+      {
+        "slideId": "intake-p2",
+        "blockId": null,
+        "severity": "advice",
+        "problem": "The chart labels the metric twice—\"Median review time, hours\" and \"Median (hours)\"—while the headline says only \"Review time fell.\" The duplicate header adds clutter, and the headline drops the median qualifier that the chart is based on.",
+        "correction": "Make the headline \"Median review time fell from 40 to 16 hours [1]\" and keep one chart label (e.g., \"Median review time, hours [1]\"), removing the redundant \"Median (hours)\" header.",
+        "route": "write"
+      },
+      {
+        "slideId": "intake-p2",
+        "blockId": "b2",
+        "severity": "advice",
+        "problem": "The bar chart keeps table-like scaffolding: the vertical gridlines are visible only in the gap between the two bars and have no tick values, so they read as column dividers rather than a scale. The row labels and hour labels also sit about 30px above their bars instead of centered, so the bars look detached from their labels.",
+        "correction": "Remove the unlabeled gridlines and vertically center \"Before\"/\"During the pilot\" and the hour labels with their bars; the direct value labels already give the scale.",
+        "route": "layout"
+      }
+    ],
+    "history": [
+      {
+        "snapshotId": "759f5849436a442b9f5054d3a0ee75d8",
+        "candidateHash": "6e1fa632f1fa5269c9b6a65d1d55ebc1c529da61516d9166b1c48ca4b8a28b71"
+      }
+    ],
+    "limits": {
+      "requests": 8,
+      "cycles": 1,
+      "affectedSlides": 4
+    },
+    "candidateHash": "6e1fa632f1fa5269c9b6a65d1d55ebc1c529da61516d9166b1c48ca4b8a28b71",
+    "calls": 1,
+    "elapsedSeconds": 120.939
+  },
+  "fidelity": {
+    "wordingNotesAndCitations": true,
+    "citationIdentities": true,
+    "poolMapping": true,
+    "pageIdentityAndOrder": true,
+    "theme": true,
+    "designVersion": true
+  }
+}

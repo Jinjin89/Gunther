@@ -131,6 +131,8 @@ class SourceSummaryOut(ApiModel):
     entity_count: int
     asset: AssetOut | None = None
     processing: dict[str, object] = Field(default_factory=dict)
+    recording_duration_seconds: int | None = None
+    recording_duration_pending: bool = False
 
 
 class EntityRefOut(ApiModel):
@@ -329,9 +331,9 @@ class HealthOut(ApiModel):
     status: Literal["ok"] = "ok"
     extraction_mode: Literal["local", "model"]
     web_search_mode: Literal["tavily", "not_configured"] = "not_configured"
-    transcription_mode: Literal[
-        "sensevoice_local", "qwen", "compatible", "not_configured"
-    ] = "not_configured"
+    transcription_mode: Literal["sensevoice_local", "qwen", "compatible", "not_configured"] = (
+        "not_configured"
+    )
     transcription_provider: Literal["sensevoice", "qwen", "compatible", "none"] = "none"
     transcription_model: str = ""
     # The model that writes recording summaries ("DeepSeek · Flash"), or "off".
@@ -812,6 +814,21 @@ class SkillRunOut(ApiModel):
     name: str
     version: int
     skipped: list[SkippedStepOut] = Field(default_factory=list)
+    outline_review: dict[str, Any] | None = None
+    render_check: dict[str, Any] | None = None
+    visual_review: dict[str, Any] | None = None
+
+    @model_serializer(mode="wrap")
+    def _without_absent_review(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data = handler(self)
+        if self.outline_review is None:
+            data.pop("outline_review", None)
+            data.pop("outlineReview", None)
+        for field, alias in (("render_check", "renderCheck"), ("visual_review", "visualReview")):
+            if getattr(self, field) is None:
+                data.pop(field, None)
+                data.pop(alias, None)
+        return data
 
 
 class OutputProvenanceOut(ArtifactProvenanceOut):
@@ -861,18 +878,60 @@ class OutputScope(ApiModel):
         return self
 
 
+class SlideDesignInput(ApiModel):
+    intent: str = Field(default="", max_length=400)
+    visual: str = Field(default="", max_length=600)
+    composition: Literal["standard", "split", "spotlight"] = "standard"
+    emphasis: str = Field(default="", max_length=400)
+    notes: str = Field(default="", max_length=400)
+    layout: str | None = Field(default=None, max_length=40)
+
+
 class OutlineItem(ApiModel):
     heading: str = Field(min_length=1, max_length=160)
     goal: str = Field(default="", max_length=400)
+    id: str = Field(default="", max_length=64, pattern=r"^(?:[A-Za-z][A-Za-z0-9_-]*)?$")
+    message: str = Field(default="", max_length=600)
+    question: str = Field(default="", max_length=400)
+    requires: list[str] = Field(default_factory=list, max_length=14)
     # A slide's layout, when a skill planned it (see skills/slides/references/layouts.md).
     layout: str | None = Field(default=None, max_length=40)
+    link: str = Field(default="", max_length=200)
+    design: SlideDesignInput | None = None
+    layout_locked: bool = False
+    design_locked: bool = False
+    design_attempted: bool = False
 
     @model_serializer(mode="wrap")
     def _without_empty_layout(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         # An outline planned without a skill reads as it always did.
         data = handler(self)
+        for key in ("id", "message", "question", "requires"):
+            if not data.get(key):
+                data.pop(key, None)
         if data.get("layout") is None:
             data.pop("layout", None)
+        if not data.get("link"):
+            data.pop("link", None)
+        if not data.get("design_attempted"):
+            data.pop("design_attempted", None)
+            data.pop("designAttempted", None)
+        if not data.get("layout_locked", data.get("layoutLocked", False)):
+            data.pop("layout_locked", None)
+            data.pop("layoutLocked", None)
+        if not data.get("design_locked", data.get("designLocked", False)):
+            data.pop("design_locked", None)
+            data.pop("designLocked", None)
+        if data.get("design") is None:
+            data.pop("design", None)
+        else:
+            design = data["design"]
+            if isinstance(design, BaseModel):
+                design_data = design.model_dump(exclude_defaults=True)
+                if design_data:
+                    data["design"] = design_data
+                else:
+                    data.pop("design", None)
         return data
 
 
@@ -933,6 +992,9 @@ class BuildOutputInput(OutputRequestInput):
     kind: OutputKind
     # Reports only; slides have none. A report without one is an overview.
     style: OutputStyle | None = None
+    # Slides only: a visual theme, separate from a report's structural style.
+    theme: Literal["classic", "briefing", "editorial", "keynote"] | None = None
+    design_version: Literal[0, 1] | None = None
     audience: ArtifactAudience
     brief: str = Field(default="", max_length=2_000)
     title: str | None = Field(default=None, min_length=1, max_length=160)
@@ -954,6 +1016,7 @@ class BuildOutputInput(OutputRequestInput):
         self.style = (self.style or "auto") if self.kind == "report" else None
         if self.kind == "report":
             self.use = "auto"
+            self.theme = None
         self.brief = self.brief.strip()
         if self.title is not None:
             self.title = self.title.strip()
@@ -983,6 +1046,10 @@ class ReviseOutputInput(OutputRequestInput):
 class EditOutputInput(ApiModel):
     client_request_id: str = REQUEST_ID
     content: str = Field(min_length=1, max_length=2_500_000)
+
+
+class ReviewSlidesInput(OutputRequestInput):
+    client_request_id: str = REQUEST_ID
 
 
 class ArtifactSummaryOut(ApiModel):

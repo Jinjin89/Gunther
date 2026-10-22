@@ -1,0 +1,96 @@
+[
+  {
+    "case": "conflict-read",
+    "pages": 3,
+    "status": "checked",
+    "extractionDifferences": []
+  },
+  {
+    "case": "conflict-talk",
+    "pages": 3,
+    "status": "checked",
+    "extractionDifferences": []
+  },
+  {
+    "case": "dense-briefing",
+    "pages": 3,
+    "status": "checked",
+    "extractionDifferences": []
+  },
+  {
+    "case": "dense-editorial",
+    "pages": 3,
+    "status": "checked",
+    "extractionDifferences": []
+  },
+  {
+    "case": "dense-keynote",
+    "pages": 3,
+    "status": "checked",
+    "extractionDifferences": []
+  },
+  {
+    "case": "figure-read",
+    "pages": 3,
+    "status": "checked",
+    "extractionDifferences": []
+  },
+  {
+    "case": "figure-talk",
+    "pages": 3,
+    "status": "checked",
+    "extractionDifferences": []
+  },
+  {
+    "case": "intake-read",
+    "pages": 3,
+    "status": "checked",
+    "extractionDifferences": []
+  },
+  {
+    "case": "intake-talk",
+    "pages": 3,
+    "status": "checked",
+    "extractionDifferences": []
+  },
+  {
+    "case": "numeric-read",
+    "pages": 3,
+    "status": "checked",
+    "extractionDifferences": []
+  },
+  {
+    "case": "numeric-talk",
+    "pages": 3,
+    "status": "checked",
+    "extractionDifferences": []
+  },
+  {
+    "case": "process-read",
+    "pages": 3,
+    "status": "checked",
+    "extractionDifferences": []
+  },
+  {
+    "case": "process-talk",
+    "pages": 3,
+    "status": "checked",
+    "extractionDifferences": []
+  },
+  {
+    "case": "reading-zh-read",
+    "pages": 3,
+    "status": "checked",
+    "extractionDifferences": [
+      "证据范围：讨论意见没有测量学习效果。 [1][2]"
+    ]
+  },
+  {
+    "case": "reading-zh-talk",
+    "pages": 3,
+    "status": "checked",
+    "extractionDifferences": [
+      "证据范围：讨论意见没有测量学习效果。 [1][2]"
+    ]
+  }
+]

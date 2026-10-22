@@ -1,0 +1,16 @@
+{
+  "case": "process-talk",
+  "candidateHash": "aa83014a8967bd56ab145e5e9e8c442ae718e0c977a0a005e529d2e5eb573d95",
+  "slides": 2,
+  "status": "differences",
+  "tolerancePixels": 3,
+  "scope": "macOS WKWebView engine probe, not a full packaged-app interaction test",
+  "differences": [
+    {
+      "slideId": "process-p1",
+      "field": "heading",
+      "text": "Collection precedes the completeness check [1]",
+      "maxPixelDifference": 3.81
+    }
+  ]
+}

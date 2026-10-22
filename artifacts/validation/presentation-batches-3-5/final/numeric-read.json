@@ -1,0 +1,1063 @@
+{
+  "id": "numeric-read",
+  "synthetic": true,
+  "model": "DeepSeek · Flash",
+  "modelRef": "deepseek/deepseek-flash",
+  "effort": "medium",
+  "reviewProtocol": "0df98d47f08dbffdac40f702e132009b2fdcbb9a0e49e86005d3e3fcd5079e3e",
+  "vision": true,
+  "theme": "keynote",
+  "use": "read",
+  "inputHash": "ed2acc6357fbf76f970ef019eecdaafe743a97258819c68be8df06109ce7700e",
+  "sourceHash": "10da6463a8437b38dc83c1c5299fab02a6d51b818b9dbb7c1872eefec3aa6437",
+  "before": {
+    "title": "An uneven series",
+    "content": "<!-- layout: title; theme: keynote; design: v1 -->\n# Recorded balances cross zero [1]\n\n---\n\n<!-- layout: line_chart -->\n## Recorded balances cross zero [1]\n\nNet balance in units. [1]\n\n| Year | Balance (units) |\n| --- | --- |\n| 2021 | -8 [1] |\n| 2022 | 4 [1] |\n| 2024 | 12 [1] |\n\nThree observations; no forecast or causal effect was established. [1][2]",
+    "outline": [
+      {
+        "id": "numeric-p1",
+        "heading": "Recorded balances cross zero [1]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "title"
+      },
+      {
+        "id": "numeric-p2",
+        "heading": "Recorded balances cross zero [1]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "line_chart"
+      }
+    ],
+    "citations": [
+      {
+        "id": "numeric-log",
+        "kind": "library",
+        "url": null,
+        "source_id": "numeric-log",
+        "source_title": "Net balance training log",
+        "assertion_id": null,
+        "quote": "Synthetic net balances in units were -8 in 2021, 4 in 2022, and 12 in 2024. The year intervals are one year then two years. The records do not identify what caused the changes.",
+        "locator": "Synthetic series table",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 1
+      },
+      {
+        "id": "numeric-scope",
+        "kind": "library",
+        "url": null,
+        "source_id": "numeric-scope",
+        "source_title": "Series interpretation note",
+        "assertion_id": null,
+        "quote": "The three observations are not a forecast. A straight segment between recorded values does not establish an intermediate observation or a constant annual rate.",
+        "locator": "Synthetic scope note",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 2
+      }
+    ],
+    "use": "read"
+  },
+  "after": {
+    "title": "An uneven series",
+    "content": "<!-- layout: title; theme: keynote; design: v1 -->\n# Recorded balances cross zero [1]\n\n---\n\n<!-- layout: line_chart -->\n## Recorded balances cross zero [1]\n\nNet balance in units. [1]\n\n| Year | Balance (units) |\n| --- | --- |\n| 2021 | -8 [1] |\n| 2022 | 4 [1] |\n| 2024 | 12 [1] |\n\nThree observations; no forecast or causal effect was established. [1][2]",
+    "outline": [
+      {
+        "id": "numeric-p1",
+        "heading": "Recorded balances cross zero [1]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "title"
+      },
+      {
+        "id": "numeric-p2",
+        "heading": "Recorded balances cross zero [1]",
+        "goal": "Explain the synthetic source and its scope",
+        "layout": "line_chart"
+      }
+    ],
+    "citations": [
+      {
+        "id": "numeric-log",
+        "kind": "library",
+        "url": null,
+        "source_id": "numeric-log",
+        "source_title": "Net balance training log",
+        "assertion_id": null,
+        "quote": "Synthetic net balances in units were -8 in 2021, 4 in 2022, and 12 in 2024. The year intervals are one year then two years. The records do not identify what caused the changes.",
+        "locator": "Synthetic series table",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 1
+      },
+      {
+        "id": "numeric-scope",
+        "kind": "library",
+        "url": null,
+        "source_id": "numeric-scope",
+        "source_title": "Series interpretation note",
+        "assertion_id": null,
+        "quote": "The three observations are not a forecast. A straight segment between recorded values does not establish an intermediate observation or a constant annual rate.",
+        "locator": "Synthetic scope note",
+        "status": "verified",
+        "confidence": 1.0,
+        "source_revision_id": null,
+        "block_id": null,
+        "anchor": {},
+        "support_text": null,
+        "support_spans": [],
+        "source_origin": null,
+        "work_identifier": null,
+        "figures": [],
+        "ref": 2
+      }
+    ],
+    "use": "read"
+  },
+  "beforeCapture": {
+    "version": 1,
+    "candidateHash": "ed2acc6357fbf76f970ef019eecdaafe743a97258819c68be8df06109ce7700e",
+    "slides": [
+      {
+        "id": "numeric-p1",
+        "index": 0,
+        "blocks": [],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "title",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 118,
+            "minimum": 28,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 153.46875,
+              "width": 990.953125,
+              "height": 361.078125
+            },
+            "text": "Recorded balances cross zero [1]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-01.png",
+        "resolvedFonts": [
+          "AvenirNext-Bold"
+        ],
+        "contentHash": "0bd87d76f7088bedde8211ac932043ed7ce691241ee9b40e27cf09de9d6c8982",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": []
+      },
+      {
+        "id": "numeric-p2",
+        "index": 1,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "text"
+          },
+          {
+            "id": "b2",
+            "type": "table"
+          },
+          {
+            "id": "b3",
+            "type": "text"
+          }
+        ],
+        "fit": 0.91,
+        "overflow": false,
+        "drawn": "line_chart",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 50.96,
+            "minimum": 28,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 64,
+              "width": 1096,
+              "height": 58.078125
+            },
+            "text": "Recorded balances cross zero [1]"
+          },
+          {
+            "role": "body",
+            "size": 26.39,
+            "minimum": 18,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 151.1875,
+              "width": 923.640625,
+              "height": 34.296875
+            },
+            "text": "Net balance in units. [1]"
+          },
+          {
+            "role": "caption",
+            "size": 20.02,
+            "minimum": 16,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 201.875,
+              "width": 1096,
+              "height": 24.015625
+            },
+            "text": "Balance (units)"
+          },
+          {
+            "role": "body",
+            "size": 40.04,
+            "minimum": 18,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 866.40625,
+              "y": 267.7109375,
+              "width": 156.640625,
+              "height": 40.046875
+            },
+            "text": "12 units"
+          },
+          {
+            "role": "body",
+            "size": 25.48,
+            "minimum": 18,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 102.6875,
+              "y": 549.8125,
+              "width": 80.53125,
+              "height": 30.578125
+            },
+            "text": "2021 [1]"
+          },
+          {
+            "role": "body",
+            "size": 25.48,
+            "minimum": 18,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 337.15625,
+              "y": 549.8125,
+              "width": 80.53125,
+              "height": 30.578125
+            },
+            "text": "2022 [1]"
+          },
+          {
+            "role": "body",
+            "size": 25.48,
+            "minimum": 18,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 806.109375,
+              "y": 549.8125,
+              "width": 80.53125,
+              "height": 30.578125
+            },
+            "text": "2024 [1]"
+          },
+          {
+            "role": "caption",
+            "size": 22.75,
+            "minimum": 16,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 620.78125,
+              "width": 1001,
+              "height": 31.84375
+            },
+            "text": "Three observations; no forecast or causal effect was established. [1][2]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-02.png",
+        "resolvedFonts": [
+          "AvenirNext-Bold",
+          "AvenirNext-Regular"
+        ],
+        "contentHash": "0f73cc92cf7c624ea8f55da027234eef85a3cbd16e32e948ffce28ac0e07d5ac",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "bec2e990239b437dec41604d57f597f18220061b4515f5a5db7b871a11805ea4"
+          },
+          {
+            "id": "b2",
+            "hash": "4da32e09d207e4ea13cdc48dde9440c7d3974b3b7ba225948de6d4c27337afbb"
+          },
+          {
+            "id": "b3",
+            "hash": "720676b398e83e5b8280b830f155c7b072158584bc71a6b1c17aa31d699bf542"
+          }
+        ]
+      }
+    ],
+    "use": "read",
+    "id": "f9199e22d1ba4c90bde43f130a2f4e2d",
+    "status": "captured",
+    "contentHash": "00301dedfc6c35472e9463c83f29024451212eb061bae9ec1f65011dccd5e103",
+    "rendererHash": "db7fc6b697746b93e0599978b619fc95a6cccd8abe51236e48315064e156b0cb",
+    "assetHashes": {},
+    "designHash": "2036459fcb50cf4f882d4ec02a270489d6082ee730db1ff7eb6ca2a85a417262",
+    "missingAssets": [],
+    "contact": "contact.png",
+    "pdf": "deck.pdf",
+    "pdfCheck": {
+      "status": "checked",
+      "pages": 3,
+      "slides": [
+        {
+          "id": "numeric-p1",
+          "index": 0,
+          "blocks": [],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "title",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 118,
+              "minimum": 28,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 153.46875,
+                "width": 990.953125,
+                "height": 361.078125
+              },
+              "text": "Recorded balances cross zero [1]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        },
+        {
+          "id": "numeric-p2",
+          "index": 1,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "text"
+            },
+            {
+              "id": "b2",
+              "type": "table"
+            },
+            {
+              "id": "b3",
+              "type": "text"
+            }
+          ],
+          "fit": 0.91,
+          "overflow": false,
+          "drawn": "line_chart",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 50.96,
+              "minimum": 28,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 64,
+                "width": 1096,
+                "height": 58.078125
+              },
+              "text": "Recorded balances cross zero [1]"
+            },
+            {
+              "role": "body",
+              "size": 26.39,
+              "minimum": 18,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 151.1875,
+                "width": 923.640625,
+                "height": 34.296875
+              },
+              "text": "Net balance in units. [1]"
+            },
+            {
+              "role": "caption",
+              "size": 20.02,
+              "minimum": 16,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 201.875,
+                "width": 1096,
+                "height": 24.015625
+              },
+              "text": "Balance (units)"
+            },
+            {
+              "role": "body",
+              "size": 40.04,
+              "minimum": 18,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 866.40625,
+                "y": 267.7109375,
+                "width": 156.640625,
+                "height": 40.046875
+              },
+              "text": "12 units"
+            },
+            {
+              "role": "body",
+              "size": 25.48,
+              "minimum": 18,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 102.6875,
+                "y": 549.8125,
+                "width": 80.53125,
+                "height": 30.578125
+              },
+              "text": "2021 [1]"
+            },
+            {
+              "role": "body",
+              "size": 25.48,
+              "minimum": 18,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 337.15625,
+                "y": 549.8125,
+                "width": 80.53125,
+                "height": 30.578125
+              },
+              "text": "2022 [1]"
+            },
+            {
+              "role": "body",
+              "size": 25.48,
+              "minimum": 18,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 806.109375,
+                "y": 549.8125,
+                "width": 80.53125,
+                "height": 30.578125
+              },
+              "text": "2024 [1]"
+            },
+            {
+              "role": "caption",
+              "size": 22.75,
+              "minimum": 16,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 620.78125,
+                "width": 1001,
+                "height": 31.84375
+              },
+              "text": "Three observations; no forecast or causal effect was established. [1][2]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        }
+      ],
+      "method": "print-dom-and-exported-pdf-text",
+      "missingSources": [],
+      "missingText": []
+    },
+    "browser": "HeadlessChrome/156.0.8078.4",
+    "distribution": "bundled:chromium_headless_shell-1248",
+    "elapsedSeconds": 1.59,
+    "files": {
+      "contact.png": "b0cbd676d61de2cbe0b90f51fae00bc76a89d94a016e67bcc5849613fae66460",
+      "slide-02.png": "847845a2950c278de92cb28fab972438fe62bf85ff3d7d79da8b6e134a4b213a",
+      "deck.pdf": "3cda1d660401a8c141d2d8b09e8872fcd7f3c212947b94635f8ff1e5f89edf59",
+      "slide-01.png": "31fe835ac5df781bebb433d2e519574265afea05b8529c14fc88732c94c63576"
+    }
+  },
+  "afterCapture": {
+    "version": 1,
+    "candidateHash": "ed2acc6357fbf76f970ef019eecdaafe743a97258819c68be8df06109ce7700e",
+    "slides": [
+      {
+        "id": "numeric-p1",
+        "index": 0,
+        "blocks": [],
+        "fit": 1,
+        "overflow": false,
+        "drawn": "title",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 118,
+            "minimum": 28,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 153.46875,
+              "width": 990.953125,
+              "height": 361.078125
+            },
+            "text": "Recorded balances cross zero [1]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-01.png",
+        "resolvedFonts": [
+          "AvenirNext-Bold"
+        ],
+        "contentHash": "0bd87d76f7088bedde8211ac932043ed7ce691241ee9b40e27cf09de9d6c8982",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": []
+      },
+      {
+        "id": "numeric-p2",
+        "index": 1,
+        "blocks": [
+          {
+            "id": "b1",
+            "type": "text"
+          },
+          {
+            "id": "b2",
+            "type": "table"
+          },
+          {
+            "id": "b3",
+            "type": "text"
+          }
+        ],
+        "fit": 0.91,
+        "overflow": false,
+        "drawn": "line_chart",
+        "sceneIssue": null,
+        "bounds": {
+          "width": 1280,
+          "height": 720
+        },
+        "blockBounds": [],
+        "typography": [
+          {
+            "role": "heading",
+            "size": 50.96,
+            "minimum": 28,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 64,
+              "width": 1096,
+              "height": 58.078125
+            },
+            "text": "Recorded balances cross zero [1]"
+          },
+          {
+            "role": "body",
+            "size": 26.39,
+            "minimum": 18,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 151.1875,
+              "width": 923.640625,
+              "height": 34.296875
+            },
+            "text": "Net balance in units. [1]"
+          },
+          {
+            "role": "caption",
+            "size": 20.02,
+            "minimum": 16,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 201.875,
+              "width": 1096,
+              "height": 24.015625
+            },
+            "text": "Balance (units)"
+          },
+          {
+            "role": "body",
+            "size": 40.04,
+            "minimum": 18,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 866.40625,
+              "y": 267.7109375,
+              "width": 156.640625,
+              "height": 40.046875
+            },
+            "text": "12 units"
+          },
+          {
+            "role": "body",
+            "size": 25.48,
+            "minimum": 18,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 102.6875,
+              "y": 549.8125,
+              "width": 80.53125,
+              "height": 30.578125
+            },
+            "text": "2021 [1]"
+          },
+          {
+            "role": "body",
+            "size": 25.48,
+            "minimum": 18,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 337.15625,
+              "y": 549.8125,
+              "width": 80.53125,
+              "height": 30.578125
+            },
+            "text": "2022 [1]"
+          },
+          {
+            "role": "body",
+            "size": 25.48,
+            "minimum": 18,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 806.109375,
+              "y": 549.8125,
+              "width": 80.53125,
+              "height": 30.578125
+            },
+            "text": "2024 [1]"
+          },
+          {
+            "role": "caption",
+            "size": 22.75,
+            "minimum": 16,
+            "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+            "blockId": null,
+            "bounds": {
+              "x": 92,
+              "y": 620.78125,
+              "width": 1001,
+              "height": 31.84375
+            },
+            "text": "Three observations; no forecast or causal effect was established. [1][2]"
+          }
+        ],
+        "overlaps": [],
+        "smallText": [],
+        "fonts": [
+          "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+        ],
+        "images": [],
+        "assetFailures": 0,
+        "pending": 0,
+        "image": "slide-02.png",
+        "resolvedFonts": [
+          "AvenirNext-Bold",
+          "AvenirNext-Regular"
+        ],
+        "contentHash": "0f73cc92cf7c624ea8f55da027234eef85a3cbd16e32e948ffce28ac0e07d5ac",
+        "sceneHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "blockContent": [
+          {
+            "id": "b1",
+            "hash": "bec2e990239b437dec41604d57f597f18220061b4515f5a5db7b871a11805ea4"
+          },
+          {
+            "id": "b2",
+            "hash": "4da32e09d207e4ea13cdc48dde9440c7d3974b3b7ba225948de6d4c27337afbb"
+          },
+          {
+            "id": "b3",
+            "hash": "720676b398e83e5b8280b830f155c7b072158584bc71a6b1c17aa31d699bf542"
+          }
+        ]
+      }
+    ],
+    "use": "read",
+    "id": "03c5b855e7284814bb4d985bab8d0cd1",
+    "status": "captured",
+    "contentHash": "00301dedfc6c35472e9463c83f29024451212eb061bae9ec1f65011dccd5e103",
+    "rendererHash": "db7fc6b697746b93e0599978b619fc95a6cccd8abe51236e48315064e156b0cb",
+    "assetHashes": {},
+    "designHash": "2036459fcb50cf4f882d4ec02a270489d6082ee730db1ff7eb6ca2a85a417262",
+    "missingAssets": [],
+    "contact": "contact.png",
+    "pdf": "deck.pdf",
+    "pdfCheck": {
+      "status": "checked",
+      "pages": 3,
+      "slides": [
+        {
+          "id": "numeric-p1",
+          "index": 0,
+          "blocks": [],
+          "fit": 1,
+          "overflow": false,
+          "drawn": "title",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 118,
+              "minimum": 28,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 153.46875,
+                "width": 990.953125,
+                "height": 361.078125
+              },
+              "text": "Recorded balances cross zero [1]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        },
+        {
+          "id": "numeric-p2",
+          "index": 1,
+          "blocks": [
+            {
+              "id": "b1",
+              "type": "text"
+            },
+            {
+              "id": "b2",
+              "type": "table"
+            },
+            {
+              "id": "b3",
+              "type": "text"
+            }
+          ],
+          "fit": 0.91,
+          "overflow": false,
+          "drawn": "line_chart",
+          "sceneIssue": null,
+          "bounds": {
+            "width": 1280,
+            "height": 720
+          },
+          "blockBounds": [],
+          "typography": [
+            {
+              "role": "heading",
+              "size": 50.96,
+              "minimum": 28,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 64,
+                "width": 1096,
+                "height": 58.078125
+              },
+              "text": "Recorded balances cross zero [1]"
+            },
+            {
+              "role": "body",
+              "size": 26.39,
+              "minimum": 18,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 151.1875,
+                "width": 923.640625,
+                "height": 34.296875
+              },
+              "text": "Net balance in units. [1]"
+            },
+            {
+              "role": "caption",
+              "size": 20.02,
+              "minimum": 16,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 201.875,
+                "width": 1096,
+                "height": 24.015625
+              },
+              "text": "Balance (units)"
+            },
+            {
+              "role": "body",
+              "size": 40.04,
+              "minimum": 18,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 866.40625,
+                "y": 267.7109375,
+                "width": 156.640625,
+                "height": 40.046875
+              },
+              "text": "12 units"
+            },
+            {
+              "role": "body",
+              "size": 25.48,
+              "minimum": 18,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 102.6875,
+                "y": 549.8125,
+                "width": 80.53125,
+                "height": 30.578125
+              },
+              "text": "2021 [1]"
+            },
+            {
+              "role": "body",
+              "size": 25.48,
+              "minimum": 18,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 337.15625,
+                "y": 549.8125,
+                "width": 80.53125,
+                "height": 30.578125
+              },
+              "text": "2022 [1]"
+            },
+            {
+              "role": "body",
+              "size": 25.48,
+              "minimum": 18,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 806.109375,
+                "y": 549.8125,
+                "width": 80.53125,
+                "height": 30.578125
+              },
+              "text": "2024 [1]"
+            },
+            {
+              "role": "caption",
+              "size": 22.75,
+              "minimum": 16,
+              "family": "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif",
+              "blockId": null,
+              "bounds": {
+                "x": 92,
+                "y": 620.78125,
+                "width": 1001,
+                "height": 31.84375
+              },
+              "text": "Three observations; no forecast or causal effect was established. [1][2]"
+            }
+          ],
+          "overlaps": [],
+          "smallText": [],
+          "fonts": [
+            "\"Avenir Next\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif"
+          ],
+          "images": [],
+          "assetFailures": 0,
+          "pending": 0
+        }
+      ],
+      "method": "print-dom-and-exported-pdf-text",
+      "missingSources": [],
+      "missingText": []
+    },
+    "browser": "HeadlessChrome/156.0.8078.4",
+    "distribution": "bundled:chromium_headless_shell-1248",
+    "elapsedSeconds": 1.512,
+    "files": {
+      "contact.png": "b0cbd676d61de2cbe0b90f51fae00bc76a89d94a016e67bcc5849613fae66460",
+      "slide-02.png": "847845a2950c278de92cb28fab972438fe62bf85ff3d7d79da8b6e134a4b213a",
+      "deck.pdf": "29f8b795e2414d4ca075aa069c8a02eb612c3ae09aac4ef1ac23713b08827559",
+      "slide-01.png": "31fe835ac5df781bebb433d2e519574265afea05b8529c14fc88732c94c63576"
+    }
+  },
+  "review": {
+    "version": 1,
+    "use": "read",
+    "status": "needs_review",
+    "model": "deepseek/deepseek-flash",
+    "imageReview": "reviewed",
+    "repairCycles": 1,
+    "repairedSlides": [],
+    "findings": [
+      {
+        "slideId": "numeric-p2",
+        "blockId": "b2",
+        "severity": "error",
+        "problem": "The plotted series has no labeled y-axis or visible zero baseline, and only the 12-unit endpoint carries a value; the negative and zero-crossing information required by the headline \"Recorded balances cross zero\" is therefore missing and cannot be verified from the chart.",
+        "correction": "Restore the y-axis scale with a zero line and the negative observation(s), and make all three recorded balances readable while keeping the existing [1] source markers and unit text intact.",
+        "route": "layout"
+      }
+    ],
+    "history": [
+      {
+        "snapshotId": "03c5b855e7284814bb4d985bab8d0cd1",
+        "candidateHash": "ed2acc6357fbf76f970ef019eecdaafe743a97258819c68be8df06109ce7700e"
+      }
+    ],
+    "limits": {
+      "requests": 8,
+      "cycles": 1,
+      "affectedSlides": 4
+    },
+    "attemptFindings": [
+      {
+        "slideId": "numeric-p2",
+        "blockId": "b3",
+        "severity": "error",
+        "problem": "The table’s closing rule runs through the bottom qualification “Three observations; no forecast or causal effect was established. [1][2]” (note text at y≈561–603, rule at y≈600). The note is crowded against the 2024 row and reads as struck through/part of the table, weakening an essential limitation.",
+        "correction": "Separate the qualification from the table: move the note below the table’s closing rule with clear padding, or shorten/raise the table so the rule sits above the note. Keep the note wording and [1][2] markers intact.",
+        "route": "layout"
+      }
+    ],
+    "reason": "Repaired pages still have severe findings; kept the previous usable deck.",
+    "candidateHash": "ed2acc6357fbf76f970ef019eecdaafe743a97258819c68be8df06109ce7700e",
+    "calls": 3,
+    "elapsedSeconds": 84.437
+  },
+  "fidelity": {
+    "wordingNotesAndCitations": true,
+    "citationIdentities": true,
+    "poolMapping": true,
+    "pageIdentityAndOrder": true,
+    "theme": true,
+    "designVersion": true
+  }
+}

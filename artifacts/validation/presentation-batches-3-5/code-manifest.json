@@ -1,0 +1,15 @@
+{
+  "apps/backend/gunther/slide_render.py": "90a0ddcaa369db8e3631e082fd33200fd27981471d3e5cd732c09cabeed795df",
+  "apps/backend/gunther/slide_render_cli.py": "b15e9c77302767f706642d560b372bec53f3e9461a715a67da225a2d1ae89a95",
+  "apps/backend/gunther/slide_review.py": "7313d85bcaf82a924825680dc82551691769e6b9dbb9e765cbf95fb7866f0b09",
+  "apps/backend/gunther/skill_runner.py": "c614e79caeebb2f79710110e25b6b37f5f21ad09a121d22eb0335e4bf05b3c21",
+  "apps/backend/gunther/artifact_steps.py": "34c02cdf75abd7ce2222168c6681f875b3fdfe91fb3ec6835c70ac8672d0026f",
+  "apps/backend/gunther/skills/slides/skill.toml": "395f808fe99f90a6ea17c3cd19a092dfb1998c8e22d146244d73075336a0b154",
+  "apps/backend/gunther/data/unicode/EquivalentUnifiedIdeograph-17.0.0.txt": "38619c05a17e771554000fe604afee92e10eb49e0616ecf0c87af3c1eb0f4320",
+  "apps/desktop/render-slides/main.tsx": "3e7eac0ed0134a033888d77b69cdd580cec122ec52dcc83c0564798b4cc20992",
+  "apps/desktop/src/outputs/slideMeasurements.ts": "1e49aee65601656572e61b8c02a6360a0c11c53bd15c370989ccdfc31ee59a48",
+  "apps/desktop/src/outputs/SlideReviewPanel.tsx": "a4e1088f171fdaaf8f79f04af88b18d8775863c9833446f017de23c2382a9156",
+  "scripts/build-slide-renderer.mjs": "4fac8266cc92f9efb75f71cd08217c46617524a0d98181c26f65aefd470e7618",
+  "scripts/prepare-slide-browser.mjs": "a57051d125a365e5bee9c23a6d9cb6d2477c9f5f34beb3490e8acb11a78835a0",
+  "scripts/build-backend-sidecar.mjs": "b1d3f680e36e31ceae2b55a69689e6bde74b2f49a864d2800f4f1ea6568ab9b8"
+}

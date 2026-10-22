@@ -115,6 +115,8 @@ export interface LectureRecorderHandle {
   stop: () => void;
   markMoment: () => void;
   restore: (draft: RecordingDraft) => void;
+  /** Freeze the latest text for saving, without waiting for transcript work. */
+  prepareSave: () => string | null;
 }
 
 const RECORDING_DRAFTS_KEY = "gunther:recording-drafts";
@@ -514,6 +516,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   const checkLoopRef = useRef<Promise<void> | null>(null);
   const closingRef = useRef(false);
   const skipRef = useRef(false);
+  const transcriptWorkRef = useRef(new AbortController());
   const groupLoopRef = useRef<Promise<void> | null>(null);
   const groupRetryRef = useRef<(() => Promise<void>) | null>(null);
   const titleRef = useRef(title);
@@ -692,6 +695,15 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
 
   const currentClockMs = () => clockBaseMsRef.current + Math.round(capturedMsRef.current);
 
+  // Timer callbacks can be throttled while the window is hidden. Sample time is
+  // also the transcript clock, so delayed UI ticks must read it rather than count ticks.
+  const syncRecordingTime = () => {
+    const durationSeconds = Math.floor(currentClockMs() / 1_000);
+    checkpointSnapshotRef.current = { ...checkpointSnapshotRef.current, durationSeconds };
+    setSeconds(durationSeconds);
+    return durationSeconds;
+  };
+
   /** Everything heard so far is final: confirm the live sentences (Pause, Stop, a closed socket). */
   const closeOutTranscript = () => {
     const before = segmentsRef.current;
@@ -701,7 +713,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   };
 
   /** Listen again to a stretch of the recording; the outcome is the answer, or why there is none. */
-  const relistenWindow = async (range: { startMs: number; endMs: number }, pass: "minute" | "retry"): Promise<WindowOutcome> => {
+  const relistenWindow = async (range: { startMs: number; endMs: number }, pass: "minute" | "retry", signal: AbortSignal): Promise<WindowOutcome> => {
     const id = recordingSessionRef.current?.id;
     if (!id) return { error: "The recording has no saved audio to listen to again." };
     const terms = titleRef.current.trim() ? [titleRef.current.trim()] : [];
@@ -711,7 +723,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
         endMs: range.endMs,
         pass,
         context: { terms, before: textBefore(segmentsRef.current, range.startMs) },
-      });
+      }, signal);
       return { text: answer.text, sentences: answer.sentences, model: answer.model };
     } catch (reason) {
       return { error: reason instanceof Error ? reason.message : "The check could not be completed." };
@@ -725,16 +737,17 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
    * is dropped, the text having been confirmed as it was.
    */
   const pumpChecks = (): Promise<void> => {
+    const signal = transcriptWorkRef.current.signal;
     return runOnce(checkLoopRef, async () => {
       try {
         for (let guard = 0; guard < 1_000; guard += 1) {
-          if (!checkAgainRef.current || skipRef.current) break;
+          if (!checkAgainRef.current || skipRef.current || signal.aborted) break;
           const closing = closingRef.current;
           const window = nextWindow(segmentsRef.current, undefined, { closing });
           if (!window) break;
           commitTranscript(beginCheck(segmentsRef.current, window));
-          const outcome = await relistenWindow(window, "minute");
-          if (skipRef.current) break;
+          const outcome = await relistenWindow(window, "minute", signal);
+          if (skipRef.current || signal.aborted) break;
           const before = segmentsRef.current;
           const next = applyWindowResult(before, window, outcome, { closing, now: new Date().toISOString() });
           commitTranscript(next);
@@ -742,17 +755,17 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
           if (next.confirmedUntilMs <= before.confirmedUntilMs && next.heldEndMs === before.heldEndMs) break;
         }
       } finally {
-        if (segmentsRef.current.checking) commitTranscript({ ...segmentsRef.current, checking: null });
+        if (!signal.aborted && segmentsRef.current.checking) commitTranscript({ ...segmentsRef.current, checking: null });
       }
     });
   };
 
   /** Ask the Analysis model where paragraphs start among these sentences. */
-  const askParagraphs = async (sentences: string[], before: string, pass: "live" | "regroup"): Promise<GroupingOutcome> => {
+  const askParagraphs = async (sentences: string[], before: string, pass: "live" | "regroup", signal: AbortSignal): Promise<GroupingOutcome> => {
     const id = recordingSessionRef.current?.id;
     if (!id) return { error: "The recording is not saved yet." };
     try {
-      const answer = await knowledgeApi.groupParagraphs(id, { sentences, before, pass });
+      const answer = await knowledgeApi.groupParagraphs(id, { sentences, before, pass }, signal);
       return { starts: answer.starts };
     } catch (reason) {
       return { error: reason instanceof Error ? reason.message : "The paragraphs could not be grouped." };
@@ -765,9 +778,10 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
    * the loop with the note and its Retry; the next confirmation sends the same sentences again.
    */
   const pumpGrouping = (): Promise<void> => {
+    const signal = transcriptWorkRef.current.signal;
     return runOnce(groupLoopRef, async () => {
       for (let guard = 0; guard < 1_000; guard += 1) {
-        if (skipRef.current) break;
+        if (skipRef.current || signal.aborted) break;
         const request = groupingRequest(segmentsRef.current);
         if (!request) {
           // Nothing is left to group: an old failure has nothing to retry.
@@ -775,7 +789,8 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
           break;
         }
         commitTranscript(beginGrouping(segmentsRef.current));
-        const outcome = await askParagraphs(request.sentences, request.before, "live");
+        const outcome = await askParagraphs(request.sentences, request.before, "live", signal);
+        if (signal.aborted) return;
         if (skipRef.current) {
           commitTranscript({ ...segmentsRef.current, grouping: { state: "idle" } });
           break;
@@ -797,13 +812,15 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
 
   /** After Stop: group the whole transcript again, in runs that start at a paragraph start and end before an edited one. */
   const regroupTranscript = async (fromMs = 0): Promise<void> => {
+    const signal = transcriptWorkRef.current.signal;
     let cursor = fromMs;
     for (let guard = 0; guard < 1_000; guard += 1) {
-      if (skipRef.current || segmentsRef.current.grouping.state === "off") return;
+      if (skipRef.current || signal.aborted || segmentsRef.current.grouping.state === "off") return;
       const chunk = nextRegroupChunk(segmentsRef.current, cursor);
       if (!chunk) return;
       commitTranscript(beginGrouping(segmentsRef.current));
-      const outcome = await askParagraphs(chunk.sentences, chunk.before, "regroup");
+      const outcome = await askParagraphs(chunk.sentences, chunk.before, "regroup", signal);
+      if (signal.aborted) return;
       if (skipRef.current) {
         commitTranscript({ ...segmentsRef.current, grouping: { state: "idle" } });
         return;
@@ -831,19 +848,28 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   };
 
   const retryCheck = async (windowId: string) => {
+    const signal = transcriptWorkRef.current.signal;
+    if (signal.aborted) return;
     const range = retryRange(segmentsRef.current, windowId);
     if (!range) return;
     commitTranscript(beginRetry(segmentsRef.current, windowId));
-    const outcome = await relistenWindow(range, "retry");
+    const outcome = await relistenWindow(range, "retry", signal);
+    if (signal.aborted) return;
     commitTranscript(applyRetry(segmentsRef.current, windowId, outcome, { now: new Date().toISOString() }));
   };
 
   /** Skip: the live text is confirmed as it is, now. */
   const skipChecks = () => {
     skipRef.current = true;
-    commitTranscript(confirmLive({ ...segmentsRef.current, checking: null }, { closing: true }));
+    transcriptWorkRef.current.abort();
+    // Pasted or typed text lives outside the sentence state and must stay intact.
+    if (hasTranscriptContent(segmentsRef.current)) {
+      commitTranscript(confirmLive(storableTranscript(segmentsRef.current), { closing: true }));
+    }
     setFinalizing(false);
     socketRef.current?.close();
+    socketRef.current = null;
+    releaseFlushWaiters();
   };
 
   const releaseFlushWaiters = (untilMs = Number.POSITIVE_INFINITY) => {
@@ -925,6 +951,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     };
     socket.onopen = sendQueued;
     socket.onmessage = (message) => {
+      if (socketRef.current !== socket) return;
       const event = JSON.parse(String(message.data)) as Record<string, unknown>;
       if (event.type === "service.ready") {
         reconnectAttemptsRef.current = 0;
@@ -1234,6 +1261,10 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
       : 0;
     capturedMsRef.current = 0;
     capturedSamplesRef.current = 0;
+    transcriptWorkRef.current.abort();
+    transcriptWorkRef.current = new AbortController();
+    checkLoopRef.current = null;
+    groupLoopRef.current = null;
     skipRef.current = false;
     closingRef.current = false;
     checkAgainRef.current = false;
@@ -1396,6 +1427,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
           });
       };
       recorder.onstop = async () => {
+        syncRecordingTime();
         setPersistence("saving");
         await uploadChainRef.current;
         const stoppedSession = recordingSessionRef.current;
@@ -1477,7 +1509,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
       }
       updatePhase("recording");
       timerRef.current = window.setInterval(() => {
-        if (phaseRef.current === "recording") setSeconds((value) => value + 1);
+        if (phaseRef.current === "recording") syncRecordingTime();
       }, 1_000);
     } catch (reason) {
       const reasonName = reason && typeof reason === "object" && "name" in reason
@@ -1507,6 +1539,8 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   };
 
   const pause = () => {
+    syncRecordingTime();
+    const signal = transcriptWorkRef.current.signal;
     const socket = socketRef.current;
     // The sentence being said is finished; once the backend says so, everything is confirmed.
     const heard = socket?.readyState === WebSocket.OPEN && transcriptionEnabledRef.current
@@ -1518,7 +1552,9 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     updatePhase("paused");
     void queueCheckpoint();
     void heard.then(async () => {
+      if (signal.aborted) return;
       await settleTranscript();
+      if (signal.aborted) return;
       // Resumed meanwhile: what is live now belongs to the recording that goes on.
       if (phaseRef.current === "paused") closeOutTranscript();
       void queueCheckpoint();
@@ -1533,6 +1569,8 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   };
 
   const stop = () => {
+    syncRecordingTime();
+    const signal = transcriptWorkRef.current.signal;
     const transcriptionSocket = socketRef.current;
     let heard = Promise.resolve();
     if (transcriptionSocket?.readyState === WebSocket.OPEN && transcriptionEnabledRef.current) {
@@ -1540,17 +1578,20 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
       heard = commitAndWait(transcriptionSocket);
     } else transcriptionSocket?.close();
     stopTranscriptionReconnect();
-    // The last sentence is heard to its end (at most 10 s), then the socket closes and every
-    // live sentence is confirmed. The note is not ready for saving until then.
+    // Transcript work can continue during review. Only durable audio gates Save;
+    // prepareSave freezes whatever text is ready when the user chooses to save.
     setFinalizing(true);
     void heard.then(async () => {
+      if (signal.aborted) return;
       transcriptionSocket?.close();
       await settleTranscript();
+      if (signal.aborted) return;
       closeOutTranscript();
       // The last live grouping, then one pass over the whole talk (Skip keeps the live grouping).
       await pumpGrouping();
+      if (signal.aborted) return;
       await regroupTranscript();
-      setFinalizing(false);
+      if (!signal.aborted) setFinalizing(false);
     });
     if (recorderRef.current?.state !== "inactive") recorderRef.current?.stop();
     closeAudioPipeline();
@@ -1602,7 +1643,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   const markMoment = () => {
     if (phaseRef.current !== "recording" && phaseRef.current !== "paused") return;
     const nextMoments = [...checkpointSnapshotRef.current.moments, {
-      seconds,
+      seconds: syncRecordingTime(),
       label: "Important moment",
     }];
     checkpointSnapshotRef.current = {
@@ -1650,6 +1691,15 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
       return;
     }
     stopTranscriptionReconnect();
+    transcriptWorkRef.current.abort();
+    transcriptWorkRef.current = new AbortController();
+    checkLoopRef.current = null;
+    groupLoopRef.current = null;
+    skipRef.current = false;
+    setFinalizing(false);
+    socketRef.current?.close();
+    socketRef.current = null;
+    releaseFlushWaiters();
     closeAudioPipeline();
     onTitleChange?.(draft.title);
     adoptTranscript(draft.transcript, [draft.segments], !draft.importedAudio);
@@ -1813,6 +1863,12 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     stop,
     markMoment,
     restore,
+    prepareSave: () => {
+      if (phaseRef.current !== "stopped" || persistence !== "saved") return null;
+      skipChecks();
+      void queueCheckpoint();
+      return knowledgeDocument(title, checkpointSnapshotRef.current.transcript, summary, seconds, savedRecording, moments);
+    },
   }));
 
   const summarize = async () => {
@@ -1850,6 +1906,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     void queueCheckpoint();
     const checkpointTimer = window.setInterval(() => {
       if (recorderRef.current?.state === "recording") recorderRef.current.requestData();
+      syncRecordingTime();
       void queueCheckpoint();
     }, 5_000);
     return () => window.clearInterval(checkpointTimer);
@@ -1887,11 +1944,11 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     onDraftChange?.(draft);
   }, [importedAudio, knowledgeBaseId, moments, onDraftChange, phase, recordingContext, recordingLabel, requireWorkspaceId, savedRecording, seconds, storedSegments, summary, title, transcript]);
   useEffect(() => {
-    // Not ready while the last sentence is still being heard to its end.
-    onKnowledgeContent(phase === "stopped" && persistence === "saved" && !finalizing
+    // Slow checks and paragraph grouping must not block saving durable audio.
+    onKnowledgeContent(phase === "stopped" && persistence === "saved"
       ? knowledgeDocument(title, transcript, summary, seconds, savedRecording, moments)
       : "");
-  }, [finalizing, moments, onKnowledgeContent, persistence, phase, savedRecording, seconds, summary, title, transcript]);
+  }, [moments, onKnowledgeContent, persistence, phase, savedRecording, seconds, summary, title, transcript]);
   useEffect(() => {
     if (!active || !transcriptRef.current || document.activeElement === transcriptRef.current) return;
     transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
@@ -1903,9 +1960,12 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     }).catch(() => setProvider("local-only"));
   }, []);
   useEffect(() => () => {
+    transcriptWorkRef.current.abort();
     stopTranscriptionReconnect();
     if (recorderRef.current?.state !== "inactive") recorderRef.current?.stop();
     socketRef.current?.close();
+    socketRef.current = null;
+    releaseFlushWaiters();
     closeAudioPipeline();
   }, [closeAudioPipeline, stopTranscriptionReconnect]);
   useEffect(() => () => { if (audioUrl?.startsWith("blob:")) URL.revokeObjectURL(audioUrl); }, [audioUrl]);
@@ -1929,14 +1989,14 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
           : phase === "stopped" && <span className="record-review-hint"><RotateCcw size={13} />Save this session before starting another</span>}
       </div>
       <div className={`transcription-state is-${provider}`}><i />{provider === "live" ? `${transcriptionLabel} · live` : provider === "available" ? `${transcriptionLabel} ready` : provider === "connecting" || provider === "checking" ? "Checking transcript…" : "Local audio · editable text"}</div>
-      <div className={`recording-persistence is-${persistence}`}><HardDrive size={13} />{persistence === "saving" ? phase === "importing" ? "Importing audio in safe chunks" : "Saving locally as you record" : persistence === "saved" ? "Complete recording saved" : persistence === "recovering" ? "Recovering local save" : "Long-session local save ready"}</div>
+      <div className={`recording-persistence is-${persistence}`}><HardDrive size={13} />{persistence === "saving" ? phase === "importing" ? "Importing audio in safe chunks" : phase === "stopped" ? "Saving the last audio chunk…" : "Saving locally as you record" : persistence === "saved" ? "Complete recording saved" : persistence === "recovering" ? "Recovering local save" : "Long-session local save ready"}</div>
     </div>
     {notice && <p className="lecture-notice" role={microphoneIssue ? "alert" : "status"}><CircleAlert size={13} />{notice}</p>}
     <div className="lecture-transcript">
       <header><span><strong>Live transcript</strong><small>Editable before it becomes knowledge</small></span><em>{transcriptWords ? `${transcriptWords} words` : "Waiting for speech"}</em></header>
       {liveNote && <p className="lecture-live-note">Live text comes in short pieces for this model.</p>}
       {groupHint && hasTranscriptContent(segments) && <p className="lecture-live-note">Add an Analysis model in Settings → Models to group paragraphs by topic.</p>}
-      {finalizing && <p className="lecture-live-note" role="status">Finishing the transcript… <button type="button" className="lp-retry" onClick={skipChecks}>Skip</button></p>}
+      {finalizing && <p className="lecture-live-note" role="status">{persistence === "saved" ? "Audio saved. You can save now with the current transcript, or wait for it to finish." : "Finishing the transcript in the background…"} <button type="button" className="lp-retry" onClick={skipChecks}>Keep current text</button></p>}
       {hasTranscriptContent(segments)
         ? <TranscriptParagraphs
           state={segments}
