@@ -486,3 +486,10 @@ All §1 targets that can be measured on this machine are met with V4 Pro; Flash 
 targets with slightly more defects. Still open and only possible for the user: the head-to-head
 with Claude.ai and Gamma themselves, timing with Claude, and the Mac checks (DMG, PowerPoint
 and Word opening the exports).
+
+**2026-10-22 — Flash re-run after the repeated-number rule (7ad2b58)** (`*-quality-final-flash-2`):
+ship 94%, strict 62%, titles-only 86% (Flash runs range 79–93% on this judge), hard defects 3,
+all report recommendations quoting a number that appears nowhere else cited. Decks: 0 defects.
+Conclusion on this machine: V4 Pro meets every measurable target except time; Flash meets time
+with quality close to but not consistently at the bar. A Claude writer is the expected way to
+have both; it can only be measured with the user's key.
