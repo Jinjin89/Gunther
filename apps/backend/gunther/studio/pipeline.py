@@ -779,14 +779,6 @@ class StudioAgents(OutputAgents):
         )
         return drafts
 
-    def _checker(self, model):
-        """Checking a sentence against its passage is a small job: it goes to the model set for
-        analysis (fast, cheap) when one is set; else to the writer's model."""
-
-        for_role = getattr(self.gateway, "for_role", None)
-        chosen = for_role("analysis") if callable(for_role) else None
-        return chosen[0] if chosen else model
-
     def _claims(self, model, text: str, by_ref: dict[int, Evidence]):
         """One claim check per part. A title is checked against the passages its own slide or
         section cites (it states their conclusion). Interpretation and recommendation that
@@ -795,8 +787,14 @@ class StudioAgents(OutputAgents):
 
         from gunther.outputs import Issue, _marked, section_hash
 
-        body = _marked(text).body
+        marked = _marked(text)
+        body = marked.body
         lines = body.split("\n")
+        if marked.layout == "title":
+            # The title slide's meta line (audience · date) states no claim.
+            content = [n for n, line in enumerate(lines) if line.strip()]
+            if len(content) >= 3:
+                lines[content[2]] = ""
         refs = "".join(f"[{n}]" for n in dict.fromkeys(re.findall(r"\[(\d+)\]", body)))
         for at, line in enumerate(lines):
             if re.match(r"^#{1,2}\s", line):
@@ -805,7 +803,7 @@ class StudioAgents(OutputAgents):
                 break
         checked = "\n".join(lines)
         _, check, _, _ = self.ask.check_sentences(
-            self._checker(model), STUDIO_CHECK, checked, by_ref, limit=self.limits.sentences
+            model, STUDIO_CHECK, checked, by_ref, limit=self.limits.sentences
         )
         coverage = (
             check._coverage
