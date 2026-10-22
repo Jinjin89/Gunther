@@ -383,3 +383,17 @@ Committed `ce0b101`, `7a4c477` (not pushed). Round 2 runs on all seven sets.
 Not done: the in-pipeline vision critic (render → look → fix); a memo/storyline review pause
 before writing (the outline is shown live instead, matching the earlier "no approval pause"
 decision); Claude provider untested against the real API; the user's Mac trial.
+
+**2026-10-22 — round 6 (final code at c70cbcb + checker revert), all seven sets.**
+`evals/results/*-quality-studio-v6`: ship rate 94% (114 slides/sections), strict ship 64%,
+titles-only 93%, hard defects 1 in 14 artifacts (a recommendation quoting "25bp" uncited),
+~13–14 min per artifact with 7 builds at once; one deck alone took 9 min on DeepSeek V4 Pro.
+
+**Head-to-head against a strong outside writer.** Claude.ai/Gamma cannot be reached here, so
+reference artifacts were written by hand by Claude Opus 5.5 (in Claude Code) from the same ten
+velmora notes and the same briefs (`/tmp/studio_dev/reference/`; method: read every source,
+write to STUDIO_FORMAT, no tools). Blind, order-swapped judging against studio builds:
+deck (v4) — studio wins storyline, ties the rest; deck (v6) — tie overall, reference wins
+clarity; report (v6) — tie overall, studio wins evidence. Win-or-tie for the studio: 3 of 3
+overall. The judge also caught a real error in the hand-written reference (albedo 0.71 → 0.55
+is a ~22% loss, not "a third"). Claude.ai and Gamma themselves still need the user.
