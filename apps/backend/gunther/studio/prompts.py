@@ -8,7 +8,8 @@ every fact carries the number of the passage that states it. Checking is a separ
 TRUTH = """\
 The one rule about truth: every fact, number, name and date that comes from the material \
 carries the number of the passage that states it, like [3] or [3][7], right after the claim. \
-Use only passage numbers you were given, and only for what that passage actually says. \
+Use only passage numbers you were given, and only for what that passage actually says. A \
+number repeated later (a caption, a summary, a recommendation) carries its citation again. \
 Something you know that the material does not contain may be used sparingly when it helps \
 the reader, marked [?] instead of a number. Interpretation and recommendation are yours: \
 state them plainly, without a citation, and make sure they follow from the cited facts."""
@@ -96,6 +97,8 @@ without a single chart or table is unfinished.
 "points" only when nothing else fits, at most twice.
 - Slide 2 never repeats the title slide: it usually gives the answer with its 2–4 \
 findings (summary).
+- The last slide's title states the decision or recommendation itself ("Fund cool roofs \
+for top-floor flats, budgeted at 9%"), not a label ("Next steps", "Key points").
 - First slide: title. Last slide: actions (what to do / decide) or summary (what it means). \
 Use "section" slides only for decks over 12 slides.
 
@@ -264,9 +267,12 @@ layout marker, separated by a line "---", in the order listed.
 FIX_CLAIMS = """\
 A fact-checker compared these slides/sections with the passages they cite and found claims \
 the passages do not support. Rewrite only what is needed: cite the passage that does state \
-the claim if one below does; otherwise restate the claim exactly as the passage supports \
-it; if nothing supports it, remove it and keep the slide coherent. Do not add new facts. \
-Keep the format, the layout marker and all other text unchanged. Reply with only the \
+the claim if one below does; otherwise correct the fact to what the passage states (the right \
+number, name or date); if nothing supports it, drop that fact and keep the slide coherent. Do \
+not add new facts. Change only the wrong facts: keep every recommendation, decision and \
+interpretation, the title's point, the voice and the confidence. Never turn a point into a \
+description of the evidence, and never write about "the sources", "the evidence" or "the \
+material". Keep the format, the layout marker and all other text unchanged. Reply with only the \
 rewritten parts, separated by a line "---", in the order given, each complete.
 
 {parts}

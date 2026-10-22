@@ -388,6 +388,12 @@ def check_deck(
     for index in range(len(slides)):
         slide = parsed[index]
         problems = check_slide(slide, first=index == 0, read=read)
+        meta = META.search(" ".join([slide.title, *slide.body]))
+        if meta:
+            problems.append(
+                f'"{meta.group(0)}": write about the world, not about the material — state the '
+                "finding or the decision itself."
+            )
         if CITE.search(slide.title):
             problems.append(
                 "Take the citation marks out of the title; the body proves it and cites."
@@ -540,3 +546,33 @@ def _same(one: str, two: str) -> bool:
         return re.sub(r"\W+", "", CITE.sub("", text)).casefold()
 
     return bool(one) and norm(one) == norm(two)
+
+
+META = re.compile(
+    r"\b(?:the sources?|the materials?|the evidence (?:shows|suggests)|supported points|"
+    r"the documents?|the provided|this dataset|according to the (?:material|sources?))\b|"
+    r"现有材料|材料显示|资料显示|根据材料",
+    re.I,
+)
+
+
+def cite_captions(text: str) -> str:
+    """An exhibit caption that states numbers cites what its table cites: the caption reads
+    them off the table."""
+
+    def fix(match: re.Match[str]) -> str:
+        block = match.group(0)
+        lines = block.split("\n")
+        if len(lines) < 3:
+            return block
+        caption = lines[1]
+        body = re.sub(r"^(?:Exhibit|图表|图)\s*\d+", "", caption)
+        if CITE.search(caption) or not re.search(r"\d", body):
+            return block
+        refs = list(dict.fromkeys(re.findall(r"\[(\d+)\]", "\n".join(lines[2:]))))
+        if not refs:
+            return block
+        lines[1] = caption.rstrip() + " " + "".join(f"[{n}]" for n in refs)
+        return "\n".join(lines)
+
+    return EXHIBIT.sub(fix, text)

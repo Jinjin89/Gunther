@@ -108,3 +108,18 @@ def test_the_desktop_fixtures_keep_the_backend_grammar():
             # The renderer is tested at 100 units of title; the writer is held to 90.
             problems = [p for p in problems if not p.startswith("title is")]
             assert problems == [], (name, index + 1, problems)
+
+
+def test_an_exhibit_caption_with_numbers_cites_its_table():
+    text = (
+        ":::exhibit chart=bar\nExhibit 2 — Savings fall from 18% to 9%\n| A | B (%) |\n"
+        "| --- | --- |\n| raw | 18 [1] |\n| adj | 9 [2] |\nSource: X [1][2]\n:::"
+    )
+    assert "Exhibit 2 — Savings fall from 18% to 9% [1][2]" in fmt.cite_captions(text)
+
+
+def test_writing_about_the_material_is_a_format_problem():
+    deck = GOOD.replace(
+        "## The pilot cut review time by 60%", "## What the evidence shows about review time"
+    )
+    assert any("about the world" in p for p in dict(fmt.check_deck(deck))[2])

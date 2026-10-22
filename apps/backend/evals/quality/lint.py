@@ -568,7 +568,9 @@ def lint(
                 defects.append(Defect(where, "topic_title", f"“{slide.title[:80]}”"))
             for phrase in meta_hits(slide.visible):
                 defects.append(Defect(where, "meta_phrase", f"“{phrase}” on the slide"))
-            for line in uncited_numbers(slide.body):
+            # A title slide's last line is its meta line (audience, date): no claim.
+            checked = slide.body[:1] if slide.layout == "title" else slide.body
+            for line in uncited_numbers(checked):
                 defects.append(Defect(where, "uncited_number", line))
             if use == "talk" and slide.layout not in {"title", "section"} and not slide.notes:
                 defects.append(Defect(where, "missing_notes", "talk slide without speaker notes"))

@@ -44,14 +44,15 @@ logger = logging.getLogger(__name__)
 DIRECT_TOKENS = 60_000
 PART_TOKENS = 24_000
 WRITER_TOKENS = 45_000
-CRITIC_ROUNDS = 2
+CRITIC_ROUNDS = 1  # one review and one revision: a second round rarely changed the story
 WORKERS = 8
 STUDIO_CHECK = (
     "Check this slide or report section. Its title states the conclusion the cited evidence "
-    "supports: judge the title against the sources cited in it. Recommendations, "
-    "interpretations and transitions that follow from the cited facts are 'inference' "
-    "(or 'nonfactual'), not errors. Use 'not' when a cited source does not state a claim or "
-    "states otherwise, including numbers, and when an interpretation overreaches the evidence."
+    "supports: judge the title against the sources cited in it. Only factual statements can be "
+    "'not' or 'partly': numbers, names, dates, events, and what a source says or found — "
+    "use 'not' when the cited source does not state it or states otherwise. Recommendations, "
+    "decisions, priorities, interpretations and transitions are the author's judgement: mark "
+    "them 'inference' or 'nonfactual', never 'not', even when the sources do not say them."
 )
 READ_HINT = r"\b(pre-?read|handout|to read|send|email)\b|阅读|发给|会后"
 
@@ -403,7 +404,7 @@ class StudioAgents(OutputAgents):
                     schema,
                     system,
                     prompt + "\n\nYour storyline:\n" + story.model_dump_json() + "\n\n" + again,
-                    effort,
+                    "medium",
                 )
             except ModelError as error:
                 logger.info("Revising the storyline failed: %s", error)
@@ -606,6 +607,30 @@ class StudioAgents(OutputAgents):
                     )[0]
                 slides[n - 1] = text
             deck = "\n\n---\n\n".join(slides)
+        # What a batch could not fix is asked for once more, one slide at a time.
+        for n, problems in fmt.check_deck(deck, read=read, notes_required=run.use == "talk"):
+            slides = fmt.split_slides(deck)
+            system = P.FIX_SLIDES.format(
+                format=DECK_FORMAT + ("\n\n" + READ_NOTE if read else ""),
+                problems=f"Slide {n} problems:\n"
+                + "\n".join(f"- {p}" for p in problems)
+                + f"\n\nSlide {n} as written:\n{slides[n - 1]}",
+            )
+            try:
+                again = fmt.split_slides(
+                    _unfence(self._text(model, system, "Rewrite it now.", effort, 4000))
+                )
+            except ModelError as error:
+                logger.info("Fixing slide %d failed: %s", n, error)
+                continue
+            if again:
+                fixed = fmt.strip_labels(again[0])
+                if n == 1:
+                    fixed = self._title_marker(
+                        [fixed], fmt.parse_slide(slides[0]).attrs.get("theme", "paper")
+                    )[0]
+                slides[n - 1] = fixed
+                deck = "\n\n---\n\n".join(slides)
         left = fmt.check_deck(deck, read=read, notes_required=run.use == "talk")
         if left:
             self.skipped.append(
@@ -680,7 +705,7 @@ class StudioAgents(OutputAgents):
                         "reason": "; ".join(left)[:600],
                     }
                 )
-        text = fmt.ensure_summary_mark(text)
+        text = fmt.cite_captions(fmt.ensure_summary_mark(text))
         self._stage(emit, "write", "Writing the report", "done")
         return text
 
