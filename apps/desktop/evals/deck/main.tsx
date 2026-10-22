@@ -1,8 +1,11 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { DeckSlide } from "../../src/outputs/deck/DeckSlide";
 import { parseDeck } from "../../src/outputs/deck/parseDeck";
 import { withDeckMarker } from "../../src/outputs/deck/marker";
+import { readTemplate } from "../../src/outputs/deck/brand";
+import { setBrandTheme } from "../../src/outputs/deck/brandStore";
+import { makeTestTemplate } from "../../src/outputs/deck/testTemplate";
 import { DECK_THEMES, type DeckTheme } from "../../src/outputs/sections";
 import "../../src/styles.css";
 import "../../src/design/tokens.css";
@@ -44,7 +47,13 @@ function Deck() {
   return <main className={sheet ? "is-sheet" : ""}>{content.slides.map((_, at) => <Card key={at} index={at} total={content.slides.length} content={content} sources={sources} />)}</main>;
 }
 
+/** The brand variant: a template made in the page, imported the way a person would. */
+const brandReady = theme === "brand" ? makeTestTemplate().then((bytes) => readTemplate(bytes, "aster.pptx")).then(({ brand }) => setBrandTheme(brand)) : Promise.resolve();
+
 function App() {
+  const [ready, setReady] = useState(false);
+  useEffect(() => { void brandReady.then(() => setReady(true)); }, []);
+  if (!ready) return null;
   return <><style>{`
     body{margin:0;background:#e4e6e9;font-family:Arial,sans-serif}main{padding:24px;display:grid;gap:28px;justify-content:center}
     .gallery-label{font-size:13px;color:#4c5664;margin-bottom:8px}.gallery-stage{width:1280px;height:720px;box-shadow:0 8px 30px #1e2b3b1a}

@@ -102,7 +102,9 @@ def app_for(tmp_path: Path, fake: FakeProvider, *, skills: bool = False, **overr
 
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "service-settings.json").write_text(
-        json.dumps({"developer": {"traces": False, "output_skills": skills}}), encoding="utf-8"
+        json.dumps(
+            {"developer": {"traces": False, "output_skills": skills, "output_method": "skills"}}
+        ), encoding="utf-8"
     )
     settings = Settings(
         database_url=f"sqlite+pysqlite:///{tmp_path / 'gunther.sqlite'}",

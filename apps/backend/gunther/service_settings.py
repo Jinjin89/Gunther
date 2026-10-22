@@ -342,7 +342,7 @@ class ServiceSettingsStore:
         self._developer: dict[str, Any] = {
             "traces": False,
             "output_skills": True,
-            "output_method": "skills",
+            "output_method": "studio",
         }
         self._listeners: list[Callable[[], None]] = []
         self._load()
@@ -562,7 +562,7 @@ class ServiceSettingsStore:
                 if output_skills is None
                 else bool(output_skills),
                 "output_method": output_method
-                or self._developer.get("output_method", "skills"),
+                or self._developer.get("output_method", "studio"),
             }
             self._write()
             listeners = list(self._listeners)

@@ -18,11 +18,11 @@ export function DeveloperSettings({ onNotify }: { onNotify: (message: string) =>
   const [problem, setProblem] = useState<string | null>(null);
   const [folder, setFolder] = useState<string | null>(null);
   const [skills, setSkills] = useState(true);
-  const [method, setMethod] = useState<"studio" | "skills">("skills");
+  const [method, setMethod] = useState<"studio" | "skills">("studio");
   useEffect(() => { void logsFolder().then(setFolder); }, []);
   useEffect(() => {
     let active = true;
-    void knowledgeApi.developerSettings().then((settings) => { if (active) { setSkills(settings.outputSkills ?? true); setMethod(settings.outputMethod ?? "skills"); } }).catch(() => undefined);
+    void knowledgeApi.developerSettings().then((settings) => { if (active) { setSkills(settings.outputSkills ?? true); setMethod(settings.outputMethod ?? "studio"); } }).catch(() => undefined);
     return () => { active = false; };
   }, []);
 

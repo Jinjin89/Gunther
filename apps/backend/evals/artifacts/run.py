@@ -251,6 +251,7 @@ def write_exam_settings(target: Path, source: Path | None) -> Path:
     write_settings_file(target, source)
     payload = json.loads(target.read_text(encoding="utf-8"))
     payload["developer"]["output_skills"] = True
+    payload["developer"].setdefault("output_method", "skills")
     target.write_text(json.dumps(payload), encoding="utf-8")
     return target
 

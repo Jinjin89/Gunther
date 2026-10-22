@@ -6,7 +6,8 @@ import { Inline } from "./Inline";
 import { sourceDetail, sourceLine } from "./inlineTokens";
 import { Layout } from "./layouts";
 import { parseDeckSlide } from "./parseDeck";
-import { deckStyle } from "./theme";
+import { useBrandTheme } from "./brandStore";
+import { deckStyle, resolveTheme } from "./theme";
 import "./deck.css";
 
 /** The smallest a slide's type is scaled to when text typed over the budget does not fit. */
@@ -33,9 +34,11 @@ export function DeckSlide({ body, layout, attrs, theme, accent, first = false, n
   onCite?: ((index: number) => void) | undefined;
   onFitChange?: ((fit: number, overflow: boolean) => void) | undefined;
 }) {
+  const brand = useBrandTheme();
+  const drawn = resolveTheme(theme, brand);
   const data = useMemo(() => parseDeckSlide(layout ?? (first ? "title" : null), body, attrs), [layout, first, body, attrs]);
   const cover = data.layout === "title" || data.layout === "section";
-  const key = `v2\n${theme}\n${data.layout}\n${body}`;
+  const key = `v2\n${theme}\n${drawn.brand ? drawn.brand.name : ""}\n${data.layout}\n${body}`;
   const fit = useFit(key);
   const face = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLDivElement>(null);
@@ -94,8 +97,8 @@ export function DeckSlide({ body, layout, attrs, theme, accent, first = false, n
   }, [key, fit, cover, onFitChange]);
 
   const context = useMemo(() => ({ numbers, sources: sources ?? [], onCite }), [numbers, sources, onCite]);
-  const style = { ...deckStyle(theme, accent), "--dk-fit": fit } as CSSProperties;
-  return <div ref={face} className={`dk-face dk-theme-${theme} dk-l-${data.layout}`} data-design-version="2" data-theme={theme} data-layout={data.layout} data-fit={fit} style={style}>
+  const style = { ...deckStyle(theme, accent, brand), "--dk-fit": fit } as CSSProperties;
+  return <div ref={face} className={`dk-face dk-theme-${drawn.theme}${drawn.brand ? " dk-brand" : ""} dk-l-${data.layout}`} data-design-version="2" data-theme={drawn.brand ? "brand" : drawn.theme} data-layout={data.layout} data-fit={fit} style={style}>
     <div ref={canvas} className="dk-canvas">
       <SlideContext.Provider value={context}>
         {!cover && data.layout !== "text" || data.layout === "text" && data.title
@@ -103,6 +106,7 @@ export function DeckSlide({ body, layout, attrs, theme, accent, first = false, n
           : null}
         <div ref={bodyBox} className="dk-body"><Layout data={data} /></div>
       </SlideContext.Provider>
+      {drawn.brand?.logo && <img className="dk-logo" src={drawn.brand.logo} alt="" style={{ "--dk-logo-ratio": drawn.brand.logoRatio ?? 3 } as CSSProperties} />}
       <footer className="dk-foot">
         <span className="dk-source" title={footDetail}>{foot}</span>
         {page !== undefined && !cover && <span className="dk-page">{page}</span>}

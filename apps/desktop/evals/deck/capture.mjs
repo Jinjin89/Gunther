@@ -158,7 +158,7 @@ try {
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: 1 });
     const pageErrors = [];
     page.on("pageerror", (e) => pageErrors.push(String(e)));
-    for (const variant of ["short", "max", "zh"]) for (const theme of ["paper", "ink", "editorial"]) {
+    for (const variant of ["short", "max", "zh"]) for (const theme of ["paper", "ink", "editorial", "brand"]) {
       await deckPage(page, `fixture=deck.${variant}&theme=${theme}`);
       const slides = await page.evaluate(measureSlides);
       const cards = page.locator("article[data-slide] .gallery-stage");

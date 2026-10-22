@@ -1,5 +1,6 @@
 import type { Artifact } from "@gunther/contracts";
 import { sourceAssetUrl } from "../../api";
+import { getBrandTheme } from "./brandStore";
 
 /** Save a file the way the app's downloads do: a link with `download`, which the desktop shell turns into a save dialog. */
 export function saveBlob(blob: Blob, filename: string): void {
@@ -35,7 +36,7 @@ async function imageData(assetId: string): Promise<string | null> {
 /** The deck as a PowerPoint file, saved. Returns the file's name. */
 export async function downloadPptx(artifact: Artifact): Promise<string> {
   const { pptxBytes } = await import("./exportPptx");
-  const bytes = await pptxBytes(artifact.content, { sources: sourcesOf(artifact), resolveImage: imageData });
+  const bytes = await pptxBytes(artifact.content, { sources: sourcesOf(artifact), resolveImage: imageData, brand: getBrandTheme() });
   const name = `${fileBase(artifact)}.pptx`;
   saveBlob(new Blob([bytes as BlobPart], { type: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }), name);
   return name;

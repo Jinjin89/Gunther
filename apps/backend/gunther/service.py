@@ -475,7 +475,7 @@ class KnowledgeService:
         # Settings → Developer: outputs are made by following a skill (see skill_runner);
         # off, by the agents in outputs alone.
         self.output_skills = True
-        self.output_method = "skills"  # "studio": gunther/studio makes Outputs
+        self.output_method = "studio"  # "skills": the earlier skill steps make Outputs
         self.slide_renderer = None
         # Let Ask pick a skill itself from the message (settings.ask_auto_skills).
         self.auto_skills = False

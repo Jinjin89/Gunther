@@ -8,7 +8,8 @@ import { wrap } from "./measure";
 import { tokens } from "./inlineTokens";
 import { sourceLine } from "./inlineTokens";
 import { parseDeck, type DeckData, type DeckSlide } from "./parseDeck";
-import { DECK_THEME_TOKENS, deckAccent } from "./theme";
+import type { BrandTheme } from "./brand";
+import { deckAccent, resolveTheme } from "./theme";
 import { countUnits, visible } from "./units";
 
 export interface PptxOptions {
@@ -16,6 +17,8 @@ export interface PptxOptions {
   sources?: string[];
   /** The bytes of a kept figure as a data URL, or null when it cannot be had. */
   resolveImage?: (assetId: string) => Promise<string | null>;
+  /** The brand theme of an imported template, used when the deck says `theme: brand` (without it, paper). */
+  brand?: BrandTheme | null;
 }
 
 const inch = (px: number) => px / 96;
@@ -25,14 +28,14 @@ const SANS = "Arial";
 const SERIF = "Georgia";
 const CJK = /[　-鿿豈-﫿가-힯＀-￯]/;
 
-interface Ink { bg: string; ink: string; muted: string; rule: string; soft: string; bar: string; onAccent: string; accent: string; titleFont: string }
+interface Ink { bodyFont: string; logo: string | null; logoRatio: number; bg: string; ink: string; muted: string; rule: string; soft: string; bar: string; onAccent: string; accent: string; titleFont: string }
 interface Run { text: string; options: Record<string, unknown> }
 interface Base { size: number; color: string; bold?: boolean; italic?: boolean; font?: string }
 
 /** Runs for one paragraph of Markdown: bold, italic, and citation marks as superscript numbers. */
 function runs(raw: string, base: Base, ink: Ink, last = true, extra: Record<string, unknown> = {}): Run[] {
   const out: Run[] = [];
-  const add = (text: string, options: Record<string, unknown>) => out.push({ text, options: { fontFace: base.font ?? SANS, fontSize: pt(base.size), color: hex(base.color), bold: base.bold, italic: base.italic, ...(CJK.test(text) ? { lang: "zh-CN" } : {}), ...options } });
+  const add = (text: string, options: Record<string, unknown>) => out.push({ text, options: { fontFace: base.font ?? ink.bodyFont, fontSize: pt(base.size), color: hex(base.color), bold: base.bold, italic: base.italic, ...(CJK.test(text) ? { lang: "zh-CN" } : {}), ...options } });
   const walk = (parts: ReturnType<typeof tokens>, inherit: Record<string, unknown>) => {
     for (const token of parts) {
       if (token.t === "text") add(token.v, inherit);
@@ -57,8 +60,9 @@ const heightOf = (raw: string, size: number, width: number, line = 1.34, weight 
 
 export async function buildPptx(content: string, options: PptxOptions = {}): Promise<PptxGenJS> {
   const deck = parseDeck(content);
-  const theme = DECK_THEME_TOKENS[deck.theme];
-  const ink: Ink = { ...theme, accent: hex(deckAccent(deck.accent, deck.theme)), titleFont: theme.titleFont === "serif" ? SERIF : SANS };
+  const resolved = resolveTheme(deck.theme, options.brand);
+  const theme = resolved.tokens;
+  const ink: Ink = { ...theme, accent: hex(deckAccent(deck.accent, deck.theme, options.brand)), titleFont: resolved.titleName ?? (theme.titleFont === "serif" ? SERIF : SANS), bodyFont: resolved.bodyName ?? SANS, logo: resolved.brand?.logo ? resolved.brand.logo.replace(/^data:/, "") : null, logoRatio: resolved.brand?.logoRatio ?? 3 };
   for (const key of ["bg", "ink", "muted", "rule", "soft", "bar", "onAccent"] as const) (ink as unknown as Record<string, string>)[key] = hex(theme[key]);
   const numbers = (options.sources ?? []).map((_, at) => at + 1);
   const pptx = new PptxGenJS();
@@ -69,8 +73,15 @@ export async function buildPptx(content: string, options: PptxOptions = {}): Pro
     slide.background = { color: ink.bg };
     const foot = sourceLine(source.body, numbers, options.sources);
     await draw(pptx, slide, source, at === 0 ? "title" : source.data.layout, ink, options);
-    if (foot) slide.addText(foot, { x: inch(80), y: inch(692), w: inch(1000), h: inch(22), fontFace: SANS, fontSize: pt(14), color: ink.muted, margin: 0, valign: "middle", fit: "none", wrap: false });
-    if (source.data.layout !== "title" && source.data.layout !== "section") slide.addText(String(at + 1), { x: inch(1100), y: inch(692), w: inch(100), h: inch(22), fontFace: SANS, fontSize: pt(14), color: ink.muted, align: "right", margin: 0, valign: "middle" });
+    if (ink.logo) {
+      const kind = at === 0 ? "title" : source.data.layout;
+      const h = kind === "title" ? 64 : kind === "section" ? 40 : 28;
+      const w = Math.min(h * ink.logoRatio, kind === "title" ? 280 : 160);
+      const top = kind === "title" ? 56 : kind === "section" ? 40 : 12;
+      slide.addImage({ data: ink.logo, x: inch(1200 - w), y: inch(top), w: inch(w), h: inch(Math.min(h, w / ink.logoRatio)), sizing: { type: "contain", w: inch(w), h: inch(h) } } as never);
+    }
+    if (foot) slide.addText(foot, { x: inch(80), y: inch(692), w: inch(1000), h: inch(22), fontFace: ink.bodyFont, fontSize: pt(14), color: ink.muted, margin: 0, valign: "middle", fit: "none", wrap: false });
+    if (source.data.layout !== "title" && source.data.layout !== "section") slide.addText(String(at + 1), { x: inch(1100), y: inch(692), w: inch(100), h: inch(22), fontFace: ink.bodyFont, fontSize: pt(14), color: ink.muted, align: "right", margin: 0, valign: "middle" });
     if (source.notes) slide.addNotes(source.notes);
   }
   return pptx;
@@ -214,8 +225,8 @@ async function draw(pptx: PptxGenJS, slide: Slide, source: DeckSlide, layout: st
         dataLabelFormatCode: `General${symbol ? `"${symbol}"` : ""}`, dataLabelPosition: d.kind === "line" ? "t" : "outEnd",
         catAxisLabelFontSize: pt(20), catAxisLabelColor: ink.ink, catAxisOrientation: d.kind === "bar" ? "maxMin" : "minMax", catAxisLineShow: true, valAxisHidden: !crowded,
         valGridLine: crowded ? { color: ink.rule, size: 0.75 } : { style: "none" }, catGridLine: { style: "none" }, valAxisLineShow: false, valAxisLabelFontSize: pt(18), valAxisLabelColor: ink.muted,
-        showLegend: m > 1, legendPos: "t", legendFontSize: pt(20), legendColor: ink.ink, legendFontFace: SANS,
-        barGapWidthPct: 60, lineSize: 4, lineDataSymbolSize: 9, catAxisLabelFontFace: SANS, dataLabelFontFace: SANS,
+        showLegend: m > 1, legendPos: "t", legendFontSize: pt(20), legendColor: ink.ink, legendFontFace: ink.bodyFont,
+        barGapWidthPct: 60, lineSize: 4, lineDataSymbolSize: 9, catAxisLabelFontFace: ink.bodyFont, dataLabelFontFace: ink.bodyFont,
         plotArea: { fill: { color: ink.bg } },
       } as never);
       if (d.after) after(d.after, bodyBottom - afterH + 20, true);
@@ -239,7 +250,7 @@ async function draw(pptx: PptxGenJS, slide: Slide, source: DeckSlide, layout: st
         d.head.map((cell, c) => ({ text: runs(cell, { size: 18, color: ink.muted, bold: true }, ink) as never, options: { ...side(c), valign: "bottom", border: [{ type: "none" }, { type: "none" }, { pt: 1.5, color: ink.ink }, { type: "none" }], margin: [0, inch(10), inch(6), 0] } })),
         ...d.rows.map((row) => row.cells.map((cell, c) => ({ text: runs(cell, { size, color: ink.ink, bold: row.highlight || c === 0 }, ink) as never, options: { ...side(c), valign: "middle", fill: row.highlight ? { color: ink.soft } : undefined, border: [{ type: "none" }, { type: "none" }, { pt: row.highlight ? 1.5 : 0.75, color: row.highlight ? ink.ink : ink.rule }, { type: "none" }], margin: [0, inch(10), 0, inch(c === 0 && row.highlight ? 12 : 0)] } }))),
       ];
-      slide.addTable(rows as never, { x: inch(80), y: inch(top), w: inch(1120), colW: cw, rowH: [inch(headH), ...d.rows.map(() => inch(rowH))], fontFace: SANS, autoPage: false });
+      slide.addTable(rows as never, { x: inch(80), y: inch(top), w: inch(1120), colW: cw, rowH: [inch(headH), ...d.rows.map(() => inch(rowH))], fontFace: ink.bodyFont, autoPage: false });
       if (d.after) after(d.after, bodyBottom - afterH + 20, true);
       break;
     }

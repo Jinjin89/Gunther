@@ -37,7 +37,7 @@ export const compositionFor = (layout: string | null | undefined, value: string 
 const LAYOUT_MARK = /^[ \t\r\n]*<!--[ \t]*layout:[ \t]*([a-z][a-z0-9_]*)[ \t]*(?:;[ \t]*[a-z][a-z0-9_]*:[^;\r\n]*?)*[ \t]*-->[ \t]*(?:\r?\n|$)/;
 const MARKER_ATTR = /;[ \t]*([a-z][a-z0-9_]*):[ \t]*([^;\r\n]*?)[ \t]*(?=;|-->)/g;
 /** The visual themes of the studio design (design: v2). */
-export const DECK_THEMES = ["paper", "ink", "editorial"] as const;
+export const DECK_THEMES = ["paper", "ink", "editorial", "brand"] as const;
 export type DeckTheme = (typeof DECK_THEMES)[number];
 
 /** Each line of a document, and whether it is inside a code fence. */

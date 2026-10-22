@@ -243,3 +243,9 @@
 .dk-l-statement .dk-statement { padding-bottom: 24px; }
 .dk-l-statement .dk-big { max-width: 1120px; }
 .dk-compare.is-md .dk-sides li { font-size: 28px; }
+
+/* A brand theme's logo: small in the top-right corner of a content slide, larger on the title slide. */
+.dk-logo { position: absolute; top: 12px; right: 80px; height: 28px; width: auto; max-width: 160px; object-fit: contain; z-index: 2; }
+.dk-l-title .dk-logo { top: 56px; right: 80px; height: 64px; max-width: 280px; }
+.dk-l-section .dk-logo { top: 40px; height: 40px; }
+.dk-brand .dk-cover h1, .dk-brand .dk-title { font-weight: 700; }

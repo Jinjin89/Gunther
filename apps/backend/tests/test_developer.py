@@ -33,10 +33,10 @@ def test_answers_keep_how_they_were_made_only_while_asked(tmp_path: Path) -> Non
         assert client.get("/api/settings/developer", headers=SIDECAR).json() == {
             "traces": False,
             "outputSkills": True,
-            "outputMethod": "skills",
+            "outputMethod": "studio",
         }
         turned_on = client.put("/api/settings/developer", headers=SIDECAR, json={"traces": True})
-        assert turned_on.json() == {"traces": True, "outputSkills": True, "outputMethod": "skills"}
+        assert turned_on.json() == {"traces": True, "outputSkills": True, "outputMethod": "studio"}
         first = ask(client, session_id)
         found = client.get(
             f"/api/sessions/{session_id}/messages/{first['id']}/trace", headers=SIDECAR

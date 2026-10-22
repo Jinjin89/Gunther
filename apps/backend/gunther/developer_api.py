@@ -45,7 +45,7 @@ def _developer(request: Request) -> dict[str, Any]:
     return {
         "traces": saved["traces"],
         "outputSkills": saved.get("output_skills", True),
-        "outputMethod": saved.get("output_method", "skills"),
+        "outputMethod": saved.get("output_method", "studio"),
     }
 
 
@@ -64,7 +64,7 @@ def save_developer(payload: DeveloperIn, request: Request) -> dict[str, Any]:
             output_skills=payload.output_skills,
             output_method=payload.output_method,
         )
-        _service(request).output_method = _store(request).developer().get("output_method", "skills")
+        _service(request).output_method = _store(request).developer().get("output_method", "studio")
     except OSError as error:
         raise HTTPException(503, "The settings could not be saved to disk") from error
     return _developer(request)

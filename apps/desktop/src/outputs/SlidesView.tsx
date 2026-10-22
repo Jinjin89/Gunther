@@ -9,10 +9,12 @@ import { ArtifactMenu } from "./ArtifactMenu";
 import { SectionStatus } from "./ReportView";
 import { SlideFace } from "./SlideFace";
 import { SlideStylePicker } from "./SlideStylePicker";
-import { ACCENTS, THEMES, attrsOf, parseSlides, slideLayouts, splitDocument } from "./sections";
+import { ACCENTS, THEMES, type DeckTheme, attrsOf, parseSlides, slideLayouts, splitDocument } from "./sections";
 import { ACCENT_COLOURS, ACCENT_LABELS, type Accent, isAccent, themeAccentColour } from "./slides/accent";
 import { slideThemeStyle } from "./slides/themes";
 import { deckStageStyle } from "./deck/theme";
+import { useBrandTheme } from "./deck/brandStore";
+import { DeckThemeMenu } from "./deck/DeckThemeMenu";
 import "reveal.js/reveal.css";
 
 /** Reveal's settings: a 16:9 deck inside its box, moved by keys only while it has focus. */
@@ -51,7 +53,7 @@ const SWATCHES = Object.fromEntries(ACCENTS.map((name) => {
  * not the screen's full-screen mode: the window keeps its size, and a person who wants the
  * whole screen can use the window's own button).
  */
-export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, onAccent, onTheme, accentDisabled = false, compact = false }: {
+export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, onAccent, onTheme, onDeckTheme, onNotice, accentDisabled = false, compact = false }: {
   artifact: Artifact;
   onCite: (citation: ConversationCitation, index: number) => void;
   /** The slide in view (counted from 0), told on every change: the part a message is about when nothing is chosen. */
@@ -66,6 +68,10 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
   onAccent?: ((accent: Accent) => void) | undefined;
   /** Changes the deck's visual theme through the version edit path. */
   onTheme?: ((theme: string) => void) | undefined;
+  /** Changes the studio deck's theme (Paper, Ink, Editorial or the imported template). Without it the toolbar has no theme menu for studio decks. */
+  onDeckTheme?: ((theme: DeckTheme) => void) | undefined;
+  /** Said to the person (a template was imported, with what was adjusted). */
+  onNotice?: ((text: string) => void) | undefined;
   /** The Accent menu is there but cannot be used now (something is being saved, or this is not the latest version). */
   accentDisabled?: boolean;
   /** A small preview (beside the editor): no arrows over the slide, the thumbnails move it. */
@@ -89,8 +95,9 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
   const theme = slides[0]?.theme ?? "classic";
   const designVersion = slides[0]?.designVersion ?? 0;
   const deckTheme = slides[0]?.deckTheme ?? "paper";
+  const brand = useBrandTheme();
   // A studio deck (design v2) is drawn in its own theme: the stage takes its colours.
-  const stageStyle = (designVersion === 2 ? deckStageStyle(deckTheme, accent) : { ...slideThemeStyle(theme), "--outputs-accent": themeAccentColour(accent, theme) }) as CSSProperties;
+  const stageStyle = (designVersion === 2 ? deckStageStyle(deckTheme, accent, brand) : { ...slideThemeStyle(theme), "--outputs-accent": themeAccentColour(accent, theme) }) as CSSProperties;
   const canAccent = !slides[0]?.layout || slides[0].layout === "title";
   const canTheme = canAccent && designVersion !== 2;
   const reportFit = useCallback((index: number, fit: number, overflow: boolean) => setFitNotes((previous) => {
@@ -170,6 +177,7 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
           <option value="editorial">Editorial</option>
         </select>}
         {onTheme && canTheme && <SlideStylePicker value={theme} accent={accent} designVersion={designVersion} disabled={accentDisabled} onSelect={onTheme} numbers={numbers} sources={sources} samples={[0, slides.findIndex((_, index) => index > 0)].filter(index => index >= 0).map(index => ({ body: slides[index]!.body, title: index === 0, layout: layouts[index], composition: slides[index]!.composition, scene: slides[index]!.scene }))} />}
+        {onDeckTheme && designVersion === 2 && canAccent && <DeckThemeMenu value={deckTheme} disabled={accentDisabled} onSelect={onDeckTheme} onNotice={(text) => onNotice?.(text)} />}
         {onAccent && canAccent && (accentDisabled
           ? <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled><Palette size={13} />Accent</button>
           : <ArtifactMenu label="Accent colour" triggerLabel="Accent colour" triggerClass="gx-btn gx-btn-quiet gx-btn-sm" trigger={<><Palette size={13} />Accent</>}
