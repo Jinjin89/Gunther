@@ -176,6 +176,10 @@ def check_slide(slide: Slide, *, first: bool, read: bool = False) -> list[str]:
             limit("title", slide.title, 80, 8)
         if lines:
             limit("subtitle", lines[0], 160)
+            if re.search(r"\d", CITE.sub("", lines[0])) and not CITE.search(lines[0]):
+                problems.append(
+                    "The subtitle states numbers: cite the passages they come from, like [2]."
+                )
         if len(lines) > 2:
             problems.append("The title slide has at most a subtitle line and a meta line.")
         return problems
@@ -402,10 +406,14 @@ def check_deck(
                 f'"{meta.group(0)}": write about the world, not about the material — state the '
                 "finding or the decision itself."
             )
-        if slide.layout not in ("title", "section") and LABEL_TITLE.search(slide.title):
+        latin_words = re.findall(r"[A-Za-z0-9'’%.-]+", CITE.sub("", slide.title))
+        cjk_chars = sum(1 for ch in slide.title if "\u4e00" <= ch <= "\u9fff")
+        short = (len(latin_words) < 5 and cjk_chars < 8) if not cjk_chars else cjk_chars < 8
+        if slide.layout not in ("title", "section") and (short or LABEL_TITLE.search(slide.title)):
             problems.append(
-                "The title announces content instead of stating it. Put the point itself in the "
-                'title (not "Three findings change the decision" but what they are).'
+                "The title names a topic or announces content instead of stating the point. "
+                'Write the point itself as a full sentence (not "Early applications" but what '
+                "the early applications show)."
             )
         if CITE.search(slide.title):
             problems.append(

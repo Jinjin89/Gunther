@@ -412,3 +412,19 @@ sources) and finds `.dk-face`; v2 type sizes are measured at the stage scale; a 
 carry a citation mark (the Python checker allowed it, the renderer fell back to plain text); Chromium
 gets `--no-sandbox` when run as root. Eval: `--visual-judge REF`.
 
+
+**2026-10-22 — round 7: everything in (render-and-look, renderer fixes, new rules).**
+`evals/results/20261022-1609-quality-studio-v7`, all seven sets: ship rate 97% (decks 98%,
+reports 96%), strict ship 66%, titles-only 86%, decks' visual score 7.1/10 from a vision judge
+(DeepSeek Flash; 6.6 before the renderer fixes; the report "visual" figure is not meaningful —
+the vision judge is built for slides). The look step ran on every deck in 23–131 s and left
+clean decks alone. 8 hard defects remained (4 topic titles such as "Early applications", 4
+uncited repeated numbers); the deck checker now sends back titles under five words and
+subtitles whose numbers carry no citation.
+
+**Packaging.** The sidecar collects `gunther.studio`; the frozen binary passes `--studio-smoke`
+and `/api/health`; the bundled renderer draws v2 decks (10-slide Chinese deck in 3.4 s); the
+production bundle's PPTX/DOCX exports work. The .deb itself could not be assembled here: the
+sidecar with the document parser is ~10 GB and Tauri stages it twice, needing ~40 GB this
+machine does not have. To check on the Mac: DMG build and signing, Chromium in the packaged app,
+PowerPoint/Word opening the exports, save dialogs, template import.
