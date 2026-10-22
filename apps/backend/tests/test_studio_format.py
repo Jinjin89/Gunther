@@ -123,3 +123,13 @@ def test_writing_about_the_material_is_a_format_problem():
         "## The pilot cut review time by 60%", "## What the evidence shows about review time"
     )
     assert any("about the world" in p for p in dict(fmt.check_deck(deck))[2])
+
+
+def test_uncited_exhibit_rows_cite_the_source_line():
+    text = (
+        ":::exhibit\nExhibit 1 — Growth\n| 指标 | 增速 |\n| --- | --- |\n| GDP | +5.0% |\n"
+        "| CPI | +0.2% [3] |\nSource: 统计公报 [2]\n:::"
+    )
+    out = fmt.cite_exhibit_rows(text)
+    assert "| GDP | +5.0% [2] |" in out and "| CPI | +0.2% [3] |" in out
+    assert "| 指标 | 增速 |" in out

@@ -576,3 +576,33 @@ def cite_captions(text: str) -> str:
         return "\n".join(lines)
 
     return EXHIBIT.sub(fix, text)
+
+
+def cite_exhibit_rows(text: str) -> str:
+    """An exhibit row with numbers and no citation cites what the exhibit's Source line cites:
+    the table is read off those sources, and each value must be checkable against them."""
+
+    def fix(match: re.Match[str]) -> str:
+        lines = match.group(0).split("\n")
+        source = next(
+            (ln for ln in reversed(lines) if re.match(r"^(Source|Sources|来源)\s*[:：]", ln)), ""
+        )
+        refs = "".join(f"[{n}]" for n in dict.fromkeys(re.findall(r"\[(\d+)\]", source)))
+        if not refs:
+            return match.group(0)
+        out = []
+        for line in lines:
+            cells = line.strip().strip("|").split("|") if line.startswith("|") else []
+            data = (
+                cells
+                and not all(re.fullmatch(r"\s*:?-{2,}:?\s*", c) for c in cells)
+                and re.search(r"\d", "".join(cells[1:]))
+                and not CITE.search(line)
+                and line is not lines[0]
+            )
+            if data and out and any(o.startswith("|") for o in out):
+                line = line.rstrip().rstrip("|").rstrip() + f" {refs} |"
+            out.append(line)
+        return "\n".join(out)
+
+    return EXHIBIT.sub(fix, text)

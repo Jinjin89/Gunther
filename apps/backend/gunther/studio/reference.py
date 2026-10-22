@@ -14,7 +14,8 @@ title (first slide only):
 # Deck title (≤80)
 The core message in one line (≤160)
 Committee briefing · March 2026
-(Line 2 is the subtitle, line 3 an optional meta line with no citations. Never write labels such as "Subtitle:", "Meta:", "Verdict:", "Takeaway:" or "Label:" — every example line below shows content only.)
+(Line 2 is the subtitle: the answer itself in one sentence, never a description of the deck \
+such as "A briefing on…". Line 3 is an optional meta line (audience · date) with no citations. Never write labels such as "Subtitle:", "Meta:", "Verdict:", "Takeaway:" or "Label:" — every example line below shows content only.)
 
 section:
 <!-- layout: section -->

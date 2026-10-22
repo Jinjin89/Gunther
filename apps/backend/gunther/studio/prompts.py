@@ -95,6 +95,8 @@ groups or years), use a chart or a table, not a list. A deck built on numeric ma
 without a single chart or table is unfinished.
 - Vary the layouts naturally; never three slides in a row with the same layout. Use \
 "points" only when nothing else fits, at most twice.
+- The title slide's subtitle states the answer itself (the memo's answer, sharpened), never \
+"An overview of…" or "A briefing for…"; who it is for goes in the meta line.
 - Slide 2 never repeats the title slide: it usually gives the answer with its 2–4 \
 findings (summary).
 - The last slide's title states the decision or recommendation itself ("Fund cool roofs \

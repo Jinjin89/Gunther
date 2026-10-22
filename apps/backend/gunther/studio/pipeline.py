@@ -54,6 +54,9 @@ STUDIO_CHECK = (
     "decisions, priorities, interpretations and transitions are the author's judgement: mark "
     "them 'inference' or 'nonfactual', never 'not', even when the sources do not say them."
 )
+# What the claim fix works on: a cited fact its passage does not state, and a number with no
+# source (the fixer cites the passage that states it, or drops the number).
+FIXABLE = ("unsupported", "contradicted", "unsourced")
 READ_HINT = r"\b(pre-?read|handout|to read|send|email)\b|阅读|发给|会后"
 
 
@@ -705,7 +708,7 @@ class StudioAgents(OutputAgents):
                         "reason": "; ".join(left)[:600],
                     }
                 )
-        text = fmt.cite_captions(fmt.ensure_summary_mark(text))
+        text = fmt.cite_exhibit_rows(fmt.cite_captions(fmt.ensure_summary_mark(text)))
         self._stage(emit, "write", "Writing the report", "done")
         return text
 
@@ -729,7 +732,7 @@ class StudioAgents(OutputAgents):
         bad = [
             index
             for index, draft in enumerate(drafts)
-            if any(issue.verdict in ("unsupported", "contradicted") for issue in draft.issues or [])
+            if any(issue.verdict in FIXABLE for issue in draft.issues or [])
         ]
         if bad:
             fixed = self._fix_claims(model, [drafts[i] for i in bad], by_ref)
@@ -802,6 +805,29 @@ class StudioAgents(OutputAgents):
                 issues.append(Issue(plain[:300], "unsourced", "A specific fact with no source."))
         return issues, coverage
 
+    def _refit(self, model, effort, run: Run, drafts: list[Draft], pool: Pool) -> list[Draft]:
+        """Claim fixes can lengthen a slide past its budget: the format is checked again, and a
+        slide that changed is checked against its sources once more."""
+
+        joined = "\n\n---\n\n".join(d.text for d in drafts)
+        if not fmt.check_deck(joined, read=run.use == "read", notes_required=False):
+            return drafts
+        fitted = fmt.split_slides(self.fix_format(model, effort, run, joined, _no_events))
+        if len(fitted) != len(drafts):
+            return drafts
+        changed = [i for i, (d, t) in enumerate(zip(drafts, fitted, strict=True)) if d.text != t]
+        by_ref = pool.by_ref()
+
+        def check(text: str) -> Draft:
+            issues, coverage = self._claims(model, text, by_ref)
+            return Draft(text, issues + self._chart_issues(text, by_ref), coverage)
+
+        with ThreadPoolExecutor(WORKERS) as workers:
+            again = list(workers.map(_in_context(check), [fitted[i] for i in changed]))
+        for index, draft in zip(changed, again, strict=True):
+            drafts[index] = draft
+        return drafts
+
     @staticmethod
     def _chart_issues(text: str, by_ref: dict[int, Evidence]):
         from gunther.outputs import Issue
@@ -819,9 +845,7 @@ class StudioAgents(OutputAgents):
         parts = []
         refs: set[int] = set()
         for number, draft in enumerate(drafts, 1):
-            flagged = [
-                i for i in draft.issues or [] if i.verdict in ("unsupported", "contradicted")
-            ]
+            flagged = [i for i in draft.issues or [] if i.verdict in FIXABLE]
             parts.append(
                 f"Part {number}:\n{draft.text}\n\nUnsupported in part {number}:\n"
                 + "\n".join(f'- "{i.claim}" ({i.note})' for i in flagged)
@@ -900,6 +924,7 @@ class StudioAgents(OutputAgents):
             text = self.fix_format(model, effort, run, text, emit)
             parts = fmt.split_slides(text)
             drafts = self.verify(model, run, parts, pool, emit)
+            drafts = self._refit(model, effort, run, drafts, pool)
             outline = [
                 Planned(
                     fmt.parse_slide(d.text).title or f"Slide {n}",
