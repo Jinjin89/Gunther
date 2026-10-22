@@ -513,6 +513,13 @@ def check_report(text: str) -> list[str]:
                 f"Section {number} heading is {size} units; the limit is {REPORT_HEADING_UNITS}. "
                 f'Shorten it to one claim: "{heading[:80]}"'
             )
+    body_text = re.sub(r"^:::exhibit.*?^:::\s*$", "", text, flags=re.M | re.S)
+    for match in META.finditer(body_text):
+        problems.append(
+            f'"{match.group(0)}": write about the world, not about the material — state the '
+            "finding itself and cite the passage."
+        )
+        break
     if re.search(r"^- \*\*(Finding|发现|Key finding)\*\*", text, re.M | re.I):
         problems.append(
             'Summary bullets start with a label ("**Finding**"); make each bold lead the '
@@ -577,7 +584,8 @@ def _same(one: str, two: str) -> bool:
 
 META = re.compile(
     r"\b(?:the sources?|the materials?|the evidence (?:shows|suggests)|supported points|"
-    r"the documents?|the provided|this dataset|according to the (?:material|sources?))\b|"
+    r"the documents?|the provided|this dataset|(?:in |nothing in )?the files?\b|"
+    r"according to the (?:material|sources?))\b|"
     r"现有材料|材料显示|资料显示|根据材料",
     re.I,
 )
