@@ -443,3 +443,13 @@ questions" item without a citation), reports 0. ~11 min per artifact with 7 buil
 | Traceable claims | met |
 | Deck ≤ 4 min / report ≤ 6 min | not met on DeepSeek V4 Pro (~9 min for one deck alone); Claude not measurable here (no key) |
 | Exports, app flow, template, Chinese | built and tested here; the Mac trial is the remaining check |
+
+**2026-10-22 — after round 8.** The deck checker now sends back uncited numbers on slides, and
+as a last resort moves the trailing clause of a still-over-long line into the speaker notes
+(both round-8 defects pass with these rules); the linter counts units exactly as the contract.
+A reduced `.deb` (without the document layout parser, 377 MB) built here
+(`node ../../scripts/build-desktop.mjs --bundles deb --config '{"build":{"beforeBuildCommand":"npm run build"}}'`
+after `node scripts/build-backend-sidecar.mjs --without-document-parser`); its sidecar passes
+`--studio-smoke`. A full release with the parser needs ~40 GB of free disk.
+Stage times (round 8, 14 builds at once): memo ~1 min, storyline + critic 2–3 min, writing
+2–6 min, checking 1.5–4 min, look < 1.5 min.
