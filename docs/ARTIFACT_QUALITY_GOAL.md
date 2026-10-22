@@ -469,3 +469,8 @@ mostly report sentences repeating numbers without a citation, which the claim ch
 for the fix step to cite. So the §1 time targets are met on this machine with a fast writing
 model at equal content quality; the choice of Outputs model stays the user's (Settings →
 Models). Claude remains untimed here.
+
+**2026-10-22 — Flash writer, re-run with the uncited-number fix** (`20261022-1833-quality-studio-v10-flash`):
+ship 97%, strict ship 66%, titles-only 93%, hard defects 1 in 14 (down from 6), ~6.6 min per
+artifact with 7 at once (4.4 min alone). Both writers now meet the quality bar here; Flash
+also meets the time bar.
