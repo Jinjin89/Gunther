@@ -341,3 +341,13 @@ Claude runs on the user's Mac once a key is added.
 - Tests: `tests/test_studio_format.py`, `tests/test_studio_pipeline.py`.
 - In progress (builder agents): deck v2 renderer, themes, gallery, PPTX/DOCX export, report v2
   view; the quality eval (`evals/quality`).
+
+**2026-10-22 — first measurements (DeepSeek V4 Pro writes and judges; text-only judge).**
+Round 1 (`evals/results/20261022-0739-quality-studio-v1`), studio vs the earlier skills method
+on velmora and ev-outlook: head-to-head the studio won 2 and tied 2 overall, never lost on any
+criterion; it used ~22 model calls per artifact against ~69. Absolute scores were held down by
+two measuring faults found afterwards, both fixed: the judge and the claim checker each saw only
+the start of a passage (420 / 900 characters), so facts later in a studio passage (~1,400
+characters) were called unsupported. Velmora studio: 8/8/8/8/7/7 (insight, storyline, titles,
+evidence, clarity, correctness), every slide or section "ship" or "minor edit".
+Committed `ce0b101`, `7a4c477` (not pushed). Round 2 runs on all seven sets.
