@@ -645,7 +645,8 @@ def cite_exhibit_rows(text: str) -> str:
 
 LABEL_TITLE = re.compile(
     r"^(?:the )?(?:two|three|four|five|\d+) (?:key )?(?:findings|numbers|things|points|reasons|"
-    r"facts|takeaways|lessons|questions|risks)\b|^(?:key (?:findings|takeaways|points)|next steps|"
+    r"facts|takeaways|lessons|questions|risks)\b|\bin one (?:sentence|slide|line|breath)\b|"
+    r"^(?:key (?:findings|takeaways|points)|next steps|"
     r"summary|overview|conclusions?)\s*$|^[三四五两]个(?:发现|数字|要点|原因)",
     re.I,
 )
@@ -744,3 +745,31 @@ def trim_to_notes(text: str, *, first: bool, read: bool = False) -> str:
         if len(after) < len(before):
             return fixed
     return text
+
+
+def cite_repeated_numbers(text: str) -> str:
+    """A line that repeats a number already cited elsewhere in the same document carries that
+    citation too. Only when every countable number on the line is found cited elsewhere."""
+
+    cited: dict[str, list[str]] = {}
+    for line in text.split("\n"):
+        refs = re.findall(r"\[(\d+)\]", line)
+        if not refs:
+            continue
+        for number in re.findall(r"\d[\d,，.]*%?", CITE.sub("", line)):
+            if _countable(number):
+                key = normal_number(number.rstrip("%")) + ("%" if number.endswith("%") else "")
+                cited.setdefault(key, [])
+                cited[key] += [r for r in refs if r not in cited[key]]
+    out = []
+    for line in text.split("\n"):
+        if line.strip() and line in uncited_lines([line]):
+            numbers = [n for n in re.findall(r"\d[\d,，.]*%?", line) if _countable(n)]
+            keys = [
+                normal_number(n.rstrip("%")) + ("%" if n.endswith("%") else "") for n in numbers
+            ]
+            if keys and all(k in cited for k in keys):
+                refs = list(dict.fromkeys(r for k in keys for r in cited[k]))[:3]
+                line = line.rstrip() + " " + "".join(f"[{r}]" for r in refs)
+        out.append(line)
+    return "\n".join(out)

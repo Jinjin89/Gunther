@@ -155,3 +155,13 @@ def test_a_slide_still_over_budget_moves_its_tail_clause_into_the_notes():
     body = fmt.parse_slide(trimmed)
     assert fmt.units(body.body[0]) <= 180 and "[1]" in body.body[0]
     assert "Most of the gain sat in a few buildings" in body.notes
+
+
+def test_a_repeated_number_takes_the_citation_it_has_elsewhere():
+    text = (
+        "Savings fell to 9% after adjustment [2].\n\nSo the plan should assume 9%, not 18%."
+        "\n\nRaw 18% [1]."
+    )
+    out = fmt.cite_repeated_numbers(text)
+    assert "So the plan should assume 9%, not 18%. [2][1]" in out
+    assert fmt.cite_repeated_numbers("A new 37% figure.") == "A new 37% figure."

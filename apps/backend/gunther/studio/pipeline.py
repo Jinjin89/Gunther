@@ -999,6 +999,11 @@ class StudioAgents(OutputAgents):
             drafts = [
                 replace(d, text=fmt.cite_exhibit_rows(fmt.cite_captions(d.text))) for d in drafts
             ]
+            # A sentence repeating a figure cited elsewhere in the report cites it too.
+            whole = "\n\n".join(d.text for d in drafts)
+            fixed = fmt.cite_repeated_numbers(whole).split("\n\n")
+            if len(fixed) == len(drafts):
+                drafts = [replace(d, text=t) for d, t in zip(drafts, fixed, strict=True)]
             outline = [
                 Planned(re.sub(r"^##\s*", "", d.text.splitlines()[0]).strip()[:160]) for d in drafts
             ]
