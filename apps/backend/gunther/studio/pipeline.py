@@ -831,6 +831,13 @@ class StudioAgents(OutputAgents):
                 issues.append(Issue(plain[:300], "unsupported", claim.get("reason") or ""))
             elif verdict == "unsourced" and re.search(r"\d", plain):
                 issues.append(Issue(plain[:300], "unsourced", "A specific fact with no source."))
+        # A number with no citation on its line (a recommendation repeating a figure, a table
+        # row): the claim fix cites the passage it comes from, or drops the number.
+        held = {issue.claim[:80] for issue in issues}
+        for line in fmt.uncited_lines([ln for ln in body.split("\n") if not ln.startswith(":::")]):
+            plain = re.sub(r"\s*\[(?:\?|\d+)\]", "", line).strip()
+            if plain[:80] not in held and not re.match(r"^(Source|Sources|来源)\s*[:：]", plain):
+                issues.append(Issue(plain[:300], "unsourced", "A number with no citation."))
         return issues, coverage
 
     def _refit(self, model, effort, run: Run, drafts: list[Draft], pool: Pool) -> list[Draft]:

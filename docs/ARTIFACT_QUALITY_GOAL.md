@@ -459,3 +459,13 @@ ship rate 95% (reports 100%), strict ship 67%, titles-only **100%**, ~10 min per
 with 7 builds at once on DeepSeek V4 Pro. Every §1 target measurable on this machine is now
 met except speed (DeepSeek, not Claude) and the head-to-head with Claude.ai and Gamma
 themselves, which need the user.
+
+**2026-10-22 — speed: DeepSeek Flash as the writer.** One deck alone: 4.4 min (265 s, look
+step included), 0 defects, blind-compared with the V4 Pro deck of round 9: tie on five criteria,
+Flash wins overall. One report alone: 4.5 min, 0 defects, tie on every criterion. Full run
+(`*-quality-studio-v9-flash`, all seven sets, 7 builds at once): ship 97%, strict ship 74%
+(V4 Pro 67%), titles-only 79% (near-misses: the retelling dropped one action), 6 defects —
+mostly report sentences repeating numbers without a citation, which the claim check now flags
+for the fix step to cite. So the §1 time targets are met on this machine with a fast writing
+model at equal content quality; the choice of Outputs model stays the user's (Settings →
+Models). Claude remains untimed here.
