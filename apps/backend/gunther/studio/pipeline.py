@@ -902,11 +902,12 @@ class StudioAgents(OutputAgents):
             if len(drafts) == 1:
                 return None
             # Asked again one part at a time; a part whose fix fails keeps its text.
-            singles = []
-            for draft in drafts:
+            def single(draft: Draft) -> str:
                 one = self._fix_claims(model, [draft], by_ref)
-                singles.append(one[0] if one else draft.text)
-            return singles
+                return one[0] if one else draft.text
+
+            with ThreadPoolExecutor(WORKERS) as workers:
+                return list(workers.map(_in_context(single), drafts))
         out = []
         for draft, piece in zip(drafts, pieces, strict=True):
             piece = re.sub(r"\A\s*Part \d+:\s*\n", "", piece)
