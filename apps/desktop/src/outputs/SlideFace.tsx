@@ -1,7 +1,8 @@
-import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ComponentProps, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnswerBody } from "../pages/AnswerBody";
 import { fitFor, overflowsFace, rememberFit, settleFit, useFit } from "./slideFit";
-import { compositionFor } from "./sections";
+import { compositionFor, type DeckTheme } from "./sections";
+import { DeckSlide } from "./deck/DeckSlide";
 import { themeAccentColour } from "./slides/accent";
 import { SLIDE_THEMES, slideThemeStyle } from "./slides/themes";
 import { Drawing } from "./slides/drawings";
@@ -20,7 +21,7 @@ import "./slides/design.css";
  * its layout's form is drawn by that layout's component (outputs/slides/); one that does not, or
  * has no layout, is its text as Markdown, as every slide was before layouts.
  */
-export function SlideFace({ body, title, layout, accent, theme = "classic", designVersion = 0, composition = "standard", scene: sceneMeta, numbers, sources, onCite, onFitChange, onSceneIssue }: {
+function LegacySlideFace({ body, title, layout, accent, theme = "classic", designVersion = 0, composition = "standard", scene: sceneMeta, numbers, sources, onCite, onFitChange, onSceneIssue }: {
   body: string;
   title: boolean;
   layout?: string | null | undefined;
@@ -181,4 +182,23 @@ export function SlideFace({ body, title, layout, accent, theme = "classic", desi
         ? <SlideContext.Provider value={context}><Drawing shape={shape} /></SlideContext.Provider>
       : <AnswerBody content={body} numbers={numbers} onCitation={onCite} />}
   </div>;
+}
+
+/**
+ * What one slide shows. A deck whose title slide says `design: v2` is drawn by the studio renderer
+ * (outputs/deck/); every other deck is drawn as it always was.
+ */
+export function SlideFace(props: ComponentProps<typeof LegacySlideFace> & {
+  /** The marker's other options (`chart: column`). Only the studio design reads them. */
+  attrs?: Record<string, string> | undefined;
+  /** The studio design's theme and the slide's place in the deck. */
+  deckTheme?: DeckTheme | undefined;
+  first?: boolean | undefined;
+  page?: number | undefined;
+}) {
+  const { attrs, deckTheme, first, page, ...legacy } = props;
+  if (props.designVersion === 2) {
+    return <DeckSlide body={props.body} layout={props.layout} attrs={attrs} theme={deckTheme ?? "paper"} accent={props.accent} first={first ?? props.title} numbers={props.numbers} sources={props.sources} page={page} onCite={props.onCite} onFitChange={props.onFitChange} />;
+  }
+  return <LegacySlideFace {...legacy} />;
 }

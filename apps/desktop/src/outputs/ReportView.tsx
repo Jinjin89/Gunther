@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnswerBody, citationNumbers } from "../pages/AnswerBody";
 import { splitDocument, withoutTitle } from "./sections";
+import { isReportV2 } from "./deck/detect";
+import { ReportV2Section } from "./deck/ReportV2";
 
 const VERDICT: Record<OutputIssue["verdict"], string> = {
   unsupported: "Its sources don’t state this",
@@ -87,7 +89,8 @@ export function ReportView({ artifact, onCite, onAsk, goTo, changed }: {
   if (artifact.origin === "legacy") {
     return <div className="outputs-body"><AnswerBody content={withoutTitle(artifact.content)} numbers={[]} /></div>;
   }
-  const brief = withoutTitle(parts.preamble);
+  const v2 = isReportV2(artifact.content);
+  const brief = withoutTitle(parts.preamble).replace(/^\s*<!--\s*report:\s*v2\s*-->\s*/, "");
   return <div ref={body} className="outputs-body">
     {brief && <div className="outputs-brief"><AnswerBody content={brief} numbers={[]} /></div>}
     {parts.sections.length === 0 && <section className="outputs-section"><AnswerBody content={withoutTitle(artifact.content)} numbers={numbers} onCitation={cite} /></section>}
@@ -96,7 +99,7 @@ export function ReportView({ artifact, onCite, onAsk, goTo, changed }: {
         {changed?.includes(index) && <em className="outputs-changed">Changed</em>}
         {onAsk && <button type="button" className="outputs-ask-section" onClick={() => onAsk(index)}><MessageSquarePlus size={12} />Ask about this section</button>}
       </div>}
-      <AnswerBody content={text} numbers={numbers} onCitation={cite} />
+      {v2 ? <ReportV2Section text={text} numbers={numbers} onCite={cite} /> : <AnswerBody content={text} numbers={numbers} onCitation={cite} />}
       <SectionStatus info={artifact.sections[index]} />
     </section>)}
     {/* On the document body: a fixed layer inside the page's entrance animation fills the page, not the window. */}

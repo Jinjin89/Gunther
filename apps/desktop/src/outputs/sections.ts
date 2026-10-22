@@ -34,8 +34,11 @@ export const compositionFor = (layout: string | null | undefined, value: string 
     ? value as SlideComposition
     : "standard";
 /** At the start of a slide, after any blank lines: layout plus extensible keyed metadata. */
-const LAYOUT_MARK = /^[ \t\r\n]*<!--[ \t]*layout:[ \t]*([a-z][a-z0-9_]*)[ \t]*(?:;[ \t]*([a-z][a-z0-9_]*):[ \t]*([a-z][a-z0-9_-]*)[ \t]*)*-->[ \t]*(?:\r?\n|$)/;
-const MARKER_ATTR = /;[ \t]*([a-z][a-z0-9_]*):[ \t]*([a-z][a-z0-9_-]*)[ \t]*/g;
+const LAYOUT_MARK = /^[ \t\r\n]*<!--[ \t]*layout:[ \t]*([a-z][a-z0-9_]*)[ \t]*(?:;[ \t]*[a-z][a-z0-9_]*:[^;\r\n]*?)*[ \t]*-->[ \t]*(?:\r?\n|$)/;
+const MARKER_ATTR = /;[ \t]*([a-z][a-z0-9_]*):[ \t]*([^;\r\n]*?)[ \t]*(?=;|-->)/g;
+/** The visual themes of the studio design (design: v2). */
+export const DECK_THEMES = ["paper", "ink", "editorial"] as const;
+export type DeckTheme = (typeof DECK_THEMES)[number];
 
 /** Each line of a document, and whether it is inside a code fence. */
 function lines(content: string): Array<{ line: string; fenced: boolean }> {
@@ -88,6 +91,12 @@ function markerAttrs(marker: string): Record<string, string> {
   return Object.fromEntries([...marker.matchAll(MARKER_ATTR)].map((match) => [match[1] ?? "", match[2] ?? ""]));
 }
 
+/** The options of a slide's marker (`chart: column`, `unit: %`): empty for a slide with no marker. */
+export function attrsOf(text: string): Record<string, string> {
+  const found = LAYOUT_MARK.exec(text);
+  return found ? markerAttrs(found[0]) : {};
+}
+
 function markerLine(layout: string, attrs: Record<string, string>): string {
   const parts = Object.entries(attrs).filter(([key, value]) => key && value);
   return `<!-- layout: ${layout}${parts.map(([key, value]) => `; ${key}: ${value}`).join("")} -->`;
@@ -98,7 +107,7 @@ function markerLine(layout: string, attrs: Record<string, string>): string {
  * slide has an accent, and only one of the six colours. A slide with no marker has no layout and
  * is given back as it is.
  */
-export function layoutOf(text: string): { layout: string | null; accent: string | null; theme: SlideTheme | null; composition: SlideComposition; body: string; scene?: ReturnType<typeof decodeScene>; designVersion?: number } {
+export function layoutOf(text: string): { layout: string | null; accent: string | null; theme: SlideTheme | null; composition: SlideComposition; body: string; scene?: ReturnType<typeof decodeScene>; designVersion?: number; deckTheme?: DeckTheme } {
   const found = LAYOUT_MARK.exec(text);
   const layout = found?.[1];
   if (!found || !layout) return { layout: null, accent: null, theme: null, composition: "standard", body: text };
@@ -124,6 +133,7 @@ export function layoutOf(text: string): { layout: string | null; accent: string 
     body,
     ...(scene ? { scene } : {}),
     ...(layout === "title" && attrs.design === "v1" ? { designVersion: 1 } : {}),
+    ...(layout === "title" && attrs.design === "v2" ? { designVersion: 2, deckTheme: DECK_THEMES.find((name) => name === attrs.theme?.toLowerCase()) ?? "paper" } : {}),
   };
 }
 
@@ -144,7 +154,7 @@ export function withAccent(content: string, accent: string): string {
   }
   if (found[1] !== "title") return content;
   const attrs = markerAttrs(found[0]);
-  if (accent === "ink" && attrs.design !== "v1") delete attrs.accent; else attrs.accent = accent;
+  if (accent === "ink" && attrs.design === undefined) delete attrs.accent; else attrs.accent = accent;
   const lead = /^[ \t\r\n]*/.exec(found[0])?.[0] ?? "";
   const end = /\r?\n$/.exec(found[0])?.[0] ?? "";
   return `${lead}${markerLine("title", attrs)}${end}${content.slice(found[0].length)}`;
@@ -157,6 +167,7 @@ export function withTheme(content: string, theme: string): string {
   if (theme === "classic" && !found) return content;
   if (found && found[1] !== "title") return content;
   const attrs = found ? markerAttrs(found[0]) : {};
+  if (attrs.design === "v2") return content;
   if (theme === "classic" && found?.[1] === "title" && (!attrs.theme || attrs.theme === "classic")) return content;
   if (theme === "classic") delete attrs.theme; else attrs.theme = theme;
   if (theme !== "classic") attrs.design = "v1";
@@ -255,6 +266,8 @@ export interface ParsedSlide {
   theme: SlideTheme | null;
   composition: SlideComposition;
   designVersion?: number;
+  /** The studio design's theme (design: v2 decks only, from the title slide). */
+  deckTheme?: DeckTheme;
   /** Decoded scene metadata and a decoding diagnostic, when a marker is present. */
   scene?: ReturnType<typeof decodeScene>;
   /** What the slide shows, heading included, without the marker. */
@@ -264,8 +277,8 @@ export interface ParsedSlide {
 
 export function parseSlides(content: string): ParsedSlide[] {
   return splitDocument(content, "slides").sections.map((text) => {
-    const { layout, accent, theme, composition, body, scene, designVersion } = layoutOf(text);
-    return { heading: headingOf(body), layout, accent, theme, composition, ...(designVersion ? { designVersion } : {}), ...(scene ? { scene } : {}), ...splitNotes(body) };
+    const { layout, accent, theme, composition, body, scene, designVersion, deckTheme } = layoutOf(text);
+    return { heading: headingOf(body), layout, accent, theme, composition, ...(deckTheme ? { deckTheme } : {}), ...(designVersion ? { designVersion } : {}), ...(scene ? { scene } : {}), ...splitNotes(body) };
   });
 }
 

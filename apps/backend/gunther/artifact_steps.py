@@ -466,6 +466,10 @@ class WorkSteps:
         approach stays as written. With a focus, or when there is an approach already, the
         model is shown them and told to keep what still holds. A card whose claim is the same
         keeps its id. Stamps the approach, and nothing after it."""
+        if getattr(self.agents, "studio", False):
+            raise ValueError(
+                "This artifact was made by the studio: use make to make it again as a whole."
+            )
 
         work = self.work
         spec = self._load(asking=True)
@@ -529,6 +533,10 @@ class WorkSteps:
         and capitals aside) is the same part; so is one with the same cards and the same
         layout. Any other is new. A part that has no place in the new outline is dropped with
         its text. Stamps the outline, and no part."""
+        if getattr(self.agents, "studio", False):
+            raise ValueError(
+                "This artifact was made by the studio: use make to make it again as a whole."
+            )
 
         work = self.work
         if work.approach is None:
@@ -807,6 +815,8 @@ class WorkSteps:
         nothing to change leaves the part, its stamp and its check as they were. Parts not
         asked for are not touched. Returns the ids of the parts whose text was written."""
 
+        if getattr(self.agents, "studio", False):
+            return self._studio_write(item_ids, instruction)
         work = self.work
         positions = self._positions(item_ids)
         if not positions:
@@ -936,6 +946,84 @@ class WorkSteps:
                 self.emit({"type": "section", "index": index, "state": "done"})
             self.agents._stage(self.emit, step, "done")
         return wrote
+
+    def _studio_write(self, item_ids: Sequence[str], instruction: str | None) -> list[str]:
+        """A studio work's parts, each written with the whole document in view (studio/work.py),
+        fitted to the format, and checked. A rewrite that changes nothing leaves the part."""
+
+        work, agents = self.work, self.agents
+        positions = self._positions(item_ids)
+        if not positions:
+            return []
+        tool = self._tool()
+        spec = self._load()
+        wrote: list[str] = []
+        for index in positions:
+            item = work.outline[index]
+            part = work.parts.get(item.id)
+            self.emit({"type": "section", "index": index, "state": "writing"})
+            parts = [work.parts[i.id].text if i.id in work.parts else "" for i in work.outline]
+            text = agents.write_part(  # type: ignore[attr-defined]
+                self.model,
+                self.effort,
+                spec,
+                parts,
+                [i.heading for i in work.outline],
+                index,
+                self.pool,
+                goal=item.goal,
+                layout=item.layout,
+                instruction=instruction if part is not None else None,
+            )
+            if part is not None and section_hash(text) == section_hash(part.text):
+                self.emit({"type": "section", "index": index, "state": "done"})
+                continue
+            text = agents.fit(
+                self.model,
+                self.effort,
+                spec,
+                [],
+                index,
+                self.pool,
+                [],
+                self.notes,
+                "",
+                self.emit,
+                text,
+            )
+            self.emit({"type": "section", "index": index, "state": "checking"})
+            with self._noting():
+                draft = agents.check_built(self.model, text, tool, self.pool, self.emit, index)
+            heading = heading_of(draft.text) if self._deck else draft.text.splitlines()[0][3:]
+            if heading and _fold(heading) != _fold(item.heading):
+                item = work.outline[index] = item.model_copy(update={"heading": heading[:200]})
+                if self._deck and index == 0:
+                    work.title = heading
+            if self._deck:
+                item.layout = _marked(draft.text).layout or item.layout
+            self._keep_part(item, draft, digest_part_inputs(self.brief, work, item))
+            item.refs = list(dict.fromkeys(_cited(draft.text)))
+            wrote.append(item.id)
+            self.emit({"type": "section", "index": index, "state": "done"})
+        return wrote
+
+    def _studio_review(self, item_ids: Sequence[str] | None) -> list[str]:
+        """A senior reader names the parts that most need it; those are rewritten."""
+
+        work, agents = self.work, self.agents
+        self._written()
+        spec = self._load()
+        only = set(self._positions(item_ids)) if item_ids else None
+        asks = agents.review_parts(  # type: ignore[attr-defined]
+            self.model, self.effort, spec, [work.parts[i.id].text for i in work.outline]
+        )
+        revised: list[str] = []
+        for ask in asks:
+            at = ask.part - 1
+            if only is not None and at not in only:
+                continue
+            revised += self._studio_write([work.outline[at].id], ask.instruction)
+        return revised
 
     def _written_before(self, index: int) -> bool:
         """Whether the part before this one has text, for the writer to carry on from."""
@@ -1238,6 +1326,8 @@ class WorkSteps:
         does not make it newer than what it was written from, and so it cannot hide that it is
         out of date. The others are not touched. Returns the ids of the revised parts."""
 
+        if getattr(self.agents, "studio", False):
+            return self._studio_review(item_ids)
         work = self.work
         only = set(self._positions(item_ids)) if item_ids else None
         before = self._written()
@@ -1297,13 +1387,19 @@ class WorkSteps:
             if len(goal) > 200:
                 goal = goal[:199].rstrip() + "…"
             preamble = f"# {title}" + (f"\n\n_{goal}_" if goal else "")
+            if getattr(agents, "studio", False):
+                preamble = "<!-- report: v2 -->\n" + preamble
         built = agents.assemble(
             spec, title, preamble, drafts, self.pool, planned, self.model, self.effort
         )
         cited = {citation.url or citation.source_id for citation in built.citations}
         built = replace(
             built,
-            approach=agents.approach.out(self.pool, cited) if agents.approach else None,
+            approach=work.approach
+            if getattr(agents, "studio", False)
+            else agents.approach.out(self.pool, cited)
+            if agents.approach
+            else None,
             skill={**agents.record(), "skipped": [*work.skipped, *final]},
         )
         inspected = agents.review_rendered(built, spec, self.emit)
@@ -1320,11 +1416,13 @@ class WorkSteps:
                 current = _marked(part.text)
                 if changed.layout != current.layout or changed.line != current.line:
                     was_fresh = part.inputs == digest_part_inputs(self.brief, work, item)
-                    text = with_layout(part.text, changed.layout or "text",
-                                       composition=changed.composition)
+                    text = with_layout(
+                        part.text, changed.layout or "text", composition=changed.composition
+                    )
                     if changed.scene_line:
                         rebound = rebind_graphics_hash(
-                            final_pages[at], with_scene_line(text, changed.scene_line),
+                            final_pages[at],
+                            with_scene_line(text, changed.scene_line),
                             {number: ref for number, ref in enumerate(built.pool_refs, 1)},
                         )
                         text = rebound

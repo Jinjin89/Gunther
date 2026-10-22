@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 480" width="900" height="480" font-family="Helvetica, Arial, sans-serif">
+  <rect width="900" height="480" fill="#ffffff"/>
+  <g stroke="#d9dce0" stroke-width="1"><line x1="70" y1="40" x2="70" y2="400"/><line x1="70" y1="400" x2="860" y2="400"/>
+  <line x1="70" y1="310" x2="860" y2="310"/><line x1="70" y1="220" x2="860" y2="220"/><line x1="70" y1="130" x2="860" y2="130"/></g>
+  <g font-size="16" fill="#5a6068"><text x="20" y="404">24</text><text x="20" y="314">28</text><text x="20" y="224">32</text><text x="20" y="134">36</text>
+  <text x="70" y="430">20</text><text x="330" y="430">28</text><text x="590" y="430">36</text><text x="820" y="430">40</text>
+  <text x="400" y="462" font-size="18">Outdoor maximum (°C)</text></g>
+  <polyline fill="none" stroke="#8d939b" stroke-width="4" points="70,330 200,300 330,270 460,226 590,170 720,110 850,64"/>
+  <polyline fill="none" stroke="#2668b6" stroke-width="4" points="70,336 200,312 330,288 460,256 590,218 720,180 850,150"/>
+  <g font-size="18" fill="#111"><text x="610" y="90">Control</text><text x="610" y="206" fill="#2668b6">Treated</text></g>
+</svg>

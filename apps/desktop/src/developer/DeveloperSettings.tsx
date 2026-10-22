@@ -18,10 +18,11 @@ export function DeveloperSettings({ onNotify }: { onNotify: (message: string) =>
   const [problem, setProblem] = useState<string | null>(null);
   const [folder, setFolder] = useState<string | null>(null);
   const [skills, setSkills] = useState(true);
+  const [method, setMethod] = useState<"studio" | "skills">("skills");
   useEffect(() => { void logsFolder().then(setFolder); }, []);
   useEffect(() => {
     let active = true;
-    void knowledgeApi.developerSettings().then((settings) => { if (active) setSkills(settings.outputSkills ?? true); }).catch(() => undefined);
+    void knowledgeApi.developerSettings().then((settings) => { if (active) { setSkills(settings.outputSkills ?? true); setMethod(settings.outputMethod ?? "skills"); } }).catch(() => undefined);
     return () => { active = false; };
   }, []);
 
@@ -56,12 +57,29 @@ export function DeveloperSettings({ onNotify }: { onNotify: (message: string) =>
     }
   };
 
+  const chooseMethod = async (chosen: "studio" | "skills") => {
+    try {
+      const saved = await knowledgeApi.saveDeveloperSettings({ traces: traces.on, outputSkills: skills, outputMethod: chosen });
+      setMethod(saved.outputMethod ?? chosen);
+      onNotify(chosen === "studio" ? "New reports and slides are made by the studio." : "New reports and slides follow the earlier skill steps.");
+    } catch (reason) {
+      onNotify(reason instanceof Error ? reason.message : "That could not be saved.");
+    }
+  };
+
   return <>
     <section>
       <div className="setting-heading"><Sparkles size={16} /><span><strong>How outputs are made</strong><small>For comparing reports and slides made two ways from the same material.</small></span></div>
       <label className="setting-row">
         <span><strong>Make outputs with skills</strong><small>Reports and slides follow their skill: an approach first, then the outline, writing, a read-through as the audience, and revisions. Off, they are made the earlier way: plan, look up, write, check. Versions keep how they were made.</small></span>
         <input type="checkbox" role="switch" aria-label="Make outputs with skills" checked={skills} onChange={(event) => void toggleSkills(event.target.checked)} />
+      </label>
+      <label className="setting-row">
+        <span><strong>Method</strong><small>Studio: finds what is worth saying, plans the storyline and has it reviewed, writes the whole artifact at once, then checks every claim against its source. Skills: the earlier step-by-step method.</small></span>
+        <select aria-label="Method" value={method} onChange={(event) => void chooseMethod(event.target.value as "studio" | "skills")}>
+          <option value="studio">Studio</option>
+          <option value="skills">Skills (earlier)</option>
+        </select>
       </label>
     </section>
 

@@ -3,7 +3,7 @@
 Only the desktop owner sees these; a paired phone does not.
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import select
@@ -23,6 +23,7 @@ class DeveloperIn(ApiModel):
     traces: bool
     # Left out, it stays as it is.
     output_skills: bool | None = None
+    output_method: Literal["skills", "studio"] | None = None
 
 
 def _owner_only(request: Request) -> None:
@@ -41,7 +42,11 @@ def _service(request: Request) -> KnowledgeService:
 
 def _developer(request: Request) -> dict[str, Any]:
     saved = _store(request).developer()
-    return {"traces": saved["traces"], "outputSkills": saved.get("output_skills", True)}
+    return {
+        "traces": saved["traces"],
+        "outputSkills": saved.get("output_skills", True),
+        "outputMethod": saved.get("output_method", "skills"),
+    }
 
 
 @router.get("/settings/developer")
@@ -54,7 +59,12 @@ def get_developer(request: Request) -> dict[str, Any]:
 def save_developer(payload: DeveloperIn, request: Request) -> dict[str, Any]:
     _owner_only(request)
     try:
-        _store(request).save_developer(traces=payload.traces, output_skills=payload.output_skills)
+        _store(request).save_developer(
+            traces=payload.traces,
+            output_skills=payload.output_skills,
+            output_method=payload.output_method,
+        )
+        _service(request).output_method = _store(request).developer().get("output_method", "skills")
     except OSError as error:
         raise HTTPException(503, "The settings could not be saved to disk") from error
     return _developer(request)

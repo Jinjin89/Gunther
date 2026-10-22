@@ -1,0 +1,148 @@
+# Gold material for the quality evaluation (docs/ARTIFACT_QUALITY_GOAL.md section 6).
+#
+# Each [[set]] is one library: real public pages read through the app's own web capture
+# (kind "web"), a PDF turned into text with pdftotext and filed as a note when the capture
+# path cannot read the format (kind "pdf-note"), or a folder of notes (kind "notes", set 0 only).
+# Every set has a talk deck and a written report. `audience` is student, researcher or
+# collaborator (the app calls "researcher" the "scientist" audience).
+# Changing anything in a set (sources, question, briefs) seeds that set's library again.
+
+[[set]]
+id = "velmora"
+title = "Velmora cool roofs (synthetic demo library)"
+question = "How well do cool roofs work in Velmora?"
+language = "en"
+note = "The only synthetic set: the Ask exam's ten demo notes. Fast development loop."
+sources = [{ kind = "notes", path = "evals/ask/library" }]
+
+[set.deck]
+audience = "collaborator"
+use = "talk"
+duration = "10-minute talk"
+brief = "A 10-minute talk for the city energy committee on what the Velmora cool-roof trial really showed and what the committee should decide."
+
+[set.report]
+audience = "collaborator"
+brief = "A written briefing for the city energy committee: what the Velmora cool-roof trial found, how far the figures can be trusted, and what to do next."
+
+[[set]]
+id = "rag-papers"
+title = "Three papers on retrieval-augmented generation"
+question = "How do retrieval-augmented generation methods work, and how have they developed?"
+language = "en"
+sources = [
+  { kind = "web", url = "https://ar5iv.labs.arxiv.org/html/2005.11401", title = "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks (Lewis et al. 2020)" },
+  { kind = "web", url = "https://arxiv.org/html/2310.11511", title = "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection (Asai et al. 2023)" },
+  { kind = "web", url = "https://arxiv.org/html/2312.10997", title = "Retrieval-Augmented Generation for Large Language Models: A Survey (Gao et al. 2023)" },
+]
+
+[set.deck]
+audience = "student"
+use = "talk"
+duration = "10-minute talk"
+brief = "A 10-minute talk for graduate students who know language models but not retrieval: how retrieval-augmented generation works, what Self-RAG changed, and what the survey says is still open."
+
+[set.report]
+audience = "researcher"
+brief = "A literature briefing for a research group deciding how to build a retrieval-augmented system: what the three papers establish, where they differ, and what remains unresolved."
+
+[[set]]
+id = "annual-letter"
+title = "Amazon CEO's 2023 letter to shareholders"
+question = "What does the company say about its year and its priorities?"
+language = "en"
+sources = [
+  { kind = "web", url = "https://www.aboutamazon.com/news/company-news/amazon-ceo-andy-jassy-2023-letter-to-shareholders", title = "Amazon CEO Andy Jassy's 2023 Letter to Shareholders" },
+]
+
+[set.deck]
+audience = "collaborator"
+use = "talk"
+duration = "10-minute talk"
+brief = "A 10-minute talk for an investment committee: what the 2023 shareholder letter claims about the year, which of its claims are backed by numbers, and what it signals about priorities."
+
+[set.report]
+audience = "collaborator"
+brief = "A written memo for an investment committee summarising the 2023 shareholder letter: results, strategic bets, and what the letter leaves unsaid."
+
+[[set]]
+id = "ev-outlook"
+title = "IEA Global EV Outlook 2024"
+question = "Where is electric vehicle adoption heading, and what does it mean for oil demand and emissions?"
+language = "en"
+sources = [
+  { kind = "web", url = "https://www.iea.org/reports/global-ev-outlook-2024/executive-summary", title = "Global EV Outlook 2024: Executive summary" },
+  { kind = "web", url = "https://www.iea.org/reports/global-ev-outlook-2024/trends-in-electric-cars", title = "Global EV Outlook 2024: Trends in electric cars" },
+  { kind = "web", url = "https://www.iea.org/reports/global-ev-outlook-2024/outlook-for-emissions-reductions", title = "Global EV Outlook 2024: Outlook for emissions reductions" },
+]
+
+[set.deck]
+audience = "collaborator"
+use = "talk"
+duration = "10-minute talk"
+brief = "A 10-minute talk for a city transport planning team on where electric cars are heading by 2030 and what it means for them."
+
+[set.report]
+audience = "collaborator"
+brief = "A policy briefing for a transport ministry: the state of electric vehicle markets, the 2030 outlook, and the effect on oil demand and emissions."
+
+[[set]]
+id = "transcript"
+title = "Federal Reserve press conference, 18 September 2024"
+question = "What did the Fed chair say about the rate decision and the economy, and how did he answer questions?"
+language = "en"
+note = "A long real spoken transcript: the chair's statement and the question-and-answer session."
+sources = [
+  { kind = "pdf-note", url = "https://www.federalreserve.gov/mediacenter/files/FOMCpresconf20240918.pdf", title = "FOMC press conference transcript, September 18, 2024" },
+]
+
+[set.deck]
+audience = "student"
+use = "talk"
+duration = "10-minute talk"
+brief = "A 10-minute talk for economics students on the September 2024 rate decision: what was decided, the reasoning given, and the questions that pressed the chair hardest."
+
+[set.report]
+audience = "collaborator"
+brief = "A written summary for a bank's treasury team of the September 2024 press conference: the decision, the stated outlook, and the main points from the question-and-answer."
+
+[[set]]
+id = "cn-stats"
+title = "中国2024年经济：统计公报与政府工作报告"
+question = "2024年中国经济运行情况如何，2025年的主要任务是什么？"
+language = "zh"
+sources = [
+  { kind = "web", url = "https://www.stats.gov.cn/sj/zxfb/202502/t20250228_1958817.html", title = "中华人民共和国2024年国民经济和社会发展统计公报" },
+  { kind = "web", url = "https://www.gov.cn/yaowen/liebiao/202503/content_7013163.htm", title = "政府工作报告（2025年）" },
+]
+
+[set.deck]
+audience = "collaborator"
+use = "talk"
+duration = "10分钟的汇报"
+brief = "为公司管理层做一个10分钟的汇报：2024年中国经济的主要数据说明了什么，2025年政府工作报告定下了哪些重点任务，对我们的业务有什么影响。请用中文。"
+
+[set.report]
+audience = "collaborator"
+brief = "为公司管理层写一份中文书面简报：2024年中国经济运行的主要数据、结构上的亮点与压力，以及2025年政府工作报告确定的重点任务。请用中文。"
+
+[[set]]
+id = "sodium-ion"
+title = "Sodium-ion batteries (web pages)"
+question = "Are sodium-ion batteries a realistic alternative to lithium-ion batteries?"
+language = "en"
+sources = [
+  { kind = "web", url = "https://en.wikipedia.org/wiki/Sodium-ion_battery", title = "Sodium-ion battery (Wikipedia)" },
+  { kind = "web", url = "https://spectrum.ieee.org/sodium-ion-battery", title = "Sodium-Ion Batteries Poised to Pick Off Large-Scale Lithium-Ion Applications (IEEE Spectrum)" },
+  { kind = "web", url = "https://www.iea.org/reports/global-ev-outlook-2024/trends-in-electric-vehicle-batteries", title = "Global EV Outlook 2024: Trends in electric vehicle batteries" },
+]
+
+[set.deck]
+audience = "student"
+use = "talk"
+duration = "10-minute talk"
+brief = "A 10-minute talk for engineering students: how sodium-ion batteries work, where they beat or lose to lithium-ion, and where they are likely to be used first."
+
+[set.report]
+audience = "collaborator"
+brief = "A briefing for a product team deciding whether to plan around sodium-ion cells: the technology, its strengths and limits against lithium-ion, and the state of commercialisation."

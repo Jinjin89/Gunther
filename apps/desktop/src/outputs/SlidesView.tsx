@@ -9,9 +9,10 @@ import { ArtifactMenu } from "./ArtifactMenu";
 import { SectionStatus } from "./ReportView";
 import { SlideFace } from "./SlideFace";
 import { SlideStylePicker } from "./SlideStylePicker";
-import { ACCENTS, THEMES, parseSlides, slideLayouts } from "./sections";
+import { ACCENTS, THEMES, attrsOf, parseSlides, slideLayouts, splitDocument } from "./sections";
 import { ACCENT_COLOURS, ACCENT_LABELS, type Accent, isAccent, themeAccentColour } from "./slides/accent";
 import { slideThemeStyle } from "./slides/themes";
+import { deckStageStyle } from "./deck/theme";
 import "reveal.js/reveal.css";
 
 /** Reveal's settings: a 16:9 deck inside its box, moved by keys only while it has focus. */
@@ -81,13 +82,17 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
   const sources = useMemo(() => artifact.citations.map((citation) => [citation.sourceTitle, citation.locator].filter(Boolean).join(" · ")), [artifact.citations]);
   const slides = useMemo(() => parseSlides(artifact.content), [artifact.content]);
   const layouts = useMemo(() => slideLayouts(artifact), [artifact.content, artifact.outline]);
+  const attrs = useMemo(() => splitDocument(artifact.content, "slides").sections.map(attrsOf), [artifact.content]);
   // The title slide's colour is the whole deck's. Only a title slide holds one, so a deck that opens
   // with another layout has nowhere to keep it.
   const accent = slides[0]?.accent ?? null;
   const theme = slides[0]?.theme ?? "classic";
   const designVersion = slides[0]?.designVersion ?? 0;
+  const deckTheme = slides[0]?.deckTheme ?? "paper";
+  // A studio deck (design v2) is drawn in its own theme: the stage takes its colours.
+  const stageStyle = (designVersion === 2 ? deckStageStyle(deckTheme, accent) : { ...slideThemeStyle(theme), "--outputs-accent": themeAccentColour(accent, theme) }) as CSSProperties;
   const canAccent = !slides[0]?.layout || slides[0].layout === "title";
-  const canTheme = canAccent;
+  const canTheme = canAccent && designVersion !== 2;
   const reportFit = useCallback((index: number, fit: number, overflow: boolean) => setFitNotes((previous) => {
     const old = previous[index];
     if (old?.fit === fit && old.overflow === overflow) return previous;
@@ -167,7 +172,7 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
         <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => setPresenting(true)}><Maximize2 size={13} />Present</button>
       </span>
     </div>
-    <div ref={stage} className={`outputs-stage theme-${theme}`} data-theme={theme} style={{ ...slideThemeStyle(theme), "--outputs-accent": themeAccentColour(accent, theme) } as CSSProperties}>
+    <div ref={stage} className={`outputs-stage theme-${theme}`} data-theme={theme} style={stageStyle}>
       <Deck
         key={artifact.id}
         deckRef={deck}
@@ -177,7 +182,7 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
         onSlideChange={(event: Event) => setCurrent(indexOf(event))}
       >
         {slides.map((slide, index) => <Slide key={index}>
-          <SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} theme={theme} designVersion={designVersion} composition={slide.composition} scene={slide.scene} numbers={numbers} sources={sources} onCite={cite} onSceneIssue={sceneCallbacks[index]} onFitChange={fitCallbacks[index]} />
+          <SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} theme={theme} designVersion={designVersion} attrs={attrs[index]} deckTheme={deckTheme} first={index === 0} page={index + 1} composition={slide.composition} scene={slide.scene} numbers={numbers} sources={sources} onCite={cite} onSceneIssue={sceneCallbacks[index]} onFitChange={fitCallbacks[index]} />
         </Slide>)}
       </Deck>
     </div>
@@ -194,7 +199,7 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
     {/* On the document body, not here: the page's entrance animation leaves a transform on it, and a
         fixed layer inside a transformed element fills that element, not the window. */}
     {presenting && createPortal(
-      <div ref={layer} className={`outputs-stage is-presenting theme-${theme}`} data-theme={theme} style={{ ...slideThemeStyle(theme), "--outputs-accent": themeAccentColour(accent, theme) } as CSSProperties} role="dialog" aria-modal="true" aria-label="Presenting" tabIndex={-1}>
+      <div ref={layer} className={`outputs-stage is-presenting theme-${theme}`} data-theme={theme} style={stageStyle} role="dialog" aria-modal="true" aria-label="Presenting" tabIndex={-1}>
         <button type="button" className="outputs-leave gx-icon-button" onClick={leave} aria-label="Leave Present"><X size={16} /></button>
         <Deck
           className="outputs-reveal"
@@ -203,7 +208,7 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
           onSlideChange={(event: Event) => go(indexOf(event))}
         >
           {slides.map((slide, index) => <Slide key={index}>
-            <SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} theme={theme} designVersion={designVersion} composition={slide.composition} scene={slide.scene} numbers={numbers} />
+            <SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} theme={theme} designVersion={designVersion} attrs={attrs[index]} deckTheme={deckTheme} first={index === 0} page={index + 1} composition={slide.composition} scene={slide.scene} numbers={numbers} sources={sources} />
           </Slide>)}
         </Deck>
       </div>,
@@ -212,7 +217,7 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
     <ol className="outputs-thumbs" aria-label="Slides">
       {slides.map((slide, index) => <li key={index}>
         <button type="button" className={index === current ? "is-active" : ""} aria-label={`Go to slide ${index + 1}`} aria-current={index === current ? "true" : undefined} onClick={() => go(index)}>
-          <span className="outputs-thumb-frame"><span className="outputs-thumb-scale"><SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} theme={theme} designVersion={designVersion} composition={slide.composition} scene={slide.scene} numbers={numbers} /></span></span>
+          <span className="outputs-thumb-frame"><span className="outputs-thumb-scale"><SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} theme={theme} designVersion={designVersion} attrs={attrs[index]} deckTheme={deckTheme} first={index === 0} page={index + 1} composition={slide.composition} scene={slide.scene} numbers={numbers} sources={sources} /></span></span>
           <small>{index + 1}{changed?.includes(index) && <em className="outputs-changed">Changed</em>}</small>
         </button>
       </li>)}

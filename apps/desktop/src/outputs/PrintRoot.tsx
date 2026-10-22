@@ -3,6 +3,8 @@ import { lazy, Suspense } from "react";
 import { createPortal } from "react-dom";
 import { AnswerBody, citationNumbers } from "../pages/AnswerBody";
 import { splitDocument, withoutTitle } from "./sections";
+import { isReportV2 } from "./deck/detect";
+import { ReportV2Section } from "./deck/ReportV2";
 
 // The designed slides and their charts are fetched when a deck is open, not when the app starts.
 const PrintSlides = lazy(() => import("./PrintSlides").then((module) => ({ default: module.PrintSlides })));
@@ -41,7 +43,8 @@ export function PrintRoot({ artifact }: { artifact: Artifact }) {
   const date = new Date(artifact.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
   const deck = artifact.kind === "slides";
   const report = splitDocument(artifact.content, "report");
-  const brief = withoutTitle(report.preamble);
+  const v2 = isReportV2(artifact.content);
+  const brief = withoutTitle(report.preamble).replace(/^\s*<!--\s*report:\s*v2\s*-->\s*/, "");
   return createPortal(
     <div id="print-root" aria-hidden="true" data-kind={artifact.kind}>
       <style>{deck ? DECK_PAGE : REPORT_PAGE}</style>
@@ -50,7 +53,7 @@ export function PrintRoot({ artifact }: { artifact: Artifact }) {
           <Suspense fallback={null}><PrintSlides artifact={artifact} /></Suspense>
           {artifact.citations.length > 0 && <section className="outputs-print-slide outputs-print-slide-sources"><Sources artifact={artifact} /></section>}
         </div>
-        : <article className="outputs-print-report">
+        : <article className={`outputs-print-report${v2 ? " is-studio" : ""}`}>
           <header>
             <h1>{artifact.title}</h1>
             {brief && <div className="outputs-print-brief"><AnswerBody content={brief} numbers={[]} /></div>}
@@ -58,7 +61,7 @@ export function PrintRoot({ artifact }: { artifact: Artifact }) {
           </header>
           {artifact.origin === "legacy" || report.sections.length === 0
             ? <section><AnswerBody content={withoutTitle(artifact.content)} numbers={artifact.origin === "legacy" ? [] : numbers} /></section>
-            : report.sections.map((text, index) => <section key={index}><AnswerBody content={text} numbers={numbers} /></section>)}
+            : report.sections.map((text, index) => <section key={index}>{v2 ? <ReportV2Section text={text} numbers={numbers} /> : <AnswerBody content={text} numbers={numbers} />}</section>)}
           <Sources artifact={artifact} />
         </article>}
     </div>,

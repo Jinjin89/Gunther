@@ -42,3 +42,4 @@ coverage/
 
 # Cool-roof exam: results from every run stay local.
 apps/backend/evals/results/
+/artifacts/validation/studio-gallery/

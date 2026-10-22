@@ -79,6 +79,7 @@ from gunther.models import (
 )
 from gunther.online_search import DisabledOnlineSearch, OnlineSearchProvider
 from gunther.outputs import (
+    BuiltOutput,
     Issue,
     Notes,
     OutputAgents,
@@ -474,6 +475,7 @@ class KnowledgeService:
         # Settings → Developer: outputs are made by following a skill (see skill_runner);
         # off, by the agents in outputs alone.
         self.output_skills = True
+        self.output_method = "skills"  # "studio": gunther/studio makes Outputs
         self.slide_renderer = None
         # Let Ask pick a skill itself from the message (settings.ask_auto_skills).
         self.auto_skills = False
@@ -3623,6 +3625,85 @@ class KnowledgeService:
         }
         return notes, seeds, inputs
 
+    def _studio_reading(
+        self, session: Session, source_ids: list[str], pool: Pool, *, most: int = 900
+    ) -> None:
+        """Every selected source read whole into the pool, in its own order, as passages of
+        consecutive blocks under one heading (about 1,400 characters each). The studio reads
+        the material, not search results; each passage stays citable like a search hit."""
+
+        target = 1400
+        sources = list(session.scalars(select(Source).where(Source.id.in_(source_ids))))
+        heads = dict(
+            session.execute(
+                select(SourceIndexHead.source_id, SourceIndexHead.revision_id).where(
+                    SourceIndexHead.source_id.in_(source_ids)
+                )
+            ).all()
+        )
+        for source in sorted(sources, key=lambda item: item.created_at):
+            revision_id = heads.get(source.id)
+            if not revision_id:
+                continue
+            blocks = list(
+                session.scalars(
+                    select(ContentBlock)
+                    .where(ContentBlock.revision_id == revision_id)
+                    .order_by(ContentBlock.ordinal)
+                )
+            )
+            groups: list[list[ContentBlock]] = []
+            size = 0
+            for block in blocks:
+                if not block.content.strip():
+                    continue
+                fresh = (
+                    not groups
+                    or block.kind == "heading"
+                    or block.heading_path_json != groups[-1][-1].heading_path_json
+                    and groups[-1][-1].kind != "heading"
+                    or size + len(block.content) > target
+                )
+                if fresh:
+                    groups.append([])
+                    size = 0
+                groups[-1].append(block)
+                size += len(block.content) + 2
+            for group in groups:
+                if len(pool) >= most:
+                    return
+                snapshot = self._read_snapshot(group, 6000)
+                if not snapshot.text.strip():
+                    continue
+                path = json.loads(group[0].heading_path_json or "[]")
+                locator = " › ".join(str(part) for part in path if part) or group[0].locator
+                citation = ConversationCitationOut(
+                    id=_id("cit"),
+                    source_id=source.id,
+                    source_title=source.title,
+                    quote=snapshot.text,
+                    locator=locator[:240],
+                    status="provisional",
+                    confidence=1.0,
+                    source_revision_id=revision_id,
+                    block_id=group[0].id,
+                    anchor=json.loads(group[0].anchor_json or "{}"),
+                    support_text=snapshot.text,
+                    support_spans=snapshot.spans,
+                    source_origin="selected",
+                )
+                pool.adopt(
+                    Evidence(
+                        kind="library",
+                        title=source.title,
+                        text=snapshot.text,
+                        locator=locator[:240],
+                        status="provisional",
+                        confidence=1.0,
+                        payload=(citation, None),
+                    )
+                )
+
     def _output_pool(self, seeds: list[Evidence], limits: OutputLimits) -> Pool:
         pool = Pool(limits.pool)
         for item in seeds:
@@ -3923,7 +4004,26 @@ class KnowledgeService:
             )
             fallback_title = parent.title if parent else library.title
             made_by = None
-            if skilled:
+            if self.output_method == "studio":
+                from gunther.studio.pipeline import StudioAgents
+
+                self._studio_reading(session, resolved.source_ids, pool)
+                studio = StudioAgents(
+                    self.models,
+                    limits,
+                    use=None if payload.use == "auto" else payload.use,
+                    tool=tool,
+                )
+                built = studio.make(
+                    model, effort, spec, pool, notes, events, fallback_title=fallback_title
+                )
+                made_by = {
+                    "generator": "gunther.studio.v1",
+                    "skill": built.skill,
+                    "approach": built.approach,
+                    "use": studio.use or (built.approach or {}).get("use"),
+                }
+            elif skilled:
                 web, _ = self._web_tool(payload.web)
                 agents = SkillAgents(
                     self.models,
@@ -5254,8 +5354,26 @@ class KnowledgeService:
                     slide_renderer=self.slide_renderer,
                 )
 
+            studio = make_studio_agents = None
+            if self.output_method == "studio":
+                from gunther.studio.pipeline import StudioAgents
+                from gunther.studio.work import StudioWorkAgents
+
+                def studio(spec: Spec, made: Pool, use: str | None) -> BuiltOutput:
+                    self._studio_reading(session, resolved.source_ids, made)
+                    return StudioAgents(gateway, limits, use=use, tool=tool).make(  # type: ignore[arg-type]
+                        model, effort, spec, made, notes, emit, fallback_title=library.title
+                    )
+
+                def make_studio_agents(kind: str) -> StudioWorkAgents:
+                    return StudioWorkAgents(
+                        gateway, kind, limits, tools=[tool, *([web] if web else [])], reader=reader
+                    )
+
             agent = artifact_agent.ArtifactAgent(
                 artifact_agent.TurnContext(
+                    studio=studio,
+                    make_studio_agents=make_studio_agents,
                     workspace=workspace,
                     brief=brief,
                     gateway=gateway,  # type: ignore[arg-type]

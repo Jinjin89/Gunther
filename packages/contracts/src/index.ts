@@ -438,7 +438,7 @@ export interface ModelMenu {
   efforts: EffortLevel[];
 }
 
-export type ProviderKind = "deepseek" | "kimi" | "glm" | "qwen" | "openai" | "compatible";
+export type ProviderKind = "deepseek" | "kimi" | "glm" | "qwen" | "openai" | "anthropic" | "compatible";
 
 export interface ProviderModel {
   id: string;
@@ -688,6 +688,8 @@ export interface DeveloperSettings {
   traces: boolean;
   /** Outputs are made by following a skill; off, by the agents alone. Left out when saving, it stays as it is. */
   outputSkills?: boolean;
+  /** How Outputs are made: "studio" (insight → storyline → whole draft) or "skills" (the earlier steps). */
+  outputMethod?: "studio" | "skills";
 }
 
 /**

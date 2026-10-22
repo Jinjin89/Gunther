@@ -1,6 +1,6 @@
 import type { Artifact } from "@gunther/contracts";
 import { citationNumbers } from "../pages/AnswerBody";
-import { parseSlides, slideLayouts } from "./sections";
+import { attrsOf, parseSlides, slideLayouts, splitDocument } from "./sections";
 import { SlideFace } from "./SlideFace";
 
 /**
@@ -10,14 +10,16 @@ import { SlideFace } from "./SlideFace";
  */
 export function PrintSlides({ artifact }: { artifact: Artifact }) {
   const numbers = citationNumbers(artifact.citations);
+  const sources = artifact.citations.map((citation) => [citation.sourceTitle, citation.locator].filter(Boolean).join(" · "));
   const layouts = slideLayouts(artifact);
   const slides = parseSlides(artifact.content);
+  const attrs = splitDocument(artifact.content, "slides").sections.map(attrsOf);
   const accent = slides[0]?.accent ?? null;
   const theme = slides[0]?.theme ?? "classic";
   const designVersion = slides[0]?.designVersion ?? 0;
   return <>
     {slides.map((slide, index) => <section key={index} className="outputs-print-slide">
-      <SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} theme={theme} designVersion={designVersion} composition={slide.composition} scene={slide.scene} numbers={numbers} />
+      <SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} theme={theme} designVersion={designVersion} attrs={attrs[index]} deckTheme={slides[0]?.deckTheme} first={index === 0} page={index + 1} composition={slide.composition} scene={slide.scene} numbers={numbers} sources={sources} />
     </section>)}
   </>;
 }

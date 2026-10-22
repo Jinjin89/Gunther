@@ -25,7 +25,7 @@ Effort = Literal["off", "low", "medium", "high", "max"]
 EFFORTS: tuple[Effort, ...] = ("off", "low", "medium", "high", "max")
 EFFORT_LABELS = {"off": "Off", "low": "Low", "medium": "Medium", "high": "High", "max": "Max"}
 
-ProviderKind = Literal["deepseek", "kimi", "glm", "qwen", "openai", "compatible"]
+ProviderKind = Literal["deepseek", "kimi", "glm", "qwen", "openai", "anthropic", "compatible"]
 
 
 @dataclass(frozen=True)
@@ -142,6 +142,20 @@ DIALECTS: dict[str, Dialect] = {
             keeps_reasoning=True,
             min_max_tokens=16_000,
         ),
+        Dialect(
+            "anthropic_budget",
+            "Thinking off or with a token budget (Claude)",
+            ("off", "low", "medium", "high", "max"),
+            {
+                "off": Params(),
+                "low": Params(body={"thinking": {"type": "enabled", "budget_tokens": 2_048}}),
+                "medium": Params(body={"thinking": {"type": "enabled", "budget_tokens": 8_192}}),
+                "high": Params(body={"thinking": {"type": "enabled", "budget_tokens": 16_384}}),
+                "max": Params(body={"thinking": {"type": "enabled", "budget_tokens": 32_000}}),
+            },
+            # The answer needs room beyond the thinking budget.
+            min_max_tokens=40_000,
+        ),
         Dialect("none", "No thinking setting", (), {}),
     )
 }
@@ -175,6 +189,7 @@ RULES: tuple[Rule, ...] = (
     Rule("qwen", r"qwen3|qwen-(plus|max|flash|turbo)", "qwen_budget"),
     Rule("openai", r"^(gpt-5|o\d)", "reasoning_effort", vision=True),
     Rule("openai", r"^gpt-4", "none", vision=True),
+    Rule("anthropic", r"claude", "anthropic_budget", vision=True),
 )
 
 

@@ -54,6 +54,12 @@ PRESETS: dict[str, Preset] = {
         note="The address the Qwen AI platform shows for your key.",
     ),
     "openai": Preset("OpenAI", "https://api.openai.com/v1"),
+    "anthropic": Preset(
+        "Claude",
+        "https://api.anthropic.com/v1",
+        ("claude-opus-5-5", "claude-sonnet-5-5"),
+        note="An Anthropic API key. Recommended for writing reports and slides (Outputs).",
+    ),
     "compatible": Preset(
         "Self-hosted",
         "http://127.0.0.1:8000/v1",
@@ -68,6 +74,9 @@ MODEL_LABELS = {
     "deepseek-v4-pro": "V4 Pro",
     "kimi-k3": "K3",
     "glm-5.3-flash": "5.3 Flash",
+    "claude-opus-5-5": "Opus 5.5",
+    "claude-sonnet-5-5": "Sonnet 5.5",
+    "claude-haiku-5-5": "Haiku 5.5",
 }
 
 

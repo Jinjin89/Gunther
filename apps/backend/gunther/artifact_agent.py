@@ -42,6 +42,7 @@ from gunther.artifact_workspace import (
     outline_state,
     pool_from,
     ready,
+    spec_of,
     status,
     store_pool,
 )
@@ -51,6 +52,8 @@ from gunther.outputs import ACCENTS, BuiltOutput, Notes, Pool, _marked, layout_o
 from gunther.run_budget import RunBudget
 from gunther.skill_runner import SkillAgents
 from gunther.skillbook import skill_for
+from gunther.studio import format as studio_format
+from gunther.studio.work import is_studio, load_built
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +81,7 @@ class Act(BaseModel):
     do: Literal[
         "ask",
         "answer",
+        "make",
         "search_library",
         "search_web",
         "read_source",
@@ -130,6 +134,16 @@ class Decision(BaseModel):
             return {key: value for key, value in data.items() if value is not None}
         return data
 
+
+STUDIO_NOTE = """
+
+This conversation uses the studio method. make: write the whole active artifact at once from \
+the material, as a strong analyst and writer would (what is worth saying, the storyline, every \
+part, checked). With no artifact yet and a clear request: select new:report or new:slides, \
+then make, then save — do not use understand or plan whole. Use make again only when the user \
+wants it remade from scratch (a new focus, audience or length). For changes to parts, use \
+write, edit, plan (insert, delete, move, item) and check as usual; review asks a senior reader \
+for the few parts that most need improving."""
 
 # What the orchestrator and the answerer are told. Each starts with its own first sentence,
 # so that a test can tell the requests apart.
@@ -642,10 +656,13 @@ def validate(act: Act, g: Gate) -> str | None:
     unit, size = _unit(work), len(g.view_ids)
     deck = work.spec.kind == "slides"
     skill = skill_for(work.spec.kind)
+    layouts = studio_format.LAYOUTS if is_studio(work) else skill.layouts
+    if do == "make":
+        return None
     if do == "understand":
         return None
     if do == "plan":
-        return _validate_plan(act, g, work, skill.layouts, deck, unit, size)
+        return _validate_plan(act, g, work, layouts, deck, unit, size)
     if do in ("write", "check"):
         if not act.parts:
             return f"Name the {unit}s (parts)."
@@ -810,6 +827,10 @@ class TurnContext:
     emit: Events = lambda _event: None
     limits: AgentLimits = field(default_factory=AgentLimits)
     effort_for_decisions: Effort | None = "low"
+    # The studio method (Settings → Developer): ``studio(spec, pool, use)`` makes a whole
+    # artifact; ``make_studio_agents(kind)`` gives the agents for working on one it made.
+    studio: Callable[[Any, Pool, str | None], BuiltOutput] | None = None
+    make_studio_agents: Callable[[str], Any] | None = None
 
 
 def _brief_json(brief: ConversationBrief, spec: WorkSpec | None) -> dict[str, Any]:
@@ -914,8 +935,14 @@ class ArtifactAgent:
 
     def _steps(self, work: Work) -> WorkSteps:
         c = self.ctx
+        agents: Any = self._agents(work.spec.kind)
+        if is_studio(work) and c.make_studio_agents is not None:
+            key = f"studio:{work.spec.kind}"
+            if key not in self.agents:
+                self.agents[key] = c.make_studio_agents(work.spec.kind)
+            agents = self.agents[key]
         return WorkSteps(
-            self._agents(work.spec.kind),
+            agents,
             work,
             self.brief,
             self.pool,
@@ -980,7 +1007,7 @@ class ArtifactAgent:
             decision, _ = c.gateway.complete_json(
                 c.model,
                 Decision,
-                system=ORCHESTRATOR,
+                system=ORCHESTRATOR + (STUDIO_NOTE if c.studio is not None else ""),
                 prompt=view,
                 effort=c.effort_for_decisions,
             )
@@ -1190,6 +1217,8 @@ class ArtifactAgent:
 
         n = max(1, len(m.ids))
         act = m.act
+        if act.do == "make":
+            return 40
         if act.do == "write":
             return 6 * n
         if act.do == "edit":
@@ -1241,6 +1270,8 @@ class ArtifactAgent:
                 return f"Searching the web for “{act.query}”"
             case "read_source":
                 return f"Reading more around source {act.query}"
+            case "make":
+                return "Making it: reading, planning the story, writing, checking"
             case "understand":
                 return "Reading the material and writing the approach"
             case "plan":
@@ -1380,6 +1411,24 @@ class ArtifactAgent:
         return Outcome(
             f"Read more around source {number}",
             f"Read more around source {number}: added as [{shown}].",
+        )
+
+    def _do_make(self, m: Mapped) -> Outcome:
+        c, work = self.ctx, active_work(self.workspace)
+        assert work is not None
+        if c.studio is None:
+            raise ValueError("make is not available here: follow the skill's steps.")
+        spec = spec_of(self.brief, work)
+        made = Pool(1_000_000)
+        made.restore(list(self.pool.items))
+        use = _fold_use(work)
+        built = c.studio(spec, made, use)
+        load_built(work, built, made, self.pool, self.brief)
+        name = "deck" if work.spec.kind == "slides" else "report"
+        return Outcome(
+            f"Made the {name}",
+            f"Made the {name} as a whole: {len(work.outline)} {_unit(work)}s, each checked "
+            "against its sources.",
         )
 
     def _do_understand(self, m: Mapped) -> Outcome:
@@ -1771,3 +1820,9 @@ class Outcome:
     label: str
     note: str
     result: TurnResult | None = None
+
+
+def _fold_use(work: Work) -> str | None:
+    line = work.spec.use
+    text = (line.text or "").strip().casefold() if line else ""
+    return text if text in ("talk", "read") else None

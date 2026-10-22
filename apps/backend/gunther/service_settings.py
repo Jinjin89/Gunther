@@ -41,6 +41,8 @@ FieldKind = Literal["text", "secret", "url", "select", "toggle", "number"]
 StatusState = Literal["configured", "not_configured", "error", "off"]
 
 CHECK_TIMEOUT_SECONDS = 8.0
+# How Outputs make a report or a deck: the skill steps, or the studio pipeline (gunther/studio).
+OUTPUT_METHODS = ("skills", "studio")
 
 
 @dataclass(frozen=True)
@@ -337,7 +339,11 @@ class ServiceSettingsStore:
         self._tts: dict[str, Any] | None = None
         # Settings → Developer: keep how each answer was made (see trace), and whether
         # outputs are made by following a skill (see skill_runner).
-        self._developer: dict[str, Any] = {"traces": False, "output_skills": True}
+        self._developer: dict[str, Any] = {
+            "traces": False,
+            "output_skills": True,
+            "output_method": "skills",
+        }
         self._listeners: list[Callable[[], None]] = []
         self._load()
 
@@ -377,6 +383,8 @@ class ServiceSettingsStore:
             for key in ("traces", "output_skills"):
                 if isinstance(developer.get(key), bool):
                     self._developer[key] = developer[key]
+            if developer.get("output_method") in OUTPUT_METHODS:
+                self._developer["output_method"] = developer["output_method"]
         checks = payload.get("checks") or {}
         self._checks = {
             key: dict(value) for key, value in checks.items() if isinstance(value, dict)
@@ -538,13 +546,23 @@ class ServiceSettingsStore:
         with self._lock:
             return dict(self._developer)
 
-    def save_developer(self, *, traces: bool, output_skills: bool | None = None) -> None:
+    def save_developer(
+        self,
+        *,
+        traces: bool,
+        output_skills: bool | None = None,
+        output_method: str | None = None,
+    ) -> None:
+        if output_method is not None and output_method not in OUTPUT_METHODS:
+            raise ServiceSettingsError(f"Unknown output method: {output_method}")
         with self._lock:
             self._developer = {
                 "traces": bool(traces),
                 "output_skills": self._developer.get("output_skills", True)
                 if output_skills is None
                 else bool(output_skills),
+                "output_method": output_method
+                or self._developer.get("output_method", "skills"),
             }
             self._write()
             listeners = list(self._listeners)

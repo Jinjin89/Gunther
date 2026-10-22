@@ -732,7 +732,7 @@ def test_the_developer_switch_turns_skills_off(tmp_path: Path) -> None:
             headers=headers,
             json={"traces": False, "outputSkills": False},
         ).json()
-        assert saved == {"traces": False, "outputSkills": False}
+        assert saved == {"traces": False, "outputSkills": False, "outputMethod": "skills"}
         # Saving only the traces switch leaves this one as it is.
         client.put("/api/settings/developer", headers=headers, json={"traces": True})
         assert (

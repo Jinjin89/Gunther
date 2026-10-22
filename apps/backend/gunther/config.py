@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     # The language model that reads captures, answers Ask and writes topic
     # overviews: any service speaking OpenAI's API. The provider only picks the
     # defaults people start from. DEEPSEEK_* names from earlier versions still work.
-    llm_provider: Literal["deepseek", "kimi", "glm", "qwen", "openai", "compatible"] = "deepseek"
+    llm_provider: Literal["deepseek", "kimi", "glm", "qwen", "openai", "anthropic", "compatible"] = "deepseek"
     llm_api_key: str | None = Field(
         default=None, validation_alias=AliasChoices("llm_api_key", "deepseek_api_key")
     )

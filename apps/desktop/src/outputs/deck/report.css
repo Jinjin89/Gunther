@@ -1,0 +1,54 @@
+/* A studio report (design v2): typeset for reading. Measure about 68 characters, claims as headings,
+   exhibits across the column. Everything is in em so the print path can set its own size. */
+.rp { font-family: var(--gx-font-display, Georgia, serif); font-size: 17px; line-height: 1.68; color: var(--gx-ink, #1a1a18); max-width: 41em; margin-inline: auto; }
+.rp .dk-prose { font-size: 1em; line-height: inherit; }
+.rp .dk-prose :is(p, li) { font-size: 1em; line-height: inherit; }
+.rp .dk-prose > * + * { margin-top: 0; }
+.rp .dk-prose :is(ul, ol) { list-style: disc; } .rp .dk-prose ol { list-style: decimal; }
+.rp .dk-prose blockquote { font-style: italic; font-size: 1.12em; }
+.rp .dk-prose p { margin: 0 0 0.85em; text-wrap: pretty; hanging-punctuation: first; }
+.rp .dk-prose :is(ul, ol) { margin: 0 0 0.9em; padding-left: 1.3em; }
+.rp .dk-prose li { margin: 0.25em 0; }
+.rp .dk-prose h3 { margin: 1.4em 0 0.35em; font-family: var(--gx-font-sans, system-ui, sans-serif); font-size: 1.02em; font-weight: 650; letter-spacing: 0; line-height: 1.3; }
+.rp .dk-prose sup { font-size: 0.62em; line-height: 0; }
+.rp .dk-prose sup button { padding: 0 1px; border: 0; background: transparent; color: var(--dk-accent, #2668b6); font: inherit; font-weight: 600; cursor: pointer; }
+.rp-heading { margin: 1.5em 0 0.5em; font-family: var(--gx-font-sans, system-ui, sans-serif); font-size: 1.5em; font-weight: 650; letter-spacing: -0.016em; line-height: 1.22; text-wrap: balance; break-after: avoid; }
+.rp-summary { margin: 0 0 1.4em; padding: 1.1em 1.4em 0.5em; background: #f5f6f7; border-top: 4px solid var(--dk-accent, #2668b6); }
+.rp-summary .dk-prose > p:first-child { font-size: 1.08em; font-weight: 500; line-height: 1.5; }
+.rp-summary .dk-prose ul { list-style: none; padding: 0; }
+.rp-summary .dk-prose li { padding: 0.55em 0; border-top: 1px solid #dcdfe3; margin: 0; }
+.rp-summary .dk-prose li strong { font-family: var(--gx-font-sans, system-ui, sans-serif); font-weight: 650; }
+.rp.is-summary .rp-heading { margin-top: 0.4em; }
+.rp-callout { margin: 1.3em 0; padding: 0.9em 1.2em 0.2em; background: #f5f6f7; border-left: 4px solid var(--dk-accent, #2668b6); break-inside: avoid; }
+.rp-callout > strong { display: block; margin-bottom: 0.3em; font-family: var(--gx-font-sans, system-ui, sans-serif); font-size: 0.82em; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.rp-exhibit { margin: 1.6em 0; padding: 0; break-inside: avoid; font-family: var(--gx-font-sans, system-ui, sans-serif); }
+.rp-exhibit figcaption { margin-bottom: 0.7em; font-size: 0.92em; font-weight: 650; line-height: 1.35; }
+.rp-exhibit table { width: 100%; border-collapse: collapse; font-size: 0.86em; line-height: 1.4; }
+.rp-exhibit th, .rp-exhibit td { padding: 0.45em 0.8em 0.45em 0; border-bottom: 1px solid #dcdfe3; text-align: left; vertical-align: top; }
+.rp-exhibit thead th { border-bottom: 2px solid #111317; font-size: 0.92em; color: #545a63; }
+.rp-exhibit tr.is-hi :is(th, td) { background: #f3f4f6; font-weight: 650; }
+.rp-exhibit .is-num { text-align: right; font-variant-numeric: tabular-nums; padding-right: 0.5em; }
+.rp-source { margin: 0.6em 0 0; font-size: 0.74em; line-height: 1.4; color: #545a63; }
+.rp-chart { position: relative; width: 100%; overflow: hidden; }
+.rp-chart > div { transform-origin: 0 0; }
+.rp blockquote { margin: 1.1em 0; padding: 0.1em 0 0.1em 1.1em; border-left: 3px solid var(--dk-accent, #2668b6); font-size: 1.12em; font-style: italic; line-height: 1.5; }
+.rp blockquote p { margin: 0 !important; }
+.rp-data { margin-top: 0.4em; font-size: 0.8em; } .rp-data summary { cursor: pointer; color: #545a63; }
+@media print {
+  .outputs-print-report .rp { font-size: inherit; max-width: none; }
+  .rp-data { display: none; }
+  .rp-summary, .rp-callout { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+
+.rp .dk-cite { font-size: 0.62em; margin-left: 1px; }
+
+/* The title block of a studio report: the title is the largest thing on the page, its italic line a standfirst. */
+.outputs-document.is-studio .outputs-title { max-width: 697px !important; margin: 0.2em auto 0.35em; font-family: var(--gx-font-sans, system-ui, sans-serif); font-size: 2.5rem; font-weight: 700; letter-spacing: -0.028em; line-height: 1.08; text-wrap: balance; }
+.outputs-document.is-studio .outputs-brief { max-width: 697px !important; margin: 0 auto 1.4em; padding-bottom: 1.1em; border-bottom: 1px solid #dcdfe3; }
+.outputs-document.is-studio .outputs-brief :is(p, em) { font-family: var(--gx-font-display, Georgia, serif); font-size: 1.28rem; line-height: 1.45; font-style: italic; color: #545a63; }
+.outputs-document.is-studio .rp-heading { font-size: 1.35em; }
+@media print {
+  .outputs-print-report.is-studio h1 { font-family: var(--gx-font-sans, system-ui, sans-serif); font-size: 30pt; font-weight: 700; letter-spacing: -0.025em; line-height: 1.08; }
+  .outputs-print-report.is-studio .outputs-print-brief { font-size: 13pt; border-bottom: 0.5pt solid #b8b7b1; padding-bottom: 8pt; }
+  .outputs-print-report.is-studio .rp-heading { font-size: 15pt; }
+}
