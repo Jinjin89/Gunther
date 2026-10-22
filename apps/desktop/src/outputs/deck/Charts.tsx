@@ -46,14 +46,15 @@ function Bars({ data, w, h }: { data: ChartData; w: number; h: number }) {
   const lw = Math.min(w * 0.34, Math.max(...labels.map((l) => textWidth(l, labelSize, 600))) + 8);
   const lines = labels.map((l, at) => wrap(l, labelSize, lw, rh >= 52 ? 2 : 1, data.categories[at]!.highlight ? 700 : 500));
   const vw = Math.max(...data.series.flatMap((s) => s.values.map((v) => textWidth(v.label, valueSize, 700)))) + 14;
-  const x0 = lw + 20;
+  const negW = Math.max(0, ...data.series.flatMap((s) => s.values.filter((v) => v.n < 0).map((v) => textWidth(v.label, valueSize, 700) + 14)));
+  const x0 = lw + 20 + negW;
   const hi = maxOf(data.series);
   const lo = minOf(data.series);
   const x = scaleLinear({ domain: [Math.min(lo, 0), hi <= 0 ? 1 : hi], range: [0, Math.max(40, w - x0 - vw)] });
   const zero = x(0);
   const bt = Math.min(44, (rh * 0.7) / m - (m > 1 ? 3 : 0));
   return <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={visible(data.categories.map((c, at) => `${c.label}: ${data.series.map((s) => s.values[at]?.label).join(" / ")}`).join("; "))}>
-    <line x1={x0 + zero} x2={x0 + zero} y1={0} y2={h} stroke="var(--dk-rule)" strokeWidth={2} />
+    <line x1={x0 + zero} x2={x0 + zero} y1={0} y2={h} stroke="var(--dk-ink)" strokeWidth={2} />
     {data.categories.map((c, row) => {
       const cy = row * rh + rh / 2;
       const group = m * bt + (m - 1) * 3;
@@ -91,7 +92,7 @@ function Columns({ data, w, h }: { data: ChartData; w: number; h: number }) {
   const hi = maxOf(data.series);
   const lo = Math.min(minOf(data.series), 0);
   const plotH = h - bottom - top;
-  const y = scaleLinear({ domain: [lo, hi <= 0 ? 1 : hi], range: [plotH, 0] });
+  const y = scaleLinear({ domain: [lo < 0 ? lo * 1.25 : lo, hi <= 0 ? 1 : hi], range: [plotH, 0] });
   const inner = Math.min(band * 0.78, m === 1 ? 110 : 150);
   const bw = (inner - (m - 1) * 4) / m;
   const valueSize = bw >= 54 ? 22 : bw >= 40 ? 20 : 18;
@@ -100,7 +101,6 @@ function Columns({ data, w, h }: { data: ChartData; w: number; h: number }) {
     {data.categories.map((c, col) => {
       const cx = col * band + band / 2;
       return <g key={col}>
-        {c.highlight && <rect x={col * band + 2} y={0} width={band - 4} height={h} fill="var(--dk-soft)" />}
         {data.series.map((s, k) => {
           const v = s.values[col]!;
           const bx = cx - inner / 2 + k * (bw + 4);
@@ -112,7 +112,7 @@ function Columns({ data, w, h }: { data: ChartData; w: number; h: number }) {
             <text x={bx + bw / 2} y={v.n >= 0 ? top1 - 8 : base + hh + 20} fontSize={valueSize} fontWeight={700} fill="var(--dk-ink)" textAnchor="middle">{v.label}</text>
           </g>;
         })}
-        <text x={cx} y={base + 26} fontSize={labelSize} fontWeight={c.highlight ? 700 : 500} fill="var(--dk-ink)" textAnchor="middle">
+        <text x={cx} y={top + plotH + 26} fontSize={labelSize} fontWeight={c.highlight ? 700 : 500} fill="var(--dk-ink)" textAnchor="middle">
           {lines[col]!.map((line, at) => <tspan key={at} x={cx} dy={at === 0 ? 0 : labelSize * 1.2}>{line}</tspan>)}
         </text>
       </g>;

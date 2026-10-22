@@ -16,7 +16,7 @@ export function Cover({ data }: { data: Of<"title"> | Of<"section"> }) {
     <div className="dk-cover-main">
       <span className="dk-cover-rule" />
       <h1 className={long ? "is-long" : ""}><Inline text={data.title} /></h1>
-      {data.subtitle && <p className="dk-cover-sub"><Inline text={data.subtitle} /></p>}
+      {data.subtitle && <p className="dk-cover-sub"><Inline text={data.subtitle} collapse /></p>}
     </div>
     {meta && <p className="dk-cover-meta"><Inline text={meta} /></p>}
   </div>;
@@ -43,7 +43,6 @@ export function Stat({ data }: { data: Of<"stat"> }) {
   return <div className={`dk-stat ${beside ? "is-beside" : ""}`}>
     <div className="dk-stat-figure">
       <p className="dk-stat-value" style={size(valueSize(data.value, beside ? 470 : 1100, 160))}><Inline text={data.value} /></p>
-      <span className="dk-stat-rule" />
     </div>
     <div className="dk-stat-words">
       <p className="dk-stat-label"><Inline text={data.label} /></p>
@@ -89,7 +88,7 @@ export function TableLayout({ data }: { data: Of<"table"> }) {
 export function Compare({ data }: { data: Of<"compare"> }) {
   const most = Math.max(...data.sides.map((side) => side.items.length));
   const total = data.sides.reduce((sum, side) => sum + side.items.reduce((inner, item) => inner + countUnits(item), 0), 0);
-  return <div className={`dk-compare ${most >= 4 ? "is-dense" : most <= 2 && total <= 400 ? (total > 200 ? "is-roomy is-md" : "is-roomy") : ""}`}>
+  return <div className={`dk-compare ${most >= 4 ? "is-dense" : most <= 2 && total <= 400 ? (most === 1 ? "is-roomy is-one" : total > 200 ? "is-roomy is-md" : "is-roomy") : ""}`}>
     <div className="dk-sides">{data.sides.map((side, at) => <section key={at}>
       <h3><Inline text={side.name} /></h3>
       <ul>{side.items.map((item, i) => <li key={i}><span><Inline text={item} /></span></li>)}</ul>
@@ -153,7 +152,7 @@ export function Figure({ data }: { data: Of<"figure"> }) {
 
 export function Statement({ data }: { data: Of<"statement"> }) {
   const units = countUnits(data.statement);
-  const px = units <= 70 ? 56 : units <= 120 ? 50 : 46;
+  const px = units <= 50 ? 52 : units <= 90 ? 46 : units <= 130 ? 40 : 36;
   return <div className="dk-statement">
     <p className="dk-big" style={size(px)}><Inline text={data.statement} /></p>
     {data.items.length > 0 && <ul className={`n${data.items.length}`}>{data.items.map((item, at) => <li key={at}><Inline text={item} /></li>)}</ul>}
