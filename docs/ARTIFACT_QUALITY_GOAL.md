@@ -474,3 +474,15 @@ Models). Claude remains untimed here.
 ship 97%, strict ship 66%, titles-only 93%, hard defects 1 in 14 (down from 6), ~6.6 min per
 artifact with 7 at once (4.4 min alone). Both writers now meet the quality bar here; Flash
 also meets the time bar.
+
+**2026-10-22 — final evaluation with the final rules (code at 518d106).**
+
+| Writer | Ship rate | Strict ship | Titles-only | Hard defects | Time / artifact (7 at once) |
+| --- | --- | --- | --- | --- | --- |
+| DeepSeek V4 Pro (`final-pro`) | 98% | 74% | 100% | 0 (one linter hit was "Rufus as an AI shopping assistant", a false positive, since narrowed) | ~9.6 min |
+| DeepSeek Flash (`final-flash`) | 92% | 69% | 93% | 4 (3 report sentences repeating numbers uncited, 1 label title) | ~7 min (4.4 alone) |
+
+All §1 targets that can be measured on this machine are met with V4 Pro; Flash meets the time
+targets with slightly more defects. Still open and only possible for the user: the head-to-head
+with Claude.ai and Gamma themselves, timing with Claude, and the Mac checks (DMG, PowerPoint
+and Word opening the exports).

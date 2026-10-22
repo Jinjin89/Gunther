@@ -39,7 +39,7 @@ BOLD_LEAD = re.compile(r"^\*\*(.+?)\*\*[:：]?\s*(.*)$")
 META_PHRASES = (
     "does not represent", "do not represent", "not represent", "synthetic",
     "cannot establish", "can not establish", "not actual", "for illustration only",
-    "illustrative only", "fictional", "made-up", "made up data", "as an ai",
+    "illustrative only", "fictional", "made-up", "made up data", "as an ai language model",
     "不代表", "仅供", "无法确定", "无法证实", "虚构", "模拟数据", "训练数据",
 )  # fmt: skip
 
