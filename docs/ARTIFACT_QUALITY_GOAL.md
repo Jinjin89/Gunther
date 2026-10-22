@@ -428,3 +428,18 @@ production bundle's PPTX/DOCX exports work. The .deb itself could not be assembl
 sidecar with the document parser is ~10 GB and Tauri stages it twice, needing ~40 GB this
 machine does not have. To check on the Mac: DMG build and signing, Chromium in the packaged app,
 PowerPoint/Word opening the exports, save dialogs, template import.
+
+**2026-10-22 — round 8 (final).** `evals/results/*-quality-studio-v8`, all seven sets:
+ship rate 96% (decks 97%, reports 95%), strict ship 67%, titles-only 93% (reports 100%),
+hard defects 2 in 14 artifacts (a statement 2 units over budget; a number in an "open
+questions" item without a citation), reports 0. ~11 min per artifact with 7 builds at once.
+
+| Target (§1) | Status after round 8 |
+| --- | --- |
+| Ship rate ≥ 80% | met: 96% (DeepSeek V4 Pro judge) |
+| Head-to-head win or tie ≥ 60% | met against the earlier method (100%, rounds 1–4) and against hand-written Claude Opus references (3 of 3 tie or win); Claude.ai and Gamma themselves not run (needs the user) |
+| Titles-only ≥ 90% | met: 93% |
+| Hard defects 0 | not quite: 2 in 14 artifacts, both minor (from 54 in round 3) |
+| Traceable claims | met |
+| Deck ≤ 4 min / report ≤ 6 min | not met on DeepSeek V4 Pro (~9 min for one deck alone); Claude not measurable here (no key) |
+| Exports, app flow, template, Chinese | built and tested here; the Mac trial is the remaining check |
