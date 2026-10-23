@@ -8,6 +8,8 @@ import { wrap } from "./measure";
 import { joinNumbers, tokens } from "./inlineTokens";
 import { sourceLine } from "./inlineTokens";
 import { parseDeck, type DeckData, type DeckSlide } from "./parseDeck";
+import { addDesignedSlide, type DesignedCapture } from "./designedPptx";
+import type { DesignedJob } from "./exportDesigned";
 import type { BrandTheme } from "./brand";
 import { deckAccent, resolveTheme } from "./theme";
 import { countUnits, visible } from "./units";
@@ -19,6 +21,11 @@ export interface PptxOptions {
   resolveImage?: (assetId: string) => Promise<string | null>;
   /** The brand theme of an imported template, used when the deck says `theme: brand` (without it, paper). */
   brand?: BrandTheme | null;
+  /**
+   * Draws the designed slides in the browser (exportDesigned.captureDesignedSlides): a picture without text plus its text
+   * boxes for each job, or null where one could not be drawn. Without it (Node, tests) designed slides use the template.
+   */
+  designed?: (jobs: DesignedJob[]) => Promise<Array<DesignedCapture | null>>;
 }
 
 const inch = (px: number) => px / 96;
@@ -68,9 +75,27 @@ export async function buildPptx(content: string, options: PptxOptions = {}): Pro
   const pptx = new PptxGenJS();
   pptx.layout = "LAYOUT_WIDE";
   pptx.title = deck.slides[0] ? visible((deck.slides[0].data as { title?: string }).title ?? "") : "Deck";
+  // Designed slides (a stored design and a deck style) are drawn by the browser; the others by the template below.
+  const designedAt: number[] = [];
+  if (options.designed && deck.style) deck.slides.forEach((source, at) => { if (source.design) designedAt.push(at); });
+  const captures = new Map<number, DesignedCapture>();
+  if (options.designed && designedAt.length) {
+    const sources = options.sources ?? [];
+    const jobs: DesignedJob[] = designedAt.map((at) => {
+      const source = deck.slides[at]!;
+      return { html: source.design!, style: deck.style!, brand: deck.theme === "brand" ? options.brand ?? null : null, chart: source.data.layout === "chart" ? source.data : null, numbers, sources, lang: /[\u3400-\u9fff]/.test(source.body) ? "zh-CN" : undefined, layout: at === 0 ? "title" : source.layout };
+    });
+    (await options.designed(jobs)).forEach((capture, index) => { if (capture) captures.set(designedAt[index]!, capture); });
+  }
   for (const [at, source] of deck.slides.entries()) {
     const slide = pptx.addSlide();
     slide.background = { color: ink.bg };
+    const picture = captures.get(at);
+    if (picture) {
+      addDesignedSlide(slide, picture);
+      if (source.notes) slide.addNotes(source.notes);
+      continue;
+    }
     const foot = sourceLine(source.body, numbers, options.sources);
     await draw(pptx, slide, source, at === 0 ? "title" : source.data.layout, ink, options);
     if (ink.logo) {

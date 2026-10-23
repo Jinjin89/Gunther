@@ -124,8 +124,11 @@ function blocks(list: ReportBlock[]): Array<Paragraph | Table> {
   return out;
 }
 
+/** A designed slide's HTML (its `:::design` block) is a picture of the slide, never text of a document. */
+const withoutDesigns = (content: string) => content.replace(/\n*:::design[ \t]*\n[\s\S]*?\n:::[ \t]*(?=\n|$)/g, "");
+
 export function buildDocx(content: string, options: DocxOptions = {}): Document {
-  const doc = parseReport(content);
+  const doc = parseReport(withoutDesigns(content));
   const body: Array<Paragraph | Table> = [];
   const title = doc.title ?? options.title ?? "Report";
   body.push(new Paragraph({ heading: HeadingLevel.TITLE, spacing: { after: 120 }, children: runs(title, { font: SANS, size: 52, bold: true, color: "111317" }) }));

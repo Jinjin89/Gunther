@@ -24,6 +24,7 @@ import { useLiveOutput } from "./liveOutput";
 import { MaterialSelectionPanel } from "./MaterialSelectionPanel";
 import { OutlineEditor } from "./OutlineEditor";
 import { PrintRoot } from "./PrintRoot";
+import { prepareForPrint } from "./printReady";
 import { SlideReviewPanel } from "./SlideReviewPanel";
 import { ReportView } from "./ReportView";
 import { describeScope, type ScopeCounts } from "./ScopePicker";
@@ -365,7 +366,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
   const copy = async (artifact = open) => { if (!artifact) return; try { await navigator.clipboard.writeText(artifact.content); onNotify(`Version ${artifact.versionNumber} copied as Markdown.`); } catch { onNotify("Clipboard access was unavailable. Download the Markdown file instead."); } };
   const download = (artifact = open) => { if (!artifact) return; const url = URL.createObjectURL(new Blob([artifact.content], { type: "text/markdown;charset=utf-8" })); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${base.id}-${artifact.kind}-v${artifact.versionNumber}.md`; anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); onNotify(`Downloaded version ${artifact.versionNumber} as Markdown.`); };
   const exportFile = async (make: (artifact: NonNullable<typeof open>) => Promise<string>) => { if (!open) return; try { onNotify(`Downloaded ${await make(open)}.`); } catch (reason) { setGeneralError(`The file wasn’t made. ${messageOf(reason)}`); } };
-  const exportPdf = async () => { if (!open) return; try { await document.fonts?.ready; if ("__TAURI_INTERNALS__" in window && /Mac/i.test(navigator.userAgent)) await invoke("print_output"); else window.print(); onNotify("In the print window, choose PDF to save it."); } catch (reason) { setGeneralError(messageOf(reason)); } };
+  const exportPdf = async () => { if (!open) return; try { const finish = await prepareForPrint(); try { if ("__TAURI_INTERNALS__" in window && /Mac/i.test(navigator.userAgent)) await invoke("print_output"); else window.print(); } finally { finish(); } onNotify("In the print window, choose PDF to save it."); } catch (reason) { setGeneralError(messageOf(reason)); } };
   const cite = (citation: ConversationCitation, index: number) => setEvidence({ citation, index });
   const runRebuild = (extra: Partial<BuildOutputRequest>, instruction: string) => { if (open && latest) void rebuild(requestFor({ brief: open.brief, supersedesArtifactId: open.id, ...extra }), instruction); };
   /** A row of a change list: show that version and take the preview to the part. */

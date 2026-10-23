@@ -36,7 +36,9 @@ async function imageData(assetId: string): Promise<string | null> {
 /** The deck as a PowerPoint file, saved. Returns the file's name. */
 export async function downloadPptx(artifact: Artifact): Promise<string> {
   const { pptxBytes } = await import("./exportPptx");
-  const bytes = await pptxBytes(artifact.content, { sources: sourcesOf(artifact), resolveImage: imageData, brand: getBrandTheme() });
+  // The designed slides are drawn by the browser (fonts, charts, a picture without text); the module loads only for a deck that has them.
+  const designed = artifact.content.includes(":::design") ? (await import("./exportDesigned")).captureDesignedSlides : undefined;
+  const bytes = await pptxBytes(artifact.content, { sources: sourcesOf(artifact), resolveImage: imageData, brand: getBrandTheme(), ...(designed ? { designed } : {}) });
   const name = `${fileBase(artifact)}.pptx`;
   saveBlob(new Blob([bytes as BlobPart], { type: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }), name);
   return name;

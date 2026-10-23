@@ -424,6 +424,8 @@
    only it. The light palette is pinned, so a dark theme never prints light text on white. */
 @media screen {
   #print-root { display: none; }
+  /* While a deck is made ready to print, its slides are laid out (charts need a size) but not seen. */
+  html[data-print-prep] #print-root { display: block; position: fixed; left: -20000px; top: 0; visibility: hidden; pointer-events: none; }
 }
 @media print {
   html, body { background: #fff !important; }

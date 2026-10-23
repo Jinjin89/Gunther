@@ -28,7 +28,7 @@ describe("exportPptx", () => {
     expect(summary).toContain("Sources: Harlow 2024; Okafor 2025; Lindqvist 2023");
   });
 
-  it("draws a designed deck by the template for now, without its design block (P4 exports the designs)", async () => {
+  it("draws a designed deck by the template when no browser draws it, without its design block", async () => {
     const content = fixture("deck.designed");
     const zip = await JSZip.loadAsync(await pptxBytes(content, { sources: SOURCES }));
     const slides = Object.keys(zip.files).filter((file) => /^ppt\/slides\/slide\d+\.xml$/.test(file));
