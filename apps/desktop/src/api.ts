@@ -17,6 +17,7 @@ import type {
   UpdateArtifactConversationRequest,
   BuildOutputRequest,
   EditOutputRequest,
+  RestyleSlidesRequest,
   OutlineItem,
   OutputApproach,
   StudioMemo,
@@ -1015,6 +1016,9 @@ export const knowledgeApi = {
   /** Have the Checker look at the sections it has not checked as they read now. */
   reviewSlidesStream: async (baseId: string, artifactId: string, payload: { clientRequestId: string; model?: string; effort?: string }, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal): Promise<Artifact> =>
     (await streamOutput(outputsPath(baseId) + "/artifacts/" + encodeURIComponent(artifactId) + "/visual-review/stream", { method: "POST", body: JSON.stringify(payload) }, workspaceId, event => onEvent(event as OutputEvent), signal)) as Artifact,
+  /** Draw every slide of the latest version again in another style: the next version. */
+  restyleSlidesStream: async (baseId: string, artifactId: string, payload: RestyleSlidesRequest, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal): Promise<Artifact> =>
+    (await streamOutput(outputsPath(baseId) + "/artifacts/" + encodeURIComponent(artifactId) + "/restyle/stream", { method: "POST", body: JSON.stringify(payload) }, workspaceId, event => onEvent(event as OutputEvent), signal)) as Artifact,
   checkOutput: (baseId: string, artifactId: string, workspaceId: string) =>
     request<Artifact>(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/check`, { method: "POST" }, workspaceId),
   updateProposal: (id: string, payload: UpdateKnowledgeProposalInput) =>

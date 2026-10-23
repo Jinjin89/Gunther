@@ -1496,6 +1496,16 @@ export interface ReviseOutputRequest {
   sectionIndex?: number;
 }
 
+/** Draw every slide of a deck again in another style (the words stay as they are). Streams like a visual review and ends with the next version. */
+export interface RestyleSlidesRequest {
+  clientRequestId: string;
+  style: "light" | "dark" | "bold";
+  model?: string;
+  effort?: string;
+  conversationId?: string;
+  conversationTitle?: string;
+}
+
 export interface EditOutputRequest {
   clientRequestId: string;
   content: string;

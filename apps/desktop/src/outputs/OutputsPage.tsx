@@ -352,16 +352,32 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
   };
   const stop = async () => { if (!workspaceId) return; setStopping(true); try { await knowledgeApi.stopOutputBuild(base.id, workspaceId); } catch (reason) { setStopping(false); setGeneralError(messageOf(reason)); } };
   const saveEdit = async (content: string, note = "What you typed has not been re-checked yet.") => {
-    if (!open || !workspaceId) return; setSaving(true); setGeneralError(null);
-    try { const artifact = await knowledgeApi.editOutput(base.id, open.id, { clientRequestId: artifactRequestId(), content }, workspaceId); await finishBuild(artifact, active.id); onNotify(`Saved as version ${artifact.versionNumber}. ${note}`); }
-    catch (reason) { setGeneralError(`The edit wasn’t saved. ${messageOf(reason)}`); } finally { setSaving(false); }
+    if (!open || !workspaceId) return null; setSaving(true); setGeneralError(null);
+    try { const artifact = await knowledgeApi.editOutput(base.id, open.id, { clientRequestId: artifactRequestId(), content }, workspaceId); await finishBuild(artifact, active.id); onNotify(`Saved as version ${artifact.versionNumber}. ${note}`); return artifact; }
+    catch (reason) { setGeneralError(`The edit wasn’t saved. ${messageOf(reason)}`); return null; } finally { setSaving(false); }
   };
   // The deck's accent is part of its Markdown (the title slide's marker), so changing it is an edit.
   const setAccent = (accent: string) => { if (!open) return; const content = withAccent(open.content, accent); if (content !== open.content) void saveEdit(content, `The accent is ${accent}.`); };
   const setTheme = (theme: string) => { if (!open) return; const content = parseSlides(open.content)[0]?.designVersion === 2 ? (["paper", "ink", "editorial"].includes(theme) ? withDeckMarker(open.content, { theme: theme as DeckTheme }) : open.content) : withTheme(open.content, theme); if (content !== open.content) void saveEdit(content, `The style is ${theme}.`); };
   const setDeckTheme = (theme: string) => { if (!open) return; const content = withDeckMarker(open.content, { theme: theme as DeckTheme }); if (content !== open.content) void saveEdit(content, `The theme is ${theme}.`); };
-  /** A designed deck's style is the title marker's `style:`; the slides are drawn again from the new style's CSS (a recolour). A built-in style also ends the template's use. */
-  const setDeckStyle = (style: DeckStyle) => { if (!open) return; const content = withDeckMarker(open.content, { style, theme: "paper" }); if (content !== open.content) void saveEdit(content, `The style is ${style}.`); };
+  /**
+   * A designed deck's style is the title marker's `style:`. The deck is recoloured at once (saved as a version, so the
+   * person sees it), then the backend draws every slide again in that style: the next version. If that fails the recoloured
+   * deck stays and the error is shown as for any other action; picking the style again tries again.
+   */
+  const setDeckStyle = async (style: DeckStyle) => {
+    if (!open || !workspaceId) return;
+    const content = withDeckMarker(open.content, { style, theme: "paper" });
+    let target: Artifact = open;
+    if (content !== open.content) {
+      const saved = await saveEdit(content, `The style is ${style}.`);
+      if (!saved) return;
+      target = saved;
+    }
+    const model = choice.model ? { model: choice.model, effort: choice.effort } : {};
+    void rebuild(requestFor(), `Redesign the slides in ${style}`, (id, payload, workspace, hear, signal) =>
+      knowledgeApi.restyleSlidesStream(id, target.id, { clientRequestId: payload.clientRequestId, style, ...model, conversationId: active.id, conversationTitle: active.title }, workspace, hear, signal));
+  };
   const checkAgain = async () => { if (!open || !workspaceId) return; setChecking(true); try { setOpen(await knowledgeApi.checkOutput(base.id, open.id, workspaceId)); onNotify("Checked against the sources."); } catch (reason) { setGeneralError(messageOf(reason)); } finally { setChecking(false); } };
   const copy = async (artifact = open) => { if (!artifact) return; try { await navigator.clipboard.writeText(artifact.content); onNotify(`Version ${artifact.versionNumber} copied as Markdown.`); } catch { onNotify("Clipboard access was unavailable. Download the Markdown file instead."); } };
   const download = (artifact = open) => { if (!artifact) return; const url = URL.createObjectURL(new Blob([artifact.content], { type: "text/markdown;charset=utf-8" })); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${base.id}-${artifact.kind}-v${artifact.versionNumber}.md`; anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); onNotify(`Downloaded version ${artifact.versionNumber} as Markdown.`); };

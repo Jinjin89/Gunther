@@ -9,6 +9,7 @@ import { knowledgeApi, OutputStoppedError, type ArtifactTurnEvent } from "../api
 import { OPEN_SETTINGS_EVENT } from "../models/askModel";
 import { makeBase, makeSource } from "../test/fixtures";
 import { OutputsPage } from "./OutputsPage";
+import { fixture } from "./deck/fixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -618,6 +619,52 @@ describe("reading, versions and editing", () => {
     await user.click(screen.getByRole("button", { name: /Editorial/ }));
     await waitFor(() => expect(edit).toHaveBeenCalledOnce());
     expect(edit.mock.calls[0]?.[2].content).toBe(styled);
+  });
+  describe("restyling a designed deck", () => {
+    const designed = (number = 1, overrides: Partial<Artifact> = {}) => accentDeck(number, { content: fixture("deck.designed"), ...overrides });
+    it("recolours at once, then redesigns in that style and shows the version it returns", async () => {
+      const user = userEvent.setup();
+      const recoloured = designed(2, { origin: "edit", content: fixture("deck.designed").replace("style: light", "style: dark") });
+      const redesigned = designed(3, { origin: "build", title: "Deck v3", content: recoloured.content });
+      const edit = vi.spyOn(knowledgeApi, "editOutput").mockResolvedValue(recoloured);
+      const restyle = vi.spyOn(knowledgeApi, "restyleSlidesStream").mockImplementation(async (_base, _id, _payload, _workspace, hear) => {
+        hear({ type: "stage", id: "design", label: "Designing the slides", state: "running" });
+        return redesigned;
+      });
+      await setup({ history: [designed()] });
+      await user.click(await screen.findByRole("button", { name: "Deck style" }));
+      await user.click(screen.getByRole("menuitem", { name: /Dark/ }));
+      await waitFor(() => expect(restyle).toHaveBeenCalledOnce());
+      expect(edit.mock.calls[0]?.[2].content).toContain("style: dark");
+      expect(restyle.mock.calls[0]?.[1]).toBe("art_2");
+      expect(restyle.mock.calls[0]?.[2]).toMatchObject({ style: "dark" });
+      expect(await screen.findByRole("heading", { level: 2, name: "Deck v3" })).toBeVisible();
+    });
+    it("keeps the recoloured deck and shows the error when the redesign fails", async () => {
+      const user = userEvent.setup();
+      const recoloured = designed(2, { origin: "edit", content: fixture("deck.designed").replace("style: light", "style: bold") });
+      vi.spyOn(knowledgeApi, "editOutput").mockResolvedValue(recoloured);
+      vi.spyOn(knowledgeApi, "restyleSlidesStream").mockRejectedValue(new Error("The model could not be reached."));
+      await setup({ history: [designed()] });
+      await user.click(await screen.findByRole("button", { name: "Deck style" }));
+      await user.click(screen.getByRole("menuitem", { name: /Bold/ }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("The model could not be reached.");
+      expect(await screen.findByRole("heading", { level: 2, name: "Deck v2" })).toBeVisible();
+    });
+    it("makes no backend call when the template is picked", async () => {
+      const user = userEvent.setup();
+      const { setBrandTheme } = await import("./deck/brandStore");
+      setBrandTheme({ name: "Acme", background: "#ffffff", text: "#202020", accent: "#0a64c8", accent2: "#0a64c8", headingFont: "Arial", bodyFont: "Arial", logo: null });
+      const edit = vi.spyOn(knowledgeApi, "editOutput").mockResolvedValue(designed(2, { origin: "edit" }));
+      const restyle = vi.spyOn(knowledgeApi, "restyleSlidesStream");
+      await setup({ history: [designed()] });
+      await user.click(await screen.findByRole("button", { name: "Deck style" }));
+      await user.click(screen.getByRole("menuitem", { name: "Acme" }));
+      await waitFor(() => expect(edit).toHaveBeenCalledOnce());
+      expect(edit.mock.calls[0]?.[2].content).toContain("theme: brand");
+      expect(restyle).not.toHaveBeenCalled();
+      setBrandTheme(null);
+    });
   });
   it("saves nothing when the deck already has the accent that was chosen", async () => {
     const user = userEvent.setup(); const edit = vi.spyOn(knowledgeApi, "editOutput");

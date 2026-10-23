@@ -9,9 +9,10 @@ import { STYLE_LABEL } from "./designStyles";
 /**
  * The look of a designed deck: Light, Dark, Bold, and the imported template's colours and fonts when there is one.
  *
- * Picking a style rewrites the title marker's `style:` and the slides are drawn again with that style's CSS; the slides' HTML
- * uses only the style's variables, so this is a recolour. (P3 hook: a later "Redesign in this style" action will ask the
- * backend to design the slides again for the chosen style; offer it here, beside the styles, when it exists.)
+ * Picking a style recolours the deck at once (the title marker's `style:` is rewritten and saved; the slides' HTML uses only the
+ * style's variables), then OutputsPage asks the backend to draw every slide again in that style (`restyleSlidesStream`),
+ * which saves the next version. The menu is disabled while that runs. The template is only ever a recolour (`onTemplate`).
+ * A studio deck with no style yet keeps the Theme menu (DeckThemeMenu) instead of this one: its look is the template's.
  */
 export function DeckStyleMenu({ style, theme, disabled, onStyle, onTemplate, onNotice }: {
   style: DeckStyle;
