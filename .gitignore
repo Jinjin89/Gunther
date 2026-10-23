@@ -47,3 +47,6 @@ apps/backend/evals/results/
 # Claude Code personal settings
 .claude/settings.local.json
 .claude/worktrees/
+# Merge-conflict and patch leftovers.
+*.orig
+*.rej
