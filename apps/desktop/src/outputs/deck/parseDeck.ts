@@ -165,11 +165,13 @@ function toChart(title: Raw, found: Extract<Block, { t: "table" }>, kind: ChartK
       values: read.map((row) => {
         const value = row[column]!;
         const attached = !value.tail && unit && !/[\p{L}\p{N}]/u.test(unit) && unit.length <= 2 ? unit : "";
-        return { n: value.number, text: value.text, label: `${value.text}${attached}` };
+        // Bold marks on a value only point at its row (see `bold` below); they are not drawn.
+        const shown = value.text.replace(/^(\*\*|__)(.*)\1/, "$2").trim();
+        return { n: value.number, text: shown, label: `${shown}${attached}` };
       }),
     };
   });
-  const bold = grid.map((row) => /^(\*\*|__).+(\*\*|__)$/.test(row[0]!.trim()));
+  const bold = grid.map((row) => row.some((cell) => /^(\*\*|__).+(\*\*|__)(?:\s*\[[^\]]*\])*$/.test(cell.trim())));
   const first = bold.indexOf(true);
   return {
     layout: "chart", title, kind, unit: unitOption, after: withLead(before, after), series,

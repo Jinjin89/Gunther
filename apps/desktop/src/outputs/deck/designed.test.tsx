@@ -149,6 +149,31 @@ describe("a designed slide", () => {
     expect(designCss("light", null)).toContain("gunther-chart");
   });
 
+  it("lays the chart out inside the placeholder's own box, never larger", async () => {
+    const size = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(640);
+    const high = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(380);
+    const { container } = render(<DesignedSlide html={sanitizeDesign('<section class="slide"><div style="width:640px;height:380px"><gunther-chart></gunther-chart></div></section>')} style="light" chart={chart} numbers={NUMBERS} />);
+    await flush();
+    const svg = shadow(container).querySelector("gunther-chart svg")!;
+    expect(Number(svg.getAttribute("width"))).toBeLessThanOrEqual(640);
+    expect(Number(svg.getAttribute("height"))).toBeLessThanOrEqual(380);
+    const css = designCss("light", null);
+    expect(css).toMatch(/gunther-chart \{[^}]*overflow: hidden/);
+    expect(css).toMatch(/\.dk-plot svg \{[^}]*overflow: hidden/);
+    size.mockRestore(); high.mockRestore();
+  });
+
+  it("draws every grouping of citations as one raised mark without brackets", async () => {
+    for (const text of ["2028 [1][8][10]", "2028 [1, 8, 10]", "2028 [1,8,10]"]) {
+      const { container, unmount } = render(<DesignedSlide html={sanitizeDesign(`<section class="slide"><p>${text}</p></section>`)} style="light" chart={null} numbers={NUMBERS} />);
+      await flush();
+      const p = shadow(container).querySelector("p")!;
+      expect([...p.querySelectorAll("sup.dk-cite")].map((m) => m.textContent), text).toEqual(["1,8,10"]);
+      expect(p.textContent, text).toBe("20281,8,10");
+      unmount();
+    }
+  });
+
   it("draws nothing in the placeholder without a chart table", async () => {
     const { container } = render(<DesignedSlide html={sanitizeDesign(html)} style="light" chart={null} numbers={NUMBERS} />);
     await flush();

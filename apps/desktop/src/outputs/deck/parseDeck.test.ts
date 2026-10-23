@@ -158,3 +158,13 @@ describe("the fixtures follow the format", () => {
     expect(budgetIssues(parse("points", "## A claim that is long enough\n- **a**: b"))).toEqual([expect.stringContaining("items: 1")]);
   });
 });
+
+describe("a chart table's bold marks", () => {
+  it("point at the highlighted row and are not drawn", () => {
+    const data = parseDeckSlide("chart", "## T\n| Item | Share (%) |\n| --- | --- |\n| A | 2.2 |\n| B | **1.5** [3] |\n| C | 1.3 |", { chart: "column" });
+    if (data.layout !== "chart") throw new Error("not a chart");
+    expect(data.categories.map((c) => c.highlight)).toEqual([false, true, false]);
+    expect(data.series[0]!.values.map((v) => v.label)).toEqual(["2.2%", "1.5%", "1.3%"]);
+    expect(JSON.stringify(data)).not.toContain("**");
+  });
+});
