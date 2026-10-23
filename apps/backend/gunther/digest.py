@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from gunther import usage
 from gunther.llm import Image, ModelError, ModelGateway, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.models import (
@@ -408,14 +409,15 @@ class ModelDigestWriter:
             else []
         )
         try:
-            parsed, _ = self.gateway.complete_json(
-                model,
-                _Digest,
-                system=INSTRUCTIONS.format(guide=GUIDES[request.profile]),
-                prompt=_prompt(request),
-                images=images,
-                effort=effort,
-            )
+            with usage.job("photos" if sees else "analysis", "summary", ref=request.source_id):
+                parsed, _ = self.gateway.complete_json(
+                    model,
+                    _Digest,
+                    system=INSTRUCTIONS.format(guide=GUIDES[request.profile]),
+                    prompt=_prompt(request),
+                    images=images,
+                    effort=effort,
+                )
         except ModelError as error:
             raise DigestError(str(error)) from error
         if not parsed.overview.strip():

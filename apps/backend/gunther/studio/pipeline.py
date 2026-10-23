@@ -19,6 +19,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from gunther import usage
 from gunther.agent import Evidence
 from gunther.llm import ModelError, ModelInfo
 from gunther.model_profiles import Effort
@@ -1017,6 +1018,7 @@ class StudioAgents(OutputAgents):
 
     # The whole run ------------------------------------------------------------------------
 
+    @usage.job("outputs")
     def make(
         self,
         model: ModelInfo,

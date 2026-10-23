@@ -22,6 +22,24 @@ def utc_now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
+class ModelUsage(Base):
+    __tablename__ = "model_usage"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    at: Mapped[datetime] = mapped_column(default=utc_now, index=True)
+    provider_id: Mapped[str] = mapped_column(String(160))
+    model_id: Mapped[str] = mapped_column(String(240))
+    job: Mapped[str] = mapped_column(String(40))
+    detail: Mapped[str | None] = mapped_column(String(160))
+    ref: Mapped[str | None] = mapped_column(String(160))
+    input: Mapped[int | None] = mapped_column(Integer)
+    cached: Mapped[int | None] = mapped_column(Integer)
+    output: Mapped[int | None] = mapped_column(Integer)
+    reasoning: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20))
+    ms: Mapped[int] = mapped_column(Integer)
+
+
 class WorkspaceIdentity(Base):
     """The durable identity of this one local Gunther workspace."""
 

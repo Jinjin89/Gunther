@@ -113,6 +113,7 @@ import { webCaptureSchema } from "@gunther/contracts";
 import { invoke } from "@tauri-apps/api/core";
 import { log } from "./log";
 import { kickActivity } from "./activity/events";
+import type { UsageRange, UsageRequest, UsageSummary } from "./usage/types";
 import type {
   CreateDevicePairingInput,
   DevicePairingSession,
@@ -770,6 +771,10 @@ export const knowledgeApi = {
   /** The models Ask can use now, for the model menu. */
   modelMenu: () => request<ModelMenu>("/models"),
   modelsOverview: () => request<ModelsOverview>("/settings/models"),
+  usageSummary: (range: UsageRange, tzOffset: number) =>
+    request<UsageSummary>(`/usage/summary?range=${range}&tzOffset=${tzOffset}`),
+  usageRecent: (limit = 50) => request<{ requests: UsageRequest[] }>(`/usage/recent?limit=${limit}`).then((body) => body.requests),
+  clearUsage: () => request<void>("/usage", { method: "DELETE" }),
   addProvider: (payload: ProviderInput) =>
     request<ModelsOverview>("/settings/providers", { method: "POST", body: JSON.stringify(payload) }),
   updateProvider: (id: string, payload: ProviderInput) =>

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from gunther import usage
 from gunther.llm import ModelError, ModelGateway, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.schemas import LectureSummaryOut
@@ -28,6 +29,7 @@ class AILectureSummarizer:
         self.effort = effort
         self.mode = model.method
 
+    @usage.job("analysis", "summary")
     def summarize(self, title: str, transcript: str, duration_seconds: int) -> LectureSummaryOut:
         try:
             parsed, _ = self.gateway.complete_json(

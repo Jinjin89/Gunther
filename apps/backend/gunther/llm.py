@@ -21,9 +21,12 @@ import json
 import logging
 import re
 import threading
+import time
+import uuid
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 from urllib.parse import urlsplit
@@ -33,7 +36,7 @@ import openai
 from openai import OpenAI
 from pydantic import BaseModel, ValidationError
 
-from gunther import trace
+from gunther import trace, usage
 from gunther.model_profiles import EFFORT_LABELS, Effort, ModelProfile, Params
 
 logger = logging.getLogger(__name__)
@@ -149,10 +152,13 @@ class ModelGateway:
         roles: dict[str, tuple[str, Effort]] | None = None,
         *,
         client_factory: ClientFactory = _openai_client,
+        recorder: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self._models = {model.ref: model for model in models}
         self._roles = roles or {}
         self._client_factory = client_factory
+        self._recorder = recorder
+        self._without_usage: set[str] = set()
         self._clients: dict[tuple[str, str | None], Any] = {}
         self._lock = threading.Lock()
 
@@ -257,13 +263,57 @@ class ModelGateway:
 
         send_effort, send_json = params, json_mode
         broke = emptied = False
+        with self._lock:
+            send_usage = model.ref not in self._without_usage
         while True:
             try:
-                text, reasoning, finish, usage = self._stream(
-                    model, payload, send_effort, send_json, max_tokens, on_text
-                )
-                if call is not None:
-                    trace.update(call, finish=finish, usage=usage)
+                counts = _usage(None)
+                at = datetime.now(UTC).replace(tzinfo=None)
+                started = time.perf_counter()
+                status = "error"
+                try:
+                    text, reasoning, finish, _ = self._stream(
+                        model,
+                        payload,
+                        send_effort,
+                        send_json,
+                        max_tokens,
+                        on_text,
+                        include_usage=send_usage,
+                        counts=counts,
+                    )
+                    if text.strip():
+                        status = (
+                            "ok" if any(v is not None for v in counts.values()) else "unreported"
+                        )
+                        if not send_usage:
+                            with self._lock:
+                                self._without_usage.add(model.ref)
+                    if call is not None:
+                        trace.update(call, finish=finish)
+                finally:
+                    entry = {
+                        "id": uuid.uuid4().hex,
+                        "at": at,
+                        "provider_id": model.provider_id,
+                        "model_id": model.model_id,
+                        **usage.current(),
+                        **counts,
+                        "status": status,
+                        "ms": round((time.perf_counter() - started) * 1000),
+                    }
+                    if call is not None:
+                        kept = {**entry, "at": at.replace(tzinfo=UTC).isoformat()}
+                        trace.update(
+                            call,
+                            usage=kept,
+                            usageAttempts=[*call.get("usageAttempts", []), kept],
+                        )
+                    if self._recorder is not None:
+                        try:
+                            self._recorder(entry)
+                        except Exception:
+                            logger.warning("Could not record model usage", exc_info=True)
                 if not text.strip() and finish != "length" and not emptied:
                     # An empty answer that did not run out of room is asked for once more.
                     emptied = True
@@ -273,6 +323,15 @@ class ModelGateway:
                     continue
                 break
             except openai.BadRequestError as error:
+                # Prefer the named setting; otherwise drop settings one at a time.
+                detail = _detail(error).lower()
+                if send_usage and ("stream_options" in detail or "include_usage" in detail):
+                    send_usage = False
+                    with self._lock:
+                        self._without_usage.add(model.ref)
+                    if admit := REQUEST_ADMISSION.get():
+                        admit()
+                    continue
                 # A setting this server does not know: once without it, and say so.
                 if send_effort.body or send_effort.reasoning_effort:
                     logger.info("%s refused the effort setting: %s", model.ref, error)
@@ -283,6 +342,11 @@ class ModelGateway:
                     continue
                 if send_json:
                     send_json = False
+                    if admit := REQUEST_ADMISSION.get():
+                        admit()
+                    continue
+                if send_usage:
+                    send_usage = False
                     if admit := REQUEST_ADMISSION.get():
                         admit()
                     continue
@@ -399,8 +463,13 @@ class ModelGateway:
         json_mode: bool,
         max_tokens: int | None,
         on_text: Callable[[str], None] | None = None,
-    ) -> tuple[str, str, str | None, dict[str, Any] | None]:
+        *,
+        include_usage: bool = True,
+        counts: dict[str, int | None] | None = None,
+    ) -> tuple[str, str, str | None, dict[str, int | None]]:
         request: dict[str, Any] = {"model": model.model_id, "messages": messages, "stream": True}
+        if include_usage:
+            request["stream_options"] = {"include_usage": True}
         if params.reasoning_effort:
             request["reasoning_effort"] = params.reasoning_effort
         if params.body:
@@ -412,19 +481,16 @@ class ModelGateway:
         text: list[str] = []
         reasoning: list[str] = []
         finish: str | None = None
-        usage: dict[str, Any] | None = None
+        counts = counts if counts is not None else _usage(None)
         client = self._client(model)
         if REQUEST_ADMISSION.get() is not None and isinstance(client, OpenAI):
             client = client.with_options(max_retries=0)
         for chunk in client.chat.completions.create(**request):
-            # Token counts, when the provider sends them unasked (asking can be refused).
             counted = getattr(chunk, "usage", None)
             if counted is not None:
-                usage = {
-                    key: getattr(counted, key)
-                    for key in ("prompt_tokens", "completion_tokens", "total_tokens")
-                    if isinstance(getattr(counted, key, None), int)
-                } or None
+                counts.update(
+                    {key: value for key, value in _usage(counted).items() if value is not None}
+                )
             if not chunk.choices:
                 continue
             choice = chunk.choices[0]
@@ -440,7 +506,28 @@ class ModelGateway:
             thought = extra.get("reasoning_content") or extra.get("reasoning")
             if isinstance(thought, str):
                 reasoning.append(thought)
-        return "".join(text), "".join(reasoning), finish, usage
+        return "".join(text), "".join(reasoning), finish, counts
+
+
+def _usage(counted: Any) -> dict[str, int | None]:
+    """Provider-reported counts only; cached and reasoning are subsets, not extras."""
+
+    def field(value: Any, key: str) -> Any:
+        return value.get(key) if isinstance(value, dict) else getattr(value, key, None)
+
+    def count(*values: Any) -> int | None:
+        return next((v for v in values if type(v) is int and v >= 0), None)
+
+    return {
+        "input": count(field(counted, "prompt_tokens")),
+        "cached": count(
+            field(counted, "prompt_cache_hit_tokens"),
+            field(field(counted, "prompt_tokens_details"), "cached_tokens"),
+            field(counted, "cached_tokens"),
+        ),
+        "output": count(field(counted, "completion_tokens")),
+        "reasoning": count(field(field(counted, "completion_tokens_details"), "reasoning_tokens")),
+    }
 
 
 def _json_text(text: str) -> str:

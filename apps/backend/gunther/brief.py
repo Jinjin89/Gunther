@@ -19,6 +19,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
+from gunther import usage
 from gunther.llm import ModelError, ModelGateway, ModelInfo
 from gunther.model_profiles import Effort
 
@@ -272,6 +273,7 @@ class BriefKeeper:
         self.gateway = gateway
         self.effort = effort
 
+    @usage.job("analysis", "brief")
     def update(
         self,
         model: ModelInfo,

@@ -645,6 +645,11 @@ def _add_recording_audio_duration(connection: Connection, metadata: MetaData) ->
         add_column_if_missing(connection, "recording_sessions", "audio_duration_ms", "INTEGER")
 
 
+def _create_model_usage(connection: Connection, metadata: MetaData) -> None:
+    if "model_usage" in metadata.tables:
+        metadata.tables["model_usage"].create(bind=connection, checkfirst=True)
+
+
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
 MIGRATIONS: tuple[Migration, ...] = (
@@ -676,6 +681,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(26, "drop_transcript_upgrades", _drop_transcript_upgrades),
     Migration(27, "artifact_conversations", _create_artifact_conversations),
     Migration(28, "recording_audio_duration", _add_recording_audio_duration),
+    Migration(29, "model_usage", _create_model_usage),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

@@ -35,6 +35,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from gunther import usage
 from gunther.agent import CITATION_GROUP, UNSOURCED, Evidence, Step, Tool, ToolFailure
 from gunther.llm import ModelError, ModelGateway, ModelInfo, Turn
 from gunther.model_profiles import Effort
@@ -2143,6 +2144,7 @@ class SkillAgents(OutputAgents):
 
     # The whole run ---------------------------------------------------------------------------
 
+    @usage.job("outputs")
     def make(
         self,
         model: ModelInfo,

@@ -4,6 +4,7 @@ import os
 import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from functools import partial
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +18,7 @@ from gunther import (
     model_registry,
     speech_registry,
     tts_service,
+    usage,
     vector_index,
 )
 from gunther.activity import Activity
@@ -69,6 +71,7 @@ from gunther.trash import TrashService
 from gunther.trash_api import router as trash_router
 from gunther.tts_api import router as tts_router
 from gunther.tts_service import TtsService
+from gunther.usage_api import router as usage_router
 from gunther.web_capture import (
     PinnedHttpFetcher,
     PublicWebUrlPolicy,
@@ -129,7 +132,7 @@ def _connect_models(
     """
 
     registry = model_registry.effective(*store.models(), settings)
-    options = {}
+    options = {"recorder": partial(usage.record, knowledge_service.sessions)}
     if application.state.model_client_factory is not None:
         options["client_factory"] = application.state.model_client_factory
     models = model_registry.build_gateway(registry, settings, **options)
@@ -507,6 +510,7 @@ def create_app(
     application.include_router(speech_router, prefix=active_settings.api_prefix)
     application.include_router(tts_router, prefix=active_settings.api_prefix)
     application.include_router(developer_router, prefix=active_settings.api_prefix)
+    application.include_router(usage_router, prefix=active_settings.api_prefix)
     return application
 
 

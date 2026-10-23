@@ -25,7 +25,7 @@ from typing import Any, Protocol
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from gunther import vector_index
+from gunther import usage, vector_index
 from gunther.content import search_tokens
 from gunther.llm import ModelError, ModelGateway, ModelInfo
 from gunther.model_profiles import Effort
@@ -298,6 +298,7 @@ class ModelTopicWriter:
         self.effort = effort
         self.method = model.method
 
+    @usage.job("analysis", "topic")
     def write(self, title: str, description: str, papers: list[Paper]) -> str | None:
         sources = "\n\n".join(
             f"[{index}] {paper.title} ({paper.year or 'n.d.'}). {paper.abstract[:1500]}"
@@ -408,7 +409,8 @@ def write_overview(
         + (f" Shared terms: {', '.join(shared)}." if shared else ""),
         "",
     ]
-    written = writer.write(topic.title, topic.description, read)
+    with usage.job("analysis", "topic", ref=topic_id):
+        written = writer.write(topic.title, topic.description, read)
     method = writer.method if written else "local"
     if written:
         if len(read) < len(papers):

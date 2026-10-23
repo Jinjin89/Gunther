@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from gunther import usage
 from gunther.llm import Image, ModelError
 from gunther.outputs import (
     BuiltOutput,
@@ -221,6 +222,7 @@ images, in order, are the named full-size slides. Do not review context-only pag
 """
 
 
+@usage.job("outputs", "slides")
 def review_deck(
     built: BuiltOutput,
     renderer: SlideRenderer | None,

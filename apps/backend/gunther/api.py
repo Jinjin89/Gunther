@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
-from gunther import listen_copy, speech_registry
+from gunther import listen_copy, speech_registry, usage
 from gunther.answer_runs import AnswerRun, AnswerRuns, Stopped
 from gunther.asset_service import (
     AssetNotFoundError,
@@ -1022,14 +1022,15 @@ async def group_recording_paragraphs(
         )
     model, effort = chosen
     try:
-        starts = await asyncio.to_thread(
-            group_paragraphs,
-            gateway,
-            model,
-            effort,
-            payload.sentences,
-            payload.before[-400:],
-        )
+        with usage.job("analysis", "paragraphs", ref=recording_id):
+            starts = await asyncio.to_thread(
+                group_paragraphs,
+                gateway,
+                model,
+                effort,
+                payload.sentences,
+                payload.before[-400:],
+            )
     except ParagraphsError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     return {"starts": starts, "model": model.display}

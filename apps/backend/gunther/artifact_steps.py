@@ -31,6 +31,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from gunther import usage
 from gunther.agent import Tool
 from gunther.artifact_workspace import (
     CardRec,
@@ -1093,6 +1094,7 @@ class WorkSteps:
 
     # 4. Edit --------------------------------------------------------------------------------
 
+    @usage.job("outputs")
     def edit(self, item_id: str, span: str, instruction: str) -> bool:
         """Change one passage of a part and nothing else, then check the part.
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 
+from gunther import usage
 from gunther.llm import ModelError, ModelGateway, ModelInfo, _json_text
 from gunther.model_profiles import Effort
 
@@ -50,6 +51,7 @@ def usable_starts(answer: object, count: int) -> list[int]:
     return sorted(picked | {0}) if picked else []
 
 
+@usage.job("analysis", "paragraphs")
 def group_paragraphs(
     gateway: ModelGateway,
     model: ModelInfo,

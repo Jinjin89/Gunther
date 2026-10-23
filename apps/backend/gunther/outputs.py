@@ -36,6 +36,7 @@ from typing import Any, NamedTuple
 
 from pydantic import BaseModel, Field
 
+from gunther import usage
 from gunther.agent import (
     CITATION_GROUP,
     SENTENCE_END,
@@ -1597,6 +1598,7 @@ class OutputAgents:
 
     # Whole runs ----------------------------------------------------------------------------
 
+    @usage.job("outputs")
     def build(
         self,
         model: ModelInfo,
@@ -1674,6 +1676,7 @@ class OutputAgents:
             preamble = f"# {title}" + (f"\n\n_{line}_" if line else "")
         return self.assemble(spec, title, preamble, drafts, pool, planned, model, effort)
 
+    @usage.job("outputs")
     def revise(
         self,
         model: ModelInfo,
@@ -1791,6 +1794,7 @@ class OutputAgents:
         title = title_of(join_document(preamble, [d.text for d in drafts], spec.kind)) or ""
         return self.assemble(spec, title, preamble, drafts, pool, planned, model, effort)
 
+    @usage.job("outputs")
     def check(
         self,
         model: ModelInfo,

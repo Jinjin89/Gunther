@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
-from gunther import trace
+from gunther import trace, usage
 from gunther.llm import Completion, ModelError, ModelGateway, ModelInfo, Turn
 from gunther.model_profiles import Effort
 from gunther.run_budget import BudgetedGateway, RunBudget
@@ -907,6 +907,7 @@ class AskAgent:
         keep = {number for number in verdict.relevant if 1 <= number <= len(found)}
         return [item for index, item in enumerate(found, start=1) if index in keep]
 
+    @usage.job("ask")
     def run(
         self,
         question: str,

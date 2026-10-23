@@ -24,6 +24,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from gunther import usage
 from gunther.agent import AskAgent, Evidence, Tool, ToolFailure, check_citations
 from gunther.artifact_steps import WorkSteps
 from gunther.artifact_workspace import (
@@ -1000,6 +1001,7 @@ class ArtifactAgent:
 
     # The loop --------------------------------------------------------------------------------
 
+    @usage.job("outputs")
     def run(self) -> TurnResult:
         self.asked = self.workspace.pending
         try:
@@ -1336,7 +1338,9 @@ class ArtifactAgent:
     def _run(self, m: Mapped) -> Outcome:
         act = m.act
         runner = getattr(self, f"_do_{act.do}")
-        return runner(m)
+        work = active_work(self.workspace)
+        with usage.job(detail=work.spec.kind if work else None):
+            return runner(m)
 
     def _do_ask(self, m: Mapped) -> Outcome:
         act = m.act

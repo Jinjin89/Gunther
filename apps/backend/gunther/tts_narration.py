@@ -17,6 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from gunther import usage
 from gunther.llm import Image, ModelError, ModelGateway, ModelInfo
 from gunther.tts_providers import TtsError
 
@@ -198,6 +199,7 @@ def _pick_model(gateway: ModelGateway | None, needs_vision: bool) -> ModelInfo |
     return None
 
 
+@usage.job("analysis", "narration")
 def _describe(gateway: ModelGateway, model: ModelInfo, part: Part, context: str) -> str:
     images = (part.image,) if part.image else ()
     prompt = f"Text around it (for language and topic):\n{context[:1500]}\n\n"

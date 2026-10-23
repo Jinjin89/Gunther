@@ -1,11 +1,11 @@
 import { persistentStorage } from "../persistentStorage";
-import { AudioLines, Brain, HardDrive, Search, Settings2, Smartphone, SquareTerminal } from "lucide-react";
+import { AudioLines, BarChart3, Brain, HardDrive, Search, Settings2, Smartphone, SquareTerminal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { knowledgeApi } from "../api";
 import { MODELS_CHANGED_EVENT, OPEN_SETTINGS_EVENT } from "../models/askModel";
 
-export type SettingsPaneId = "general" | "models" | "voice" | "search" | "library" | "devices" | "developer";
+export type SettingsPaneId = "general" | "models" | "usage" | "voice" | "search" | "library" | "devices" | "developer";
 
 export interface SettingsPane {
   id: SettingsPaneId;
@@ -18,6 +18,7 @@ export interface SettingsPane {
 export const SETTINGS_PANES: SettingsPane[] = [
   { id: "general", label: "General", description: "Appearance, answer style and preferences for this computer.", icon: <Settings2 size={15} /> },
   { id: "models", label: "Models", description: "The language models that answer, read and summarize, and where they come from.", icon: <Brain size={15} /> },
+  { id: "usage", label: "Usage", description: "Tokens used by model requests, by model and job.", icon: <BarChart3 size={15} /> },
   { id: "voice", label: "Voice", description: "How Gunther hears you and reads answers aloud.", icon: <AudioLines size={15} /> },
   { id: "search", label: "Search", description: "Finding things by meaning in your libraries, and on the web.", icon: <Search size={15} /> },
   { id: "library", label: "Library & storage", description: "Where your libraries and their files live on this computer.", icon: <HardDrive size={15} /> },

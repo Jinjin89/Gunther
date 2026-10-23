@@ -84,6 +84,7 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (26, "drop_transcript_upgrades"),
             (27, "artifact_conversations"),
             (28, "recording_audio_duration"),
+            (29, "model_usage"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
@@ -1171,7 +1172,7 @@ def test_v20_database_gains_session_briefs_without_losing_conversations(tmp_path
             assert connection.execute(
                 text("SELECT title, brief_json FROM knowledge_sessions WHERE id = 'ses_old'")
             ).one() == ("Kept", "{}")
-        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 28
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 29
     finally:
         engine.dispose()
 
@@ -1230,7 +1231,7 @@ def test_v22_database_gains_transcript_segments_without_losing_recordings(tmp_pa
                     "WHERE id = 'rec_old'"
                 )
             ).one() == ("[00:00] Hello", None)
-        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 28
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 29
     finally:
         engine.dispose()
 
@@ -1264,7 +1265,7 @@ def test_v25_database_loses_the_upgrade_table_and_keeps_its_recordings(tmp_path:
             assert connection.execute(
                 text("SELECT transcript FROM recording_sessions WHERE id = 'rec_old'")
             ).scalar_one() == "[00:00] Hello"
-        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 28
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 29
     finally:
         engine.dispose()
 
@@ -1317,11 +1318,12 @@ def test_v24_database_gets_one_place_per_source_and_a_shared_order(tmp_path: Pat
                     f"('{link}', '{topic}', '{source}', '{created}')"
                 )
         history = run_migrations(engine, Base.metadata)
-        assert [item.name for item in history[-4:]] == [
+        assert [item.name for item in history[-5:]] == [
             "library_contents",
             "drop_transcript_upgrades",
             "artifact_conversations",
             "recording_audio_duration",
+            "model_usage",
         ]
         assert run_migrations(engine, Base.metadata) == history
         with engine.connect() as connection:

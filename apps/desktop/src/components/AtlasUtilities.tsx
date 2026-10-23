@@ -65,6 +65,7 @@ import { SETTINGS_PANES, SettingsNav, useSettingsAttention, useSettingsPane } fr
 import { DeveloperSettings } from "../developer/DeveloperSettings";
 import { TypographySettings } from "./TypographySettings";
 import { ModelSettings } from "../models/ModelSettings";
+import { UsageSettings } from "../usage/UsageSettings";
 import { AnswerStyleSetting } from "../models/AnswerStyleSetting";
 import { SpeechSettings } from "../models/SpeechSettings";
 import { TtsSettings } from "../speech/TtsSettings";
@@ -1054,6 +1055,8 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
       <ModelSettings onNotify={onNotify} />
       <ServiceSettings onNotify={onNotify} only={["summaries"]} heading={{ title: "Summaries", description: "A short summary written for each source after it is read, by the Analysis model above." }} />
     </>}
+
+    {pane === "usage" && <UsageSettings />}
 
     {pane === "voice" && <>
       <SpeechSettings onNotify={onNotify} />

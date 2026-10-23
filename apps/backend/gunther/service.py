@@ -19,7 +19,7 @@ from sqlalchemy import and_, delete, func, or_, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
-from gunther import artifact_agent, trace
+from gunther import artifact_agent, trace, usage
 from gunther import artifact_workspace as workspaces
 from gunther import brief as briefs
 from gunther.agent import (
@@ -1747,9 +1747,10 @@ class KnowledgeService:
             stored.error = "Set up a model under Settings → Models to keep a brief."
             return self._save_brief(session_id, stored, expect=stored.brief)
         _, check_effort = self.agent_efforts or ASK_EFFORTS
-        updated = briefs.BriefKeeper(self.models, check_effort).update(
-            model, stored, question, answer, pool_refs, supported_claims=supported
-        )
+        with usage.job("analysis", "brief", ref=session_id):
+            updated = briefs.BriefKeeper(self.models, check_effort).update(
+                model, stored, question, answer, pool_refs, supported_claims=supported
+            )
         if updated.error is None:
             updated.through = answered_id
         return self._save_brief(session_id, updated, expect=stored.brief, was=stored.edited)
@@ -2648,7 +2649,7 @@ class KnowledgeService:
             ]
             # Settings → Developer: keep how this answer is made, step by step.
             kept = trace.Trace() if self.tracing else None
-            with trace.tracing(kept):
+            with usage.job("ask", ref=session_id), trace.tracing(kept):
                 response = self._answer(
                     question,
                     history,
@@ -3936,7 +3937,10 @@ class KnowledgeService:
         skilled = self.output_skills
         # Without a skill there is nothing to choose a structure: "auto" is an overview.
         style = "overview" if not skilled and payload.style == "auto" else payload.style
-        with session_scope(self.sessions) as session:
+        with (
+            usage.job("outputs", payload.kind, ref=payload.conversation_id),
+            session_scope(self.sessions) as session,
+        ):
             library = self._output_library(session, workspace_id, base_id)
             parent = (
                 self._output_version(
@@ -4341,7 +4345,7 @@ class KnowledgeService:
         if earlier is not None:
             return earlier
         model, effort = self._output_model(payload.model, payload.effort)
-        with session_scope(self.sessions) as session:
+        with usage.job("outputs", ref=artifact_id), session_scope(self.sessions) as session:
             library = self._output_library(session, workspace_id, base_id)
             parent = self._output_version(session, workspace_id, base_id, artifact_id, latest=True)
             self._require_agent_output(parent)
@@ -4394,55 +4398,56 @@ class KnowledgeService:
                 )
             else:
                 agents = OutputAgents(self.models, limits)
-            built = agents.revise(
-                model,
-                effort,
-                Spec(
-                    parent.kind,
-                    parent.audience,
-                    parent.style,
-                    parent.brief,
-                    theme=_marked(split_document(parent.content, "slides")[1][0]).theme
-                    if parent.kind == "slides" and split_document(parent.content, "slides")[1]
-                    else None,
-                ),
-                parent.content,
-                [
-                    Planned(
-                        item["heading"],
-                        item.get("goal", ""),
-                        layout=item.get("layout") or "",
-                        link=item.get("link") or "",
-                        id=item.get("id", ""),
-                        message=item.get("message", ""),
-                        question=item.get("question", ""),
-                        requires=tuple(item.get("requires") or ()),
-                        design=item.get("design"),
-                        layout_locked=bool(
-                            item.get("layoutLocked", item.get("layout_locked", False))
-                        ),
-                        design_locked=bool(
-                            item.get("designLocked", item.get("design_locked", False))
-                        ),
-                        design_attempted=bool(
-                            item.get("designAttempted", item.get("design_attempted", False))
-                        ),
-                    )
-                    for item in json.loads(parent.outline_json)
-                ],
-                carried,
-                payload.instruction,
-                payload.section_index,
-                tool,
-                pool,
-                notes,
-                events,
-                known_coverage={
-                    digest: record["coverage"]
-                    for digest, record in records.items()
-                    if record.get("coverage")
-                },
-            )
+            with usage.job(detail=parent.kind):
+                built = agents.revise(
+                    model,
+                    effort,
+                    Spec(
+                        parent.kind,
+                        parent.audience,
+                        parent.style,
+                        parent.brief,
+                        theme=_marked(split_document(parent.content, "slides")[1][0]).theme
+                        if parent.kind == "slides" and split_document(parent.content, "slides")[1]
+                        else None,
+                    ),
+                    parent.content,
+                    [
+                        Planned(
+                            item["heading"],
+                            item.get("goal", ""),
+                            layout=item.get("layout") or "",
+                            link=item.get("link") or "",
+                            id=item.get("id", ""),
+                            message=item.get("message", ""),
+                            question=item.get("question", ""),
+                            requires=tuple(item.get("requires") or ()),
+                            design=item.get("design"),
+                            layout_locked=bool(
+                                item.get("layoutLocked", item.get("layout_locked", False))
+                            ),
+                            design_locked=bool(
+                                item.get("designLocked", item.get("design_locked", False))
+                            ),
+                            design_attempted=bool(
+                                item.get("designAttempted", item.get("design_attempted", False))
+                            ),
+                        )
+                        for item in json.loads(parent.outline_json)
+                    ],
+                    carried,
+                    payload.instruction,
+                    payload.section_index,
+                    tool,
+                    pool,
+                    notes,
+                    events,
+                    known_coverage={
+                        digest: record["coverage"]
+                        for digest, record in records.items()
+                        if record.get("coverage")
+                    },
+                )
             for check in built.checks:
                 previous = records.get(check["hash"], {})
                 if "coverage" not in check and previous.get("coverage"):
@@ -4525,9 +4530,10 @@ class KnowledgeService:
                 "snapshots": [ArtifactUnitSnapshotOut.model_validate(s)
                               for s in json.loads(parent.revision_snapshot_json)],
             }
-        built = review_deck(built, self.slide_renderer, self.models, model, "medium",
-                            brief=fields["brief"], use=use, emit=events or (lambda _: None),
-                            instructions=skill.instructions(skill.step("visual_review")))
+        with usage.job("outputs", "slides", ref=artifact_id):
+            built = review_deck(built, self.slide_renderer, self.models, model, "medium",
+                                brief=fields["brief"], use=use, emit=events or (lambda _: None),
+                                instructions=skill.instructions(skill.step("visual_review")))
         if events:
             events({"type": "saving"})
         return self._save_output(workspace_id=workspace_id, base_id=base_id,
@@ -4599,7 +4605,10 @@ class KnowledgeService:
         agents = StudioAgents(self.models, OutputLimits(), design=True)
         label = "Designing the slides"
         agents._stage(events or (lambda _event: None), "design", label, "running")
-        designed, count, notes = D.restyle(agents, model, slides, payload.style, workers=WORKERS)
+        with usage.job("outputs", "slides", ref=artifact_id):
+            designed, count, notes = D.restyle(
+                agents, model, slides, payload.style, workers=WORKERS
+            )
         plain = len(slides) - count
         agents._stage(
             events or (lambda _event: None),
@@ -4751,16 +4760,18 @@ class KnowledgeService:
                 )
                 if citation.ref is not None
             }
-        checks = OutputAgents(self.models).check(
-            model,
-            sections,
-            known,
-            by_ref,
-            title_slide=artifact_kind == "slides",
-            known_coverage={
-                key: value["coverage"] for key, value in records.items() if value.get("coverage")
-            },
-        )
+        with usage.job("outputs", artifact_kind, ref=artifact_id):
+            checks = OutputAgents(self.models).check(
+                model,
+                sections,
+                known,
+                by_ref,
+                title_slide=artifact_kind == "slides",
+                known_coverage={
+                    key: value["coverage"]
+                    for key, value in records.items() if value.get("coverage")
+                },
+            )
         with session_scope(self.sessions) as session:
             artifact = self._output_version(
                 session, workspace_id, base_id, artifact_id, latest=False
@@ -5396,7 +5407,7 @@ class KnowledgeService:
         emit = events or (lambda _event: None)
         limits = OutputLimits()
         agent_limits = self.artifact_limits
-        with session_scope(self.sessions) as session:
+        with usage.job("outputs", ref=conversation_id), session_scope(self.sessions) as session:
             self._output_library(session, workspace_id, base_id)
             row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
             earlier = self._earlier_turn(session, row, payload)
@@ -5407,7 +5418,7 @@ class KnowledgeService:
         emit({"type": "turn", "conversationId": conversation_id, "messageId": user_id})
         failure: BaseException | None = None
         result: artifact_agent.TurnResult | None = None
-        with session_scope(self.sessions) as session:
+        with usage.job("outputs", ref=conversation_id), session_scope(self.sessions) as session:
             library = self._output_library(session, workspace_id, base_id)
             row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
             workspace, brief = self._load_workspace(row)

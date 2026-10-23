@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from gunther import usage
 from gunther.llm import ModelError, ModelGateway
 
 
@@ -124,6 +125,7 @@ class ModelExtractor(Extractor):
         self.gateway = gateway
         self.fallback = LocalExtractor()
 
+    @usage.job("analysis", "extraction")
     def extract(self, title: str, content: str) -> ExtractionResult:
         chosen = self.gateway.for_role("analysis")
         if chosen is None:
