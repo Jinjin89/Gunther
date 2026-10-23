@@ -27,6 +27,12 @@ Concrete beats abstract: numbers with what they are compared to, names, places, 
 filler ("it is worth noting", "plays a crucial role", "in today's world", "综上所述", \
 "具有重要意义", "值得关注"). Write in {language}."""
 
+# Roles differ by step; language is chosen by the memo. Neither belongs in the
+# build-independent prefix. Keep the shared sentences verbatim.
+STUDIO_BASE = TRUTH + "\n\n" + VOICE.removesuffix(" Write in {language}.")
+LANGUAGE = "Write in {language}."
+TASK_BOUNDARY = "\n\n── Your task now ──\n\n"
+
 # 1. Reading ---------------------------------------------------------------------------------
 
 NOTES = """\
@@ -60,8 +66,6 @@ audience (the so-what).
 to, and its passage numbers.
 - Tensions: where sources disagree, or something important was not measured. Be specific.
 - What the audience will ask or doubt.
-
-{truth}
 
 Reply with a JSON object:
 {{"language": "language to write in",
@@ -208,9 +212,7 @@ cell, level against level).
 - Every slide adds something the others do not; no slide restates another in a new form.
 - Respect every length limit in the format exactly; they guarantee the slide looks right.
 
-{voice}
-
-{truth}
+{language}
 
 {format}
 
@@ -251,9 +253,7 @@ most one per section, often none.
 summary.
 - {length}
 
-{voice}
-
-{truth}
+{language}
 
 {format}
 

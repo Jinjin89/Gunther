@@ -87,8 +87,22 @@ def designed(system: str) -> str:
     return f'<section class="slide{dark}">\n' + "\n".join(lines) + "\n</section>"
 
 
+def request_text(request):
+    """Text from both roles: studio tasks follow the shared material now."""
+
+    texts = []
+    for message in request["messages"]:
+        content = message["content"]
+        texts.append(
+            content
+            if isinstance(content, str)
+            else "\n".join(part["text"] for part in content if part["type"] == "text")
+        )
+    return "\n\n".join(texts)
+
+
 def router(request):
-    system = str(request["messages"][0]["content"])
+    system = request_text(request)
     if "Choose the visual style" in system:
         return json.dumps({"style": "light", "why": "A calm research brief"})
     if "world-class presentation designer" in system:
@@ -159,14 +173,11 @@ def test_a_deck_is_made_in_the_new_format_and_an_unstated_chart_value_becomes_a_
     assert {e["id"] for e in events if e.get("type") == "stage"} >= {"memo", "story", "write"}
     # Few calls: memo, storyline, critic, draft, then checks.
     asked = [
-        str(r["messages"][0]["content"])[:40]
+        request_text(r)[:40]
         for r in fake.requests
-        if "designer" not in str(r["messages"][0]["content"])
-        and "Choose the visual" not in str(r["messages"][0]["content"])
+        if "designer" not in request_text(r) and "Choose the visual" not in request_text(r)
     ]
-    writers = [
-        r for r in fake.requests if "presentation writer" in str(r["messages"][0]["content"])
-    ]
+    writers = [r for r in fake.requests if "presentation writer" in request_text(r)]
     assert len(writers) == 1
     assert len(asked) <= 10
 
@@ -185,7 +196,7 @@ def test_a_conversation_makes_a_studio_deck_in_one_action_and_can_rewrite_one_sl
     )
 
     def inner(request):
-        system = str(request["messages"][0]["content"])
+        system = request_text(request)
         if "working on one slide" in system:
             return rewritten
         if "knowledge assertions" in system:
@@ -241,7 +252,7 @@ def test_a_failed_build_resumes_after_its_memo_and_storyline():
     calls = {"writer": 0}
 
     def failing(request):
-        system = str(request["messages"][0]["content"])
+        system = request_text(request)
         if "presentation writer" in system and calls["writer"] == 0:
             calls["writer"] += 1
             raise ModelError("The connection broke")
@@ -258,7 +269,7 @@ def test_a_failed_build_resumes_after_its_memo_and_storyline():
     built = StudioAgents(gateway(fake), use="talk").make(
         model(), "high", spec, pool(), Notes(), resume=dict(saved)
     )
-    again = [str(r["messages"][0]["content"]) for r in fake.requests[before:]]
+    again = [request_text(r) for r in fake.requests[before:]]
     assert not any("lead analyst" in s or "presentation strategist" in s for s in again)
     assert "design: v2" in built.content
 
@@ -310,7 +321,7 @@ POINTS = (
 
 def looking_router(rewrite=POINTS, findings=None):
     def route(request):
-        system = str(request["messages"][0]["content"])
+        system = request_text(request)
         if "demanding presentation designer" in system:
             return json.dumps({"findings": findings or []})
         if "A designer looked at these slides" in system:
@@ -440,11 +451,11 @@ def test_the_subtitle_is_rewritten_to_state_what_the_slide_titles_say():
     ]
     agent = SimpleNamespace(
         _text=lambda *a, **k: "Cool roofs save 9% [2], half the plan's figure",
-        _claims=lambda model, text, by_ref, rest="": ([], {}),
+        _claims=lambda model, text, by_ref, rest="", **kwargs: ([], {}),
         _chart_issues=lambda text, by_ref: [],
     )
     pool = SimpleNamespace(by_ref=lambda: {2: object()})
-    out = StudioAgents._cover(agent, None, [Draft(t, [], {}) for t in deck], pool)
+    out = StudioAgents._cover(agent, None, [Draft(t, [], {}) for t in deck], pool, "material")
     assert "Cool roofs save 9% [2], half the plan's figure\nCommittee" in out[0].text
     assert out[1].text == deck[1]
 

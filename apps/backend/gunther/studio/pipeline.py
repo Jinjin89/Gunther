@@ -14,6 +14,7 @@ import logging
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
+from copy import copy
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -46,7 +47,6 @@ logger = logging.getLogger(__name__)
 # How much material is read whole. Beyond it the material is read in parts first (notes).
 DIRECT_TOKENS = 60_000
 PART_TOKENS = 24_000
-WRITER_TOKENS = 45_000
 CRITIC_ROUNDS = 1  # one review and one revision: a second round rarely changed the story
 WORKERS = 12
 # Every slide of a deck is also designed as HTML (studio/design.py); False: the template draws.
@@ -182,6 +182,38 @@ def _in_context(function):
     return lambda *args: context.copy().run(function, *args)
 
 
+def material_request(material: str, task: str) -> tuple[str, str]:
+    """One opening for every step reading the same build's material."""
+
+    return P.STUDIO_BASE, "The material:\n\n" + material + P.TASK_BOUNDARY + task
+
+
+def warm_map(function, items, workers: int):
+    """Finish the first item before submitting the rest, preserving context and order."""
+
+    items = list(items)
+    if not items:
+        return []
+    first = function(items[0])
+    if len(items) == 1:
+        return [first]
+    with ThreadPoolExecutor(workers) as pool:
+        return [first, *pool.map(_in_context(function), items[1:])]
+
+
+class _MaterialCheckerGateway:
+    """Adapt only the studio's sentence checks, keeping Ask's checking logic intact."""
+
+    def __init__(self, gateway, material: str) -> None:
+        self.gateway, self.material = gateway, material
+
+    def complete_json(self, model, schema, *, system, prompt, **kwargs):
+        system, prompt = material_request(self.material, system + "\n\n" + prompt)
+        return self.gateway.complete_json(
+            model, schema, system=system, prompt=prompt, schema_at="end", **kwargs
+        )
+
+
 class StudioAgents(OutputAgents):
     """Makes a report or a deck with the studio method. Checking reuses OutputAgents."""
 
@@ -224,14 +256,14 @@ class StudioAgents(OutputAgents):
         # scratch before the step fails: one bad reply should not cost the whole build.
         try:
             result, _ = self.gateway.complete_json(
-                model, schema, system=system, prompt=prompt, effort=effort
+                model, schema, system=system, prompt=prompt, effort=effort, schema_at="end"
             )
         except ModelError as error:
             if "could not read" not in str(error):
                 raise
             logger.info("Asking again from scratch after an unreadable reply")
             result, _ = self.gateway.complete_json(
-                model, schema, system=system, prompt=prompt, effort=effort
+                model, schema, system=system, prompt=prompt, effort=effort, schema_at="end"
             )
         return result
 
@@ -272,7 +304,7 @@ class StudioAgents(OutputAgents):
     def read(self, model, run: Run, pool: Pool, notes: Notes, emit: Events) -> str:
         """The material as the memo step reads it: whole when it fits, else notes per part."""
 
-        items = list(pool.items)
+        items = sorted(pool.items, key=lambda item: item.ref)
         whole = self._material(items)
         extra = self._notes_text(notes)
         if tokens(whole) <= DIRECT_TOKENS:
@@ -292,7 +324,9 @@ class StudioAgents(OutputAgents):
 
         def note(part: list[Evidence]) -> PartNotes | None:
             try:
-                return self._json(model, PartNotes, system, self._material(part), "low")
+                return self._json(
+                    model, PartNotes, *material_request(self._material(part), system), "low"
+                )
             except ModelError as error:
                 logger.info("Reading a part failed: %s", error)
                 return None
@@ -314,12 +348,16 @@ class StudioAgents(OutputAgents):
             ]
         self._stage(emit, "read", "Reading the material", "done", f"{len(parts)} parts")
         sources = sorted({item.title for item in items})
+        # Keep raw passages too: writers and checks previously fetched them after
+        # reading notes. No step may lose evidence to make its opening match.
         return (
             extra
             + "Sources: "
             + "; ".join(sources)
             + "\n\nNotes from the material:\n"
             + "\n".join(lines)
+            + "\n\n"
+            + whole
         )
 
     @staticmethod
@@ -345,9 +383,8 @@ class StudioAgents(OutputAgents):
             audience=spec.audience,
             use_line=f"Use: {run.use}." if run.use else "",
             kind="deck" if spec.kind == "slides" else "report",
-            truth=P.TRUTH,
         )
-        memo = self._json(model, Memo, system, "The material:\n\n" + material, effort)
+        memo = self._json(model, Memo, *material_request(material, system), effort)
         self._stage(emit, "memo", "Finding what is worth saying", "done", memo.answer[:200])
         emit({"type": "memo", "memo": memo.model_dump()})
         return memo
@@ -418,11 +455,11 @@ class StudioAgents(OutputAgents):
                 memo=memo,
             )
         figures = self._figures(material)
-        prompt = "The material (for reference):\n\n" + self._trim(material, WRITER_TOKENS) + figures
+        system, prompt = material_request(material, system + figures)
         story = self._json(model, schema, system, prompt, effort)
         run.reviews = []
         for round_ in range(CRITIC_ROUNDS):
-            review = self.critique(model, run, story)
+            review = self.critique(model, run, story, material)
             run.reviews.append(review)
             emit(
                 {
@@ -476,7 +513,7 @@ class StudioAgents(OutputAgents):
                 slides[index] = replace_layout(slide, "statement")
         return DeckStory(title=story.title, subtitle=story.subtitle, slides=slides)
 
-    def critique(self, model, run: Run, story) -> Review:
+    def critique(self, model, run: Run, story, material: str) -> Review:
         spec = run.spec
         if isinstance(story, DeckStory):
             lines = [
@@ -498,7 +535,9 @@ class StudioAgents(OutputAgents):
             answer=run.memo.answer if run.memo else "(not given)",
         )
         try:
-            return self._json(model, Review, system, "Review it now.", "medium")
+            return self._json(
+                model, Review, *material_request(material, system + "\n\nReview it now."), "medium"
+            )
         except ModelError as error:
             logger.info("The storyline review failed: %s", error)
             return Review(verdict="ready")
@@ -510,44 +549,7 @@ class StudioAgents(OutputAgents):
             return "\n\nNo figures are available: do not use the figure layout."
         return "\n\nFigures available (copy exactly):\n" + "\n".join(sorted(set(found)))
 
-    @staticmethod
-    def _trim(text: str, budget: int) -> str:
-        if tokens(text) <= budget:
-            return text
-        ratio = budget / max(1, tokens(text))
-        return text[: int(len(text) * ratio)] + "\n…"
-
     # 4. Writing ---------------------------------------------------------------------------
-
-    def _writer_material(self, run: Run, pool: Pool, material: str) -> str:
-        """The passages the writer quotes from: all of them when they fit, else the ones the
-        memo and the storyline lean on, then the rest by order, up to the budget."""
-
-        if tokens(material) <= WRITER_TOKENS:
-            return material
-        wanted: list[int] = []
-        if run.memo:
-            for item in [*run.memo.insights, *run.memo.facts, *run.memo.tensions]:
-                wanted += item.refs
-        story = run.story
-        if isinstance(story, DeckStory):
-            for slide in story.slides:
-                wanted += slide.refs
-        elif isinstance(story, ReportStory):
-            for section in story.sections:
-                wanted += section.refs
-        by_ref = pool.by_ref()
-        order = list(dict.fromkeys([r for r in wanted if r in by_ref]))
-        order += [item.ref for item in pool.items if item.ref not in order]
-        chosen, size = [], 0
-        for ref in order:
-            text = self._passage(by_ref[ref])
-            if size + tokens(text) > WRITER_TOKENS:
-                continue
-            chosen.append(ref)
-            size += tokens(text)
-        chosen.sort()
-        return self._material([by_ref[ref] for ref in chosen])
 
     def write_deck(self, model, effort, run: Run, pool: Pool, material: str, emit: Events) -> str:
         spec = run.spec
@@ -567,18 +569,13 @@ class StudioAgents(OutputAgents):
             audience=spec.audience,
             use=run.use,
             use_rule=P.USE_RULES[run.use],
-            voice=P.VOICE.format(language=run.language),
-            truth=P.TRUTH,
+            language=P.LANGUAGE.format(language=run.language),
             format=DECK_FORMAT + ("\n\n" + READ_NOTE if run.use == "read" else ""),
             memo=self._memo_text(run.memo) if run.memo else "",
             story=story_text,
             theme=theme,
         )
-        prompt = (
-            "The material (passages with their numbers):\n\n"
-            + self._writer_material(run, pool, material)
-            + self._figures(material)
-        )
+        system, prompt = material_request(material, system + self._figures(material))
         text = self._text(model, system, prompt, effort, max_tokens=24_000)
         deck = _unfence(text)
         slides = fmt.split_slides(deck)
@@ -627,15 +624,16 @@ class StudioAgents(OutputAgents):
 
             def fix(item: tuple[int, list[str]], slides: list[str] = slides) -> str | None:
                 n, problems = item
-                system = P.FIX_SLIDES.format(
-                    format=guide,
-                    problems=f"Slide {n} problems:\n"
+                system = P.FIX_SLIDES.format(format=guide, problems="")
+                prompt = (
+                    f"Slide {n} problems:\n"
                     + "\n".join(f"- {p}" for p in problems)
-                    + f"\n\nSlide {n} as written:\n{slides[n - 1]}",
+                    + f"\n\nSlide {n} as written:\n{slides[n - 1]}"
+                    + "\n\nRewrite it now."
                 )
                 try:
                     again = fmt.split_slides(
-                        _unfence(self._text(model, system, "Rewrite it now.", effort, 4000))
+                        _unfence(self._text(model, system, prompt, effort, 4000))
                     )
                 except ModelError as error:
                     logger.info("Fixing slide %d failed: %s", n, error)
@@ -649,8 +647,7 @@ class StudioAgents(OutputAgents):
                     )[0]
                 return text
 
-            with ThreadPoolExecutor(WORKERS) as workers:
-                fixed = list(workers.map(_in_context(fix), found))
+            fixed = warm_map(fix, found, WORKERS)
             changed = False
             for (n, _), text in zip(found, fixed, strict=True):
                 if text is not None and text != slides[n - 1]:
@@ -696,17 +693,12 @@ class StudioAgents(OutputAgents):
             brief=spec.brief or "(none)",
             audience=spec.audience,
             length=f"Length: {self._length(run)}.",
-            voice=P.VOICE.format(language=run.language),
-            truth=P.TRUTH,
+            language=P.LANGUAGE.format(language=run.language),
             format=REPORT_FORMAT,
             memo=self._memo_text(run.memo) if run.memo else "",
             story=story_text,
         )
-        prompt = (
-            "The material (passages with their numbers):\n\n"
-            + self._writer_material(run, pool, material)
-            + self._figures(material)
-        )
+        system, prompt = material_request(material, system + self._figures(material))
         text = _unfence(self._text(model, system, prompt, effort, max_tokens=24_000))
         if not text.lstrip().startswith("<!-- report: v2 -->"):
             text = "<!-- report: v2 -->\n" + text.lstrip()
@@ -720,8 +712,8 @@ class StudioAgents(OutputAgents):
                 fixed = _unfence(
                     self._text(
                         model,
-                        system + "\n\n" + fix,
-                        prompt + "\n\nYour report:\n\n" + text,
+                        system,
+                        prompt + "\n\n" + fix + "\n\nYour report:\n\n" + text,
                         effort,
                         max_tokens=24_000,
                     )
@@ -745,10 +737,16 @@ class StudioAgents(OutputAgents):
 
     # 5. Verifying -------------------------------------------------------------------------
 
-    def verify(self, model, run: Run, parts: list[str], pool: Pool, emit: Events) -> list[Draft]:
-        """Each part on its own, all parts at once: its claims checked against the passages it
-        cites, the unsupported ones fixed, and the fixed part checked once more. No part waits
-        for another."""
+    def verify(
+        self,
+        model,
+        run: Run,
+        parts: list[str],
+        pool: Pool,
+        emit: Events,
+        material: str | None = None,
+    ) -> list[Draft]:
+        """Warm with the first part, then check and repair the remaining parts in parallel."""
 
         self._stage(emit, "verify", "Checking every claim against its source", "running")
         by_ref = pool.by_ref()
@@ -757,7 +755,7 @@ class StudioAgents(OutputAgents):
 
         def check(text: str) -> Draft:
             text, _ = check_citations(text, set(by_ref))
-            issues, coverage = self._claims(model, text, by_ref, rest)
+            issues, coverage = self._claims(model, text, by_ref, rest, material=material)
             issues += self._chart_issues(text, by_ref)
             return Draft(text, issues, coverage)
 
@@ -766,11 +764,12 @@ class StudioAgents(OutputAgents):
             if not any(issue.verdict in FIXABLE for issue in draft.issues or []):
                 return draft
             title = fmt.MARK.match(text) and fmt.parse_slide(text).layout == "title"
-            fixed = self._fix_claims(model, [draft], by_ref, rest if title else "")
+            fixed = self._fix_claims(
+                model, [draft], by_ref, rest if title else "", material=material
+            )
             return check(fixed[0]) if fixed else draft
 
-        with ThreadPoolExecutor(WORKERS) as workers:
-            drafts = list(workers.map(_in_context(check_and_fix), parts))
+        drafts = warm_map(check_and_fix, parts, WORKERS)
         for index, draft in enumerate(drafts):
             if any(issue.note.startswith("Chart value") for issue in draft.issues or []):
                 # A chart whose values its sources do not state is drawn as a table.
@@ -799,7 +798,15 @@ class StudioAgents(OutputAgents):
         )
         return drafts
 
-    def _claims(self, model, text: str, by_ref: dict[int, Evidence], rest: str = ""):
+    def _claims(
+        self,
+        model,
+        text: str,
+        by_ref: dict[int, Evidence],
+        rest: str = "",
+        *,
+        material: str | None = None,
+    ):
         """One claim check per part. A title is checked against the passages its own slide or
         section cites (it states their conclusion). The title slide states the whole deck's
         conclusion, so a figure on it is checked against the passages the other slides (``rest``)
@@ -825,7 +832,12 @@ class StudioAgents(OutputAgents):
                     lines[at] = line.rstrip() + " " + refs
                 break
         checked = "\n".join(lines)
-        _, check, _, _ = self.ask.check_sentences(
+        checker = copy(self.ask)
+        checker.gateway = _MaterialCheckerGateway(
+            self.gateway,
+            material if material is not None else self._material(list(by_ref.values())),
+        )
+        _, check, _, _ = checker.check_sentences(
             model, STUDIO_CHECK, checked, by_ref, limit=self.limits.sentences
         )
         coverage = (
@@ -851,7 +863,9 @@ class StudioAgents(OutputAgents):
                 issues.append(Issue(plain[:300], "unsourced", "A number with no citation."))
         return issues, coverage
 
-    def _cover(self, model, drafts: list[Draft], pool: Pool) -> list[Draft]:
+    def _cover(
+        self, model, drafts: list[Draft], pool: Pool, material: str | None = None
+    ) -> list[Draft]:
         """The subtitle is the deck's core message: after the slides are final, it is made to
         state what their titles say (claim fixes can move a title away from it), then the
         title slide is checked against its sources again."""
@@ -877,8 +891,12 @@ class StudioAgents(OutputAgents):
             titles="\n".join(f"{n}. {t}" for n, t in enumerate(titles, 2)),
             cited="\n".join(cited) or "(none)",
         )
+        system, prompt = material_request(
+            material if material is not None else self._material(list(pool.by_ref().values())),
+            system + "\n\nReply now.",
+        )
         try:
-            line = _unfence(self._text(model, system, "Reply now.", "low", 2000)).strip()
+            line = _unfence(self._text(model, system, prompt, "low", 2000)).strip()
         except ModelError as error:
             logger.info("Aligning the subtitle failed: %s", error)
             return drafts
@@ -889,13 +907,21 @@ class StudioAgents(OutputAgents):
         text = drafts[0].text.replace(body[0], line, 1)
         by_ref = pool.by_ref()
         text, _ = check_citations(text, set(by_ref))
-        issues, coverage = self._claims(model, text, by_ref, rest)
+        issues, coverage = self._claims(model, text, by_ref, rest, material=material)
         if any(i.verdict in ("unsupported", "contradicted") for i in issues):
             logger.info("The aligned subtitle is not supported; keeping the old one")
             return drafts
         return [Draft(text, issues + self._chart_issues(text, by_ref), coverage), *drafts[1:]]
 
-    def _refit(self, model, effort, run: Run, drafts: list[Draft], pool: Pool) -> list[Draft]:
+    def _refit(
+        self,
+        model,
+        effort,
+        run: Run,
+        drafts: list[Draft],
+        pool: Pool,
+        material: str | None = None,
+    ) -> list[Draft]:
         """Claim fixes can lengthen a slide past its budget: the format is checked again, and a
         slide that changed is checked against its sources once more."""
 
@@ -911,11 +937,10 @@ class StudioAgents(OutputAgents):
         rest = "\n".join(fitted[1:])
 
         def check(text: str) -> Draft:
-            issues, coverage = self._claims(model, text, by_ref, rest)
+            issues, coverage = self._claims(model, text, by_ref, rest, material=material)
             return Draft(text, issues + self._chart_issues(text, by_ref), coverage)
 
-        with ThreadPoolExecutor(WORKERS) as workers:
-            again = list(workers.map(_in_context(check), [fitted[i] for i in changed]))
+        again = warm_map(check, [fitted[i] for i in changed], WORKERS)
         for index, draft in zip(changed, again, strict=True):
             drafts[index] = draft
         return drafts
@@ -933,7 +958,15 @@ class StudioAgents(OutputAgents):
                 )
         return issues
 
-    def _fix_claims(self, model, drafts: list[Draft], by_ref, rest: str = "") -> list[str] | None:
+    def _fix_claims(
+        self,
+        model,
+        drafts: list[Draft],
+        by_ref,
+        rest: str = "",
+        *,
+        material: str | None = None,
+    ) -> list[str] | None:
         parts = []
         refs: set[int] = set()
         for number, draft in enumerate(drafts, 1):
@@ -947,8 +980,12 @@ class StudioAgents(OutputAgents):
             refs |= _stating(flagged, by_ref)
         passages = "\n\n".join(self._passage(by_ref[r], 3000) for r in sorted(refs) if r in by_ref)
         system = P.FIX_CLAIMS.format(parts="\n\n=====\n\n".join(parts), passages=passages)
+        system, prompt = material_request(
+            material if material is not None else self._material(list(by_ref.values())),
+            system + "\n\nRewrite them now.",
+        )
         try:
-            text = _unfence(self._text(model, system, "Rewrite them now.", "medium", 16_000))
+            text = _unfence(self._text(model, system, prompt, "medium", 16_000))
         except ModelError as error:
             logger.info("Fixing unsupported claims failed: %s", error)
             return None
@@ -960,11 +997,10 @@ class StudioAgents(OutputAgents):
 
             # Asked again one part at a time; a part whose fix fails keeps its text.
             def single(draft: Draft) -> str:
-                one = self._fix_claims(model, [draft], by_ref)
+                one = self._fix_claims(model, [draft], by_ref, rest, material=material)
                 return one[0] if one else draft.text
 
-            with ThreadPoolExecutor(WORKERS) as workers:
-                return list(workers.map(_in_context(single), drafts))
+            return warm_map(single, drafts, WORKERS)
         out = []
         for draft, piece in zip(drafts, pieces, strict=True):
             piece = re.sub(r"\A\s*Part \d+:\s*\n", "", piece)
@@ -1070,9 +1106,9 @@ class StudioAgents(OutputAgents):
             text = self.write_deck(model, effort, run, pool, material, emit)
             text = self.fix_format(model, effort, run, text, emit)
             parts = fmt.split_slides(text)
-            drafts = self.verify(model, run, parts, pool, emit)
-            drafts = self._cover(model, drafts, pool)
-            drafts = self._refit(model, effort, run, drafts, pool)
+            drafts = self.verify(model, run, parts, pool, emit, material)
+            drafts = self._cover(model, drafts, pool, material)
+            drafts = self._refit(model, effort, run, drafts, pool, material)
             if self.design and drafts:
                 drafts = self.design_deck(model, run, drafts, emit)
             outline = [
@@ -1098,7 +1134,7 @@ class StudioAgents(OutputAgents):
             try:
                 built, looked, snapshot = look(
                     self, built, drafts, model=model, effort=effort, use=run.use, pool=pool,
-                    assemble=assemble_deck, emit=emit, unfence=_unfence,
+                    assemble=assemble_deck, emit=emit, unfence=_unfence, material=material,
                 )  # fmt: skip
             except Exception as error:  # noqa: BLE001 - looking never fails a build
                 logger.warning("The look at the slides failed: %s", error)
@@ -1107,7 +1143,7 @@ class StudioAgents(OutputAgents):
             preamble, sections = split_document(text, "report")
             if not sections:
                 raise ModelError("The report came back without sections.")
-            drafts = self.verify(model, run, sections, pool, emit)
+            drafts = self.verify(model, run, sections, pool, emit, material)
             # A claim fix may rewrite an exhibit: its caption and rows cite their sources again.
             drafts = [
                 replace(

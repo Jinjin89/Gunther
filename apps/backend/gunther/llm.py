@@ -392,19 +392,24 @@ class ModelGateway:
         prompt: str,
         images: Sequence[Image] = (),
         history: Sequence[Turn] = (),
+        schema_at: Literal["system", "end"] = "system",
         effort: Effort | None = None,
     ) -> tuple[T, Completion]:
         """Structured output, checked against ``schema``; one retry with the error shown."""
 
         instructions = (
-            f"{system}\n\nReply with one JSON object and nothing else. It must match this "
+            "Reply with one JSON object and nothing else. It must match this "
             f"JSON schema:\n{json.dumps(schema.model_json_schema(), ensure_ascii=False)}"
         )
+        if schema_at == "end":
+            prompt += "\n\n" + instructions
+        else:
+            system += "\n\n" + instructions
         turns = [*history, Turn("user", prompt)]
         for attempt in range(2):
             completion = self.complete(
                 model,
-                system=instructions,
+                system=system,
                 messages=turns,
                 images=images,
                 effort=effort,

@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from typing import Any, Literal
 
@@ -115,6 +114,7 @@ def look(
     assemble: Callable[[list[Draft]], BuiltOutput],
     emit: Events,
     unfence: Callable[[str], str],
+    material: str | None = None,
 ) -> tuple[BuiltOutput, dict[str, Any], dict[str, Any] | None]:
     """The deck after one look, what happened, and the snapshot of the deck as returned."""
 
@@ -189,6 +189,7 @@ def look(
             prompt="Slides:\n" + "\n".join(lines),
             images=images,
             effort=eye_effort or "low",
+            schema_at="end",
         )
         return [f for f in result.findings if f.slide in numbers]
 
@@ -198,7 +199,7 @@ def look(
     ]
     findings: list[LookFinding] = []
     failed = 0
-    from gunther.studio.pipeline import _in_context
+    from gunther.studio.pipeline import warm_map
 
     def safe(numbers: list[int]) -> list[LookFinding]:
         nonlocal failed
@@ -209,9 +210,8 @@ def look(
             failed += 1
             return []
 
-    with ThreadPoolExecutor(3) as workers:
-        for part in workers.map(_in_context(safe), batches):
-            findings += part
+    for part in warm_map(safe, batches, 3):
+        findings += part
     for finding in findings:
         if finding.action == "layout" and (
             finding.layout not in TARGET_LAYOUTS
@@ -301,11 +301,13 @@ def look(
             for n in targets
         )
         fix_system = P.FIX_LOOK.format(
-            format=DECK_FORMAT + ("\n\n" + READ_NOTE if read else ""), problems=asked
+            format=DECK_FORMAT + ("\n\n" + READ_NOTE if read else ""), problems=""
         )
         try:
             fixed = fmt.split_slides(
-                unfence(agents._text(model, fix_system, "Rewrite them now.", effort, 12_000))
+                unfence(
+                    agents._text(model, fix_system, asked + "\n\nRewrite them now.", effort, 12_000)
+                )
             )
         except ModelError as error:
             logger.info("Fixing what the look found failed: %s", error)
@@ -358,13 +360,12 @@ def look(
         by_ref = pool.by_ref()
 
         def recheck(n: int) -> Draft:
-            issues, coverage = agents._claims(model, candidate[n - 1], by_ref)
+            issues, coverage = agents._claims(model, candidate[n - 1], by_ref, material=material)
             return Draft(
                 candidate[n - 1], issues + agents._chart_issues(candidate[n - 1], by_ref), coverage
             )
 
-        with ThreadPoolExecutor(4) as workers:
-            rechecked = dict(zip(changed, workers.map(_in_context(recheck), changed), strict=True))
+        rechecked = dict(zip(changed, warm_map(recheck, changed, 4), strict=True))
         revised = list(drafts)
         for n, draft in rechecked.items():
             was = sum(1 for i in drafts[n - 1].issues or [] if i.verdict in FIXABLE)

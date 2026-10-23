@@ -19,7 +19,6 @@ import logging
 import re
 import unicodedata
 from collections.abc import Collection, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -240,16 +239,16 @@ def design_slides(
     requests: Mapping[int, str] | None = None,
     keep_on_fail: bool = False,
 ) -> tuple[list[str], int, list[dict[str, str]]]:
-    """Every slide designed on its own, all at once. Back: the slides (each that passed the
-    guard now ends with its design block), how many were designed, and one note for each slide
-    that was not (it is drawn by the template).
+    """Warm with one slide, then design the remaining slides in parallel. Back: the slides
+    (each that passed the guard now ends with its design block), how many were designed, and
+    one note for each slide that was not (it is drawn by the template).
 
     ``only`` (positions counted from 0) designs just those slides; the others come back as
     they are. ``requests`` maps a position to what the person (or the measuring) wants changed
     in the look: the slide's earlier design is then shown too. A slide that fails the guard
     twice loses its design, unless ``keep_on_fail``: then it keeps the one it had."""
 
-    from gunther.studio.pipeline import _in_context
+    from gunther.studio.pipeline import warm_map
 
     guide, base = load_style(style)
     parsed = [fmt.parse_slide(slide) for slide in slides]
@@ -297,8 +296,11 @@ def design_slides(
                 return html, ""
         return "", "; ".join(problems)
 
-    with ThreadPoolExecutor(workers) as pool:
-        done = dict(zip(wanted, pool.map(_in_context(design), wanted), strict=True))
+    # A figure uses the template and makes no request, so warm with a designable slide.
+    wanted = list(wanted)
+    eligible = [index for index in wanted if designable(slides[index])]
+    done = dict.fromkeys(wanted, ("", ""))
+    done.update(zip(eligible, warm_map(design, eligible, workers), strict=True))
     out: list[str] = []
     notes: list[dict[str, str]] = []
     for index, slide in enumerate(slides):
