@@ -507,4 +507,13 @@ shorten — untested here without a key.
 - Flash only from now on: it writes, checks and judges; V4 Pro is not used. The outside-tool head-to-head (Claude.ai, Gamma) is dropped. The user does the Mac trial.
 - Each slide's claim check and format fix now run on their own and in parallel (eda83a9). Verify went from 130–490 s to 46–127 s. With 7 decks at once, a deck takes 5–7 min (average 5.6–6.3 min), down from about 9.6 min.
 - Blind comparison judged by Flash, old decks against new: new won 2, tied 4, lost 0 (one comparison errored).
-- Getting decks under 4 min would mean removing a step. The user chose to keep about 6 min and the current quality. Every target in §1 is met.
+- Getting decks under 4 min would mean removing a step. The user chose to keep about 6 min and the current quality.
+- Titles-only had slipped to 71–86%. The cause was the title slide: it cites nothing itself, so the claim fix rewrote the deck's conclusion to fit a single passage. The fix: the title slide borrows the citations the other slides give its figures, and its subtitle is aligned with the final slide titles. Also new: figures with no source get the passages that state them, and reports drop label headings.
+- Flash judge, 7 sets, after the fixes (a1f3af4), runs close-flash-c to f:
+
+  | | Ship rate | Titles-only | Hard defects per run (14 artifacts) |
+  |---|---|---|---|
+  | Decks | 74–89% (average about 80%) | 83–100% (average about 92%) | 0–1 |
+  | Reports | 79–88% (average about 84%) | 86–100% | 0–2 |
+
+  Two runs of the same code differ by up to 15 points. Some defects remain: a label title now and then, and a number the writer made up for a recommendation.
