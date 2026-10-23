@@ -19,7 +19,7 @@ titles, not restructuring the story, not fixing broken layouts.
 | Titles-only test: a fresh reader retells the core message from the titles alone | ≥ 90% of decks |
 | Hard defects (clipped or overflowing text, type under 18 px at 1280×720, an empty half-slide, a made-up number, a topic-word title, disclaimer/meta text on a slide) | 0 |
 | Every number and factual claim traceable to a source passage | 100% (unchanged from today) |
-| Time with the writing model (DeepSeek Flash; V4 Pro is not used, 2026-10-23): deck ≤ 4 min, report ≤ 6 min | met |
+| Time with the writing model (DeepSeek Flash; V4 Pro is not used, 2026-10-23): deck about 6 min (the user accepted this over the 4-minute aim, 2026-10-23), report ≤ 6 min | met |
 
 ## 2. What is wrong today (the honest diagnosis)
 
@@ -501,3 +501,10 @@ repeating figures). Quality bar met with Flash. Time alone, same velmora deck: 4
 met). The deck's 4-minute target is not reliably met on DeepSeek; most of the deck time is the
 memo, storyline and claim checks (≈1 min each), which a faster writing model (Claude) should
 shorten — untested here without a key.
+
+### 2026-10-23: Flash only, and the goal closed
+
+- Flash only from now on: it writes, checks and judges; V4 Pro is not used. The outside-tool head-to-head (Claude.ai, Gamma) is dropped. The user does the Mac trial.
+- Each slide's claim check and format fix now run on their own and in parallel (eda83a9). Verify went from 130–490 s to 46–127 s. With 7 decks at once, a deck takes 5–7 min (average 5.6–6.3 min), down from about 9.6 min.
+- Blind comparison judged by Flash, old decks against new: new won 2, tied 4, lost 0 (one comparison errored).
+- Getting decks under 4 min would mean removing a step. The user chose to keep about 6 min and the current quality. Every target in §1 is met.
