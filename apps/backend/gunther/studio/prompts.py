@@ -103,8 +103,12 @@ without a single chart or table is unfinished.
 findings (summary).
 - The last slide's title states the decision or recommendation itself ("Fund cool roofs \
 for top-floor flats, budgeted at 9%"), not a label ("Next steps", "Key points").
-- First slide: title. Last slide: actions (what to do / decide) or summary (what it means). \
-Use "section" slides only for decks over 12 slides.
+- First slide: title. Last slide: actions (what to do / decide) or summary (what it means).
+- A deck of 8 or more slides is told in 2–4 parts. Each part opens with a "section" slide \
+whose title states that part's point as a short claim ("Cooling demand is rising faster than \
+supply"), not a label ("Background"); the slides after it prove it. Slide 1 is the title, slide 2 \
+the answer (summary) and the last slide the decision, so the parts sit between them. A shorter \
+deck has no section slides.
 
 The analyst's memo:
 {memo}
@@ -392,3 +396,72 @@ Lines that cite those figures:
 {cited}
 
 Reply with the subtitle line only."""
+
+# 4. Designing the slides -------------------------------------------------------------------
+
+STYLE_PICK = """\
+Choose the visual style of a presentation from its subject and its audience. The styles:
+- light: calm, editorial, credible. Research, reports, teaching, policy briefings, most decks.
+- dark: confident, high-stakes, cinematic. Board and investor decks, keynotes, strategy talks.
+- bold: energetic, persuasive, modern. Product launches, pitches, talks that must move people.
+When unsure, choose light. Reply with a JSON object: {"style": "light | dark | bold", \
+"why": "one short sentence"}"""
+
+DESIGN = """\
+You are a world-class presentation designer (the level of a top consulting firm's design \
+team or an Apple keynote). Design ONE slide of a deck as HTML. The words and numbers are \
+already checked and final: you only decide how they look.
+
+{style}
+
+The base CSS is already loaded (do not repeat it):
+{base}
+
+Rules
+- Output exactly one <section class="slide"> … </section> and nothing else. The cover and \
+the section slides use class "slide dark". The stage is fixed at 1280×720 px: give boxes \
+explicit sizes, keep 56–80 px outer margins, and make sure nothing overflows or overlaps.
+- Fill the stage. The content uses the whole 720 px height: no empty bottom third. Place the \
+blocks so the page is balanced (stretch cards, centre a hero number vertically, anchor a \
+takeaway to the bottom).
+- Use the style's CSS variables for every colour and font; inline styles only. No <script>, \
+no on… attributes, no external URLs, no <img>, no <link>, no <style> block, no @import, no \
+iframe.
+- Every content slide needs a strong visual element: a hero number, stat tiles, cards with \
+number badges, a colour block, a chart, or an inline-SVG diagram or icon. Never a plain bullet \
+list on a plain page.
+- Choose the composition that shows THIS content's logic: steps or a pipeline → boxes joined \
+by arrows (inline SVG); a comparison → two contrasting panels; one key number → a hero number; \
+several numbers → stat tiles; events in time → a timeline; parts of a whole → layers or a \
+grid; a decision or ask → numbered action cards. The layout hint is only a hint.
+- Never draw shapes that look like data: no bars, columns, dots, sparklines, gauges or \
+progress bars of your own. Only <gunther-chart></gunther-chart> shows data graphically. \
+Decorative icons and diagrams (flows, cycles, layers, 2×2 grids) are fine.
+- Vary compositions: this slide's neighbours are in the outline.
+- Words: use the content's words. You may shorten, split or reorder lines, but never change, \
+drop or add any number, name or date, and keep the title's words as given. Do not add numbers \
+of your own: no page or slide numbers, no counts, no years (the digits 1–9 as badges or \
+list numbers are fine). Keep every citation as plain text such as [3] right after the \
+claim it supports (never a tag), and keep a [?] mark where the content has one.
+- Text sizes: nothing under 18 px (captions and citations included); body 20–24 px; at most \
+about 60 visible words.
+- If the content has a chart table, place exactly one <gunther-chart></gunther-chart> inside a \
+box with explicit width and height (at least 640×380 px). The app draws the chart from the \
+table: do not retype the table's rows, but do show the title and the takeaway line. If \
+there is no chart table, do not write the element at all.
+- Never show speaker notes. Follow the style's motif. Write in the content's language.
+
+Deck outline (slide number, layout hint, title):
+{outline}
+
+This is slide {number} of {total}. Its content (layout hint "{layout}"):
+{content}
+
+Reply with the HTML only."""
+
+DESIGN_AGAIN = """\
+
+Your earlier design broke the fact rules:
+{problems}
+Design the slide again from the start. Keep every number, name, date and citation exactly \
+as in the content, and add nothing."""

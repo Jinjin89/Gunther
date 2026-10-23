@@ -34,6 +34,7 @@ from gunther.outputs import (
     check_citations,
     split_document,
 )
+from gunther.studio import design as D
 from gunther.studio import format as fmt
 from gunther.studio import prompts as P
 from gunther.studio.look import look
@@ -47,6 +48,8 @@ PART_TOKENS = 24_000
 WRITER_TOKENS = 45_000
 CRITIC_ROUNDS = 1  # one review and one revision: a second round rarely changed the story
 WORKERS = 12
+# Every slide of a deck is also designed as HTML (studio/design.py); False: the template draws.
+DESIGN_SLIDES = True
 STUDIO_CHECK = (
     "Check this slide or report section. Its title states the conclusion the cited evidence "
     "supports: judge the title against the sources cited in it. Only factual statements can be "
@@ -182,9 +185,17 @@ class StudioAgents(OutputAgents):
     """Makes a report or a deck with the studio method. Checking reuses OutputAgents."""
 
     def __init__(
-        self, gateway, limits=None, *, use: str | None = None, tool=None, renderer=None
+        self,
+        gateway,
+        limits=None,
+        *,
+        use: str | None = None,
+        tool=None,
+        renderer=None,
+        design: bool | None = None,
     ) -> None:
         super().__init__(gateway, limits)
+        self.design = DESIGN_SLIDES if design is None else design
         # Draws slides with the real renderer for the "look" step; None: that step is skipped.
         self.renderer = renderer
         self.use = use if use in ("talk", "read") else None
@@ -963,6 +974,47 @@ class StudioAgents(OutputAgents):
             out.append(piece)
         return out
 
+    # 4. Designing -------------------------------------------------------------------------
+
+    def design_deck(self, model, run: Run, drafts: list[Draft], emit: Events) -> list[Draft]:
+        """The deck's style, then every slide designed on its own. The words are final by now:
+        a design may not change one. It never fails a build: whatever goes wrong, the slides
+        stay as they are and the template draws them."""
+
+        label = "Designing the slides"
+        self._stage(emit, "design", label, "running")
+        try:
+            slides = [d.text for d in drafts]
+            first = fmt.parse_slide(slides[0])
+            style = D.pick_style(
+                self,
+                model,
+                title=first.title,
+                subtitle=first.body[0] if first.body else "",
+                brief=run.spec.brief,
+                audience=run.spec.audience,
+            )
+            designed, count, notes = D.design_slides(
+                self, model, D.apply_style(slides, style), style, workers=WORKERS
+            )
+        except Exception as error:  # noqa: BLE001 - designing never fails a build
+            logger.warning("Designing the slides failed: %s", error)
+            self.skipped.append(
+                {"step": "design", "label": "Slides were not designed", "reason": str(error)[:300]}
+            )
+            self._stage(emit, "design", label, "done", "not designed")
+            return drafts
+        self.skipped += notes
+        plain = len(drafts) - count
+        self._stage(
+            emit,
+            "design",
+            label,
+            "done",
+            f"{count} slides designed" + (f", {plain} drawn plainly" if plain else ""),
+        )
+        return [replace(d, text=text) for d, text in zip(drafts, designed, strict=True)]
+
     # The whole run ------------------------------------------------------------------------
 
     def make(
@@ -1019,6 +1071,8 @@ class StudioAgents(OutputAgents):
             drafts = self.verify(model, run, parts, pool, emit)
             drafts = self._cover(model, drafts, pool)
             drafts = self._refit(model, effort, run, drafts, pool)
+            if self.design and drafts:
+                drafts = self.design_deck(model, run, drafts, emit)
             outline = [
                 Planned(
                     fmt.parse_slide(d.text).title or f"Slide {n}",

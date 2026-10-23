@@ -168,6 +168,8 @@ const result = spawnSync("uv", [
   "--add-data", `${vadDir}:models/silero-vad`,
   // Skills are files the backend reads at run time (gunther/skillbook.py).
   "--add-data", `${join(backendRoot, "gunther", "skills")}:gunther/skills`,
+  // The slide styles the designer reads (gunther/studio/design.py).
+  "--add-data", `${join(backendRoot, "gunther", "studio", "styles")}:gunther/studio/styles`,
   "--add-data", `${join(backendRoot, "gunther", "data")}:gunther/data`,
   ...(isMac ? ["--add-binary", `${visionBinary}:.`] : []),
   join(backendRoot, "gunther", "desktop_server.py"),

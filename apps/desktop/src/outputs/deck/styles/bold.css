@@ -1,0 +1,5 @@
+.slide { --bg:#FFFFFF; --text:#111111; --muted:#5E5E5E; --panel:#F4F4F4; --line:#E2E2E2;
+  --dominant:#FF4F2E; --accent:#111111; --accent-soft:#FFE1D9; --positive:#00A86B;
+  --dark-bg:#111111; --on-dark:#FFFFFF; --on-dark-muted:#C4C4C4;
+  --font-head:"Inter","PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif;
+  --font-body:"Inter","PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif; --head-weight:800; }

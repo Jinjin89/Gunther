@@ -1,0 +1,11 @@
+/* The stage every designed slide sits on: 1280 x 720 px. */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 1280px; height: 720px; overflow: hidden; background: #fff; }
+.slide { width: 1280px; height: 720px; position: relative; overflow: hidden;
+  font-family: var(--font-body); color: var(--text); background: var(--bg);
+  font-size: 22px; line-height: 1.35; -webkit-font-smoothing: antialiased; }
+.slide.dark { background: var(--dark-bg); color: var(--on-dark); }
+.slide h1, .slide h2, .slide h3 { font-family: var(--font-head); font-weight: var(--head-weight);
+  line-height: 1.12; }
+/* Where the chart is drawn, from the slide's verified table. */
+.slide gunther-chart { display: block; width: 100%; height: 100%; }

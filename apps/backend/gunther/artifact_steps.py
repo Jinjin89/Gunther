@@ -80,6 +80,7 @@ from gunther.skill_runner import (
     _line,
     understanding_again,
 )
+from gunther.studio.format import without_design
 
 # What the writer is asked when one passage of a part is changed. Its first sentence is its
 # own, so that a test can tell this request from the others.
@@ -1203,6 +1204,8 @@ class WorkSteps:
         rest stays word for word with its findings. A part with no check of its own, or a
         chart (whose values are checked as a whole), is checked whole."""
 
+        # An edit drops the slide's design: it was drawn for the words as they were.
+        text = without_design(text)
         old = _marked(part.text)
         new = _marked(text)
         whole = new.layout in ("bar_chart", "line_chart") or old.layout != new.layout

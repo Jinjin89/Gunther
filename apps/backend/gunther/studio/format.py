@@ -31,6 +31,8 @@ LAYOUTS = (
     "actions",
 )
 THEMES = ("paper", "ink", "editorial")
+# The looks a designed deck can take (gunther/studio/styles/<name>.md).
+STYLES = ("light", "dark", "bold")
 CHART_KINDS = ("bar", "column", "line")
 DESIGN = "v2"
 
@@ -85,7 +87,31 @@ def split_slides(content: str) -> list[str]:
     return [part for part in parts if part]
 
 
+# A designed slide: its HTML sits at the very end of its Markdown, after the speaker notes.
+DESIGN_BLOCK = re.compile(r"\n*:::design[ \t]*\n(?P<html>.*?)\n:::[ \t]*\Z", re.S)
+
+
+def design_of(text: str) -> str | None:
+    """The HTML a designed slide carries, or None when it has none."""
+
+    found = DESIGN_BLOCK.search(text.rstrip())
+    return found.group("html").strip() if found else None
+
+
+def without_design(text: str) -> str:
+    """The slide's Markdown as the writer and the checks know it: the design block removed."""
+
+    return DESIGN_BLOCK.sub("", text.rstrip()).rstrip() if ":::design" in text else text
+
+
+def with_design(text: str, html: str) -> str:
+    """The slide with ``html`` as its design (any earlier design is replaced)."""
+
+    return f"{without_design(text).rstrip()}\n:::design\n{html.strip()}\n:::"
+
+
 def parse_slide(text: str) -> Slide:
+    text = without_design(text)
     found = MARK.match(text)
     layout, attrs, rest = "", {}, text
     if found:

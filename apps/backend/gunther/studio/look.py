@@ -85,7 +85,7 @@ def measured(snapshot: dict, layouts: list[str] | None = None) -> list[dict[str,
 def _facts(text: str) -> set[str]:
     """The numbers a slide states: not its marker, citation marks or list numbering."""
 
-    text = fmt.MARK.sub("", text, count=1)
+    text = fmt.MARK.sub("", fmt.without_design(text), count=1)
     text = fmt.CITE.sub("", text)
     text = re.sub(r"(?m)^\s*\d+[.)]\s+", "", text)
     return fmt.numbers_in(text)
@@ -264,7 +264,7 @@ def look(
     asked = "\n\n".join(
         f"Slide {n} — what to fix:\n"
         + "\n".join(f"- {text}" for text in wanted[n])
-        + f"\n\nSlide {n} as written:\n{slides[n - 1]}"
+        + f"\n\nSlide {n} as written:\n{fmt.without_design(slides[n - 1])}"
         for n in targets
     )
     fix_system = P.FIX_LOOK.format(
@@ -300,7 +300,8 @@ def look(
             )
             record.setdefault("rejected", []).append({"slide": n, "why": "changed a fact"})
             continue
-        if text.strip() != old.strip():
+        # A slide the fix rewrote loses its design: the template draws it from the new words.
+        if text.strip() != fmt.without_design(old).strip():
             candidate[n - 1] = text
             changed.append(n)
     if not changed:

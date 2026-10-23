@@ -71,6 +71,7 @@ from gunther.slide_scene import (
     rebind_graphics_hash,
     with_scene_line,
 )
+from gunther.studio.format import design_of, without_design
 
 logger = logging.getLogger(__name__)
 
@@ -176,10 +177,7 @@ def chart_rows_coverage_reason(text: str, coverage: Mapping[str, Any] | None) ->
     table_lines = [line.strip() for line in page.body if line.strip().startswith("|")]
     if len(table_lines) < 4:
         return "The chart does not contain the required numeric rows."
-    rows = [
-        [cell.strip() for cell in line.strip("|").split("|")]
-        for line in table_lines[2:]
-    ]
+    rows = [[cell.strip() for cell in line.strip("|").split("|")] for line in table_lines[2:]]
     claims = coverage.get("claims", [])
 
     def clean(value: str) -> str:
@@ -366,12 +364,16 @@ class Marked(NamedTuple):
     scene_line: str
     scene: SceneEnvelope | None
     design_version: int = 0
+    design: str = ""  # a designed slide's HTML; it is not part of ``body``
 
 
 def _marked(text: str) -> Marked:
+    design = design_of(text) or ""
+    if design:
+        text = without_design(text)
     found = LAYOUT_MARK.match(text)
     if found is None:
-        return Marked("", None, None, None, "standard", text, "", None)
+        return Marked("", None, None, None, "standard", text, "", None, design=design)
     layout = found.group("layout")
     attrs = marker_attributes(found.group("attrs"))
     accent, theme = attrs.get("accent"), attrs.get("theme")
@@ -400,6 +402,7 @@ def _marked(text: str) -> Marked:
         scene_line,
         scene,
         1 if layout == "title" and attrs.get("design") == "v1" else 0,
+        design,
     )
 
 
@@ -1762,9 +1765,7 @@ class OutputAgents:
             )
             emit({"type": "section", "index": index, "state": "done"})
         compose_pages = getattr(self, "compose_pages", None)
-        composed_indexes = [
-            index for index in indexes if planned[index].layout == "composed"
-        ]
+        composed_indexes = [index for index in indexes if planned[index].layout == "composed"]
         if spec.kind == "slides" and callable(compose_pages) and composed_indexes:
             drafts = compose_pages(
                 model,

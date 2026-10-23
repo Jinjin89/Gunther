@@ -61,8 +61,38 @@ def pool() -> Pool:
     return out
 
 
+def designed(system: str) -> str:
+    """What a careful designer sends back: the slide's own words and citations in a section."""
+
+    found = re.search(
+        r'Its content \(layout hint "(\w+)"\):\n(.*)\n\nReply with the HTML only', system, re.S
+    )
+    assert found, system[-300:]
+    layout, content = found.groups()
+    lines = []
+    for line in content.split("\n"):
+        if re.fullmatch(r"\|?[\s:|-]+\|?", line):
+            continue
+        if line.startswith("|"):
+            if layout == "chart":
+                continue
+            line = line.replace("|", "  ")
+        tag = "h1" if line.startswith("# ") else "h2" if line.startswith("## ") else "p"
+        text = re.sub(r"\*\*|^[-*>#\s]+|^\d+[.)]\s+", "", line)
+        if text.strip():
+            lines.append(f"<{tag}>{text.strip()}</{tag}>")
+    if layout == "chart":
+        lines.append("<gunther-chart></gunther-chart>")
+    dark = " dark" if layout in ("title", "section") else ""
+    return f'<section class="slide{dark}">\n' + "\n".join(lines) + "\n</section>"
+
+
 def router(request):
     system = str(request["messages"][0]["content"])
+    if "Choose the visual style" in system:
+        return json.dumps({"style": "light", "why": "A calm research brief"})
+    if "world-class presentation designer" in system:
+        return designed(system)
     if "lead analyst" in system:
         return json.dumps(
             {
@@ -119,7 +149,7 @@ def test_a_deck_is_made_in_the_new_format_and_an_unstated_chart_value_becomes_a_
         events.append,
     )
     slides = fmt.split_slides(built.content)
-    assert slides[0].startswith("<!-- layout: title; design: v2; theme: paper -->")
+    assert slides[0].startswith("<!-- layout: title; design: v2; theme: paper; style: light -->")
     # 7% is not in passage 2, so the chart is drawn as a table.
     assert fmt.parse_slide(slides[2]).layout == "table"
     assert any(item["step"] == "verify" for item in agents.skipped)
@@ -128,7 +158,12 @@ def test_a_deck_is_made_in_the_new_format_and_an_unstated_chart_value_becomes_a_
     assert built.approach["method"] == "studio"
     assert {e["id"] for e in events if e.get("type") == "stage"} >= {"memo", "story", "write"}
     # Few calls: memo, storyline, critic, draft, then checks.
-    asked = [str(r["messages"][0]["content"])[:40] for r in fake.requests]
+    asked = [
+        str(r["messages"][0]["content"])[:40]
+        for r in fake.requests
+        if "designer" not in str(r["messages"][0]["content"])
+        and "Choose the visual" not in str(r["messages"][0]["content"])
+    ]
     writers = [
         r for r in fake.requests if "presentation writer" in str(r["messages"][0]["content"])
     ]
