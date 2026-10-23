@@ -22,7 +22,7 @@ from gunther import digest, vector_index
 from gunther.content import MIN_EMBED_CHARS, ParsedBlock, search_tokens
 from gunther.database import session_scope
 from gunther.document_store import publish_document
-from gunther.document_structure import NON_BODY
+from gunther.document_structure import evidence_eligible
 from gunther.documents import ParsedDocument, text_document
 from gunther.models import (
     ContentBlock,
@@ -46,7 +46,7 @@ def embeddable() -> list[Any]:
     """SQL conditions for passages that get a vector (see content.passage_flags)."""
 
     return [
-        ContentBlock.kind != "heading",
+        evidence_eligible(ContentBlock.kind, ContentBlock.payload_json),
         func.length(ContentBlock.content) >= MIN_EMBED_CHARS,
         func.coalesce(func.json_extract(ContentBlock.payload_json, "$.noEmbed"), 0) == 0,
     ]
@@ -172,9 +172,7 @@ class KnowledgeIndex:
                 session.add(block)
                 # Flush parents before children for the self-referential foreign key.
                 session.flush()
-                if parsed.kind not in {"heading", *NON_BODY} and not parsed.payload.get(
-                    "reference"
-                ):
+                if evidence_eligible(parsed.kind, parsed.payload):
                     session.execute(
                         text(
                             "INSERT INTO knowledge_fts(block_id,source_id,revision_id,tokens) "
@@ -205,7 +203,7 @@ class KnowledgeIndex:
             )
         if blocks:
             self.enqueue_summary(session, source.id, revision.id)
-        text_chars = sum(len(b.text) for b in blocks if b.kind != "heading")
+        text_chars = sum(len(b.text) for b in blocks if evidence_eligible(b.kind, b.payload))
         if self.digest_method and digest.worth_digesting(source, text_chars, self.digest_vision):
             enqueue(
                 session,
@@ -410,6 +408,8 @@ class KnowledgeIndex:
         methods: dict[str, str] = {}
         for rank, (block_id, _) in enumerate(rows):
             block = session.get(ContentBlock, block_id)
+            if block is None or not evidence_eligible(block.kind, block.payload_json):
+                continue
             matched = set(terms).intersection(search_tokens(block.content))
             if len(matched) < min(2, len(terms)):
                 continue
@@ -456,6 +456,9 @@ class KnowledgeIndex:
         counts: Counter[str] = Counter()
         for block_id, score in sorted(ranked.items(), key=lambda item: item[1], reverse=True):
             block = session.get(ContentBlock, block_id)
+            # Older revisions can still have furniture in FTS or vector storage.
+            if block is None or not evidence_eligible(block.kind, block.payload_json):
+                continue
             revision = session.get(SourceRevision, block.revision_id)
             source = session.get(Source, revision.source_id)
             if counts[source.id] >= 3:
@@ -503,9 +506,15 @@ class KnowledgeIndex:
                 continue
             if paper.work_id and paper.work_id in works:
                 continue  # one copy of a paper is enough
-            works.add(paper.work_id or source_id)
             block_ids = json.loads(paper.abstract_block_ids_json or "[]")
-            results.append((paper, session.get(ContentBlock, block_ids[0]) if block_ids else None))
+            abstract_blocks = [session.get(ContentBlock, block_id) for block_id in block_ids]
+            if any(
+                block is None or not evidence_eligible(block.kind, block.payload_json)
+                for block in abstract_blocks
+            ):
+                continue  # A cached abstract from an older revision may include furniture.
+            works.add(paper.work_id or source_id)
+            results.append((paper, abstract_blocks[0] if abstract_blocks else None))
             if len(results) >= limit:
                 break
         return results

@@ -2,8 +2,8 @@
 
 Everything here is read from the source's current revision without a model:
 
-- the title: the largest type on a PDF's first page, else the PDF's metadata,
-  else the source's own title;
+- the title: PDF metadata or a first-page title element, then typography,
+  excluding repeated page furniture, else the source's own title;
 - authors: PDF metadata, or the names printed under the title;
 - the year: an arXiv id, a dated notice on the first page, or the PDF's date;
 - a DOI or arXiv id;
@@ -28,6 +28,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from gunther import vector_index
+from gunther.document_structure import evidence_eligible
 from gunther.knowledge_index import new_id
 from gunther.models import ContentBlock, Source, SourcePaper, Work, utc_now
 from gunther.pdf_text import looks_like_heading, title_by_font
@@ -73,6 +74,7 @@ class PdfFacts:
     authors: str | None = None
     year: int | None = None
     doi: str | None = None
+    title_origin: str = "metadata"
 
 
 @dataclass(slots=True)
@@ -126,9 +128,17 @@ def pdf_facts(path: Path) -> PdfFacts:
         declared = pdf_metadata(path)
     except Exception:
         declared = {}
-    title = _plausible_title(title_by_font(reader)) or _plausible_title(
-        str(meta.get("/Title") or "")
+    title = next(
+        (
+            title
+            for entry in declared.get("title", [])
+            if (title := _plausible_title(entry["value"]))
+        ),
+        None,
     )
+    title = title or _plausible_title(str(meta.get("/Title") or ""))
+    title_origin = "metadata" if title else "typography"
+    title = title or _plausible_title(title_by_font(reader))
     # Metadata sometimes carries emails: "Olaf Ronneberger (ronneber@…), …".
     author = re.sub(r"\(\s*\)", "", EMAIL.sub("", str(meta.get("/Author") or "")))
     author = re.sub(r"\s+([,;])", r"\1", re.sub(r"\s+", " ", author)).strip(" ,;")
@@ -162,6 +172,7 @@ def pdf_facts(path: Path) -> PdfFacts:
         authors=author[:500] or None,
         year=int(publication_year) if publication_year else None,
         doi=_clean_doi(doi[1]) if doi else None,
+        title_origin=title_origin,
     )
 
 
@@ -235,6 +246,10 @@ def _authors(front: Sequence[ContentBlock], title: str) -> str:
 
 
 def _abstract(blocks: Sequence[ContentBlock]) -> tuple[str, list[str]]:
+    blocks = [
+        block for block in blocks
+        if evidence_eligible(block.kind, block.payload_json, include_headings=True)
+    ]
     start = None
     parts: list[tuple[str, str]] = []
     for index, block in enumerate(blocks):
@@ -273,6 +288,8 @@ def _gist(blocks: Sequence[ContentBlock]) -> tuple[str, list[str]]:
 
     parts: list[tuple[str, str]] = []
     for block in blocks:
+        if not evidence_eligible(block.kind, block.payload_json):
+            continue
         text = block.content.strip()
         if block.kind in {"heading", "table", "figure"} or looks_like_heading(text):
             continue
@@ -299,6 +316,39 @@ def _outline(blocks: Sequence[ContentBlock]) -> list[str]:
     return seen
 
 
+def _document_title(blocks: Sequence[ContentBlock], pdf: PdfFacts) -> str | None:
+    """Prefer declared titles; reject repeated page furniture as inferred titles."""
+    if pdf.title_origin == "metadata" and (title := _plausible_title(pdf.title)):
+        return title
+    pages: dict[str, set[int]] = {}
+    furniture: set[str] = set()
+    candidates = []
+    for block in blocks:
+        payload = json.loads(block.payload_json or "{}")
+        key = _alnum(block.content)
+        if block.kind in {"page_header", "page_footer"}:
+            furniture.add(key)
+        if block.kind in {"heading", "page_header", "page_footer"}:
+            page = _page(block)
+            if page is not None:
+                pages.setdefault(key, set()).add(page)
+        if (
+            block.kind == "heading"
+            and payload.get("role") == "title"
+            and (_page(block) or 1) == 1
+        ):
+            candidates.append(block.content)
+    repeated = {key for key, seen in pages.items() if len(seen) > 1}
+    for value in [*candidates, pdf.title]:
+        if (
+            (title := _plausible_title(value))
+            and _alnum(title) not in furniture
+            and _alnum(title) not in repeated
+        ):
+            return title
+    return None
+
+
 def read_paper(
     source_title: str, blocks: Sequence[ContentBlock], pdf: PdfFacts | None = None
 ) -> PaperFacts:
@@ -307,7 +357,7 @@ def read_paper(
     pdf = pdf or PdfFacts()
     front = [block for block in blocks if (_page(block) or 1) <= 2][:80]
     front_text = "\n".join(block.content for block in front)
-    title = pdf.title
+    title = _document_title(blocks, pdf)
     facts = PaperFacts(title=title or source_title, title_from_document=bool(title))
     doi = DOI.search(front_text)
     facts.doi = pdf.doi or (_clean_doi(doi[1]) if doi else None)

@@ -30,6 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gunther import usage
+from gunther.document_structure import evidence_eligible
 from gunther.llm import Image, ModelError, ModelGateway, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.models import (
@@ -223,14 +224,16 @@ def prepare(
 ) -> DigestRequest:
     blocks = session.scalars(
         select(ContentBlock)
-        .where(ContentBlock.revision_id == revision_id, ContentBlock.kind != "heading")
+        .where(
+            ContentBlock.revision_id == revision_id,
+            evidence_eligible(ContentBlock.kind, ContentBlock.payload_json),
+        )
         .order_by(ContentBlock.ordinal)
     ).all()
     passages: list[Passage] = []
     for block in blocks:
-        payload = json.loads(block.payload_json or "{}")
         text = block.content.strip()
-        if not text or payload.get("reference"):
+        if not text:
             continue
         headings = json.loads(block.heading_path_json or "[]")
         passages.append(

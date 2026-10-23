@@ -8,22 +8,54 @@ being interleaved with the document's prose or embedded as body evidence.
 from __future__ import annotations
 
 import html
+import json
 import re
 from collections import Counter, defaultdict
 from contextlib import suppress
 from pathlib import Path
+from typing import Any
 from xml.etree import ElementTree as ET
 
 from gunther.documents import ParsedDocument
 
 NON_BODY = {
+    "footnote",
     "page_header",
     "page_footer",
+    "page_number",
+    "sidebar",
+    "margin_note",
     "metadata",
     "figure_text",
     "figure_panel",
     "embedded_image",
 }
+
+
+def evidence_eligible(kind: Any, payload: Any, *, include_headings: bool = False) -> Any:
+    """One body-evidence policy for parsed blocks and stored SQLite passages.
+
+    Pass a kind and a payload dict/JSON string for a boolean, or SQLAlchemy
+    kind/payload columns for a SQL predicate. Headings may supply context to
+    readers, but are not standalone evidence. ``noEmbed`` remains a separate
+    vector-quality flag: short or numeric body text is still readable evidence.
+    Original elements and their provenance are never removed by this policy.
+    """
+    excluded = NON_BODY | {"reference"}
+    if not include_headings:
+        excluded = excluded | {"heading"}
+    if isinstance(kind, str):
+        data = json.loads(payload or "{}") if isinstance(payload, str) else (payload or {})
+        return kind not in excluded and not data.get("reference")
+
+    from sqlalchemy import and_, func
+
+    return and_(
+        kind.not_in(sorted(excluded)),
+        func.coalesce(func.json_extract(payload, "$.reference"), 0) == 0,
+    )
+
+
 DATE_LABEL = re.compile(
     r"^(received|accepted|published(?: online)?|publication date|issued|updated|"
     r"出版日期|发布日期|接收日期|修订日期)\s*[:：]\s*(.+)$",
@@ -329,6 +361,17 @@ def organize_document(document: ParsedDocument, metadata: dict | None = None) ->
     document.validate()
 
 
+def in_reference_section(headings: list[str]) -> bool:
+    """A bibliography ends at the next heading, regardless of inferred level.
+
+    An ancestor can remain on the layout stack when a later appendix has a
+    deeper inferred level. Only the current heading determines this span.
+    """
+    from gunther.pdf_text import REFERENCE_SECTIONS, section_name
+
+    return bool(headings and section_name(headings[-1]) in REFERENCE_SECTIONS)
+
+
 def _box(element) -> tuple[int, int, int, int] | None:
     box = element.anchor.get("bboxPpm")
     if not isinstance(box, list) or len(box) != 4:
@@ -363,6 +406,65 @@ def group_visuals(document: ParsedDocument) -> None:
     Keep panel text and structured tables as children. A chart's numeric labels
     never become reconstructed table values or body paragraphs.
     """
+
+    def caption_kind(text):
+        if not CAPTION_LABEL.match(text.strip()):
+            return None
+        return "table" if re.match(r"^(?:table|表|tabelle)", text.strip(), re.I) else "figure"
+
+    def caption_refs(element):
+        return list(
+            dict.fromkeys(
+                filter(
+                    None,
+                    [
+                        *element.payload.get("captionRefs", []),
+                        element.payload.get("captionRef"),
+                    ],
+                )
+            )
+        )
+
+    objects = {
+        e.payload["documentRef"]: e for e in document.elements if e.payload.get("documentRef")
+    }
+    linked_captions = defaultdict(set)
+    for element in document.elements:
+        if element.kind not in {"figure", "table"}:
+            continue
+        refs = caption_refs(element)
+        rejected = [
+            ref
+            for ref in refs
+            if ref in objects and caption_kind(objects[ref].text) not in {None, element.kind}
+        ]
+        if rejected:
+            # Preserve the parser's claim, but never use a contradictory link
+            # as active ownership. The caption itself remains unchanged.
+            element.payload.setdefault("sourceCaptionRefs", refs)
+            element.payload.setdefault("sourceCaption", element.payload.get("caption", ""))
+            element.payload["captionLinkIssues"] = [
+                {"captionRef": ref, "reason": "caption-type-mismatch"} for ref in rejected
+            ]
+            refs = [ref for ref in refs if ref not in rejected]
+            element.payload["captionRefs"] = refs
+            element.payload.pop("captionRef", None)
+            if len(refs) == 1:
+                element.payload["captionRef"] = refs[0]
+            element.payload["caption"] = "\n".join(
+                objects[ref].text for ref in refs if ref in objects
+            )
+        for ref in refs:
+            linked_captions[ref].add(element.payload.get("documentRef"))
+    for element in document.elements:
+        if element.kind != "caption":
+            continue
+        owner = objects.get(element.payload.get("visualOwner"))
+        if owner is not None and caption_kind(element.text) not in {None, owner.kind}:
+            element.payload.setdefault("sourceVisualOwner", element.payload.pop("visualOwner"))
+        owners = linked_captions.get(element.payload.get("documentRef"), set())
+        if len(owners) == 1 and None not in owners:
+            element.payload.setdefault("visualOwner", next(iter(owners)))
     by_page = defaultdict(list)
     for index, element in enumerate(document.elements):
         box = _box(element)
@@ -371,6 +473,8 @@ def group_visuals(document: ParsedDocument) -> None:
             and box
             and (box[2] - box[0]) * (box[3] - box[1]) < 2_000_000_000
             and not element.payload.get("caption")
+            and not element.payload.get("captionRefs")
+            and not element.payload.get("captionRef")
             and not any(
                 c.payload.get("visualOwner") == element.payload.get("documentRef")
                 for c in document.elements
@@ -389,39 +493,102 @@ def group_visuals(document: ParsedDocument) -> None:
         ]
         if not visuals:
             continue
+        free_visuals = [
+            i
+            for i in visuals
+            if not document.elements[i].payload.get("caption")
+            and not document.elements[i].payload.get("captionRefs")
+            and not document.elements[i].payload.get("captionRef")
+        ]
         captions = []
+        seeds = {}
         for index in indices:
             element = document.elements[index]
             if element.kind != "caption":
                 continue
-            if any(_contains(_box(document.elements[v]), _box(element)) for v in visuals):
+            owners = linked_captions.get(element.payload.get("documentRef"), set())
+            if owners:
+                members = [
+                    i for i in visuals if document.elements[i].payload.get("documentRef") in owners
+                ]
+                # Only a single shared, external figure caption can grow a panel
+                # group. Multi-caption and cross-page links remain as supplied.
+                if len(members) != len(owners) or any(
+                    document.elements[i].kind != "figure"
+                    or len(caption_refs(document.elements[i])) != 1
+                    or _box(element)[1] < _box(document.elements[i])[3] - 25_000
+                    for i in members
+                ):
+                    continue
+                seeds[index] = members
+                captions.append(index)
+            elif element.payload.get("visualOwner"):
+                continue
+            elif any(_contains(_box(document.elements[v]), _box(element)) for v in visuals):
                 element.kind = "figure_text"
                 element.payload["noEmbed"] = True
-            elif len(element.text) >= 40:
+            elif len(element.text) >= 40 or CAPTION_LABEL.match(element.text):
                 captions.append(index)
         numbered = [c for c in captions if CAPTION_LABEL.match(document.elements[c].text)]
         if numbered:
             captions = numbered
         groups = defaultdict(list)
-        for index in visuals:
-            box = _box(document.elements[index])
-            candidates = [
-                c
-                for c in captions
-                if _box(document.elements[c])[1] >= box[3] - 25_000
-                and _box(document.elements[c])[1] - box[3] < 550_000
-                and (
-                    numbered
-                    or min(_box(document.elements[c])[2], box[2])
-                    > max(_box(document.elements[c])[0], box[0])
-                )
-            ]
+        for caption_index, members in seeds.items():
+            groups[caption_index].extend(members)
+        for index in free_visuals:
+            visual = document.elements[index]
+            box = _box(visual)
+            candidates = []
+            for c in captions:
+                caption = document.elements[c]
+                cb = _box(caption)
+                if not (
+                    cb[1] >= box[3] - 25_000
+                    and cb[1] - box[3] < 550_000
+                    and min(cb[2], box[2]) > max(cb[0], box[0])
+                    and caption_kind(caption.text) in {None, visual.kind}
+                ):
+                    continue
+                if c in seeds:
+                    # A linked caption may cover an adjacent unlinked panel,
+                    # but must span both columns and the panels' vertical bands
+                    # must overlap. A nearby legend or another row is not a panel.
+                    seed_boxes = [_box(document.elements[i]) for i in seeds[c]]
+                    if (
+                        visual.kind != "figure"
+                        or caption_kind(caption.text) != "figure"
+                        or any(
+                            max(0, min(cb[2], b[2]) - max(cb[0], b[0])) < 0.85 * (b[2] - b[0])
+                            for b in [box, *seed_boxes]
+                        )
+                        or not any(
+                            min(box[3], b[3]) - max(box[1], b[1])
+                            >= 0.5 * min(box[3] - box[1], b[3] - b[1])
+                            and (box[2] <= b[0] or b[2] <= box[0])
+                            for b in seed_boxes
+                        )
+                    ):
+                        continue
+                candidates.append(c)
             if candidates:
                 caption = min(candidates, key=lambda c: _box(document.elements[c])[1] - box[3])
                 groups[caption].append(index)
         for caption_index, members in groups.items():
+            if caption_index in seeds and len(members) == 1:
+                continue  # Preserve the original crop of a linked single visual.
             pictures = [i for i in members if document.elements[i].kind == "figure"]
             if not pictures:
+                # A table caption identifies one table, never a combined crop.
+                if len(members) == 1:
+                    table = document.elements[members[0]]
+                    caption = document.elements[caption_index]
+                    table.payload.update(
+                        caption=caption.text,
+                        captionRef=caption.payload["documentRef"],
+                    )
+                    caption.payload["visualOwner"] = table.payload["documentRef"]
+                continue
+            if len(pictures) != len(members):
                 continue
             boxes = [_box(document.elements[i]) for i in members]
             member_refs = {document.elements[i].payload["documentRef"] for i in members}
@@ -455,6 +622,7 @@ def group_visuals(document: ParsedDocument) -> None:
             primary.payload.update(
                 caption=caption.text,
                 captionRef=caption.payload["documentRef"],
+                captionRefs=[caption.payload["documentRef"]],
                 panelRefs=[document.elements[i].payload["documentRef"] for i in members],
             )
             left, top = max(0, union[0] - 2_000), max(0, union[1] - 2_000)
@@ -468,6 +636,11 @@ def group_visuals(document: ParsedDocument) -> None:
                     if child.payload.get("visualOwner") == previous_owner:
                         child.payload["visualOwner"] = owner
                 if other is not primary:
+                    if other.payload.get("captionRefs") or other.payload.get("captionRef"):
+                        other.payload.setdefault("sourceCaptionRefs", caption_refs(other))
+                        other.payload.setdefault("sourceCaption", other.payload.get("caption", ""))
+                        for key in ("caption", "captionRef", "captionRefs"):
+                            other.payload.pop(key, None)
                     other.payload.update(visualOwner=owner, noEmbed=True)
                     if other.kind == "figure":
                         other.kind = "figure_panel"
@@ -478,6 +651,8 @@ def group_visuals(document: ParsedDocument) -> None:
                 if (
                     other.kind in {"paragraph", "caption"}
                     and i != caption_index
+                    and other.payload.get("documentRef") not in linked_captions
+                    and not other.payload.get("visualOwner")
                     and _contains(union, _box(other))
                 ):
                     other.kind = "figure_text"

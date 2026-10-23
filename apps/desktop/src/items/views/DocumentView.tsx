@@ -25,7 +25,7 @@ export function useStructure(sourceId: string, enabled = true) {
     if (!enabled) return undefined;
     const run = ++generation.current;
     let timer: number | undefined;
-    setData(null);
+    setData((previous) => previous?.sourceId === sourceId ? previous : null);
     setError(null);
     const load = async () => {
       try {
@@ -250,7 +250,7 @@ const PROCESSING_COPY: Record<string, string> = {
   cancelled: "Reading was cancelled",
 };
 
-function FileCard({ source, file, pages, state, onReprocess }: { source: SourceDetail; file: FileContent; pages: number | null; state: string | undefined; onReprocess?: () => Promise<void> }) {
+function FileCard({ source, file, pages, state, hasRevision, onReprocess }: { source: SourceDetail; file: FileContent; pages: number | null; state: string | undefined; hasRevision: boolean; onReprocess?: () => Promise<void> }) {
   const asset = source.asset;
   const name = asset?.originalName ?? file.fileName ?? source.title;
   const type = mediaTypeLabel(asset?.mediaType ?? file.mediaType, name);
@@ -259,6 +259,11 @@ function FileCard({ source, file, pages, state, onReprocess }: { source: SourceD
   const [viewing, setViewing] = useState(false);
   const viewable = Boolean(asset && (asset.mediaType === "application/pdf" || /\.pdf$/i.test(asset.originalName)));
   const working = state ? WORKING.includes(state) : false;
+  const layout = viewable && hasRevision;
+  const status = layout && working ? "Reading layout…"
+    : layout && state === "failed" ? "Layout parsing failed"
+    : layout && state === "cancelled" ? "Layout reading was cancelled"
+    : state ? PROCESSING_COPY[state] ?? state : null;
   return (
     <div className="gx-file-card">
       <span className="gx-file-mark" aria-hidden="true"><FileText size={20} /><em>{(extensionOf(name) || type.split(" ")[0]!).slice(0, 4)}</em></span>
@@ -268,7 +273,7 @@ function FileCard({ source, file, pages, state, onReprocess }: { source: SourceD
         {state && (
           <em className={`gx-file-state is-${state}`}>
             {working ? <LoaderCircle className="spin" size={12} /> : state === "failed" || state === "partial" ? <CircleAlert size={12} /> : <i />}
-            {PROCESSING_COPY[state] ?? state}
+            {status}
             {(state === "failed" || state === "partial" || state === "cancelled") && onReprocess && (
               <button type="button" className="gx-link" disabled={retrying} onClick={() => { setRetrying(true); void onReprocess().finally(() => setRetrying(false)); }}>
                 <RotateCcw size={11} />Try again
@@ -304,7 +309,7 @@ export function DocumentBody({ source, file }: { source: SourceDetail; file: Fil
   else content = <p className="gx-item-empty-line">{structure.data.processing.warning ?? "No readable text was found. The original file is preserved and can be downloaded."}</p>;
   return (
     <div className="gx-reader">
-      <FileCard source={source} file={file} pages={pages} state={state} onReprocess={structure.reprocess} />
+      <FileCard source={source} file={file} pages={pages} state={state} hasRevision={Boolean(structure.data?.revisionId ?? source.processing?.revisionId)} onReprocess={structure.reprocess} />
       {state === "ready" || state === "partial" ? <PaperCard sourceId={source.id} revisionId={structure.data?.revisionId} /> : null}
       <ContextNote text={file.context} />
       {structure.data?.processing.warning && blocks.length > 0 && <p className="gx-reader-warning"><CircleAlert size={13} />{structure.data.processing.warning}</p>}

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -14,9 +15,13 @@ from contextlib import suppress
 from pathlib import Path
 
 from gunther.content import ParsedBlock
-from gunther.document_structure import group_visuals, organize_document, pdf_metadata
+from gunther.document_structure import (
+    group_visuals,
+    in_reference_section,
+    organize_document,
+    pdf_metadata,
+)
 from gunther.documents import DocumentAsset, ParsedDocument, split_reference_entries
-from gunther.pdf_text import REFERENCE_SECTIONS, section_name
 
 # Run in an explicitly configured Python environment. The desktop sidecar stays
 # small and does not import PyTorch, download models, or execute document code.
@@ -33,7 +38,8 @@ socket.getaddrinfo = offline
 try:
     import resource
     resource.setrlimit(resource.RLIMIT_FSIZE, (33554432, 33554432))
-    resource.setrlimit(resource.RLIMIT_CPU, (180, 180))
+    cpu_seconds = int(sys.argv[6])
+    resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 1))
 except (ImportError, OSError, ValueError):
     pass
 from pathlib import Path
@@ -52,7 +58,7 @@ options.table_structure_options = TableStructureOptions(mode=TableFormerMode.ACC
 options.do_ocr = True
 options.ocr_options = RapidOcrOptions(backend='onnxruntime')
 options.accelerator_options = AcceleratorOptions(device=sys.argv[4], num_threads=4)
-options.document_timeout = 180
+options.document_timeout = float(sys.argv[5])
 options.enable_remote_services = False
 options.allow_external_plugins = False
 options.generate_page_images = True
@@ -188,6 +194,9 @@ def docling_document(document: dict) -> ParsedDocument:
             "reference": "reference",
             "page_header": "page_header",
             "page_footer": "page_footer",
+            "page_number": "page_number",
+            "sidebar": "sidebar",
+            "margin_note": "margin_note",
         }.get(label, "paragraph")
         text = str(item.get("text", ""))
         payload: dict[str, object] = {"documentRef": ref}
@@ -205,12 +214,15 @@ def docling_document(document: dict) -> ParsedDocument:
             table = item.get("data", {})
             payload["table"] = table
             text = "\n".join(str(cell.get("text", "")) for cell in table.get("table_cells", []))
+        if kind in {"figure", "table"}:
+            caption_refs = [c["$ref"] for c in item.get("captions", []) if c.get("$ref")]
+            payload["captionRefs"] = caption_refs
+            if len(caption_refs) == 1:
+                payload["captionRef"] = caption_refs[0]
+            captions = [objects.get(c, {}).get("text", "") for c in caption_refs]
+            payload["caption"] = "\n".join(c for c in captions if c)
         if kind == "figure":
             text = text or "Figure"
-            captions = [
-                objects.get(c.get("$ref"), {}).get("text", "") for c in item.get("captions", [])
-            ]
-            payload["caption"] = "\n".join(c for c in captions if c)
             payload["imageKey"] = ref
         new_parent = parent
         if text:
@@ -233,9 +245,7 @@ def docling_document(document: dict) -> ParsedDocument:
             else:
                 parent = headings_stack[-1][1] if headings_stack else parent
             headings = [entry[2] for entry in headings_stack]
-            if kind in {"paragraph", "list_item"} and any(
-                section_name(h) in REFERENCE_SECTIONS for h in headings
-            ):
+            if kind in {"paragraph", "list_item"} and in_reference_section(headings):
                 kind = "reference"
             if kind == "reference":
                 payload.update(reference=True, noEmbed=True)
@@ -309,6 +319,23 @@ def docling_document(document: dict) -> ParsedDocument:
     return parsed
 
 
+class DoclingError(RuntimeError):
+    """A safe, actionable failure from the offline parser boundary."""
+
+
+def docling_budget(path: Path) -> tuple[int, int]:
+    """Bound elapsed time and aggregate CPU time for a four-thread layout worker."""
+    from pypdf import PdfReader
+
+    try:
+        pages = len(PdfReader(path, strict=False).pages)
+    except Exception:
+        # Uncertain page counts must not starve an otherwise readable document.
+        pages = 500
+    wall_seconds = min(1800, 180 + 30 * max(1, pages))
+    return wall_seconds, wall_seconds * 4
+
+
 class DoclingParser:
     def __init__(self, python: Path, artifacts: Path, *, frozen: bool = False, device: str = "cpu"):
         self.python, self.artifacts = python, artifacts
@@ -371,9 +398,9 @@ class DoclingParser:
 
     def parse(self, path: Path, *, stopping: Callable[[], bool] | None = None) -> ParsedDocument:
         if not self.python.is_file() or not self.artifacts.is_dir():
-            raise ValueError("Docling runtime and offline model artifacts must be configured")
+            raise DoclingError("The offline layout runtime or model artifacts are unavailable")
         if path.stat().st_size > 64 * 1024 * 1024:
-            raise ValueError("PDF exceeds the document parsing budget")
+            raise DoclingError("PDF exceeds the 64 MiB layout parsing budget")
         with tempfile.TemporaryDirectory(prefix="gunther-docling-") as directory:
             output = Path(directory) / "document.json"
             environment = {
@@ -382,10 +409,17 @@ class DoclingParser:
                 "TRANSFORMERS_OFFLINE": "1",
                 "HF_HUB_DISABLE_TELEMETRY": "1",
             }
-            deadline = time.monotonic() + 240
+            wall_seconds, cpu_seconds = docling_budget(path)
+            deadline = time.monotonic() + wall_seconds
             for device in dict.fromkeys((self.device, "cpu")):
                 command = [str(self.python)] if self.frozen else [str(self.python), "-c", _PROGRAM]
-                command += [str(path), str(self.artifacts), str(output), device]
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Layout parsing exceeded its time budget")
+                command += [
+                    str(path), str(self.artifacts), str(output), device,
+                    str(remaining), str(cpu_seconds),
+                ]
                 process = subprocess.Popen(
                     command,
                     env=environment,
@@ -395,14 +429,21 @@ class DoclingParser:
                 )
                 try:
                     while process.poll() is None:
-                        if (stopping and stopping()) or time.monotonic() >= deadline:
-                            raise RuntimeError("Document parsing cancelled or timed out")
+                        if stopping and stopping():
+                            raise DoclingError("Layout parsing was interrupted")
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("Layout parsing exceeded its time budget")
                         with suppress(subprocess.TimeoutExpired):
                             process.wait(timeout=0.25)
                     if process.returncode == 0:
                         break
                     if device == "cpu":
-                        raise ValueError("The offline document parser failed")
+                        if process.returncode == -getattr(signal, "SIGXCPU", 24):
+                            raise DoclingError("Layout parsing exceeded its CPU budget")
+                        raise DoclingError(
+                            "The offline layout parser exited unsuccessfully "
+                            f"({process.returncode})"
+                        )
                 finally:
                     if process.poll() is None:
                         process.terminate()

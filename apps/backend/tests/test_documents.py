@@ -327,7 +327,7 @@ def test_reparse_is_idempotent_and_figures_references_survive_restart(tmp_path, 
                     .select_from(SourceRevision)
                     .where(SourceRevision.source_id == saved)
                 )
-                == 1
+                == 2  # Native first, then the idempotent layout upgrade.
             )
             assert session.scalar(select(func.count()).select_from(ElementAsset)) == 1
             assert session.scalar(select(func.count()).select_from(ProcessingAsset)) == 0
@@ -364,7 +364,8 @@ def test_cancelled_import_releases_derived_assets_and_cannot_publish(tmp_path, m
         with session_scope(worker.sessions) as session:
             assert session.scalar(select(func.count()).select_from(Asset)) == 1
             assert session.scalar(select(func.count()).select_from(ProcessingAsset)) == 0
-            assert session.get(SourceIndexHead, saved) is None
+            # Cancelling layout keeps the already-published native revision readable.
+            assert session.get(SourceIndexHead, saved) is not None
 
 
 def test_reclaimed_lease_collects_abandoned_images_safely(tmp_path):

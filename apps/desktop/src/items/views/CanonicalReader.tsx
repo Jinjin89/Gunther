@@ -2,6 +2,9 @@ import type { DocumentElement, DocumentReference, SourceDocument } from "@gunthe
 import { Fragment, type ReactNode } from "react";
 import { sourceAssetUrl } from "../../api";
 
+// Page-furniture kinds preserved by the backend's document_structure policy.
+const PAGE_FURNITURE = new Set(["page_header", "page_footer", "footnote", "page_number", "sidebar", "margin_note"]);
+
 function passage(element: DocumentElement, references: Map<string, DocumentReference>): ReactNode {
   const chars = Array.from(element.content);
   const nodes: ReactNode[] = [];
@@ -38,19 +41,17 @@ function Table({ element }: { element: DocumentElement }) {
 function DocumentDetails({ document }: { document: SourceDocument }) {
   type Field = { value: string; origin: string; status: string };
   const metadata = document.manifest.metadata as Record<string, Field[]> | undefined;
-  const notes = document.elements.filter((e) => ["metadata", "page_header", "page_footer", "embedded_image", "footnote"].includes(e.kind));
+  const notes = document.elements.filter((e) => ["metadata", "embedded_image"].includes(e.kind));
   const labels: Record<string, string> = { title: "Title", authors: "Authors", publication: "Publication", publisher: "Publisher", source: "Source", doi: "DOI", identifier: "Identifier", published: "Published", received: "Received", accepted: "Accepted", issued: "Issued", updated: "Updated", coverDate: "Cover date", subject: "Subject", keywords: "Keywords", rights: "Rights and publication notices", issn: "ISSN", isbn: "ISBN", fileCreated: "File created", fileModified: "File modified", fileCreator: "File creator", fileProducer: "File producer" };
   const fields = Object.entries(metadata ?? {}).filter(([name, values]) => labels[name] && values.length);
   if (!fields.length && !notes.length) return null;
-  const furniture = [...new Set(notes.filter((e) => e.kind === "page_header" || e.kind === "page_footer").map((e) => e.content))];
   return <details className="gx-document-details"><summary>Document details</summary>
     <dl>{fields.map(([name, values]) => {
       // Keep conflicts inspectable; identical declarations need only one visible value.
       const unique = [...new Set(values.map((v) => v.value))];
       return <Fragment key={name}><dt>{labels[name]}</dt><dd title={values.map((v) => `${v.origin}: ${v.value}`).join("\n")}>{unique.join(" · ")}</dd></Fragment>;
     })}</dl>
-    {notes.filter((e) => e.kind === "metadata" || e.kind === "footnote").map((e) => <p key={e.id} id={e.id}>{e.payload?.status === "unresolved" && <small>Uncertain source text: </small>}{e.content}</p>)}
-    {furniture.length > 0 && <details><summary>Page headers and footers</summary>{furniture.map((text) => <p key={text}>{text}</p>)}</details>}
+    {notes.filter((e) => e.kind === "metadata").map((e) => <p key={e.id} id={e.id}>{e.payload?.status === "unresolved" && <small>Uncertain source text: </small>}{e.content}</p>)}
     {notes.filter((e) => e.kind === "embedded_image").map((e) => typeof e.payload?.imageAssetId === "string" && <img key={e.id} src={sourceAssetUrl(e.payload.imageAssetId)} alt={e.content} loading="lazy" style={{ maxWidth: "100%", height: "auto" }} />)}
   </details>;
 }
@@ -68,11 +69,14 @@ export function CanonicalReader({ document }: { document: SourceDocument }) {
     if (typeof owner === "string" && figureRefs.has(owner)) visualChildren.set(owner, [...(visualChildren.get(owner) ?? []), element]);
   }
   const headings = document.elements.filter((e) => e.kind === "heading" && e.payload?.role !== "title");
+  const furniture = document.elements.filter((e) => PAGE_FURNITURE.has(e.kind));
   return <div className="gx-prose gx-document">
     <DocumentDetails document={document} />
+    {furniture.length > 0 && <details className="gx-document-details"><summary>Show page furniture</summary>{furniture.map((element) =>
+      <p key={element.id} id={element.id}><small>{element.locator} · {element.kind.replaceAll("_", " ")}: </small>{passage(element, references)}</p>)}</details>}
     {headings.length > 1 && <details className="gx-document-outline"><summary>Contents</summary><nav aria-label="Document contents"><ul>{headings.map((e) => <li key={e.id} style={{ marginInlineStart: Math.max(0, (Number(e.payload?.level) || 2) - 2) * 12 }}><a href={`#${e.id}`}>{e.content}</a></li>)}</ul></nav></details>}
     {document.elements.map((element) => {
-      if (["reference", "metadata", "page_header", "page_footer", "embedded_image", "footnote", "figure_panel"].includes(element.kind)) return null;
+      if (PAGE_FURNITURE.has(element.kind) || ["reference", "metadata", "embedded_image", "figure_panel"].includes(element.kind)) return null;
       if (typeof element.payload?.visualOwner === "string" && figureRefs.has(element.payload.visualOwner)) return null;
       if (element.kind === "heading") {
         const level = Math.max(1, Math.min(6, Number(element.payload?.level) || (element.headings.length > 1 ? 3 : 2)));

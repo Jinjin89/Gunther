@@ -1,5 +1,6 @@
 import type { DocumentElement, SourceDocument } from "@gunther/contracts";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { CanonicalReader } from "./CanonicalReader";
 
@@ -26,6 +27,41 @@ describe("CanonicalReader", () => {
     expect(screen.getByText(/😀 中文/).textContent).toBe("😀 中文 [1] 后文。");
     expect(screen.getAllByText("[1] Smith 2020.")).toHaveLength(1);
     expect(screen.getByRole("link", { name: "Return to citation" })).toHaveAttribute("href", "#mention_1");
+    expect(screen.queryByText("Show page furniture")).not.toBeInTheDocument();
+  });
+
+  it("hides all six page-furniture kinds behind one toggle while retaining their text and locations", async () => {
+    const user = userEvent.setup();
+    const kinds = ["page_header", "page_footer", "footnote", "page_number", "sidebar", "margin_note"];
+    const data = document([
+      element("body", "paragraph", "Readable body paragraph."),
+      element("metadata", "metadata", "Original publication notice."),
+      ...kinds.map((kind, index) => element(`furniture_${kind}`, kind, `Original ${kind} text.`, { locator: `Page ${index + 1}` })),
+      element("repeated_header", "page_header", "Original page_header text.", { locator: "Page 7" }),
+    ]);
+    const { container } = render(<CanonicalReader document={data} />);
+    const toggle = screen.getByText("Show page furniture");
+    expect(toggle.closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText("Readable body paragraph.")).toBeVisible();
+    for (const kind of kinds) {
+      for (const text of screen.getAllByText(`Original ${kind} text.`)) expect(text).not.toBeVisible();
+    }
+    await user.click(screen.getByText("Document details"));
+    expect(screen.getByText("Original publication notice.")).toBeVisible();
+    expect(screen.getByText("Original footnote text.")).not.toBeVisible();
+    await user.click(toggle);
+    for (const [index, kind] of kinds.entries()) {
+      const retained = container.querySelector(`#furniture_${kind}`);
+      expect(retained).toBeVisible();
+      expect(retained).toHaveTextContent(`Page ${index + 1}`);
+      expect(retained).toHaveTextContent(`Original ${kind} text.`);
+      expect(retained?.closest("details")).toBe(toggle.closest("details"));
+    }
+    expect(screen.getAllByText("Original page_header text.")).toHaveLength(2);
+    expect(container.querySelector("#repeated_header")).toHaveTextContent("Page 7");
+    await user.click(toggle);
+    for (const kind of kinds) expect(container.querySelector(`#furniture_${kind}`)).not.toBeVisible();
+    expect(screen.getByText("Readable body paragraph.")).toBeVisible();
   });
 
   it("preserves saved figures, unavailable positions and table cell spans", () => {

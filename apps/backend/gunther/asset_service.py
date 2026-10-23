@@ -985,6 +985,13 @@ class AssetService:
             if source is None:
                 raise RuntimeError("The captured source disappeared before its asset was linked.")
             source.asset_id = asset.id
+            if (
+                asset.media_type == "application/pdf"
+                or Path(asset.original_name).suffix.lower() == ".pdf"
+            ):
+                from gunther.knowledge_index import enqueue
+
+                enqueue(session, source.id, "parse_asset", f"parse_asset:{source.id}:v1")
         detail = self.knowledge_service.get_source(imported.source.id)
         summary = SourceSummaryOut.model_validate(detail.model_dump())
         return AssetCaptureOut(

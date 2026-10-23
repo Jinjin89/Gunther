@@ -37,6 +37,7 @@ from gunther.answer_runs import Stopped
 from gunther.artifact_workspace import evidence_from_citation
 from gunther.conversation import GroundingClaim, KnowledgeResponder
 from gunther.database import session_scope
+from gunther.document_structure import evidence_eligible
 from gunther.extraction import CandidateAssertion, ExtractionResult, Extractor
 from gunther.knowledge_index import KnowledgeIndex, enqueue
 from gunther.llm import ModelError, ModelGateway, ModelInfo, Turn
@@ -3651,7 +3652,12 @@ class KnowledgeService:
             blocks = list(
                 session.scalars(
                     select(ContentBlock)
-                    .where(ContentBlock.revision_id == revision_id)
+                    .where(
+                        ContentBlock.revision_id == revision_id,
+                        evidence_eligible(
+                            ContentBlock.kind, ContentBlock.payload_json, include_headings=True
+                        ),
+                    )
                     .order_by(ContentBlock.ordinal)
                 )
             )
@@ -4181,7 +4187,12 @@ class KnowledgeService:
         on each side when it has none. It grows outward from the passage, one block each
         way in turn, until it is as long as a source is read."""
 
-        query = select(ContentBlock).where(ContentBlock.revision_id == block.revision_id)
+        if not evidence_eligible(block.kind, block.payload_json, include_headings=True):
+            return []
+        query = select(ContentBlock).where(
+            ContentBlock.revision_id == block.revision_id,
+            evidence_eligible(ContentBlock.kind, ContentBlock.payload_json, include_headings=True),
+        )
         if block.heading_path_json and block.heading_path_json != "[]":
             query = query.where(ContentBlock.heading_path_json == block.heading_path_json)
         else:
@@ -4286,6 +4297,9 @@ class KnowledgeService:
                 .where(
                     ContentBlock.revision_id == block.revision_id,
                     ContentBlock.ordinal.between(block.ordinal - 2, block.ordinal + 2),
+                    evidence_eligible(
+                        ContentBlock.kind, ContentBlock.payload_json, include_headings=True
+                    ),
                 )
                 .order_by(ContentBlock.ordinal)
             )

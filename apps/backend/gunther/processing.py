@@ -14,7 +14,7 @@ from dataclasses import replace
 from datetime import timedelta
 from difflib import SequenceMatcher
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread
 
 from sqlalchemy import and_, or_, select, update
 
@@ -22,7 +22,7 @@ from gunther import digest, papers, vector_index
 from gunther.asset_service import AssetService, _decode_text, _read_prefix, extract_asset_content
 from gunther.audio_decode import audio_duration_ms
 from gunther.database import session_scope
-from gunther.document_parser import DoclingParser
+from gunther.document_parser import DoclingError, DoclingParser
 from gunther.document_structure import organize_document, pdf_metadata
 from gunther.documents import ParsedDocument, text_document
 from gunther.knowledge_index import ASSET_PARSER, KnowledgeIndex, embeddable, new_id
@@ -46,6 +46,7 @@ IDLE_POLL_SECONDS = 1.0
 POLL_STEP_SECONDS = 0.5
 MAX_RETRY_SECONDS = 60.0
 FAILURE_LOG_EVERY = 30
+HEARTBEAT_SECONDS = 10
 # Jobs that may wait on a model over the network.
 AI_KINDS = ("digest", "extract_assertions")
 
@@ -201,9 +202,9 @@ class ProcessingWorker:
         self.assets.release_abandoned()
         return (claimed, token) if claimed else None
 
-    def heartbeat(self, job_id: str, token: str) -> None:
+    def heartbeat(self, job_id: str, token: str) -> bool:
         with session_scope(self.sessions) as session:
-            session.execute(
+            owned = session.execute(
                 update(ProcessingJob)
                 .where(
                     ProcessingJob.id == job_id,
@@ -211,9 +212,68 @@ class ProcessingWorker:
                     ProcessingJob.state == "running",
                 )
                 .values(lease_until=utc_now() + timedelta(seconds=120), updated_at=utc_now())
-            )
+            ).rowcount
+        return bool(owned)
 
     def process(self, job_id: str, token: str) -> None:
+        # Both the background lanes and synchronous harnesses renew long-running jobs.
+        finished, lease_lost = Event(), Event()
+
+        def renew() -> None:
+            while not finished.wait(HEARTBEAT_SECONDS):
+                try:
+                    if not self.heartbeat(job_id, token):
+                        lease_lost.set()
+                        return
+                except Exception as error:
+                    logger.warning("Processing heartbeat failed (%s)", type(error).__name__)
+
+        heartbeat = Thread(target=renew, daemon=True)
+        heartbeat.start()
+        try:
+            self._process(job_id, token, lease_lost)
+        finally:
+            finished.set()
+            heartbeat.join()
+
+    def _retain_images(self, document: ParsedDocument, job_id: str, token: str) -> None:
+        for image in document.assets:
+            retained = asyncio.run(
+                self.assets.preserve_bytes(
+                    image.data, file_name=image.name, media_type=image.media_type,
+                    staging=(job_id, token),
+                )
+            )
+            for element in document.elements:
+                if element.payload.get("imageKey") == image.key:
+                    element.payload["imageAssetId"] = retained.id
+
+    def _publish_initial_pdf(
+        self, source_id: str, document: ParsedDocument, warning: str | None,
+        job_id: str, token: str,
+    ) -> bool:
+        """Commit readable native content while its layout job remains running."""
+        with session_scope(self.sessions) as session:
+            owned = session.execute(
+                update(ProcessingJob)
+                .where(
+                    ProcessingJob.id == job_id, ProcessingJob.lease_token == token,
+                    ProcessingJob.state == "running", ProcessingJob.lease_until > utc_now(),
+                )
+                .values(updated_at=utc_now())
+            ).rowcount
+            if not owned or self.stopping.is_set():
+                return False
+            # Reprocessing never replaces an existing revision with a temporary fallback.
+            if session.get(SourceIndexHead, source_id) is None:
+                self.index.publish(
+                    session, session.get(Source, source_id), document.chunks(),
+                    parser=ASSET_PARSER, warning=warning, document=document,
+                )
+        return True
+
+    def _process(self, job_id: str, token: str, lease_lost: Event) -> None:
+        layout_started = False
         try:
             with session_scope(self.sessions) as session:
                 job = session.get(ProcessingJob, job_id)
@@ -272,6 +332,8 @@ class ProcessingWorker:
                         )
                     )
             if kind == "parse_asset":
+                suffix = Path(file_name).suffix.lower()
+                is_pdf = media_type == "application/pdf" or suffix == ".pdf"
                 extracted = extract_asset_content(
                     path, file_name, media_type, self.assets.ocr_provider
                 )
@@ -279,7 +341,6 @@ class ProcessingWorker:
                 document = text_document(extracted.text)
                 warning = extracted.limitation
                 parser = ASSET_PARSER
-                suffix = Path(file_name).suffix.lower()
                 if suffix in {".docx", ".epub", ".html", ".htm"}:
                     try:
                         document = (
@@ -293,61 +354,7 @@ class ProcessingWorker:
                             + f" Structured import unavailable ({type(error).__name__}); "
                             "text retained."
                         )
-                if self.document_parser and media_type == "application/pdf":
-                    try:
-                        result = (
-                            self.document_parser.parse(path, stopping=self.stopping.is_set)
-                            if isinstance(self.document_parser, DoclingParser)
-                            else self.document_parser.parse(path)
-                        )
-                        structured = (
-                            result if isinstance(result, ParsedDocument) else ParsedDocument(result)
-                        )
-                        if not any(
-                            b.kind not in {"heading", "figure"} for b in structured.elements
-                        ):
-                            raise ValueError("No structured document content")
-                        extras = reconcile_fallback(structured, document)
-                        for block in extras:
-                            block.parent = None
-                        # Retain page order and rebase parents after inserting fallback pages.
-                        indexed = list(enumerate(structured.elements + extras))
-                        if extras:
-                            indexed.sort(
-                                key=lambda pair: (pair[1].anchor.get("page") or 0, pair[0])
-                            )
-                        positions = {old: new for new, (old, _) in enumerate(indexed)}
-                        for new, (_, block) in enumerate(indexed):
-                            parent = (
-                                positions.get(block.parent) if block.parent is not None else None
-                            )
-                            block.parent = parent if parent is not None and parent < new else None
-                        structured.elements = [block for _, block in indexed]
-                        document = structured
-                        parser = self.document_parser.version
-                        limitations = []
-                        if structured.manifest.get("conversionStatus") not in {
-                            None,
-                            "unknown",
-                            "success",
-                        }:
-                            limitations.append("Some PDF regions could not be parsed.")
-                        if structured.manifest.get("missingImages"):
-                            limitations.append("Some figure images could not be rendered.")
-                        if structured.manifest.get("metadataWarning"):
-                            limitations.append(str(structured.manifest["metadataWarning"]))
-                        if extras:
-                            limitations.append(
-                                "Missing pages were retained using text extraction; "
-                                "their layout is uncertain."
-                            )
-                        warning = " ".join(limitations) or None
-                    except Exception as error:
-                        warning = (warning or "") + (
-                            f" Structured parsing unavailable ({type(error).__name__}); "
-                            "using local text/OCR extraction."
-                        )
-                if media_type == "application/pdf" and document.manifest.get("method") != "docling":
+                if is_pdf:
                     try:
                         pdf_raster_images(path, document)
                     except Exception as error:
@@ -356,27 +363,76 @@ class ProcessingWorker:
                             warning or ""
                         ) + f" Some images could not be extracted ({type(error).__name__})."
                     warning = (warning or "") + (
-                        " Layout parsing is unavailable; heading hierarchy, vector figures "
+                        " Layout has not been read yet; heading hierarchy, vector figures "
                         "and table structure may be incomplete. The original PDF is retained."
                     )
                     try:
                         organize_document(document, pdf_metadata(path))
                     except Exception:
                         organize_document(document)
-                else:
-                    organize_document(document)
-                for image in document.assets:
-                    retained = asyncio.run(
-                        self.assets.preserve_bytes(
-                            image.data,
-                            file_name=image.name,
-                            media_type=image.media_type,
-                            staging=(job_id, token),
+                    document.manifest.update(parser=parser, warning=warning)
+                    self._retain_images(document, job_id, token)
+                    if not self._publish_initial_pdf(
+                        source_id, document, warning, job_id, token,
+                    ):
+                        return
+                    layout_started = True
+                    if not self.document_parser:
+                        raise DoclingError("The offline layout parser is unavailable")
+                if self.document_parser and is_pdf:
+                    result = (
+                        self.document_parser.parse(
+                            path, stopping=lambda: self.stopping.is_set() or lease_lost.is_set(),
                         )
+                        if isinstance(self.document_parser, DoclingParser)
+                        else self.document_parser.parse(path)
                     )
-                    for element in document.elements:
-                        if element.payload.get("imageKey") == image.key:
-                            element.payload["imageAssetId"] = retained.id
+                    structured = (
+                        result if isinstance(result, ParsedDocument) else ParsedDocument(result)
+                    )
+                    if structured.manifest.get("conversionStatus") in {"failure", "skipped"}:
+                        raise DoclingError("The offline layout parser could not convert this PDF")
+                    if not any(
+                        b.kind not in {"heading", "figure"} for b in structured.elements
+                    ):
+                        raise DoclingError("The offline layout parser returned no readable content")
+                    extras = reconcile_fallback(structured, document)
+                    for block in extras:
+                        block.parent = None
+                    # Retain page order and rebase parents after inserting fallback pages.
+                    indexed = list(enumerate(structured.elements + extras))
+                    if extras:
+                        indexed.sort(
+                            key=lambda pair: (pair[1].anchor.get("page") or 0, pair[0])
+                        )
+                    positions = {old: new for new, (old, _) in enumerate(indexed)}
+                    for new, (_, block) in enumerate(indexed):
+                        parent = (
+                            positions.get(block.parent) if block.parent is not None else None
+                        )
+                        block.parent = parent if parent is not None and parent < new else None
+                    structured.elements = [block for _, block in indexed]
+                    document = structured
+                    parser = self.document_parser.version
+                    limitations = []
+                    if structured.manifest.get("conversionStatus") not in {
+                        None,
+                        "unknown",
+                        "success",
+                    }:
+                        limitations.append("Some PDF regions could not be parsed.")
+                    if structured.manifest.get("missingImages"):
+                        limitations.append("Some figure images could not be rendered.")
+                    if structured.manifest.get("metadataWarning"):
+                        limitations.append(str(structured.manifest["metadataWarning"]))
+                    if extras:
+                        limitations.append(
+                            "Missing pages were retained using text extraction; "
+                            "their layout is uncertain."
+                        )
+                    warning = " ".join(limitations) or None
+                organize_document(document)
+                self._retain_images(document, job_id, token)
                 document.manifest.update(parser=parser, warning=warning)
                 parsed = document.chunks()
                 vectors = []
@@ -524,12 +580,15 @@ class ProcessingWorker:
                 job.lease_token, job.lease_until = None, None
                 job.updated_at = utc_now()
         except Exception as error:
+            if layout_started and self.stopping.is_set():
+                # Shutdown is resumable: the next worker reclaims this lease on expiry.
+                return
             # Do not return model errors, local paths, or credentials to API clients.
             logger.warning("Knowledge job %s failed (%s)", job_id, type(error).__name__)
             with session_scope(self.sessions) as session:
                 job = session.get(ProcessingJob, job_id)
                 if job and job.state == "running" and job.lease_token == token:
-                    job.state = "failed" if job.attempts >= 3 else "queued"
+                    job.state = "failed" if layout_started or job.attempts >= 3 else "queued"
                     job.error = (
                         # The gateway's own words: which provider, and what to do about it.
                         f"The model could not write the summary: {error}"
@@ -538,6 +597,17 @@ class ProcessingWorker:
                         if job.kind == "digest"
                         else f"Processing failed ({type(error).__name__}). Original preserved."
                     )
+                    if layout_started:
+                        reason = (
+                            str(error) if isinstance(error, DoclingError)
+                            else "the time budget was exceeded" if isinstance(error, TimeoutError)
+                            else type(error).__name__
+                        )
+                        job.error = (
+                            f"Layout parsing failed: {reason}. "
+                            "The previous document revision was retained. "
+                            "Try again to retry layout."
+                        )
                     job.available_at = utc_now() + timedelta(seconds=5 * 2**job.attempts)
                     job.lease_token, job.lease_until = None, None
                     job.updated_at = utc_now()
@@ -575,12 +645,7 @@ class ProcessingWorker:
                 if not claimed:
                     await self._pause(IDLE_POLL_SECONDS)
                     continue
-                task = asyncio.create_task(asyncio.to_thread(self.process, *claimed))
-                while not task.done():
-                    await asyncio.wait({task}, timeout=10)
-                    if not task.done():
-                        await asyncio.to_thread(self.heartbeat, *claimed)
-                await task
+                await asyncio.to_thread(self.process, *claimed)
             except asyncio.CancelledError:
                 raise
             except Exception as error:
