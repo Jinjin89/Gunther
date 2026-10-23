@@ -297,7 +297,7 @@ def look(
         asked = "\n\n".join(
             f"Slide {n} — what to fix:\n"
             + "\n".join(f"- {text}" for text in wanted[n])
-            + f"\n\nSlide {n} as written:\n{fmt.without_design(slides[n - 1])}"
+            + f"\n\nSlide {n} as written:\n{fmt.without_design(drafts[n - 1].text)}"
             for n in targets
         )
         fix_system = P.FIX_LOOK.format(
