@@ -1,6 +1,6 @@
 # Designed slides: plan
 
-Status: agreed with the user on 2026-10-23; not built yet.
+Status: built 2026-10-23 (P1–P4, commits 03901e5…bc3f0a1), tested with fake models only; a real-model run and the Mac trial are pending.
 
 ## 1. Goal
 
