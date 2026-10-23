@@ -15,11 +15,11 @@ titles, not restructuring the story, not fixing broken layouts.
 | Measure | Target |
 | --- | --- |
 | Ship rate: slides / sections a blind judge rates "ship as is" or "one-minute edit" | ≥ 80% |
-| Head-to-head against the best outside tool on the same material (Claude.ai, Gamma, ChatGPT) | Gunther wins or ties ≥ 60% |
+| Head-to-head against the earlier method and hand-written reference decks, blind and order-swapped | Gunther wins or ties ≥ 60% (outside tools such as Claude.ai and Gamma dropped by the user, 2026-10-23) |
 | Titles-only test: a fresh reader retells the core message from the titles alone | ≥ 90% of decks |
 | Hard defects (clipped or overflowing text, type under 18 px at 1280×720, an empty half-slide, a made-up number, a topic-word title, disclaimer/meta text on a slide) | 0 |
 | Every number and factual claim traceable to a source passage | 100% (unchanged from today) |
-| Time with the writing model: deck ≤ 4 min, report ≤ 6 min | met |
+| Time with the writing model (DeepSeek Flash; V4 Pro is not used, 2026-10-23): deck ≤ 4 min, report ≤ 6 min | met |
 
 ## 2. What is wrong today (the honest diagnosis)
 

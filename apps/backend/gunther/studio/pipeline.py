@@ -46,7 +46,7 @@ DIRECT_TOKENS = 60_000
 PART_TOKENS = 24_000
 WRITER_TOKENS = 45_000
 CRITIC_ROUNDS = 1  # one review and one revision: a second round rarely changed the story
-WORKERS = 8
+WORKERS = 12
 STUDIO_CHECK = (
     "Check this slide or report section. Its title states the conclusion the cited evidence "
     "supports: judge the title against the sources cited in it. Only factual statements can be "
@@ -590,68 +590,52 @@ class StudioAgents(OutputAgents):
         return slides
 
     def fix_format(self, model, effort, run: Run, deck: str, emit: Events) -> str:
-        """Slides that break the format are written again, at most twice; a slide that still
-        breaks it keeps its words and is drawn by the renderer's fallback."""
+        """Each slide that breaks the format is written again on its own, all such slides at
+        once, for at most three rounds; a slide that still breaks it keeps its words and is
+        drawn by the renderer's fallback."""
 
         read = run.use == "read"
-        for _ in range(2):
-            found = fmt.check_deck(deck, read=read, notes_required=run.use == "talk")
+        notes = run.use == "talk"
+        guide = DECK_FORMAT + ("\n\n" + READ_NOTE if read else "")
+        for _ in range(3):
+            found = fmt.check_deck(deck, read=read, notes_required=notes)
             if not found:
                 break
             slides = fmt.split_slides(deck)
-            asked = "\n\n".join(
-                f"Slide {n} problems:\n"
-                + "\n".join(f"- {p}" for p in problems)
-                + "\n\nSlide "
-                + str(n)
-                + " as written:\n"
-                + slides[n - 1]
-                for n, problems in found
-            )
-            system = P.FIX_SLIDES.format(
-                format=DECK_FORMAT + ("\n\n" + READ_NOTE if read else ""), problems=asked
-            )
-            try:
-                fixed = fmt.split_slides(
-                    _unfence(self._text(model, system, "Rewrite them now.", effort, 12_000))
+
+            def fix(item: tuple[int, list[str]]) -> str | None:
+                n, problems = item
+                system = P.FIX_SLIDES.format(
+                    format=guide,
+                    problems=f"Slide {n} problems:\n"
+                    + "\n".join(f"- {p}" for p in problems)
+                    + f"\n\nSlide {n} as written:\n{slides[n - 1]}",
                 )
-            except ModelError as error:
-                logger.info("Fixing the slide format failed: %s", error)
-                break
-            if len(fixed) != len(found):
-                logger.info("Format fix returned %d slides for %d", len(fixed), len(found))
-                fixed = fixed[: len(found)]
-            for (n, _), text in zip(found, fixed, strict=False):
+                try:
+                    again = fmt.split_slides(
+                        _unfence(self._text(model, system, "Rewrite it now.", effort, 4000))
+                    )
+                except ModelError as error:
+                    logger.info("Fixing slide %d failed: %s", n, error)
+                    return None
+                if not again:
+                    return None
+                text = fmt.strip_labels(again[0])
                 if n == 1:
                     text = self._title_marker(
                         [text], fmt.parse_slide(slides[0]).attrs.get("theme", "paper")
                     )[0]
-                slides[n - 1] = text
+                return text
+
+            with ThreadPoolExecutor(WORKERS) as workers:
+                fixed = list(workers.map(_in_context(fix), found))
+            changed = False
+            for (n, _), text in zip(found, fixed, strict=True):
+                if text is not None and text != slides[n - 1]:
+                    slides[n - 1], changed = text, True
             deck = "\n\n---\n\n".join(slides)
-        # What a batch could not fix is asked for once more, one slide at a time.
-        for n, problems in fmt.check_deck(deck, read=read, notes_required=run.use == "talk"):
-            slides = fmt.split_slides(deck)
-            system = P.FIX_SLIDES.format(
-                format=DECK_FORMAT + ("\n\n" + READ_NOTE if read else ""),
-                problems=f"Slide {n} problems:\n"
-                + "\n".join(f"- {p}" for p in problems)
-                + f"\n\nSlide {n} as written:\n{slides[n - 1]}",
-            )
-            try:
-                again = fmt.split_slides(
-                    _unfence(self._text(model, system, "Rewrite it now.", effort, 4000))
-                )
-            except ModelError as error:
-                logger.info("Fixing slide %d failed: %s", n, error)
-                continue
-            if again:
-                fixed = fmt.strip_labels(again[0])
-                if n == 1:
-                    fixed = self._title_marker(
-                        [fixed], fmt.parse_slide(slides[0]).attrs.get("theme", "paper")
-                    )[0]
-                slides[n - 1] = fixed
-                deck = "\n\n---\n\n".join(slides)
+            if not changed:
+                break
         left = fmt.check_deck(deck, read=read, notes_required=run.use == "talk")
         if any("units long" in p for _, problems in left for p in problems):
             slides = fmt.split_slides(deck)
@@ -740,8 +724,9 @@ class StudioAgents(OutputAgents):
     # 5. Verifying -------------------------------------------------------------------------
 
     def verify(self, model, run: Run, parts: list[str], pool: Pool, emit: Events) -> list[Draft]:
-        """Each part's claims against the passages it cites (in parallel), the unsupported
-        ones fixed in one call, and the fixed parts checked once more."""
+        """Each part on its own, all parts at once: its claims checked against the passages it
+        cites, the unsupported ones fixed, and the fixed part checked once more. No part waits
+        for another."""
 
         self._stage(emit, "verify", "Checking every claim against its source", "running")
         by_ref = pool.by_ref()
@@ -752,20 +737,15 @@ class StudioAgents(OutputAgents):
             issues += self._chart_issues(text, by_ref)
             return Draft(text, issues, coverage)
 
+        def check_and_fix(text: str) -> Draft:
+            draft = check(text)
+            if not any(issue.verdict in FIXABLE for issue in draft.issues or []):
+                return draft
+            fixed = self._fix_claims(model, [draft], by_ref)
+            return check(fixed[0]) if fixed else draft
+
         with ThreadPoolExecutor(WORKERS) as workers:
-            drafts = list(workers.map(_in_context(check), parts))
-        bad = [
-            index
-            for index, draft in enumerate(drafts)
-            if any(issue.verdict in FIXABLE for issue in draft.issues or [])
-        ]
-        if bad:
-            fixed = self._fix_claims(model, [drafts[i] for i in bad], by_ref)
-            if fixed:
-                with ThreadPoolExecutor(WORKERS) as workers:
-                    again = list(workers.map(_in_context(check), fixed))
-                for index, draft in zip(bad, again, strict=True):
-                    drafts[index] = draft
+            drafts = list(workers.map(_in_context(check_and_fix), parts))
         for index, draft in enumerate(drafts):
             if any(issue.note.startswith("Chart value") for issue in draft.issues or []):
                 # A chart whose values its sources do not state is drawn as a table.

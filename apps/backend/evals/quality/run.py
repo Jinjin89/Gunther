@@ -46,7 +46,7 @@ REPO = materials.BACKEND.parents[1]
 CAPTURE = REPO / "apps" / "desktop" / "evals" / "deck" / "capture.mjs"
 METHODS = ("skills", "studio")
 KINDS = {"deck": "slides", "report": "report"}
-DEFAULT_JUDGE = "deepseek/deepseek-v4-pro"
+DEFAULT_JUDGE = "deepseek/deepseek-flash"
 RENDER_TIMEOUT_SECONDS = 600
 
 

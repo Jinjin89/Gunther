@@ -16,7 +16,7 @@ From `apps/backend` (keys as for the Ask exam: the repo-root `.env`, or `--setti
 ```
 
 Flags: `--sets` (ids from `materials.toml`, default all 7), `--methods skills,studio`, `--kinds deck,report`,
-`--model REF` (writer; default the Outputs job's model), `--judge REF` (default `deepseek/deepseek-v4-pro`),
+`--model REF` (writer; default the Outputs job's model), `--judge REF` (default `deepseek/deepseek-flash`),
 `--effort`, `--jobs N` (builds at once), `--label`, `--reuse` (skip a build whose set definition, brief,
 method, model and a hash of `gunther/` already have a result in an earlier run), `--reseed`,
 `--no-render`, `--no-judge`, `--visual-judge REF` (a vision model, e.g. `deepseek/deepseek-flash`,
