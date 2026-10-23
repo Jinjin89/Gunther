@@ -8,7 +8,7 @@ import { useBrandTheme } from "./brandStore";
 import { DECK_THEME_TOKENS } from "./theme";
 
 /** Pick a file from the computer: the browser needs a click on an input, which is made and thrown away here. */
-function chooseFile(accept: string): Promise<File | null> {
+export function chooseFile(accept: string): Promise<File | null> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
@@ -17,6 +17,21 @@ function chooseFile(accept: string): Promise<File | null> {
     input.oncancel = () => resolve(null);
     input.click();
   });
+}
+
+/** Read a template the person picks and keep it as the app's one template; says what was imported (or why not). Returns whether it worked. */
+export async function importTemplateFile(onNotice: (text: string) => void): Promise<boolean> {
+  const file = await chooseFile(".pptx,.potx,application/vnd.openxmlformats-officedocument.presentationml.presentation");
+  if (!file) return false;
+  try {
+    const { brand: imported, notes } = await readTemplate(await file.arrayBuffer(), file.name);
+    setBrandTheme(imported);
+    onNotice([`Template “${imported.name}” imported.`, ...notes].join(" "));
+    return true;
+  } catch (reason) {
+    onNotice(reason instanceof Error ? reason.message : String(reason));
+    return false;
+  }
 }
 
 /**
@@ -31,18 +46,7 @@ export function DeckThemeMenu({ value, disabled, onSelect, onNotice }: {
 }) {
   const brand = useBrandTheme();
   const current = value === "brand" && !brand ? "paper" : value;
-  const importTemplate = async () => {
-    const file = await chooseFile(".pptx,.potx,application/vnd.openxmlformats-officedocument.presentationml.presentation");
-    if (!file) return;
-    try {
-      const { brand: imported, notes } = await readTemplate(await file.arrayBuffer(), file.name);
-      setBrandTheme(imported);
-      onNotice([`Template “${imported.name}” imported.`, ...notes].join(" "));
-      onSelect("brand");
-    } catch (reason) {
-      onNotice(reason instanceof Error ? reason.message : String(reason));
-    }
-  };
+  const importTemplate = async () => { if (await importTemplateFile(onNotice)) onSelect("brand"); };
   const items: MenuItem[] = [
     ...DECK_THEMES.filter((name) => name !== "brand").map((name) => ({ label: DECK_THEME_TOKENS[name as Exclude<DeckTheme, "brand">].label, ...(current === name ? { icon: Check } : {}), onSelect: () => onSelect(name) })),
     ...(brand ? [{ label: brand.name, icon: current === "brand" ? Check : Layers, onSelect: () => onSelect("brand") }] : []),

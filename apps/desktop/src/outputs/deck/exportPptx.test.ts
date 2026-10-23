@@ -27,4 +27,12 @@ describe("exportPptx", () => {
     expect(summary).toContain('baseline="30000"');
     expect(summary).toContain("Sources: Harlow 2024; Okafor 2025; Lindqvist 2023");
   });
+
+  it("draws a designed deck by the template for now, without its design block (P4 exports the designs)", async () => {
+    const content = fixture("deck.designed");
+    const zip = await JSZip.loadAsync(await pptxBytes(content, { sources: SOURCES }));
+    const slides = Object.keys(zip.files).filter((file) => /^ppt\/slides\/slide\d+\.xml$/.test(file));
+    expect(slides.length).toBe(parseDeck(content).slides.length);
+    for (const file of Object.keys(zip.files).filter((name) => /\.xml$/.test(name))) expect(await zip.file(file)!.async("string")).not.toMatch(/:::design|&lt;section/);
+  });
 });

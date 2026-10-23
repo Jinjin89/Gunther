@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, type CSSProperties } from "react";
-import type { DeckTheme } from "../sections";
+import type { DeckStyle, DeckTheme } from "../sections";
 import { rememberFit, useFit } from "../slideFit";
 import { SlideContext } from "../slides/Rich";
 import { Inline } from "./Inline";
@@ -8,19 +8,14 @@ import { Layout } from "./layouts";
 import { parseDeckSlide } from "./parseDeck";
 import { useBrandTheme } from "./brandStore";
 import { deckStyle, resolveTheme } from "./theme";
+import { DesignedSlide, useCleanDesign } from "./DesignedSlide";
 import "./deck.css";
 
 /** The smallest a slide's type is scaled to when text typed over the budget does not fit. */
 export const SMALLEST_FIT = 0.85;
 const STEPS = [1, 0.95, 0.9, SMALLEST_FIT];
 
-/**
- * One slide of a studio deck (design v2), drawn on a 1280 × 720 face: an action title, the layout's
- * content, and at the foot the sources the slide cites. Nothing is scaled unless the text is over
- * its budget; then the canvas is drawn down to 85% at most and `onFitChange` says whether it still
- * overflows.
- */
-export function DeckSlide({ body, layout, attrs, theme, accent, first = false, numbers, sources, page, onCite, onFitChange }: {
+interface DeckSlideProps {
   body: string;
   layout: string | null | undefined;
   attrs?: Record<string, string> | undefined;
@@ -33,7 +28,38 @@ export function DeckSlide({ body, layout, attrs, theme, accent, first = false, n
   page?: number | undefined;
   onCite?: ((index: number) => void) | undefined;
   onFitChange?: ((fit: number, overflow: boolean) => void) | undefined;
-}) {
+  /** The slide's HTML (its `:::design` block); with a `style` the slide is drawn from it, else the template draws it. */
+  design?: string | null | undefined;
+  /** The look of a designed deck (the title marker's `style:`). */
+  style?: DeckStyle | null | undefined;
+}
+
+/**
+ * One slide of a studio deck (design v2). A designed slide (it has HTML and its deck has a style) is drawn from that HTML
+ * (DesignedSlide); every other slide is drawn by the template (TemplateSlide), so old decks look as they always did.
+ */
+export function DeckSlide(props: DeckSlideProps) {
+  const { design, style, body, layout, attrs, first = false, theme, numbers, sources, onCite, onFitChange } = props;
+  const clean = useCleanDesign(design);
+  const brand = useBrandTheme();
+  const chart = useMemo(() => {
+    if (!clean || !style) return null;
+    const data = parseDeckSlide(layout ?? (first ? "title" : null), body, attrs);
+    return data.layout === "chart" ? data : null;
+  }, [clean, style, layout, first, body, attrs]);
+  if (clean && style) {
+    return <DesignedSlide html={clean} style={style} brand={theme === "brand" ? brand : null} chart={chart} numbers={numbers} sources={sources} onCite={onCite} onFitChange={onFitChange} layout={layout ?? (first ? "title" : null)} lang={/[\u3400-\u9fff]/.test(body) ? "zh-CN" : undefined} />;
+  }
+  return <TemplateSlide {...props} />;
+}
+
+/**
+ * One slide of a studio deck (design v2), drawn on a 1280 × 720 face: an action title, the layout's
+ * content, and at the foot the sources the slide cites. Nothing is scaled unless the text is over
+ * its budget; then the canvas is drawn down to 85% at most and `onFitChange` says whether it still
+ * overflows.
+ */
+function TemplateSlide({ body, layout, attrs, theme, accent, first = false, numbers, sources, page, onCite, onFitChange }: DeckSlideProps) {
   const brand = useBrandTheme();
   const drawn = resolveTheme(theme, brand);
   const data = useMemo(() => parseDeckSlide(layout ?? (first ? "title" : null), body, attrs), [layout, first, body, attrs]);

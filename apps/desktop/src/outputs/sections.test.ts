@@ -126,8 +126,8 @@ describe("a deck's slides", () => {
 describe("parsing a deck", () => {
   it("gives each slide its heading, how it is drawn, what it shows and what is said", () => {
     expect(parseSlides("# Deck\n\nsub\n\n---\n\n## One\n\n- a\n\nNote: Say a.")).toEqual([
-      { heading: "Deck", layout: null, accent: null, theme: null, composition: "standard", body: "# Deck\n\nsub", notes: "" },
-      { heading: "One", layout: null, accent: null, theme: null, composition: "standard", body: "## One\n\n- a", notes: "Say a." },
+      { heading: "Deck", layout: null, accent: null, theme: null, composition: "standard", design: null, body: "# Deck\n\nsub", notes: "" },
+      { heading: "One", layout: null, accent: null, theme: null, composition: "standard", design: null, body: "## One\n\n- a", notes: "Say a." },
     ]);
     expect(parseSlides("")).toEqual([]);
   });
@@ -135,8 +135,8 @@ describe("parsing a deck", () => {
   it("takes the marker off a slide's body and keeps it out of the heading and the notes", () => {
     const content = "<!-- layout: title; accent: blue -->\n# Deck\n\nsub\n\n---\n\n<!-- layout: flow -->\n## One\n\n1. a\n2. b\n\nNote: Say a.";
     expect(parseSlides(content)).toEqual([
-      { heading: "Deck", layout: "title", accent: "blue", theme: null, composition: "standard", body: "# Deck\n\nsub", notes: "" },
-      { heading: "One", layout: "flow", accent: null, theme: null, composition: "standard", body: "## One\n\n1. a\n2. b", notes: "Say a." },
+      { heading: "Deck", layout: "title", accent: "blue", theme: null, composition: "standard", design: null, body: "# Deck\n\nsub", notes: "" },
+      { heading: "One", layout: "flow", accent: null, theme: null, composition: "standard", design: null, body: "## One\n\n1. a\n2. b", notes: "Say a." },
     ]);
   });
 });

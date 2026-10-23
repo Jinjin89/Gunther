@@ -1,7 +1,7 @@
 import { type CSSProperties, type ComponentProps, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnswerBody } from "../pages/AnswerBody";
 import { fitFor, overflowsFace, rememberFit, settleFit, useFit } from "./slideFit";
-import { compositionFor, type DeckTheme } from "./sections";
+import { compositionFor, type DeckStyle, type DeckTheme } from "./sections";
 import { DeckSlide } from "./deck/DeckSlide";
 import { themeAccentColour } from "./slides/accent";
 import { SLIDE_THEMES, slideThemeStyle } from "./slides/themes";
@@ -195,10 +195,13 @@ export function SlideFace(props: ComponentProps<typeof LegacySlideFace> & {
   deckTheme?: DeckTheme | undefined;
   first?: boolean | undefined;
   page?: number | undefined;
+  /** A designed slide's HTML and the deck's look: with both, the slide is drawn from its design, else by the template. */
+  design?: string | null | undefined;
+  deckStyle?: DeckStyle | null | undefined;
 }) {
-  const { attrs, deckTheme, first, page, ...legacy } = props;
+  const { attrs, deckTheme, first, page, design, deckStyle, ...legacy } = props;
   if (props.designVersion === 2) {
-    return <DeckSlide body={props.body} layout={props.layout} attrs={attrs} theme={deckTheme ?? "paper"} accent={props.accent} first={first ?? props.title} numbers={props.numbers} sources={props.sources} page={page} onCite={props.onCite} onFitChange={props.onFitChange} />;
+    return <DeckSlide body={props.body} layout={props.layout} attrs={attrs} theme={deckTheme ?? "paper"} accent={props.accent} first={first ?? props.title} design={design} style={deckStyle} numbers={props.numbers} sources={props.sources} page={page} onCite={props.onCite} onFitChange={props.onFitChange} />;
   }
   return <LegacySlideFace {...legacy} />;
 }

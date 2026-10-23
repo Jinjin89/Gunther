@@ -5,7 +5,7 @@ import { SlideFace } from "../src/outputs/SlideFace";
 import { PrintRoot } from "../src/outputs/PrintRoot";
 import { attrsOf, parseSlides, slideLayouts, splitDocument } from "../src/outputs/sections";
 import { splitBlocks } from "../src/outputs/slides/scene";
-import { measureSlide, waitForSlides } from "../src/outputs/slideMeasurements";
+import { FACE_SELECTOR, measureSlide, waitForSlides } from "../src/outputs/slideMeasurements";
 import "../src/styles.css";
 import "../src/design/tokens.css";
 import "../src/design/primitives.css";
@@ -33,7 +33,7 @@ function Face({ index }: { index: number }) {
   const [issue, setIssue] = useState<string | null>(null);
   const change = useCallback((scale: number, overflow: boolean) => setFit(old => old.scale === scale && old.overflow === overflow ? old : { scale, overflow }), []);
   return <article data-slide-id={input.slideIds[index]} data-fit={fit.scale} data-overflow={fit.overflow} data-scene-issue={issue ?? ""}>
-    <SlideFace body={slide.body} title={index === 0} layout={layouts[index]} theme={theme} accent={accent} designVersion={designVersion} attrs={attrs[index]} deckTheme={slides[0]?.deckTheme} first={index === 0} page={index + 1} composition={slide.composition} scene={slide.scene} numbers={designVersion === 2 ? numbers : input.artifact.citations.map(citation => citation.ref ?? 0)} sources={sources} onFitChange={change} onSceneIssue={setIssue}/>
+    <SlideFace body={slide.body} title={index === 0} layout={layouts[index]} theme={theme} accent={accent} designVersion={designVersion} attrs={attrs[index]} deckTheme={slides[0]?.deckTheme} first={index === 0} page={index + 1} composition={slide.composition} scene={slide.scene} design={slide.design} deckStyle={slides[0]?.style} numbers={designVersion === 2 ? numbers : input.artifact.citations.map(citation => citation.ref ?? 0)} sources={sources} onFitChange={change} onSceneIssue={setIssue}/>
   </article>;
 }
 function App() {
@@ -46,7 +46,7 @@ createRoot(document.getElementById("root")!).render(<App/>);
 Object.assign(window, { guntherCapture: {
   version: 1,
   async ready(print = false) {
-    const selector = print ? "#print-root :is(.outputs-slide-face,.dk-face)" : "#capture-slides :is(.outputs-slide-face,.dk-face)";
+    const selector = print ? `#print-root :is(${FACE_SELECTOR})` : `#capture-slides :is(${FACE_SELECTOR})`;
     await waitForSlides(selector, slides.length, 15000);
     return {
       version: 1, candidateHash: input.candidateHash,

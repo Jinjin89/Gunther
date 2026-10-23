@@ -7,7 +7,7 @@
  * slide's Markdown, drawn as ordinary points). Words that belong to no part of the grammar are
  * kept in `after`.
  */
-import { attrsOf, layoutOf, parseSlides, splitDocument, type DeckTheme } from "../sections";
+import { attrsOf, layoutOf, parseSlides, splitDocument, splitDesign, type DeckStyle, type DeckTheme } from "../sections";
 import { plainText, unitOf, valueOf } from "../slides/parseSlide";
 import { BUDGETS, READ_FACTOR, countUnits, isDeckLayout, type DeckLayout, type Range } from "./units";
 
@@ -283,18 +283,20 @@ export function parseDeckSlide(layout: string | null | undefined, body: string, 
 
 // --- whole decks -----------------------------------------------------------------------------
 
-export interface DeckSlide { layout: string | null; attrs: Record<string, string>; data: DeckData; notes: string; body: string }
-export interface Deck { version: 2 | 0; theme: DeckTheme; accent: string | null; slides: DeckSlide[] }
+/** `design` is the slide's HTML (its `:::design` block), null when the template draws it; it is never part of `body` or `notes`. */
+export interface DeckSlide { layout: string | null; attrs: Record<string, string>; data: DeckData; notes: string; body: string; design: string | null }
+/** `style` is set for a designed deck (the title marker's `style:`); the slides with a `design` are drawn from it. */
+export interface Deck { version: 2 | 0; theme: DeckTheme; accent: string | null; style: DeckStyle | null; slides: DeckSlide[] }
 
 /** A deck's slides read for the studio design. `version` is 2 when the title slide's marker says `design: v2`. */
 export function parseDeck(content: string): Deck {
-  const sections = splitDocument(content, "slides").sections;
+  const sections = splitDocument(content, "slides").sections.map((section) => splitDesign(section).text);
   const first = sections[0] ? layoutOf(sections[0]) : null;
   const slides = parseSlides(content).map((slide, at) => {
     const attrs = attrsOf(sections[at] ?? "");
-    return { layout: slide.layout, attrs, body: slide.body, notes: slide.notes, data: parseDeckSlide(slide.layout, slide.body, attrs) };
+    return { layout: slide.layout, attrs, body: slide.body, notes: slide.notes, design: slide.design, data: parseDeckSlide(slide.layout, slide.body, attrs) };
   });
-  return { version: first?.designVersion === 2 ? 2 : 0, theme: first?.deckTheme ?? "paper", accent: first?.accent ?? null, slides };
+  return { version: first?.designVersion === 2 ? 2 : 0, theme: first?.deckTheme ?? "paper", accent: first?.accent ?? null, style: first?.style ?? null, slides };
 }
 
 // --- budgets ---------------------------------------------------------------------------------

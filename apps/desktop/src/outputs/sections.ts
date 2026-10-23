@@ -36,9 +36,32 @@ export const compositionFor = (layout: string | null | undefined, value: string 
 /** At the start of a slide, after any blank lines: layout plus extensible keyed metadata. */
 const LAYOUT_MARK = /^[ \t\r\n]*<!--[ \t]*layout:[ \t]*([a-z][a-z0-9_]*)[ \t]*(?:;[ \t]*[a-z][a-z0-9_]*:[^;\r\n]*?)*[ \t]*-->[ \t]*(?:\r?\n|$)/;
 const MARKER_ATTR = /;[ \t]*([a-z][a-z0-9_]*):[ \t]*([^;\r\n]*?)[ \t]*(?=;|-->)/g;
+/** The looks a designed deck can take (the title marker's `style:`; gunther/studio/format.py STYLES). */
+export const DECK_STYLES = ["light", "dark", "bold"] as const;
+export type DeckStyle = (typeof DECK_STYLES)[number];
+export const isDeckStyle = (value: unknown): value is DeckStyle => DECK_STYLES.some((name) => name === value);
+
 /** The visual themes of the studio design (design: v2). */
 export const DECK_THEMES = ["paper", "ink", "editorial", "brand"] as const;
 export type DeckTheme = (typeof DECK_THEMES)[number];
+
+/** A designed slide keeps its HTML in one block at its very end, after the notes (gunther/studio/format.py DESIGN_BLOCK). */
+const DESIGN_BLOCK = /\n*:::design[ \t]*\n([\s\S]*?)\n:::[ \t]*$/;
+
+/** A slide's Markdown without its design block, and the block's HTML (null for a slide with none). */
+export function splitDesign(slide: string): { text: string; design: string | null } {
+  if (!slide.includes(":::design")) return { text: slide, design: null };
+  const trimmed = slide.replace(/\s+$/, "");
+  const found = DESIGN_BLOCK.exec(trimmed);
+  if (!found) return { text: slide, design: null };
+  return { text: trimmed.slice(0, found.index).replace(/\s+$/, ""), design: (found[1] ?? "").trim() || null };
+}
+
+/** The slide with its design block added (an earlier one is replaced). */
+export function withDesignBlock(slide: string, html: string | null): string {
+  const { text } = splitDesign(slide);
+  return html ? `${text.replace(/\s+$/, "")}\n:::design\n${html.trim()}\n:::` : text;
+}
 
 /** Each line of a document, and whether it is inside a code fence. */
 function lines(content: string): Array<{ line: string; fenced: boolean }> {
@@ -107,7 +130,7 @@ function markerLine(layout: string, attrs: Record<string, string>): string {
  * slide has an accent, and only one of the six colours. A slide with no marker has no layout and
  * is given back as it is.
  */
-export function layoutOf(text: string): { layout: string | null; accent: string | null; theme: SlideTheme | null; composition: SlideComposition; body: string; scene?: ReturnType<typeof decodeScene>; designVersion?: number; deckTheme?: DeckTheme } {
+export function layoutOf(text: string): { layout: string | null; accent: string | null; theme: SlideTheme | null; composition: SlideComposition; body: string; scene?: ReturnType<typeof decodeScene>; designVersion?: number; deckTheme?: DeckTheme; style?: DeckStyle } {
   const found = LAYOUT_MARK.exec(text);
   const layout = found?.[1];
   if (!found || !layout) return { layout: null, accent: null, theme: null, composition: "standard", body: text };
@@ -134,6 +157,7 @@ export function layoutOf(text: string): { layout: string | null; accent: string 
     ...(scene ? { scene } : {}),
     ...(layout === "title" && attrs.design === "v1" ? { designVersion: 1 } : {}),
     ...(layout === "title" && attrs.design === "v2" ? { designVersion: 2, deckTheme: DECK_THEMES.find((name) => name === attrs.theme?.toLowerCase()) ?? "paper" } : {}),
+    ...(layout === "title" && attrs.design === "v2" && isDeckStyle(attrs.style?.toLowerCase()) ? { style: attrs.style!.toLowerCase() as DeckStyle } : {}),
   };
 }
 
@@ -209,7 +233,9 @@ export function splitNotes(slide: string): { body: string; notes: string } {
 
 /** Remove only scene metadata in its reserved header position, for an ordinary Markdown editor. */
 export function withoutSceneMarkers(content: string): string {
-  return splitDocument(content, "slides").sections.map((section) => {
+  return splitDocument(content, "slides").sections.map((full) => {
+    // A designed slide's HTML is not for typing over either: it comes back below while the words are untouched.
+    const section = splitDesign(full).text;
     const marker = LAYOUT_MARK.exec(section);
     if (!marker) return section;
     const rest = section.slice(marker[0].length);
@@ -252,7 +278,31 @@ export async function restoreUnchangedScenes(original: string, draft: string): P
     const tail = page.slice(layout[0].length).replace(/^(?:[ \t]*\r?\n)+/, "");
     return `${layout[0]}${line}\n${tail}`;
   });
-  return restored.join("\n\n---\n\n");
+  return restoreUnchangedDesigns(original, restored).join("\n\n---\n\n");
+}
+
+/**
+ * A designed slide keeps its design only while its words are as they were (the one place where a
+ * hand edit drops a design: after that the design no longer matches, and the template draws the slide).
+ * A slide is the same slide when its visible Markdown, citations included, reads the same; one that
+ * only moved takes its design along.
+ */
+function restoreUnchangedDesigns(original: string, pages: string[]): string[] {
+  const key = (page: string) => normalizeSection(visibleMarkdown(splitDesign(page).text, true));
+  const old = splitDocument(original, "slides").sections.map((page) => ({ key: key(page), design: splitDesign(page).design }));
+  if (!old.some((item) => item.design)) return pages;
+  const used = new Set<number>();
+  const found = new Array<string | null>(pages.length).fill(null);
+  const match = (at: number, from: number) => {
+    const item = old[from];
+    if (!item?.design || used.has(from) || item.key !== key(pages[at]!)) return false;
+    found[at] = item.design;
+    used.add(from);
+    return true;
+  };
+  pages.forEach((_, at) => { match(at, at); });
+  pages.forEach((_, at) => { if (!found[at]) old.some((__, from) => match(at, from)); });
+  return pages.map((page, at) => found[at] ? withDesignBlock(page, found[at]) : page);
 }
 
 /** A slide as the viewer needs it: its heading, how it is drawn, what it shows, and what the presenter says. */
@@ -268,6 +318,10 @@ export interface ParsedSlide {
   designVersion?: number;
   /** The studio design's theme (design: v2 decks only, from the title slide). */
   deckTheme?: DeckTheme;
+  /** The look of a designed deck (from the title slide's `style:`); missing for decks drawn by the templates. */
+  style?: DeckStyle;
+  /** The HTML a designed slide carries (its `:::design` block); null when the template draws it. */
+  design: string | null;
   /** Decoded scene metadata and a decoding diagnostic, when a marker is present. */
   scene?: ReturnType<typeof decodeScene>;
   /** What the slide shows, heading included, without the marker. */
@@ -276,9 +330,10 @@ export interface ParsedSlide {
 }
 
 export function parseSlides(content: string): ParsedSlide[] {
-  return splitDocument(content, "slides").sections.map((text) => {
-    const { layout, accent, theme, composition, body, scene, designVersion, deckTheme } = layoutOf(text);
-    return { heading: headingOf(body), layout, accent, theme, composition, ...(deckTheme ? { deckTheme } : {}), ...(designVersion ? { designVersion } : {}), ...(scene ? { scene } : {}), ...splitNotes(body) };
+  return splitDocument(content, "slides").sections.map((section) => {
+    const { text, design } = splitDesign(section);
+    const { layout, accent, theme, composition, body, scene, designVersion, deckTheme, style } = layoutOf(text);
+    return { heading: headingOf(body), layout, accent, theme, composition, design, ...(style ? { style } : {}), ...(deckTheme ? { deckTheme } : {}), ...(designVersion ? { designVersion } : {}), ...(scene ? { scene } : {}), ...splitNotes(body) };
   });
 }
 

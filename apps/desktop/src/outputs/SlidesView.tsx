@@ -9,12 +9,13 @@ import { ArtifactMenu } from "./ArtifactMenu";
 import { SectionStatus } from "./ReportView";
 import { SlideFace } from "./SlideFace";
 import { SlideStylePicker } from "./SlideStylePicker";
-import { ACCENTS, THEMES, type DeckTheme, attrsOf, parseSlides, slideLayouts, splitDocument } from "./sections";
+import { ACCENTS, THEMES, type DeckStyle, type DeckTheme, attrsOf, parseSlides, slideLayouts, splitDocument } from "./sections";
 import { ACCENT_COLOURS, ACCENT_LABELS, type Accent, isAccent, themeAccentColour } from "./slides/accent";
 import { slideThemeStyle } from "./slides/themes";
 import { deckStageStyle } from "./deck/theme";
 import { useBrandTheme } from "./deck/brandStore";
 import { DeckThemeMenu } from "./deck/DeckThemeMenu";
+import { DeckStyleMenu } from "./deck/DeckStyleMenu";
 import "reveal.js/reveal.css";
 
 /** Reveal's settings: a 16:9 deck inside its box, moved by keys only while it has focus. */
@@ -53,7 +54,7 @@ const SWATCHES = Object.fromEntries(ACCENTS.map((name) => {
  * not the screen's full-screen mode: the window keeps its size, and a person who wants the
  * whole screen can use the window's own button).
  */
-export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, onAccent, onTheme, onDeckTheme, onNotice, accentDisabled = false, compact = false }: {
+export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, onAccent, onTheme, onDeckTheme, onDeckStyle, onNotice, accentDisabled = false, compact = false }: {
   artifact: Artifact;
   onCite: (citation: ConversationCitation, index: number) => void;
   /** The slide in view (counted from 0), told on every change: the part a message is about when nothing is chosen. */
@@ -70,6 +71,8 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
   onTheme?: ((theme: string) => void) | undefined;
   /** Changes the studio deck's theme (Paper, Ink, Editorial or the imported template). Without it the toolbar has no theme menu for studio decks. */
   onDeckTheme?: ((theme: DeckTheme) => void) | undefined;
+  /** Changes a designed deck's style (Light, Dark, Bold). Without it the toolbar has no Style menu for designed decks. */
+  onDeckStyle?: ((style: DeckStyle) => void) | undefined;
   /** Said to the person (a template was imported, with what was adjusted). */
   onNotice?: ((text: string) => void) | undefined;
   /** The Accent menu is there but cannot be used now (something is being saved, or this is not the latest version). */
@@ -95,9 +98,11 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
   const theme = slides[0]?.theme ?? "classic";
   const designVersion = slides[0]?.designVersion ?? 0;
   const deckTheme = slides[0]?.deckTheme ?? "paper";
+  // A designed deck has a style; its slides are drawn from their own HTML and the theme/accent menus give way to one Style menu.
+  const deckStyle = designVersion === 2 ? slides[0]?.style ?? null : null;
   const brand = useBrandTheme();
   // A studio deck (design v2) is drawn in its own theme: the stage takes its colours.
-  const stageStyle = (designVersion === 2 ? deckStageStyle(deckTheme, accent, brand) : { ...slideThemeStyle(theme), "--outputs-accent": themeAccentColour(accent, theme) }) as CSSProperties;
+  const stageStyle = (designVersion === 2 ? deckStageStyle(deckStyle === "dark" ? "ink" : deckTheme, accent, brand) : { ...slideThemeStyle(theme), "--outputs-accent": themeAccentColour(accent, theme) }) as CSSProperties;
   const canAccent = !slides[0]?.layout || slides[0].layout === "title";
   const canTheme = canAccent && designVersion !== 2;
   const reportFit = useCallback((index: number, fit: number, overflow: boolean) => setFitNotes((previous) => {
@@ -172,8 +177,9 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
       <span className="outputs-slides-tools">
         {onAsk && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => onAsk(Math.min(current, slides.length - 1))}><MessageSquarePlus size={13} />Ask about this slide</button>}
         {onTheme && canTheme && <SlideStylePicker value={theme} accent={accent} designVersion={designVersion} disabled={accentDisabled} onSelect={onTheme} numbers={numbers} sources={sources} samples={[0, slides.findIndex((_, index) => index > 0)].filter(index => index >= 0).map(index => ({ body: slides[index]!.body, title: index === 0, layout: layouts[index], composition: slides[index]!.composition, scene: slides[index]!.scene }))} />}
-        {onDeckTheme && designVersion === 2 && canAccent && <DeckThemeMenu value={deckTheme} disabled={accentDisabled} onSelect={onDeckTheme} onNotice={(text) => onNotice?.(text)} />}
-        {onAccent && canAccent && (accentDisabled
+        {deckStyle && canAccent && onDeckStyle && onDeckTheme && <DeckStyleMenu style={deckStyle} theme={deckTheme} disabled={accentDisabled} onStyle={onDeckStyle} onTemplate={(on) => onDeckTheme(on ? "brand" : "paper")} onNotice={(text) => onNotice?.(text)} />}
+        {!deckStyle && onDeckTheme && designVersion === 2 && canAccent && <DeckThemeMenu value={deckTheme} disabled={accentDisabled} onSelect={onDeckTheme} onNotice={(text) => onNotice?.(text)} />}
+        {onAccent && canAccent && !deckStyle && (accentDisabled
           ? <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled><Palette size={13} />Accent</button>
           : <ArtifactMenu label="Accent colour" triggerLabel="Accent colour" triggerClass="gx-btn gx-btn-quiet gx-btn-sm" trigger={<><Palette size={13} />Accent</>}
             items={ACCENTS.map((name) => ({ label: ACCENT_LABELS[name], icon: name === (isAccent(accent) ? accent : "ink") ? Check : SWATCHES[name], onSelect: () => onAccent(name) }))} />)}
@@ -190,7 +196,7 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
         onSlideChange={(event: Event) => setCurrent(indexOf(event))}
       >
         {slides.map((slide, index) => <Slide key={index}>
-          <SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} theme={theme} designVersion={designVersion} attrs={attrs[index]} deckTheme={deckTheme} first={index === 0} page={index + 1} composition={slide.composition} scene={slide.scene} numbers={numbers} sources={sources} onCite={cite} onSceneIssue={sceneCallbacks[index]} onFitChange={fitCallbacks[index]} />
+          <SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} theme={theme} designVersion={designVersion} attrs={attrs[index]} deckTheme={deckTheme} first={index === 0} page={index + 1} composition={slide.composition} scene={slide.scene} design={slide.design} deckStyle={slides[0]?.style} numbers={numbers} sources={sources} onCite={cite} onSceneIssue={sceneCallbacks[index]} onFitChange={fitCallbacks[index]} />
         </Slide>)}
       </Deck>
     </div>
@@ -216,7 +222,7 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
           onSlideChange={(event: Event) => go(indexOf(event))}
         >
           {slides.map((slide, index) => <Slide key={index}>
-            <SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} theme={theme} designVersion={designVersion} attrs={attrs[index]} deckTheme={deckTheme} first={index === 0} page={index + 1} composition={slide.composition} scene={slide.scene} numbers={numbers} sources={sources} />
+            <SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} theme={theme} designVersion={designVersion} attrs={attrs[index]} deckTheme={deckTheme} first={index === 0} page={index + 1} composition={slide.composition} scene={slide.scene} design={slide.design} deckStyle={slides[0]?.style} numbers={numbers} sources={sources} />
           </Slide>)}
         </Deck>
       </div>,
@@ -225,7 +231,7 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
     <ol className="outputs-thumbs" aria-label="Slides">
       {slides.map((slide, index) => <li key={index}>
         <button type="button" className={index === current ? "is-active" : ""} aria-label={`Go to slide ${index + 1}`} aria-current={index === current ? "true" : undefined} onClick={() => go(index)}>
-          <span className="outputs-thumb-frame"><span className="outputs-thumb-scale"><SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} theme={theme} designVersion={designVersion} attrs={attrs[index]} deckTheme={deckTheme} first={index === 0} page={index + 1} composition={slide.composition} scene={slide.scene} numbers={numbers} sources={sources} /></span></span>
+          <span className="outputs-thumb-frame"><span className="outputs-thumb-scale"><SlideFace body={slide.body} title={index === 0} layout={layouts[index]} accent={accent} theme={theme} designVersion={designVersion} attrs={attrs[index]} deckTheme={deckTheme} first={index === 0} page={index + 1} composition={slide.composition} scene={slide.scene} design={slide.design} deckStyle={slides[0]?.style} numbers={numbers} sources={sources} /></span></span>
           <small>{index + 1}{changed?.includes(index) && <em className="outputs-changed">Changed</em>}</small>
         </button>
       </li>)}

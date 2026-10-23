@@ -1,0 +1,24 @@
+/* Around a designed slide, inside its shadow root (the style's own CSS comes before this). */
+:host { display: block; position: relative; width: 1280px; height: 720px; overflow: hidden; flex: none; }
+.stage { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; transform-origin: 0 0; transform: scale(var(--stage-scale, 1)); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+:lang(zh), .slide[lang^="zh"] { word-break: auto-phrase; line-break: strict; }
+/* Citation marks: the same marks the template slides draw, small and raised. */
+.dk-cite { font-size: .65em; line-height: 0; vertical-align: super; font-weight: 600; font-style: normal; letter-spacing: 0; white-space: nowrap; margin-left: 2px; color: var(--muted); font-family: var(--font-body); }
+.slide.dark .dk-cite { color: var(--on-dark-muted); }
+.dk-cite button { all: unset; cursor: pointer; }
+.dk-cite button:hover { text-decoration: underline; }
+.dk-cite.is-unverified { opacity: .8; }
+/* Where the verified chart table is drawn (Charts.tsx) and the colours it takes from the style. */
+.slide gunther-chart, gunther-chart { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0;
+  --dk-ink: var(--text); --dk-muted: var(--muted); --dk-bg: var(--bg); --dk-soft: var(--panel); --dk-rule: var(--line);
+  --dk-bar: var(--dominant); --dk-accent: var(--dominant); --dk-sans: var(--font-body); font-family: var(--font-body); font-size: 20px; line-height: 1.4; }
+gunther-chart[data-highlight="true"] { --dk-accent: var(--accent); }
+.slide.dark gunther-chart { --dk-ink: var(--on-dark); --dk-muted: var(--on-dark-muted); --dk-bg: var(--dark-bg); }
+gunther-chart .dk-chart { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+gunther-chart :where(ul, p) { margin: 0; padding: 0; list-style: none; }
+gunther-chart .dk-measure { flex: none; font-size: 20px; line-height: 28px; color: var(--dk-muted); margin-bottom: 8px; }
+gunther-chart .dk-legend { flex: none; display: flex; flex-wrap: wrap; gap: 4px 28px; margin-bottom: 8px; font-size: 20px; line-height: 28px; color: var(--dk-ink); }
+gunther-chart .dk-legend li { display: flex; align-items: center; gap: 10px; }
+gunther-chart .dk-legend i { width: 18px; height: 18px; display: block; }
+gunther-chart .dk-plot { flex: 1 1 0; min-height: 0; position: relative; }
+gunther-chart .dk-plot svg { position: absolute; inset: 0; display: block; overflow: visible; font-family: var(--dk-sans); }

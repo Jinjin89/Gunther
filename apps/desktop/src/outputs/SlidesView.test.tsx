@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SlidesView } from "./SlidesView";
+import { fixture } from "./deck/fixtures";
 
 const setFullscreen = vi.fn(async () => undefined);
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ setFullscreen }) }));
@@ -322,5 +323,28 @@ describe("pointing at a slide", () => {
     expect(screen.queryByText(/· Changed/)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Go to slide 2" }));
     expect(screen.getByText(/· Changed/)).toBeVisible();
+  });
+});
+
+describe("a designed deck in the viewer", () => {
+  const designed = deck({ content: fixture("deck.designed"), citations: Array.from({ length: 12 }, (_, at) => ({ ...citation, id: `cit_${at}`, ref: at + 1 })) });
+
+  it("draws the slides from their designs and has one Style menu instead of Theme and Accent", async () => {
+    const onDeckStyle = vi.fn();
+    const { container } = await show(designed, vi.fn(), { onDeckStyle, onDeckTheme: vi.fn(), onAccent: vi.fn() });
+    expect(container.querySelectorAll(".dk-designed").length).toBeGreaterThan(5);
+    expect(screen.queryByRole("button", { name: /Accent colour/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Deck theme/ })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /Deck style/ }));
+    expect(screen.getByRole("menuitem", { name: /Light/ })).toBeTruthy();
+    await userEvent.click(screen.getByRole("menuitem", { name: /Bold/ }));
+    expect(onDeckStyle).toHaveBeenCalledWith("bold");
+  });
+
+  it("keeps the Theme and Accent menus for an old studio deck", async () => {
+    const old = deck({ content: fixture("deck.short") });
+    await show(old, vi.fn(), { onDeckStyle: vi.fn(), onDeckTheme: vi.fn(), onAccent: vi.fn() });
+    expect(screen.getByRole("button", { name: /Deck theme/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Deck style/ })).toBeNull();
   });
 });

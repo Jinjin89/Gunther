@@ -1,5 +1,34 @@
+import { DESIGNED_MINIMUM, measureDesigned } from "./deck/measureDesigned";
+
+/** The faces the renderer waits for and measures: a template slide, a studio-template slide and a designed slide. */
+export const FACE_SELECTOR = ".outputs-slide-face,.dk-face,.dk-designed";
+
+/**
+ * A designed slide (HTML in a shadow root) in the shape measureSlide reports: its typography and `smallText` are the visible text
+ * with its size in stage pixels against the 18 px floor (20 px for headings); `overflowWhy` names the first element that leaves
+ * the stage or spills out of its box, and `designed.overflow` lists them all (see measureDesigned.ts).
+ */
+function measureDesignedSlide(face: HTMLElement) {
+  const stage = face.getBoundingClientRect();
+  const factor = stage.width / 1280 || 1;
+  const found = measureDesigned(face);
+  const first = found.overflow[0];
+  return {
+    fit: 1,
+    overflowWhy: first ? `${first.kind === "outside" ? "outside the stage" : "spills"}: ${first.element} "${first.text}"` : null,
+    overflow: found.overflow.length > 0,
+    drawn: "designed", sceneIssue: null,
+    bounds: { width: stage.width / factor, height: stage.height / factor }, blockBounds: [], typography: found.typography.map(item => ({ ...item, blockId: null })), overlaps: [],
+    smallText: found.typography.filter(item => item.size < item.minimum - 0.5).map(item => ({ ...item, blockId: null })),
+    fonts: [...new Set(found.typography.map(item => item.family))],
+    images: [], assetFailures: 0, pending: face.dataset.ready === "true" ? 0 : 1,
+    designed: { style: face.dataset.designStyle ?? null, minimumFont: DESIGNED_MINIMUM, smallest: found.smallest, overflow: found.overflow },
+  };
+}
+
 /** Shared, bounded measurements in stage pixels, after the real renderer has settled. */
 export function measureSlide(face: HTMLElement, use: "talk" | "read") {
+  if (face.classList.contains("dk-designed")) return measureDesignedSlide(face);
   const stage = face.getBoundingClientRect();
   const factor = stage.width / 1280 || 1;
   const rect = (element: Element) => {
@@ -63,8 +92,9 @@ export async function waitForSlides(selector: string, count: number, timeout: nu
     const faces = [...document.querySelectorAll<HTMLElement>(selector)];
     if (faces.length === count && document.fonts.status === "loaded") {
       await Promise.all(faces.flatMap(face => [...face.querySelectorAll("img")].map(image => image.decode().catch(() => undefined))));
-      const pending = faces.some(face => face.dataset.layout === "composed" && face.dataset.sceneReady !== "true" || face.querySelector('[data-graphic-fallback="pending"]'));
-      const signature = JSON.stringify(faces.map(face => [face.style.getPropertyValue("--outputs-fit"), face.dataset.drawn, face.innerText, [...face.querySelectorAll("img")].map(image => [image.complete, image.naturalWidth]), face.getBoundingClientRect().height]));
+      // A designed slide is drawn in a shadow root: it is ready when its fonts are in, and it has settled when its text and charts stop changing.
+      const pending = faces.some(face => face.dataset.layout === "composed" && face.dataset.sceneReady !== "true" || face.querySelector('[data-graphic-fallback="pending"]') || face.dataset.designed === "true" && face.dataset.ready !== "true");
+      const signature = JSON.stringify(faces.map(face => [face.style.getPropertyValue("--outputs-fit"), face.dataset.drawn, face.innerText, face.shadowRoot ? [face.shadowRoot.textContent?.length, [...face.shadowRoot.querySelectorAll("svg *")].length, face.shadowRoot.querySelector("gunther-chart svg")?.getBoundingClientRect().width] : null, [...face.querySelectorAll("img")].map(image => [image.complete, image.naturalWidth]), face.getBoundingClientRect().height]));
       stable = !pending && signature === previous ? stable + 1 : 0;
       previous = signature;
       if (stable >= 4) return;
