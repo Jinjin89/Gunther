@@ -54,7 +54,7 @@ const SWATCHES = Object.fromEntries(ACCENTS.map((name) => {
  * not the screen's full-screen mode: the window keeps its size, and a person who wants the
  * whole screen can use the window's own button).
  */
-export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, onAccent, onTheme, onDeckTheme, onDeckStyle, onNotice, accentDisabled = false, compact = false }: {
+export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, onAccent, onTheme, onDeckTheme, onDeckStyle, onNotice, accentDisabled = false, deckStyleDisabled = accentDisabled, pendingDeckStyle = null, compact = false }: {
   artifact: Artifact;
   onCite: (citation: ConversationCitation, index: number) => void;
   /** The slide in view (counted from 0), told on every change: the part a message is about when nothing is chosen. */
@@ -77,6 +77,9 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
   onNotice?: ((text: string) => void) | undefined;
   /** The Accent menu is there but cannot be used now (something is being saved, or this is not the latest version). */
   accentDisabled?: boolean;
+  /** The latest style choice can wait during a redesign while edits and template changes stay disabled. */
+  deckStyleDisabled?: boolean;
+  pendingDeckStyle?: DeckStyle | null;
   /** A small preview (beside the editor): no arrows over the slide, the thumbnails move it. */
   compact?: boolean;
 }) {
@@ -177,7 +180,7 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
       <span className="outputs-slides-tools">
         {onAsk && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => onAsk(Math.min(current, slides.length - 1))}><MessageSquarePlus size={13} />Ask about this slide</button>}
         {onTheme && canTheme && <SlideStylePicker value={theme} accent={accent} designVersion={designVersion} disabled={accentDisabled} onSelect={onTheme} numbers={numbers} sources={sources} samples={[0, slides.findIndex((_, index) => index > 0)].filter(index => index >= 0).map(index => ({ body: slides[index]!.body, title: index === 0, layout: layouts[index], composition: slides[index]!.composition, scene: slides[index]!.scene }))} />}
-        {deckStyle && canAccent && onDeckStyle && onDeckTheme && <DeckStyleMenu style={deckStyle} theme={deckTheme} disabled={accentDisabled} onStyle={onDeckStyle} onTemplate={(on) => onDeckTheme(on ? "brand" : "paper")} onNotice={(text) => onNotice?.(text)} />}
+        {deckStyle && canAccent && onDeckStyle && onDeckTheme && <DeckStyleMenu style={deckStyle} pendingStyle={pendingDeckStyle} theme={deckTheme} disabled={deckStyleDisabled} templateDisabled={accentDisabled} onStyle={onDeckStyle} onTemplate={(on) => onDeckTheme(on ? "brand" : "paper")} onNotice={(text) => onNotice?.(text)} />}
         {!deckStyle && onDeckTheme && designVersion === 2 && canAccent && <DeckThemeMenu value={deckTheme} disabled={accentDisabled} onSelect={onDeckTheme} onNotice={(text) => onNotice?.(text)} />}
         {onAccent && canAccent && !deckStyle && (accentDisabled
           ? <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled><Palette size={13} />Accent</button>

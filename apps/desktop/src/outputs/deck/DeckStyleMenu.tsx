@@ -11,13 +11,15 @@ import { STYLE_LABEL } from "./designStyles";
  *
  * Picking a style recolours the deck at once (the title marker's `style:` is rewritten and saved; the slides' HTML uses only the
  * style's variables), then OutputsPage asks the backend to draw every slide again in that style (`restyleSlidesStream`),
- * which saves the next version. The menu is disabled while that runs. The template is only ever a recolour (`onTemplate`).
+ * which saves the next version. Only the latest pending style is applied after that runs. The template is only ever a recolour (`onTemplate`).
  * A studio deck with no style yet keeps the Theme menu (DeckThemeMenu) instead of this one: its look is the template's.
  */
-export function DeckStyleMenu({ style, theme, disabled, onStyle, onTemplate, onNotice }: {
+export function DeckStyleMenu({ style, pendingStyle = null, theme, disabled, templateDisabled = disabled, onStyle, onTemplate, onNotice }: {
   style: DeckStyle;
+  pendingStyle?: DeckStyle | null;
   theme: DeckTheme;
   disabled: boolean;
+  templateDisabled?: boolean;
   onStyle: (style: DeckStyle) => void;
   /** The imported template is chosen (the marker's `theme: brand`), or removed (a built-in theme again). */
   onTemplate: (on: boolean) => void;
@@ -26,10 +28,10 @@ export function DeckStyleMenu({ style, theme, disabled, onStyle, onTemplate, onN
   const brand = useBrandTheme();
   const withTemplate = theme === "brand" && !!brand;
   const items: MenuItem[] = [
-    ...DECK_STYLES.map((name) => ({ label: STYLE_LABEL[name], ...(!withTemplate && style === name ? { icon: Check } : {}), onSelect: () => onStyle(name) })),
-    ...(brand ? [{ label: brand.name, icon: withTemplate ? Check : Layers, onSelect: () => onTemplate(true) }] : []),
-    { label: brand ? "Replace template…" : "Import template…", icon: FileUp, divider: true, onSelect: () => void importTemplateFile(onNotice).then((worked) => { if (worked) onTemplate(true); }) },
-    ...(brand ? [{ label: "Remove template", icon: Trash2, onSelect: () => { setBrandTheme(null); if (withTemplate) onTemplate(false); } }] : []),
+    ...DECK_STYLES.map((name) => ({ label: `${STYLE_LABEL[name]}${pendingStyle === name ? " (next)" : ""}`, ...(!withTemplate && style === name ? { icon: Check } : {}), onSelect: () => onStyle(name) })),
+    ...(brand ? [{ label: brand.name, icon: withTemplate ? Check : Layers, disabled: templateDisabled, onSelect: () => onTemplate(true) }] : []),
+    { label: brand ? "Replace template…" : "Import template…", icon: FileUp, divider: true, disabled: templateDisabled, onSelect: () => void importTemplateFile(onNotice).then((worked) => { if (worked) onTemplate(true); }) },
+    ...(brand ? [{ label: "Remove template", icon: Trash2, disabled: templateDisabled, onSelect: () => { setBrandTheme(null); if (withTemplate) onTemplate(false); } }] : []),
   ];
   return <ArtifactMenu label="Deck style" triggerLabel="Deck style" triggerClass="gx-btn gx-btn-quiet gx-btn-sm" trigger={<><Palette size={13} />Style</>} items={disabled ? items.map((item) => ({ ...item, disabled: true })) : items} />;
 }

@@ -70,6 +70,9 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
   const { store, state, active } = useArtifactConversations(workspaceId, base.id);
   const [history, setHistory] = useState<ArtifactSummary[]>([]);
   const [open, setOpen] = useState<Artifact | null>(null);
+  const styleRun = useRef<{ lineageId: string; running: DeckStyle; pending: DeckStyle | null } | null>(null);
+  const [pendingStyle, setPendingStyle] = useState<DeckStyle | null>(null);
+  const [restyling, setRestyling] = useState(false);
   const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState(false);
   const [generalError, setGeneralError] = useState<string | null>(null);
@@ -103,7 +106,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
   const live = useLiveOutput();
   const building = live.live !== null;
   const activeJob = job?.conversationId === active.id && building;
-  const busy = building || editing || saving || checking;
+  const busy = building || editing || saving || checking || restyling;
   const noModel = menu !== null && menu.models.length === 0;
   const controller = useRef<AbortController | null>(null);
   const followController = useRef<AbortController | null>(null);
@@ -186,6 +189,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
   useEffect(() => {
     let alive = true;
     controller.current?.abort(); followController.current?.abort(); jobRef.current = null; setJob(null); live.stop();
+    styleRun.current = null; setRestyling(false); setPendingStyle(null);
     openingToken.current += 1; setLoading(true); setOpen(null); setHistory([]); setLibrary(null); setGeneralError(null); setEditing(false);
     if (!workspaceId) { setGeneralError("The local workspace identity has not been verified yet."); setLoading(false); return () => { alive = false; }; }
     void (async () => {
@@ -206,7 +210,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
       } catch (reason) { if (alive) setGeneralError(messageOf(reason)); }
       finally { if (alive) setLoading(false); }
     })();
-    return () => { alive = false; controller.current?.abort(); followController.current?.abort(); openingToken.current += 1; };
+    return () => { alive = false; styleRun.current = null; controller.current?.abort(); followController.current?.abort(); openingToken.current += 1; };
   }, [base.id, workspaceId, store, show]);
 
   /** The saved versions again (the one just saved joins them even when the list is stale). */
@@ -314,7 +318,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
   };
   /** The old builder, for the Approach and Outline panels: a new version from the words changed there. */
   const rebuild = async (request: BuildOutputRequest, instruction: string, runner = knowledgeApi.buildOutputStream) => {
-    if (!workspaceId || building) return;
+    if (!workspaceId || building) return null;
     followController.current?.abort();
     const abort = new AbortController(); controller.current = abort;
     const context: JobContext = { conversationId: active.id, turnId: request.clientRequestId, kind: "rebuild", text: instruction };
@@ -322,13 +326,15 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
     live.start();
     try {
       const artifact = await runner(base.id, request, workspaceId, live.hear, abort.signal);
-      if (abort.signal.aborted) return;
+      if (abort.signal.aborted) return null;
       await finishBuild(artifact, context.conversationId);
+      return artifact;
     } catch (reason) {
-      if (abort.signal.aborted) return;
+      if (abort.signal.aborted) return null;
       const stopped = reason instanceof OutputStoppedError;
       if (!stopped) setGeneralError(messageOf(reason));
       onNotify(stopped ? "Stopped. Nothing was saved." : "The artifact wasn’t saved.");
+      return null;
     } finally { if (!abort.signal.aborted && jobRef.current === context) { live.stop(); jobRef.current = null; setJob(null); setStopping(false); } }
   };
   const requestFor = (extra: Partial<BuildOutputRequest> = {}): BuildOutputRequest => {
@@ -351,9 +357,9 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
     void sendTurn({ kind: asked.kind as NonNullable<ArtifactTurnInput["kind"]>, ...(asked.text ? { text: asked.text } : {}), ...(focus ? { focus } : {}) });
   };
   const stop = async () => { if (!workspaceId) return; setStopping(true); try { await knowledgeApi.stopOutputBuild(base.id, workspaceId); } catch (reason) { setStopping(false); setGeneralError(messageOf(reason)); } };
-  const saveEdit = async (content: string, note = "What you typed has not been re-checked yet.") => {
-    if (!open || !workspaceId) return null; setSaving(true); setGeneralError(null);
-    try { const artifact = await knowledgeApi.editOutput(base.id, open.id, { clientRequestId: artifactRequestId(), content }, workspaceId); await finishBuild(artifact, active.id); onNotify(`Saved as version ${artifact.versionNumber}. ${note}`); return artifact; }
+  const saveEdit = async (content: string, note = "What you typed has not been re-checked yet.", target = open) => {
+    if (!target || !workspaceId) return null; setSaving(true); setGeneralError(null);
+    try { const artifact = await knowledgeApi.editOutput(base.id, target.id, { clientRequestId: artifactRequestId(), content }, workspaceId); await finishBuild(artifact, active.id); onNotify(`Saved as version ${artifact.versionNumber}. ${note}`); return artifact; }
     catch (reason) { setGeneralError(`The edit wasn’t saved. ${messageOf(reason)}`); return null; } finally { setSaving(false); }
   };
   // The deck's accent is part of its Markdown (the title slide's marker), so changing it is an edit.
@@ -363,20 +369,45 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
   /**
    * A designed deck's style is the title marker's `style:`. The deck is recoloured at once (saved as a version, so the
    * person sees it), then the backend draws every slide again in that style: the next version. If that fails the recoloured
-   * deck stays and the error is shown as for any other action; picking the style again tries again.
+   * deck stays and the error is shown as for any other action.
+   * Keep only the latest choice while the model works; skip it if the returned deck already has that style.
    */
   const setDeckStyle = async (style: DeckStyle) => {
     if (!open || !workspaceId) return;
-    const content = withDeckMarker(open.content, { style, theme: "paper" });
-    let target: Artifact = open;
-    if (content !== open.content) {
-      const saved = await saveEdit(content, `The style is ${style}.`);
-      if (!saved) return;
-      target = saved;
+    const current = styleRun.current;
+    if (current) {
+      if (current.lineageId !== open.lineageId) return;
+      // Picking the running style cancels a pending change back to another style.
+      const pending = style === current.running ? null : style;
+      if (pending === current.pending) return;
+      current.pending = pending; setPendingStyle(pending);
+      if (pending) onNotify(`${pending[0]!.toUpperCase()}${pending.slice(1)} will be applied after the current redesign.`);
+      return;
     }
-    const model = choice.model ? { model: choice.model, effort: choice.effort } : {};
-    void rebuild(requestFor(), `Redesign the slides in ${style}`, (id, payload, workspace, hear, signal) =>
-      knowledgeApi.restyleSlidesStream(id, target.id, { clientRequestId: payload.clientRequestId, style, ...model, conversationId: active.id, conversationTitle: active.title }, workspace, hear, signal));
+    if (busy || !latest || parseSlides(open.content)[0]?.style === style) return;
+    const run = { lineageId: open.lineageId, running: style, pending: null as DeckStyle | null };
+    styleRun.current = run; setRestyling(true);
+    let target: Artifact = open;
+    try {
+      let next: DeckStyle | null = style;
+      while (styleRun.current === run && next) {
+        run.running = next; run.pending = null; setPendingStyle(null);
+        const content = withDeckMarker(target.content, { style: next, theme: "paper" });
+        if (content !== target.content) {
+          const saved = await saveEdit(content, `The style is ${next}.`, target);
+          if (!saved || styleRun.current !== run) break;
+          target = saved;
+        }
+        const model = choice.model ? { model: choice.model, effort: choice.effort } : {};
+        const redesigned = await rebuild(requestFor(), `Redesign the slides in ${next}`, (id, payload, workspace, hear, signal) =>
+          knowledgeApi.restyleSlidesStream(id, target.id, { clientRequestId: payload.clientRequestId, style: run.running, ...model, conversationId: active.id, conversationTitle: active.title }, workspace, hear, signal));
+        if (!redesigned) break;
+        target = redesigned;
+        next = run.pending === parseSlides(target.content)[0]?.style ? null : run.pending;
+      }
+    } finally {
+      if (styleRun.current === run) { styleRun.current = null; setRestyling(false); setPendingStyle(null); }
+    }
   };
   const checkAgain = async () => { if (!open || !workspaceId) return; setChecking(true); try { setOpen(await knowledgeApi.checkOutput(base.id, open.id, workspaceId)); onNotify("Checked against the sources."); } catch (reason) { setGeneralError(messageOf(reason)); } finally { setChecking(false); } };
   const copy = async (artifact = open) => { if (!artifact) return; try { await navigator.clipboard.writeText(artifact.content); onNotify(`Version ${artifact.versionNumber} copied as Markdown.`); } catch { onNotify("Clipboard access was unavailable. Download the Markdown file instead."); } };
@@ -453,7 +484,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
     {open ? <div className={`aw-preview-scroll${open.kind === "slides" ? " is-slides" : ""}`}>
       {workspaceId && <SlideReviewPanel key={open.id} artifact={open} baseId={base.id} workspaceId={workspaceId} disabled={busy || !latest || !changeable || noModel} onReview={reviewSlides} onFollowUp={send} />}
       <div className="artifact-reading-actions">{changeable && latest && !editing && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={busy} onClick={() => setEditing(true)}><Pencil size={12} />Edit</button>}{open.sections.some((section) => !section.checked) && changeable && latest && !editing && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={busy || noModel} onClick={() => void checkAgain()}><ShieldCheck size={12} />Check again</button>}</div>
-      {editing ? <EditPane key={open.id} artifact={open} saving={saving} onSave={(content) => void saveEdit(content)} onCancel={() => { setEditing(false); setGeneralError(null); }} onCite={cite} /> : open.kind === "slides" ? <div className="aw-deck"><h2 className="outputs-title">{open.title}</h2><LazySlidesView artifact={open} onCite={cite} onSlide={setOnScreen} onAsk={changeable && latest ? (index) => setPointing({ section: index }) : undefined} goTo={jump} changed={changed} onAccent={changeable ? setAccent : undefined} onTheme={changeable ? setTheme : undefined} onDeckTheme={changeable ? setDeckTheme : undefined} onDeckStyle={changeable ? setDeckStyle : undefined} onNotice={onNotify} accentDisabled={busy || !latest} /></div> : <article className={`aw-paper outputs-document is-saved${isReportV2(open.content) ? " is-studio" : ""}`} aria-label="Document preview"><h2 className="outputs-title">{open.title}</h2><p className="outputs-doc-meta">{[describe(open), new Date(open.createdAt).toLocaleDateString(), open.modelLabel ?? (open.origin === "edit" ? "typed by hand" : "")].filter(Boolean).join(" · ")}</p><ReportView artifact={open} onCite={cite} onAsk={changeable && latest ? (section, quote) => setPointing({ section, quote }) : undefined} goTo={jump} changed={changed} /><footer className="outputs-doc-foot"><ShieldCheck size={14} />{open.origin === "legacy" ? `From ${open.unitCount} accepted knowledge units` : `Built from ${describeScope(open.inputs)}`} · seal {open.manifestHash.slice(0, 12)}…</footer></article>}
+      {editing ? <EditPane key={open.id} artifact={open} saving={saving} onSave={(content) => void saveEdit(content)} onCancel={() => { setEditing(false); setGeneralError(null); }} onCite={cite} /> : open.kind === "slides" ? <div className="aw-deck"><h2 className="outputs-title">{open.title}</h2><LazySlidesView artifact={open} onCite={cite} onSlide={setOnScreen} onAsk={changeable && latest ? (index) => setPointing({ section: index }) : undefined} goTo={jump} changed={changed} onAccent={changeable ? setAccent : undefined} onTheme={changeable ? setTheme : undefined} onDeckTheme={changeable ? setDeckTheme : undefined} onDeckStyle={changeable ? setDeckStyle : undefined} onNotice={onNotify} accentDisabled={busy || !latest} pendingDeckStyle={styleRun.current?.lineageId === open.lineageId ? pendingStyle : null} deckStyleDisabled={!(restyling && styleRun.current?.lineageId === open.lineageId) && (busy || !latest)} /></div> : <article className={`aw-paper outputs-document is-saved${isReportV2(open.content) ? " is-studio" : ""}`} aria-label="Document preview"><h2 className="outputs-title">{open.title}</h2><p className="outputs-doc-meta">{[describe(open), new Date(open.createdAt).toLocaleDateString(), open.modelLabel ?? (open.origin === "edit" ? "typed by hand" : "")].filter(Boolean).join(" · ")}</p><ReportView artifact={open} onCite={cite} onAsk={changeable && latest ? (section, quote) => setPointing({ section, quote }) : undefined} goTo={jump} changed={changed} /><footer className="outputs-doc-foot"><ShieldCheck size={14} />{open.origin === "legacy" ? `From ${open.unitCount} accepted knowledge units` : `Built from ${describeScope(open.inputs)}`} · seal {open.manifestHash.slice(0, 12)}…</footer></article>}
     </div> : <div className="aw-preview-empty"><ListChecks size={30} /><h3>Your artifacts live here.</h3><p>Documents and slide decks from this conversation appear here. Create them through the conversation.</p></div>}
   </>;
   return <div className={`outputs-page page-enter${open?.kind === "slides" ? " is-deck" : ""}`}>

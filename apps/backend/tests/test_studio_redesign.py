@@ -397,6 +397,33 @@ def test_what_the_eye_finds_on_a_designed_slide_leads_to_a_design_not_a_rewrite(
 # The restyle route -------------------------------------------------------------------------
 
 
+def test_restyle_can_return_to_an_earlier_style_and_repeat_the_current_style(tmp_path):
+    from test_outputs import built as saved_version
+    from test_outputs import read_events, workspace
+
+    with studio_deck(tmp_path, studio_inner) as (client, base_id, first, go):
+        headers = workspace(client)
+        current = first
+        assert D.deck_style(fmt.split_slides(current["content"])) == "light"
+        for number, style in enumerate(("dark", "light", "light", "bold", "dark", "bold"), 1):
+            path = f"/api/knowledge-bases/{base_id}/artifacts/{current['id']}/restyle/stream"
+            payload = {"clientRequestId": f"restyle-{number}", "style": style}
+            events = read_events(client.post(path, json=payload, headers=headers))
+            saved = saved_version(events)
+            assert saved["id"] != current["id"]
+            assert saved["versionNumber"] == current["versionNumber"] + 1
+            assert saved["supersedesArtifactId"] == current["id"]
+            slides = fmt.split_slides(saved["content"])
+            assert D.deck_style(slides) == style
+            for before, after in zip(fmt.split_slides(first["content"]), slides, strict=True):
+                assert words(before) == words(after)
+                assert f'data-style="{style}"' in fmt.design_of(after)
+            assert any(name == "stage" and data["state"] == "running" for name, data in events)
+            replay = saved_version(read_events(client.post(path, json=payload, headers=headers)))
+            assert replay["id"] == saved["id"]
+            current = saved
+
+
 def test_the_restyle_route_saves_a_new_version_with_the_words_and_checks_unchanged(tmp_path):
     from test_outputs import built as saved_version
     from test_outputs import read_events, workspace

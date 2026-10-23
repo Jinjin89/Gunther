@@ -622,6 +622,90 @@ describe("reading, versions and editing", () => {
   });
   describe("restyling a designed deck", () => {
     const designed = (number = 1, overrides: Partial<Artifact> = {}) => accentDeck(number, { content: fixture("deck.designed"), ...overrides });
+    it("allows Light → Dark → Light and skips choices of the applied style", async () => {
+      const user = userEvent.setup();
+      const history = [designed()];
+      const edit = vi.spyOn(knowledgeApi, "editOutput").mockImplementation(async (_base, id, payload) => {
+        expect(id).toBe(history[0]!.id);
+        const saved = designed(history[0]!.versionNumber + 1, { origin: "edit", content: payload.content });
+        history.unshift(saved);
+        return saved;
+      });
+      const restyle = vi.spyOn(knowledgeApi, "restyleSlidesStream").mockImplementation(async (_base, id, payload, _workspace, hear) => {
+        expect(id).toBe(history[0]!.id);
+        expect(history[0]!.content).toContain(`style: ${payload.style}`);
+        hear({ type: "stage", id: "design", label: "Designing the slides", state: "running" });
+        const saved = designed(history[0]!.versionNumber + 1, { origin: "revise", content: history[0]!.content });
+        history.unshift(saved);
+        return saved;
+      });
+      await setup({ history });
+      for (const [name, requests] of [["Light", 0], ["Light", 0], ["Dark", 1], ["Light", 2], ["Light", 2]] as const) {
+        await user.click(await screen.findByRole("button", { name: "Deck style" }));
+        const item = screen.getByRole("menuitem", { name });
+        expect(item).toBeEnabled();
+        await user.click(item);
+        await waitFor(() => expect(restyle).toHaveBeenCalledTimes(requests));
+        await waitFor(() => expect(screen.getByRole("heading", { level: 2, name: `Deck v${history[0]!.versionNumber}` })).toBeVisible());
+        await waitFor(() => expect(screen.getByRole("button", { name: "Edit" })).toBeEnabled());
+      }
+      expect(edit).toHaveBeenCalledTimes(2);
+      expect(new Set([...edit.mock.calls, ...restyle.mock.calls].map((call) => call[2].clientRequestId)).size).toBe(4);
+    }, 20_000);
+    it.each([
+      { picks: ["Light", "Dark"], finalStyle: "dark", requests: 1, versionNumber: 3 },
+      { picks: ["Light", "Bold"], finalStyle: "bold", requests: 2, versionNumber: 5 },
+      { picks: ["Light", "Light"], finalStyle: "light", requests: 2, versionNumber: 5 },
+    ])("keeps only the latest pending choice: $picks → $finalStyle", async ({ picks, finalStyle, requests, versionNumber }) => {
+      const user = userEvent.setup();
+      const darkRun = held<void>();
+      const history = [designed()];
+      const edit = vi.spyOn(knowledgeApi, "editOutput").mockImplementation(async (_base, id, payload) => {
+        expect(id).toBe(history[0]!.id);
+        const saved = designed(history[0]!.versionNumber + 1, { origin: "edit", content: payload.content });
+        history.unshift(saved);
+        return saved;
+      });
+      const restyle = vi.spyOn(knowledgeApi, "restyleSlidesStream").mockImplementation(async (_base, id, payload, _workspace, hear) => {
+        expect(id).toBe(history[0]!.id);
+        hear({ type: "stage", id: "design", label: "Designing the slides", state: "running" });
+        if (payload.style === "dark") await darkRun.promise;
+        expect(id).toBe(history[0]!.id); // No edit may overtake an unfinished redesign.
+        const saved = designed(history[0]!.versionNumber + 1, { origin: "revise", content: history[0]!.content });
+        history.unshift(saved);
+        return saved;
+      });
+      const { view, onNotify } = await setup({ history });
+      await user.click(await screen.findByRole("button", { name: "Deck style" }));
+      await user.click(screen.getByRole("menuitem", { name: "Dark" }));
+      await waitFor(() => expect(restyle).toHaveBeenCalledOnce());
+      for (const name of picks) {
+        await user.click(screen.getByRole("button", { name: "Deck style" }));
+        expect(screen.getByRole("menuitem", { name: "Import template…" })).toBeDisabled();
+        const item = screen.getByRole("menuitem", { name: new RegExp(`^${name}`) });
+        expect(item).toBeEnabled();
+        await user.click(item);
+      }
+      expect(onNotify).toHaveBeenCalledWith("Light will be applied after the current redesign.");
+      await user.click(screen.getByRole("button", { name: "Deck style" }));
+      if (finalStyle === "dark") {
+        expect(screen.queryByRole("menuitem", { name: /next/ })).not.toBeInTheDocument();
+      } else {
+        expect(screen.getAllByRole("menuitem", { name: /next/ })).toHaveLength(1);
+        expect(screen.getByRole("menuitem", { name: `${picks.at(-1)} (next)` })).toBeEnabled();
+      }
+      expect(edit).toHaveBeenCalledOnce();
+      expect(restyle).toHaveBeenCalledOnce();
+      await act(async () => darkRun.release());
+      await waitFor(() => expect(screen.getByRole("heading", { level: 2, name: `Deck v${versionNumber}` })).toBeVisible());
+      await waitFor(() => expect(screen.getByRole("button", { name: "Edit" })).toBeEnabled());
+      expect(restyle).toHaveBeenCalledTimes(requests);
+      expect(restyle.mock.calls.map((call) => [call[1], call[2].style])).toEqual([["art_2", "dark"], ...(requests === 2 ? [["art_4", finalStyle]] : [])]);
+      expect(edit.mock.calls.map((call) => call[1])).toEqual(requests === 2 ? ["art_1", "art_3"] : ["art_1"]);
+      expect(new Set([...edit.mock.calls, ...restyle.mock.calls].map((call) => call[2].clientRequestId)).size).toBe(requests * 2);
+      expect(view.container.querySelector(".dk-designed")).toHaveAttribute("data-design-style", finalStyle);
+      expect(screen.queryByRole("menuitem", { name: /next/ })).not.toBeInTheDocument();
+    }, 20_000);
     it("recolours at once, then redesigns in that style and shows the version it returns", async () => {
       const user = userEvent.setup();
       const recoloured = designed(2, { origin: "edit", content: fixture("deck.designed").replace("style: light", "style: dark") });
