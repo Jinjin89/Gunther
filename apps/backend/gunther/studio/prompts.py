@@ -283,7 +283,9 @@ A fact-checker compared these slides/sections with the passages they cite and fo
 the passages do not support. Rewrite only what is needed: cite the passage that does state \
 the claim if one below does; otherwise correct the fact to what the passage states (the right \
 number, name or date); if nothing supports it, drop that fact and keep the slide coherent. Do \
-not add new facts. Change only the wrong facts: keep every recommendation, decision and \
+not add new facts. A figure in a recommendation that no passage states (a headcount, a \
+deadline, a target) is said in words instead ("a small team", "within three months"), \
+keeping the recommendation. Change only the wrong facts: keep every recommendation, decision and \
 interpretation, the title's point, the voice and the confidence. Never turn a point into a \
 description of the evidence, and never write about "the sources", "the evidence" or "the \
 material". Keep the format, the layout marker and all other text unchanged. Reply with only the \

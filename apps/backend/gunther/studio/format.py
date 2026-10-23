@@ -11,6 +11,8 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
+from gunther.studio.titles import is_topic_title
+
 LAYOUTS = (
     "title",
     "section",
@@ -409,7 +411,9 @@ def check_deck(
         latin_words = re.findall(r"[A-Za-z0-9'’%.-]+", CITE.sub("", slide.title))
         cjk_chars = sum(1 for ch in slide.title if "\u4e00" <= ch <= "\u9fff")
         short = (len(latin_words) < 5 and cjk_chars < 8) if not cjk_chars else cjk_chars < 8
-        if slide.layout not in ("title", "section") and (short or LABEL_TITLE.search(slide.title)):
+        if slide.layout not in ("title", "section") and (
+            short or is_topic_title(slide.title) or LABEL_TITLE.search(slide.title)
+        ):
             problems.append(
                 "The title names a topic or announces content instead of stating the point. "
                 'Write the point itself as a full sentence (not "Early applications" but what '
@@ -656,7 +660,7 @@ def is_label_heading(heading: str) -> bool:
     latin_words = re.findall(r"[A-Za-z0-9'’%.-]+", plain)
     cjk_chars = sum(1 for ch in plain if "\u4e00" <= ch <= "\u9fff")
     short = cjk_chars < 8 if cjk_chars else len(latin_words) < 5
-    return short or bool(LABEL_TITLE.search(plain))
+    return short or is_topic_title(plain) or bool(LABEL_TITLE.search(plain))
 
 
 LABEL_TITLE = re.compile(

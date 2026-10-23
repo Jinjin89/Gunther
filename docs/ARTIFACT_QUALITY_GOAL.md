@@ -517,3 +517,5 @@ shorten — untested here without a key.
   | Reports | 79–88% (average about 84%) | 86–100% | 0–2 |
 
   Two runs of the same code differ by up to 15 points. Some defects remain: a label title now and then, and a number the writer made up for a recommendation.
+- Runs close-flash-g and -h, Flash only, after the shared title test (`gunther/studio/titles.py`) and the rule that invented figures are written in words. Ship rate: decks 81% and 81%, reports 86% and 89%. Titles-only: decks 71% and 86%, reports 100% and 100%. Defects per run: 0–2.
+- 2026-10-23: the user chose to stop here and accept the bars as met on average. Next is their Mac trial. **Goal closed.**
