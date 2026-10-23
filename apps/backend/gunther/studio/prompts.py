@@ -465,3 +465,14 @@ Your earlier design broke the fact rules:
 {problems}
 Design the slide again from the start. Keep every number, name, date and citation exactly \
 as in the content, and add nothing."""
+
+
+DESIGN_REQUEST = """
+
+Change to make in this design: {request}
+Only the look changes. The words, numbers, names, dates and citations stay exactly as in the \
+content above: do not add, drop or reword any. The slide's current design, to improve on (not \
+to copy):
+{current}
+
+Reply with the HTML only."""

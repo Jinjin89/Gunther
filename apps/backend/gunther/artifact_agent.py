@@ -52,7 +52,9 @@ from gunther.outputs import ACCENTS, BuiltOutput, Notes, Pool, _marked, layout_o
 from gunther.run_budget import RunBudget
 from gunther.skill_runner import SkillAgents
 from gunther.skillbook import skill_for
+from gunther.studio import design as studio_design
 from gunther.studio import format as studio_format
+from gunther.studio.format import without_design
 from gunther.studio.work import is_studio, load_built
 
 logger = logging.getLogger(__name__)
@@ -89,6 +91,7 @@ class Act(BaseModel):
         "plan",
         "write",
         "edit",
+        "redesign",
         "check",
         "review",
         "save",
@@ -193,6 +196,11 @@ says what to change; the rest of the part stays word for word. In a report "pass
 "¶2" (its paragraph 2); a passage cut short with "…" runs on to the end of its paragraph (of the \
 notes, on a slide). Use edit for any change inside a part: a sentence, a paragraph, a list item, \
 the notes, a heading.
+- redesign: (decks of the studio method with designed slides) change only how the slides at \
+"parts" look, as "instruction" asks ("make slide 4 a diagram", "less text on this slide", "make \
+it more visual", "use a bigger number"): the words, numbers, citations and notes stay exactly \
+as they are, so nothing is checked again. Use it when the request is about the look alone; \
+when it changes what a slide says, use write or edit (the slide is designed again after it).
 - check: check the parts at "parts" against their sources again, as they read now, without \
 rewriting them (for text the user typed, or when the user asks).
 - review: read the whole artifact as its editor and as its audience, and improve at most the \
@@ -363,7 +371,7 @@ def _line(label: str, line: Line | None, empty: str = "not set") -> str:
 def _deck_text(text: str, notes: int | None = 150) -> list[str]:
     """A slide as the orchestrator reads it: without its marker, and its notes cut."""
 
-    lines = layout_of(text)[1].splitlines()
+    lines = layout_of(without_design(text))[1].splitlines()
     if notes is None:
         return lines
     at = next((n for n, line in enumerate(lines) if line.startswith("Note:")), None)
@@ -676,6 +684,22 @@ def validate(act: Act, g: Gate) -> str | None:
         missing = [p for p, i in zip(act.parts, ids, strict=True) if i not in work.parts]
         if missing:
             return f"{unit.capitalize()} {missing[0]} is not written yet."
+        return None
+    if do == "redesign":
+        if not deck:
+            return "Only a deck's slides have a design."
+        if not act.parts:
+            return f"Name the {unit}s (parts)."
+        if wrong := _positions(act.parts, size, unit):
+            return wrong
+        if not act.instruction.strip():
+            return "Say what to change in the look (instruction)."
+        missing = [p for p in act.parts if g.view_ids[p - 1] not in work.parts]
+        if missing:
+            return f"{unit.capitalize()} {missing[0]} is not written yet."
+        first = work.parts.get(work.outline[0].id) if work.outline else None
+        if first is None or studio_design.deck_style([first.text]) is None:
+            return "This deck has no designed style yet: restyle it from the style menu first."
         return None
     if do == "edit":
         if wrong := _positions([act.item], size, unit):
@@ -1159,7 +1183,7 @@ class ArtifactAgent:
 
         taken: list[BriefUpdate] = []
         size = len(work.outline) if work else 0
-        some = [a for a in decision.actions if a.do in ("write", "edit", "check")]
+        some = [a for a in decision.actions if a.do in ("write", "edit", "redesign", "check")]
         whole = any(
             a.do in ("understand", "select", "review")
             or (a.do == "plan" and a.change == "whole")
@@ -1223,6 +1247,8 @@ class ArtifactAgent:
             return 6 * n
         if act.do == "edit":
             return 6
+        if act.do == "redesign":
+            return 4 * n
         if act.do == "check":
             return 4 * n
         if act.do == "review":
@@ -1254,7 +1280,11 @@ class ArtifactAgent:
     def _label(self, m: Mapped) -> str:
         act, work = m.act, active_work(self.workspace)
         where = self._where(work, m.ids)
-        if work is not None and not m.ids and act.do in ("write", "edit", "check", "plan"):
+        if (
+            work is not None
+            and not m.ids
+            and act.do in ("write", "edit", "redesign", "check", "plan")
+        ):
             # A position the view does not have is named as it was asked for.
             asked = sorted({*act.parts, *([act.item] if act.item else [])})
             if asked:
@@ -1287,6 +1317,8 @@ class ArtifactAgent:
                 return f"Writing {where}" if where else "Writing"
             case "edit":
                 return f"Editing {where}"
+            case "redesign":
+                return f"Redesigning {where}"
             case "check":
                 return f"Checking {where}"
             case "review":
@@ -1564,6 +1596,21 @@ class ArtifactAgent:
             return Outcome(f"No change to {where}", f"The edit left {where} as it was.")
         self._touch(work, item_id, "edited", act.instruction)
         return Outcome(f"Edited {where}", f"Edited {where} and checked it.")
+
+    def _do_redesign(self, m: Mapped) -> Outcome:
+        act, work = m.act, active_work(self.workspace)
+        assert work is not None
+        changed = self._steps(work).redesign(m.ids, act.instruction)
+        where = self._where(work, m.ids)
+        for item_id in changed:
+            self._touch(work, item_id, "edited", f"redesigned: {act.instruction}"[:300])
+        if not changed:
+            return Outcome(
+                f"No change to {where}",
+                f"The new look of {where} did not pass; it stays as it was.",
+            )
+        shown = self._where(work, changed)
+        return Outcome(f"Redesigned {shown}", f"Redesigned {shown}; the words are unchanged.")
 
     def _do_check(self, m: Mapped) -> Outcome:
         work = active_work(self.workspace)

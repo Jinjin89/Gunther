@@ -1081,6 +1081,13 @@ class ReviewSlidesInput(OutputRequestInput):
     client_request_id: str = REQUEST_ID
 
 
+class RestyleSlidesInput(OutputRequestInput):
+    """Draw every slide of a deck again in another style (the words stay as they are)."""
+
+    client_request_id: str = REQUEST_ID
+    style: Literal["light", "dark", "bold"]
+
+
 class ArtifactSummaryOut(ApiModel):
     id: str
     workspace_id: str

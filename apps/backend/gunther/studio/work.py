@@ -188,6 +188,8 @@ class StudioWorkAgents(StudioAgents):
         deck = spec.kind == "slides"
         unit = "slide" if deck else "section"
         use = self.use or "talk"
+        # The words are written from the words: a slide's design is not shown to the writer.
+        parts = [fmt.without_design(text) for text in parts]
         current = parts[index] if index < len(parts) else ""
         whole = "\n\n---\n\n".join(
             f"[{unit} {n}]\n{text}"
@@ -260,6 +262,7 @@ class StudioWorkAgents(StudioAgents):
         self, model, effort, spec: Spec, parts: list[str], most: int = 4
     ) -> list[ReviewAsk]:
         unit = "slide" if spec.kind == "slides" else "section"
+        parts = [fmt.without_design(text) for text in parts]
         whole = "\n\n---\n\n".join(f"[{unit} {n}]\n{text}" for n, text in enumerate(parts, 1))
         system = REVIEW.format(
             what=self._what(spec), brief=spec.brief or "(none)", audience=spec.audience, most=most

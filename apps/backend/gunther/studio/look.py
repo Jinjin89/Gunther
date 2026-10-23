@@ -11,6 +11,7 @@ import logging
 import re
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -68,6 +69,12 @@ def measured(snapshot: dict, layouts: list[str] | None = None) -> list[dict[str,
             for item in slide.get("smallText", [])
         ]
         overflow = bool(slide.get("overflow"))
+        # A designed slide names each element that spills out of its box or off the stage.
+        spill = [
+            f"{item.get('element', 'element')} {str(item.get('text', ''))[:40]!r} "
+            + ("is outside the stage" if item.get("kind") == "outside" else "spills out of its box")
+            for item in (slide.get("designed") or {}).get("overflow", [])
+        ]
         asked = layouts[n] if layouts and n < len(layouts) else ""
         fallback = bool(asked) and asked != "text" and slide.get("drawn") == "text"
         out.append(
@@ -75,6 +82,7 @@ def measured(snapshot: dict, layouts: list[str] | None = None) -> list[dict[str,
                 "overflow": overflow,
                 "why": slide.get("overflowWhy") or "",
                 "small": small,
+                "spill": spill,
                 "fallback": asked if fallback else "",
                 "score": (10 if overflow else 0) + len(small) + (6 if fallback else 0),
             }
@@ -220,7 +228,23 @@ def look(
     wanted: dict[int, list[str]] = {}
     rank: dict[int, int] = {}
     for n, facts in enumerate(first, 1):
-        if facts["score"]:
+        if facts["score"] and fmt.design_of(slides[n - 1]):
+            # A designed slide is drawn again: its words stay, only its look changes.
+            what = []
+            if facts["overflow"]:
+                what.append(
+                    "text spills out of its box: "
+                    + ("; ".join(facts["spill"][:4]) or facts["why"] or "content did not fit")
+                )
+            if facts["small"]:
+                what.append("text under 18 px: " + "; ".join(facts["small"][:4]))
+            wanted.setdefault(n, []).append(
+                "; ".join(what) + ". Redraw it so everything fits inside its box and no text is "
+                "under 18 px (shrink boxes' content by simplifying the layout, never by cutting "
+                "or rewording the words)."
+            )
+            rank[n] = rank.get(n, 0) + 100 + facts["score"]
+        elif facts["score"]:
             what = ["The renderer measured: "]
             if facts["fallback"]:
                 what.append(
@@ -243,6 +267,11 @@ def look(
         # recorded. (Models looking at a clean slide invent small complaints.)
         if finding.action == "none" or not finding.problem or finding.severity != "high":
             continue
+        if fmt.design_of(slides[finding.slide - 1]):
+            # What the eye found on a designed slide is a design to change, not words to cut.
+            wanted.setdefault(finding.slide, []).append(f"{finding.problem} {finding.fix}".strip())
+            rank[finding.slide] = rank.get(finding.slide, 0) + 10
+            continue
         how = {
             "layout": f"switch to the {finding.layout} layout",
             "cut": "cut words",
@@ -259,88 +288,140 @@ def look(
         record["status"] = "clean"
         return finish("", "no slide needed a fix")
 
-    # 3. Fix: one writer call for all of them.
-    read = use == "read"
-    asked = "\n\n".join(
-        f"Slide {n} — what to fix:\n"
-        + "\n".join(f"- {text}" for text in wanted[n])
-        + f"\n\nSlide {n} as written:\n{fmt.without_design(slides[n - 1])}"
-        for n in targets
-    )
-    fix_system = P.FIX_LOOK.format(
-        format=DECK_FORMAT + ("\n\n" + READ_NOTE if read else ""), problems=asked
-    )
-    try:
-        fixed = fmt.split_slides(
-            unfence(agents._text(model, fix_system, "Rewrite them now.", effort, 12_000))
+    # 3. Fix. A designed slide is drawn again (its words stay); the others are rewritten, one
+    # writer call for all of them.
+    def fix_plain(targets: list[int]) -> tuple[dict[int, Draft], str | tuple[str, str] | None]:
+        """The rewritten slides that passed every check, or why none did."""
+
+        read = use == "read"
+        asked = "\n\n".join(
+            f"Slide {n} — what to fix:\n"
+            + "\n".join(f"- {text}" for text in wanted[n])
+            + f"\n\nSlide {n} as written:\n{fmt.without_design(slides[n - 1])}"
+            for n in targets
         )
-    except ModelError as error:
-        logger.info("Fixing what the look found failed: %s", error)
-        return finish(f"The fix could not be written: {error}"[:300])
-    if len(fixed) != len(targets):
-        record["status"] = "fix_dropped"
-        return finish(f"The fix came back with {len(fixed)} slides for {len(targets)}; dropped.")
-    candidate = [d.text for d in drafts]
-    changed: list[int] = []
-    for n, text in zip(targets, fixed, strict=True):
-        text = fmt.strip_labels(text)
-        old = drafts[n - 1].text
-        new = fmt.parse_slide(text)
-        if n == 1:
-            text = fmt.with_marker(text, "title", **fmt.parse_slide(old).attrs)
-        elif new.layout not in TARGET_LAYOUTS:
-            continue
-        if (
-            _facts(text) - _facts(old)
-            or _refs(text) != _refs(old)
-            or _facts(fmt.parse_slide(old).title) - _facts(new.title)
-        ):
-            logger.info(
-                "Slide %d: the fix changed a number or dropped or added a citation; dropped", n
+        fix_system = P.FIX_LOOK.format(
+            format=DECK_FORMAT + ("\n\n" + READ_NOTE if read else ""), problems=asked
+        )
+        try:
+            fixed = fmt.split_slides(
+                unfence(agents._text(model, fix_system, "Rewrite them now.", effort, 12_000))
             )
-            record.setdefault("rejected", []).append({"slide": n, "why": "changed a fact"})
-            continue
-        # A slide the fix rewrote loses its design: the template draws it from the new words.
-        if text.strip() != fmt.without_design(old).strip():
-            candidate[n - 1] = text
+        except ModelError as error:
+            logger.info("Fixing what the look found failed: %s", error)
+            return {}, (f"The fix could not be written: {error}"[:300])
+        if len(fixed) != len(targets):
+            record["status"] = "fix_dropped"
+            return {}, (f"The fix came back with {len(fixed)} slides for {len(targets)}; dropped.")
+        candidate = [d.text for d in drafts]
+        changed: list[int] = []
+        for n, text in zip(targets, fixed, strict=True):
+            text = fmt.strip_labels(text)
+            old = drafts[n - 1].text
+            new = fmt.parse_slide(text)
+            if n == 1:
+                text = fmt.with_marker(text, "title", **fmt.parse_slide(old).attrs)
+            elif new.layout not in TARGET_LAYOUTS:
+                continue
+            if (
+                _facts(text) - _facts(old)
+                or _refs(text) != _refs(old)
+                or _facts(fmt.parse_slide(old).title) - _facts(new.title)
+            ):
+                logger.info(
+                    "Slide %d: the fix changed a number or dropped or added a citation; dropped", n
+                )
+                record.setdefault("rejected", []).append({"slide": n, "why": "changed a fact"})
+                continue
+            # A slide the fix rewrote loses its design: the template draws it from the new words.
+            if text.strip() != fmt.without_design(old).strip():
+                candidate[n - 1] = text
+                changed.append(n)
+        if not changed:
+            record["status"] = "fix_dropped"
+            return {}, ("", "the fix changed nothing usable")
+
+        # The format, in the context of the whole deck, and the claims against their sources.
+        joined = "\n\n---\n\n".join(candidate)
+        original = "\n\n---\n\n".join(d.text for d in drafts)
+        before_problems = dict(fmt.check_deck(original, read=read, notes_required=use == "talk"))
+        now = dict(fmt.check_deck(joined, read=read, notes_required=use == "talk"))
+        for n in list(changed):
+            if len(now.get(n, [])) > len(before_problems.get(n, [])):
+                candidate[n - 1] = drafts[n - 1].text
+                changed.remove(n)
+                record.setdefault("rejected", []).append(
+                    {"slide": n, "why": "; ".join(now[n])[:200]}
+                )
+        if not changed:
+            return {}, ("", "the fix broke the format; dropped")
+        by_ref = pool.by_ref()
+
+        def recheck(n: int) -> Draft:
+            issues, coverage = agents._claims(model, candidate[n - 1], by_ref)
+            return Draft(
+                candidate[n - 1], issues + agents._chart_issues(candidate[n - 1], by_ref), coverage
+            )
+
+        with ThreadPoolExecutor(4) as workers:
+            rechecked = dict(zip(changed, workers.map(_in_context(recheck), changed), strict=True))
+        revised = list(drafts)
+        for n, draft in rechecked.items():
+            was = sum(1 for i in drafts[n - 1].issues or [] if i.verdict in FIXABLE)
+            now_bad = sum(1 for i in draft.issues if i.verdict in FIXABLE)
+            if now_bad > was:
+                record.setdefault("rejected", []).append(
+                    {"slide": n, "why": "a claim lost its source"}
+                )
+                continue
+            revised[n - 1] = draft
+        changed = [n for n in changed if revised[n - 1] is not drafts[n - 1]]
+        if not changed:
+            return {}, ("", "the fix lost a claim's source; dropped")
+        return {n: revised[n - 1] for n in changed}, None
+
+    revised = list(drafts)
+    changed: list[int] = []
+    designed_targets = [n for n in targets if fmt.design_of(slides[n - 1])]
+    plain_targets = [n for n in targets if n not in designed_targets]
+    record["designed"] = designed_targets
+    if designed_targets:
+        from gunther.studio import design as D
+        from gunther.studio.pipeline import WORKERS
+
+        # The drafts' own citation numbers (the pool's), not the renumbered ones the deck shows:
+        # the design is renumbered with the text when the deck is assembled.
+        held = [d.text for d in drafts]
+        try:
+            redrawn, _, notes = D.redesign(
+                agents,
+                model,
+                held,
+                {n - 1: " ".join(wanted[n]) for n in designed_targets},
+                workers=WORKERS,
+                style=D.deck_style(slides),
+                keep_on_fail=True,
+            )
+            agents.skipped += notes
+        except Exception as error:  # noqa: BLE001 - never fail the build
+            logger.info("Redesigning the slides failed: %s", error)
+            redrawn = held
+        for n in designed_targets:
+            if redrawn[n - 1] != held[n - 1]:
+                revised[n - 1] = replace(drafts[n - 1], text=redrawn[n - 1])
+                changed.append(n)
+    stopped: str | tuple[str, str] | None = None
+    if plain_targets:
+        fixed_plain, stopped = fix_plain(plain_targets)
+        for n, draft in fixed_plain.items():
+            revised[n - 1] = draft
             changed.append(n)
     if not changed:
+        if stopped:
+            return finish(*stopped) if isinstance(stopped, tuple) else finish(stopped)
         record["status"] = "fix_dropped"
-        return finish("", "the fix changed nothing usable")
-
-    # The format, in the context of the whole deck, and the claims against their sources.
-    joined = "\n\n---\n\n".join(candidate)
-    original = "\n\n---\n\n".join(d.text for d in drafts)
-    before_problems = dict(fmt.check_deck(original, read=read, notes_required=use == "talk"))
-    now = dict(fmt.check_deck(joined, read=read, notes_required=use == "talk"))
-    for n in list(changed):
-        if len(now.get(n, [])) > len(before_problems.get(n, [])):
-            candidate[n - 1] = drafts[n - 1].text
-            changed.remove(n)
-            record.setdefault("rejected", []).append({"slide": n, "why": "; ".join(now[n])[:200]})
-    if not changed:
-        return finish("", "the fix broke the format; dropped")
-    by_ref = pool.by_ref()
-
-    def recheck(n: int) -> Draft:
-        issues, coverage = agents._claims(model, candidate[n - 1], by_ref)
-        return Draft(
-            candidate[n - 1], issues + agents._chart_issues(candidate[n - 1], by_ref), coverage
-        )
-
-    with ThreadPoolExecutor(4) as workers:
-        rechecked = dict(zip(changed, workers.map(_in_context(recheck), changed), strict=True))
-    revised = list(drafts)
-    for n, draft in rechecked.items():
-        was = sum(1 for i in drafts[n - 1].issues or [] if i.verdict in FIXABLE)
-        now_bad = sum(1 for i in draft.issues if i.verdict in FIXABLE)
-        if now_bad > was:
-            record.setdefault("rejected", []).append({"slide": n, "why": "a claim lost its source"})
-            continue
-        revised[n - 1] = draft
-    changed = [n for n in changed if revised[n - 1] is not drafts[n - 1]]
-    if not changed:
-        return finish("", "the fix lost a claim's source; dropped")
+        return finish("", "the new designs changed nothing usable")
+    changed.sort()
 
     # 4. Look again: the same measurements; a slide that got worse keeps its old self.
     try:

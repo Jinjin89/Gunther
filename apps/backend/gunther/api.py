@@ -107,6 +107,7 @@ from gunther.schemas import (
     RecordingCheckpointInput,
     RecordingSessionOut,
     RenameSourceInput,
+    RestyleSlidesInput,
     ReviewSlidesInput,
     ReviseOutputInput,
     SourceDetailOut,
@@ -1743,6 +1744,29 @@ async def revise_output_stream(
             knowledge_base_id, workspace_id, artifact_id, payload, hear
         ),
         _OUTPUT_WORDS["revise", "slides" if kind == "slides" else "report"],
+        service.library_title(knowledge_base_id),
+    )
+
+
+@router.post("/knowledge-bases/{knowledge_base_id}/artifacts/{artifact_id}/restyle/stream")
+async def restyle_slides_stream(
+    knowledge_base_id: str,
+    artifact_id: str,
+    payload: RestyleSlidesInput,
+    request: Request,
+    workspace_id: WorkspaceHeader,
+) -> StreamingResponse:
+    """Draw every slide of the latest version again in another style: the next version."""
+
+    service = _service(request)
+    return _output_run(
+        request,
+        knowledge_base_id,
+        f"Restyle the slides: {payload.style}",
+        lambda hear: service.restyle_output(
+            knowledge_base_id, workspace_id, artifact_id, payload, hear
+        ),
+        ("Designing the slides", "Slides restyled", "Couldn't restyle the slides"),
         service.library_title(knowledge_base_id),
     )
 

@@ -273,16 +273,23 @@ def test_the_deck_story_asks_for_parts_in_long_decks():
     assert DECK  # the shared fixture still loads
 
 
-def test_a_slide_the_look_rewrites_loses_its_design_and_the_others_keep_theirs(tmp_path):
+def test_a_plain_slide_the_look_rewrites_stays_on_the_template_path_and_designs_stay(tmp_path):
     from test_studio_pipeline import FakeRenderer, looking_router
 
-    fake = FakeProvider(looking_router())
-    agents = StudioAgents(gateway(fake), use="talk", renderer=FakeRenderer(tmp_path))
+    looks = looking_router()
+
+    def route(request):
+        system = str(request["messages"][0]["content"])
+        if "world-class" in system and 'Its content (layout hint "stats")' in system:
+            return "<section>no</section>"  # slide 2 fails the guard twice: it is drawn plainly
+        return looks(request)
+
+    agents = StudioAgents(gateway(FakeProvider(route)), use="talk", renderer=FakeRenderer(tmp_path))
     built = agents.make(
         model(), "high", Spec("slides", "collaborator", brief="A 10-minute talk"), pool(), Notes()
     )
     slides = fmt.split_slides(built.content)
-    assert built.skill["look"]["status"] == "fixed"
+    assert built.skill["look"]["status"] == "fixed" and built.skill["look"]["designed"] == []
     assert fmt.parse_slide(slides[1]).layout == "points" and fmt.design_of(slides[1]) is None
     assert fmt.design_of(slides[0]) and fmt.design_of(slides[2])
     assert fmt.parse_slide(slides[0]).attrs["style"] == "light"

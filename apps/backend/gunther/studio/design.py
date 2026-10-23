@@ -18,7 +18,7 @@ import html as htmllib
 import logging
 import re
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -222,12 +222,32 @@ def check_design(slide: str, html: str) -> list[str]:
 # Designing ---------------------------------------------------------------------------------
 
 
+def deck_style(slides: Sequence[str]) -> str | None:
+    """The style the title slide's marker records, or None for a deck that has none."""
+
+    style = fmt.parse_slide(slides[0]).attrs.get("style") if slides else None
+    return style if style in fmt.STYLES else None
+
+
 def design_slides(
-    agents, model, slides: Sequence[str], style: str, *, workers: int
+    agents,
+    model,
+    slides: Sequence[str],
+    style: str,
+    *,
+    workers: int,
+    only: Collection[int] | None = None,
+    requests: Mapping[int, str] | None = None,
+    keep_on_fail: bool = False,
 ) -> tuple[list[str], int, list[dict[str, str]]]:
     """Every slide designed on its own, all at once. Back: the slides (each that passed the
     guard now ends with its design block), how many were designed, and one note for each slide
-    that was not (it is drawn by the template)."""
+    that was not (it is drawn by the template).
+
+    ``only`` (positions counted from 0) designs just those slides; the others come back as
+    they are. ``requests`` maps a position to what the person (or the measuring) wants changed
+    in the look: the slide's earlier design is then shown too. A slide that fails the guard
+    twice loses its design, unless ``keep_on_fail``: then it keeps the one it had."""
 
     from gunther.studio.pipeline import _in_context
 
@@ -236,6 +256,8 @@ def design_slides(
     outline = "\n".join(
         f"{n}. [{p.layout}] {p.title or '(cover)'}" for n, p in enumerate(parsed, 1)
     )
+    wanted = range(len(slides)) if only is None else sorted(only)
+    requests = requests or {}
 
     def design(index: int) -> tuple[str, str]:
         """The slide's design and the findings that kept it from having one."""
@@ -252,6 +274,10 @@ def design_slides(
             layout=parsed[index].layout,
             content=visible_content(slide),
         )
+        if request := requests.get(index, "").strip():
+            system += P.DESIGN_REQUEST.format(
+                request=request, current=fmt.design_of(slide) or "(none: it was drawn plainly)"
+            )
         problems: list[str] = []
         for _ in range(2):
             prompt = "Design the slide now." + (
@@ -272,21 +298,28 @@ def design_slides(
         return "", "; ".join(problems)
 
     with ThreadPoolExecutor(workers) as pool:
-        results = list(pool.map(_in_context(design), range(len(slides))))
+        done = dict(zip(wanted, pool.map(_in_context(design), wanted), strict=True))
     out: list[str] = []
     notes: list[dict[str, str]] = []
-    for index, (slide, (html, why)) in enumerate(zip(slides, results, strict=True)):
-        out.append(fmt.with_design(slide, html) if html else slide)
+    for index, slide in enumerate(slides):
+        if index not in done:
+            out.append(slide)
+            continue
+        html, why = done[index]
+        if html:
+            out.append(fmt.with_design(slide, html))
+            continue
+        out.append(slide if keep_on_fail else fmt.without_design(slide))
         if why:
             notes.append(
                 {
                     "step": "design",
-                    "label": f"Slide {index + 1} drawn plainly",
+                    "label": f"Slide {index + 1} "
+                    + ("kept its design" if keep_on_fail else "drawn plainly"),
                     "reason": why[:600],
                 }
             )
-    designed = sum(1 for html, _ in results if html)
-    return out, designed, notes
+    return out, sum(1 for html, _ in done.values() if html), notes
 
 
 def apply_style(slides: list[str], style: str) -> list[str]:
@@ -295,3 +328,41 @@ def apply_style(slides: list[str], style: str) -> list[str]:
     first = fmt.parse_slide(slides[0])
     attrs: dict[str, Any] = {**first.attrs, "style": style}
     return [fmt.with_marker(slides[0], first.layout or "title", **attrs), *slides[1:]]
+
+
+def restyle(
+    agents, model, slides: Sequence[str], style: str, *, workers: int
+) -> tuple[list[str], int, list[dict[str, str]]]:
+    """The whole deck in another style: ``style`` goes in the title marker and every slide is
+    designed again from its stored content (the words never change). A slide that fails the
+    guard twice is left plain."""
+
+    if style not in fmt.STYLES:
+        raise ValueError(f"“{style}” is not a style; choose one of {', '.join(fmt.STYLES)}.")
+    return design_slides(agents, model, apply_style(list(slides), style), style, workers=workers)
+
+
+def redesign(
+    agents,
+    model,
+    slides: Sequence[str],
+    requests: Mapping[int, str],
+    *,
+    workers: int,
+    style: str | None = None,
+    keep_on_fail: bool = True,
+) -> tuple[list[str], int, list[dict[str, str]]]:
+    """The slides at these positions (from 0) designed again in the deck's style, each with
+    what was asked of its look. Everything else is untouched. A deck with no style is drawn in
+    light (and gets no marker: the template still draws its other slides)."""
+
+    return design_slides(
+        agents,
+        model,
+        list(slides),
+        style or deck_style(slides) or "light",
+        workers=workers,
+        only=set(requests),
+        requests=requests,
+        keep_on_fail=keep_on_fail,
+    )

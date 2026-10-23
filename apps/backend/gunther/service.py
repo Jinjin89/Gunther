@@ -89,6 +89,7 @@ from gunther.outputs import (
     Spec,
     _marked,
     heading_of,
+    join_document,
     section_hash,
     split_document,
     title_of,
@@ -162,6 +163,7 @@ from gunther.schemas import (
     OutputSectionOut,
     OverviewCountsOut,
     OverviewOut,
+    RestyleSlidesInput,
     ReviseOutputInput,
     SessionMessageOut,
     SourceDetailOut,
@@ -4534,6 +4536,119 @@ class KnowledgeService:
             outline=built.outline, citations=[c.model_dump() for c in built.citations],
             model=OutputModelOut(ref=model.ref, label=model.display, effort="medium"),
             checks=built.checks, made_by={**made_by, "skill": built.skill, "use": use}, **fields)
+
+    def restyle_output(
+        self,
+        base_id: str,
+        workspace_id: str,
+        artifact_id: str,
+        payload: RestyleSlidesInput,
+        events: Callable[[dict], None] | None = None,
+    ) -> ArtifactOut:
+        """Draw every slide of the latest version of a deck again in another style: the next
+        version. The words, numbers, citations and notes are kept exactly (the checks carry
+        over to the redrawn slides); a slide whose design fails the fact guard twice is left
+        plain. The citation numbers are the version's own: the designer and the guard see the
+        stored slides as they are."""
+
+        from gunther.studio import design as D
+        from gunther.studio.pipeline import WORKERS, StudioAgents
+
+        fingerprint = self._output_fingerprint(
+            workspace_id,
+            base_id,
+            "restyle",
+            {
+                "artifactId": artifact_id,
+                "style": payload.style,
+                **self._output_request_fields(payload),
+            },
+        )
+        earlier = self._earlier_output(workspace_id, payload.client_request_id, fingerprint)
+        if earlier is not None:
+            return earlier
+        model, effort = self._output_model(payload.model, payload.effort)
+        with session_scope(self.sessions) as session:
+            self._output_library(session, workspace_id, base_id)
+            parent = self._output_version(session, workspace_id, base_id, artifact_id, latest=True)
+            self._require_agent_output(parent)
+            if parent.kind != "slides":
+                raise ValueError("Only a deck has a style.")
+            records = self._latest_check_records(session, parent.id)
+            provenance = json.loads(parent.provenance_json)
+            made_by = self._made_by(parent) or {}
+            content = parent.content
+            fields = {
+                "kind": parent.kind,
+                "style": parent.style,
+                "audience": parent.audience,
+                "brief": parent.brief,
+                "scope": json.loads(parent.scope_json),
+                "outline": json.loads(parent.outline_json),
+                "inputs": json.loads(parent.inputs_json),
+                "snapshots": [
+                    ArtifactUnitSnapshotOut.model_validate(item)
+                    for item in json.loads(parent.revision_snapshot_json)
+                ],
+                "title": parent.title,
+            }
+            citations = json.loads(parent.citations_json)
+        preamble, slides = split_document(content, "slides")
+        if not slides:
+            raise ValueError("The deck has no slides.")
+        agents = StudioAgents(self.models, OutputLimits(), design=True)
+        label = "Designing the slides"
+        agents._stage(events or (lambda _event: None), "design", label, "running")
+        designed, count, notes = D.restyle(agents, model, slides, payload.style, workers=WORKERS)
+        plain = len(slides) - count
+        agents._stage(
+            events or (lambda _event: None),
+            "design",
+            label,
+            "done",
+            f"{count} slides designed" + (f", {plain} drawn plainly" if plain else ""),
+        )
+        # The checks belong to the words, which did not change: they follow each slide to its
+        # new text (a check is found by the hash of the section it checked).
+        checks = []
+        for old, new in zip(slides, designed, strict=True):
+            record = records.get(section_hash(old))
+            if record is None:
+                continue
+            moved = {**record, "hash": section_hash(new)}
+            if record.get("coverage"):
+                moved["coverage"] = {**record["coverage"], "answerHash": section_hash(new)}
+            checks.append(moved)
+        skill = dict(made_by.get("skill") or {})
+        skill["skipped"] = [
+            *[item for item in skill.get("skipped", []) if item.get("step") != "design"],
+            *notes,
+        ]
+        skill.pop("renderCheck", None)
+        made_by = {
+            **made_by,
+            "skill": skill,
+            "conversation_id": payload.conversation_id,
+            "conversation_title": payload.conversation_title,
+            "request": f"Restyle: {payload.style}",
+            "library_supplements": provenance.get("library_supplements", False),
+        }
+        if events:
+            events({"type": "saving"})
+        return self._save_output(
+            workspace_id=workspace_id,
+            base_id=base_id,
+            client_request_id=payload.client_request_id,
+            fingerprint=fingerprint,
+            parent_id=artifact_id,
+            origin="revise",
+            content=join_document(preamble, designed, "slides"),
+            citations=citations,
+            model=OutputModelOut(ref=model.ref, label=model.display, effort=effort),
+            checks=checks,
+            made_by=made_by,
+            **fields,
+        )
 
     def edit_output(
         self,

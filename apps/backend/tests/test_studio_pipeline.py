@@ -320,8 +320,9 @@ def looking_router(rewrite=POINTS, findings=None):
     return route
 
 
-def make_with_look(fake, renderer, *models):
-    agents = StudioAgents(gateway(fake, *models), use="talk", renderer=renderer)
+def make_with_look(fake, renderer, *models, design=False):
+    # Plain (template) slides by default: this is the look step's older path.
+    agents = StudioAgents(gateway(fake, *models), use="talk", renderer=renderer, design=design)
     built = agents.make(
         models[0] if models else model(), "high",
         Spec("slides", "collaborator", brief="A 10-minute talk"), pool(), Notes(),
