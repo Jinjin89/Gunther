@@ -508,6 +508,12 @@ def check_report(text: str) -> list[str]:
         return ['The report has no "## " sections.']
     for number, heading in enumerate(headings, 1):
         size = units(heading)
+        if number > 1 and is_label_heading(heading):
+            # The first section is the executive summary; its heading may be a plain label.
+            problems.append(
+                f'Section {number} heading "{heading[:80]}" names a topic instead of stating '
+                "the point. Write the section's claim itself as a short sentence."
+            )
         if size > REPORT_HEADING_UNITS:
             problems.append(
                 f"Section {number} heading is {size} units; the limit is {REPORT_HEADING_UNITS}. "
@@ -643,9 +649,23 @@ def cite_exhibit_rows(text: str) -> str:
     return EXHIBIT.sub(fix, text)
 
 
+def is_label_heading(heading: str) -> bool:
+    """A heading that names a topic ("Three asks", "Next steps") rather than stating a point."""
+
+    plain = CITE.sub("", heading).replace("**", "").strip()
+    latin_words = re.findall(r"[A-Za-z0-9'’%.-]+", plain)
+    cjk_chars = sum(1 for ch in plain if "\u4e00" <= ch <= "\u9fff")
+    short = cjk_chars < 8 if cjk_chars else len(latin_words) < 5
+    return short or bool(LABEL_TITLE.search(plain))
+
+
 LABEL_TITLE = re.compile(
     r"^(?:the )?(?:two|three|four|five|\d+) (?:key )?(?:findings|numbers|things|points|reasons|"
-    r"facts|takeaways|lessons|questions|risks)\b|\bin one (?:sentence|slide|line|breath)\b|"
+    r"facts|takeaways|lessons|questions|risks|asks|steps|actions|recommendations|options)\b|"
+    r"\bin one (?:sentence|slide|line|breath)\b|"
+    r"\b(?:talk|deck|presentation|report|story) in "
+    r"(?:two|three|four|five|\d+) (?:parts|steps|acts)\b|"
+    r"^(?:agenda|outline|roadmap|contents|what (?:we|i) will cover)\s*$|"
     r"^(?:key (?:findings|takeaways|points)|next steps|"
     r"summary|overview|conclusions?)\s*$|^[三四五两]个(?:发现|数字|要点|原因)",
     re.I,
@@ -747,9 +767,68 @@ def trim_to_notes(text: str, *, first: bool, read: bool = False) -> str:
     return text
 
 
+def _telling(keys) -> bool:
+    """Numbers specific enough to say where they came from: two or more, or one that is a
+    decimal or has three or more digits."""
+
+    keys = {re.sub(r"%$", "", k) for k in keys}
+    return len(keys) >= 2 or any("." in k or len(re.sub(r"\D", "", k)) >= 3 for k in keys)
+
+
+def table_separators(text: str) -> str:
+    """A Markdown table whose header row has no separator line under it gets one, so the first
+    row reads (and draws) as the header, not as data."""
+
+    lines = text.split("\n")
+    out: list[str] = []
+    for index, line in enumerate(lines):
+        out.append(line)
+        is_row = line.strip().startswith("|")
+        starts = is_row and (index == 0 or not lines[index - 1].strip().startswith("|"))
+        following = lines[index + 1].strip() if index + 1 < len(lines) else ""
+        if starts and following.startswith("|") and not re.fullmatch(r"\|?[\s:|-]+\|?", following):
+            columns = len(line.strip().strip("|").split("|"))
+            out.append("|" + " --- |" * columns)
+    return "\n".join(out)
+
+
+def cite_stated_numbers(text: str, passages: dict[int, str]) -> str:
+    """A line still stating numbers with no citation cites the passage that states all of
+    them, or else two passages the same text already cites that state them between them.
+    Only when the numbers tell where they came from (see ``_telling``)."""
+
+    def stated(ref: int) -> set[str]:
+        return {n.lstrip("-") for n in numbers_in(passages[ref])}
+
+    near = [int(n) for n in dict.fromkeys(re.findall(r"\[(\d+)\]", text)) if int(n) in passages]
+    out = []
+    for line in text.split("\n"):
+        if line.strip() and line in uncited_lines([line]):
+            numbers = [n.rstrip("%") for n in re.findall(r"\d[\d,，.]*%?", line) if _countable(n)]
+            keys = {normal_number(n) for n in numbers}
+            if keys and _telling(keys):
+                found = [ref for ref in passages if keys <= stated(ref)]
+                if len(found) == 1:
+                    line = line.rstrip() + f" [{found[0]}]"
+                elif not found:
+                    pairs = [
+                        (one, two)
+                        for i, one in enumerate(near)
+                        for two in near[i + 1 :]
+                        if keys <= stated(one) | stated(two)
+                        and keys & stated(one)
+                        and keys & stated(two)
+                    ]
+                    if pairs:
+                        line = line.rstrip() + f" [{pairs[0][0]}][{pairs[0][1]}]"
+        out.append(line)
+    return "\n".join(out)
+
+
 def cite_repeated_numbers(text: str) -> str:
     """A line that repeats a number already cited elsewhere in the same document carries that
-    citation too. Only when every countable number on the line is found cited elsewhere."""
+    citation too. Only when every countable number on the line is found cited elsewhere, and
+    the match tells (see ``_telling``): one common number ("90 days") borrows nothing."""
 
     cited: dict[str, list[str]] = {}
     for line in text.split("\n"):
@@ -768,7 +847,7 @@ def cite_repeated_numbers(text: str) -> str:
             keys = [
                 normal_number(n.rstrip("%")) + ("%" if n.endswith("%") else "") for n in numbers
             ]
-            if keys and all(k in cited for k in keys):
+            if keys and _telling(keys) and all(k in cited for k in keys):
                 refs = list(dict.fromkeys(r for k in keys for r in cited[k]))[:3]
                 line = line.rstrip() + " " + "".join(f"[{r}]" for r in refs)
         out.append(line)

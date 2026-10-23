@@ -65,24 +65,39 @@ def router(request):
     system = str(request["messages"][0]["content"])
     if "lead analyst" in system:
         return json.dumps(
-            {"language": "English", "answer": "Cool roofs save 9% after adjustment [2]",
-             "insights": [{"claim": "Saving halves", "so_what": "Budget", "refs": [2]}],
-             "facts": [], "tensions": [], "questions": [], "title": "Cool roofs"}
+            {
+                "language": "English",
+                "answer": "Cool roofs save 9% after adjustment [2]",
+                "insights": [{"claim": "Saving halves", "so_what": "Budget", "refs": [2]}],
+                "facts": [],
+                "tensions": [],
+                "questions": [],
+                "title": "Cool roofs",
+            }
         )
     if "presentation strategist" in system:
         return json.dumps(
-            {"title": "Cool roofs work, but at half the headline saving", "subtitle": "s",
-             "slides": [
-                 {"title": "Cool roofs work", "layout": "title", "job": "", "refs": []},
-                 {"title": "The trial was large", "layout": "stats", "job": "", "refs": [1]},
-                 {"title": "Weather adjustment halves the saving", "layout": "chart",
-                  "job": "", "refs": [2]},
-             ]}
+            {
+                "title": "Cool roofs work, but at half the headline saving",
+                "subtitle": "s",
+                "slides": [
+                    {"title": "Cool roofs work", "layout": "title", "job": "", "refs": []},
+                    {"title": "The trial was large", "layout": "stats", "job": "", "refs": [1]},
+                    {
+                        "title": "Weather adjustment halves the saving",
+                        "layout": "chart",
+                        "job": "",
+                        "refs": [2],
+                    },
+                ],
+            }
         )
     if "senior partner" in system:
         return json.dumps({"understood": "Saving halves", "verdict": "ready", "problems": []})
     if "presentation writer" in system:
         return DECK
+    if "core message" in system:
+        return re.search(r"^Subtitle: (.*)$", system, re.M).group(1)
     if "fact-checker" in system:
         return fmt.split_slides(DECK)[2]  # could not fix it
     if "checking step" in system:
@@ -96,8 +111,12 @@ def test_a_deck_is_made_in_the_new_format_and_an_unstated_chart_value_becomes_a_
     agents = StudioAgents(gateway(fake), use="talk")
     events = []
     built = agents.make(
-        model(), "high", Spec("slides", "collaborator", brief="A 10-minute talk"),
-        pool(), Notes(), events.append,
+        model(),
+        "high",
+        Spec("slides", "collaborator", brief="A 10-minute talk"),
+        pool(),
+        Notes(),
+        events.append,
     )
     slides = fmt.split_slides(built.content)
     assert slides[0].startswith("<!-- layout: title; design: v2; theme: paper -->")
@@ -139,8 +158,13 @@ def test_a_conversation_makes_a_studio_deck_in_one_action_and_can_rewrite_one_sl
         return router(request)
 
     decisions = [
-        {"actions": [{"do": "select", "artifact": "new:slides"}, {"do": "make"},
-                     {"do": "save", "text": "Made the deck."}]},
+        {
+            "actions": [
+                {"do": "select", "artifact": "new:slides"},
+                {"do": "make"},
+                {"do": "save", "text": "Made the deck."},
+            ]
+        },
     ]
     fake = FakeProvider(orchestrator_replies(decisions, inner))
     with app_for(tmp_path, fake) as client:
@@ -158,11 +182,19 @@ def test_a_conversation_makes_a_studio_deck_in_one_action_and_can_rewrite_one_sl
         workspace, _ = kept(client, "talk")
         work = workspace.works[0]
         assert is_studio(work) and len(work.outline) == 3
-        fake.replies[:] = [orchestrator_replies(
-            [{"actions": [{"do": "write", "parts": [2], "instruction": "Lead with the size"},
-                          {"do": "save", "text": "Rewrote slide 2."}]}],
-            inner,
-        )]
+        fake.replies[:] = [
+            orchestrator_replies(
+                [
+                    {
+                        "actions": [
+                            {"do": "write", "parts": [2], "instruction": "Lead with the size"},
+                            {"do": "save", "text": "Rewrote slide 2."},
+                        ]
+                    }
+                ],
+                inner,
+            )
+        ]
         again = done(turn(client, base_id, "talk", "Make slide 2 lead with the size"))
         assert again["outcome"] == "saved", again
         assert "Three summers and 412 buildings" in again["artifact"]["content"]
@@ -346,3 +378,50 @@ def test_without_a_renderer_the_step_is_skipped():
     agents, built = make_with_look(FakeProvider(looking_router()), None)
     assert [s for s in agents.skipped if s["step"] == "look"]
     assert built.content.startswith("<!-- layout: title")
+
+
+def test_the_title_slide_borrows_the_citations_other_slides_give_for_its_figures():
+    from gunther.studio.pipeline import _lend_refs
+
+    rest = (
+        "## Weather adjustment halves the saving\n- 9% weather-adjusted saving [3][4]\n"
+        "- 2.1 °C cooler [2]\n- Albedo fell [7]"
+    )
+    assert _lend_refs("# Cool roofs: 2.1 °C comfort, 9% not 18%", rest).endswith("[3] [4] [2]")
+    assert _lend_refs("Comfort is real [1]", rest) == "Comfort is real [1]"
+    assert _lend_refs("A 40% gain", rest) == "A 40% gain"
+
+
+def test_the_subtitle_is_rewritten_to_state_what_the_slide_titles_say():
+    from types import SimpleNamespace
+
+    from gunther.studio.pipeline import Draft, StudioAgents
+
+    deck = [
+        "<!-- layout: title; design: v2; theme: paper -->\n# Cool roofs\nA vague promise\n"
+        "Committee · March 2026",
+        "<!-- layout: points -->\n## The saving is 9%, not 18%\n- 9% after adjustment [2]",
+    ]
+    agent = SimpleNamespace(
+        _text=lambda *a, **k: "Cool roofs save 9% [2], half the plan's figure",
+        _claims=lambda model, text, by_ref, rest="": ([], {}),
+        _chart_issues=lambda text, by_ref: [],
+    )
+    pool = SimpleNamespace(by_ref=lambda: {2: object()})
+    out = StudioAgents._cover(agent, None, [Draft(t, [], {}) for t in deck], pool)
+    assert "Cool roofs save 9% [2], half the plan's figure\nCommittee" in out[0].text
+    assert out[1].text == deck[1]
+
+
+def test_a_figure_with_no_source_brings_the_passages_that_state_it_to_the_fix():
+    from types import SimpleNamespace
+
+    from gunther.outputs import Issue
+    from gunther.studio.pipeline import _stating
+
+    by_ref = {
+        1: SimpleNamespace(context="水泥产量下降9.5%，房地产开发投资下降10.6%", text=""),
+        2: SimpleNamespace(context="GDP grew 5% in 2024", text=""),
+    }
+    flagged = [Issue("| 水泥产量 | -9.5% |", "unsourced", ""), Issue("Up 5%", "unsourced", "")]
+    assert _stating(flagged, by_ref) == {1}

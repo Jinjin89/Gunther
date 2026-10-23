@@ -208,9 +208,19 @@ class StudioAgents(OutputAgents):
         emit(event)
 
     def _json(self, model, schema, system, prompt, effort):
-        result, _ = self.gateway.complete_json(
-            model, schema, system=system, prompt=prompt, effort=effort
-        )
+        # A reply in the wrong shape (twice, inside the gateway) is asked for once more from
+        # scratch before the step fails: one bad reply should not cost the whole build.
+        try:
+            result, _ = self.gateway.complete_json(
+                model, schema, system=system, prompt=prompt, effort=effort
+            )
+        except ModelError as error:
+            if "could not read" not in str(error):
+                raise
+            logger.info("Asking again from scratch after an unreadable reply")
+            result, _ = self.gateway.complete_json(
+                model, schema, system=system, prompt=prompt, effort=effort
+            )
         return result
 
     def _text(self, model, system, prompt, effort, max_tokens=16_000) -> str:
@@ -603,7 +613,7 @@ class StudioAgents(OutputAgents):
                 break
             slides = fmt.split_slides(deck)
 
-            def fix(item: tuple[int, list[str]]) -> str | None:
+            def fix(item: tuple[int, list[str]], slides: list[str] = slides) -> str | None:
                 n, problems = item
                 system = P.FIX_SLIDES.format(
                     format=guide,
@@ -731,9 +741,11 @@ class StudioAgents(OutputAgents):
         self._stage(emit, "verify", "Checking every claim against its source", "running")
         by_ref = pool.by_ref()
 
+        rest = "\n".join(parts[1:])
+
         def check(text: str) -> Draft:
             text, _ = check_citations(text, set(by_ref))
-            issues, coverage = self._claims(model, text, by_ref)
+            issues, coverage = self._claims(model, text, by_ref, rest)
             issues += self._chart_issues(text, by_ref)
             return Draft(text, issues, coverage)
 
@@ -741,7 +753,8 @@ class StudioAgents(OutputAgents):
             draft = check(text)
             if not any(issue.verdict in FIXABLE for issue in draft.issues or []):
                 return draft
-            fixed = self._fix_claims(model, [draft], by_ref)
+            title = fmt.MARK.match(text) and fmt.parse_slide(text).layout == "title"
+            fixed = self._fix_claims(model, [draft], by_ref, rest if title else "")
             return check(fixed[0]) if fixed else draft
 
         with ThreadPoolExecutor(WORKERS) as workers:
@@ -774,9 +787,11 @@ class StudioAgents(OutputAgents):
         )
         return drafts
 
-    def _claims(self, model, text: str, by_ref: dict[int, Evidence]):
+    def _claims(self, model, text: str, by_ref: dict[int, Evidence], rest: str = ""):
         """One claim check per part. A title is checked against the passages its own slide or
-        section cites (it states their conclusion). Interpretation and recommendation that
+        section cites (it states their conclusion). The title slide states the whole deck's
+        conclusion, so a figure on it is checked against the passages the other slides (``rest``)
+        cite for that same figure, not only its own. Interpretation and recommendation that
         follow from cited facts are the author's judgement, not findings; what is flagged is a
         cited claim its passages do not state, and a specific fact (a number) with no source."""
 
@@ -790,6 +805,7 @@ class StudioAgents(OutputAgents):
             content = [n for n, line in enumerate(lines) if line.strip()]
             if len(content) >= 3:
                 lines[content[2]] = ""
+            lines = [_lend_refs(line, rest) for line in lines]
         refs = "".join(f"[{n}]" for n in dict.fromkeys(re.findall(r"\[(\d+)\]", body)))
         for at, line in enumerate(lines):
             if re.match(r"^#{1,2}\s", line):
@@ -823,6 +839,50 @@ class StudioAgents(OutputAgents):
                 issues.append(Issue(plain[:300], "unsourced", "A number with no citation."))
         return issues, coverage
 
+    def _cover(self, model, drafts: list[Draft], pool: Pool) -> list[Draft]:
+        """The subtitle is the deck's core message: after the slides are final, it is made to
+        state what their titles say (claim fixes can move a title away from it), then the
+        title slide is checked against its sources again."""
+
+        if not drafts or fmt.parse_slide(drafts[0].text).layout != "title":
+            return drafts
+        cover = fmt.parse_slide(drafts[0].text)
+        body = [line for line in cover.body if line.strip()]
+        if not cover.title or not body:
+            return drafts
+        titles = [fmt.parse_slide(d.text).title for d in drafts[1:]]
+        titles = [t for t in titles if t]
+        rest = "\n".join(d.text for d in drafts[1:])
+        cited = [
+            line.strip()
+            for line in rest.split("\n")
+            if re.search(r"\[\d+\]", line)
+            and fmt.numbers_in(re.sub(r"\s*\[\d+\]", "", line)) & fmt.numbers_in(" ".join(titles))
+        ][:30]
+        system = P.COVER.format(
+            title=cover.title,
+            subtitle=body[0],
+            titles="\n".join(f"{n}. {t}" for n, t in enumerate(titles, 2)),
+            cited="\n".join(cited) or "(none)",
+        )
+        try:
+            line = _unfence(self._text(model, system, "Reply now.", "low", 2000)).strip()
+        except ModelError as error:
+            logger.info("Aligning the subtitle failed: %s", error)
+            return drafts
+        line = line.splitlines()[0].strip() if line else ""
+        line = re.sub(r"^(Subtitle|副标题)\s*[:：]\s*", "", line)
+        if not line or line == body[0] or line.startswith("#"):
+            return drafts
+        text = drafts[0].text.replace(body[0], line, 1)
+        by_ref = pool.by_ref()
+        text, _ = check_citations(text, set(by_ref))
+        issues, coverage = self._claims(model, text, by_ref, rest)
+        if any(i.verdict in ("unsupported", "contradicted") for i in issues):
+            logger.info("The aligned subtitle is not supported; keeping the old one")
+            return drafts
+        return [Draft(text, issues + self._chart_issues(text, by_ref), coverage), *drafts[1:]]
+
     def _refit(self, model, effort, run: Run, drafts: list[Draft], pool: Pool) -> list[Draft]:
         """Claim fixes can lengthen a slide past its budget: the format is checked again, and a
         slide that changed is checked against its sources once more."""
@@ -836,8 +896,10 @@ class StudioAgents(OutputAgents):
         changed = [i for i, (d, t) in enumerate(zip(drafts, fitted, strict=True)) if d.text != t]
         by_ref = pool.by_ref()
 
+        rest = "\n".join(fitted[1:])
+
         def check(text: str) -> Draft:
-            issues, coverage = self._claims(model, text, by_ref)
+            issues, coverage = self._claims(model, text, by_ref, rest)
             return Draft(text, issues + self._chart_issues(text, by_ref), coverage)
 
         with ThreadPoolExecutor(WORKERS) as workers:
@@ -859,7 +921,7 @@ class StudioAgents(OutputAgents):
                 )
         return issues
 
-    def _fix_claims(self, model, drafts: list[Draft], by_ref) -> list[str] | None:
+    def _fix_claims(self, model, drafts: list[Draft], by_ref, rest: str = "") -> list[str] | None:
         parts = []
         refs: set[int] = set()
         for number, draft in enumerate(drafts, 1):
@@ -868,7 +930,9 @@ class StudioAgents(OutputAgents):
                 f"Part {number}:\n{draft.text}\n\nUnsupported in part {number}:\n"
                 + "\n".join(f'- "{i.claim}" ({i.note})' for i in flagged)
             )
-            refs |= {int(n) for n in re.findall(r"\[(\d+)\]", draft.text)}
+            lent = "\n".join(_lend_refs(line, rest) for line in draft.text.split("\n"))
+            refs |= {int(n) for n in re.findall(r"\[(\d+)\]", lent if rest else draft.text)}
+            refs |= _stating(flagged, by_ref)
         passages = "\n\n".join(self._passage(by_ref[r], 3000) for r in sorted(refs) if r in by_ref)
         system = P.FIX_CLAIMS.format(parts="\n\n=====\n\n".join(parts), passages=passages)
         try:
@@ -881,6 +945,7 @@ class StudioAgents(OutputAgents):
             logger.info("Claim fix returned %d parts for %d", len(pieces), len(drafts))
             if len(drafts) == 1:
                 return None
+
             # Asked again one part at a time; a part whose fix fails keeps its text.
             def single(draft: Draft) -> str:
                 one = self._fix_claims(model, [draft], by_ref)
@@ -952,6 +1017,7 @@ class StudioAgents(OutputAgents):
             text = self.fix_format(model, effort, run, text, emit)
             parts = fmt.split_slides(text)
             drafts = self.verify(model, run, parts, pool, emit)
+            drafts = self._cover(model, drafts, pool)
             drafts = self._refit(model, effort, run, drafts, pool)
             outline = [
                 Planned(
@@ -988,13 +1054,23 @@ class StudioAgents(OutputAgents):
             drafts = self.verify(model, run, sections, pool, emit)
             # A claim fix may rewrite an exhibit: its caption and rows cite their sources again.
             drafts = [
-                replace(d, text=fmt.cite_exhibit_rows(fmt.cite_captions(d.text))) for d in drafts
+                replace(
+                    d,
+                    text=fmt.cite_exhibit_rows(fmt.cite_captions(fmt.table_separators(d.text))),
+                )
+                for d in drafts
             ]
             # A sentence repeating a figure cited elsewhere in the report cites it too.
-            whole = "\n\n".join(d.text for d in drafts)
-            fixed = fmt.cite_repeated_numbers(whole).split("\n\n")
+            # (Sections hold blank lines themselves: they are joined on a line of their own.)
+            cut = "\n\n<!-- section break -->\n\n"
+            whole = cut.join(d.text for d in drafts)
+            fixed = fmt.cite_repeated_numbers(whole).split(cut)
             if len(fixed) == len(drafts):
                 drafts = [replace(d, text=t) for d, t in zip(drafts, fixed, strict=True)]
+            # What is still uncited cites the passages that state its figures, preferring
+            # those its own section cites.
+            stated = {r: (e.context or e.text) for r, e in pool.by_ref().items() if r is not None}
+            drafts = [replace(d, text=fmt.cite_stated_numbers(d.text, stated)) for d in drafts]
             outline = [
                 Planned(re.sub(r"^##\s*", "", d.text.splitlines()[0]).strip()[:160]) for d in drafts
             ]
@@ -1033,6 +1109,44 @@ class StudioAgents(OutputAgents):
 
 def replace_layout(slide: StorySlide, layout: str) -> StorySlide:
     return slide.model_copy(update={"layout": layout})
+
+
+def _stating(issues, by_ref: dict[int, Evidence], most: int = 6) -> set[int]:
+    """Passages that state the figures of claims flagged as having no source, so the fix can
+    cite them. Small whole numbers match too much to tell; a sign is a direction a passage may
+    state in words ("down 9.5%")."""
+
+    wanted = {
+        n.lstrip("-")
+        for issue in issues
+        if issue.verdict == "unsourced"
+        for n in fmt.numbers_in(issue.claim)
+        if "." in n or len(re.sub(r"\D", "", n)) >= 3
+    }
+    found: list[int] = []
+    for ref, item in by_ref.items():
+        stated = {n.lstrip("-") for n in fmt.numbers_in(item.context or item.text)}
+        if ref is not None and wanted & stated:
+            found.append(ref)
+    return set(found[:most])
+
+
+def _lend_refs(line: str, rest: str, most: int = 6) -> str:
+    """The line with the citations other slides give for the same figures added (for checking
+    only). A line with no figure, or whose figures no other slide cites, is left as it is."""
+
+    plain = re.sub(r"\s*\[\d+\]", "", line)
+    wanted = fmt.numbers_in(plain)
+    if not wanted:
+        return line
+    lent: list[str] = []
+    for other in rest.split("\n"):
+        cited = re.findall(r"\[(\d+)\]", other)
+        if cited and wanted & fmt.numbers_in(re.sub(r"\s*\[\d+\]", "", other)):
+            lent += cited
+    own = re.findall(r"\[(\d+)\]", line)
+    extra = [n for n in dict.fromkeys(lent) if n not in own][:most]
+    return line.rstrip() + "".join(f" [{n}]" for n in extra) if extra else line
 
 
 def _unfence(text: str) -> str:

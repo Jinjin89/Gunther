@@ -224,13 +224,18 @@ VISUAL_LINE = (
 
 def _ask(gateway: ModelGateway, model: ModelInfo, schema: type, system: str, prompt: str,
          images: Sequence[Image] = ()) -> tuple[Any | None, str]:  # fmt: skip
-    try:
-        value, _ = gateway.complete_json(
-            model, schema, system=system, prompt=prompt, images=images, effort="low"
-        )
-    except ModelError as error:
-        return None, str(error)
-    return value, ""
+    # A reply in the wrong shape is asked for once more before it counts as a failed test.
+    error: ModelError | None = None
+    for _ in range(2):
+        try:
+            value, _ = gateway.complete_json(
+                model, schema, system=system, prompt=prompt, images=images, effort="low"
+            )
+        except ModelError as failed:
+            error = failed
+            continue
+        return value, ""
+    return None, str(error)
 
 
 def load_images(paths: Sequence[Path]) -> list[Image]:

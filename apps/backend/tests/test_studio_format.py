@@ -58,7 +58,7 @@ def test_problems_name_the_slide_and_the_fix():
 def test_over_budget_is_measured():
     long = "x" * 130
     deck = GOOD.replace("## The pilot cut review time by 60%", f"## {long}")
-    (slide, problems), = fmt.check_deck(deck)
+    ((slide, problems),) = fmt.check_deck(deck)
     assert slide == 2 and "Shorten it by 40" in problems[0]
 
 
@@ -165,3 +165,61 @@ def test_a_repeated_number_takes_the_citation_it_has_elsewhere():
     out = fmt.cite_repeated_numbers(text)
     assert "So the plan should assume 9%, not 18%. [2][1]" in out
     assert fmt.cite_repeated_numbers("A new 37% figure.") == "A new 37% figure."
+
+
+def test_a_report_heading_that_names_a_topic_is_sent_back():
+    from gunther.studio import format as fmt
+
+    report = (
+        "<!-- report: v2 -->\n# Plan for 2030\n\n## Summary\n<!-- block: summary -->\n"
+        "- **A**: b\n\n"
+        "## Charging must grow sixfold by 2035 [1]\nText [1].\n\n## Three asks\nText.\n"
+    )
+    problems = fmt.check_report(report)
+    assert any("Three asks" in p and "topic" in p for p in problems)
+    assert not any('"Summary"' in p for p in problems)
+    assert not any("Charging must grow" in p and "topic" in p for p in problems)
+
+
+def test_a_table_header_without_a_separator_gets_one():
+    from gunther.studio import format as fmt
+
+    text = ":::exhibit\nExhibit 3 — x [1]\n| Task | Self-RAG 13B |\n| PopQA | 55.8 [7] |\n:::"
+    fixed = fmt.table_separators(text)
+    assert "| Task | Self-RAG 13B |\n| --- | --- |\n| PopQA" in fixed
+    assert fmt.table_separators(fixed) == fixed
+    assert not fmt.uncited_lines(fixed.split("\n"))
+
+
+def test_a_line_cites_the_one_passage_that_states_all_its_numbers():
+    from gunther.studio import format as fmt
+
+    passages = {
+        3: "Lifecycle savings range from 20% in India to 40% in Europe.",
+        4: "Sales grew 40% in 2024.",
+    }
+    line = "The gap between a 20% and a 40% saving decides the case."
+    assert fmt.cite_stated_numbers(line, passages) == line + " [3]"
+    # One whole number alone is too common to tell which passage it came from.
+    assert fmt.cite_stated_numbers("Sales grew 40%.", passages) == "Sales grew 40%."
+
+
+def test_one_common_number_borrows_no_citation():
+    from gunther.studio import format as fmt
+
+    text = "For managers: what to do in the next 90 days. [1][2]\n\nDecide within 90 days."
+    assert fmt.cite_repeated_numbers(text) == text
+
+
+def test_figures_from_two_passages_the_section_cites_cite_both():
+    from gunther.studio import format as fmt
+
+    passages = {
+        1: "Sodium cells may reach $40/kWh.",
+        2: "LFP packs cost $81/kWh; sodium is 30% dearer.",
+        3: "Unrelated 40 and 81.",
+    }
+    text = "Packs cost $81/kWh [2]. Cells $40/kWh [1].\nBuild at a 30% premium over $81, not $40."
+    out = fmt.cite_stated_numbers(text, passages)
+    # No single passage states all three; the two the text cites state them between them.
+    assert out.endswith("not $40. [2][1]")

@@ -50,7 +50,9 @@ def summarize(builds: list[dict[str, Any]]) -> dict[str, Any]:
             # The vision judge, when one ran, scores how the slides look.
             "visual": judging.mean(
                 [
-                    (b.get("visualJudge") or {}).get("score", (b.get("absolute") or {}).get("visual"))
+                    (b.get("visualJudge") or {}).get(
+                        "score", (b.get("absolute") or {}).get("visual")
+                    )
                     for b in ok
                 ]
             ),
@@ -196,7 +198,9 @@ def render(raw: dict[str, Any]) -> str:
             out.append("")
         visual = b.get("visualJudge")
         if visual and visual.get("slides"):
-            out.append(f"Visual ({visual.get('model', '?')}): **{visual['score']}/10**. {visual['summary']}")
+            out.append(
+                f"Visual ({visual.get('model', '?')}): **{visual['score']}/10**. {visual['summary']}"
+            )
             out += ["", "| # | Looks | Reason |", "|---|---|---|"]
             out += [
                 f"| {v['index']} | {v['verdict']} | {v['reason'].replace('|', '/')} |"

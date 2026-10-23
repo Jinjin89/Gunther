@@ -12,7 +12,9 @@ Use only passage numbers you were given, and only for what that passage actually
 number repeated later (a caption, a summary, a recommendation) carries its citation again. \
 Something you know that the material does not contain may be used sparingly when it helps \
 the reader, marked [?] instead of a number. Interpretation and recommendation are yours: \
-state them plainly, without a citation, and make sure they follow from the cited facts."""
+state them plainly, without a citation, and make sure they follow from the cited facts. A \
+deadline or target of your own, or from the brief, has no passage: say it in words \
+("within three months", "before the next budget"), not as a bare figure."""
 
 VOICE = """\
 Write about the world, not about the material: never "the document", "the sources", "the \
@@ -192,6 +194,14 @@ The presenter's words go in the notes.
 - Speaker notes (every slide except title and section): what the presenter actually says, \
 3–6 sentences: the point, the evidence to stress, a concrete example or implication, and \
 the bridge to the next slide. Notes cite facts like the slides do.
+- An actions slide lists decisions, not reminders: each item says what to decide or do, \
+what it unlocks or prevents, and who and by when where the brief or material says so. \
+Never repeat earlier numbers as an "ask", and never ask for information the deck already \
+shows.
+- Claim only what the cited passage says: a cause, a ranking or a comparison needs a \
+source that states it, and numbers set side by side measure the same thing (cell against \
+cell, level against level).
+- Every slide adds something the others do not; no slide restates another in a new form.
 - Respect every length limit in the format exactly; they guarantee the slide looks right.
 
 {voice}
@@ -358,3 +368,25 @@ line "---", in the order listed.
 {format}
 
 {problems}"""
+
+COVER = """\
+A deck's subtitle is its core message: what a reader who saw only the slide titles, in \
+order, should be able to retell. Below are the deck's title, its subtitle and every slide \
+title.
+
+If the subtitle states the same central claim and conclusion the slide titles make, reply \
+with it exactly as it is. Otherwise rewrite it so it does: one sentence, at most 160 \
+characters (a Chinese, Japanese or Korean character counts as two), in the deck's \
+language, no fact the slides do not state. A number in it keeps the citation the slide \
+lines below give it, like [2].
+
+Title: {title}
+Subtitle: {subtitle}
+
+Slide titles:
+{titles}
+
+Lines that cite those figures:
+{cited}
+
+Reply with the subtitle line only."""

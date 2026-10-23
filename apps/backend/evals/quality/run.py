@@ -331,9 +331,7 @@ def lint_build(record: dict[str, Any], material: materials.MaterialSet) -> None:
 # Judge ------------------------------------------------------------------------------------
 
 
-def visual_build(
-    record: dict[str, Any], gateway: Any, model: Any, meter: judging.Meter
-) -> None:
+def visual_build(record: dict[str, Any], gateway: Any, model: Any, meter: judging.Meter) -> None:
     """A vision model's score of the rendered slides, and a verdict for each slide."""
 
     folder = Path(record["dir"])
