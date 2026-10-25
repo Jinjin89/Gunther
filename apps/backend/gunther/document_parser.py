@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import signal
@@ -16,10 +17,12 @@ from pathlib import Path
 
 from gunther.content import ParsedBlock
 from gunther.document_structure import (
+    body_font_size,
     group_visuals,
     in_reference_section,
     organize_document,
     pdf_metadata,
+    recover_figure_regions,
 )
 from gunther.documents import DocumentAsset, ParsedDocument, split_reference_entries
 
@@ -72,6 +75,11 @@ converter = DocumentConverter(format_options={
 result = converter.convert(sys.argv[1], max_num_pages=500, max_file_size=67108864)
 with open(sys.argv[3], 'w', encoding='utf-8') as output:
     data = result.document.export_to_dict()
+    try:
+        from gunther.pdf_native import enrich_native_pdf
+        enrich_native_pdf(data, sys.argv[1])
+    except Exception as error:
+        data['gunther_native_warning'] = type(error).__name__
     # A native text layer can contain a placeholder underneath a printed image.
     # Check only unresolved, explicitly labelled metadata against the page pixels.
     from gunther.document_structure import DATE_LABEL, DATE_VALUE
@@ -128,9 +136,17 @@ with open(sys.argv[3], 'w', encoding='utf-8') as output:
                 image.save(Path(sys.argv[3]).parent / name, 'PNG')
                 images.append({'ref': element.self_ref, 'file': name})
     data['gunther_images'] = images
+    try:
+        from gunther.pdf_native import render_visual_pages
+        sharp = render_visual_pages(data, sys.argv[1], Path(sys.argv[3]).parent)
+    except Exception as error:
+        sharp = {}
+        data['gunther_render_warning'] = type(error).__name__
     pages = []
     for number, page in result.document.pages.items():
-        if page.image is not None:
+        if number in sharp:
+            pages.append({'page': number, 'file': sharp[number]})
+        elif page.image is not None:
             name = 'page-' + str(number) + '.png'
             page.image.pil_image.save(Path(sys.argv[3]).parent / name, 'PNG')
             pages.append({'page': number, 'file': name})
@@ -198,8 +214,14 @@ def docling_document(document: dict) -> ParsedDocument:
             "sidebar": "sidebar",
             "margin_note": "margin_note",
         }.get(label, "paragraph")
-        text = str(item.get("text", ""))
+        text = str(item.get("text") or item.get("orig") or "")
         payload: dict[str, object] = {"documentRef": ref}
+        if item.get("gunther_font_size"):
+            payload["fontSize"] = item["gunther_font_size"]
+        if native := item.get("gunther_native"):
+            payload.update(sourceText=text, textSource="pdf-native-glyphs")
+            text = native["text"]
+            payload["inlineSpans"] = native["scripts"]
         if item.get("marker"):
             payload["marker"] = str(item["marker"])
             payload["enumerated"] = bool(item.get("enumerated"))
@@ -224,8 +246,14 @@ def docling_document(document: dict) -> ParsedDocument:
         if kind == "figure":
             text = text or "Figure"
             payload["imageKey"] = ref
+        if kind == "equation":
+            # Formula recognition is optional; an empty transcription must never
+            # discard a detected equation. Render its original region instead.
+            payload.update(imageKey=ref, transcription="available" if text else "unavailable")
+            if not text:
+                payload["noEmbed"] = True
         new_parent = parent
-        if text:
+        if text or kind == "equation":
             prov = item.get("prov", [])
             anchor: dict[str, object] = {"documentRef": ref}
             if prov:
@@ -314,6 +342,25 @@ def docling_document(document: dict) -> ParsedDocument:
         },
     )
     group_visuals(parsed)
+    if recover_figure_regions(parsed):
+        # Visual labels first classified as headings must not remain ancestors of
+        # later prose. Structural parents (lists, visuals) stay as parsed.
+        headings_stack.clear()
+        demoted = set()
+        for index, element in enumerate(parsed.elements):
+            if element.kind == "heading":
+                level = int(element.payload.get("level", 2))
+                while headings_stack and headings_stack[-1][0] >= level:
+                    headings_stack.pop()
+                element.parent = headings_stack[-1][1] if headings_stack else None
+                headings_stack.append((level, index, element.text))
+            else:
+                if element.payload.get("sourceKind") == "heading":
+                    demoted.add(index)
+                parent = element.parent
+                if parent is None or parent in demoted or parsed.elements[parent].kind == "heading":
+                    element.parent = headings_stack[-1][1] if headings_stack else None
+            element.headings = [entry[2] for entry in headings_stack]
     organize_document(parsed)
     parsed.validate()
     return parsed
@@ -321,6 +368,66 @@ def docling_document(document: dict) -> ParsedDocument:
 
 class DoclingError(RuntimeError):
     """A safe, actionable failure from the offline parser boundary."""
+
+
+def attach_document_images(parsed: ParsedDocument, document: dict, directory: Path) -> None:
+    """Render detected equations and complete visual regions from the page pixels."""
+    from PIL import Image
+
+    pictures = {entry["ref"]: entry["file"] for entry in document.get("gunther_images", [])}
+    pages = {entry["page"]: entry["file"] for entry in document.get("gunther_page_images", [])}
+
+    def local_file(name):
+        path = directory / name
+        if path.parent != directory or path.is_symlink():
+            raise ValueError("Invalid exported image path")
+        return path
+
+    total = 0
+    for element in parsed.elements:
+        if element.kind not in {"figure", "embedded_image", "equation"}:
+            continue
+        key = element.payload.get("imageKey")
+        page = pages.get(element.anchor.get("page"))
+        box = element.anchor.get("bboxPpm")
+        image_file = pictures.get(key)
+        if page and box and (element.anchor.get("cropSource") or not image_file):
+            with Image.open(local_file(page)) as image:
+                if image.width * image.height > 20_000_000:
+                    raise ValueError("Oversized page image")
+                x, y, width, height = box
+                pad = 2_000 if element.kind == "equation" else 0
+                crop = (
+                    max(0, int((x - pad) / 1e6 * image.width)),
+                    max(0, int((y - pad) / 1e6 * image.height)),
+                    min(image.width, int((x + width + pad) / 1e6 * image.width + 1)),
+                    min(image.height, int((y + height + pad) / 1e6 * image.height + 1)),
+                )
+                if crop[2] <= crop[0] or crop[3] <= crop[1]:
+                    continue
+                output = io.BytesIO()
+                image.crop(crop).save(output, "PNG")
+                data = output.getvalue()
+        elif image_file:
+            data = local_file(image_file).read_bytes()
+        else:
+            continue
+        size = document.get("pages", {}).get(str(element.anchor.get("page")), {}).get("size", {})
+        if box and size.get("width"):
+            # Physical width lets the reader print a formula at the text's own size.
+            element.payload["widthPt"] = round(box[2] / 1e6 * float(size["width"]), 1)
+        total += len(data)
+        if total > 128 * 1024 * 1024:
+            raise ValueError("Document images exceed the processing budget")
+        parsed.assets.append(DocumentAsset(key, data, name=f"region-{len(parsed.assets)}.png"))
+    keys = {asset.key for asset in parsed.assets}
+    missing = sum(
+        e.kind in {"figure", "equation"} and e.payload.get("imageKey") not in keys
+        for e in parsed.elements
+    )
+    parsed.manifest.update(missingImages=missing, images="partial" if missing else "preserved")
+    if body := body_font_size(parsed):
+        parsed.manifest["bodyFontSize"] = body
 
 
 def docling_budget(path: Path) -> tuple[int, int]:
@@ -340,7 +447,7 @@ class DoclingParser:
     def __init__(self, python: Path, artifacts: Path, *, frozen: bool = False, device: str = "cpu"):
         self.python, self.artifacts = python, artifacts
         self.frozen, self.device = frozen, device
-        self.version = "docling-adapter-v3"
+        self.version = "docling-adapter-v4"
         self.bundle_metadata: dict[str, object] = {}
 
     @classmethod
@@ -409,6 +516,13 @@ class DoclingParser:
                 "TRANSFORMERS_OFFLINE": "1",
                 "HF_HUB_DISABLE_TELEMETRY": "1",
             }
+            if not self.frozen:
+                # The inline program imports Gunther's own structure helpers; the
+                # frozen helper bundles them, a development runtime finds them here.
+                backend = str(Path(__file__).resolve().parents[1])
+                environment["PYTHONPATH"] = os.pathsep.join(
+                    filter(None, [backend, os.environ.get("PYTHONPATH")])
+                )
             wall_seconds, cpu_seconds = docling_budget(path)
             deadline = time.monotonic() + wall_seconds
             for device in dict.fromkeys((self.device, "cpu")):
@@ -455,7 +569,7 @@ class DoclingParser:
             if output.stat().st_size > 32 * 1024 * 1024:
                 raise ValueError("Document representation exceeds the processing budget")
             document = json.loads(output.read_text(encoding="utf-8"))
-            self.version = (str(document.get("gunther_parser", "docling")) + "/adapter-v3")[:120]
+            self.version = (str(document.get("gunther_parser", "docling")) + "/adapter-v4")[:120]
             parsed = docling_document(document)
             try:
                 metadata = pdf_metadata(path, parsed)
@@ -465,62 +579,16 @@ class DoclingParser:
                     f"Some PDF metadata could not be read ({type(error).__name__})."
                 )
             organize_document(parsed, metadata)
-            total = 0
-            figures = {
-                element.payload.get("imageKey"): element
-                for element in parsed.elements
-                if element.kind in {"figure", "embedded_image"}
-            }
-            page_images = {
-                entry["page"]: entry["file"] for entry in document.get("gunther_page_images", [])
-            }
-            for entry in document.get("gunther_images", []):
-                if entry["ref"] not in figures:
-                    continue
-                element = figures[entry["ref"]]
-                image_path = Path(directory) / entry["file"]
-                if image_path.parent != Path(directory) or image_path.is_symlink():
-                    raise ValueError("Invalid exported image path")
-                if element.anchor.get("cropSource"):
-                    from PIL import Image
-
-                    page_path = Path(directory) / page_images[element.anchor["page"]]
-                    if page_path.parent != Path(directory) or page_path.is_symlink():
-                        raise ValueError("Invalid exported page path")
-                    with Image.open(page_path) as page_image:
-                        if page_image.width * page_image.height > 20_000_000:
-                            raise ValueError("Oversized page image")
-                        x, y, width, height = element.anchor["bboxPpm"]
-                        crop = (
-                            max(0, x / 1e6 * page_image.width),
-                            max(0, y / 1e6 * page_image.height),
-                            min(page_image.width, (x + width) / 1e6 * page_image.width),
-                            min(page_image.height, (y + height) / 1e6 * page_image.height),
-                        )
-                        page_image.crop(crop).save(image_path, "PNG")
-                total += image_path.stat().st_size
-                if total > 128 * 1024 * 1024:
-                    raise ValueError("Figure images exceed the processing budget")
-                parsed.assets.append(
-                    DocumentAsset(entry["ref"], image_path.read_bytes(), name=image_path.name)
-                )
+            attach_document_images(parsed, document, Path(directory))
             parsed.manifest["parser"] = self.version
             parsed.manifest.update(device=device, ocr="rapidocr-onnxruntime", offline=True)
             parsed.manifest.update(
                 options={
                     "imageScale": 1.5,
                     "threads": 4,
-                    "adapterSchema": 3,
+                    "adapterSchema": 4,
                     "headingHierarchy": True,
                 },
                 modelBundle=self.bundle_metadata,
-            )
-            missing = sum(
-                element.kind == "figure"
-                and not any(asset.key == element.payload.get("imageKey") for asset in parsed.assets)
-                for element in parsed.elements
-            )
-            parsed.manifest.update(
-                missingImages=missing, images="partial" if missing else "preserved"
             )
             return parsed

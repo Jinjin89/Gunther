@@ -653,7 +653,7 @@ export const knowledgeApi = {
   sourceStructure: (id: string, offset = 0, revisionId?: string | null, blockId?: string | null, limit?: number) =>
     request<SourceStructure>(`/sources/${encodeURIComponent(id)}/structure?offset=${offset}${revisionId ? `&revision_id=${encodeURIComponent(revisionId)}` : ""}${blockId ? `&block_id=${encodeURIComponent(blockId)}` : ""}${limit ? `&limit=${limit}` : ""}`),
   sourceDocument: (id: string, offset = 0, revisionId?: string | null, limit = 500) =>
-    request<SourceDocument>(`/sources/${encodeURIComponent(id)}/document?offset=${offset}&limit=${limit}${revisionId ? `&revision_id=${encodeURIComponent(revisionId)}` : ""}`),
+    request<SourceDocument>(`/sources/${encodeURIComponent(id)}/document?offset=${offset}&limit=${limit}&reading=true${revisionId ? `&revision_id=${encodeURIComponent(revisionId)}` : ""}`),
   reprocessSource: (id: string) => request<SourceProcessing>(`/sources/${encodeURIComponent(id)}/reprocess`, { method: "POST" }),
   cancelSourceProcessing: (id: string) => request<SourceProcessing>(`/sources/${encodeURIComponent(id)}/processing/cancel`, { method: "POST" }),
   topics: (baseId: string) => request<KnowledgeTopic[]>(`/knowledge-bases/${encodeURIComponent(baseId)}/topics`),

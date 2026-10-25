@@ -21,12 +21,16 @@ export function useStructure(sourceId: string, enabled = true) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [reload, setReload] = useState(0);
   const generation = useRef(0);
+  const loadingPage = useRef(false);
+  const currentRevision = useRef<string | null>(null);
   useEffect(() => {
     if (!enabled) return undefined;
     const run = ++generation.current;
     let timer: number | undefined;
     setData((previous) => previous?.sourceId === sourceId ? previous : null);
     setError(null);
+    setLoadingMore(false);
+    loadingPage.current = false;
     const load = async () => {
       try {
         const document = await knowledgeApi.sourceDocument?.(sourceId).catch(() => null);
@@ -34,6 +38,7 @@ export function useStructure(sourceId: string, enabled = true) {
           ? { ...document, blocks: document.elements, document }
           : await knowledgeApi.sourceStructure(sourceId, 0, null, null, STRUCTURE_PAGE);
         if (generation.current !== run) return;
+        currentRevision.current = result.revisionId;
         setData(result);
         setError(null);
         if (WORKING.includes(result.processing.state)) timer = window.setTimeout(() => void load(), 2_500);
@@ -48,30 +53,36 @@ export function useStructure(sourceId: string, enabled = true) {
     };
   }, [enabled, reload, sourceId]);
   const loadMore = useCallback(async () => {
-    if (!data || data.nextOffset === null) return;
+    if (!data || data.nextOffset === null || loadingPage.current) return;
     const run = generation.current;
+    loadingPage.current = true;
     setLoadingMore(true);
+    setError(null);
     try {
       if (data.document) {
         const next = await knowledgeApi.sourceDocument(sourceId, data.nextOffset, data.revisionId);
-        if (generation.current === run) {
+        if (generation.current === run && currentRevision.current === data.revisionId) {
           const document = { ...next, elements: [...data.document.elements, ...next.elements] };
           setData({ ...document, blocks: document.elements, document });
         }
       } else {
         const next = await knowledgeApi.sourceStructure(sourceId, data.nextOffset, data.revisionId, null, STRUCTURE_PAGE);
-        if (generation.current === run) setData({ ...next, blocks: [...data.blocks, ...next.blocks] });
+        if (generation.current === run && currentRevision.current === data.revisionId) setData({ ...next, blocks: [...data.blocks, ...next.blocks] });
       }
     } catch (reason) {
       if (generation.current === run) setError(reason instanceof Error ? reason.message : "More of the document could not be read.");
     } finally {
-      if (generation.current === run) setLoadingMore(false);
+      if (generation.current === run) { setLoadingMore(false); loadingPage.current = false; }
     }
   }, [data, sourceId]);
   const reprocess = useCallback(async () => {
-    await knowledgeApi.reprocessSource(sourceId);
-    window.dispatchEvent(new CustomEvent("gunther:sources-updated"));
-    setReload((value) => value + 1);
+    try {
+      await knowledgeApi.reprocessSource(sourceId);
+      window.dispatchEvent(new CustomEvent("gunther:sources-updated"));
+      setReload((value) => value + 1);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The document could not be read again.");
+    }
   }, [sourceId]);
   return { data, error, loadingMore, loadMore, reprocess };
 }
@@ -274,9 +285,9 @@ function FileCard({ source, file, pages, state, hasRevision, onReprocess }: { so
           <em className={`gx-file-state is-${state}`}>
             {working ? <LoaderCircle className="spin" size={12} /> : state === "failed" || state === "partial" ? <CircleAlert size={12} /> : <i />}
             {status}
-            {(state === "failed" || state === "partial" || state === "cancelled") && onReprocess && (
+            {!working && onReprocess && (
               <button type="button" className="gx-link" disabled={retrying} onClick={() => { setRetrying(true); void onReprocess().finally(() => setRetrying(false)); }}>
-                <RotateCcw size={11} />Try again
+                <RotateCcw size={11} />{state === "ready" ? "Read again" : "Try again"}
               </button>
             )}
           </em>
@@ -293,6 +304,7 @@ export function DocumentBody({ source, file }: { source: SourceDetail; file: Fil
   const asset = source.asset;
   const original = asset && asset.sizeBytes <= ORIGINAL_TEXT_LIMIT ? readableOriginal(asset.mediaType, asset.originalName) : null;
   const structure = useStructure(source.id);
+  const [originalPage, setOriginalPage] = useState<number | null>(null);
   const blocks = useMemo(() => readerBlocks(structure.data?.blocks ?? []), [structure.data]);
   const pages = useMemo(() => {
     const numbers = (structure.data?.blocks ?? []).map((block) => block.anchor.page ?? 0);
@@ -300,8 +312,13 @@ export function DocumentBody({ source, file }: { source: SourceDetail; file: Fil
   }, [structure.data]);
   const state = structure.data?.processing.state ?? source.processing?.state;
   const working = state ? WORKING.includes(state) : false;
+  const continuation = (!original || structure.data?.document) && structure.data?.nextOffset != null ? (
+    <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm gx-continue" disabled={structure.loadingMore} onClick={() => void structure.loadMore()}>
+      {structure.loadingMore ? <LoaderCircle className="spin" size={13} /> : null}Continue reading
+    </button>
+  ) : null;
   let content;
-  if (structure.data?.document) content = <CanonicalReader document={structure.data.document} />;
+  if (structure.data?.document) content = <CanonicalReader document={structure.data.document} continuation={continuation} onOpenPage={asset ? setOriginalPage : undefined} />;
   else if (original && asset) content = <OriginalText assetId={asset.id} mode={original} title={source.title} />;
   else if (blocks.length) content = <DocumentReader blocks={blocks} />;
   else if (file.extracted.trim()) content = <PlainText text={file.extracted} />;
@@ -313,12 +330,10 @@ export function DocumentBody({ source, file }: { source: SourceDetail; file: Fil
       {state === "ready" || state === "partial" ? <PaperCard sourceId={source.id} revisionId={structure.data?.revisionId} /> : null}
       <ContextNote text={file.context} />
       {structure.data?.processing.warning && blocks.length > 0 && <p className="gx-reader-warning"><CircleAlert size={13} />{structure.data.processing.warning}</p>}
+      {structure.error && <p className="gx-reader-warning" role="alert">{structure.error}</p>}
       {content}
-      {(!original || structure.data?.document) && structure.data?.nextOffset != null && (
-        <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm gx-continue" disabled={structure.loadingMore} onClick={() => void structure.loadMore()}>
-          {structure.loadingMore ? <LoaderCircle className="spin" size={13} /> : null}Continue reading
-        </button>
-      )}
+      {!structure.data?.document && continuation}
+      {originalPage !== null && <EvidencePanel citation={{ id: `page-${source.id}-${originalPage}`, kind: "library", sourceId: source.id, sourceTitle: source.title, assertionId: null, quote: "", locator: `Page ${originalPage}`, status: "verified", confidence: 1, anchor: { page: originalPage } }} onClose={() => setOriginalPage(null)} />}
     </div>
   );
 }

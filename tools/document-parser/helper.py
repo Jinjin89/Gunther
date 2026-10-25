@@ -2,6 +2,7 @@
 
 import multiprocessing
 
+from gunther import pdf_native  # noqa: F401 — include native glyph recovery in the frozen helper
 from gunther.document_parser import _PROGRAM
 
 if __name__ == "__main__":

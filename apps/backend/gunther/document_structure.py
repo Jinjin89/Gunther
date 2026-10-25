@@ -63,7 +63,8 @@ DATE_LABEL = re.compile(
 )
 DATE_VALUE = re.compile(r"\b(?:19|20)\d{2}\b")
 CAPTION_LABEL = re.compile(
-    r"^(?:fig(?:ure)?\.?|table|图|表|abbildung|tabelle)\s*(?:\d+|[IVX]+)\b", re.I
+    r"^(?:(?:extended data|supplementary|supporting)\s+)?"
+    r"(?:fig(?:ure)?\.?|table|图|表|abbildung|tabelle)\s*(?:[A-Z]?\d+|[IVX]+)\b", re.I
 )
 PUBLICATION_NOTICE = re.compile(
     r"^(?:©|copyright\b|(?:publisher|editor)(?:['’]s)?\s+note\b|"
@@ -358,8 +359,87 @@ def organize_document(document: ParsedDocument, metadata: dict | None = None) ->
             "inferredSectionNames": False,
         },
     )
+    # A sentence interrupted by a page or column break continues in the next
+    # paragraph. Only page furniture and floats (visuals, tables) may sit between
+    # the two parts; equations, lists and headings end the sentence's flow.
+    notes = _page_notes(document)
+    flow: dict[object, list[tuple[int, int, int, int]]] = defaultdict(list)
+    for element in document.elements:
+        skip = element.kind in CONTINUATION_SKIPPABLE or id(element) in notes
+        if not skip and (box := _box(element)):
+            flow[element.anchor.get("page")].append(box)
+    previous = None
+    for element in document.elements:
+        element.payload.pop("continuesDocumentRef", None)
+        if element.kind in CONTINUATION_SKIPPABLE or id(element) in notes:
+            continue
+        if element.kind != "paragraph":
+            previous = None
+            continue
+        if previous is not None and _continues(previous, element, flow):
+            element.payload["continuesDocumentRef"] = previous.payload["documentRef"]
+        previous = element
     document.validate()
 
+
+CONTINUATION_SKIPPABLE = {
+    "page_header", "page_footer", "page_number", "footnote", "metadata",
+    "figure", "figure_text", "figure_panel", "embedded_image", "caption", "table",
+}
+
+
+def _page_notes(document: ParsedDocument) -> set[int]:
+    """Small-type blocks closing a page, such as affiliations or footnotes.
+
+    Typography and position together are the evidence: text set clearly smaller
+    than the running prose, in the lower part of a page, with no prose below it.
+    """
+    body = body_font_size(document)
+    if not body:
+        return set()
+    prose: dict[object, list[int]] = defaultdict(list)
+    for e in document.elements:
+        size, box = e.payload.get("fontSize"), _box(e)
+        if box and e.kind in {"paragraph", "list_item"} and size and size >= body * 0.95:
+            prose[e.anchor.get("page")].append(box[1])
+    notes = set()
+    for e in document.elements:
+        size, box = e.payload.get("fontSize"), _box(e)
+        if (
+            e.kind == "paragraph" and box and size and size < body * 0.95
+            and box[1] > 600_000
+            and not any(top > box[3] for top in prose[e.anchor.get("page")])
+        ):
+            notes.add(id(e))
+    return notes
+
+
+def _continues(previous: Any, element: Any, flow: dict) -> bool:
+    """The first part ends its column and the second opens a later column."""
+    pb, cb = _box(previous), _box(element)
+    page, next_page = previous.anchor.get("page"), element.anchor.get("page")
+    if not (pb and cb and isinstance(page, int) and isinstance(next_page, int)):
+        return False
+
+    def overlaps(a, b):
+        return min(a[2], b[2]) - max(a[0], b[0]) > 0.5 * min(a[2] - a[0], b[2] - b[0])
+
+    ends_column = not any(
+        box != pb and overlaps(box, pb) and box[1] >= pb[3] - 2_000 for box in flow[page]
+    )
+    opens_column = not any(
+        box != cb and overlaps(box, cb) and box[3] <= cb[1] + 2_000 for box in flow[next_page]
+    )
+    later_column = next_page == page + 1 or (next_page == page and cb[0] >= pb[2] - 2_000)
+    sizes = previous.payload.get("fontSize"), element.payload.get("fontSize")
+    same_type = None in sizes or abs(float(sizes[0]) - float(sizes[1])) < 0.5
+    return bool(
+        ends_column and opens_column and later_column and same_type
+        and previous.headings == element.headings
+        and len(previous.text) > 100 and re.match(r"^[(\[]?[a-z0-9]", element.text)
+        and not re.search(r"[.!?。！？:：;；][\"'”’)]*$", previous.text.rstrip())
+        and previous.payload.get("documentRef")
+    )
 
 def in_reference_section(headings: list[str]) -> bool:
     """A bibliography ends at the next heading, regardless of inferred level.
@@ -398,6 +478,216 @@ def _contains(outer: tuple, inner: tuple) -> bool:
     )
     area = max(1, (inner[2] - inner[0]) * (inner[3] - inner[1]))
     return overlap / area >= 0.85
+
+
+def body_font_size(document: ParsedDocument) -> float | None:
+    """The size carrying most running prose, from native glyph evidence only."""
+    fonts = Counter()
+    for e in document.elements:
+        size = e.payload.get("fontSize")
+        prose = e.kind == "paragraph" and len(e.text) > 200
+        if prose and size and not e.payload.get("visualOwner"):
+            fonts[size] += len(e.text)
+    return fonts.most_common(1)[0][0] if fonts else None
+
+
+def recover_figure_regions(document: ParsedDocument) -> bool:
+    """Complete caption-led regions when layout detection found only one panel.
+
+    Caption typography and the absence of body prose bound expansion. A short
+    string alone is never evidence that text belongs to a diagram. Returns
+    whether a heading changed role, so the caller can rebuild heading paths.
+    """
+    elements = document.elements
+    body_size = body_font_size(document)
+    captions = []
+    original_kinds = {id(e): e.kind for e in elements}
+    for e in elements:
+        match = CAPTION_LABEL.match(e.text.strip())
+        if (
+            e.kind in {"paragraph", "heading", "caption"} and _box(e) and match
+            and re.match(r"\s*[|:：.‒–—]", e.text.strip()[match.end():])
+            and not re.search(r"(?:^|\s)(?:table|tabelle|表)\s*", match[0], re.I)
+        ):
+            e.payload.setdefault("sourceKind", e.kind)
+            e.kind = "caption"
+            e.payload.pop("level", None)
+            captions.append(e)
+    caption_ids = {id(e) for e in captions}
+    visuals = [e for e in elements if e.kind == "figure" and _box(e)]
+    assigned: dict[str, list] = defaultdict(list)
+    for caption in captions:
+        cb, page = _box(caption), caption.anchor.get("page")
+        declared = [
+            e for e in visuals if caption.payload["documentRef"] in {
+                *e.payload.get("captionRefs", []), e.payload.get("captionRef")
+            }
+        ]
+        candidates = [
+            e for e in visuals if e.anchor.get("page") == page
+            and _box(e)[1] < cb[1]
+            and _box(e)[3] <= cb[1] + 25_000
+            and min(_box(e)[2], cb[2]) > max(_box(e)[0], cb[0])
+        ]
+        if len(declared) == 1:
+            owner = declared[0]
+        elif declared:
+            continue  # Shared explicit ownership remains with the panel grouping pass.
+        elif candidates:
+            owner = min(candidates, key=lambda e: abs(_box(e)[3] - cb[1]))
+        else:
+            # A full-page plate can have its caption on the adjoining page.
+            adjacent = None
+            if isinstance(page, int):
+                adjacent = page + 1 if cb[1] > 600_000 else page - 1 if cb[1] < 200_000 else None
+            label = CAPTION_LABEL.match(caption.text.strip())
+            prefix = caption.text.strip()[:label.end()] if label else caption.text.strip()
+            candidates = [
+                e for e in visuals if e.anchor.get("page") == adjacent
+                and (_box(e)[2] - _box(e)[0]) * (_box(e)[3] - _box(e)[1]) > 150_000_000_000
+                # A plate that already declares a different caption is not this one's.
+                and not (
+                    CAPTION_LABEL.match(str(e.payload.get("caption", "")))
+                    and not str(e.payload.get("caption", "")).startswith(prefix)
+                )
+            ]
+            owner = candidates[0] if len(candidates) == 1 else None
+        if owner is None:
+            continue
+        ref = owner.payload["documentRef"]
+        assigned[ref].append(caption)
+        size = caption.payload.get("fontSize")
+        for other in elements:
+            ob = _box(other)
+            first = other.anchor.get("bboxPpm")
+            first_box = first and (first[0], first[1], first[0] + first[2], first[1] + first[3])
+            if (
+                id(other) in caption_ids or not ob
+                or other.anchor.get("page") != page
+                or other.kind not in {"paragraph", "caption"}
+                or other.payload.get("visualOwner")
+                or len(other.text) < 60
+            ):
+                continue
+            same_font = size and abs(float(other.payload.get("fontSize", 0)) - size) < 0.4
+            aligned = abs(ob[1] - cb[1]) < 8_000 and ob[0] >= cb[2] - 10_000
+            below = (
+                original_kinds[id(caption)] == "heading"
+                and first_box and 0 <= first_box[1] - cb[3] < 15_000
+                and abs(first_box[0] - cb[0]) < 5_000
+            )
+            smaller = same_font and body_size and size < body_size * 0.95
+            if (aligned or below) and (other.kind == "caption" or smaller):
+                other.payload.setdefault("sourceKind", other.kind)
+                other.kind = "caption"
+                assigned[ref].append(other)
+        # A caption can span multiple columns in a single layout object, or several
+        # objects. Reading order comes from its existing provenance, then column x.
+        assigned[ref] = list({id(e): e for e in assigned[ref]}.values())
+
+    for visual in visuals:
+        owner = visual.payload["documentRef"]
+        linked = assigned.get(owner, [])
+        if not linked:
+            continue
+        linked_ids = {id(e) for e in linked}
+        linked.sort(key=lambda e: (e.anchor.get("page", 0), _box(e)[0], _box(e)[1]))
+        caption = ""
+        for part in (e.text.strip() for e in linked):
+            # Column-split parts of one sentence rejoin; complete ones keep a break.
+            ends = re.search(r"[.!?。！？:：][\"'”’)]*$", caption)
+            caption += ("\n" if ends else " ") + part if caption else part
+        visual.payload.update(
+            caption=caption,
+            captionRefs=[e.payload["documentRef"] for e in linked],
+            captionRef=linked[0].payload["documentRef"],
+        )
+        for e in linked:
+            e.payload["visualOwner"] = owner
+        same_page = [e for e in linked if e.anchor.get("page") == visual.anchor.get("page")]
+        vb = _box(visual)
+        region = vb
+        if same_page and body_size:
+            top = min(_box(e)[1] for e in same_page)
+            left = min(vb[0], *(_box(e)[0] for e in same_page))
+            right = max(vb[2], *(_box(e)[2] for e in same_page))
+            page_items = [
+                e for e in elements if e.anchor.get("page") == visual.anchor.get("page") and _box(e)
+            ]
+
+            def body(e):
+                return (
+                    e.kind in {"paragraph", "list_item"} and len(e.text) > 100
+                    and not e.payload.get("visualOwner")
+                    and e.payload.get("fontSize", body_size) >= body_size * 0.95
+                )
+
+            def boundary(e):
+                # Prose, tables and other visuals' captions bound the region.
+                text = e.text.strip()
+                labelled = e.kind in {"caption", "paragraph"} and CAPTION_LABEL.match(text)
+                return body(e) or e.kind == "table" or bool(labelled)
+
+            above = [
+                _box(e)[3] for e in page_items
+                if boundary(e) and id(e) not in linked_ids and _box(e)[3] <= vb[1]
+                and min(_box(e)[2], right) > max(_box(e)[0], left)
+            ]
+            start = max(above, default=0)
+            labels = [
+                e for e in page_items
+                if e.kind in {"paragraph", "heading", "figure_text", "caption", "equation"}
+                and id(e) not in linked_ids and id(e) not in caption_ids and not boundary(e)
+                and start < _box(e)[1] and _box(e)[3] < top
+                and left - 10_000 <= _box(e)[0] and _box(e)[2] <= right + 10_000
+            ]
+            proposed = (
+                left, min([vb[1], *(_box(e)[1] for e in labels)]), right,
+                max(vb[3], top - 4_000),
+            )
+            eats_body = any(
+                boundary(e) and id(e) not in linked_ids and _contains(proposed, _box(e))
+                for e in page_items
+            )
+            if proposed != vb and not eats_body:
+                region = proposed
+                visual.anchor.setdefault("sourceBboxPpm", visual.anchor["bboxPpm"])
+                visual.anchor.update(
+                    bboxPpm=[region[0], region[1], region[2] - region[0], region[3] - region[1]],
+                    cropSource="caption-and-typography",
+                )
+        for other in elements:
+            if (
+                other.kind in {"paragraph", "heading", "caption", "equation"}
+                and id(other) not in linked_ids and id(other) not in caption_ids
+                and other.anchor.get("page") == visual.anchor.get("page")
+                and _box(other) and _edge_label(other, region, body_size)
+                and other.payload.get("visualOwner") in {None, owner}
+            ):
+                other.payload.setdefault("sourceKind", other.kind)
+                other.kind = "figure_text"
+                other.payload.update(visualOwner=owner, noEmbed=True)
+    return any(
+        e.kind != "heading" and e.payload.get("sourceKind") == "heading" for e in elements
+    )
+
+
+def _edge_label(element: Any, region: tuple, body_size: float | None) -> bool:
+    """Text inside a visual's region, or a label touching its edge.
+
+    Panel letters and axis titles often sit just outside the detected box. Only
+    text set smaller than body prose, or a lone panel letter, is taken from the
+    margin; the geometry is always required.
+    """
+    box = _box(element)
+    if _contains(region, box):
+        return True
+    pad = 12_000
+    padded = (region[0] - pad, region[1] - pad, region[2] + pad, region[3] + pad)
+    size = element.payload.get("fontSize")
+    small = bool(body_size and size and size < body_size * 0.95)
+    letter = bool(re.fullmatch(r"\(?[A-Za-z]\)?", element.text.strip()))
+    return _contains(padded, box) and (small or letter)
 
 
 def group_visuals(document: ParsedDocument) -> None:

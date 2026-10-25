@@ -366,7 +366,45 @@ input.gx-item-title.is-editable::placeholder { color: var(--gx-ghost); }
 .gx-file-state i { width: 6px; height: 6px; border-radius: 50%; background: var(--gx-brand); }
 .gx-file-state.is-failed, .gx-file-state.is-partial { color: var(--gx-warning); }
 .gx-file-state .gx-link { margin-left: 6px; display: inline-flex; align-items: center; gap: 4px; }
-.gx-document { max-width: 70ch; }
+.gx-document { width: 100%; max-width: 70ch; min-width: 0; overflow-wrap: anywhere; }
+.gx-document > * { min-width: 0; max-width: 100%; }
+.gx-document :is(figure, dl, dd) { margin-inline: 0; }
+.gx-document :is(pre, code) { white-space: pre-wrap; overflow-wrap: anywhere; }
+.gx-document-raw { margin: 12px 0; padding: 12px; border: 1px solid var(--gx-line); border-radius: 8px; font-family: var(--gx-font-mono, monospace); font-size: 0.85em; line-height: 1.6; }
+.gx-document :is(.gx-document-details, .gx-document-outline, .gx-document-annotations) { margin: 12px 0; padding: 12px 14px; border: 1px solid var(--gx-line); border-radius: 8px; font-family: var(--gx-font-sans); font-size: calc(13px * var(--gx-fs, 1)); line-height: 1.6; letter-spacing: 0; }
+.gx-document summary { cursor: pointer; color: var(--gx-muted); font-weight: 560; }
+.gx-document details[open] > summary { margin-bottom: 12px; }
+.gx-document-details dl { display: grid; grid-template-columns: minmax(90px, 0.3fr) minmax(0, 1fr); gap: 8px 16px; margin-block: 0; }
+.gx-document-details dt { color: var(--gx-muted); }
+.gx-document-details dd { min-width: 0; margin-block: 0; }
+.gx-document-details p { margin-top: 12px; }
+.gx-document-outline ul { margin: 0; padding-left: 18px; }
+.gx-document-visual { margin: 28px 0; }
+.gx-document-visual > img { display: block; width: auto; max-width: 100%; height: auto; margin: 0 auto 12px; }
+.gx-document figcaption { font-family: var(--gx-font-sans); font-size: calc(13px * var(--gx-fs, 1)); line-height: 1.65; color: var(--gx-muted); white-space: pre-line; }
+.gx-document-math { margin: 20px 0; }
+.gx-document-math > img { display: block; max-width: 100%; height: auto; margin: 0 auto 6px; }
+.gx-document-visual > .gx-link { margin-top: 8px; font-family: var(--gx-font-sans); font-size: calc(12px * var(--gx-fs, 1)); }
+.gx-document .gx-document-math-meta { display: flex; justify-content: flex-end; align-items: baseline; gap: 12px; white-space: normal; font-size: calc(12px * var(--gx-fs, 1)); color: var(--gx-faint); }
+.gx-document-math-meta details { margin-inline-end: auto; }
+.gx-document-math-meta summary { font-weight: 500; color: var(--gx-faint); }
+.gx-document-math-meta details[open] { flex-basis: 100%; }
+.gx-document .gx-document-note { color: var(--gx-muted); font-size: calc(12px * var(--gx-fs, 1)); }
+.gx-document-label { padding-block: 4px; border-top: 1px solid var(--gx-line); white-space: pre-wrap; }
+.gx-document-table { max-width: 100%; box-sizing: border-box; }
+.gx-document-table table { border-collapse: collapse; width: 100%; font-family: var(--gx-font-sans); line-height: 1.5; }
+.gx-document-table :is(td, th) { padding: 8px 12px; border: 1px solid var(--gx-line); text-align: left; vertical-align: top; }
+.gx-document-table th { background: var(--gx-surface-2); font-weight: 600; }
+.gx-document-references { border-top: 1px solid var(--gx-line); margin-top: 32px; padding-top: 8px; font-size: 0.9em; }
+.gx-document [id] { scroll-margin-top: 80px; }
+.gx-document :is(sup, sub) { font-size: 0.72em; line-height: 0; }
+.gx-inline-fraction { display: inline-grid; vertical-align: middle; margin-inline: 0.15em; font-size: 0.82em; line-height: 1.25; text-align: center; }
+.gx-inline-fraction > :first-child { border-bottom: 1px solid currentColor; padding: 0 0.12em 0.08em; }
+.gx-inline-fraction > :last-child { padding-top: 0.08em; }
+@media (max-width: 520px) {
+  .gx-document-details dl { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .gx-document-details dd { margin-bottom: 10px; }
+}
 .gx-page-break { margin: 2.2em 0 1.4em; display: flex; align-items: center; gap: 12px; color: var(--gx-faint); font-family: var(--gx-font-sans); font-size: calc(10.5px * var(--gx-fs, 1)); font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; }
 .gx-page-break::before, .gx-page-break::after { content: ""; height: 1px; flex: 1; background: var(--gx-line); }
 .gx-document-lead { margin: 1.6em 0 0.4em !important; color: var(--gx-ink); font-family: var(--gx-font-sans); font-size: calc(14px * var(--gx-fs, 1)); font-weight: 650; letter-spacing: -0.005em; }

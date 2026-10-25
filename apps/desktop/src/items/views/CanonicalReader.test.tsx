@@ -8,11 +8,11 @@ function element(id: string, kind: string, content: string, extra: Partial<Docum
   return { id, kind, content, parentId: null, locator: "Page 1", headings: [], anchor: { page: 1 }, mentions: [], ...extra };
 }
 
-function document(elements: DocumentElement[]): SourceDocument {
+function document(elements: DocumentElement[], manifest: Record<string, unknown> = {}): SourceDocument {
   return {
     sourceId: "src_paper", revisionId: "srev_1", parser: "fixture", nextOffset: null,
     processing: { state: "ready", jobId: null, revisionId: "srev_1", warning: null },
-    manifest: {}, elements,
+    manifest, elements,
     references: [{ id: "ref_1", elementId: "el_ref", label: "1", raw: "[1] Smith 2020.", metadata: {} }],
   };
 }
@@ -92,8 +92,38 @@ describe("CanonicalReader", () => {
     expect(screen.getByRole("heading", { level: 3, name: "Escalation paths" })).toBeVisible();
     expect(screen.getByText("Example Press").closest("details")).not.toBeNull();
     expect(screen.getByText("Organization quarterly review").closest("details")).not.toBeNull();
-    expect(screen.getByText("Revenue 0.1 0.2 0.3").closest("figure details")).not.toBeNull();
+    expect(screen.queryByText("Revenue 0.1 0.2 0.3")).not.toBeInTheDocument();
     expect(container.querySelectorAll("figcaption")).toHaveLength(1);
     expect(screen.getByText("The original policy paragraph.")).toBeVisible();
+  });
+
+  it("renders native scripts, original equations and continued sentences without chart debris", () => {
+    const { container } = render(<CanonicalReader document={document([
+      element("start", "paragraph", "Read xi and R2. We", { payload: { documentRef: "first", inlineSpans: [{ start: 6, end: 7, script: "sub" }, { start: 13, end: 14, script: "super" }] } }),
+      element("label", "figure_text", "Knowledge transfer ?"),
+      element("finish", "paragraph", "attribute this to the observations.", { payload: { documentRef: "second", continuesDocumentRef: "first" } }),
+      element("formula", "equation", "", { payload: { imageAssetId: "ast_equation", widthPt: 90 } }),
+    ], { bodyFontSize: 9 })} />);
+    expect(container.querySelector("#start")).toHaveTextContent("Read xi and R2. We attribute this to the observations.");
+    expect(container.querySelector("#start sub")).toHaveTextContent("i");
+    expect(container.querySelector("#start sup")).toHaveTextContent("2");
+    expect(container.querySelector("#finish")).not.toBeNull();
+    expect(screen.queryByText("Knowledge transfer ?")).not.toBeInTheDocument();
+    const formula = screen.getByRole("img", { name: "Formula from Page 1" });
+    expect(formula).toHaveAttribute("src", expect.stringContaining("ast_equation"));
+    expect(formula.style.width).toBe("min(100%, 10.00em)");
+    expect(screen.queryByText("Formula text")).not.toBeInTheDocument();
+  });
+
+  it("shows a unique author list and a readable file timestamp with the source offset", async () => {
+    const data = document([]);
+    data.manifest.metadata = {
+      authors: [{ value: "Alex Example", origin: "pdf-info" }, { value: "Alex Example; Sam Example", origin: "xmp" }],
+      fileCreated: [{ value: "D:20260128004804+05'30'", origin: "pdf-info" }],
+    };
+    render(<CanonicalReader document={data} />);
+    await userEvent.click(screen.getByText("Document details"));
+    expect(screen.getByText("Alex Example · Sam Example")).toBeVisible();
+    expect(screen.getByText("2026-01-28 00:48:04 UTC+05:30")).toHaveAttribute("title", expect.stringContaining("D:20260128004804"));
   });
 });

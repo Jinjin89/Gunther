@@ -174,6 +174,7 @@ def build() -> None:
             for name in (
                 "apps/backend/gunther/document_parser.py",
                 "apps/backend/gunther/document_structure.py",
+                "apps/backend/gunther/pdf_native.py",
                 "tools/document-parser/helper.py",
                 "scripts/build-document-parser.py",
             )

@@ -65,4 +65,34 @@ describe("document layout status", () => {
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
     expect(screen.getByText("Native readable paragraph.")).toBeVisible();
   });
+
+  it("continues the same revision before the bibliography and exposes a retryable page error", async () => {
+    const first = document("ready", "layout");
+    first.nextOffset = 500;
+    first.references = [{ id: "ref", elementId: "reference", label: "1", raw: "A source reference.", metadata: {} }];
+    api.sourceDocument.mockResolvedValueOnce(first).mockRejectedValueOnce(new Error("Could not load the next page."));
+    render(<DocumentBody source={source} file={file} />);
+    const button = await screen.findByRole("button", { name: "Continue reading" });
+    expect(button.compareDocumentPosition(screen.getByRole("heading", { name: "References" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(button);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not load the next page.");
+    const next = document("ready", "layout");
+    next.references = first.references;
+    next.elements = [{ ...next.elements[0]!, id: "next", content: "The next complete paragraph." }];
+    api.sourceDocument.mockResolvedValueOnce(next);
+    fireEvent.click(button);
+    expect(await screen.findByText("The next complete paragraph.")).toBeVisible();
+    expect(api.sourceDocument).toHaveBeenLastCalledWith(source.id, 500, "layout");
+    expect(screen.getAllByText("Layout readable paragraph.")).toHaveLength(1);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue reading" })).not.toBeInTheDocument();
+  });
+
+  it("can refresh an already completed extraction without removing the current text", async () => {
+    api.sourceDocument.mockResolvedValue(document("ready"));
+    render(<DocumentBody source={source} file={file} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Read again" }));
+    await waitFor(() => expect(api.reprocessSource).toHaveBeenCalledWith(source.id));
+    expect(screen.getByText("Native readable paragraph.")).toBeVisible();
+  });
 });

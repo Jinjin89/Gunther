@@ -393,6 +393,7 @@ def source_document(
     revision_id: str | None = None,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    reading: bool = False,
 ):
     import json
 
@@ -405,11 +406,15 @@ def source_document(
         revision = session.get(SourceRevision, revision_id) if revision_id else None
         if revision_id and (not revision or revision.source_id != source_id):
             raise HTTPException(404, "Source revision was not found")
+        query = select(DocumentElement).where(DocumentElement.revision_id == revision_id)
+        if reading:
+            # The reader shows visuals as images; their extracted labels stay
+            # available to search and to the structure view.
+            query = query.where(DocumentElement.kind.not_in(("figure_text", "figure_panel")))
         elements = (
             list(
                 session.scalars(
-                    select(DocumentElement)
-                    .where(DocumentElement.revision_id == revision_id)
+                    query
                     .order_by(DocumentElement.ordinal)
                     .offset(offset)
                     .limit(limit + 1)
