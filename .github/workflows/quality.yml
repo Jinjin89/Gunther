@@ -104,7 +104,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: tools/document-parser/.build/bundle
-          key: document-parser-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/document-parser/pyproject.toml', 'tools/document-parser/uv.lock', 'tools/document-parser/helper.py', 'scripts/build-document-parser.py', 'apps/backend/gunther/document_parser.py', 'apps/backend/gunther/document_structure.py') }}
+          key: document-parser-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/document-parser/pyproject.toml', 'tools/document-parser/uv.lock', 'tools/document-parser/helper.py', 'scripts/build-document-parser.py', 'apps/backend/gunther/document_parser.py', 'apps/backend/gunther/document_structure.py', 'apps/backend/gunther/pdf_native.py') }}
       - name: Build the pinned layout parser runtime
         if: steps.parser-cache.outputs.cache-hit != 'true'
         run: uv run --frozen --project tools/document-parser scripts/build-document-parser.py
