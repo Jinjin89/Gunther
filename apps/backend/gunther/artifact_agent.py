@@ -217,6 +217,10 @@ change. Not after a change: a changed artifact ends with save.
 How to work:
 - Do only what the latest message needs. A change touches the parts it is about and the parts it \
 makes out of date; every other part stays exactly as it is.
+- The material overview is what is available in the user's chosen scope. Its documents may \
+not have been read into the evidence pool yet: an empty pool does not mean no material was \
+selected. Use the overview to understand a request about the selected material, then read it \
+through the workflow. The overviews identify sources; only loaded evidence can be cited.
 - Find the part a message means from what the user points at (selected beats on screen), its \
 number or its content, and the conversation and the changes so far.
 - With no artifact yet and a clear request, follow the skill: understand, plan whole, write every \
@@ -363,6 +367,7 @@ class View:
     limits: AgentLimits = field(default_factory=AgentLimits)
     # The question this message answers (the workspace's pending one, as the turn began).
     asked: Any = None
+    material: Notes = field(default_factory=Notes)
 
 
 def _line(label: str, line: Line | None, empty: str = "not set") -> str:
@@ -452,6 +457,19 @@ def build_view(v: View) -> str:
     ws, brief = v.workspace, v.brief
     work = active_work(ws)
     out = [f"Library: {v.library}. Web: {'on' if v.web else 'off'}."]
+    material = v.material
+    has_material = bool(material.sources or material.knowledge or material.discussions)
+    if has_material:
+        out.append("Material available in the chosen scope (overview, not citable passages):")
+        for kind, items in (
+            ("Document", material.sources),
+            ("Saved answer", material.knowledge),
+            ("Discussion", material.discussions),
+        ):
+            out += [
+                f"- {kind}: {_one_line(title, 160)} — {_one_line(text, 400)}"
+                for title, text in items
+            ]
     for kind in [work.spec.kind] if work else ["slides", "report"]:
         skill = skill_for(kind)
         options = (
@@ -554,6 +572,8 @@ def build_view(v: View) -> str:
     pool_items = [i for i in v.pool.items if i.ref is not None]
     newest = list(reversed(pool_items))[:10]
     line = f"Pool: {len(pool_items)} sources"
+    if not pool_items and has_material:
+        line += "; no evidence passages loaded yet; the material above is available."
     if newest:
         names = [
             f"[{numbering.view(i.ref) or i.ref}] {_one_line(i.title, 60)} ({i.kind})"
@@ -996,6 +1016,7 @@ class ArtifactAgent:
                 focus=c.focus,
                 limits=c.limits,
                 asked=self.asked,
+                material=c.notes,
             )
         )
 

@@ -54,7 +54,13 @@ from gunther.artifact_workspace import (
     Pending,
     Workspace,
 )
-from gunther.models import Artifact, ArtifactConversation, ArtifactMessage
+from gunther.models import (
+    Artifact,
+    ArtifactConversation,
+    ArtifactMessage,
+    SourceIndexHead,
+    SourceRevision,
+)
 from gunther.outputs import Pool, section_hash, split_document
 from gunther.service import KnowledgeService
 
@@ -156,6 +162,36 @@ def seen_by_the_orchestrator(fake: FakeProvider, before: int = 0) -> list[str]:
         for request in fake.requests[before:]
         if is_orchestrating(request)
     ]
+
+
+@pytest.mark.parametrize("mode", ["selection", "library"])
+@pytest.mark.parametrize("processing", ["ready", "partial"])
+def test_selected_documents_reach_the_first_decision_before_evidence_is_loaded(
+    tmp_path: Path, mode: str, processing: str
+) -> None:
+    selected = "Insulated rooms stayed cooler during the afternoon trial."
+    fake = FakeProvider(script([{"actions": [{"do": "reply", "text": "Material is available."}]}]))
+    with app_for(tmp_path, fake, skills=True) as client:
+        base_id, ids = library(client, title="Experiments", notes={
+            "Thermal measurements": selected,
+            "Unselected garden notes": "Watering changed the growth rate.",
+        })
+        with client.app.state.knowledge_service.sessions() as session:
+            head = session.get(SourceIndexHead, ids["Thermal measurements"])
+            session.get(SourceRevision, head.revision_id).state = processing
+            session.commit()
+        scope = {"mode": mode, "sourceIds": [ids["Thermal measurements"]]}
+        created = client.post(
+            conversations(base_id), headers=workspace(client),
+            json={"id": "material-first", "scope": scope},
+        )
+        assert created.status_code == 201, created.text
+        done(turn(client, base_id, "material-first", "Create slides from the selected material."))
+        first = seen_by_the_orchestrator(fake)[0]
+        assert "Material available in the chosen scope" in first
+        assert "Thermal measurements" in first and selected in first
+        assert "no evidence passages loaded yet; the material above is available" in first
+        assert ("Unselected garden notes" in first) == (mode == "library")
 
 
 def test_a_vague_request_is_asked_about_and_the_answer_makes_the_deck(tmp_path: Path) -> None:

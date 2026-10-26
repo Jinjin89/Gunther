@@ -59,6 +59,7 @@ const CHUNK = 100;
 
 const blankLocal = (): Local => ({ draft: "", choice: null, scope: null, selectedArtifactId: null, createdAt: new Date().toISOString() });
 const hasContent = (local: Local | undefined) => Boolean(local && (local.draft || local.choice || local.scope || local.selectedArtifactId));
+const scopeKey = (scope: OutputScope | undefined) => scope ? JSON.stringify([scope.mode, scope.sourceIds, scope.unitIds, scope.sessionIds]) : "";
 
 /** The turns a device kept (version 1), as the service's import takes them. A turn that was running when the page closed was interrupted. */
 function importable(item: Record<string, unknown>): ImportedArtifactConversation | null {
@@ -88,6 +89,7 @@ export class ArtifactConversationStore {
   private listeners = new Set<() => void>();
   private summaries: ArtifactConversationSummary[] = [];
   private details = new Map<string, ArtifactConversationDetail>();
+  private scopeWrites = new Map<string, Promise<void>>();
   private local: Record<string, Local> = {};
   /** Conversations made here and not yet sent: they join the service with their first message. */
   private unsaved: string[] = [];
@@ -179,10 +181,22 @@ export class ArtifactConversationStore {
     this.local[id] = { ...(this.local[id] ?? blankLocal()), ...patch };
     this.commit();
     if (patch.scope && this.get(id)?.saved) {
-      void knowledgeApi.updateArtifactConversation(this.baseId, id, { scope: patch.scope }, this.workspaceId).catch((reason) => {
-        log.warn("artifacts", `The source selection was not saved to the conversation: ${reason instanceof Error ? reason.message : String(reason)}`);
-      });
+      this.saveScope(id, patch.scope);
     }
+  }
+  /** Keep rapid selection changes in order, and let sending wait for the latest one. */
+  private saveScope(id: string, scope: OutputScope) {
+    const previous = this.scopeWrites.get(id);
+    const save = async () => {
+      const saved = await knowledgeApi.updateArtifactConversation(this.baseId, id, { scope }, this.workspaceId);
+      const detail = this.details.get(id);
+      this.details.set(id, { ...(detail ?? saved), scope });
+    };
+    const pending = previous ? previous.catch(() => undefined).then(save) : save();
+    this.scopeWrites.set(id, pending);
+    void pending.catch((reason) => {
+      log.warn("artifacts", `The source selection was not saved to the conversation: ${reason instanceof Error ? reason.message : String(reason)}`);
+    });
   }
   select(id: string) { if (this.get(id)) { this.activeId = id; this.commit(); } }
   /** A conversation made here; the service gets it with its first message. */
@@ -195,12 +209,31 @@ export class ArtifactConversationStore {
   /** The service has this conversation (a new one is sent now). */
   async ensure(id: string) {
     const conversation = this.get(id);
-    if (!conversation || conversation.saved) return;
-    const detail = await knowledgeApi.createArtifactConversation(this.baseId, { id, scope: conversation.scope }, this.workspaceId);
-    this.details.set(id, detail);
-    this.summaries = [{ id, title: detail.title, updatedAt: detail.updatedAt, artifactCount: detail.artifactCount, waiting: detail.waiting }, ...this.summaries.filter((item) => item.id !== id)];
-    this.unsaved = this.unsaved.filter((item) => item !== id);
-    this.commit();
+    if (!conversation) return;
+    if (!conversation.saved) {
+      const detail = await knowledgeApi.createArtifactConversation(this.baseId, { id, scope: conversation.scope }, this.workspaceId);
+      this.details.set(id, detail);
+      this.summaries = [{ id, title: detail.title, updatedAt: detail.updatedAt, artifactCount: detail.artifactCount, waiting: detail.waiting }, ...this.summaries.filter((item) => item.id !== id)];
+      this.unsaved = this.unsaved.filter((item) => item !== id);
+      this.commit();
+    }
+    for (;;) {
+      const pending = this.scopeWrites.get(id);
+      if (pending) {
+        try { await pending; }
+        catch (reason) {
+          if (this.scopeWrites.get(id) !== pending) continue;
+          this.scopeWrites.delete(id);
+          throw reason;
+        }
+        if (this.scopeWrites.get(id) === pending) this.scopeWrites.delete(id);
+        continue;
+      }
+      const selected = this.local[id]?.scope;
+      if (!selected || scopeKey(selected) === scopeKey(this.details.get(id)?.scope)) return;
+      // Also covers a restored local selection or a change made while creation was pending.
+      this.saveScope(id, selected);
+    }
   }
 
   /** Read a conversation again from the service. */

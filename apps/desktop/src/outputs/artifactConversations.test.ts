@@ -13,6 +13,13 @@ const oldDevice = (conversations: unknown[], activeId: string) => JSON.stringify
 const oldConversation = (id: string, turns: unknown[] = [], extra: Record<string, unknown> = {}) => ({ id, title: "Make notes", untitled: false, scope: libraryScope(), choice: null, draft: "", lineageIds: [], selectedArtifactId: null, createdAt: "2026-09-01T00:00:00Z", turns, ...extra });
 const oldTurn = (id: string, status: string, extra: Record<string, unknown> = {}) => ({ id, instruction: `Instruction ${id}`, request: null, status, createdAt: "2026-09-01T00:00:00Z", result: null, error: null, ...extra });
 const KEY = "gunther:artifact-conversations:workspace:library";
+const selected = (...sourceIds: string[]) => ({ mode: "selection" as const, sourceIds, unitIds: [], sessionIds: [] });
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+};
 
 let list: ArtifactConversationSummary[];
 let imports: Array<{ conversations: Array<{ id: string; turns: Array<{ id?: string; status: string; artifactId?: string | null }> }> }>;
@@ -115,6 +122,53 @@ describe("artifact conversations kept by the service", () => {
     await store.load([]);
     store.update("one", { scope: { mode: "selection", sourceIds: ["b"], unitIds: [], sessionIds: [] } });
     expect(update).toHaveBeenCalledWith("library", "one", { scope: { mode: "selection", sourceIds: ["b"], unitIds: [], sessionIds: [] } }, "workspace");
+  });
+
+  it("saves rapid selection changes in order before allowing a turn to send", async () => {
+    list = [summary("one")];
+    const first = deferred<ArtifactConversationDetail>(), second = deferred<ArtifactConversationDetail>();
+    const update = vi.spyOn(knowledgeApi, "updateArtifactConversation").mockImplementationOnce(() => first.promise).mockImplementationOnce(() => second.promise);
+    const store = new ArtifactConversationStore("workspace", "library");
+    await store.load([]);
+    store.update("one", { scope: selected("a") });
+    store.update("one", { scope: selected("b") });
+    expect(update).toHaveBeenCalledTimes(1);
+    let ready = false;
+    const sending = store.ensure("one").then(() => { ready = true; });
+    expect(ready).toBe(false);
+    first.resolve(detail("one"));
+    await vi.waitFor(() => expect(update).toHaveBeenCalledTimes(2));
+    expect(update.mock.calls.map((call) => call[2])).toEqual([{ scope: selected("a") }, { scope: selected("b") }]);
+    expect(ready).toBe(false);
+    second.resolve(detail("one"));
+    await sending;
+    expect(ready).toBe(true);
+  });
+
+  it("blocks sending after a failed scope save and retries the current selection", async () => {
+    list = [summary("one")];
+    const update = vi.spyOn(knowledgeApi, "updateArtifactConversation").mockRejectedValueOnce(new Error("Selection save failed")).mockResolvedValue(detail("one"));
+    const store = new ArtifactConversationStore("workspace", "library");
+    await store.load([]);
+    store.update("one", { scope: selected("chosen") });
+    await expect(store.ensure("one")).rejects.toThrow("Selection save failed");
+    await store.ensure("one");
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update).toHaveBeenLastCalledWith("library", "one", { scope: selected("chosen") }, "workspace");
+  });
+
+  it("persists a selection changed while the new conversation is being created", async () => {
+    const creating = deferred<ArtifactConversationDetail>();
+    vi.mocked(knowledgeApi.createArtifactConversation).mockReturnValueOnce(creating.promise);
+    const update = vi.spyOn(knowledgeApi, "updateArtifactConversation").mockImplementation(async (_base, id) => detail(id));
+    const store = new ArtifactConversationStore("workspace", "library");
+    const id = store.active().id;
+    store.update(id, { scope: selected("before") });
+    const sending = store.ensure(id);
+    store.update(id, { scope: selected("after") });
+    creating.resolve({ ...detail(id), scope: selected("before") });
+    await sending;
+    expect(update).toHaveBeenCalledWith("library", id, { scope: selected("after") }, "workspace");
   });
 
   it("keeps previous snapshots immutable when something changes", async () => {
