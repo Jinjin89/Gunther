@@ -1,6 +1,12 @@
 # Artifact quality goal: reports and slides a professional would ship
 
-Written 2026-10-22. Status: plan, waiting for the user's decisions in §8. Nothing is built yet.
+Historical studio design and progress record, begun 2026-10-22. The studio implementation
+now exists. Earlier diagnoses and model choices below describe their dates.
+
+For the current presentation task, start with
+[Scientific presentations that explain the study](SCIENTIFIC_PRESENTATION_WORKFLOW.md).
+Its automatic workflow and scientific review requirements supersede the universal
+consulting-style and manual-review requirements in this older plan.
 
 ## 1. The goal
 
@@ -131,12 +137,14 @@ brief ─▶ insight memo ─▶ storyline ─▶ draft ─▶ verify ─▶ ren
 ```
 
 ### 4.1 Brief
-Who is it for, what should they understand or decide, how long (minutes or pages), talk or
-read. The agent asks at most two questions, and only when audience or purpose is truly missing.
+Infer who it is for, what they should understand or decide, the appropriate depth and length,
+and whether it supports speaking or independent reading. Use the request and available
+context, with sensible defaults. Clarification is for material ambiguity about the task,
+not a required setup questionnaire.
 
 ### 4.2 Insight memo (research)
 Input: the selected material in full (long context; large sources chunked by their own
-structure, not 110-character glances). Output, shown to the user and editable:
+structure, not 110-character glances). Internal output, inspectable by the user on request:
 - **The answer** in one sentence.
 - **Key facts table**: number, unit, what it is compared with, source id.
 - **3–7 insights**: each a specific, non-obvious statement + why it matters to this audience
@@ -214,17 +222,14 @@ memo states which sources were thin or unreadable.
 evidence.
 
 **The user's flow in the app.**
-1. Pick material and say what it is for. The agent asks at most two questions.
-2. See the insight memo: answer, key facts, insights, gaps. Edit or say "go".
-3. See the storyline as titles (a ghost deck or a list of section claims). Reorder, rewrite,
-   add or drop items, then continue. Saying "just do it" skips steps 2–3.
-4. Watch progress live; see slides appear as they are drawn.
-5. Review the result: viewer, slide sorter, speaker notes, a quality report (what the checker
-   and the vision critic found, and what is still open).
-6. Change things by talking ("make slide 4 a chart", "shorter for a 5-minute talk",
-   "add the cost risk") or by editing text directly. Only the target changes. Each save is a
-   version.
-7. Present, or export PPTX, PDF or DOCX.
+1. Describe the goal using the material already in scope. The agent infers the presentation
+   approach, audience assumptions and depth from the request and context.
+2. The agent reads, plans and reviews internally, then produces a complete first draft.
+   Memo and outline inspection are optional, requested by the user rather than required gates.
+3. Review the result and refine it in ordinary language. Changes target the relevant content
+   and preserve scientific evidence, source images and provenance.
+4. Present or export the result. The current interaction requirements are in
+   [Scientific presentations that explain the study](SCIENTIFIC_PRESENTATION_WORKFLOW.md).
 
 **Your own look.** Upload an existing .pptx or .potx template: colours, fonts and logo are read
 from it and applied to the layouts. Default themes stay for people without one.
@@ -285,17 +290,12 @@ Opus writes the detailed contract for a phase, a Sonnet agent builds it, Opus re
 the synthetic fixtures in `evals/slides`. **Kept**: source pool and citation numbers, `[?]` marks,
 the claim checker, the artifact agent and workspace, versions, the viewer shell, Present, print.
 
-## 8. Decisions for the user
+## 8. Settled decisions
 
-1. **Writing model.** Recommend adding Claude (Anthropic) as a provider and using it for the
-   insight, storyline and draft steps; keep cheaper models for verify and small edits.
-   Without it, use the strongest available (DeepSeek V4 Pro or Kimi K3) and expect a lower ceiling.
-2. **Native PPTX and DOCX export.** Recommend yes; people present and send these formats.
-3. **Delete the old step machinery** listed in §7 once the new path passes. Recommend yes.
-4. **Gold material.** Use the six kinds in §6; the user may swap in their own real material
-   (better: it is what they will judge by).
-5. **Caveat policy.** Caveats live in a footnote line, speaker notes, or one dedicated
-   slide/section when they change the decision. Recommend yes.
+The launch decisions recorded in this phase were settled; they are not pending questions
+for the user. Current presentation work follows
+[Scientific presentations that explain the study](SCIENTIFIC_PRESENTATION_WORKFLOW.md),
+including automatic task adaptation and figure selection without a setup questionnaire.
 
 ## 9. Before / after (one slide, same facts)
 

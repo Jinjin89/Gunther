@@ -2,6 +2,11 @@
 
 Status: built 2026-10-23 (P1–P4, commits 03901e5…bc3f0a1), tested with fake models only; a real-model run and the Mac trial are pending.
 
+This is a historical visual-design record. The current content and interaction requirements
+are in [Scientific presentations that explain the study](SCIENTIFIC_PRESENTATION_WORKFLOW.md).
+Source evidence, scientific explanation and legibility take precedence over decorative
+visual quotas or mandatory layout variation for research presentations.
+
 ## 1. Goal
 
 A Gunther deck should look as good as one Claude Code or Codex designs from scratch: a strong

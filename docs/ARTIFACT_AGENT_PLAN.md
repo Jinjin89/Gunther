@@ -1,8 +1,10 @@
 # Artifacts agent: one orchestrator over Gunther's skill steps — implementation plan
 
-> **Status 2026-10-15: the architecture was agreed with the user (third draft). Nothing has been
-> built.** Written by Claude Opus for a Sonnet agent that builds one phase at a time. Opus
-> reviews each phase. Line numbers are from 2026-10-15 and drift: grep for the names.
+> Historical architecture and implementation record, begun 2026-10-15. The agent and
+> conversation workspace now exist. Use the current code for implementation details.
+> The next presentation task is specified in
+> [Scientific presentations that explain the study](SCIENTIFIC_PRESENTATION_WORKFLOW.md).
+> Its automatic adaptation requirements take precedence over earlier interaction plans here.
 
 ## What the user wants
 
@@ -356,21 +358,12 @@ steps do.
 
 ---
 
-## 4. How to run this plan (for the user)
+## 4. Historical implementation workflow
 
-- One phase per Sonnet session, or Opus spawns one Sonnet subagent per phase.
-- Sonnet stops at the end of its phase and writes a progress-log entry.
-- Opus reviews the phase against this plan.
-- Commit only when asked.
-
-```
-Implement Phase N of docs/ARTIFACT_AGENT_PLAN.md in /root/git/Gunther.
-Read §0–§3, §5 How to work, §7 Contracts and §8 Prompts, then Phase N and the files it names.
-Do only Phase N's tasks, in order. §1 and §3 are decided: don't reopen them. If a task conflicts
-with the code or seems wrong, stop and say so instead of improvising. Use §8's prompts verbatim.
-Run the phase's checks, append a progress-log entry (what you built, files, test results,
-anything unverified or changed from the plan) and stop. Don't commit.
-```
+The phase-by-phase instructions below record how the existing architecture was built.
+The old copy-and-paste implementation prompt is retired. For new presentation work, use
+[Scientific presentations that explain the study](SCIENTIFIC_PRESENTATION_WORKFLOW.md)
+and the current repository instructions rather than restarting completed phases.
 
 ## 5. How to work (for the implementer)
 
@@ -389,7 +382,6 @@ anything unverified or changed from the plan) and stop. Don't commit.
   is faked.
 - **`tests/test_outputs.py` and `tests/test_output_skills.py` keep passing.** If a phase changes a
   behaviour on purpose, say so in the log.
-- Don't commit. Don't start the next phase.
 
 ---
 
