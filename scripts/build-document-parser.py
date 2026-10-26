@@ -175,6 +175,7 @@ def build() -> None:
                 "apps/backend/gunther/document_parser.py",
                 "apps/backend/gunther/document_structure.py",
                 "apps/backend/gunther/pdf_native.py",
+                "apps/backend/gunther/pdf_glyphs.py",
                 "tools/document-parser/helper.py",
                 "scripts/build-document-parser.py",
             )

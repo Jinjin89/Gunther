@@ -327,6 +327,8 @@ class ProcessingWorker:
                             .order_by(ContentBlock.ordinal)
                         )
                     )
+                    revision = session.get(SourceRevision, revision_id) if revision_id else None
+                    manifest = json.loads(revision.manifest_json) if revision else {}
                 else:
                     head = session.get(SourceIndexHead, source_id)
                     revision_id = job.revision_id or (head.revision_id if head else None)
@@ -431,7 +433,11 @@ class ProcessingWorker:
                         "success",
                     }:
                         limitations.append("Some PDF regions could not be parsed.")
-                    if structured.manifest.get("missingImages"):
+                    extraction = structured.manifest.get("extraction") or {}
+                    for problem in extraction.get("warnings") or []:
+                        # Faithfulness problems, apart from how the structure was checked.
+                        limitations.append(str(problem.get("message") or ""))
+                    if structured.manifest.get("missingImages") and not extraction:
                         limitations.append("Some figure images could not be rendered.")
                     if structured.manifest.get("metadataWarning"):
                         limitations.append(str(structured.manifest["metadataWarning"]))
@@ -476,7 +482,8 @@ class ProcessingWorker:
                         vectors.append((block.id, vector))
             elif kind == "summarize":
                 facts = papers.read_paper(
-                    source_title, blocks, papers.pdf_facts(pdf_path) if pdf_path else None
+                    source_title, blocks, papers.pdf_facts(pdf_path) if pdf_path else None,
+                    manifest=manifest,
                 )
                 paper_vector = None
                 embedder = self.index.embedder
@@ -554,6 +561,14 @@ class ProcessingWorker:
                         recording.audio_duration_ms = measured_ms
                         recording.updated_at = utc_now()
                 elif kind == "summarize":
+                    head = session.get(SourceIndexHead, source_id)
+                    if head is None or head.revision_id != revision_id:
+                        # Read again since: the card describes the revision the reader shows.
+                        job = session.get(ProcessingJob, job_id)
+                        job.state, job.error = "completed", None
+                        job.lease_token, job.lease_until = None, None
+                        job.updated_at = utc_now()
+                        return
                     papers.publish(
                         session,
                         source,

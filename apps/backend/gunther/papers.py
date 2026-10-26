@@ -4,11 +4,13 @@ Everything here is read from the source's current revision without a model:
 
 - the title: PDF metadata or a first-page title element, then typography,
   excluding repeated page furniture, else the source's own title;
-- authors: PDF metadata, or the names printed under the title;
-- the year: an arXiv id, a dated notice on the first page, or the PDF's date;
+- authors: the names printed under the title, reconciled with the PDF's declared
+  authors (``reconcile_authors``);
+- the year: an arXiv id, a printed publication date, a dated notice on the first
+  page, or a declared publication date; never the file's own timestamps;
 - a DOI or arXiv id;
 - the abstract, with the blocks it came from, so it can be cited;
-- the outline: the section headings.
+- the outline: every section heading, as the reader's contents list them.
 
 A document organized by its structure plan (docs/DOCUMENT_STRUCTURE_PLAN.md)
 already marks its title, authors and abstract; those marks are used as they are.
@@ -336,22 +338,38 @@ def _gist(blocks: Sequence[ContentBlock]) -> tuple[str, list[str]]:
     return " ".join(part for _, part in parts)[: GIST * 2], [block for block, _ in parts]
 
 
-def _outline(blocks: Sequence[ContentBlock], *, planned: bool = False) -> list[str]:
-    """Section headings; a planned document's headings are exactly its heading elements."""
+def _outline(
+    blocks: Sequence[ContentBlock], *, planned: bool = False, manifest: dict | None = None
+) -> list[str]:
+    """Section headings, all of them, in order.
 
+    A planned document's outline is its canonical manifest outline (the reader's
+    contents), so the card and the reader list the same sections. Older documents
+    use their heading elements, or lines set like headings. A heading printed twice in
+    a row (a running head over its own section) is listed once.
+    """
+    if planned and manifest and isinstance(manifest.get("outline"), list):
+        titles = [
+            re.sub(r"\s+", " ", str(entry.get("title") or "")).strip()
+            for entry in manifest["outline"] if isinstance(entry, dict)
+        ]
+    else:
+        titles = []
+        for block in blocks:
+            text = re.sub(r"\s+", " ", block.content).strip()
+            if block.kind != "heading" and (planned or not looks_like_heading(text)):
+                continue
+            if block.kind == "heading" and _role(block) in {"title", "subtitle"}:
+                continue
+            if len(text) <= 300:
+                titles.append(text)
     seen: list[str] = []
-    for block in blocks:
-        text = re.sub(r"\s+", " ", block.content).strip()
-        if block.kind != "heading" and (planned or not looks_like_heading(text)):
-            continue
-        if block.kind == "heading" and _role(block) in {"title", "subtitle"}:
-            continue
+    for text in titles:
+        # The card shows the abstract itself; the bibliography is not a section.
         if text.casefold().rstrip(" .:") in ABSTRACT_NAMES | {"references", "bibliography"}:
             continue
-        if text not in seen and len(text) <= 120:
+        if text and (not seen or seen[-1] != text):
             seen.append(text)
-        if len(seen) >= 40:
-            break
     return seen
 
 
@@ -388,10 +406,92 @@ def _document_title(blocks: Sequence[ContentBlock], pdf: PdfFacts) -> str | None
     return None
 
 
+def _split_names(value: str) -> list[str]:
+    """Names in a byline: "A. Smith, B. Lee and C. Wu" or "Smith, A.; Lee, B."."""
+    value = EMAIL.sub("", value)
+    if ";" in value:
+        parts = value.split(";")
+    else:
+        parts = re.split(r",|\band\b|&|\n", value)
+        # "Smith, J." written without semicolons: an initials-only part joins its surname.
+        joined: list[str] = []
+        for part in parts:
+            if joined and re.fullmatch(r"\s*(?:[^\W\d_]\.\s*-?)+", part):
+                joined[-1] = f"{joined[-1]}, {part.strip()}"
+            else:
+                joined.append(part)
+        parts = joined
+    names = [re.sub(r"\s+", " ", MARKERS.sub("", part)).strip(" ,;") for part in parts]
+    return [name for name in names if any(c.isalpha() for c in name)]
+
+
+def _name_key(name: str) -> tuple[str, str]:
+    """(surname, first initial), accents folded: "Smith, J." and "John Smith" agree."""
+    import unicodedata
+
+    plain = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().casefold()
+    if "," in plain:
+        surname, _, given = plain.partition(",")
+        words = re.findall(r"[a-z]+", given)
+        return " ".join(re.findall(r"[a-z]+", surname)), words[0][:1] if words else ""
+    words = re.findall(r"[a-z]+\.?", plain)
+    full = [w for w in words if not w.endswith(".") and len(w) > 1]
+    if not full:
+        return plain.strip(), ""
+    surname = full[-1]
+    others = [w for w in words if w.rstrip(".") != surname]
+    return surname, others[0][:1] if others else ""
+
+
+def _same_name(a: tuple[str, str], b: tuple[str, str]) -> bool:
+    return a[0] == b[0] and (not a[1] or not b[1] or a[1] == b[1])
+
+
+def reconcile_authors(printed: str, declared: str) -> str:
+    """One byline from the printed author lines and the file's declared authors.
+
+    The printed byline is the document's own statement and wins unless the declared
+    list holds every printed name and more (the printed lines were read partly).
+    Equivalent spellings of one author ("Smith, J." and "John Smith") appear once.
+    """
+    shown, other = _split_names(printed), _split_names(declared)
+    if not shown:
+        shown, other = other, []
+    elif other:
+        printed_keys = [_name_key(name) for name in shown]
+        declared_keys = [_name_key(name) for name in other]
+        covered = all(any(_same_name(p, d) for d in declared_keys) for p in printed_keys)
+        if covered and len(declared_keys) > len(printed_keys):
+            shown = other
+    names: list[str] = []
+    keys: list[tuple[str, str]] = []
+    for name in shown:
+        key = _name_key(name)
+        if not any(_same_name(key, seen) for seen in keys):
+            names.append(name)
+            keys.append(key)
+    return ", ".join(names[:30])
+
+
+def _publication_year(manifest: dict | None) -> int | None:
+    """The year of a printed or declared publication date; never a file timestamp."""
+    metadata = (manifest or {}).get("metadata") or {}
+    for name, origins in (("published", ("document",)), ("issued", ("document",)),
+                          ("published", None), ("coverDate", None), ("issued", None)):
+        for choice in metadata.get(name) or []:
+            if origins and choice.get("origin") not in origins:
+                continue
+            if match := re.search(r"\b(?:19|20)\d{2}\b", str(choice.get("value") or "")):
+                return int(match[0])
+    return None
+
+
 def read_paper(
-    source_title: str, blocks: Sequence[ContentBlock], pdf: PdfFacts | None = None
+    source_title: str, blocks: Sequence[ContentBlock], pdf: PdfFacts | None = None,
+    *, manifest: dict | None = None,
 ) -> PaperFacts:
-    """What the source says about itself. ``blocks`` in reading order."""
+    """What the source says about itself. ``blocks`` in reading order; ``manifest`` is
+    the revision's canonical manifest (its metadata and outline), when there is one."""
 
     pdf = pdf or PdfFacts()
     front = [block for block in blocks if (_page(block) or 1) <= 2][:80]
@@ -407,18 +507,20 @@ def read_paper(
         facts.year = 2000 + int(facts.arxiv_id[:2])
     else:
         notice = YEAR_NOTICE.search(front_text)
-        year = int(notice[1]) if notice else pdf.year
+        year = _publication_year({"metadata": {
+            name: [c for c in choices if c.get("origin") == "document"]
+            for name, choices in ((manifest or {}).get("metadata") or {}).items()
+        }}) or (int(notice[1]) if notice else None) or _publication_year(manifest) or pdf.year
         facts.year = year if year and 1900 < year <= this_year + 1 else None
-    facts.authors = (
-        pdf.authors or _marked_authors(blocks) or (_authors(front, title) if title else "")
-    )
+    printed = _marked_authors(blocks) or (_authors(front, title) if title else "")
+    facts.authors = reconcile_authors(printed, pdf.authors or "")
     facts.abstract, facts.abstract_block_ids = _marked_abstract(blocks)
     if not facts.abstract:
         facts.abstract, facts.abstract_block_ids = _abstract(blocks)
     if not facts.abstract:
         facts.abstract, facts.abstract_block_ids = _gist(blocks)
     planned = any("part" in json.loads(block.payload_json or "{}") for block in blocks)
-    facts.outline = _outline(blocks, planned=planned)
+    facts.outline = _outline(blocks, planned=planned, manifest=manifest)
     return facts
 
 

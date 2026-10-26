@@ -168,8 +168,9 @@ describe("CanonicalReader with a structured (schema 2) document", () => {
       "Ada Lovelace, Grace Hopper, Alan Turing",
       "Keywords: reading; layout",
       "Abstract", "We present a method.", "It works well.",
+      // The entry is printed where it stands; no heading the document lacks is added.
       "Introduction", "Reading comes first.", "Method", "1. Open the file",
-      "References", "[1] Smith 2020.",
+      "[1] Smith 2020.",
     ]);
     expect(container.querySelectorAll("h1")).toHaveLength(1);
     expect(screen.getByRole("heading", { level: 1, name: "A study of reading" })).toBeVisible();
@@ -303,7 +304,7 @@ describe("CanonicalReader with a structured (schema 2) document", () => {
     expect(container.querySelector("#snippet")?.textContent).toBe("const a = 1;\nconst b = 2;");
   });
 
-  it("lists the bibliography once, under the heading the paper prints for it", () => {
+  it("prints the bibliography once, in place under the heading the paper prints for it", () => {
     const { container } = render(<CanonicalReader document={document([
       element("intro", "heading", "Introduction", { payload: { level: 2 } }),
       element("para", "paragraph", "Cited work [1].", { mentions: [{ id: "mention_1", start: 11, end: 14, raw: "[1]", status: "resolved", targets: ["ref_1"] }] }),
@@ -312,8 +313,10 @@ describe("CanonicalReader with a structured (schema 2) document", () => {
     ], planned())} />);
     expect(screen.getAllByRole("heading", { name: "Literature cited" })).toHaveLength(1);
     expect(screen.queryByRole("heading", { name: "References" })).not.toBeInTheDocument();
-    expect(container.querySelector("section.gx-document-references h2")).toHaveAttribute("id", "literature");
+    expect(container.querySelector("section.gx-document-references")).toBeNull();
     expect(screen.getAllByText("[1] Smith 2020.")).toHaveLength(1);
+    // The entry follows its own heading and is the citation's target.
+    expect(container.querySelector("#literature + p.gx-document-reference")).toHaveAttribute("id", "ref_1");
     expect(screen.getByRole("link", { name: "Literature cited" })).toHaveAttribute("href", "#literature");
     expect(screen.getByRole("link", { name: "Return to citation" })).toHaveAttribute("href", "#mention_1");
   });
@@ -393,5 +396,98 @@ describe("CanonicalReader with a structured (schema 2) document", () => {
     expect(container.querySelector("#by")).toHaveClass("gx-document-authors");
     expect(screen.getByText("Received 3 May 2024")).toBeVisible();
     expect(screen.getByText("Ada Lovelace", { selector: "dd" })).toBeVisible();
+  });
+});
+
+describe("CanonicalReader shows what extraction could and could not read", () => {
+  it("marks characters read from their printed shapes and characters it could not read", () => {
+    const { container } = render(<CanonicalReader document={document([
+      element("value", "paragraph", "The mean change was −0.42 (n = 12) and x�y.", { payload: { inlineSpans: [
+        { start: 20, end: 21, mark: "decoded", from: "2" },
+        { start: 26, end: 27, mark: "decoded", from: "ð" },
+        { start: 40, end: 41, mark: "uncertain", from: "" },
+      ] } }),
+    ], planned(), [])} />);
+    const decoded = [...container.querySelectorAll(".gx-glyph-decoded")];
+    expect(decoded.map((node) => node.textContent)).toEqual(["−", "("]);
+    expect(decoded[0]).toHaveAttribute("title", expect.stringContaining("“2”"));
+    expect(container.querySelector(".gx-glyph-uncertain")).toHaveAttribute("title", expect.stringContaining("Unreadable"));
+    expect(container.querySelector("#value")?.textContent).toBe("The mean change was −0.42 (n = 12) and x�y.");
+  });
+
+  it("sets a caption's sub- and superscripts and links its citation", () => {
+    const caption = "Figure 1. Drift of sensor S2 over 103 hours of operation [1].";
+    const { container } = render(<CanonicalReader document={document([
+      element("figure_1", "figure", caption, {
+        payload: { imageAssetId: "ast_figure", number: "1", caption, inlineSpans: [{ start: 27, end: 28, script: "sub" }, { start: 36, end: 37, script: "super" }] },
+        mentions: [{ id: "mention_f", start: 57, end: 60, raw: "[1]", status: "resolved", targets: ["ref_1"] }],
+      }),
+      element("refs", "heading", "References", { payload: { role: "references", level: 2 } }),
+      element("el_ref", "reference", "[1] Smith 2020."),
+    ], planned())} />);
+    const figcaption = container.querySelector("figcaption");
+    expect(figcaption?.querySelector("sub")?.textContent).toBe("2");
+    expect(figcaption?.querySelector("sup")?.textContent).toBe("3");
+    expect(figcaption?.textContent).toBe(caption);
+    expect(within(figcaption as HTMLElement).getByRole("link", { name: "[1]" })).toHaveAttribute("href", "#ref_1");
+  });
+
+  it("shows an equation printed in two dimensions as its picture, with its number and no text", () => {
+    render(<CanonicalReader document={document([
+      element("eq_1", "equation", "", { payload: { imageAssetId: "ast_eq", equationNumber: "(1)", transcription: "unreliable", transcriptionIssue: "two-dimensional layout" } }),
+      element("eq_2", "equation", "y = −2x + 1", { payload: { imageAssetId: "ast_eq2", equationNumber: "(2)", transcription: "available" } }),
+    ], planned(), [])} />);
+    // The pictures print their numbers; the reader names them without printing them again.
+    expect(screen.getByRole("img", { name: "Formula (1) from Page 1" })).toHaveAttribute("src", expect.stringContaining("ast_eq"));
+    expect(screen.queryByText("(1)")).not.toBeInTheDocument();
+    expect(screen.getByText("Shown as printed; no text transcription (two-dimensional layout).")).toBeVisible();
+    expect(screen.getByRole("img", { name: "Formula (2): y = −2x + 1" })).toBeVisible();
+    expect(screen.getAllByText(/no text transcription/)).toHaveLength(1);
+  });
+
+  it("lists every extraction problem and every block left out, with its page and reason", async () => {
+    const { container } = render(<CanonicalReader document={document([element("p", "paragraph", "Text.")], planned(undefined, {
+      extraction: { state: "partial", warnings: [
+        { kind: "glyphs-decoded", message: "Some characters were named wrongly by the PDF's fonts and were read from their printed shapes instead.", count: 7, pages: [1, 2] },
+        { kind: "figures-clipped", message: "Some figures may be cut off at an edge.", count: 1, pages: [2] },
+      ], omitted: { "page furniture": 1, "repeated references heading": 1 } },
+      omissions: [
+        { block: "b0", label: "page_header", reason: "page furniture", text: "Synthetic Sensors Letters 3 (2024) 41-52", page: 1 },
+        { block: "b30", label: "section_header", reason: "repeated references heading", text: "References", page: 4 },
+      ],
+    }), [])} />);
+    expect(screen.getByText(/Extraction incomplete: 2 problems to check · 2 source blocks left out/)).toBeVisible();
+    await userEvent.click(screen.getByText(/Extraction incomplete/));
+    expect(screen.getByText(/read from their printed shapes instead\. 7× \(pages 1, 2\)/)).toBeVisible();
+    const rows = [...container.querySelectorAll(".gx-extraction-omissions tbody tr")].map((row) => [...row.querySelectorAll("td")].map((cell) => cell.textContent));
+    expect(rows).toEqual([
+      ["1", "page furniture", "Synthetic Sensors Letters 3 (2024) 41-52"],
+      ["4", "repeated references heading", "References"],
+    ]);
+  });
+
+  it("keeps the printed publication dates apart from the file's own timestamps and software", async () => {
+    render(<CanonicalReader document={document([element("p", "paragraph", "Text.")], planned(undefined, { metadata: {
+      published: [{ value: "2 June 2024", origin: "document", status: "observed" }],
+      received: [{ value: "3 March 2024", origin: "document", status: "observed" }],
+      doi: [{ value: "10.5555/sensors.2024.17", origin: "document", status: "observed" }],
+      fileCreated: [{ value: "D:20250115093000+02'00'", origin: "pdf-info:/CreationDate", status: "observed" }],
+      fileProducer: [{ value: "Example PDF Library 9.0", origin: "pdf-info:/Producer", status: "observed" }],
+      authors: [
+        { value: "Kovač, A.; Ortiz, B.", origin: "pdf-info:/Author", status: "observed" },
+        { value: "Ana Kovač; Ben Ortiz", origin: "xmp:creator", status: "observed" },
+        { value: "Ana Kovač, Ben Ortiz and Chen Li", origin: "document", status: "observed" },
+      ],
+    } }), [])} />);
+    await userEvent.click(screen.getByText("Document details"));
+    const terms = [...window.document.querySelectorAll(".gx-document-details dt")].map((node) => node.textContent);
+    const group = screen.getByText("About this file (not publication dates)");
+    expect(terms.indexOf("Published")).toBeLessThan(terms.indexOf("File created"));
+    expect(group.compareDocumentPosition(screen.getByText("2 June 2024")) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    expect(screen.getByText("2025-01-15 09:30:00 UTC+02:00")).toBeVisible();
+    expect(screen.getByText("PDF written by (software)")).toBeVisible();
+    expect(screen.queryByText("Publisher")).not.toBeInTheDocument();
+    // Three declarations of the authors read as the printed byline, each author once.
+    expect(screen.getByText("Ana Kovač · Ben Ortiz · Chen Li")).toBeVisible();
   });
 });

@@ -82,7 +82,8 @@ def test_html_superscript_markers_use_document_references_not_guessed_numbers():
         "<h2>References</h2><p>[1] Smith 2020.</p><p>[2] Jones 2021.</p>"
     )
     _, mentions = reference_data(document.elements)
-    assert [(m["raw"], m["status"]) for m in mentions] == [("1,2", "resolved"), ("9", "unresolved")]
+    # x⁹ is a power: a raised number right after a one-letter symbol cites nothing.
+    assert [(m["raw"], m["status"]) for m in mentions] == [("1,2", "resolved")]
     assert all(m["method"] == "numeric-superscript" for m in mentions)
 
 

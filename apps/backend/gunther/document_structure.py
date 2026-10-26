@@ -160,6 +160,42 @@ def pdf_metadata(path: Path, document: ParsedDocument | None = None) -> dict:
     return metadata
 
 
+def pdf_facts(path: Path) -> dict:
+    """The file's physical page count and its bookmarks (title, page, nesting level).
+
+    Bookmarks are the document's own navigation; a broken outline is skipped, never
+    guessed at. At most 2,000 are read.
+    """
+    from pypdf import PdfReader
+
+    from gunther.asset_service import _limited_pdf_filters
+
+    facts: dict = {}
+    with _limited_pdf_filters():
+        reader = PdfReader(path, strict=False)
+        facts["pageCount"] = len(reader.pages)
+        bookmarks: list[dict] = []
+
+        def visit(nodes, level=1):
+            for node in nodes:
+                if len(bookmarks) >= 2000:
+                    return
+                if isinstance(node, list):
+                    visit(node, level + 1)
+                    continue
+                with suppress(Exception):
+                    page = reader.get_destination_page_number(node)
+                    title = _clean(node.title)
+                    if page is not None and title:
+                        bookmarks.append({"title": title, "page": page + 1, "level": level})
+
+        with suppress(Exception):
+            visit(reader.outline)
+        if bookmarks:
+            facts["bookmarks"] = bookmarks
+    return facts
+
+
 def _native_hierarchy(reader, document: ParsedDocument) -> None:
     """Partial bookmarks calibrate matching font styles on the remaining pages.
 

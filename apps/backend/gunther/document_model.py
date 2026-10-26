@@ -681,20 +681,53 @@ def _joined(
     blocks: list[Block], separator: str | Callable[[str], str] = " "
 ) -> tuple[str, list[dict]]:
     """The blocks' texts one after the other, with their inline spans moved to match."""
+    text, spans, _ = _joined_parts(blocks, separator)
+    return text, spans
+
+
+def _joined_parts(
+    blocks: list[Block], separator: str | Callable[[str], str] = " "
+) -> tuple[str, list[dict], dict[str, tuple[int, int]]]:
+    """``_joined``, and where each block's text starts and ends in the result."""
     text, spans, glued = "", [], False
+    offsets: dict[str, tuple[int, int]] = {}
     for block in blocks:
         if not block.text.strip():
             continue
         if text and not glued:
             text += separator(text) if callable(separator) else separator
         spans.extend(_shifted(span, len(text)) for span in block.inline)
+        offsets[block.id] = (len(text), len(text) + len(block.text))
         text += block.text
         # A word hyphenated at the end of one region goes on at the start of the next.
         glued = bool(block.extra.get("joinsNext"))
-    return text, spans
+    return text, spans, offsets
 
 
-def _anchor(blocks: list[Block]) -> dict:
+def _regions(
+    blocks: list[Block], offsets: dict[str, tuple[int, int]] | None = None,
+    role: str | None = None,
+) -> list[dict]:
+    """Every page region of the blocks; with ``offsets``, the element text each one holds.
+
+    A block of one region gives that region its text span; the regions of a block the
+    parser read as one item share the block's span.
+    """
+    found = []
+    for block in blocks:
+        for region in block.regions:
+            entry = copy.deepcopy(region)
+            if offsets and block.id in offsets:
+                entry["textStart"], entry["textEnd"] = offsets[block.id]
+            if role:
+                entry["role"] = role
+            if ref := block.extra.get("documentRef"):
+                entry["documentRef"] = ref
+            found.append(entry)
+    return found
+
+
+def _anchor(blocks: list[Block], offsets: dict[str, tuple[int, int]] | None = None) -> dict:
     """Page and box of the first block; spans keep every region of all of them."""
     first = blocks[0]
     anchor: dict = {}
@@ -705,7 +738,7 @@ def _anchor(blocks: list[Block]) -> dict:
     if first.box:
         left, top, right, bottom = first.box
         anchor["bboxPpm"] = [left, top, right - left, bottom - top]
-    if spans := [copy.deepcopy(region) for block in blocks for region in block.regions]:
+    if spans := _regions(blocks, offsets):
         anchor["spans"] = spans
     return anchor
 
@@ -718,6 +751,26 @@ def _union(blocks: list[Block], page: int | None) -> list[int] | None:
     left, top = min(box[0] for box in boxes), min(box[1] for box in boxes)
     right, bottom = max(box[2] for box in boxes), max(box[3] for box in boxes)
     return [left, top, right - left, bottom - top]
+
+
+def table_text(data: dict) -> str:
+    """A table's text row by row, its cells in column order: an answer stays on the line
+    of the item it answers ("Exits marked | ☒ | ☐ | ☐"), in search as on the page."""
+    cells = data.get("table_cells") or []
+    if not all(
+        isinstance(cell.get(key), int)
+        for cell in cells for key in ("start_row_offset_idx", "start_col_offset_idx")
+    ):
+        # Without grid positions, the layout parser's own order: one cell per line.
+        return "\n".join(str(cell.get("text", "")) for cell in cells)
+    rows: dict[int, list[tuple[int, str]]] = {}
+    for cell in cells:
+        rows.setdefault(cell["start_row_offset_idx"], []).append(
+            (cell["start_col_offset_idx"], str(cell.get("text", "")).strip())
+        )
+    return "\n".join(
+        " | ".join(text for _, text in sorted(row)) for _, row in sorted(rows.items())
+    )
 
 
 def _grid(blocks: list[Block]) -> dict:
@@ -777,14 +830,68 @@ def _author_text(block: Block) -> str:
     return text.strip(" ,")
 
 
-def _add_field(metadata: dict, name: str, value: str) -> None:
+def _add_field(metadata: dict, name: str, value: str, anchor: dict | None = None) -> None:
     """Add a value the plan found, in the shape of the declared metadata, once."""
     text = " ".join(value.split())[:2000]
     if not text:
         return
     choices = metadata.setdefault(name, [])
     if not any(c["value"] == text and c["origin"] == "document" for c in choices):
-        choices.append({"value": text, "origin": "document", "status": "observed"})
+        choice = {"value": text, "origin": "document", "status": "observed"}
+        if anchor:
+            choice["anchor"] = anchor
+        choices.append(choice)
+
+
+def _cited(anchor: dict) -> dict:
+    return {key: anchor[key] for key in ("page", "bboxPpm", "documentRef") if key in anchor}
+
+
+def _heading_key(text: str) -> str:
+    return re.sub(r"[\W\d_]+", "", text.casefold())
+
+
+# Drop reasons of the draft whose blocks are the document's own declarations.
+METADATA_PLACEMENTS = {"dates": "dates", "identifier line": "identifier", "licence": "rights"}
+# "Received 3 May 2021; accepted 9 June 2021": a label, then its value up to the next one.
+_DECLARED = re.compile(
+    r"(?P<label>received|revised|accepted|published(?:\s+online)?|first\s+published|"
+    r"available\s+online|publication\s+date|date\s+of\s+publication|issued|"
+    r"出版日期|发布日期|接收日期|修订日期|录用日期)\s*(?:on|in)?\s*[:：]?\s*"
+    r"(?P<value>.+?)(?=\s*[;,|·]?\s*(?:received|revised|accepted|published|first\s+published|"
+    r"available\s+online|publication\s+date|date\s+of\s+publication|issued|出版日期|"
+    r"发布日期|接收日期|修订日期|录用日期)\b|\s*[;,|·]?\s+(?:https?://|www\.|doi\b|10\.\d{4,9}/)"
+    r"|\s*$)",
+    re.I | re.S,
+)
+_DATE_NAMES = {
+    "received": "received", "接收日期": "received", "revised": "revised", "修订日期": "revised",
+    "accepted": "accepted", "录用日期": "accepted", "issued": "issued",
+}
+_YEAR = re.compile(r"\b(?:1[6-9]|20)\d{2}\b")
+_DOI = re.compile(r"\b10\.\d{4,9}/[^\s\"<>]+", re.I)
+
+
+def printed_declarations(text: str, role: str) -> list[tuple[str, str]]:
+    """Metadata fields a printed declaration states, word for word.
+
+    Dates keep their printed form and their label (received, accepted, published …);
+    only a value holding a year counts. A DOI is the identifier as printed. A notice
+    of rights is kept whole. Nothing is inferred from file timestamps here.
+    """
+    found: list[tuple[str, str]] = []
+    if role == "dates":
+        for match in _DECLARED.finditer(text):
+            value = match["value"].strip(" ;,.|·")
+            if not _YEAR.search(value):
+                continue
+            label = re.sub(r"\s+", " ", match["label"].casefold())
+            found.append((_DATE_NAMES.get(label, "published"), value[:120]))
+    if role in {"identifier", "dates", "rights"}:
+        found += [("doi", doi.rstrip(".,;)")) for doi in _DOI.findall(text)]
+    if role == "rights":
+        found.append(("rights", text))
+    return found
 
 
 class _Assembly:
@@ -807,6 +914,8 @@ class _Assembly:
             if all(evidence.get(block_id).placeable for block_id in (first, second))
         }
         self.element_of: dict[str, ParsedBlock] = {}
+        self.reference_headings: set[str] = set()
+        self.repeated: dict[str, str] = {}
 
     def build(self, status: StructureStatus) -> ParsedDocument:
         plan = self.plan
@@ -816,6 +925,10 @@ class _Assembly:
             self.emit("heading", subtitle, "front", level=2, role="subtitle", noEmbed=True)
         for block in self.blocks(plan.authors):
             self.author(block)
+        for drop in plan.drop:
+            if drop.reason in METADATA_PLACEMENTS:
+                for block_id in _placed(drop.blocks, self.evidence):
+                    self.metadata(block_id, drop.reason)
         for part in plan.front:
             self.part(part, "front")
         for section in plan.body:
@@ -850,8 +963,11 @@ class _Assembly:
         **payload: object,
     ) -> ParsedBlock | None:
         """Append one element made of ``blocks``; values that are None stay out of the payload."""
+        offsets = None
         if text is None:
-            text, spans = _joined(blocks)
+            text, spans, offsets = _joined_parts(blocks)
+        elif len(blocks) == 1 and text == blocks[0].text:
+            offsets = {blocks[0].id: (0, len(text))}
         if not text and kind not in _VISUAL_KINDS:
             return None
         first = blocks[0]
@@ -864,6 +980,9 @@ class _Assembly:
             base["marker"] = first.marker
         if len(blocks) == 1:
             base.update({k: v for k, v in first.extra.items() if k in {"textSource", "sourceText"}})
+        checks = {b.extra["glyphCheck"] for b in blocks if b.extra.get("glyphCheck")}
+        if "unverified" in checks:
+            base["glyphCheck"] = "unverified"
         if spans:
             base["inlineSpans"] = spans
         payload = {**base, **{key: value for key, value in payload.items() if value is not None}}
@@ -875,7 +994,7 @@ class _Assembly:
         if kind == "heading":
             self.stack.append((level, len(self.elements), text))
         headings = [entry[2] for entry in self.stack]
-        anchor = _anchor(blocks) if anchor is None else anchor
+        anchor = _anchor(blocks, offsets) if anchor is None else anchor
         page = anchor.get("page")
         locator = f"Page {page}" if page else (" / ".join(headings) or "Source text")
         element = ParsedBlock(text, kind, parent, headings, anchor, locator, payload)
@@ -899,7 +1018,16 @@ class _Assembly:
         )
 
     def part(self, part: Part, area: str) -> None:
-        if heading := self.blocks([part.heading] if part.heading else []):
+        heading = self.blocks([part.heading] if part.heading else [])
+        if heading and part.part == "references":
+            name = _heading_key(heading[0].text)
+            if name in self.reference_headings:
+                # The bibliography's heading printed again (on its next page): its entries
+                # go on in the same list, under the one heading.
+                self.repeated[heading[0].id] = "repeated references heading"
+                heading = []
+            self.reference_headings.add(name)
+        if heading:
             self.emit("heading", heading, area, level=part.level, role=part.part, noEmbed=True)
         kind, role = None, part.part
         if area == "front":
@@ -944,15 +1072,7 @@ class _Assembly:
             return
         label = block.label
         if label == "formula":
-            written = bool(block.text.strip())
-            self.emit(
-                "equation",
-                [block],
-                area,
-                imageKey=block.image_key,
-                transcription="available" if written else "unavailable",
-                noEmbed=None if written else True,
-            )
+            self.equation(block, area)
         elif label == "table":
             self.table(Table(id="", table=[block.id]), area)
         elif label == "picture":
@@ -964,6 +1084,50 @@ class _Assembly:
             if kind == "reference":
                 flags["reference"] = True
             self.emit(kind, [block], area, role=role, **flags)
+
+    def equation(self, block: Block, area: str) -> None:
+        """A formula's picture is the formula; its glyphs are its text only when they read
+        as one line and every glyph was checked against the print.
+
+        Otherwise the glyphs stay with the element as an unchecked text layer, out of the
+        text that is searched, copied and cited, and the element says why.
+        """
+        layout = block.extra.get("formulaLayout")
+        check = block.extra.get("glyphCheck")
+        written = bool(block.text.strip())
+        if not written:
+            transcription, issue = "unavailable", "no text layer"
+        elif check == "uncertain":
+            transcription, issue = "unreliable", "unreadable glyphs"
+        elif layout == "two-dimensional":
+            transcription, issue = "unreliable", "two-dimensional layout"
+        elif layout != "linear" or check not in {"verified", "decoded"}:
+            transcription, issue = "unreliable", "glyphs not checked"
+        else:
+            transcription, issue = "available", None
+        shown = transcription == "available"
+        self.emit(
+            "equation",
+            [block],
+            area,
+            text=block.text if shown else "",
+            spans=block.inline if shown else None,
+            imageKey=block.image_key,
+            transcription=transcription,
+            transcriptionIssue=issue,
+            textLayer=None if shown or not written else block.text,
+            glyphCheck=check,
+            equationNumber=block.extra.get("equationNumber"),
+            noEmbed=None if shown else True,
+        )
+
+    def metadata(self, block_id: str, reason: str) -> None:
+        """Dates, identifiers and notices printed in the document: its own declarations,
+        kept as metadata elements (listed with the document's details, not read inline)."""
+        for block in self.blocks([block_id]):
+            self.emit(
+                "metadata", [block], "front", role=METADATA_PLACEMENTS[reason], noEmbed=True
+            )
 
     def continue_element(self, element: ParsedBlock, block: Block) -> None:
         """A paragraph split by a column or page break is one element again."""
@@ -977,22 +1141,30 @@ class _Assembly:
             spans.extend(_shifted(span, offset) for span in block.inline)
         element.payload["blockIds"].append(block.id)
         element.payload.pop("sourceText", None)
+        if block.extra.get("glyphCheck") == "unverified":
+            element.payload["glyphCheck"] = "unverified"
         if block.regions:
-            element.anchor.setdefault("spans", []).extend(copy.deepcopy(block.regions))
+            element.anchor.setdefault("spans", []).extend(
+                _regions([block], {block.id: (offset, len(element.text))})
+            )
         self.element_of[block.id] = element
 
     def figure(self, figure: Figure, area: str) -> None:
         images, labels = self.blocks(figure.images), self.blocks(figure.labels)
         captions = self.blocks(figure.caption)
-        caption, spans = _joined(captions, _after_sentence)
+        caption, spans, offsets = _joined_parts(captions, _after_sentence)
         first = images[0]
         around = [*images, *labels]
         anchor = _anchor(around)
-        # The crop covers the picture and the labels printed around it, on its page.
+        # The caption's own regions, on whatever page it is printed, with its text spans.
+        anchor.setdefault("spans", []).extend(_regions(captions, offsets, role="caption"))
+        inner = [b for image in images for b in self.inside.get(image.id, [])]
+        # The crop covers the picture, the labels printed around it and the text the
+        # layout read as printed in it (tick labels, a legend), on its page.
         if first.box and first.page is not None:
-            anchor["bboxPpm"] = _union(around, first.page)
+            anchor["bboxPpm"] = _union([*around, *inner], first.page)
             anchor["cropSource"] = "plan-figure"
-        shown = [*labels, *(b for image in images for b in self.inside.get(image.id, []))]
+        shown = [*labels, *inner]
         self.emit(
             "figure",
             [*images, *captions, *labels],
@@ -1014,17 +1186,22 @@ class _Assembly:
         grids = [block for block in blocks if block.label == "table"]
         pictures = [block for block in blocks if block.label == "picture"]
         data = _grid(grids) if grids else {}
-        # As the layout parser's own export: the cells' texts, one per line.
-        text = "\n".join(str(cell.get("text", "")) for cell in data.get("table_cells", []))
-        caption, _ = _joined(captions, _after_sentence)
+        text = table_text(data)
+        caption, spans, offsets = _joined_parts(captions, _after_sentence)
         cells = text or "\n".join(b.text for b in grids if b.text.strip())
+        anchor = _anchor(blocks)
+        anchor.setdefault("spans", []).extend([
+            *_regions(captions, offsets, role="caption"), *_regions(footnotes, role="footnote"),
+        ])
         self.emit(
             "table",
             [*blocks, *captions, *footnotes],
             area,
-            # Search reads element text only; the caption says what the cells are.
+            # Search reads element text only; the caption says what the cells are. The
+            # caption comes first, so its inline spans hold for the element text too.
             text="\n\n".join(part for part in (caption, cells) if part),
-            anchor=_anchor(blocks),
+            spans=spans,
+            anchor=anchor,
             number=table.number,
             caption=caption,
             footnotes="\n".join(b.text for b in footnotes if b.text.strip()),
@@ -1033,6 +1210,61 @@ class _Assembly:
         )
 
     # -- Manifest
+
+    def omissions(self) -> list[dict]:
+        """One record per source block left out of the document, with its reason.
+
+        Dropped blocks (page furniture, decoration, …), repeated headings, and text
+        printed inside a picture that was itself left out. Blocks placed as metadata
+        are not omitted: they are elements.
+        """
+        records = []
+        reasons: dict[str, str] = {}
+        for drop in self.plan.drop:
+            if drop.reason in METADATA_PLACEMENTS:
+                continue
+            for block_id in expand(drop.blocks, self.evidence):
+                reasons.setdefault(block_id, drop.reason)
+        reasons.update(self.repeated)
+        for picture, inside in self.inside.items():
+            if picture in reasons:
+                for block in inside:
+                    reasons.setdefault(block.id, "printed inside a picture left out: "
+                                       + reasons[picture])
+        for block in self.evidence.blocks:
+            reason = reasons.get(block.id)
+            if reason is None or block.id in self.element_of:
+                continue
+            record = {"block": block.id, "label": block.label, "reason": reason,
+                      "chars": len(block.text), "text": block.text[:120]}
+            if ref := block.extra.get("documentRef"):
+                record["documentRef"] = ref
+            if block.page is not None:
+                record["page"] = block.page
+            if block.box:
+                left, top, right, bottom = block.box
+                record["bboxPpm"] = [left, top, right - left, bottom - top]
+            records.append(record)
+        return records
+
+    def accounting(self, omissions: list[dict]) -> dict:
+        """Every source block counted once: placed, printed inside a figure, or omitted."""
+        omitted = {record["block"] for record in omissions}
+        placed = set(self.element_of) - omitted
+        shown_inside = {
+            block.id for picture, inside in self.inside.items() if picture in self.element_of
+            for block in inside
+        }
+        counts = {
+            "blocks": len(self.evidence.blocks),
+            "placed": len(placed),
+            "insideFigures": len(shown_inside - placed - omitted),
+            "omitted": len(omitted),
+        }
+        counts["unaccounted"] = counts["blocks"] - counts["placed"] - counts["insideFigures"] - (
+            counts["omitted"]
+        )
+        return counts
 
     def manifest(self, status: StructureStatus) -> dict:
         outline = [
@@ -1050,6 +1282,9 @@ class _Assembly:
         for element in self.elements:
             if element.payload.get("role") in {"title", "authors"}:
                 _add_field(metadata, element.payload["role"], element.text)
+            elif element.kind == "metadata":
+                for name, value in printed_declarations(element.text, element.payload["role"]):
+                    _add_field(metadata, name, value, anchor=_cited(element.anchor))
         manifest: dict[str, object] = {
             "schema": 2,
             "method": "docling",
@@ -1058,9 +1293,99 @@ class _Assembly:
             "outline": outline,
             "metadata": metadata,
             "bodyFontSize": self.evidence.body_font_size,
-            "pageCount": len(self.evidence.pages),
+            # The file's physical pages, not the last page anything was placed on.
+            "pageCount": self.evidence.manifest.get("pageCount") or len(self.evidence.pages),
             "images": "pending",
+            "omissions": self.omissions(),
         }
+        manifest["accounting"] = self.accounting(manifest["omissions"])
         for key, value in self.evidence.manifest.items():
             manifest.setdefault(key, value)
         return manifest
+
+
+def extraction_report(document: ParsedDocument) -> dict:
+    """What the stored document cannot vouch for, apart from how it was structured.
+
+    ``complete`` only when every check found nothing to report; otherwise ``partial``
+    with one warning per kind of problem, counted, with the pages it affects.
+    Omitted blocks are listed in the manifest's ``omissions``; they are counted here.
+    """
+    manifest = document.manifest
+    warnings: list[dict] = []
+
+    def warn(kind: str, message: str, elements: list[ParsedBlock], count: int | None = None):
+        pages = sorted(
+            {e.anchor["page"] for e in elements if isinstance(e.anchor.get("page"), int)}
+        )
+        total = count if count is not None else len(elements)
+        warnings.append({"kind": kind, "message": message, "count": total, "pages": pages[:50]})
+
+    marked: dict[str, list[ParsedBlock]] = {"decoded": [], "uncertain": []}
+    glyphs = Counter()
+    for element in document.elements:
+        spans = element.payload.get("inlineSpans") or []
+        for kind in marked:
+            found = sum(s["end"] - s["start"] for s in spans if s.get("mark") == kind)
+            if found:
+                marked[kind].append(element)
+                glyphs[kind] += found
+    if marked["uncertain"]:
+        warn("glyphs-uncertain",
+             "Some printed characters could not be read from the PDF's text layer; they are "
+             "shown as \ufffd.", marked["uncertain"], glyphs["uncertain"])
+    if marked["decoded"]:
+        warn("glyphs-decoded",
+             "Some characters were named wrongly by the PDF's fonts and were read from their "
+             "printed shapes instead.", marked["decoded"], glyphs["decoded"])
+    unverified = [e for e in document.elements if e.payload.get("glyphCheck") == "unverified"]
+    if unverified:
+        warn("glyphs-unverified",
+             "Some text keeps the layout parser's reading although the glyph check found "
+             "misnamed glyphs in it.", unverified)
+    check = manifest.get("glyphCheck")
+    if isinstance(check, dict) and check.get("error") or manifest.get("nativeTextWarning"):
+        warn("glyphs-unchecked", "The text layer could not be checked against the print.", [], 0)
+    equations = [
+        e for e in document.elements
+        if e.kind == "equation" and e.payload.get("transcription") != "available"
+    ]
+    if equations:
+        warn("equations-image-only",
+             "Some equations are kept as images only: their text could not be read faithfully.",
+             equations)
+    clipped = [
+        e for e in document.elements if (e.payload.get("cropCheck") or {}).get("state") == "clipped"
+    ]
+    if clipped:
+        warn("figures-clipped",
+             "Some figure images may be incomplete: printed content runs past their edges.",
+             clipped)
+    missing = int(manifest.get("missingImages") or 0)
+    if missing:
+        warn("images-missing", "Some figure images could not be rendered.", [], missing)
+    forms = [f for f in manifest.get("formFields") or [] if f.get("placed") == "none"]
+    if forms:
+        warnings.append({
+            "kind": "form-unplaced", "count": len(forms),
+            "message": "Some form selections or answers could not be placed in the text.",
+            "pages": sorted({f["page"] for f in forms})[:50],
+        })
+    pages, read = manifest.get("pageCount"), manifest.get("layoutPageCount")
+    if isinstance(pages, int) and isinstance(read, int) and read < pages:
+        warnings.append({
+            "kind": "pages-unread", "count": pages - read, "pages": [],
+            "message": f"The layout parser read {read} of the file's {pages} pages.",
+        })
+    accounting = manifest.get("accounting") or {}
+    if accounting.get("unaccounted"):
+        warnings.append({
+            "kind": "blocks-unaccounted", "count": accounting["unaccounted"], "pages": [],
+            "message": "Some source blocks were neither placed nor recorded as omitted.",
+        })
+    omitted = Counter(record["reason"] for record in manifest.get("omissions") or [])
+    return {
+        "state": "partial" if warnings else "complete",
+        "warnings": warnings,
+        "omitted": dict(omitted.most_common()),
+    }

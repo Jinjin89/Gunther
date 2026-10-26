@@ -307,6 +307,9 @@ export function DocumentBody({ source, file }: { source: SourceDetail; file: Fil
   const [originalPage, setOriginalPage] = useState<number | null>(null);
   const blocks = useMemo(() => readerBlocks(structure.data?.blocks ?? []), [structure.data]);
   const pages = useMemo(() => {
+    // The file's own page count when the reading recorded it, not the last page with content.
+    const counted = Number(structure.data?.document?.manifest.pageCount);
+    if (Number.isInteger(counted) && counted > 0) return counted;
     const numbers = (structure.data?.blocks ?? []).map((block) => block.anchor.page ?? 0);
     return numbers.length ? Math.max(...numbers) || null : null;
   }, [structure.data]);

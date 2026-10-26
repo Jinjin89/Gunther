@@ -68,7 +68,7 @@ if (withParser && !existsSync(join(parserDir, "manifest.json"))) {
 }
 if (withParser && !process.argv.includes("--if-missing")) {
   const manifest = JSON.parse(readFileSync(join(parserDir, "manifest.json"), "utf8"));
-  const sources = ["apps/backend/gunther/document_parser.py", "apps/backend/gunther/document_structure.py", "apps/backend/gunther/pdf_native.py", "tools/document-parser/helper.py", "scripts/build-document-parser.py"];
+  const sources = ["apps/backend/gunther/document_parser.py", "apps/backend/gunther/document_structure.py", "apps/backend/gunther/pdf_native.py", "apps/backend/gunther/pdf_glyphs.py", "tools/document-parser/helper.py", "scripts/build-document-parser.py"];
   if (sources.some((name) => manifest.sourceHashes?.[name] !== createHash("sha256").update(readFileSync(join(root, name))).digest("hex"))) {
     process.stderr.write("The parser runtime is stale. Rebuild it with scripts/build-document-parser.py before packaging.\n");
     process.exit(1);

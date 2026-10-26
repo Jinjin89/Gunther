@@ -389,6 +389,22 @@ input.gx-item-title.is-editable::placeholder { color: var(--gx-ghost); }
 .gx-document-math-meta details { margin-inline-end: auto; }
 .gx-document-math-meta summary { font-weight: 500; color: var(--gx-faint); }
 .gx-document-math-meta details[open] { flex-basis: 100%; }
+/* What the extraction could not vouch for: quiet, inspectable, apart from the structure line. */
+.gx-document .gx-extraction-status { margin: 0 0 12px; font-family: var(--gx-font-sans); font-size: var(--gx-text-xs); line-height: 1.5; letter-spacing: 0; color: var(--gx-faint); }
+.gx-document .gx-extraction-status > summary { font-weight: 500; color: var(--gx-faint); }
+.gx-document .gx-extraction-status.is-partial > summary { color: var(--gx-ink-2); }
+.gx-extraction-status ul { margin: 0 0 8px; padding-left: 18px; }
+.gx-extraction-omissions { width: 100%; border-collapse: collapse; }
+.gx-extraction-omissions :is(th, td) { padding: 2px 8px 2px 0; text-align: left; vertical-align: top; border-bottom: 1px solid var(--gx-line); }
+.gx-extraction-omissions th { font-weight: 560; color: var(--gx-muted); white-space: nowrap; }
+.gx-document-details-group { color: var(--gx-muted); font-weight: 560; }
+.gx-document-conflict { color: var(--gx-faint); }
+/* A character read from its printed shape, and one the text layer could not name. */
+.gx-document .gx-glyph-decoded { text-decoration: underline dotted; text-decoration-color: var(--gx-faint); text-underline-offset: 0.18em; }
+.gx-document .gx-glyph-uncertain { outline: 1px dashed var(--gx-faint); outline-offset: 1px; border-radius: 2px; }
+.gx-document .gx-document-math-number { font-variant-numeric: tabular-nums; color: var(--gx-muted); }
+.gx-document .gx-document-math-note { margin-inline-end: auto; }
+.gx-document .gx-document-reference { margin-bottom: 0.5em; font-size: 0.94em; line-height: 1.6; }
 .gx-document .gx-document-note { margin-bottom: 0.5em; color: var(--gx-muted); font-size: calc(13px * var(--gx-fs, 1)); line-height: 1.6; }
 .gx-document .gx-document-note-marker { margin-inline-end: 0.15em; color: var(--gx-faint); font-variant-numeric: tabular-nums; }
 /* Structured documents: how the structure was decided, then the title's byline and keywords. */

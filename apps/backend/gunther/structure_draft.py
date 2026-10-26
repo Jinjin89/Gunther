@@ -165,11 +165,37 @@ def compute_clues(evidence: Evidence) -> None:
     _page_notes(doc)
     _picture_clues(doc)
     _title_clues(doc)
+    _bookmark_clues(doc)
     _continuations(doc)
     claimed = {image for group in _match_floats(doc) for image in group.images}
     for picture in doc.pictures:
         if picture.id not in claimed:
             picture.clues.append("no-caption")
+
+
+def _bookmark_clues(doc: _Doc) -> None:
+    """A block printing a bookmark's title on the bookmark's page is that heading.
+
+    Bookmarks are the document's own navigation, so they decide what is a heading
+    and how deep it sits ("bookmark:2"), wherever the type alone is unclear.
+    """
+    bookmarks = doc.evidence.manifest.get("bookmarks") or []
+    if not bookmarks:
+        return
+    wanted: dict[tuple[int, str], int] = {}
+    for mark in bookmarks:
+        key = _key(str(mark.get("title") or ""))
+        if key and isinstance(mark.get("page"), int):
+            wanted.setdefault((mark["page"], key), int(mark.get("level") or 1))
+    if not wanted:
+        return
+    top = min(wanted.values())
+    for block in doc.blocks:
+        if block.label not in TEXTUAL or not block.placeable or len(block.text) > 200:
+            continue
+        level = wanted.get((block.page, _key(block.text)))
+        if level is not None:
+            block.clues.append(f"bookmark:{level - top + 1}")
 
 
 def draft_plan(evidence: Evidence) -> Plan:
@@ -233,8 +259,12 @@ def _clue(block: Block, prefix: str) -> str | None:
 
 
 def _same_item(first: Block, second: Block) -> bool:
-    """Two regions the layout parser read as one item (see ``same-item:``)."""
+    """Two regions the layout parser read as one item (see ``same-item:``). Lines of one
+    item that the evidence set apart (``splitFrom``: a wide gap, a change of type) are
+    separate blocks, not one item's regions."""
     ref = first.extra.get("documentRef")
+    if first.extra.get("splitFrom") or second.extra.get("splitFrom"):
+        return False
     return first is not second and ref is not None and second.extra.get("documentRef") == ref
 
 
@@ -1506,7 +1536,9 @@ class _Draft:
         for h in headings:
             m = _NUMBERING.match(h.text)
             size = _half(h.font_size)
-            if m and m["arabic"]:
+            if mark := _clue(h, "bookmark:"):
+                level = int(mark)
+            elif m and m["arabic"]:
                 level = m["arabic"].count(".") + 1 + (1 if roman else 0)
             elif m and m["roman"]:
                 level = 1
@@ -1548,7 +1580,8 @@ class _Draft:
 
     def _is_heading(self, block: Block) -> bool:
         return block.label in HEADING_LABELS or (
-            _has(block, "heading:") and block.label in {"text", "other"} and len(block.text) <= 80
+            _has(block, "heading:", "bookmark:") and block.label in {"text", "other"}
+            and len(block.text) <= (200 if _has(block, "bookmark:") else 80)
         )
 
     def _sections(self) -> list[_Box]:

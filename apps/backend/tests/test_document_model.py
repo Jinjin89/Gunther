@@ -478,7 +478,7 @@ def test_elements_follow_the_reading_order_with_kinds_roles_and_parents():
         ("figure", None, "Figure 1. Overview of the method."),
         ("heading", None, "Methods"),
         ("paragraph", None, "We measured things twice."),
-        ("table", None, "Table 1. Results.\n\nName\nValue"),
+        ("table", None, "Table 1. Results.\n\nName | Value"),
         ("note", "note", "* Corresponding author"),
         ("heading", "references", "References"),
         ("reference", None, "[1] Smith, A. First work. 2020."),
@@ -637,7 +637,10 @@ def test_joined_blocks_keep_the_regions_of_both_and_chains_become_one_element():
     (element,) = built(plan, evidence).elements
     assert element.text == "One two three"
     assert element.payload["blockIds"] == ["b0", "b1", "b2"]
-    assert element.anchor["spans"] == [region, other]
+    # Each region says which part of the joined text it holds.
+    assert element.anchor["spans"] == [
+        {**region, "textStart": 0, "textEnd": 3}, {**other, "textStart": 4, "textEnd": 7},
+    ]
     assert "sourceText" not in element.payload
 
 
@@ -659,7 +662,9 @@ def test_a_figure_is_its_caption_with_the_union_box_of_its_images_and_labels():
     assert figure.anchor["bboxPpm"] == [50_000, 250_000, 650_000, 350_000]
     assert figure.anchor["cropSource"] == "plan-figure"
     assert figure.anchor["documentRef"] == "#/pictures/0"
-    assert figure.anchor["spans"] == [{"page": 2, "bboxPpm": [100_000, 300_000, 600_000, 300_000]}]
+    assert figure.anchor["spans"] == [{
+        "page": 2, "bboxPpm": [100_000, 300_000, 600_000, 300_000], "documentRef": "#/pictures/0",
+    }]
     assert figure.payload["number"] == "1"
     assert figure.payload["caption"] == "Figure 1. Overview of the method."
     assert figure.payload["imageKey"] == "#/pictures/0"
@@ -752,7 +757,7 @@ def test_a_table_has_its_cells_caption_and_footnotes():
     plan, evidence = paper()
     table = built(plan, evidence).elements[8]
     # The caption leads the searchable text; the grid stays in the payload.
-    assert table.text == "Table 1. Results.\n\nName\nValue"
+    assert table.text == "Table 1. Results.\n\nName | Value"
     assert table.payload["table"] == evidence.get("b13").table
     assert table.payload["number"] == "1"
     assert table.payload["caption"] == "Table 1. Results."
@@ -796,7 +801,7 @@ def test_a_table_cut_across_pages_is_stacked_into_one_grid():
     )
     plan = Plan(body=[Section(blocks=["T1"])], tables=[Table(id="T1", table=["b0", "b1"])])
     table = built(plan, evidence).elements[0]
-    assert table.text == "a\nb\nc\nd\ne\nf"
+    assert table.text == "a | b\nc | d\ne | f"
     data = table.payload["table"]
     assert (data["num_rows"], data["num_cols"]) == (3, 2)
     assert [c["start_row_offset_idx"] for c in data["table_cells"]] == [0, 0, 1, 1, 2, 2]
@@ -850,7 +855,8 @@ def test_blocks_become_the_element_their_label_calls_for():
         [
             Block("b0", "list_item", "First point", marker="•"),
             Block("b1", "code", "x = 1"),
-            Block("b2", "formula", "E = mc2", image_key="#/texts/9"),
+            Block("b2", "formula", "E = mc2", image_key="#/texts/9",
+                  extra={"formulaLayout": "linear", "glyphCheck": "verified"}),
             Block("b3", "formula", "", image_key="#/texts/10"),
             Block("b4", "table", "", table={"table_cells": [{"text": "A"}, {"text": "B"}]}),
             Block("b5", "picture", "", image_key="#/pictures/3"),
@@ -1021,10 +1027,11 @@ def test_the_manifest_describes_the_structure_and_the_evidence():
     assert manifest["documentType"] == "paper"
     assert manifest["structure"] == status.to_json()
     assert manifest["structure"]["violations"][0]["code"] == "no-title"
-    assert manifest["bodyFontSize"] == 9.5 and manifest["pageCount"] == 4
+    # The file's physical page count, not the pages the layout kept blocks on.
+    assert manifest["bodyFontSize"] == 9.5 and manifest["pageCount"] == 99
     assert manifest["images"] == "pending"
     # The evidence's own entries fill gaps only.
-    assert manifest["conversionStatus"] == "success" and manifest["pageCount"] == 4
+    assert manifest["conversionStatus"] == "success" and manifest["schema"] == 2
 
 
 def test_the_outline_lists_every_heading_but_the_title():

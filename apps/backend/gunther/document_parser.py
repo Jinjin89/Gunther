@@ -26,6 +26,7 @@ from gunther.document_structure import (
     group_visuals,
     in_reference_section,
     organize_document,
+    pdf_facts,
     pdf_metadata,
     recover_figure_regions,
 )
@@ -418,8 +419,16 @@ class DoclingError(RuntimeError):
 
 
 def attach_document_images(parsed: ParsedDocument, document: dict, directory: Path) -> None:
-    """Render detected equations and complete visual regions from the page pixels."""
+    """Render detected equations and complete visual regions from the page pixels.
+
+    Each crop is checked against its page image: ink joined to the visual that runs
+    past the detected box is taken in, and a crop that still cuts ink (other text
+    touching it) is marked ``clipped`` (``figure_crops``).
+    """
+    import numpy as np
     from PIL import Image
+
+    from gunther.figure_crops import complete_region
 
     pictures = {entry["ref"]: entry["file"] for entry in document.get("gunther_images", [])}
     pages = {entry["page"]: entry["file"] for entry in document.get("gunther_page_images", [])}
@@ -430,17 +439,21 @@ def attach_document_images(parsed: ParsedDocument, document: dict, directory: Pa
             raise ValueError("Invalid exported image path")
         return path
 
-    total = 0
-    for element in parsed.elements:
+    def visual(element) -> bool:
         # A table printed as a picture has no cells; its image is the table.
         picture_table = element.kind == "table" and not element.payload.get("table")
-        if element.kind not in {"figure", "embedded_image", "equation"} and not picture_table:
+        return element.kind in {"figure", "embedded_image", "equation"} or picture_table
+
+    total = 0
+    for element in parsed.elements:
+        if not visual(element):
             continue
         key = element.payload.get("imageKey")
-        page = pages.get(element.anchor.get("page"))
+        number = element.anchor.get("page")
+        page = pages.get(number)
         box = element.anchor.get("bboxPpm")
         image_file = pictures.get(key)
-        if page and box and (element.anchor.get("cropSource") or not image_file):
+        if page and box:
             with Image.open(local_file(page)) as image:
                 if image.width * image.height > 20_000_000:
                     raise ValueError("Oversized page image")
@@ -454,13 +467,29 @@ def attach_document_images(parsed: ParsedDocument, document: dict, directory: Pa
                 )
                 if crop[2] <= crop[0] or crop[3] <= crop[1]:
                     continue
+                gray = np.asarray(image.convert("L"))
+                others = [
+                    _pixels(region, image.width, image.height)
+                    for region in _other_text(parsed, element, number)
+                ]
+                crop, check = complete_region(gray, crop, others)
+                element.payload["cropCheck"] = {**check, "source": "page-pixels"}
+                if check["state"] == "extended":
+                    left, top, right, bottom = crop
+                    element.anchor["bboxPpm"] = [
+                        round(left / image.width * 1e6), round(top / image.height * 1e6),
+                        round((right - left) / image.width * 1e6),
+                        round((bottom - top) / image.height * 1e6),
+                    ]
                 output = io.BytesIO()
                 image.crop(crop).save(output, "PNG")
                 data = output.getvalue()
         elif image_file:
             data = local_file(image_file).read_bytes()
+            element.payload["cropCheck"] = {"state": "unchecked", "source": "layout-image"}
         else:
             continue
+        box = element.anchor.get("bboxPpm")
         size = document.get("pages", {}).get(str(element.anchor.get("page")), {}).get("size", {})
         if box and size.get("width"):
             # Physical width lets the reader print a formula at the text's own size.
@@ -474,9 +503,51 @@ def attach_document_images(parsed: ParsedDocument, document: dict, directory: Pa
         e.kind in {"figure", "equation"} and e.payload.get("imageKey") not in keys
         for e in parsed.elements
     )
-    parsed.manifest.update(missingImages=missing, images="partial" if missing else "preserved")
+    clipped = sum(
+        (e.payload.get("cropCheck") or {}).get("state") == "clipped" for e in parsed.elements
+    )
+    parsed.manifest.update(
+        missingImages=missing, clippedImages=clipped,
+        images="partial" if missing or clipped else "preserved",
+    )
     if body := body_font_size(parsed):
         parsed.manifest["bodyFontSize"] = body
+
+
+# Elements whose regions are pictures, not text a crop must stop at.
+_PICTURE_KINDS = frozenset({"figure_text", "figure_panel"})
+
+
+def _other_text(parsed: ParsedDocument, element, page) -> list[list[int]]:
+    """Regions on ``page`` a visual's crop must not take in: every other element's, and
+    the visual's own caption and notes."""
+    regions = []
+    for other in parsed.elements:
+        if other.kind in _PICTURE_KINDS:
+            continue
+        own = other is element
+        spans = other.anchor.get("spans") or (
+            [{"page": other.anchor.get("page"), "bboxPpm": other.anchor.get("bboxPpm")}]
+        )
+        for span in spans:
+            if span.get("page") != page or not span.get("bboxPpm"):
+                continue
+            if own and span.get("role") not in {"caption", "footnote"}:
+                continue
+            regions.append(span["bboxPpm"])
+        if not own and other.kind in {"figure", "equation", "embedded_image"} and (
+            other.anchor.get("page") == page and other.anchor.get("bboxPpm")
+        ):
+            regions.append(other.anchor["bboxPpm"])
+    return regions
+
+
+def _pixels(region: list[int], width: int, height: int) -> tuple[int, int, int, int]:
+    left, top, w, h = region
+    return (
+        int(left / 1e6 * width), int(top / 1e6 * height),
+        int((left + w) / 1e6 * width + 1), int((top + h) / 1e6 * height + 1),
+    )
 
 
 def docling_budget(path: Path) -> tuple[int, int]:
@@ -631,6 +702,15 @@ class DoclingParser:
                 raise ValueError("Document representation exceeds the processing budget")
             document = json.loads(output.read_text(encoding="utf-8"))
             self.version = (str(document.get("gunther_parser", "docling")) + "/adapter-v4")[:120]
+            try:
+                facts = pdf_facts(path)
+            except Exception:
+                facts = {}
+            # The file's own page count, whatever the layout parser read or kept.
+            if facts.get("pageCount") and not document.get("gunther_page_count"):
+                document["gunther_page_count"] = facts["pageCount"]
+            if facts.get("bookmarks"):
+                document["gunther_bookmarks"] = facts["bookmarks"]
             metadata_warning = None
             try:
                 metadata = pdf_metadata(path)
@@ -658,6 +738,10 @@ class DoclingParser:
             if metadata_warning:
                 parsed.manifest["metadataWarning"] = metadata_warning
             attach_document_images(parsed, document, Path(directory))
+            if parsed.manifest.get("schema") == 2:
+                from gunther.document_model import extraction_report
+
+                parsed.manifest["extraction"] = extraction_report(parsed)
             parsed.manifest["parser"] = self.version
             parsed.manifest.update(device=device, ocr="rapidocr-onnxruntime", offline=True)
             parsed.manifest.update(
