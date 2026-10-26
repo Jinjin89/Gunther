@@ -1,10 +1,15 @@
-"""Optional Docling process boundary. No cloud calls or implicit model downloads."""
+"""Optional Docling process boundary. No cloud calls or implicit model downloads.
+
+Layout parsing is offline. Only the structure reviser a caller passes in may call
+a model, to check how the document is organized.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import io
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -25,6 +30,8 @@ from gunther.document_structure import (
     recover_figure_regions,
 )
 from gunther.documents import DocumentAsset, ParsedDocument, split_reference_entries
+
+logger = logging.getLogger(__name__)
 
 # Run in an explicitly configured Python environment. The desktop sidecar stays
 # small and does not import PyTorch, download models, or execute document code.
@@ -366,6 +373,46 @@ def docling_document(document: dict) -> ParsedDocument:
     return parsed
 
 
+def structured_document(
+    document: dict, metadata: dict, reviser=None, *, source_id: str | None = None
+) -> ParsedDocument:
+    """Evidence, the rule draft, a model's correction when one is set up, then assembly.
+
+    See docs/DOCUMENT_STRUCTURE_PLAN.md. Imported here rather than at the top: the
+    offline layout helper imports this module for its program and has no model client.
+    """
+    from gunther.document_evidence import build_evidence
+    from gunther.document_model import StructureStatus, assemble, check
+    from gunther.structure_draft import compute_clues, draft_plan
+    from gunther.structure_model import StructureError, StructureTooLong
+
+    evidence = build_evidence(document, metadata)
+    compute_clues(evidence)
+    draft = draft_plan(evidence)
+    plan, status = draft, StructureStatus("needs-key")
+    if reviser is not None and any(block.placeable for block in evidence.blocks):
+        try:
+            plan, status = reviser.revise(evidence, draft, source_id=source_id)
+        except StructureTooLong:
+            status = StructureStatus("too-long")
+        except StructureError as error:
+            status = StructureStatus("failed", error=str(error))
+    if plan is draft:
+        status.violations = [v for v in check(draft, evidence) if v.severity == "warning"]
+    parsed = assemble(plan, evidence, status)
+    parsed.manifest.update(
+        layout="structured",
+        conversionStatus=document.get("gunther_status", "unknown"),
+        # Pages the layout read, including those whose every block was dropped, so
+        # native text never brings back what the plan removed.
+        layoutPages=sorted(
+            {region["page"] for block in evidence.blocks for region in block.regions}
+            | {block.page for block in evidence.blocks if block.page is not None}
+        ),
+    )
+    return parsed
+
+
 class DoclingError(RuntimeError):
     """A safe, actionable failure from the offline parser boundary."""
 
@@ -385,7 +432,9 @@ def attach_document_images(parsed: ParsedDocument, document: dict, directory: Pa
 
     total = 0
     for element in parsed.elements:
-        if element.kind not in {"figure", "embedded_image", "equation"}:
+        # A table printed as a picture has no cells; its image is the table.
+        picture_table = element.kind == "table" and not element.payload.get("table")
+        if element.kind not in {"figure", "embedded_image", "equation"} and not picture_table:
             continue
         key = element.payload.get("imageKey")
         page = pages.get(element.anchor.get("page"))
@@ -503,7 +552,19 @@ class DoclingParser:
                 return None
         return parser
 
-    def parse(self, path: Path, *, stopping: Callable[[], bool] | None = None) -> ParsedDocument:
+    def parse(
+        self,
+        path: Path,
+        *,
+        stopping: Callable[[], bool] | None = None,
+        reviser=None,
+        source_id: str | None = None,
+    ) -> ParsedDocument:
+        """The stored document; ``reviser`` is the model that checks its structure, if any.
+
+        Structure is decided here, not later, because figure crops come from the page
+        images in the parser's temporary folder.
+        """
         if not self.python.is_file() or not self.artifacts.is_dir():
             raise DoclingError("The offline layout runtime or model artifacts are unavailable")
         if path.stat().st_size > 64 * 1024 * 1024:
@@ -570,15 +631,32 @@ class DoclingParser:
                 raise ValueError("Document representation exceeds the processing budget")
             document = json.loads(output.read_text(encoding="utf-8"))
             self.version = (str(document.get("gunther_parser", "docling")) + "/adapter-v4")[:120]
-            parsed = docling_document(document)
+            metadata_warning = None
             try:
-                metadata = pdf_metadata(path, parsed)
+                metadata = pdf_metadata(path)
             except Exception as error:
                 metadata = {}
-                parsed.manifest["metadataWarning"] = (
+                metadata_warning = (
                     f"Some PDF metadata could not be read ({type(error).__name__})."
                 )
-            organize_document(parsed, metadata)
+            try:
+                parsed = structured_document(
+                    document, metadata, reviser, source_id=source_id
+                )
+            except Exception as error:
+                # A fault in the structure step must not cost the layout read: keep the
+                # older organized version and say so.
+                logger.exception("Document structure step failed; using the older layout")
+                parsed = docling_document(document)
+                with suppress(Exception):
+                    pdf_metadata(path, parsed)
+                organize_document(parsed, metadata)
+                parsed.manifest["structureWarning"] = (
+                    f"The document's structure could not be organized ({type(error).__name__}); "
+                    "showing the older layout version."
+                )
+            if metadata_warning:
+                parsed.manifest["metadataWarning"] = metadata_warning
             attach_document_images(parsed, document, Path(directory))
             parsed.manifest["parser"] = self.version
             parsed.manifest.update(device=device, ocr="rapidocr-onnxruntime", offline=True)

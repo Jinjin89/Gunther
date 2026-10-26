@@ -10,6 +10,9 @@ Everything here is read from the source's current revision without a model:
 - the abstract, with the blocks it came from, so it can be cited;
 - the outline: the section headings.
 
+A document organized by its structure plan (docs/DOCUMENT_STRUCTURE_PLAN.md)
+already marks its title, authors and abstract; those marks are used as they are.
+
 The result is kept in ``source_papers`` and written as ``summary.md`` in the
 library folder. Copies of one paper (the same DOI or arXiv id, else the same
 title) share a row in ``works``.
@@ -176,6 +179,38 @@ def pdf_facts(path: Path) -> PdfFacts:
     )
 
 
+def _role(block: ContentBlock) -> str | None:
+    return json.loads(block.payload_json or "{}").get("role")
+
+
+def _marked_authors(blocks: Sequence[ContentBlock]) -> str:
+    """The names in the document's own author lines, when its plan marked them."""
+
+    names: list[str] = []
+    for block in blocks:
+        if block.kind == "metadata" and _role(block) == "authors":
+            for part in re.split(r"\n|,|;|\band\b|&", block.content):
+                name = " ".join(part.split()).strip(" ,;")
+                if name and name not in names:
+                    names.append(name)
+    return ", ".join(names[:30])
+
+
+def _marked_abstract(blocks: Sequence[ContentBlock]) -> tuple[str, list[str]]:
+    """The paragraphs the document's plan marked as its abstract."""
+
+    texts: dict[object, str] = {}
+    ids: list[str] = []
+    for block in blocks:
+        if block.kind == "paragraph" and _role(block) == "abstract":
+            # A long paragraph is stored in pieces; they join without a space.
+            element = json.loads(block.payload_json or "{}").get("elementOrdinal", block.id)
+            texts[element] = texts.get(element, "") + block.content
+            ids.append(block.id)
+    text = " ".join(part.strip() for part in texts.values())
+    return text[:MAX_ABSTRACT], ids
+
+
 def _page(block: ContentBlock) -> int | None:
     page = json.loads(block.anchor_json or "{}").get("page")
     return page if isinstance(page, int) else None
@@ -301,11 +336,15 @@ def _gist(blocks: Sequence[ContentBlock]) -> tuple[str, list[str]]:
     return " ".join(part for _, part in parts)[: GIST * 2], [block for block, _ in parts]
 
 
-def _outline(blocks: Sequence[ContentBlock]) -> list[str]:
+def _outline(blocks: Sequence[ContentBlock], *, planned: bool = False) -> list[str]:
+    """Section headings; a planned document's headings are exactly its heading elements."""
+
     seen: list[str] = []
     for block in blocks:
         text = re.sub(r"\s+", " ", block.content).strip()
-        if block.kind != "heading" and not looks_like_heading(text):
+        if block.kind != "heading" and (planned or not looks_like_heading(text)):
+            continue
+        if block.kind == "heading" and _role(block) in {"title", "subtitle"}:
             continue
         if text.casefold().rstrip(" .:") in ABSTRACT_NAMES | {"references", "bibliography"}:
             continue
@@ -370,11 +409,16 @@ def read_paper(
         notice = YEAR_NOTICE.search(front_text)
         year = int(notice[1]) if notice else pdf.year
         facts.year = year if year and 1900 < year <= this_year + 1 else None
-    facts.authors = pdf.authors or (_authors(front, title) if title else "")
-    facts.abstract, facts.abstract_block_ids = _abstract(blocks)
+    facts.authors = (
+        pdf.authors or _marked_authors(blocks) or (_authors(front, title) if title else "")
+    )
+    facts.abstract, facts.abstract_block_ids = _marked_abstract(blocks)
+    if not facts.abstract:
+        facts.abstract, facts.abstract_block_ids = _abstract(blocks)
     if not facts.abstract:
         facts.abstract, facts.abstract_block_ids = _gist(blocks)
-    facts.outline = _outline(blocks)
+    planned = any("part" in json.loads(block.payload_json or "{}") for block in blocks)
+    facts.outline = _outline(blocks, planned=planned)
     return facts
 
 

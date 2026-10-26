@@ -257,6 +257,7 @@ def _native_hierarchy(reader, document: ParsedDocument) -> None:
 def organize_document(document: ParsedDocument, metadata: dict | None = None) -> None:
     """Retain observed roles and make section hierarchy available to every consumer."""
     metadata = metadata if metadata is not None else document.manifest.get("metadata", {})
+    page_roles(document)
     title_keys = {normalized(c["value"]) for c in metadata.get("title", [])}
     author_keys = [
         normalized(name) for c in metadata.get("authors", []) for name in c["value"].split(";")
@@ -379,7 +380,261 @@ def organize_document(document: ParsedDocument, metadata: dict | None = None) ->
         if previous is not None and _continues(previous, element, flow):
             element.payload["continuesDocumentRef"] = previous.payload["documentRef"]
         previous = element
+    mark_abstract(document)
     document.validate()
+
+
+ABSTRACT_HEADING = re.compile(
+    r"^(?:abstract|summary|synopsis|résumé|resumen|zusammenfassung|摘要|概要|要旨)$", re.I
+)
+NOTE_MARKER = re.compile(r"^\s*(?:[*†‡§¶#]|\d{1,2}\s*[A-Z])")
+
+
+def _demote(element: Any, kind: str, role: str) -> None:
+    element.payload.setdefault("sourceKind", element.kind)
+    element.kind = kind
+    element.payload.pop("level", None)
+    element.payload.update(role=role, noEmbed=True)
+
+
+def page_roles(document: ParsedDocument) -> None:
+    """Separate what the page prints around the text from the text itself.
+
+    Evidence is repetition and geometry: running heads that recur at a page
+    edge, uncaptioned images at the page edge or on several pages, small-type
+    notes closing a page, and narrow small-type margin columns beside the body.
+    Every element is kept with its original kind; only its role changes.
+    """
+    elements = document.elements
+    body = body_font_size(document)
+
+    def band(e):
+        box = _box(e)
+        if not box:
+            return None
+        return "top" if box[3] < 120_000 else "bottom" if box[1] > 900_000 else None
+
+    # Running heads and feet: the same short text at a page edge on several
+    # pages, or text the layout already recognised as a page header elsewhere.
+    known = {
+        normalized(e.text) for e in elements
+        if e.kind in {"page_header", "page_footer"} and normalized(e.text)
+    }
+    pages_by_text: dict[tuple, set] = defaultdict(set)
+    for e in elements:
+        if (edge := band(e)) and len(e.text) <= 120 and normalized(e.text):
+            pages_by_text[(normalized(e.text), edge)].add(e.anchor.get("page"))
+    largest = max(
+        (float(e.payload.get("fontSize") or 0) for e in elements if e.kind == "heading"),
+        default=0,
+    )
+    for e in elements:
+        edge, box, key = band(e), _box(e), normalized(e.text)
+        # A masthead can print a running label lower on the opening page.
+        known_head = key in known and len(e.text) <= 40 and box and box[3] < 250_000
+        if (
+            e.kind in {"heading", "paragraph"} and key and (edge or known_head)
+            and not (largest and float(e.payload.get("fontSize") or 0) >= largest)
+            and (known_head or key in known or len(pages_by_text[(key, edge)]) >= 2)
+        ):
+            _demote(e, "page_header" if edge != "bottom" else "page_footer", "running-text")
+
+    # Images without a caption that sit at a page edge or recur on several
+    # pages (logos, journal mastheads, licence badges) are not the document's
+    # figures; they stay available with the document details.
+    def captioned(e):
+        ref = e.payload.get("documentRef")
+        return bool(
+            e.payload.get("caption") or e.payload.get("captionRefs") or e.payload.get("captionRef")
+            or any(c.kind == "caption" and c.payload.get("visualOwner") == ref for c in elements)
+        )
+
+    figures = [e for e in elements if e.kind == "figure" and _box(e)]
+    numbered = any(CAPTION_LABEL.match(str(e.payload.get("caption", ""))) for e in figures)
+    for e in figures:
+        if captioned(e):
+            continue
+        box = _box(e)
+        area = (box[2] - box[0]) * (box[3] - box[1])
+        recurring = any(
+            other is not e and other.anchor.get("page") != e.anchor.get("page")
+            and all(abs(a - b) < 20_000 for a, b in zip(_box(other), box, strict=True))
+            for other in figures
+        )
+        if band(e) or box[3] < 150_000 or recurring or (numbered and area < 20_000_000_000):
+            _demote(e, "embedded_image", "decoration")
+            ref = e.payload.get("documentRef")
+            for other in elements:
+                if other.payload.get("visualOwner") == ref and other.kind == "figure_text":
+                    other.payload["role"] = "decoration-text"
+
+    # A lone glyph or a string without letters is not a paragraph: brackets of
+    # a formula, panel letters, invisible font-check strings.
+    for e in elements:
+        stripped = re.sub(r"\s", "", e.text)
+        if e.kind == "paragraph" and not e.payload.get("marker") and (
+            len(stripped) <= 2 or (len(stripped) <= 24 and not re.search(r"[^\W\d_]", stripped))
+        ):
+            _demote(e, "figure_text", "stray-glyphs")
+
+    # A bare link printed under a caption (a figure's own DOI) belongs to it,
+    # as does a bare link set in small type away from it.
+    previous = None
+    for e in elements:
+        size = e.payload.get("fontSize")
+        if (
+            e.kind == "paragraph"
+            and re.fullmatch(r"(?:https?://|doi:)\S+", e.text.strip(), re.I)
+            and (
+                (previous is not None and previous.kind in {"caption", "figure", "table"})
+                or (body and size and size < body * 0.95)
+            )
+        ):
+            _demote(e, "figure_text", "caption-link")
+            if previous is not None and previous.kind in {"caption", "figure", "table"} and (
+                owner := previous.payload.get("visualOwner", previous.payload.get("documentRef"))
+            ):
+                e.payload["visualOwner"] = owner
+        if e.kind not in {"figure_text", "figure_panel", "page_header", "page_footer"}:
+            previous = e
+
+    # Small-type notes closing a page: affiliations and correspondence on the
+    # opening page, and marked footnotes on any page.
+    first_page = min(
+        (e.anchor.get("page") for e in elements
+         if isinstance(e.anchor.get("page"), int) and e.kind not in NON_BODY),
+        default=1,
+    )
+    notes = [e for e in elements if id(e) in _page_notes(document)]
+    note_pages = {
+        e.anchor.get("page") for e in notes
+        if e.anchor.get("page") == first_page or NOTE_MARKER.match(e.text)
+        or any(s.get("start") == 0 and s.get("script") == "super"
+               for s in e.payload.get("inlineSpans", []))
+    }
+    for e in notes:
+        if e.anchor.get("page") in note_pages:
+            _demote(e, "footnote", "page-note")
+    # Marked notes at the foot of the opening page can share the body's size.
+    for e in elements:
+        box = _box(e)
+        if (
+            e.kind == "paragraph" and box and e.anchor.get("page") == first_page
+            and box[1] > 850_000 and NOTE_MARKER.match(e.text)
+            and not any(
+                _box(o) and _box(o)[1] > box[3] and o.kind == "paragraph"
+                and o.anchor.get("page") == first_page for o in elements
+            )
+        ):
+            _demote(e, "footnote", "page-note")
+
+    # Margin columns: small type in a strip much narrower than the body column
+    # and beside it, never overlapping it horizontally.
+    if not body:
+        return
+    prose: dict[object, list[tuple]] = defaultdict(list)
+    for e in elements:
+        size = e.payload.get("fontSize")
+        if e.kind == "paragraph" and len(e.text) > 200 and size and size >= body * 0.95 and _box(e):
+            prose[e.anchor.get("page")].append(_box(e))
+    def first_box(e):
+        # The element's own region; a layout merge may have appended text
+        # from elsewhere on the page.
+        b = e.anchor.get("bboxPpm")
+        if not isinstance(b, list) or len(b) != 4:
+            return None
+        return (b[0], b[1], b[0] + b[2], b[1] + b[3])
+
+    for e in elements:
+        columns = prose.get(e.anchor.get("page"))
+        size, box = e.payload.get("fontSize"), first_box(e)
+        if not (columns and box and size and size < body * 0.95):
+            continue
+        if e.kind not in {"paragraph", "heading", "list_item"} or e.payload.get("visualOwner"):
+            continue
+        width = sorted(b[2] - b[0] for b in columns)[len(columns) // 2]
+        beside = all(box[2] <= b[0] or box[0] >= b[2] for b in columns)
+        if beside and box[2] - box[0] < 0.6 * width:
+            _demote(e, "sidebar", "margin-column")
+    for e in figures:
+        columns = prose.get(e.anchor.get("page"))
+        box = _box(e)
+        if e.kind == "figure" and columns and not captioned(e):
+            width = sorted(b[2] - b[0] for b in columns)[len(columns) // 2]
+            beside = all(box[2] <= b[0] or box[0] >= b[2] for b in columns)
+            if box[2] - box[0] < 0.6 * width and beside:
+                _demote(e, "embedded_image", "decoration")
+
+
+def mark_abstract(document: ParsedDocument) -> None:
+    """The opening summary of a paper, so readers can start with it.
+
+    A heading naming the abstract is used when present. Otherwise the first
+    long paragraph on the title page, before any section heading, is the
+    abstract only in a document that also has a title and a bibliography.
+    The role is recorded as inferred; the text is unchanged.
+    """
+    elements = document.elements
+    positions = {id(e): i for i, e in enumerate(elements)}
+
+    def index_of(e):
+        return positions[id(e)]
+
+    for e in elements:
+        if e.payload.get("role") == "abstract":
+            e.payload.pop("role")
+            e.payload.pop("abstractSource", None)
+    title = next((e for e in elements if e.payload.get("role") == "title"), None)
+    body = body_font_size(document)
+    start = None
+    for index, e in enumerate(elements):
+        if e.kind == "heading" and ABSTRACT_HEADING.match(e.text.strip().rstrip(".:：")):
+            start = index
+            for follower in elements[index + 1:]:
+                if follower.kind == "heading":
+                    break
+                if follower.kind == "paragraph":
+                    follower.payload.update(role="abstract", abstractSource="heading")
+            break
+    if start is None:
+        if title is None or not any(e.kind == "reference" for e in elements):
+            return
+        for index, e in enumerate(elements[elements.index(title) + 1:], elements.index(title) + 1):
+            if e.anchor.get("page") != title.anchor.get("page") or e.kind == "heading":
+                return
+            size = e.payload.get("fontSize")
+            if (
+                e.kind == "paragraph" and len(e.text) >= 300 and not e.payload.get("visualOwner")
+                and not (size and body and size < body * 0.95)
+            ):
+                e.payload.update(role="abstract", abstractSource="first-page-position")
+                start = index
+                break
+        else:
+            return
+    # Short labels printed before the title on its page form the masthead.
+    if title is not None:
+        for e in elements[:elements.index(title)]:
+            if (
+                e.kind in {"paragraph", "heading"} and len(e.text) < 80
+                and e.anchor.get("page") == title.anchor.get("page")
+            ):
+                _demote(e, "page_header", "masthead")
+    # Small type on the title page before the first section is front matter
+    # (affiliations, correspondence, keywords), shown with the document details.
+    if title is None or not body or elements.index(title) > start:
+        return
+    for e in elements[elements.index(title) + 1:]:
+        if e.kind == "heading" and e.payload.get("role") != "title" and index_of(e) > start:
+            break
+        size = e.payload.get("fontSize")
+        if (
+            e.kind in {"paragraph", "list_item"} and size and size < body * 0.95
+            and e.anchor.get("page") == title.anchor.get("page")
+        ):
+            e.payload.setdefault("sourceKind", e.kind)
+            e.kind = "metadata"
+            e.payload.update(role="front-matter", noEmbed=True)
 
 
 CONTINUATION_SKIPPABLE = {

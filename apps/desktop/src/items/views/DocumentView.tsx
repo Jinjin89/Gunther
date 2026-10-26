@@ -318,7 +318,7 @@ export function DocumentBody({ source, file }: { source: SourceDetail; file: Fil
     </button>
   ) : null;
   let content;
-  if (structure.data?.document) content = <CanonicalReader document={structure.data.document} continuation={continuation} onOpenPage={asset ? setOriginalPage : undefined} />;
+  if (structure.data?.document) content = <CanonicalReader document={structure.data.document} continuation={continuation} onOpenPage={asset ? setOriginalPage : undefined} onReprocess={structure.reprocess} />;
   else if (original && asset) content = <OriginalText assetId={asset.id} mode={original} title={source.title} />;
   else if (blocks.length) content = <DocumentReader blocks={blocks} />;
   else if (file.extracted.trim()) content = <PlainText text={file.extracted} />;

@@ -22,6 +22,11 @@ function document(state: SourceDocument["processing"]["state"], revisionId = "na
   };
 }
 
+/** A document the structure plan assembled (schema 2), with the state of its structure check. */
+function structured(structure: Record<string, unknown>, state: SourceDocument["processing"]["state"] = "ready"): SourceDocument {
+  return { ...document(state, "layout"), manifest: { schema: 2, documentType: "paper", structure } };
+}
+
 beforeEach(() => {
   Object.values(api).forEach((mock) => mock.mockReset());
   api.sourcePaper.mockRejectedValue(new Error("Not yet summarized"));
@@ -94,5 +99,37 @@ describe("document layout status", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Read again" }));
     await waitFor(() => expect(api.reprocessSource).toHaveBeenCalledWith(source.id));
     expect(screen.getByText("Native readable paragraph.")).toBeVisible();
+  });
+
+  it("explains a failed structure check and tries again with the same Read again action", async () => {
+    api.sourceDocument.mockResolvedValue(structured({ state: "failed", by: "rules", error: "The model did not answer in the expected form." }));
+    render(<DocumentBody source={source} file={file} />);
+    expect(await screen.findByText("Structure check failed: The model did not answer in the expected form.")).toBeVisible();
+    expect(screen.getByText("Read and indexed")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(api.reprocessSource).toHaveBeenCalledWith(source.id));
+    await waitFor(() => expect(api.sourceDocument).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Layout readable paragraph.")).toBeVisible();
+  });
+
+  it("names the model that checked the structure and waits while the document is read again", async () => {
+    const checked = { state: "checked", by: "deepseek:deepseek-flash", error: null };
+    api.sourceDocument.mockResolvedValueOnce(structured(checked)).mockResolvedValue(structured(checked, "running"));
+    render(<DocumentBody source={source} file={file} />);
+    expect(await screen.findByText("Structure checked by deepseek-flash")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Read again" }));
+    expect(await screen.findByText("Reading layout…")).toBeVisible();
+    expect(screen.queryByText("Structure checked by deepseek-flash")).not.toBeInTheDocument();
+  });
+
+  it("asks for a model when the structure was only drafted, and shows nothing for an older document", async () => {
+    api.sourceDocument.mockResolvedValueOnce(structured({ state: "needs-key", by: "rules", error: null }));
+    const drafted = render(<DocumentBody source={source} file={file} />);
+    expect(await screen.findByText("Structure not checked by a model. Add one in Settings → Models, then Read again.")).toBeVisible();
+    drafted.unmount();
+    api.sourceDocument.mockResolvedValueOnce(document("ready", "layout"));
+    const older = render(<DocumentBody source={source} file={file} />);
+    expect(await screen.findByText("Layout readable paragraph.")).toBeVisible();
+    expect(older.container.querySelector(".gx-structure-status")).toBeNull();
   });
 });

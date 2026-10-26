@@ -15,6 +15,7 @@ from datetime import timedelta
 from difflib import SequenceMatcher
 from pathlib import Path
 from threading import Event, Thread
+from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, or_, select, update
 
@@ -39,6 +40,9 @@ from gunther.models import (
 )
 from gunther.portable_documents import archive_document, html_document, pdf_raster_images
 from gunther.recording_service import RecordingService
+
+if TYPE_CHECKING:
+    from gunther.structure_model import StructureReviser
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +80,7 @@ def reconcile_fallback(structured: ParsedDocument, fallback: ParsedDocument) -> 
             pages[page] = pages.get(page, "") + element.text
     normalized = {page: normalize(text)[0] for page, text in pages.items()}
     recovered = []
-    layout_pages = {
+    layout_pages = set(structured.manifest.get("layoutPages") or ()) or {
         span.get("page")
         for element in structured.elements
         if element.kind not in {"page_header", "page_footer", "metadata"}
@@ -145,12 +149,15 @@ class ProcessingWorker:
         document_parser: DoclingParser | None = None,
         digest_writer: digest.DigestWriter | None = None,
         recordings_dir: Path | None = None,
+        structure_reviser: StructureReviser | None = None,
     ):
         self.index = index
         self.sessions = index.sessions
         self.assets = assets
         self.document_parser = document_parser
         self.digest_writer = digest_writer
+        # The Analysis model that checks a document's structure while it is read.
+        self.structure_reviser = structure_reviser
         self.recordings_dir = recordings_dir
         self.stopping = Event()
 
@@ -382,7 +389,10 @@ class ProcessingWorker:
                 if self.document_parser and is_pdf:
                     result = (
                         self.document_parser.parse(
-                            path, stopping=lambda: self.stopping.is_set() or lease_lost.is_set(),
+                            path,
+                            stopping=lambda: self.stopping.is_set() or lease_lost.is_set(),
+                            reviser=self.structure_reviser,
+                            source_id=source_id,
                         )
                         if isinstance(self.document_parser, DoclingParser)
                         else self.document_parser.parse(path)
@@ -425,13 +435,17 @@ class ProcessingWorker:
                         limitations.append("Some figure images could not be rendered.")
                     if structured.manifest.get("metadataWarning"):
                         limitations.append(str(structured.manifest["metadataWarning"]))
+                    if structured.manifest.get("structureWarning"):
+                        limitations.append(str(structured.manifest["structureWarning"]))
                     if extras:
                         limitations.append(
                             "Missing pages were retained using text extraction; "
                             "their layout is uncertain."
                         )
                     warning = " ".join(limitations) or None
-                organize_document(document)
+                if document.manifest.get("schema") != 2:
+                    # A schema-2 document was organized by its plan; nothing re-decides it.
+                    organize_document(document)
                 self._retain_images(document, job_id, token)
                 document.manifest.update(parser=parser, warning=warning)
                 parsed = document.chunks()

@@ -4,7 +4,8 @@ A *provider* is one connection (DeepSeek, Kimi, GLM, Qwen, OpenAI, or a
 self-hosted server): a name, an address, a key, and the models chosen from it.
 A *role* is a job, with the model and effort it uses:
 
-- analysis: reading captures, their summaries, papers, and topic overviews;
+- analysis: reading captures (including organizing a document's structure),
+  their summaries, papers, and topic overviews;
 - ask: answering in Ask (each conversation can pick another model);
 - outputs: building reports and slides (follows Ask until a model is chosen for it);
 - photos: looking at photos, which needs a model that can see images.
@@ -95,7 +96,8 @@ ROLES: tuple[Role, ...] = (
     Role(
         "analysis",
         "Analysis",
-        "Reads what you capture and writes summaries, paper notes and topic overviews.",
+        "Reads what you capture: organizes documents and writes summaries, paper notes and "
+        "topic overviews.",
         "low",
     ),
     Role("ask", "Ask", "Answers questions. Each conversation can switch model.", "high"),

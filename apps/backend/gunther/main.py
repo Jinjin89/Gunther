@@ -67,6 +67,7 @@ from gunther.settings_api import router as settings_router
 from gunther.speech_api import router as speech_router
 from gunther.storage_api import router as storage_router
 from gunther.storage_budget import StorageBudget
+from gunther.structure_model import create_structure_reviser
 from gunther.trash import TrashService
 from gunther.trash_api import router as trash_router
 from gunther.tts_api import router as tts_router
@@ -159,6 +160,8 @@ def _connect_models(
         None if digest_writer else "setting" if settings.ai_summaries == "off" else "no_key"
     )
     worker.digest_writer = digest_writer
+    # Documents read from now on have their structure checked by the Analysis model.
+    worker.structure_reviser = create_structure_reviser(models)
     application.state.models = models
     application.state.model_registry = registry
     application.state.speech_registry = speech_registry.effective(

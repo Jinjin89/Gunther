@@ -6,7 +6,7 @@ from gunther.content import ParsedBlock
 from gunther.document_parser import attach_document_images, docling_document
 from gunther.document_structure import evidence_eligible, organize_document
 from gunther.documents import ParsedDocument
-from gunther.pdf_native import _native_text
+from gunther.pdf_native import SYMBOL_ENCODING, _native_text, _owned
 
 
 def region(x, y, width, height, page=1):
@@ -85,6 +85,47 @@ def test_native_scripts_and_discretionary_hyphens_keep_exact_offsets():
     assert [(result["text"][s["start"]:s["end"]], s["script"]) for s in result["scripts"]] == [
         ("i", "sub"), ("2", "super"),
     ]
+
+
+def test_a_line_end_outside_the_layout_box_still_separates_the_words():
+    def glyph(index, text, left):
+        return {"index": index, "text": text, "size": 10, "y": 20, "left": left,
+                "right": left + 5, "cy": 20, "page": 1}
+
+    # "frustrated" ends a line; its space and break lie past the box's right edge.
+    chars = [glyph(0, "e", 90), glyph(1, "d", 95), glyph(2, " ", 101),
+             {**glyph(3, "\r", 104), "y": 20}, {**glyph(4, "\n", 104), "y": 20},
+             {**glyph(5, "c", 10), "y": 8, "cy": 8}, {**glyph(6, "o", 15), "y": 8, "cy": 8}]
+    owner = {(1, index): (1.0, 0, 0) for index in (0, 1, 5, 6)}
+    owned = _owned({1: chars}, owner)
+    assert _native_text(owned[(0, 0)])["text"] == "ed co"
+    # Whitespace after a glyph that belongs to no region stays out.
+    assert _owned({1: [glyph(0, "x", 0), glyph(1, " ", 5)]}, {}) == {}
+
+
+def test_accents_badges_and_line_starts_are_read_from_the_glyphs():
+    def glyph(text, left, y=20, **extra):
+        return {"text": text, "size": 10, "y": y, "left": left, "right": left + 5,
+                "cy": y, "x": left + 2.5, "page": 1, **extra}
+
+    # A name, then on the next line an ORCID badge's glyphs and an accent drawn
+    # as its own glyph over the letter before it ("Ba¨r").
+    chars = [glyph(c, i * 5) for i, c in enumerate("Ada Lovelace")]
+    chars += [{"text": "\n", "size": 10, "y": 20, "left": 70, "right": 70, "cy": 20,
+               "x": 70, "page": 1}]
+    chars += [glyph("I", 0, 8, icon=True), glyph("D", 5, 8, icon=True), glyph(" ", 10, 8)]
+    chars += [glyph("B", 15, 8), glyph("a", 20, 8), glyph("¨", 20.5, 8), glyph("r", 25, 8)]
+    native = _native_text(chars)
+    assert native["text"] == "Ada Lovelace ID Bär"
+    assert native["lineStarts"] == [13]
+    assert native["icons"] == [{"start": 13, "end": 15}]
+
+
+def test_symbol_font_private_codes_read_as_their_characters():
+    assert [SYMBOL_ENCODING[code] for code in (0x61, 0x63, 0x68, 0x6D, 0xB1, 0xE5, 0xF2)] == [
+        "α", "χ", "η", "μ", "±", "∑", "∫",
+    ]
+    assert SYMBOL_ENCODING[0x20] == " " and len(SYMBOL_ENCODING) == 189
 
 
 def test_cross_page_sentence_continuation_requires_matching_structure_and_geometry():

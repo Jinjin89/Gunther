@@ -257,6 +257,34 @@ def test_a_note_without_an_abstract_is_summarised_by_its_opening():
     assert facts.abstract_block_ids == ["p"] and facts.year is None
 
 
+def test_a_planned_document_is_read_from_its_marks_not_guessed_again():
+    def block(id, kind, content, **payload):
+        return ContentBlock(
+            id=id, kind=kind, content=content, anchor_json='{"page": 1}',
+            payload_json=json.dumps({"part": "body", **payload}),
+        )
+
+    blocks = [
+        block("t", "heading", "Generative modelling of cell responses", role="title", part="front"),
+        block("a", "metadata", "Ada Lovelace, Grace Hopper & Alan Turing", role="authors"),
+        # The abstract printed without a heading, stored in two pieces.
+        block("x1", "paragraph", "Single-cell perturbation resp", role="abstract",
+              elementOrdinal=2, part="abstract"),
+        block("x2", "paragraph", "onses are predicted out of sample.", role="abstract",
+              elementOrdinal=2, part="abstract"),
+        block("h", "heading", "Results", level=2),
+        # Short bold text the old reader would take for a heading.
+        block("p", "paragraph", "Figure 2 Overview"),
+        block("r", "heading", "References", role="references", part="references"),
+    ]
+    facts = read_paper("scgen.pdf", blocks)
+    assert facts.title == "Generative modelling of cell responses"
+    assert facts.authors == "Ada Lovelace, Grace Hopper, Alan Turing"
+    assert facts.abstract == "Single-cell perturbation responses are predicted out of sample."
+    assert facts.abstract_block_ids == ["x1", "x2"]
+    assert facts.outline == ["Results"]
+
+
 # Papers, copies and folders ------------------------------------------------------
 
 

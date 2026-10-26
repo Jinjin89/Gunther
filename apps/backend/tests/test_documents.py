@@ -145,6 +145,23 @@ def test_partial_page_fallback_recovers_missing_text_without_repeating_known_tex
     )
 
 
+def test_fallback_never_restores_a_page_whose_blocks_the_plan_dropped():
+    kept = "The results section continues with a long paragraph about the method."
+    dropped = "Competing interests: the authors declare no competing interests at all."
+    structured = ParsedDocument(
+        [ParsedBlock(kept, anchor={"page": 1})],
+        manifest={"schema": 2, "layout": "structured", "layoutPages": [1, 2]},
+    )
+    fallback = ParsedDocument(
+        [ParsedBlock(kept, anchor={"page": 1}), ParsedBlock(dropped, anchor={"page": 2})]
+    )
+    assert reconcile_fallback(structured, fallback) == []
+    # A page the layout never read is still recovered.
+    fallback.elements.append(ParsedBlock("A third page the layout parser skipped entirely.",
+                                         anchor={"page": 3}))
+    assert [e.anchor["page"] for e in reconcile_fallback(structured, fallback)] == [3]
+
+
 def test_epub_uses_spine_order_and_preserves_relative_embedded_image(tmp_path):
     path = tmp_path / "book.epub"
     with ZipFile(path, "w") as archive:
