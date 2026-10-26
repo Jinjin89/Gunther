@@ -1,0 +1,82 @@
+{
+  "scope": "Blind problem handoff: observed PDF parsing and reading defects only. No document identities, source quotations, document-specific values, page locations, revision identifiers, screenshots or implementation recommendations.",
+  "findings": [
+    {
+      "id": "F01",
+      "priority": "P1",
+      "title": "Character decoding changes values and ordinary text",
+      "problem": "Arithmetic signs, digits, Greek symbols, delimiters and punctuation are decoded incorrectly. A minus sign can become a numeral, changing both the sign and magnitude of a reported value. Stray glyphs also appear inside ordinary words.",
+      "impact": "The reading version contains altered facts and damaged prose, not merely different typography."
+    },
+    {
+      "id": "F02",
+      "priority": "P1",
+      "title": "Equation images and their text transcriptions disagree",
+      "problem": "A displayed equation image can preserve the printed formula while its associated text has incorrect operators, indices, delimiters, symbol order or equation numbers, including control or private-use characters.",
+      "impact": "Copying, searching or retrieving the formula text can produce a mathematically different expression from the visible image."
+    },
+    {
+      "id": "F03",
+      "priority": "P1",
+      "title": "Figure crops remove real graphical content",
+      "problem": "The saved crop can end inside a figure rather than at its complete outer boundary. Lower or right portions of panels, bars, axes, diagrams and labels are clipped, including figures whose panels were grouped together successfully.",
+      "impact": "A retained image asset can be classified as preserved even though the figure is incomplete."
+    },
+    {
+      "id": "F04",
+      "priority": "P2",
+      "title": "Document citations are disconnected from bibliography entries",
+      "problem": "Bibliography entries are recognized and reference numbers appear in the body, but the in-text mentions have no resolved targets or return links.",
+      "impact": "The reader cannot navigate between a document citation and its bibliography entry. This concerns document bibliography references, independently of generated-summary evidence buttons."
+    },
+    {
+      "id": "F05",
+      "priority": "P2",
+      "title": "Recovered headings and bibliography navigation are incorrect",
+      "problem": "A running page header can be concatenated with a genuine section heading, producing a heading not printed as such. Repeated bibliography headings can also create duplicate contents links and an empty heading while the entries themselves are rendered elsewhere.",
+      "impact": "The section hierarchy and navigation do not faithfully represent the document organization."
+    },
+    {
+      "id": "F06",
+      "priority": "P2",
+      "title": "Publication metadata and author displays are inconsistent",
+      "problem": "Publication dates or years remain empty despite being printed in the document. An incomplete metadata byline can override a complete recovered byline. Equivalent author declarations are repeated instead of reconciled, and some file timestamps are displayed in their serialized storage format.",
+      "impact": "The document card, details panel and reading view can disagree about the same document. Publication dates must remain distinct from file timestamps."
+    },
+    {
+      "id": "F07",
+      "priority": "P2",
+      "title": "Displayed page counts do not match the PDF page count",
+      "problem": "The displayed count follows the last retained content anchor rather than the physical page count. Pages represented only by merged captions or omitted material can disappear from that count even when the stored manifest has the correct total.",
+      "impact": "The file card understates the file length and obscures coverage. This alone does not establish that the main text is missing."
+    },
+    {
+      "id": "F08",
+      "priority": "P2",
+      "title": "The document-card outline truncates silently",
+      "problem": "The outline stops at an arbitrary fixed entry limit while additional recovered headings exist. The card presents the shortened list or count without identifying it as partial.",
+      "impact": "Later sections become absent from the document-card navigation."
+    },
+    {
+      "id": "F09",
+      "priority": "P2",
+      "title": "Retained forms lose selection states and answer relationships",
+      "problem": "Checkbox states and row/column associations are flattened into unmarked text. Selected and unselected options, or not-applicable and involved states, become indistinguishable.",
+      "impact": "Keeping the option labels does not preserve the answers; the reading version can no longer express the form meaning."
+    },
+    {
+      "id": "F10",
+      "priority": "P2",
+      "title": "Caption typography ignores available inline formatting",
+      "problem": "Superscript and subscript spans recorded for captions are not applied when those captions are rendered. Exponents, variable indices and reference markers appear on the baseline.",
+      "impact": "Mathematical and citation notation in captions loses its printed structure even when the characters themselves were extracted correctly."
+    },
+    {
+      "id": "F11",
+      "priority": "P2",
+      "title": "Completeness limitations and omission decisions are not adequately reported",
+      "problem": "Confirmed text corruption and figure clipping receive no extraction warning while the result is marked ready or structurally checked. The persisted document lacks an auditable per-block record of omitted content and reasons. Cross-page captions can retain their text while losing independently inspectable provenance for the caption page.",
+      "impact": "Users cannot determine which material was retained, merged, omitted or extracted incompletely, or distinguish successful structural validation from faithful extraction."
+    }
+  ]
+}
