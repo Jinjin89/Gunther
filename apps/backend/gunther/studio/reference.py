@@ -101,6 +101,28 @@ actions (2–4 numbered items; lead ≤24, detail ≤100):
 Every content slide ends with:
 Note: What the presenter says…"""
 
+# Same grammar, purpose-appropriate wording and room beside source figures to teach them.
+STUDY_DECK_FORMAT = (
+    DECK_FORMAT.replace(
+        '"## Action title": one sentence, ideally 8–14 words,',
+        '"## Scientific title": clear framing,',
+    )
+    .replace(
+        "figure (only with a figure listed in the material; copy its reference exactly; takeaway ≤160):",
+        "figure (only with a listed source image; copy its reference exactly; takeaway ≤160; "
+        "optional 1–3 explanation bullets after it, shown beside the image: then the takeaway "
+        "≤120, each bullet ≤90 and all of them together ≤280, for a deck to read too):",
+    )
+    .replace(
+        "The gap opens above 30 °C outside [n]\n\nstatement",
+        "The gap opens above 30 °C outside [n]\n"
+        "- Test and comparison/control; axes and legend [n]\n"
+        "- Observation and conclusion it supports [n]\n"
+        "- Assumptions or limitation beside this result [n]\n\nstatement",
+    )
+)
+
+
 READ_NOTE = (
     "This deck is for reading: body limits are 1.5× those above (titles unchanged), and full "
     "short sentences are fine; notes are optional."

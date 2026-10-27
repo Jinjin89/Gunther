@@ -1302,6 +1302,35 @@ export interface OutputApproach {
   reviews?: StudioReview[] | null;
   /** The memo's source numbers (as a string) -> the number the text cites them by. */
   refMap?: Record<string, number> | null;
+  /** A deck made to explain a study ("explain_study" in purpose): why, and its argument. */
+  purposeReason?: string | null;
+  studyMap?: StudyMap | null;
+  figureReadings?: FigureReading[] | null;
+  /** What this deck could not check or still has open, in plain words. */
+  limitations?: string[] | null;
+  /** The scientific review's outcome: ready, delivered with open problems, or not reviewed. */
+  reviewStatus?: "ready" | "open_problems" | "unavailable" | null;
+}
+
+/** The study's argument, as the studio understood it before planning a scientific deck. */
+export interface StudyMap {
+  title?: string;
+  question: string;
+  prior_gap?: string;
+  contribution: string;
+  study_type?: string;
+  claims: Array<{ claim: string; central?: boolean; refs: number[]; limits?: string[] }>;
+  limitations?: string[];
+  open_questions?: string[];
+}
+
+/** What a vision model read in one source figure's pixels. */
+export interface FigureReading {
+  asset_id: string;
+  shows: string;
+  key_observation?: string;
+  legible: boolean;
+  uncertain?: string[];
 }
 
 /** What the studio found worth saying, before it planned. */

@@ -99,6 +99,7 @@ class Evidence:
     payload: Any = None
     # More of the source than the card shows, for the model to read; the card keeps `text`.
     context: str = ""
+    extraction_warnings: tuple[dict[str, Any], ...] = ()
 
     @property
     def key(self) -> tuple[str, str, str]:

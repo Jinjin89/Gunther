@@ -48,6 +48,9 @@ NUMBERED = re.compile(r"^\d+[.)]\s+(?P<text>.+)$")
 BULLET = re.compile(r"^[-*•]\s+(?P<text>.+)$")
 IMAGE = re.compile(r"^!\[[^\]]*\]\(gunther-asset:[A-Za-z0-9_-]+\)\s*$")
 NUMBER = re.compile(r"[-+−]?\d[\d,，.]*")
+# A figure slide with explanations puts its text in a 340 px column beside the image: what
+# fits there (the same in the app, the renderer and PPTX export: deck/units.ts).
+FIGURE_SIDE = {"takeaway": 120, "explanation": 90, "beside": 280}
 
 
 def units(text: str) -> int:
@@ -181,9 +184,9 @@ def check_slide(slide: Slide, *, first: bool, read: bool = False) -> list[str]:
     problems: list[str] = []
     factor = READ_FACTOR if read else 1.0
 
-    def limit(what: str, text: str, most: int, least: int = 1) -> None:
+    def limit(what: str, text: str, most: int, least: int = 1, scaled: bool = True) -> None:
         size = units(text)
-        most = int(most * factor) if what not in {"title"} else most
+        most = int(most * factor) if scaled and what not in {"title"} else most
         if size > most:
             problems.append(
                 f"{what} is {size} units long; the limit is {most}. Shorten it by {size - most}."
@@ -382,10 +385,25 @@ def check_slide(slide: Slide, *, first: bool, read: bool = False) -> list[str]:
             problems.append(
                 "The first line is the figure, copied exactly: ![caption](gunther-asset:…)."
             )
-        if len(body) != 2:
-            problems.append("Under the figure, one takeaway line.")
-        else:
+        if len(body) < 2 or len(body) > 5:
+            problems.append("Under the figure, one takeaway and up to three explanation bullets.")
+        explanations = [re.sub(r"^[-*]\s+", "", line) for line in body[2:]]
+        if any(not re.match(r"^[-*]\s+", line) for line in body[2:]):
+            problems.append("Figure explanations are bullets after the takeaway.")
+        if len(body) >= 2 and not explanations:
             limit("takeaway", body[1], 160)
+        elif len(body) >= 2:
+            # Beside the figure the text has a fixed column, a deck for reading included.
+            limit("takeaway", body[1], FIGURE_SIDE["takeaway"], scaled=False)
+            for line in explanations:
+                limit("explanation", line, FIGURE_SIDE["explanation"], scaled=False)
+            beside = units(body[1]) + sum(units(line) for line in explanations)
+            if beside > FIGURE_SIDE["beside"]:
+                problems.append(
+                    f"The text beside the figure is {beside} units; the takeaway and its "
+                    f"explanations may use {FIGURE_SIDE['beside']} together. Shorten it by "
+                    f"{beside - FIGURE_SIDE['beside']}."
+                )
     elif layout == "statement":
         if not other:
             problems.append("Write the statement line under the title.")
@@ -414,7 +432,7 @@ def check_slide(slide: Slide, *, first: bool, read: bool = False) -> list[str]:
 
 
 def check_deck(
-    content: str, *, read: bool = False, notes_required: bool = True
+    content: str, *, read: bool = False, notes_required: bool = True, scientific: bool = False
 ) -> list[tuple[int, list[str]]]:
     """Each slide (counted from 1) with what is wrong with it; slides with nothing wrong are
     left out."""
@@ -437,8 +455,10 @@ def check_deck(
         latin_words = re.findall(r"[A-Za-z0-9'’%.-]+", CITE.sub("", slide.title))
         cjk_chars = sum(1 for ch in slide.title if "\u4e00" <= ch <= "\u9fff")
         short = (len(latin_words) < 5 and cjk_chars < 8) if not cjk_chars else cjk_chars < 8
-        if slide.layout not in ("title", "section") and (
-            short or is_topic_title(slide.title) or LABEL_TITLE.search(slide.title)
+        if (
+            not scientific
+            and slide.layout not in ("title", "section")
+            and (short or is_topic_title(slide.title) or LABEL_TITLE.search(slide.title))
         ):
             problems.append(
                 "The title names a topic or announces content instead of stating the point. "
@@ -462,13 +482,17 @@ def check_deck(
             )
         if slide.layout == "points":
             points_seen += 1
-            if points_seen > 2:
+            if not scientific and points_seen > 2:
                 problems.append(
                     "The deck already has two points slides. Rewrite this one with the layout "
                     "its content really has: stats or a chart for numbers, table or compare "
                     "for comparisons, process or timeline for sequences, statement for one idea."
                 )
-        if index >= 2 and slide.layout == parsed[index - 1].layout == parsed[index - 2].layout:
+        if (
+            not scientific
+            and index >= 2
+            and slide.layout == parsed[index - 1].layout == parsed[index - 2].layout
+        ):
             problems.append(
                 f"Three {slide.layout} slides in a row: show this one with a different layout "
                 "that fits its content."

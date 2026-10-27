@@ -289,6 +289,10 @@ def create_app(
 
     from gunther.slide_render import SlideRenderer
 
+    # The studio reads source figures' pixels with this, whether or not slides are rendered.
+    knowledge_service.asset_reader = AssetService(
+        sessions, active_settings.assets_dir, knowledge_service, local_ocr, storage_budget
+    ).download
     knowledge_service.slide_renderer = SlideRenderer(
         active_settings.slide_render_dir or active_settings.speech_dir.parent / "slide-renders",
         AssetService(sessions, active_settings.assets_dir, knowledge_service, local_ocr,

@@ -36,7 +36,9 @@ export const BUDGETS = {
   process: { items: [2, 6], step: [1, 24], detail: [0, 90] },
   timeline: { items: [3, 6], when: [1, 16], event: [1, 90] },
   quote: { quote: [1, 240], attribution: [0, 90] },
-  figure: { takeaway: [0, 160] },
+  // With explanations the text sits in a 340 px column beside the image, for reading decks
+  // too (not scaled): the takeaway, each line and all of them together (studio/format.py).
+  figure: { takeaway: [0, 160], side: [0, 120], explanation: [0, 90], beside: [0, 280] },
   statement: { statement: [1, 180], items: [0, 3], item: [1, 80] },
   points: { items: [2, 4], lead: [0, 40], detail: [1, 120] },
   actions: { items: [2, 4], lead: [1, 24], detail: [0, 100] },

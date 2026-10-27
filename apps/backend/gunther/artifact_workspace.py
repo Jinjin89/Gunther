@@ -218,6 +218,7 @@ def evidence_from_citation(citation: ConversationCitationOut) -> Evidence:
         ref=citation.ref,
         payload=(citation, None),
         context=citation.support_text or "",
+        extraction_warnings=tuple(citation.extraction_warnings),
     )
 
 

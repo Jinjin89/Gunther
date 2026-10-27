@@ -255,6 +255,11 @@ def build_one(
     (folder / "checks.json").write_text(
         json.dumps(sections, ensure_ascii=False, indent=1), encoding="utf-8"
     )
+    approach = (data.get("provenance") or {}).get("approach") or {}
+    record["purpose"] = approach.get("purpose", "general")
+    # The API's names (camelCase), as the artifact comes back from the service.
+    record["study_map"] = approach.get("studyMap")
+    record["figure_readings"] = approach.get("figureReadings") or []
     record["title"] = data.get("title")
     record["parts"] = len(split_document(content, brief.kind)[1])
     record["issues"] = sum(len(s.get("issues") or []) for s in sections)
@@ -320,7 +325,13 @@ def lint_build(record: dict[str, Any], material: materials.MaterialSet) -> None:
     brief = material.brief(record["label"])
     measure = measure_in(folder)
     defects = linting.lint(
-        brief.kind, (folder / "content.md").read_text(encoding="utf-8"), brief.use, measure
+        brief.kind,
+        (folder / "content.md").read_text(encoding="utf-8"),
+        brief.use,
+        measure,
+        purpose=record.get("purpose", "general"),
+        study_map=record.get("study_map"),
+        figure_readings=record.get("figure_readings"),
     )
     record["measured"] = measure is not None
     record["defects"] = [d.as_dict() for d in defects]
@@ -361,8 +372,13 @@ def judge_build(
             gateway, model, kind=brief.kind, brief=brief.text(), audience=brief.audience,
             use=brief.use, content=content, citations=passages,
             pngs=[folder / p for p in record.get("pngs", [])],
+            purpose=record.get("purpose", "general"), study_map=record.get("study_map"),
         )  # fmt: skip
-        titles = judging.judge_titles_only(gateway, model, kind=brief.kind, content=content)
+        titles = (
+            {"skipped": "Scientific comprehension is reviewed from the whole deck"}
+            if record.get("purpose") == "explain_study"
+            else judging.judge_titles_only(gateway, model, kind=brief.kind, content=content)
+        )
     record["judgeCalls"], record["judgeTokens"] = used.calls, used.tokens
     record["judgeError"] = error
     record["titlesOnly"] = titles
@@ -403,10 +419,26 @@ def judge_pairs(
             })  # fmt: skip
         with meter.bucket() as used:
             one_order, error_a = judging.judge_pair(
-                gateway, model, kind=brief.kind, brief=brief.text(), first=docs[0], second=docs[1]
+                gateway,
+                model,
+                kind=brief.kind,
+                brief=brief.text(),
+                first=docs[0],
+                second=docs[1],
+                purpose="explain_study"
+                if "explain_study" in {first.get("purpose"), second.get("purpose")}
+                else "general",
             )  # noqa: E501
             swapped, error_b = judging.judge_pair(
-                gateway, model, kind=brief.kind, brief=brief.text(), first=docs[1], second=docs[0]
+                gateway,
+                model,
+                kind=brief.kind,
+                brief=brief.text(),
+                first=docs[1],
+                second=docs[0],
+                purpose="explain_study"
+                if "explain_study" in {first.get("purpose"), second.get("purpose")}
+                else "general",
             )  # noqa: E501
         result: dict[str, Any] = {
             "set": set_id, "label": label, "first": first["method"], "second": second["method"],

@@ -10,6 +10,7 @@ import { makeTestTemplate, TEST_TEMPLATE } from "./testTemplate";
 import { withDeckMarker } from "./marker";
 import { render } from "@testing-library/react";
 import { DeckSlide } from "./DeckSlide";
+import { budgetIssues, parseDeckSlide } from "./parseDeck";
 
 describe("importing a template", () => {
   beforeEach(() => setBrandTheme(null));
@@ -74,5 +75,49 @@ describe("figures in running text", () => {
     expect(keep("新增债务11.86万亿元，增长5.0%，+38.7%，9月26日")).toEqual(["11.86万亿元", "5.0%", "+38.7%", "9月26日"]);
     expect(keep("a 2.1 °C drop")).toEqual(["2.1 °C"]);
     expect(joinNumbers("5.0%增长")).toBe("5⁠.⁠0⁠%增长");
+  });
+});
+
+
+describe("scientific source figures", () => {
+  it("renders image, controls, axes and limitations on the slide and exports them", async () => {
+    const body = "## Controlled ablation\n![Panels A and B](gunther-asset:ast_synthetic)\nFeedback reduces drift [1]\n- A: fixed vs adaptive; y is drift in mV [1]\n- B: feedback on vs off [2]\n- Simulated conditions only [2]";
+    const view = render(<DeckSlide body={body} layout="figure" theme="paper" numbers={[]} />);
+    expect(view.container.querySelector("img")?.getAttribute("src")).toContain("ast_synthetic");
+    expect(view.container.querySelector(".dk-figure-explanation")?.textContent).toContain("y is drift in mV");
+    expect(view.container.textContent).toContain("Simulated conditions only");
+    const content = "<!-- layout: title; design: v2; theme: paper -->\n# A synthetic study\nFeedback under controlled noise\n\n---\n<!-- layout: figure -->\n" + body;
+    const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==";
+    const bytes = await pptxBytes(content, { resolveImage: async (id) => { expect(id).toBe("ast_synthetic"); return png; } });
+    const zip = await JSZip.loadAsync(bytes);
+    const slide = await zip.file("ppt/slides/slide2.xml")!.async("string");
+    expect(slide).toContain("y is drift in mV");
+    expect(slide).toContain("feedback on vs off");
+    expect(slide).toContain("Simulated conditions only");
+    expect(Object.keys(zip.files).some((name) => name.startsWith("ppt/media/"))).toBe(true);
+  });
+});
+
+describe("text beside a source figure", () => {
+  const deck = (lines: string[]) => "<!-- layout: title; design: v2; theme: paper -->\n# A synthetic study\nSubtitle\n\n---\n<!-- layout: figure -->\n## Controlled ablation\n![Panels](gunther-asset:ast_synthetic)\n" + lines.join("\n");
+  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==";
+  const sizeOf = async (content: string, word: string) => {
+    const zip = await JSZip.loadAsync(await pptxBytes(content, { resolveImage: async () => png }));
+    const xml = await zip.file("ppt/slides/slide2.xml")!.async("string");
+    const run = xml.split("<a:r>").find((part) => part.includes(word))!;
+    return Number(/sz="(\d+)"/.exec(run)![1]);
+  };
+
+  it("keeps a too-long column inside the slide with smaller type in the export", async () => {
+    const short = await sizeOf(deck(["Feedback reduces drift [1]", "- Marker: fixed vs adaptive [1]"]), "Marker");
+    const long = "- Marker " + "explains the comparison and the control in many words ".repeat(5) + "[1]";
+    const crowded = await sizeOf(deck(["Feedback reduces drift and the ablation confirms the mechanism under all tested conditions [1]", long, long, long]), "Marker");
+    expect(crowded).toBeLessThan(short);
+  });
+
+  it("budgets the column the same way the backend does", () => {
+    const issues = budgetIssues(parseDeckSlide("figure", "## Controlled ablation\n![Panels](gunther-asset:ast_x)\n" + "a ".repeat(60) + "\n- " + "b".repeat(85) + "\n- " + "c".repeat(95)), true);
+    expect(issues.some((issue) => issue.startsWith("explanation has 95 units"))).toBe(true);
+    expect(issues.some((issue) => issue.startsWith("text beside the figure has 299 units"))).toBe(true);
   });
 });

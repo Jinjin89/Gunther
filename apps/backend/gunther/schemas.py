@@ -578,6 +578,7 @@ class ConversationCitationOut(ApiModel):
     source_origin: Literal["selected", "library_supplement", "web_supplement"] | None = None
     work_identifier: str | None = None
     figures: list[dict[str, object]] = Field(default_factory=list)
+    extraction_warnings: list[dict[str, object]] = Field(default_factory=list)
     # Its number in the conversation's source pool: `[ref]` in an answer, the same in
     # every answer of the conversation. Older answers have none and count from 1.
     ref: int | None = None
@@ -808,6 +809,14 @@ class OutputApproachOut(ApiModel):
     reviews: list[dict[str, Any]] | None = None
     # The memo's source numbers (the pool's) -> the numbers this version's text cites.
     ref_map: dict[str, int] | None = None
+    # A deck made to explain a study: why that purpose, the study's argument, what the
+    # figures were read to show, what could not be checked, and the scientific review's
+    # outcome ("ready", "open_problems" or "unavailable").
+    purpose_reason: str | None = None
+    study_map: dict[str, Any] | None = None
+    figure_readings: list[dict[str, Any]] | None = None
+    limitations: list[str] | None = None
+    review_status: str | None = None
 
     @model_serializer(mode="wrap")
     def _without_absent_studio(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
@@ -819,6 +828,11 @@ class OutputApproachOut(ApiModel):
             ("storyline", "storyline"),
             ("reviews", "reviews"),
             ("ref_map", "refMap"),
+            ("purpose_reason", "purposeReason"),
+            ("study_map", "studyMap"),
+            ("figure_readings", "figureReadings"),
+            ("limitations", "limitations"),
+            ("review_status", "reviewStatus"),
         ):
             if getattr(self, field) is None:
                 data.pop(field, None)

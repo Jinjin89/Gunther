@@ -260,3 +260,10 @@
 .dk-compare.is-one .dk-sides ul { flex: 0 0 auto; max-height: 220px; min-height: 180px; }
 .dk-compare.is-one .dk-sides li { font-size: 40px; line-height: 1.22; }
 .dk-compare.is-one .dk-sides { margin-block: auto; }
+
+/* Source evidence stays large; the adjacent explanation teaches the comparison. */
+.dk-figure.has-explanation { flex-direction: row; gap: 28px; }
+.dk-figure.has-explanation figure { flex: 1 1 0; }
+.dk-figure-explanation { flex: 0 0 340px; display: flex; flex-direction: column; justify-content: center; gap: 18px; }
+.dk-figure-explanation p { font-size: 22px; line-height: 1.4; }
+.dk-figure-explanation .dk-after { margin-top: 0; }

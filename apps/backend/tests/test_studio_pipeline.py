@@ -103,6 +103,8 @@ def request_text(request):
 
 def router(request):
     system = request_text(request)
+    if "You own the presentation purpose decision" in system:
+        return json.dumps({"purpose": "general", "reason": "A general briefing"})
     if "Choose the visual style" in system:
         return json.dumps({"style": "light", "why": "A calm research brief"})
     if "world-class presentation designer" in system:
@@ -179,7 +181,7 @@ def test_a_deck_is_made_in_the_new_format_and_an_unstated_chart_value_becomes_a_
     ]
     writers = [r for r in fake.requests if "presentation writer" in request_text(r)]
     assert len(writers) == 1
-    assert len(asked) <= 10
+    assert len(asked) <= 11
 
 
 def test_a_conversation_makes_a_studio_deck_in_one_action_and_can_rewrite_one_slide(tmp_path):

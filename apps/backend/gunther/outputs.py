@@ -235,6 +235,26 @@ def figure_lines(item: Evidence) -> list[str]:
     ]
 
 
+def _with_metadata(kept: Evidence, other: Evidence) -> Evidence:
+    """``kept`` with the figures and extraction warnings ``other`` (another reading of the same
+    passage) has and it lacks."""
+
+    def citation(item: Evidence):
+        return item.payload[0] if isinstance(item.payload, tuple) and item.payload else None
+
+    mine, theirs = citation(kept), citation(other)
+    if getattr(mine, "figures", None) is None or getattr(theirs, "figures", None) is None:
+        return kept
+    figures = list(mine.figures)
+    figures += [f for f in theirs.figures if f not in figures]
+    warnings = list(mine.extraction_warnings)
+    warnings += [w for w in theirs.extraction_warnings if w not in warnings]
+    if figures == mine.figures and warnings == mine.extraction_warnings:
+        return kept
+    merged = mine.model_copy(update={"figures": figures, "extraction_warnings": warnings})
+    return replace(kept, payload=(merged, *kept.payload[1:]), extraction_warnings=tuple(warnings))
+
+
 @dataclass(frozen=True)
 class OutputLimits:
     """How far one build may go. Defaults suit most; nothing else depends on them."""
@@ -503,12 +523,15 @@ class Pool:
         held = self.known.get(item.key)
         if held is not None:
             citation = item.payload[0] if isinstance(item.payload, tuple) and item.payload else None
+            kept = held
             if getattr(citation, "support_spans", None) and len(item.text) > len(held.text):
-                expanded = replace(item, ref=held.ref)
-                self.items[self.items.index(held)] = expanded
-                self.known[item.key] = expanded
-                return expanded
-            return held
+                kept = replace(item, ref=held.ref)  # the longer reading of the passage
+            # Its figures and extraction warnings stay, whichever reading brought them.
+            kept = _with_metadata(kept, item if kept is held else held)
+            if kept is not held:
+                self.items[self.items.index(held)] = kept
+                self.known[item.key] = kept
+            return kept
         self.top += 1
         fresh = replace(item, ref=self.top)
         self.items.append(fresh)

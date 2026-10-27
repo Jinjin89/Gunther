@@ -9,6 +9,7 @@ plain code and is unit-tested.
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 from collections.abc import Iterator, Sequence
@@ -216,6 +217,25 @@ the passages; flag any that do not.)
 Give a verdict and a one-line reason for EVERY {unit}, numbered from 1 as labelled. Then a short \
 summary of the biggest weaknesses."""
 
+SCIENTIFIC_SYSTEM = """Judge a scientific explanation {kind} against the study and source passages.
+Score 1-10 using the existing score fields, with these purpose-specific meanings:
+- insight: research question, prior gap and contribution understood by a reader
+- storyline: the study's own argument and central experiments/method evaluations, ranked by importance
+- titles: clear scientific framing; topic titles are acceptable; no mandatory action titles
+- evidence: each main conclusion connected to its experiment, control/comparison, measurement and
+  result; useful source images shown and explained with panels, axes, units and legend
+- clarity: method inputs, mechanism and outputs taught on slides; notes only add detail
+- correctness: compatible comparisons, authors' findings vs interpretation, no association promoted
+  to causation or damaged values stated without confirmation; assumptions and limitations beside claims
+{visual}
+Answer all five reader questions: question/contribution; method beyond terminology; important figures
+and controls; evidence supporting conclusions; assumptions/limits/unresolved questions. Reject missing
+central experiments, promoted peripheral details and overclaims. No hero-number, business-decision or
+recommendation requirement, and no image quota where the study has no useful figures.
+Return the existing Absolute schema, including a verdict/reason for every {unit}.
+"""
+
+
 VISUAL_LINE = (
     "- visual: the attached images are the rendered slides in order; judge layout, density, "
     "hierarchy and whether any text is clipped or crowded.\n"
@@ -253,10 +273,12 @@ def judge_absolute(
     content: str,
     citations: Sequence[dict[str, Any]],
     pngs: Sequence[Path] = (),
+    purpose: str = "general",
+    study_map: dict[str, Any] | None = None,
 ) -> tuple[Absolute | None, str]:
     images = load_images(pngs) if (model.vision and pngs) else []
     unit = "slide" if kind == "slides" else "section"
-    system = ABSOLUTE_SYSTEM.format(
+    system = (SCIENTIFIC_SYSTEM if purpose == "explain_study" else ABSOLUTE_SYSTEM).format(
         kind="slide deck" if kind == "slides" else "written report",
         unit=unit,
         visual=VISUAL_LINE if images else "(No images are attached: leave visual null.)\n",
@@ -267,6 +289,8 @@ def judge_absolute(
         + f")\n\nThe {kind} to judge:\n\n{numbered(kind, content)}\n\n"
         f"Source passages it cites (what the sources actually say):\n{source_view(citations)}"
     )
+    if purpose == "explain_study":
+        prompt += "\nStudy argument map:\n" + json.dumps(study_map or {}, ensure_ascii=False)
     result, error = _ask(gateway, model, Absolute, system, prompt, images)
     return result, error
 
@@ -366,10 +390,21 @@ and wording shown, not on length. For each criterion say which is better, "A", "
 def judge_pair(
     gateway: ModelGateway, model: ModelInfo, *, kind: str, brief: str,
     first: dict[str, Any], second: dict[str, Any],
+    purpose: str = "general",
 ) -> tuple[Compared | None, str]:  # fmt: skip
     """One blind comparison: ``first`` is shown as A, ``second`` as B."""
 
     system = PAIR_SYSTEM.format(kind="slide deck" if kind == "slides" else "report")
+    if purpose == "explain_study":
+        system = (
+            "Compare A and B as scientific explanations. Use Compared fields with these meanings: "
+            "insight = question/contribution; storyline = study argument and central experiments; "
+            "titles = clear scientific framing (topics acceptable); evidence = method mechanism, "
+            "experiments, controls, figures/axes/legend and limits; clarity = explanation on slides; "
+            "overall = which teaches the study more faithfully. Reject overclaims and unconfirmed "
+            "damaged values. No mandatory action titles, hero numbers or business recommendation. "
+            "Return A, B or tie for each field."
+        )
     prompt = (
         f"The request:\n{brief}\n\n=== A ===\n{numbered(kind, first['content'])}\n\n"
         f"=== B ===\n{numbered(kind, second['content'])}\n\n"

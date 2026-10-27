@@ -156,3 +156,61 @@ do not silently treat uncertain extraction as verified evidence.
 Deliver an implementation report covering the changed behavior, scientific and visual
 verification, unresolved limitations and any pre-existing test failures. This handoff makes
 the product direction concrete; it does not require further user selection of a mode or skill.
+
+## Implementation status (2026-10-27)
+
+Built for decks; tested with fake models only. No real-model run yet, so the quality of the
+model steps is unverified.
+
+- **Purpose.** A small model step reads the brief and a short overview of the material and
+  returns `explain_study` or `general` (`studio/science.py: Purpose`). An explicit purpose in
+  the request wins. The purpose is kept with the deck, so edits stay scientific. Reports
+  still take the general path.
+- **Study map** (`StudyMap`). Replaces the consulting memo for `explain_study`: question,
+  gap, contribution, method, claims with experiment, control, measurement, result, refs,
+  linked figures and limits. A link to a passage or figure the material does not hold is
+  sent back once; still wrong, the build fails.
+- **Figures and warnings reach the writer.** `_studio_reading` attaches each passage's figures
+  (asset, caption, page, region, crop check) and extraction warnings: `uncertain_glyph`
+  (U+FFFD), `unverified_glyphs` (with the numbers that cannot be trusted), `withheld_formula`.
+  `_passage` prints both, so `_figures` sees the real images.
+- **Figure reading.** Up to 8 figures linked to central claims, central first, are sent as
+  pixels with caption and passages to the vision model (photos job, else the writer if it
+  can see). If none is set up, or a read fails, the limitation is recorded; nothing is
+  invented from captions.
+- **Storyline, writing, review.** Scientific prompts (`STUDY_STORY`, `STUDY_WRITE`,
+  `SCIENTIFIC_REVIEW`, `STUDY_REVISE`). The figure layout takes up to three explanation
+  bullets beside the image, in the app, the renderer and the PPTX export.
+- **Gate before verify and design.** The reviewer answers the five reader questions. Code
+  checks (`code_problems`) that the legible figures of central claims are shown on a slide,
+  that no number cited to a damaged passage is stated unless clean text or a figure reading
+  confirms it, and that no image comes from outside the scope. One whole-deck revision
+  follows. Code problems still left fail the build. Reviewer problems still left, or a
+  review that could not run, are recorded with the deck as limitations.
+- **Preservation.** Automatic fixes (format, claims, fitting) may not drop a source image.
+  Design may not shorten an explanation line. The look step redraws designed slides with
+  their words kept, and does not cut plain slides or move their text into notes.
+- **Edits.** A one-slide edit uses the study map and readings. The edited slide gets the same
+  value and scope checks, is asked again once, then fails.
+- **Evals.** The judge and lint use scientific criteria for `explain_study` (code only; not run).
+
+- **Review outcome is shown.** The approach records `review_status`: `ready`,
+  `open_problems` (delivered; the problems are listed) or `unavailable` (not reviewed).
+  The app shows it with the limitations, under "What this deck could not check".
+- **Blank model answers fail.** A study map with no claims, a review with empty answers, or a
+  legible figure reading with no observation is asked for again, then treated as failed.
+- **Scope and resume.** The build keeps `allowed_assets` (its own source images), and edits
+  are checked against them. A saved study map is reused only for the same passages, not just
+  the same count of them.
+- **Edits are checked when finished.** The finished deck's code checks are attached to the
+  version as notes. Fitting a slide may not bring in a damaged value or a foreign image.
+- **Figure text fits its column.** With explanations, the takeaway is ≤120 units, each line
+  ≤90 and all of them ≤280, for reading decks too. The same budget applies in
+  `studio/format.py` and `deck/units.ts`; PPTX export shrinks type before it spills.
+
+Reviewed on 2026-10-27 by GLM 5.3 (code), GLM 5.3 Flash (rendered slides) and gpt-6.1-sol
+(checked both reviews against the code). Their confirmed findings are fixed above.
+
+Open: panel crops and a layout that suits each figure's shape (a dense multi-panel figure gets
+about half the slide), checking damaged values against the rendered page image, a real-model
+run and the Mac trial.

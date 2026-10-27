@@ -220,6 +220,10 @@ class WorkSteps:
         ]
         self._number = {card.id: number for number, card in enumerate(work.cards, start=1)}
         agents.approach = self._approach()
+        if getattr(agents, "studio", False):
+            # Only a deck made to explain a study is held to the scientific rules.
+            scientific = (work.approach or {}).get("purpose") == "explain_study"
+            agents.scientific_context = work.approach if scientific else None
         agents.outline_review = work.outline_review
         return spec_of(self.brief, work)
 

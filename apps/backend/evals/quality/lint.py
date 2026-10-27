@@ -375,7 +375,14 @@ def measure_defects(measure: dict[str, Any] | None) -> list[Defect]:
 
 
 def lint(
-    kind: str, content: str, use: str = "", measure: dict[str, Any] | None = None
+    kind: str,
+    content: str,
+    use: str = "",
+    measure: dict[str, Any] | None = None,
+    *,
+    purpose: str = "general",
+    study_map: dict[str, Any] | None = None,
+    figure_readings: list[dict[str, Any]] | None = None,
 ) -> list[Defect]:
     """Every hard defect of one artifact. ``kind`` is "slides" or "report"."""
 
@@ -386,7 +393,11 @@ def lint(
             slide = parse_slide(number, text)
             where = f"slide {number}"
             defects += budget_defects(slide, use)
-            if slide.layout not in {"title", "section"} and is_topic_title(slide.title):
+            if (
+                purpose != "explain_study"
+                and slide.layout not in {"title", "section"}
+                and is_topic_title(slide.title)
+            ):
                 defects.append(Defect(where, "topic_title", f"“{slide.title[:80]}”"))
             for phrase in meta_hits(slide.visible):
                 defects.append(Defect(where, "meta_phrase", f"“{phrase}” on the slide"))
@@ -396,13 +407,15 @@ def lint(
                 defects.append(Defect(where, "uncited_number", line))
             if use == "talk" and slide.layout not in {"title", "section"} and not slide.notes:
                 defects.append(Defect(where, "missing_notes", "talk slide without speaker notes"))
+        if purpose == "explain_study":
+            defects += scientific_defects(content, study_map, figure_readings)
         return defects
     preamble, sections = split_document(content, "report")
     for number, text in enumerate(sections, start=1):
         where = f"section {number}"
         heading = text.splitlines()[0].removeprefix("## ").strip() if text else ""
         summary = "block: summary" in text
-        if is_topic_title(heading) and not summary:
+        if purpose != "explain_study" and is_topic_title(heading) and not summary:
             defects.append(Defect(where, "topic_title", f"“{heading[:80]}”"))
         for phrase in meta_hits(text):
             defects.append(Defect(where, "meta_phrase", f"“{phrase}”"))
@@ -411,6 +424,31 @@ def lint(
             defects.append(Defect(where, "uncited_number", line))
     for phrase in meta_hits(preamble):
         defects.append(Defect("document", "meta_phrase", f"“{phrase}”"))
+    return defects
+
+
+def scientific_defects(content, study_map, figure_readings) -> list[Defect]:
+    """Evidence transport checks; semantic completeness belongs to the scientific judge."""
+    from gunther.studio.science import FigureReading, StudyMap, content_problems
+
+    defects = []
+    if not study_map:
+        return [Defect("document", "missing_study_map", "No scientific argument map was retained")]
+    study = StudyMap.model_validate(study_map)
+    for claim in study.claims:
+        if claim.central and not claim.refs:
+            defects.append(Defect("document", "unlinked_central_claim", claim.claim))
+        if (
+            claim.central
+            and study.study_type in {"methods", "experimental"}
+            and not (claim.experiment and claim.comparison_or_control and claim.measurement)
+        ):
+            defects.append(Defect("document", "incomplete_experiment", claim.claim))
+    readings = [FigureReading.model_validate(r) for r in figure_readings or []]
+    defects += [
+        Defect("document", "missing_source_figure", p)
+        for p in content_problems(study, readings, content)
+    ]
     return defects
 
 

@@ -10,6 +10,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from threading import Lock
 from typing import Literal
 from urllib.parse import urlsplit
@@ -480,6 +481,8 @@ class KnowledgeService:
         self.output_skills = True
         self.output_method = "studio"  # "skills": the earlier skill steps make Outputs
         self.slide_renderer = None
+        # Reads a stored asset: id -> (path, media type, name). Set by the app.
+        self.asset_reader: Callable[[str], tuple[Path, str, str]] | None = None
         # Let Ask pick a skill itself from the message (settings.ask_auto_skills).
         self.auto_skills = False
         # (plan effort, check effort) for Ask's own steps; the exam sets it, nothing else.
@@ -3629,6 +3632,96 @@ class KnowledgeService:
         }
         return notes, seeds, inputs
 
+    @staticmethod
+    def _studio_metadata(
+        session: Session,
+        group: list[ContentBlock],
+        elements: list[DocumentElement],
+        mapped: dict[str, list[int]],
+    ) -> tuple[list[dict], list[dict]]:
+        """A passage's figures and what its extraction could not vouch for.
+
+        Figures come from the passage's own elements and those just around it on the same
+        page (a figure sits between paragraphs). Warnings come from the passage's own text
+        only: uncertain glyphs (shown as U+FFFD), glyphs the check could not verify (their
+        numbers cannot be trusted) and equations withheld from the text. The caller passes
+        only the selected source's current revision; captions are not interpreted here.
+        """
+        from gunther.studio.format import numbers_in
+
+        ordinals = [n for block in group for n in mapped.get(block.id, [])]
+        pages = {json.loads(b.anchor_json or "{}").get("page") for b in group} - {None}
+        paths = {b.heading_path_json for b in group}
+        own: list[DocumentElement] = []
+        nearby: list[DocumentElement] = []
+        if ordinals:
+            low, high = min(ordinals), max(ordinals)
+            for element in elements:
+                if low <= element.ordinal <= high:
+                    own.append(element)
+                    continue
+                anchor = json.loads(element.anchor_json or "{}")
+                if (
+                    low - 4 <= element.ordinal <= high + 4
+                    and (not pages or anchor.get("page") in pages)
+                    and (
+                        element.heading_path_json in paths
+                        or not json.loads(element.heading_path_json or "[]")
+                    )
+                ):
+                    nearby.append(element)
+        figures: list[dict] = []
+        warnings: dict[tuple, dict] = {}
+        for node in [*group, *own, *nearby]:
+            payload = json.loads(node.payload_json or "{}")
+            anchor = json.loads(node.anchor_json or "{}")
+            provenance = {"revisionId": node.revision_id, "page": anchor.get("page")}
+            provenance["elementId" if isinstance(node, DocumentElement) else "blockId"] = node.id
+            if node.kind == "figure" and isinstance(node, DocumentElement):
+                asset_id = payload.get("imageAssetId")
+                if asset_id and session.get(Asset, asset_id) is not None:
+                    figures.append(
+                        {
+                            **provenance,
+                            "assetId": asset_id,
+                            "caption": payload.get("caption") or node.content,
+                            "region": anchor.get("bbox") or anchor.get("bboxPpm"),
+                            "quality": {
+                                key: payload[key]
+                                for key in ("cropCheck", "glyphCheck")
+                                if key in payload
+                            },
+                        }
+                    )
+                continue
+            if node in nearby:
+                continue
+            page = anchor.get("page")
+            if "\ufffd" in node.content or any(
+                span.get("mark") == "uncertain" for span in payload.get("inlineSpans", [])
+            ):
+                warnings[("uncertain_glyph", page, node.content)] = {
+                    **provenance,
+                    "kind": "uncertain_glyph",
+                    "reason": "Some glyphs could not be read; they show as U+FFFD.",
+                }
+            if payload.get("transcription") in {"unavailable", "unreliable"}:
+                warnings[("withheld_formula", node.id)] = {
+                    **provenance,
+                    "kind": "withheld_formula",
+                    "reason": "An equation was kept as an image, not as text: "
+                    + str(payload.get("transcriptionIssue") or payload["transcription"]),
+                }
+            elif payload.get("glyphCheck") in {"unverified", "uncertain"} and node.content:
+                numbers = sorted(numbers_in(node.content))
+                warnings[("unverified_glyphs", page, node.content)] = {
+                    **provenance,
+                    "kind": "unverified_glyphs",
+                    "reason": "The glyph check could not verify this text's characters.",
+                    "numbers": numbers,
+                }
+        return figures, list(warnings.values())
+
     def _studio_reading(
         self, session: Session, source_ids: list[str], pool: Pool, *, most: int = 900
     ) -> None:
@@ -3645,6 +3738,17 @@ class KnowledgeService:
                 )
             ).all()
         )
+        # This is a temporary build pool: prior conversation material cannot widen scope.
+        scoped = []
+        for item in pool.items:
+            citation = item.payload[0] if isinstance(item.payload, tuple) and item.payload else None
+            if item.kind != "library" or (
+                getattr(citation, "source_id", None) in heads
+                and getattr(citation, "source_revision_id", None) == heads[citation.source_id]
+            ):
+                scoped.append(item)
+        pool.items = scoped
+        pool.known = {item.key: item for item in scoped}
         for source in sorted(sources, key=lambda item: item.created_at):
             revision_id = heads.get(source.id)
             if not revision_id:
@@ -3661,6 +3765,20 @@ class KnowledgeService:
                     .order_by(ContentBlock.ordinal)
                 )
             )
+            elements = list(
+                session.scalars(
+                    select(DocumentElement)
+                    .where(DocumentElement.revision_id == revision_id)
+                    .order_by(DocumentElement.ordinal)
+                )
+            )
+            mapped: dict[str, list[int]] = {}
+            for block_id, ordinal in session.execute(
+                select(BlockElementMap.block_id, DocumentElement.ordinal)
+                .join(DocumentElement, DocumentElement.id == BlockElementMap.element_id)
+                .where(DocumentElement.revision_id == revision_id)
+            ):
+                mapped.setdefault(block_id, []).append(ordinal)
             groups: list[list[ContentBlock]] = []
             size = 0
             for block in blocks:
@@ -3686,6 +3804,7 @@ class KnowledgeService:
                     continue
                 path = json.loads(group[0].heading_path_json or "[]")
                 locator = " › ".join(str(part) for part in path if part) or group[0].locator
+                figures, warnings = self._studio_metadata(session, group, elements, mapped)
                 citation = ConversationCitationOut(
                     id=_id("cit"),
                     source_id=source.id,
@@ -3700,6 +3819,8 @@ class KnowledgeService:
                     support_text=snapshot.text,
                     support_spans=snapshot.spans,
                     source_origin="selected",
+                    figures=figures,
+                    extraction_warnings=warnings,
                 )
                 pool.adopt(
                     Evidence(
@@ -3713,6 +3834,7 @@ class KnowledgeService:
                         # The checker reads ``context`` whole (up to 6,000 characters) and
                         # only the start of ``text``: a fact late in a passage must be seen.
                         context=snapshot.text,
+                        extraction_warnings=tuple(warnings),
                     )
                 )
 
@@ -4029,6 +4151,7 @@ class KnowledgeService:
                     use=None if payload.use == "auto" else payload.use,
                     tool=tool,
                     renderer=self.slide_renderer,
+                    asset_reader=self.asset_reader,
                 )
                 built = studio.make(
                     model, effort, spec, pool, notes, events, fallback_title=fallback_title
@@ -5508,7 +5631,12 @@ class KnowledgeService:
                 ) -> BuiltOutput:
                     self._studio_reading(session, resolved.source_ids, made)
                     return StudioAgents(
-                        gateway, limits, use=use, tool=tool, renderer=self.slide_renderer
+                        gateway,
+                        limits,
+                        use=use,
+                        tool=tool,
+                        renderer=self.slide_renderer,
+                        asset_reader=self.asset_reader,
                     ).make(  # type: ignore[arg-type]
                         model,
                         effort,

@@ -42,6 +42,7 @@ def step_of(request):
     task = task_of(request)
     # Repairs contain the original writing/planning instructions as well.
     for marker, step in [
+        ("You own the presentation purpose decision", "purpose"),
         ("Your report breaks", "report repair"),
         ("A senior partner reviewed", "story revision"),
         ("lead analyst", "memo"),
@@ -129,7 +130,7 @@ def test_build_requests_share_material_and_warm_workers(kind, tmp_path):
         step = step_of(request)
         steps.add(step)
         system = request["messages"][0]["content"]
-        if step in {"design", "style", "look", "slide format"}:
+        if step in {"design", "style", "look", "slide format", "purpose"}:
             assert material not in request_text(request)
             assert "The material:\n\n" not in request_text(request)
             continue

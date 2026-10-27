@@ -139,14 +139,17 @@ export function Quote({ data }: { data: Of<"quote"> }) {
 export function Figure({ data }: { data: Of<"figure"> }) {
   const [missing, setMissing] = useState(false);
   useEffect(() => setMissing(false), [data.assetId]);
-  return <div className="dk-figure">
+  return <div className={`dk-figure${data.explanation?.length ? " has-explanation" : ""}`}>
     <figure>
       <div className="dk-picture">{missing
         ? <span className="dk-missing" role="img" aria-label={data.alt}>{data.alt || "The figure could not be loaded."}</span>
         : <img src={sourceAssetUrl(data.assetId)} alt={data.alt} onError={() => setMissing(true)} />}</div>
       {data.alt && <figcaption>{data.alt}</figcaption>}
     </figure>
-    <After text={data.takeaway} className="is-takeaway" />
+    {data.explanation?.length ? <div className="dk-figure-explanation">
+      <After text={data.takeaway} className="is-takeaway" />
+      {data.explanation.map((line, index) => <p key={index}><Inline text={line} /></p>)}
+    </div> : <After text={data.takeaway} className="is-takeaway" />}
   </div>;
 }
 

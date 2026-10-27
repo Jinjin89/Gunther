@@ -110,6 +110,12 @@ describe("parsing each layout", () => {
 });
 
 describe("a body that does not fit its layout", () => {
+  it("keeps scientific explanation beside the original figure", () => {
+    const data = parse("figure", "## Controlled ablation\n![Panels A and B](gunther-asset:ast_synthetic)\nFeedback reduces drift [1]\n- A: fixed vs adaptive; y is drift in mV [1]\n- B: feedback on vs off [2]\n- Simulated conditions only [2]");
+    expect(data).toMatchObject({ layout: "figure", assetId: "ast_synthetic", takeaway: "Feedback reduces drift [1]", explanation: ["A: fixed vs adaptive; y is drift in mV [1]", "B: feedback on vs off [2]", "Simulated conditions only [2]"] });
+    expect(budgetIssues(data)).toEqual([]);
+  });
+
   it("a chart with a value that is not a number becomes a table", () => {
     const data = parse("chart", "## A claim\n| Name | Score |\n| --- | --- |\n| a | high |\n| b | low |");
     expect(data.layout).toBe("table");

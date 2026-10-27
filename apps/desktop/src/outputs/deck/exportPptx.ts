@@ -375,15 +375,30 @@ async function draw(pptx: PptxGenJS, slide: Slide, source: DeckSlide, layout: st
       break;
     }
     case "figure": {
-      const takeH = d.takeaway ? heightOf(d.takeaway, 24, 1096, 1.38) + 20 : 0;
-      const capH = d.alt ? 28 : 0;
+      const explained = Boolean(d.explanation?.length);
+      const pictureW = explained ? 752 : 1120;
+      const takeH = !explained && d.takeaway ? heightOf(d.takeaway, 24, 1096, 1.38) + 20 : 0;
+      const capH = d.alt ? heightOf(d.alt, 18, pictureW, 1.3) + 8 : 0;
       const pictureH = bodyBottom - top - takeH - capH;
-      box(slide, 80, top, 1120, pictureH, ink.soft);
+      box(slide, 80, top, pictureW, pictureH, ink.soft);
       const image = options.resolveImage ? await options.resolveImage(d.assetId) : null;
-      if (image) slide.addImage({ data: image, x: inch(92), y: inch(top + 12), w: inch(1096), h: inch(pictureH - 24), sizing: { type: "contain", w: inch(1096), h: inch(pictureH - 24) } } as never);
-      else text(slide, runs(d.alt || "The figure could not be loaded.", { size: 22, color: ink.muted }, ink), 120, top, 1040, pictureH, { align: "center", valign: "middle" });
-      if (d.alt) text(slide, runs(d.alt, { size: 18, color: ink.muted }, ink), 80, top + pictureH + 8, 1120, 24);
-      if (d.takeaway) { box(slide, 80, bodyBottom - takeH + 20, 4, takeH - 20, ink.accent); text(slide, runs(d.takeaway, { size: 24, color: ink.ink }, ink), 104, bodyBottom - takeH + 20, 1096, takeH - 20); }
+      if (image) slide.addImage({ data: image, x: inch(92), y: inch(top + 12), w: inch(pictureW - 24), h: inch(pictureH - 24), sizing: { type: "contain", w: inch(pictureW - 24), h: inch(pictureH - 24) } } as never);
+      else text(slide, runs(d.alt || "The figure could not be loaded.", { size: 22, color: ink.muted }, ink), 92, top, pictureW - 24, pictureH, { align: "center", valign: "middle" });
+      if (d.alt) text(slide, runs(d.alt, { size: 18, color: ink.muted }, ink), 80, top + pictureH + 8, pictureW, capH - 8);
+      if (explained) {
+        // The column beside the image, centred like the app's; smaller type before it spills.
+        const lines = [d.takeaway, ...(d.explanation ?? [])].filter((line): line is string => Boolean(line));
+        const room = bodyBottom - top;
+        const tall = (size: number) => lines.reduce((sum, line) => sum + heightOf(line, size, 340, 1.4) + 18, -18);
+        let size = 22;
+        while (size > 16 && tall(size) > room) size -= 2;
+        let y = top + Math.max(0, (room - tall(size)) / 2);
+        for (const line of lines) {
+          const h = heightOf(line, size, 340, 1.4);
+          text(slide, runs(line, { size, color: ink.ink }, ink), 860, y, 340, h);
+          y += h + 18;
+        }
+      } else if (d.takeaway) { box(slide, 80, bodyBottom - takeH + 20, 4, takeH - 20, ink.accent); text(slide, runs(d.takeaway, { size: 24, color: ink.ink }, ink), 104, bodyBottom - takeH + 20, 1096, takeH - 20); }
       break;
     }
     case "statement": {

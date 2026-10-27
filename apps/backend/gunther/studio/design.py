@@ -273,6 +273,12 @@ def design_slides(
             layout=parsed[index].layout,
             content=visible_content(slide),
         )
+        if getattr(agents, "scientific_context", None):
+            system += (
+                "\nThis is a reviewed scientific explanation. Preserve every visible explanation "
+                "line, including mechanism, controls, conditions and limits, word for word. "
+                "Rearrange whole lines only; do not shorten or paraphrase them."
+            )
         if request := requests.get(index, "").strip():
             system += P.DESIGN_REQUEST.format(
                 request=request, current=fmt.design_of(slide) or "(none: it was drawn plainly)"
@@ -292,6 +298,17 @@ def design_slides(
                 continue
             html = extract_section(reply)
             problems = check_design(slide, html) if html else ["The reply held no <section>."]
+            if html and getattr(agents, "scientific_context", None):
+                # Scientific explanations are already reviewed. Styling may rearrange whole
+                # lines, but cannot shorten or paraphrase away the method or its limits.
+                drawn = words(visible_text(html))
+                for line in visible_content(slide).splitlines():
+                    if parsed[index].layout == "chart" and line.startswith("|"):
+                        continue  # the chart placeholder renders this table's cells
+                    plain = re.sub(r"^\s*\d+[.)]\s+", "", line)
+                    if words(plain) and words(plain) not in drawn:
+                        problems.append("Keep the full scientific explanation line: " + line[:200])
+
             if not problems:
                 return html, ""
         return "", "; ".join(problems)

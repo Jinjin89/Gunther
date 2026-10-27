@@ -33,7 +33,7 @@ export type DeckData =
   | { layout: "process"; title: Raw; items: Pair[]; after: Raw | null }
   | { layout: "timeline"; title: Raw; items: Array<{ when: Raw; event: Raw }>; after: Raw | null }
   | { layout: "quote"; title: Raw; quote: Raw; attribution: Raw | null; after: Raw | null }
-  | { layout: "figure"; title: Raw; alt: string; assetId: string; takeaway: Raw | null }
+  | { layout: "figure"; title: Raw; alt: string; assetId: string; takeaway: Raw | null; explanation?: Raw[] }
   | { layout: "statement"; title: Raw; statement: Raw; items: Raw[]; after: Raw | null }
   | { layout: "points"; title: Raw; items: Pair[]; after: Raw | null }
   | { layout: "actions"; title: Raw; items: Pair[]; after: Raw | null }
@@ -268,8 +268,9 @@ export function parseDeckSlide(layout: string | null | undefined, body: string, 
     }
     case "figure": {
       const image = blocks.find((block): block is Extract<Block, { t: "image" }> => block.t === "image");
-      if (!image || blocks.some((block) => block.t !== "image" && block.t !== "line")) return fallback();
-      return { layout: "figure", title, alt: image.alt, assetId: image.id, takeaway: lineText(blocks) };
+      if (!image || blocks.filter((block) => block.t === "image").length !== 1 || blocks.some((block) => block.t !== "image" && block.t !== "line" && block.t !== "items")) return fallback();
+      const explanation = blocks.flatMap((block) => block.t === "items" ? block.items : []);
+      return { layout: "figure", title, alt: image.alt, assetId: image.id, takeaway: lineText(blocks), ...(explanation.length ? { explanation } : {}) };
     }
     case "statement": {
       const first = blocks.findIndex((block) => block.t === "line");
@@ -329,7 +330,15 @@ export function budgetIssues(data: DeckData, read = false): string[] {
     case "process": count("steps", data.items.length, BUDGETS.process.items); data.items.forEach((item) => { check("step", item.lead ?? "", BUDGETS.process.step, 1); check("detail", item.detail, BUDGETS.process.detail); }); break;
     case "timeline": count("events", data.items.length, BUDGETS.timeline.items); data.items.forEach((item) => { check("when", item.when, BUDGETS.timeline.when, 1); check("event", item.event, BUDGETS.timeline.event); }); break;
     case "quote": check("quote", data.quote, BUDGETS.quote.quote); check("attribution", data.attribution ?? "", BUDGETS.quote.attribution); break;
-    case "figure": check("takeaway", data.takeaway ?? "", BUDGETS.figure.takeaway); break;
+    case "figure": {
+      const lines = data.explanation ?? [];
+      if (lines.length === 0) { check("takeaway", data.takeaway ?? "", BUDGETS.figure.takeaway); break; }
+      check("takeaway", data.takeaway ?? "", BUDGETS.figure.side, 1);
+      count("explanations", lines.length, [0, 3]);
+      lines.forEach((line) => check("explanation", line, BUDGETS.figure.explanation, 1));
+      check("text beside the figure", [data.takeaway ?? "", ...lines].join(""), BUDGETS.figure.beside, 1);
+      break;
+    }
     case "statement": check("statement", data.statement, BUDGETS.statement.statement); count("items", data.items.length, BUDGETS.statement.items); data.items.forEach((item) => check("item", item, BUDGETS.statement.item)); break;
     case "points": count("items", data.items.length, BUDGETS.points.items); data.items.forEach((item) => { check("lead", item.lead ?? "", BUDGETS.points.lead); check("detail", item.detail, BUDGETS.points.detail); }); break;
     case "actions": count("items", data.items.length, BUDGETS.actions.items); data.items.forEach((item) => { check("lead", item.lead ?? "", BUDGETS.actions.lead, 1); check("detail", item.detail, BUDGETS.actions.detail); }); break;

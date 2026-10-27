@@ -5,7 +5,9 @@ import { qualityReport, spoken } from "./studioReport";
 
 /** The critic's verdict in one line. */
 export function criticLine(review: StudioReview): string {
-  const ready = review.verdict.trim().toLowerCase() === "ready" || review.problems.length === 0;
+  const verdict = review.verdict.trim().toLowerCase();
+  if (verdict === "unavailable") return "The critic could not review the storyline.";
+  const ready = verdict === "ready" || review.problems.length === 0;
   if (ready) return review.round && review.round > 1 ? `The critic accepted the storyline after ${review.round} rounds.` : "The critic accepted the storyline.";
   return `The critic asked for ${review.problems.length === 1 ? "1 change" : `${review.problems.length} changes`}${review.round ? ` (round ${review.round})` : ""}.`;
 }
@@ -55,6 +57,20 @@ export function StudioLive({ state }: { state: LiveOutputState }) {
   </section>;
 }
 
+const REVIEW_LINE = {
+  ready: "The scientific review found the deck ready.",
+  open_problems: "Delivered with open problems: the scientific review still found the points below after one revision.",
+  unavailable: "Not reviewed: the scientific review could not run for this deck.",
+} as const;
+
+/** A scientific deck's review outcome, and what it could not check, said plainly. */
+export function ScientificReview({ status, limitations }: { status: keyof typeof REVIEW_LINE; limitations: string[] }) {
+  return <div className={`studio-science is-${status}`}>
+    <p className="studio-critic">{status !== "ready" && <CircleAlert size={12} aria-hidden="true" />}{REVIEW_LINE[status]}</p>
+    {limitations.length > 0 && <><h4>What this deck could not check</h4><ul>{limitations.map((item, index) => <li key={index}>{item}</li>)}</ul></>}
+  </div>;
+}
+
 /** A saved studio artifact: how it was made, and what the checker still flags. */
 export function StudioBrief({ artifact, onCite }: { artifact: Artifact; onCite?: ((index: number) => void) | undefined }) {
   const approach = artifact.provenance.approach!;
@@ -67,7 +83,7 @@ export function StudioBrief({ artifact, onCite }: { artifact: Artifact; onCite?:
   return <div className="studio-brief">
     {approach.memo ? <MemoView memo={approach.memo} map={approach.refMap ?? null} {...(onCite ? { onCite } : {})} /> : approach.answer ? <p className="studio-answer">{approach.answer}</p> : null}
     {gaps.length > 0 && <div><h4>Where the material is thin or disagrees</h4><ul>{gaps.map((gap, index) => <li key={index}>{gap}</li>)}</ul></div>}
-    {last && <p className="studio-critic">{criticLine(last)}</p>}
+    {approach.reviewStatus ? <ScientificReview status={approach.reviewStatus} limitations={approach.limitations ?? []} /> : last && <p className="studio-critic">{criticLine(last)}</p>}
     <div className="studio-quality" aria-label="Quality report">
       <h4>Quality report{report.seconds !== null && <small>made in {spoken(report.seconds)}</small>}</h4>
       <p>{report.flagged === 0 ? "The checker found nothing left to flag." : `The checker still flags ${report.flagged} of ${report.rows.length}.`}{report.unchecked > 0 && ` ${report.unchecked} not checked yet.`}</p>

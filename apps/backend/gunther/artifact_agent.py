@@ -1480,6 +1480,15 @@ class ArtifactAgent:
         made.restore(list(self.pool.items))
         use = _fold_use(work)
         resume = (work.approach or {}).get("studio_progress")
+        if resume is None and (work.approach or {}).get("purpose") == "explain_study":
+            resume = {
+                "previous_purpose": {
+                    "purpose": "explain_study",
+                    "reason": work.approach.get("purpose_reason") or "Kept from this deck",
+                },
+                "brief": spec.brief,
+                "passages": len(made),
+            }
 
         def keep(state: dict[str, Any]) -> None:
             # Kept in the work (the workspace is saved even when the turn fails).

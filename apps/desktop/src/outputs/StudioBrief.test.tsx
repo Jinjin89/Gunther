@@ -62,3 +62,17 @@ describe("a saved studio artifact", () => {
     expect(screen.getByText("The checker still flags 2 of 3. 1 not checked yet.")).toBeInTheDocument();
   });
 });
+
+describe("a scientific deck's review", () => {
+  it("says plainly when the review could not run or left open problems", async () => {
+    const { criticLine, ScientificReview } = await import("./StudioBrief");
+    expect(criticLine({ verdict: "unavailable", understood: "", problems: [] })).toBe("The critic could not review the storyline.");
+    const { rerender } = render(<ScientificReview status="open_problems" limitations={["Review: slide 3: The control is unnamed"]} />);
+    expect(screen.getByText(/Delivered with open problems/)).toBeInTheDocument();
+    expect(screen.getByText("Review: slide 3: The control is unnamed")).toBeInTheDocument();
+    rerender(<ScientificReview status="unavailable" limitations={[]} />);
+    expect(screen.getByText(/Not reviewed/)).toBeInTheDocument();
+    rerender(<ScientificReview status="ready" limitations={[]} />);
+    expect(screen.getByText("The scientific review found the deck ready.")).toBeInTheDocument();
+  });
+});

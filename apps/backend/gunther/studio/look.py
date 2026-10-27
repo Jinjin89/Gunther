@@ -385,6 +385,20 @@ def look(
     changed: list[int] = []
     designed_targets = [n for n in targets if fmt.design_of(slides[n - 1])]
     plain_targets = [n for n in targets if n not in designed_targets]
+    if getattr(agents, "scientific_context", None) and plain_targets:
+        # A reviewed scientific explanation is not cut or moved into the notes to fit:
+        # designed slides are redrawn with their words kept; the rest stay as reviewed.
+        record["kept"] = plain_targets
+        agents.skipped.append(
+            {
+                "step": step,
+                "label": "Slides kept as reviewed",
+                "reason": "Slides "
+                + ", ".join(map(str, plain_targets))
+                + " looked crowded; their scientific explanation was not cut to fit.",
+            }
+        )
+        plain_targets = []
     record["designed"] = designed_targets
     if designed_targets:
         from gunther.studio import design as D
