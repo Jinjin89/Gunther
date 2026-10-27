@@ -1,216 +1,303 @@
-# Scientific presentations that explain the study
+# Journal club presentations that teach the paper
 
-Status: agreed direction for the next implementation task. Read [AGENTS.md](../AGENTS.md).
-The user should be able to learn a study from the slides: its question, contribution,
-method, main experiments, supporting figures and limits. A collection of isolated facts,
-prominent numbers and generic recommendations does not meet that goal.
+Status: agreed implementation handoff, updated 2026-10-27. Read
+[AGENTS.md](../AGENTS.md). The existing scientific workflow is a baseline to extend;
+the journal club requirements below still need implementation and quality verification.
 
-## Interaction
+The audience should be able to learn the actual paper from the deck: understand its
+central method, walk through its major figures and experiments, and explain how the
+evidence supports its conclusions. Sparse facts, isolated scores, generic commentary,
+or images accompanied by shallow captions do not meet this requirement. Correct
+citations, successful image delivery and attractive rendering cannot substitute for
+substantive coverage and explanation.
 
-Keep the existing simple request flow. Infer the purpose from the user's words and the
-material already in scope. A request to explain or learn a paper should lead to scientific
-explanation automatically. An explicit request for a different purpose takes precedence.
+## Interaction and scope
 
-Do not add a presentation-mode selector, manual figure-selection step, setup questionnaire,
-or required approval of the memo and outline. Infer reasonable defaults for length, depth
-and audience. Produce a complete first draft and accept natural refinements such as
-“explain the method more” or “focus on the experiments.” Respect the current material scope;
-automatic adaptation does not authorize reading unrelated libraries.
+For selected research material and a request to present, explain or learn the paper,
+infer the journal club purpose automatically. An explicit request for another purpose
+takes precedence. Reuse the existing purpose mechanism where appropriate; this does
+not require a new user-facing mode or applying a research-paper structure to other
+document types.
 
-For a learning deck, essential explanations belong on the slides. Presenter notes can add
-detail, but should not carry the only explanation of an experiment. Adapt delivery to an
-explicit speaking or reading request without making the user configure an internal workflow.
+Keep the simple request flow. Do not add a presentation-mode selector, manual figure
+selection, setup questionnaire, or required approval of an internal map or outline.
+Infer reasonable defaults for audience, depth and duration. Produce a complete first
+draft and accept natural refinements such as “explain this method more.”
 
-## Confirmed gaps
+Respect the selected material scope. Background must be supported and cited; do not
+silently read unrelated libraries to supply it. Report missing source information
+rather than inventing an explanation. Preserve the original canonical text, files,
+organization and provenance. Presentation explanations and schematics are derived
+content and must not rewrite the reading version or manufacture source sections.
 
-The studio prompts currently emphasize consulting-style insights, prominent numbers, action
-titles, persuasive storylines and a recommendation at the end. Those choices can displace
-scientific explanation even when the requested audience is scientific.
+Essential explanations belong on the slides. Speaker notes may add detail and a
+spoken walkthrough, but cannot carry the only explanation of a method, result or
+control. Adapt to an explicit speaking or reading request without exposing internal
+workflow configuration.
 
-Original figure assets can exist without reaching the writer. `_studio_reading` constructs
-textual evidence without attaching the available figure metadata. The studio material
-serializer outputs passage text without figure references. `_figures` then tells the writer
-that no figures are available. The renderer already supports source-image references;
-the handoff between reading, planning and writing needs attention.
+## Understand the paper and establish coverage
 
-Extraction limitations also disappear from the material shown to the writer. The source
-reader can report uncertain glyphs or unreliable formula text while the slide writer receives
-only text. Citation presence alone cannot establish that the resulting scientific claim is
-correct.
+Before choosing slides, read the main scientific content together: results, original
+figures and captions, the methods needed to interpret them, and relevant supplementary
+evidence. A short abstract, digest or a few retrieved passages cannot establish that
+the paper's central content has been covered. Gather the necessary material within
+scope; explicitly record extraction or access gaps that prevent understanding it.
 
-The separate source-selection problem is already addressed in the current code: the
-orchestrator receives the chosen material overview before its first decision, and sending
-waits for source-selection saves. Preserve those fixes and their regression tests.
+Build an internal coverage plan connecting:
 
-## Understand the study before planning slides
+- The scientific context, prior knowledge, unresolved question and contribution.
+- The central method or experimental approach, how it works, why it was chosen,
+  its assumptions and what its measurements can establish.
+- Every main figure, its important panels, the experiments or analyses they contain,
+  relevant methods, comparisons or controls, observations and supported interpretations.
+- The dependencies between results: what one experiment establishes, what question
+  remains, and why the next experiment follows.
+- The authors' claims, the evidence supporting them, plausible alternatives and the
+  agent's separately identified critical assessment.
 
-Build an internal representation of the scientific argument. It should connect:
+Account for every main figure. Record where it is taught, which panels are grouped
+or split across slides, and any omitted material with a scientific reason. Include
+supplementary panels when they are necessary to understand or assess a central claim.
+This is an internal completeness check, not a request for the user to select figures.
 
-- The research question, prior gap and main contribution.
-- The method's inputs, core mechanism, outputs and assumptions.
-- Each central claim to its experiment or analysis, comparison or control, measurement,
-  result, supporting text and relevant figure panels.
-- The interpretation warranted by that evidence, competing explanations and limitations.
+Prioritize the method and central results. A parameter, dataset statistic, isolated
+score or routine caveat deserves space when it helps explain the science or assess a
+claim. Specificity and the size of a number are not measures of scientific importance.
+Keep quantities attached to units, baselines, conditions and uncertainty.
 
-Distinguish the authors' findings from the agent's interpretation. Keep quantities attached
-to their units, baselines, conditions and uncertainty. Preserve the original canonical source
-text and provenance; slide explanations are derived content.
+The coverage plan must reflect the source, not just repeat the writer's chosen
+storyline: a central experiment omitted from the outline must still be discoverable
+as an omission. Citation checking of selected sentences does not check coverage.
 
-Use this representation to select important content. A parameter, implementation detail or
-dataset statistic deserves a prominent slide only when it explains a central mechanism,
-result or limitation. Specificity by itself is not scientific importance.
+## Presentation sequence
 
-Let the study's actual argument determine the sequence. A methods paper, experimental study,
-theoretical paper and review need different explanations. Do not impose a fixed paper
-template, manufacture source section names, or require every slide to have an action title,
-hero number or business recommendation.
+Most of the presentation should teach the central method and walk through the
+paper's figures and results. Use this flow as a starting point:
 
-## Use original figures as evidence
+| Part | Content and purpose |
+| --- | --- |
+| Opening | Identify the paper, establish the essential background and unresolved question, and explain the overall study strategy. |
+| Main body | Teach the central approach and work through the main figures, introducing experimental details where they are needed to interpret the evidence. |
+| Ending | Integrate the findings, assess which conclusions are supported, explain the contribution and identify meaningful discussion questions. |
 
-Carry available figure assets through the full workflow, with captions, panel labels,
-document revision, page and region provenance, and links to the relevant claims and passages.
-Retain extraction and crop-quality information alongside them. Keep asset access within the
-chosen source scope.
+The first slide uses the paper's actual title, authors, journal or venue and publication
+year where available, together with its central question and a brief explanation of
+why that question matters. Do not invent missing bibliographic details, event labels
+or presentation dates. Distinguish publication dates from file timestamps.
 
-Read important images together with their captions and the related methods/results text.
-The component interpreting a figure must actually receive its pixels through a capable
-model interface. An asset identifier or caption alone is not evidence that its contents were
-visually inspected.
+Background should prepare the audience to understand the experiments. Define necessary
+concepts and show the relevant biological system or technical problem. Explain what
+previous work established and the specific gap the authors address. Avoid spending
+the opening on broad field summaries that do not help interpret this study.
 
-Choose figures automatically for their explanatory value. When a central result depends on
-a figure, the deck should show and interpret its relevant panels. A result slide should make
-clear what was tested, what the controls or comparisons are, how to read the axes and legend,
-which observation matters, and what conclusion it supports.
+Start with the paper's figure order and make the scientific connections explicit.
+Reorder or group material when a method must be taught first or the argument is clearer
+that way. Every main figure must be accounted for, but neither figure order nor a
+one-figure-per-slide rule is a substitute for explanation.
 
-Use legible panel crops when helpful, preserving axes, units, legends and essential context.
-Annotations should direct attention without changing the evidence. Avoid shrinking a dense
-full figure into an unreadable thumbnail. Distinguish original evidence from any explanatory
-schematic derived by the agent; decorative graphics cannot substitute for experimental data.
+For a methods paper, explain the central mechanism sufficiently before examining its
+evaluation, comparisons, ablations and demonstrated applications. For experimental
+work, explain the system, interventions, measurements and successive scientific
+questions. Adapt to the actual argument of theoretical papers, reviews and other
+research material; do not invent experiments or impose one paper template.
 
-Review a figure-dependent deck that uses no relevant source images as a content failure.
-Do not impose an image quota on material that has no useful figures. If an image cannot be
-read reliably, preserve the limitation instead of inventing its interpretation.
+Length follows the content needed to teach the paper. Do not force it into a generic
+eight-to-twelve-slide target. Honor an explicit duration by choosing and explaining
+the central argument coherently, with further evidence in an appendix when useful;
+do not silently omit central results or shrink them into unreadable slides.
 
-## Plan and review for understanding
+## Teach the figures and their results
 
-Each planned slide should have a scientific purpose, a contribution to the overall argument,
-supporting evidence, any selected figures or panels, and an explanation of the intended
-takeaway. Plan the method and main results in enough depth to teach them before choosing
-visual styling.
+For each important figure or coherent group of panels, develop a teaching sequence:
 
-The scientific review must check whether a reader can:
+**Question → method and controls → panel observations → interpretation → remaining
+uncertainty → reason for the next experiment.**
 
-1. Explain the research question and what the work contributes.
-2. Describe how the central method or experiment works beyond a list of terminology.
-3. Interpret the important figures and their comparisons or controls.
-4. Explain which evidence supports each main conclusion.
-5. State the assumptions, limitations and important unresolved questions.
+Explain what the authors are trying to find out and how the experiment or analysis
+addresses that question. Explain the method at the point of use: what was manipulated,
+compared or measured, what each point, image or distribution represents, why the control
+is needed, and what the readout can and cannot establish.
 
-Reject drafts that omit central experiments, promote peripheral details, confuse association
-with causation, compare incompatible quantities, or make stronger claims than the evidence
-supports. Necessary limitations belong with the claims they qualify. A titles-only review,
-citation-count check or layout score is insufficient.
+Then walk through the original evidence. Identify axes, units, groups and legend as
+needed, direct attention to the important comparison, and explain the actual observation.
+Explain why that observation supports a conclusion and which alternative explanations
+remain. Keep the authors' interpretation distinct from the agent's assessment.
 
-Verify uncertain scientific values against reliable source evidence, including the rendered
-page when needed. Do not guess a replacement for a damaged number or symbol. Complete those
-checks before delivery; do not leave instructions to proofread unresolved values in the
-presenter's notes.
+The results are taught through these walkthroughs. Do not replace them with disconnected
+lists of findings or repeatedly restate the same numbers in separate summary slides.
+Each step should add understanding of the experiment or its role in the argument.
 
-Run visual design after the scientific content and figure choices pass review. Preserve
-source-image references and scientific meaning through formatting, design and export.
+A complex figure may need several slides: experimental setup, enlarged related panels,
+controls and interpretation. A simple figure may need one. Do not require every figure
+to use the same number of slides or every panel to receive equal time. Dense figures
+may benefit from an overview for orientation followed by focused panel views.
 
-## Implementation entry points
+After a result, make its connection to the next scientific question understandable.
+At the end, reconstruct the integrated explanation or method and show which findings
+support its parts. State what the work adds relative to the original gap.
 
-- `apps/backend/gunther/studio/prompts.py`: reading, memo, storyline, writing and criticism.
-- `apps/backend/gunther/studio/pipeline.py`: intermediate representations, material
-  serialization, figure availability and scientific verification.
-- `apps/backend/gunther/service.py`: selected-source reading, figure metadata and source
-  quality/provenance handoff.
-- `apps/backend/gunther/studio/design.py` and the desktop slide renderer: legible source
-  figures, explanations, annotations and preservation through rendering/export.
-- `apps/backend/evals/quality/`: task-appropriate scientific completeness and visual
-  comprehension checks; general business-presentation conventions are not universal rules.
+Critical discussion must concern specific conclusions and evidence. Explain which
+control, comparison or assumption affects a claim, why an alternative remains possible,
+and what evidence could distinguish explanations. “More validation is needed” is not
+enough. Label proposed experiments as proposals. A study's genuine scientific limitations
+are content to explain; they do not themselves mean that the presentation has failed.
 
-Reuse the existing agent, workspace, evidence and rendering capabilities where they fit.
-The purpose is to improve task interpretation, scientific content selection and evidence
-delivery. A model change or visual restyling alone will not repair the missing inputs or
-the wrong evaluation objective.
+## Figures, layout and fidelity
 
-## Verification and scope
+Carry source figure assets, captions, panel labels, revision and region provenance,
+claim links, crop quality and extraction warnings through reading, planning, writing,
+editing and export. The component interpreting an image must receive its actual pixels
+through a capable model interface. Captions and asset identifiers alone do not establish
+that the figure was visually read.
 
-Use independent synthetic or development fixtures to test scientific reasoning, figure
-transport, multimodal inputs, scope boundaries, quality flags and rendering. Cover material
-with multiple experiments, methods/benchmarks, useful multi-panel figures, and material for
-which no source image is appropriate. Inspect rendered outputs and evaluate whole-deck
-comprehension as well as individual claims.
+Use the original evidence at a readable size. Keep axes, units, legends, relevant controls
+and essential context visible when cropping panels. Link a crop to its original figure
+and source revision, preserve panel identity, and retain the original asset. Annotations
+may direct attention without changing the evidence. Clearly distinguish derived teaching
+schematics from original experimental figures.
 
-Keep the user's evaluation papers held out. Do not search the live library or repository
-history for their identities, originals, saved parses or old screenshots. Do not encode
-document-, publisher- or example-specific production rules. Retain source-selection,
-editing, citation and export behavior, and preserve user data.
+The existing whole-image layout with up to three explanation bullets may remain one
+option, but must not constrain scientific planning. Support related panel groups, readable
+panel views and explanatory sequences across multiple slides. Do not use decorative
+graphics as substitutes for data or shrink a dense figure into a thumbnail to fit a template.
 
-The [remaining PDF extraction issues](../artifacts/handoffs/pdf-reader-issues/README.md)
-describe upstream limitations. Propagate those limitations into the presentation workflow;
-do not silently treat uncertain extraction as verified evidence.
+Preserve the image's intrinsic aspect ratio in the app, PDF and PowerPoint. Verify the
+exported placement as well as the embedded bytes. DOM text-size and overflow checks do
+not establish that labels inside an image are legible; inspect the rendered figure too.
 
-Deliver an implementation report covering the changed behavior, scientific and visual
-verification, unresolved limitations and any pre-existing test failures. This handoff makes
-the product direction concrete; it does not require further user selection of a mode or skill.
+Generation, image reading, capture and review must support the required deck length and
+figure coverage, using bounded batches where necessary. Current image-count and capture
+limits must not silently exclude central evidence. Do not add a figure quota to a paper
+that has no useful source images. Unreadable or unavailable figures remain explicit
+limitations; never invent their contents.
 
-## Implementation status (2026-10-27)
+## Review for scientific learning
 
-Built for decks; tested with fake models only. No real-model run yet, so the quality of the
-model steps is unverified.
+Use separate checks for coverage, learning, factual grounding and visual fidelity.
 
-- **Purpose.** A small model step reads the brief and a short overview of the material and
-  returns `explain_study` or `general` (`studio/science.py: Purpose`). An explicit purpose in
-  the request wins. The purpose is kept with the deck, so edits stay scientific. Reports
-  still take the general path.
-- **Study map** (`StudyMap`). Replaces the consulting memo for `explain_study`: question,
-  gap, contribution, method, claims with experiment, control, measurement, result, refs,
-  linked figures and limits. A link to a passage or figure the material does not hold is
-  sent back once; still wrong, the build fails.
-- **Figures and warnings reach the writer.** `_studio_reading` attaches each passage's figures
-  (asset, caption, page, region, crop check) and extraction warnings: `uncertain_glyph`
-  (U+FFFD), `unverified_glyphs` (with the numbers that cannot be trusted), `withheld_formula`.
-  `_passage` prints both, so `_figures` sees the real images.
-- **Figure reading.** Up to 8 figures linked to central claims, central first, are sent as
-  pixels with caption and passages to the vision model (photos job, else the writer if it
-  can see). If none is set up, or a read fails, the limitation is recorded; nothing is
-  invented from captions.
-- **Storyline, writing, review.** Scientific prompts (`STUDY_STORY`, `STUDY_WRITE`,
-  `SCIENTIFIC_REVIEW`, `STUDY_REVISE`). The figure layout takes up to three explanation
-  bullets beside the image, in the app, the renderer and the PPTX export.
-- **Gate before verify and design.** The reviewer answers the five reader questions. Code
-  checks (`code_problems`) that the legible figures of central claims are shown on a slide,
-  that no number cited to a damaged passage is stated unless clean text or a figure reading
-  confirms it, and that no image comes from outside the scope. One whole-deck revision
-  follows. Code problems still left fail the build. Reviewer problems still left, or a
-  review that could not run, are recorded with the deck as limitations.
-- **Preservation.** Automatic fixes (format, claims, fitting) may not drop a source image.
-  Design may not shorten an explanation line. The look step redraws designed slides with
-  their words kept, and does not cut plain slides or move their text into notes.
-- **Edits.** A one-slide edit uses the study map and readings. The edited slide gets the same
-  value and scope checks, is asked again once, then fails.
-- **Evals.** The judge and lint use scientific criteria for `explain_study` (code only; not run).
+1. **Source-aware coverage.** Compare the plan and draft against the paper's central
+   content and figure inventory. Identify omitted methods, experiments, important panels,
+   controls and links in the scientific argument. Check that the explanation has enough
+   depth to teach them, rather than merely naming them.
+2. **Independent learner.** Give a separate reader only the rendered slides and their
+   visible content, with an audience brief. Do not provide the source paper, evidence
+   pool, study map, planning rationale or speaker notes. Ask it to reconstruct the study
+   and explicitly identify what the slides do not explain.
+3. **Compare understanding with the source.** Assess whether that reconstruction correctly
+   describes the question and contribution, central method, major experiments and panels,
+   comparisons or controls, observations, supported conclusions and unresolved issues.
+   Require evidence from the slides for the reader's answers, so prior knowledge cannot
+   substitute for missing teaching.
+4. **Grounding and delivery.** Check factual claims, attribution, quantities, formulas,
+   cover metadata, image provenance and exports. Reject association stated as causation,
+   incompatible comparisons and conclusions stronger than the evidence. Inspect the final
+   rendered figures and ensure that design or fitting has preserved both the evidence and
+   its explanation.
 
-- **Review outcome is shown.** The approach records `review_status`: `ready`,
-  `open_problems` (delivered; the problems are listed) or `unavailable` (not reviewed).
-  The app shows it with the limitations, under "What this deck could not check".
-- **Blank model answers fail.** A study map with no claims, a review with empty answers, or a
-  legible figure reading with no observation is asked for again, then treated as failed.
-- **Scope and resume.** The build keeps `allowed_assets` (its own source images), and edits
-  are checked against them. A saved study map is reused only for the same passages, not just
-  the same count of them.
-- **Edits are checked when finished.** The finished deck's code checks are attached to the
-  version as notes. Fitting a slide may not bring in a damaged value or a foreign image.
-- **Figure text fits its column.** With explanations, the takeaway is ≤120 units, each line
-  ≤90 and all of them ≤280, for reading decks too. The same budget applies in
-  `studio/format.py` and `deck/units.ts`; PPTX export shrinks type before it spills.
+The current scientific reviewer sees source material and the study map alongside the
+draft. It can assess consistency, but it is not the independent learner: access to those
+inputs risks filling gaps that the audience cannot fill. Keep those roles separate.
 
-Reviewed on 2026-10-27 by GLM 5.3 (code), GLM 5.3 Flash (rendered slides) and gpt-6.1-sol
-(checked both reviews against the code). Their confirmed findings are fixed above.
+Missing central methods or results, shallow panel descriptions that do not explain the
+experiment, or incorrect reconstruction are content failures. Revise them before expensive
+visual polish. The final designed and exported deck must preserve the teaching and remain
+readable. Do not mark a deck ready merely because images, citations and expected headings
+are present. If necessary source information is missing or a blocking content problem
+remains, report the incomplete outcome accurately rather than claiming successful review.
+Ordinary scientific uncertainty should remain an accurately explained limitation, not
+trigger an endless attempt to make the paper's evidence stronger than it is.
 
-Open: panel crops and a layout that suits each figure's shape (a dense multi-panel figure gets
-about half the slide), checking damaged values against the rendered page image, a real-model
-run and the Mac trial.
+Verify uncertain scientific values against reliable source evidence, including the original
+rendered page when needed. Do not guess replacements for damaged numbers or symbols, or
+leave instructions to proofread unresolved values in presenter notes. Distinguish missing
+extraction from a method, control or result that the authors did not report.
+
+## Implementation priorities and entry points
+
+Implement substantive coverage and teaching first, then panel presentation and independent
+learning review. Preserve existing source-selection, citation, editing, resume and scope
+protections. Reuse the existing agent, workspace, evidence and renderer capabilities.
+
+- `apps/backend/gunther/service.py`: selected-source reading and sufficient coverage of
+  results, methods, figures, captions and relevant supplementary evidence; preserve warnings
+  and provenance in the handoff.
+- `apps/backend/gunther/studio/science.py`: extend the study map and figure readings into a
+  source-grounded coverage and teaching plan. Current asset-presence checks do not prove
+  that important panels or their experiments were explained.
+- `apps/backend/gunther/studio/prompts.py`, `pipeline.py` and `work.py`: journal club planning,
+  method teaching, figure walkthroughs, scientific transitions, targeted revisions and
+  separate source-aware and independent learner reviews. Preserve them through edits/resume.
+- `apps/backend/gunther/studio/design.py`, `format.py`, the desktop deck renderer and
+  `exportPptx.ts`: layouts that support readable panels and multi-slide explanations,
+  source-image fidelity, metadata grounding and preservation through fitting and export.
+- `apps/backend/gunther/slide_render.py`: capture and review of longer decks in bounded
+  batches; final figure readability and PDF verification.
+- `apps/backend/evals/quality/`: source coverage, depth and slide-only comprehension
+  criteria, alongside factual and visual checks. Generic presentation scores are insufficient.
+
+Measure model calls and latency by stage. Reuse readings and evidence for the same source
+revision; revise affected sections and avoid repeating unchanged verification or design.
+Performance improvements must preserve scientific depth, central evidence and final review.
+A model change, another generic prompt or visual restyling alone is not the implementation.
+
+## Current baseline and observed validation (2026-10-27)
+
+The existing implementation already provides automatic scientific purpose inference,
+a study map, figure metadata and extraction warnings, actual image reading, scientific
+planning/review, review-status reporting and source-image preservation through edits.
+Do not treat the earlier figure-transport and source-selection gaps as still unimplemented.
+
+Local validation passed 390 targeted backend tests, 950 desktop tests, 50 UI smoke checks,
+lint, type checking and the native app build. A real-model trial on one independent invented
+study produced eleven slides with three source figures, successful PDF capture and no
+measured overflow. The trial's review status remained `open_problems`.
+
+That trial verifies functional behavior, not journal club quality. The user rejected the
+presentation direction because it taught too little substantive scientific content and
+spent attention on small details. Do not use the synthetic trial or passing test counts
+as evidence that the paper-presentation goal is solved.
+
+Confirmed additional issues from that trial:
+
+- PowerPoint embedded the original image bytes but changed their aspect ratios through
+  placement. Correct figure sizing and verify the exported geometry.
+- The cover invented an event label and date absent from the brief and evidence. Prevent
+  format-example metadata from becoming factual content and include it in grounding checks.
+- Generation took about fourteen minutes and 69 gateway completion calls at the configured
+  high effort, including repeated format repairs. Improve reuse and targeted revision.
+
+Panel crops and layouts suited to figure shape, checking damaged values against the rendered
+original page, and substantive real-paper journal club evaluation remain implementation or
+verification work. The installed Mac build was exercised; protected library content and
+portable files remained unchanged.
+
+## Verification, protected material and delivery
+
+Use independent fixtures for functional checks of multimodal inputs, panel provenance,
+source scope, missing extraction, editing, resume and export. Add real-paper development
+evaluations with complex methods and multiple experiments or panels. Compare the deck's
+coverage against the source and inspect what the independent learner can actually explain.
+Synthetic examples alone cannot establish journal club quality.
+
+Exercise variable-length decks, dense panels, negative or conflicting results when present,
+methods/benchmark explanations, source images that cannot be read reliably, and research
+material with no useful figures. Verify the figure geometry and explanatory content in
+PowerPoint as well as the app/PDF. Regression examples must verify general behavior and
+must not become document-, publisher- or example-specific production rules.
+
+Keep the user's evaluation papers held out. Do not search live libraries or repository
+history for their identities, originals, saved parses or old screenshots. Reports and
+handoffs must omit evaluation-paper names, quotations, filenames, source identifiers,
+revision identifiers, page locations and screenshots exposing their identities. Use
+independent development material and preserve the eventual blind evaluation.
+
+Use isolated validation data. Preserve real libraries, especially Leadership, and do not
+create data backups or reparse real material merely to run these checks. The
+[remaining PDF extraction issues](../artifacts/handoffs/pdf-reader-issues/README.md)
+describe upstream limitations to propagate accurately into the presentation workflow.
+
+Deliver an implementation report covering the final behavior, scientific coverage and
+learning evaluation, rendered figures and exports, latency, unresolved limitations and
+any pre-existing test failures. Make the generated validation deck directly viewable and
+clearly identify its role as development material; test logs alone are not the result the
+user needs to inspect. No further mode selection or internal-outline approval is required.
