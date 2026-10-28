@@ -38,11 +38,13 @@ function Sources({ artifact }: { artifact: Artifact }) {
  * superscripts and a list of sources at the end; a deck is one slide per page, without notes,
  * followed by a page of sources.
  */
-export function PrintRoot({ artifact }: { artifact: Artifact }) {
+export function PrintRoot({ artifact, from = 0, to = Number.POSITIVE_INFINITY }: { artifact: Artifact; from?: number; to?: number }) {
   const numbers = citationNumbers(artifact.citations);
   const date = new Date(artifact.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
   const deck = artifact.kind === "slides";
   const report = splitDocument(artifact.content, "report");
+  const deckSlides = deck ? splitDocument(artifact.content, "slides").sections : [];
+  const end = Math.min(to, deckSlides.length);
   const v2 = isReportV2(artifact.content);
   const brief = withoutTitle(report.preamble).replace(/^\s*<!--\s*report:\s*v2\s*-->\s*/, "");
   return createPortal(
@@ -50,8 +52,8 @@ export function PrintRoot({ artifact }: { artifact: Artifact }) {
       <style>{deck ? DECK_PAGE : REPORT_PAGE}</style>
       {deck
         ? <div className="outputs-print-deck">
-          <Suspense fallback={null}><PrintSlides artifact={artifact} /></Suspense>
-          {artifact.citations.length > 0 && <section className="outputs-print-slide outputs-print-slide-sources"><Sources artifact={artifact} /></section>}
+          <Suspense fallback={null}><PrintSlides artifact={artifact} from={from} to={end} /></Suspense>
+          {artifact.citations.length > 0 && end >= deckSlides.length && <section className="outputs-print-slide outputs-print-slide-sources"><Sources artifact={artifact} /></section>}
         </div>
         : <article className={`outputs-print-report${v2 ? " is-studio" : ""}`}>
           <header>

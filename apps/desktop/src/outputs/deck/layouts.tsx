@@ -1,11 +1,12 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { sourceAssetUrl } from "../../api";
 import { Chart } from "./Charts";
 import { Inline, Prose } from "./Inline";
-import type { DeckData } from "./parseDeck";
+import type { DeckData, ImageCrop } from "./parseDeck";
 import { countUnits } from "./units";
 
 type Of<L extends DeckData["layout"]> = Extract<DeckData, { layout: L }>;
+type FigureData = Extract<DeckData, { layout: "figure" | "figure_detail" }>;
 const After = ({ text, className = "" }: { text: string | null | undefined; className?: string }) => text ? <p className={`dk-after ${className}`}><Inline text={text} /></p> : null;
 const size = (value: number): CSSProperties => ({ "--dk-size": `${value}px` }) as CSSProperties;
 
@@ -136,14 +137,83 @@ export function Quote({ data }: { data: Of<"quote"> }) {
   </div>;
 }
 
-export function Figure({ data }: { data: Of<"figure"> }) {
+export function cropGeometry(
+  frameWidth: number,
+  frameHeight: number,
+  crop: ImageCrop,
+  naturalWidth: number,
+  naturalHeight: number,
+) {
+  const ratio = (naturalWidth * crop.w) / (naturalHeight * crop.h);
+  const width = Math.min(frameWidth, frameHeight * ratio);
+  const height = width / ratio;
+  return {
+    width,
+    height,
+    imageWidth: width / crop.w,
+    imageHeight: height / crop.h,
+    left: -crop.x * 100,
+    top: -crop.y * 100,
+  };
+}
+
+function FigureImage({ data, missing, setMissing }: { data: FigureData; missing: boolean; setMissing: (value: boolean) => void }) {
+  const frame = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState<{ width: number; height: number } | null>(null);
+  const [natural, setNatural] = useState({ width: 1, height: 1 });
+  const crop = data.crop;
+
+  useLayoutEffect(() => {
+    const element = frame.current;
+    if (!element) return undefined;
+    const fit = () => {
+      const width = element.clientWidth;
+      const height = element.clientHeight;
+      if (!crop || !width || !height) {
+        setBox(null);
+        return;
+      }
+      const fit = cropGeometry(width, height, crop, natural.width, natural.height);
+      setBox({ width: fit.width, height: fit.height });
+    };
+    fit();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const watcher = new ResizeObserver(fit);
+    watcher.observe(element);
+    return () => watcher.disconnect();
+  }, [crop, natural]);
+
+  return <div className="dk-picture" ref={frame}>
+    {missing
+      ? <span className="dk-missing" role="img" aria-label={data.alt}>{data.alt || "The figure could not be loaded."}</span>
+      : crop && box
+        ? <span className="dk-crop" style={{ width: box.width, height: box.height }}>
+            <img
+              src={sourceAssetUrl(data.assetId)}
+              alt={data.alt}
+              onError={() => setMissing(true)}
+              onLoad={(event) => setNatural({
+                width: event.currentTarget.naturalWidth || 1,
+                height: event.currentTarget.naturalHeight || 1,
+              })}
+              style={{
+                width: `${100 / crop.w}%`,
+                height: `${100 / crop.h}%`,
+                transform: `translate(-${crop.x * 100}%, -${crop.y * 100}%)`,
+              }}
+            />
+          </span>
+        : <img src={sourceAssetUrl(data.assetId)} alt={data.alt} onError={() => setMissing(true)} onLoad={() => setBox((old) => old ?? null)} />}
+  </div>;
+}
+
+export function Figure({ data }: { data: FigureData }) {
   const [missing, setMissing] = useState(false);
-  useEffect(() => setMissing(false), [data.assetId]);
-  return <div className={`dk-figure${data.explanation?.length ? " has-explanation" : ""}`}>
+  const cropKey = data.crop ? `${data.crop.x},${data.crop.y},${data.crop.w},${data.crop.h}` : "";
+  useEffect(() => setMissing(false), [data.assetId, cropKey]);
+  return <div className={`dk-figure${data.explanation?.length ? " has-explanation" : ""}${data.layout === "figure_detail" ? " is-detail" : ""}`}>
     <figure>
-      <div className="dk-picture">{missing
-        ? <span className="dk-missing" role="img" aria-label={data.alt}>{data.alt || "The figure could not be loaded."}</span>
-        : <img src={sourceAssetUrl(data.assetId)} alt={data.alt} onError={() => setMissing(true)} />}</div>
+      <FigureImage data={data} missing={missing} setMissing={setMissing} />
       {data.alt && <figcaption>{data.alt}</figcaption>}
     </figure>
     {data.explanation?.length ? <div className="dk-figure-explanation">
@@ -203,6 +273,7 @@ export function Layout({ data }: { data: DeckData }): ReactNode {
     case "timeline": return <Timeline data={data} />;
     case "quote": return <Quote data={data} />;
     case "figure": return <Figure data={data} />;
+    case "figure_detail": return <Figure data={data} />;
     case "statement": return <Statement data={data} />;
     case "points": return <Points data={data} />;
     case "actions": return <Actions data={data} />;

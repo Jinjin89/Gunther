@@ -382,6 +382,8 @@ def lint(
     *,
     purpose: str = "general",
     study_map: dict[str, Any] | None = None,
+    coverage_plan: dict[str, Any] | None = None,
+    source_figures: list[str] | None = None,
     figure_readings: list[dict[str, Any]] | None = None,
 ) -> list[Defect]:
     """Every hard defect of one artifact. ``kind`` is "slides" or "report"."""
@@ -408,7 +410,9 @@ def lint(
             if use == "talk" and slide.layout not in {"title", "section"} and not slide.notes:
                 defects.append(Defect(where, "missing_notes", "talk slide without speaker notes"))
         if purpose == "explain_study":
-            defects += scientific_defects(content, study_map, figure_readings)
+            defects += scientific_defects(
+                content, study_map, coverage_plan, source_figures, figure_readings
+            )
         return defects
     preamble, sections = split_document(content, "report")
     for number, text in enumerate(sections, start=1):
@@ -427,9 +431,16 @@ def lint(
     return defects
 
 
-def scientific_defects(content, study_map, figure_readings) -> list[Defect]:
-    """Evidence transport checks; semantic completeness belongs to the scientific judge."""
-    from gunther.studio.science import FigureReading, StudyMap, content_problems
+def scientific_defects(
+    content, study_map, coverage_plan, source_figures, figure_readings
+) -> list[Defect]:
+    """Accounting and transport checks; semantic depth belongs to the scientific judges."""
+    from gunther.studio.science import (
+        CoveragePlan,
+        FigureReading,
+        StudyMap,
+        content_problems,
+    )
 
     defects = []
     if not study_map:
@@ -445,9 +456,27 @@ def scientific_defects(content, study_map, figure_readings) -> list[Defect]:
         ):
             defects.append(Defect("document", "incomplete_experiment", claim.claim))
     readings = [FigureReading.model_validate(r) for r in figure_readings or []]
+    if not coverage_plan:
+        defects.append(Defect("document", "missing_coverage_plan", "No source coverage plan"))
+    else:
+        plan = CoveragePlan.model_validate(coverage_plan)
+        if source_figures is not None:
+            planned = {figure.asset_id for figure in plan.figures}
+            defects += [
+                Defect("document", "unaccounted_source_figure", asset)
+                for asset in source_figures
+                if asset not in planned
+            ]
+        # ``lint`` has no evidence pool, so source accounting is checked by run.py and the
+        # app; here an unexplained grouped/omitted figure is still a hard planning defect.
+        defects += [
+            Defect("document", "unaccounted_figure", f"{figure.asset_id}: {figure.reason}")
+            for figure in plan.figures
+            if figure.disposition in {"group", "omit"} and not figure.reason.strip()
+        ]
     defects += [
         Defect("document", "missing_source_figure", p)
-        for p in content_problems(study, readings, content)
+        for p in content_problems(study, readings, content, plan if coverage_plan else None)
     ]
     return defects
 

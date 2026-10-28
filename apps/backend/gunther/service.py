@@ -3724,13 +3724,26 @@ class KnowledgeService:
 
     def _studio_reading(
         self, session: Session, source_ids: list[str], pool: Pool, *, most: int = 900
-    ) -> None:
+    ) -> list[str]:
         """Every selected source read whole into the pool, in its own order, as passages of
         consecutive blocks under one heading (about 1,400 characters each). The studio reads
         the material, not search results; each passage stays citable like a search hit."""
 
         target = 1400
+        wanted_sources = set(source_ids)
         sources = list(session.scalars(select(Source).where(Source.id.in_(source_ids))))
+        found_sources = {source.id for source in sources}
+        paper_rows = session.scalars(
+            select(SourcePaper).where(SourcePaper.source_id.in_(source_ids))
+        )
+        papers = {
+            row.source_id: row
+            for row in paper_rows
+        }
+        gaps = [
+            f"Source {source_id} is selected but unavailable, so it was not read."
+            for source_id in sorted(wanted_sources - found_sources)
+        ]
         heads = dict(
             session.execute(
                 select(SourceIndexHead.source_id, SourceIndexHead.revision_id).where(
@@ -3752,6 +3765,10 @@ class KnowledgeService:
         for source in sorted(sources, key=lambda item: item.created_at):
             revision_id = heads.get(source.id)
             if not revision_id:
+                gaps.append(
+                    f"Source {source.title} has no indexed revision, so its main content "
+                    "was not read."
+                )
                 continue
             blocks = list(
                 session.scalars(
@@ -3798,13 +3815,31 @@ class KnowledgeService:
                 size += len(block.content) + 2
             for group in groups:
                 if len(pool) >= most:
-                    return
+                    gaps.append(
+                        f"The build pool held {len(pool)} of {len(groups)} passage groups from "
+                        f"{source.title}; the remaining groups were not read."
+                    )
+                    return gaps
                 snapshot = self._read_snapshot(group, 6000)
                 if not snapshot.text.strip():
                     continue
                 path = json.loads(group[0].heading_path_json or "[]")
                 locator = " › ".join(str(part) for part in path if part) or group[0].locator
                 figures, warnings = self._studio_metadata(session, group, elements, mapped)
+                paper = papers.get(source.id)
+                source_metadata = (
+                    {
+                        key: value
+                        for key, value in {
+                            "title": paper.title,
+                            "authors": paper.authors,
+                            "year": paper.year,
+                        }.items()
+                        if value not in (None, "")
+                    }
+                    if paper is not None
+                    else {}
+                )
                 citation = ConversationCitationOut(
                     id=_id("cit"),
                     source_id=source.id,
@@ -3821,6 +3856,7 @@ class KnowledgeService:
                     source_origin="selected",
                     figures=figures,
                     extraction_warnings=warnings,
+                    source_metadata=source_metadata,
                 )
                 pool.adopt(
                     Evidence(
@@ -3837,6 +3873,30 @@ class KnowledgeService:
                         extraction_warnings=tuple(warnings),
                     )
                 )
+        return gaps
+
+    @staticmethod
+    def _reusable_figure_readings(session: Session, base_id: str) -> list[dict]:
+        """Earlier studio decks in this library: readings reused only when pipeline checks the
+        asset, revision and vision model all match."""
+
+        found: list[dict] = []
+        rows = session.scalars(
+            select(Artifact.provenance_json)
+            .where(
+                Artifact.knowledge_base_id == base_id,
+                Artifact.kind == "slides",
+            )
+            .order_by(Artifact.created_at.desc())
+            .limit(30)
+        )
+        for row in rows:
+            try:
+                approach = (json.loads(row).get("approach") or {})
+            except ValueError:
+                continue
+            found += approach.get("figure_readings") or approach.get("figureReadings") or []
+        return found
 
     def _output_pool(self, seeds: list[Evidence], limits: OutputLimits) -> Pool:
         pool = Pool(limits.pool)
@@ -4144,7 +4204,8 @@ class KnowledgeService:
             if self.output_method == "studio":
                 from gunther.studio.pipeline import StudioAgents
 
-                self._studio_reading(session, resolved.source_ids, pool)
+                reading_gaps = self._studio_reading(session, resolved.source_ids, pool)
+                notes = replace(notes, extraction_gaps=tuple(reading_gaps))
                 studio = StudioAgents(
                     self.models,
                     limits,
@@ -4152,6 +4213,7 @@ class KnowledgeService:
                     tool=tool,
                     renderer=self.slide_renderer,
                     asset_reader=self.asset_reader,
+                    reusable_figures=self._reusable_figure_readings(session, base_id),
                 )
                 built = studio.make(
                     model, effort, spec, pool, notes, events, fallback_title=fallback_title
@@ -5629,7 +5691,8 @@ class KnowledgeService:
                 def studio(
                     spec: Spec, made: Pool, use: str | None, resume=None, checkpoint=None
                 ) -> BuiltOutput:
-                    self._studio_reading(session, resolved.source_ids, made)
+                    reading_gaps = self._studio_reading(session, resolved.source_ids, made)
+                    scoped_notes = replace(notes, extraction_gaps=tuple(reading_gaps))
                     return StudioAgents(
                         gateway,
                         limits,
@@ -5637,12 +5700,13 @@ class KnowledgeService:
                         tool=tool,
                         renderer=self.slide_renderer,
                         asset_reader=self.asset_reader,
+                        reusable_figures=self._reusable_figure_readings(session, base_id),
                     ).make(  # type: ignore[arg-type]
                         model,
                         effort,
                         spec,
                         made,
-                        notes,
+                        scoped_notes,
                         emit,
                         fallback_title=library.title,
                         resume=resume,

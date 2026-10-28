@@ -579,6 +579,8 @@ class ConversationCitationOut(ApiModel):
     work_identifier: str | None = None
     figures: list[dict[str, object]] = Field(default_factory=list)
     extraction_warnings: list[dict[str, object]] = Field(default_factory=list)
+    # Bibliographic fields retained from the selected source; absent fields stay absent.
+    source_metadata: dict[str, object] = Field(default_factory=dict)
     # Its number in the conversation's source pool: `[ref]` in an answer, the same in
     # every answer of the conversation. Older answers have none and count from 1.
     ref: int | None = None

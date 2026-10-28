@@ -108,6 +108,15 @@ STUDY_DECK_FORMAT = (
         '"## Scientific title": clear framing,',
     )
     .replace(
+        "The core message in one line (≤160)",
+        "The central question and why it matters in one line (≤160)",
+    )
+    .replace("Committee briefing · March 2026\n", "")
+    .replace(
+        "Line 3 is an optional meta line (audience · date) with no citations. ",
+        "Bibliographic metadata is supplied by delivery code. ",
+    )
+    .replace(
         "figure (only with a figure listed in the material; copy its reference exactly; takeaway ≤160):",
         "figure (only with a listed source image; copy its reference exactly; takeaway ≤160; "
         "optional 1–3 explanation bullets after it, shown beside the image: then the takeaway "
@@ -118,7 +127,20 @@ STUDY_DECK_FORMAT = (
         "The gap opens above 30 °C outside [n]\n"
         "- Test and comparison/control; axes and legend [n]\n"
         "- Observation and conclusion it supports [n]\n"
-        "- Assumptions or limitation beside this result [n]\n\nstatement",
+        "- Assumptions or limitation beside this result [n]\n\n"
+        "figure_detail (3–6 focused explanations; use for a method or panel walkthrough; image "
+        "and text each keep room; takeaway ≤150, bullets ≤125, together ≤620):\n"
+        "## Title\n"
+        "![Panel A — caption](gunther-asset:ID#x=0.1,y=0.1,w=0.4,h=0.5)\n"
+        "What this experiment establishes and what remains uncertain [n]\n"
+        "- Setup, manipulation or model input [n]\n"
+        "- Comparison/control and what each visual mark means [n]\n"
+        "- Observation and interpretation, kept distinct [n]\n"
+        "- Assumption, limitation, or the reason for the next experiment [n]\n\n"
+        "A crop always uses a normalized region of the original managed image — "
+        "`#x=…,y=…,w=…,h=…` — supplied from an actual FigureReading panel box. It is not a "
+        "freehand crop and the original asset must also be shown (usually on the figure's "
+        "orientation slide).\n\nstatement",
     )
 )
 

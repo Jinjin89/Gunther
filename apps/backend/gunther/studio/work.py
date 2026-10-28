@@ -140,6 +140,11 @@ class StudioWorkAgents(StudioAgents):
                 purpose="explain_study", reason=data.get("purpose_reason") or "Kept from this deck"
             ),
             study=S.StudyMap.model_validate(data["study_map"]),
+            coverage_plan=(
+                S.CoveragePlan.model_validate(data["coverage_plan"])
+                if data.get("coverage_plan")
+                else None
+            ),
             figure_readings=[
                 S.FigureReading.model_validate(r) for r in data.get("figure_readings") or []
             ],
@@ -173,6 +178,12 @@ class StudioWorkAgents(StudioAgents):
                         deck,
                         pool.items,
                         self._allowed(),
+                        plan=scientific.coverage_plan,
+                    )
+                ] + [
+                    {"step": "science", "label": "Cover metadata", "reason": problem}
+                    for problem in S.cover_problems(
+                        deck, pool.items
                     )
                 ]
             return notes
@@ -188,7 +199,9 @@ class StudioWorkAgents(StudioAgents):
 
         return S.value_problems(
             text, pool.items, scientific.figure_readings or []
-        ) + S.scope_problems(text, pool.items, self._allowed())
+        ) + S.crop_problems(text, scientific.figure_readings or []) + S.scope_problems(
+            text, pool.items, self._allowed()
+        )
 
     def record(self) -> dict[str, Any]:
         return {"name": "studio", "version": 1, "skipped": self.skipped, "trail": self.trail}

@@ -72,12 +72,14 @@ READING = {
             "shows": "Noise test",
             "axes": "Noise vs drift (mV)",
             "legend": "Blue adaptive; gray fixed",
+            "box": [0.0, 0.0, 0.5, 1.0],
         },
         {
             "label": "B",
             "shows": "Ablation",
             "axes": "Feedback vs drift (mV)",
             "legend": "On vs off",
+            "box": [0.5, 0.0, 0.5, 1.0],
         },
     ],
     "comparison": "Adaptive vs fixed; feedback on vs off",
@@ -172,6 +174,11 @@ def science_pool(*, figures=True, warning=False):
             ]
             if figures
             else [],
+            source_metadata={
+                "title": "Learning the adaptive filter study",
+                "authors": "A. Researcher, B. Collaborator",
+                "year": 2026,
+            },
         )
         pool.adopt(
             Evidence(
@@ -213,6 +220,30 @@ def science_router(study=None, *, first=DECK, revised=DECK, reading=READING, rea
             )
         if task.startswith("Build the study map"):
             return json.dumps(study)
+        if task.startswith("Make the journal-club coverage plan"):
+            return json.dumps(
+                {
+                    "method_teaching": [
+                        "Reference error updates filter gain",
+                        "Changing-noise challenge precedes feedback ablation",
+                    ],
+                    "result_dependencies": [
+                        "The noise challenge motivates the feedback-on/off ablation"
+                    ],
+                    "figures": [
+                        {
+                            "asset_id": "ast_signal",
+                            "central": True,
+                            "disposition": "teach",
+                            "panels": ["A", "B"],
+                            "teaching_role": "Both controlled experiments",
+                            "reason": "",
+                        }
+                    ]
+                    if any(claim.get("figures") for claim in study["claims"])
+                    else [],
+                }
+            )
         if task.startswith("Read the attached original source figure pixels"):
             if read_error:
                 raise ModelError("Synthetic image read failed")
@@ -260,9 +291,44 @@ def science_router(study=None, *, first=DECK, revised=DECK, reading=READING, rea
                     "problems": [],
                 }
             )
+        if task.startswith("You are an independent learner"):
+            return json.dumps(
+                {
+                    "question_and_contribution": {
+                        "answer": "Adaptive filtering addresses changing-noise drift",
+                        "evidence": [1, 3],
+                    },
+                    "method_or_experiment": {
+                        "answer": "Reference error updates filter gain",
+                        "evidence": [2],
+                    },
+                    "figures_and_controls": {
+                        "answer": "Panels A/B compare adaptive/fixed and feedback on/off",
+                        "evidence": [3],
+                    },
+                    "evidence_for_conclusions": {
+                        "answer": "Noise challenge and ablation support the contribution",
+                        "evidence": [3],
+                    },
+                    "assumptions_limits_and_questions": {
+                        "answer": "Stable reference assumed; no field validation",
+                        "evidence": [3, 4],
+                    },
+                    "unexplained": [],
+                }
+            )
+        if task.startswith("Compare an independent learner"):
+            return json.dumps(
+                {
+                    "understood": "The learner reconstructed the controlled study",
+                    "verdict": "ready",
+                    "coverage_problems": [],
+                    "learner_problems": [],
+                }
+            )
         if task.startswith("Write the scientific explanation deck"):
             return first
-        if task.startswith("Revise the complete scientific deck"):
+        if task.startswith("Revise only the scientific slides"):
             return revised
         if task.startswith("You are working on one slide of an existing scientific"):
             return fmt.split_slides(DECK)[1]
@@ -309,7 +375,7 @@ def test_multi_experiment_map_pixels_story_writer_revision_and_design(tmp_path):
     assert len(built.approach["study_map"]["claims"]) == 2
     assert built.approach["figure_readings"][0]["panels"][1]["label"] == "B"
     tasks = [request_text(r).split(P.TASK_BOUNDARY)[-1] for r in fake.requests]
-    assert sum(t.startswith("Revise the complete scientific deck") for t in tasks) == 1
+    assert sum(t.startswith("Revise only the scientific slides") for t in tasks) == 1
     for marker in ("Plan a scientific", "Write the scientific"):
         prompt = next(t for t in tasks if t.startswith(marker))
         assert "ast_signal" in prompt and "Actual FigureReadings" in prompt
@@ -412,10 +478,10 @@ def test_failed_purpose_or_review_is_not_replaced_by_a_general_or_ready_answer(t
     # An unavailable review is recorded as such with the deck, never as a ready verdict.
     agents = StudioAgents(gateway(FakeProvider(failing)), use="read", asset_reader=pixels(tmp_path))
     built = agents.make(model(), "low", Spec("slides", "Readers"), science_pool(), Notes())
-    assert "The scientific review could not run." in built.approach["limitations"]
+    assert any("review-ready" in reason for reason in built.approach["limitations"])
     assert built.approach["review_status"] == "unavailable"
     assert any(s["label"] == "Scientific review unavailable" for s in agents.skipped)
-    assert all(r["verdict"] != "ready" for r in built.approach["reviews"])
+    assert not any("answers" in review for review in built.approach["reviews"])
 
 
 def test_unselected_figure_link_is_rejected_before_pixels_are_read(tmp_path):
@@ -479,9 +545,9 @@ def test_review_problems_left_after_revision_are_recorded_with_the_deck(tmp_path
         science_pool(),
         Notes(),
     )
-    # One revision of the whole deck; what the reviewer still finds goes with the deck.
+    # One targeted revision; what the reviewer still finds goes with the deck.
     revisions = [
-        r for r in fake.requests if "Revise the complete scientific deck" in request_text(r)
+        r for r in fake.requests if "Revise only the scientific slides" in request_text(r)
     ]
     assert len(revisions) == 1 and "The control is unnamed" in request_text(revisions[0])
     assert "Review: slide 3: The control is unnamed" in built.approach["limitations"]
@@ -577,6 +643,8 @@ def test_scientific_eval_uses_completeness_not_business_conventions(tmp_path):
         "read",
         purpose="explain_study",
         study_map=STUDY,
+        coverage_plan=built.approach["coverage_plan"],
+        source_figures=["ast_signal"],
         figure_readings=[READING],
     )
     assert not any(d.rule == "topic_title" for d in defects)
@@ -586,6 +654,8 @@ def test_scientific_eval_uses_completeness_not_business_conventions(tmp_path):
         "read",
         purpose="explain_study",
         study_map=STUDY,
+        coverage_plan=built.approach["coverage_plan"],
+        source_figures=["ast_signal"],
         figure_readings=[READING],
     )
     assert any(d.rule == "missing_source_figure" for d in missing)

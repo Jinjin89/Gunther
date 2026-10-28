@@ -20,6 +20,7 @@ export interface ChartCategory { label: Raw; highlight: boolean }
 export interface ChartValue { n: number; text: Raw; label: string }
 export interface ChartSeries { name: Raw; unit: string | null; values: ChartValue[] }
 export interface TableRow { cells: Raw[]; highlight: boolean }
+export interface ImageCrop { x: number; y: number; w: number; h: number }
 
 export type DeckData =
   | { layout: "title"; title: Raw; subtitle: Raw | null; meta: Raw | null }
@@ -33,7 +34,7 @@ export type DeckData =
   | { layout: "process"; title: Raw; items: Pair[]; after: Raw | null }
   | { layout: "timeline"; title: Raw; items: Array<{ when: Raw; event: Raw }>; after: Raw | null }
   | { layout: "quote"; title: Raw; quote: Raw; attribution: Raw | null; after: Raw | null }
-  | { layout: "figure"; title: Raw; alt: string; assetId: string; takeaway: Raw | null; explanation?: Raw[] }
+  | { layout: "figure" | "figure_detail"; title: Raw; alt: string; assetId: string; crop?: ImageCrop; takeaway: Raw | null; explanation?: Raw[] }
   | { layout: "statement"; title: Raw; statement: Raw; items: Raw[]; after: Raw | null }
   | { layout: "points"; title: Raw; items: Pair[]; after: Raw | null }
   | { layout: "actions"; title: Raw; items: Pair[]; after: Raw | null }
@@ -46,11 +47,11 @@ type Block =
   | { t: "table"; rows: string[][]; aligns: Align[] }
   | { t: "quote"; text: string }
   | { t: "h3"; text: string }
-  | { t: "image"; alt: string; id: string }
+  | { t: "image"; alt: string; id: string; crop: ImageCrop | null }
   | { t: "line"; text: string };
 
 const ITEM = /^\s*(?:([-*+•])|(\d{1,2}[.)]))\s+(.*)$/;
-const IMAGE = /^!\[([^\]]*)\]\(gunther-asset:([A-Za-z0-9_-]+)\)\s*$/;
+const IMAGE = /^!\[([^\]]*)\]\(gunther-asset:([A-Za-z0-9_-]+)(?:#x=(\d+(?:\.\d+)?),y=(\d+(?:\.\d+)?),w=(\d+(?:\.\d+)?),h=(\d+(?:\.\d+)?))?\)\s*$/;
 const DELIMITER = /^:?-+:?$/;
 
 /** The cells of a table row: leading and trailing pipes are dropped, `\|` is a pipe in a cell. */
@@ -92,7 +93,10 @@ export function scan(body: string, options: { paragraphs?: boolean } = {}): Bloc
       if (last?.t === "quote") last.text += `\n${text}`; else blocks.push({ t: "quote", text });
     } else if (IMAGE.test(trimmed)) {
       const found = IMAGE.exec(trimmed)!;
-      blocks.push({ t: "image", alt: found[1] ?? "", id: found[2] ?? "" });
+      const crop = found[3] !== undefined && found[4] !== undefined && found[5] !== undefined && found[6] !== undefined
+        ? { x: Number(found[3]), y: Number(found[4]), w: Number(found[5]), h: Number(found[6]) }
+        : null;
+      blocks.push({ t: "image", alt: found[1] ?? "", id: found[2] ?? "", crop });
     } else if (item) {
       const ordered = item[2] !== undefined;
       if (last?.t === "items" && last.ordered === ordered) last.items.push(item[3]!.trim()); else blocks.push({ t: "items", ordered, items: [item[3]!.trim()] });
@@ -266,11 +270,12 @@ export function parseDeckSlide(layout: string | null | undefined, body: string, 
       }
       return { layout: "quote", title, quote: said.join(" ").trim(), attribution, after: join(...after) };
     }
-    case "figure": {
+    case "figure":
+    case "figure_detail": {
       const image = blocks.find((block): block is Extract<Block, { t: "image" }> => block.t === "image");
       if (!image || blocks.filter((block) => block.t === "image").length !== 1 || blocks.some((block) => block.t !== "image" && block.t !== "line" && block.t !== "items")) return fallback();
       const explanation = blocks.flatMap((block) => block.t === "items" ? block.items : []);
-      return { layout: "figure", title, alt: image.alt, assetId: image.id, takeaway: lineText(blocks), ...(explanation.length ? { explanation } : {}) };
+      return { layout: name, title, alt: image.alt, assetId: image.id, ...(image.crop ? { crop: image.crop } : {}), takeaway: lineText(blocks), ...(explanation.length ? { explanation } : {}) };
     }
     case "statement": {
       const first = blocks.findIndex((block) => block.t === "line");
@@ -330,13 +335,15 @@ export function budgetIssues(data: DeckData, read = false): string[] {
     case "process": count("steps", data.items.length, BUDGETS.process.items); data.items.forEach((item) => { check("step", item.lead ?? "", BUDGETS.process.step, 1); check("detail", item.detail, BUDGETS.process.detail); }); break;
     case "timeline": count("events", data.items.length, BUDGETS.timeline.items); data.items.forEach((item) => { check("when", item.when, BUDGETS.timeline.when, 1); check("event", item.event, BUDGETS.timeline.event); }); break;
     case "quote": check("quote", data.quote, BUDGETS.quote.quote); check("attribution", data.attribution ?? "", BUDGETS.quote.attribution); break;
-    case "figure": {
+    case "figure":
+    case "figure_detail": {
       const lines = data.explanation ?? [];
+      const detail = data.layout === "figure_detail";
       if (lines.length === 0) { check("takeaway", data.takeaway ?? "", BUDGETS.figure.takeaway); break; }
-      check("takeaway", data.takeaway ?? "", BUDGETS.figure.side, 1);
-      count("explanations", lines.length, [0, 3]);
-      lines.forEach((line) => check("explanation", line, BUDGETS.figure.explanation, 1));
-      check("text beside the figure", [data.takeaway ?? "", ...lines].join(""), BUDGETS.figure.beside, 1);
+      check("takeaway", data.takeaway ?? "", detail ? [0, 150] : BUDGETS.figure.side, 1);
+      count("explanations", lines.length, detail ? [3, 6] as Range : [0, 3] as Range);
+      lines.forEach((line) => check("explanation", line, detail ? [0, 125] as Range : BUDGETS.figure.explanation, 1));
+      check("text beside the figure", [data.takeaway ?? "", ...lines].join(""), detail ? [0, 620] as Range : BUDGETS.figure.beside, 1);
       break;
     }
     case "statement": check("statement", data.statement, BUDGETS.statement.statement); count("items", data.items.length, BUDGETS.statement.items); data.items.forEach((item) => check("item", item, BUDGETS.statement.item)); break;

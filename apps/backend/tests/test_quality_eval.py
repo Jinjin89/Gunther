@@ -136,3 +136,95 @@ def test_the_visual_column_prefers_the_vision_judge_and_falls_back_to_the_text_j
         {"set": "c", "label": "deck", "absolute": {"insight": 5}},
     ]
     assert report.summarize(builds)["scores"]["visual"] == 7.0
+
+
+def test_judge_pair_returns_the_structured_result():
+    import json
+
+    from fake_models import FakeProvider, gateway, model
+
+    answer = {name: "A" for name in judge.PAIR_CRITERIA}
+    answer["reason"] = "A explains the control."
+    fake = FakeProvider(json.dumps(answer))
+    result, error = judge.judge_pair(
+        gateway(fake), model(), kind="slides", brief="Teach the study",
+        first={"content": DECK, "citations": []},
+        second={"content": DECK, "citations": []},
+    )
+    assert result.overall == "A" and not error and len(fake.requests) == 1
+
+
+def test_eval_reads_uncited_experiment_and_inventory_from_selected_revision(tmp_path):
+    import json
+    from types import SimpleNamespace
+
+    from fake_models import FakeProvider, gateway, model
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from test_studio_pipeline import request_text
+
+    from evals.quality.run import judge_build, source_material
+    from gunther.database import Base
+    from gunther.models import (
+        ContentBlock,
+        DocumentElement,
+        Source,
+        SourceIndexHead,
+        SourceRevision,
+    )
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(engine)
+    with sessions.begin() as session:
+        for identity in ("selected", "outside"):
+            session.add(Source(id=identity, title=identity, kind="paper", content="fixture", content_hash=identity))
+            for version in ("old", "current"):
+                revision = identity + version
+                session.add(SourceRevision(id=revision, source_id=identity, fingerprint=revision, parser="fixture"))
+                for n, text in enumerate(["Mechanism setup", "Read every character. " * 400 + "UNCITED CENTRAL ABLATION"]):
+                    session.add(ContentBlock(id=revision + str(n), revision_id=revision, ordinal=n, kind="paragraph", content=text, locator=str(n)))
+                for n, kind in enumerate(("figure", "equation")):
+                    session.add(DocumentElement(id=revision + kind, revision_id=revision, ordinal=n, kind=kind, content="Controlled ablation caption", locator="p. 2", payload_json=json.dumps({"imageAssetId": revision + kind})))
+            session.add(SourceIndexHead(source_id=identity, revision_id=identity + "current"))
+    service = SimpleNamespace(sessions=sessions, list_knowledge_base_sources=lambda _: [SimpleNamespace(id="selected", title="Selected study")])
+    passages, inventory = source_material(service, "fixture")
+    assert inventory == ["selectedcurrentfigure"]
+    assert [p["locator"] for p in passages] == ["0", "1", "p. 2"]
+    assert "UNCITED CENTRAL ABLATION" in judge.whole_source_view(passages)
+    assert "outside" not in str(passages) and "selectedold" not in str(passages)
+    (tmp_path / "content.md").write_text(DECK)
+    (tmp_path / "passages.json").write_text('[{"quote":"Only the cited mechanism"}]')
+    (tmp_path / "source-material.json").write_text(json.dumps(passages))
+    (tmp_path / "source-figures.json").write_text(json.dumps(inventory))
+    learner = {key: {"answer": "Only mechanism explained", "evidence": [1]} for key in judge.LearningReconstruction.model_fields if key != "unexplained"}
+    prompts = []
+
+    def reply(request):
+        text = request_text(request)
+        prompts.append(text)
+        if "independent learner's slide-only reconstruction" in text:
+            assert "UNCITED CENTRAL ABLATION" in text and "selectedcurrentfigure" in text
+            return json.dumps({"source_coverage": 2, "explanation_depth": 3, "slide_only_comprehension": 3, "problems": ["Central ablation is omitted"], "summary": "Missing central evidence"})
+        if "You are an independent learner" in text:
+            assert "UNCITED" not in text and "selectedcurrentfigure" not in text
+            return json.dumps(learner)
+        assert "Only the cited mechanism" in text
+        return json.dumps({**dict.fromkeys(judge.CRITERIA, 5), "sections": [], "summary": "Partial"})
+
+    fake = FakeProvider(reply)
+    gw = gateway(fake)
+    brief = materials.Brief("slides", "scientist", "Teach the study", "read")
+    material = SimpleNamespace(brief=lambda _: brief)
+    record = {"dir": str(tmp_path), "label": "deck", "purpose": "explain_study", "parts": 3,
+              "study_map": {}, "coverage_plan": {}, "source_figures": ["WRITER_INVENTORY"]}
+    judge_build(record, material, gw, model(), judge.Meter(gw))
+    assert record["learningComparison"]["problems"] == ["Central ablation is omitted"]
+    assert len(prompts) == 3
+
+
+def test_whole_source_budget_reports_any_unread_content(monkeypatch):
+    monkeypatch.setattr(judge, "SOURCE_BUDGET_CHARS", 100)
+    result = judge.whole_source_view([{"supportText": "x" * 200}, {"supportText": "unseen"}])
+    assert "block 1 incomplete" in result and "1 further blocks unavailable" in result
+    assert "unseen" not in result

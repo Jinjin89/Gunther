@@ -174,3 +174,19 @@ describe("a chart table's bold marks", () => {
     expect(JSON.stringify(data)).not.toContain("**");
   });
 });
+
+it("preserves normalized crop provenance and the uncropped figure shape", () => {
+  const cropped = parse("figure_detail", "## Controlled panel comparison\n![Panel B](gunther-asset:ast_panels#x=0.25,y=0.1,w=0.5,h=0.8)\nObservation\n- Setup\n- Control\n- Interpretation");
+  expect(cropped).toMatchObject({ layout: "figure_detail", assetId: "ast_panels", crop: { x: 0.25, y: 0.1, w: 0.5, h: 0.8 } });
+  expect(parse("figure", "## Original figure\n![Panels](gunther-asset:ast_panels)")).not.toHaveProperty("crop");
+});
+
+it("checks detailed figure counts and text budgets equally for talk and read", () => {
+  const body = "## Controlled panel comparison\n![Panel B](gunther-asset:ast_panels)\n" + "x".repeat(80) + "\n" + Array.from({ length: 6 }, () => "- " + "y".repeat(90)).join("\n");
+  const parsed = parse("figure_detail", body);
+  expect(budgetIssues(parsed)).toEqual([]);
+  expect(budgetIssues(parsed, true)).toEqual([]);
+  expect(budgetIssues(parse("figure_detail", body + "z"))).toContain("text beside the figure has 621 units (allowed 0-620)");
+  expect(budgetIssues(parse("figure_detail", body + "\n- Extra"))).toContain("explanations: 7 (allowed 3-6)");
+  expect(budgetIssues(parse("figure_detail", body.replace("y".repeat(90), "y".repeat(126))))).toContain("explanation has 126 units (allowed 0-125)");
+});

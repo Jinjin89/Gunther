@@ -182,6 +182,7 @@ def look(
                 f"{parsed[n - 1].title or '(cover)'}"
                 + (f" — measured: {' | '.join(notes)}" if notes else " — measured: no problem")
             )
+        agents._count_model_call(step)
         result, _ = agents.gateway.complete_json(
             eye,
             LookReview,

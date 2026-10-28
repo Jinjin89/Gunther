@@ -7,7 +7,7 @@ import PptxGenJS from "pptxgenjs";
 import { wrap } from "./measure";
 import { joinNumbers, tokens } from "./inlineTokens";
 import { sourceLine } from "./inlineTokens";
-import { parseDeck, type DeckData, type DeckSlide } from "./parseDeck";
+import { parseDeck, type DeckData, type DeckSlide, type ImageCrop } from "./parseDeck";
 import { addDesignedSlide, type DesignedCapture } from "./designedPptx";
 import type { DesignedJob } from "./exportDesigned";
 import type { BrandTheme } from "./brand";
@@ -38,6 +38,65 @@ const CJK = /[　-鿿豈-﫿가-힯＀-￯]/;
 interface Ink { bodyFont: string; logo: string | null; logoRatio: number; bg: string; ink: string; muted: string; rule: string; soft: string; bar: string; onAccent: string; accent: string; titleFont: string }
 interface Run { text: string; options: Record<string, unknown> }
 interface Base { size: number; color: string; bold?: boolean; italic?: boolean; font?: string }
+
+function headerSize(data: string): { width: number; height: number } | null {
+  const comma = data.indexOf(",");
+  if (comma < 0 || !data.startsWith("data:")) return null;
+  try {
+    const binary = atob(data.slice(comma + 1));
+    const bytes = new Uint8Array(binary.length);
+    for (let at = 0; at < binary.length; at += 1) bytes[at] = binary.charCodeAt(at);
+    if (bytes.length >= 24 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+      const view = new DataView(bytes.buffer);
+      return { width: view.getUint32(16), height: view.getUint32(20) };
+    }
+    if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+    let at = 2;
+    while (at + 9 < bytes.length) {
+      if (bytes[at] !== 0xff) { at += 1; continue; }
+      const marker = bytes[at + 1]!;
+      const length = (bytes[at + 2]! << 8) | bytes[at + 3]!;
+      if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+        const height = (bytes[at + 5]! << 8) | bytes[at + 6]!;
+        const width = (bytes[at + 7]! << 8) | bytes[at + 8]!;
+        return { width, height };
+      }
+      at += 2 + length;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+async function imageSize(data: string): Promise<{ width: number; height: number } | null> {
+  const size = headerSize(data);
+  if (size?.width && size.height) return size;
+  if (typeof Image === "undefined") return null;
+  return await new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => resolve(image.naturalWidth && image.naturalHeight
+      ? { width: image.naturalWidth, height: image.naturalHeight } : null);
+    image.onerror = () => resolve(null);
+    image.src = data;
+  });
+}
+
+async function fittedImage(data: string, crop: ImageCrop | null, boxW: number, boxH: number) {
+  const natural = await imageSize(data);
+  if (!natural?.width || !natural.height) {
+    // Unknown metadata still exports the original bytes; the app/browser paths decode it.
+    const fallbackRatio = crop ? crop.w / crop.h : boxW / boxH;
+    const width = Math.min(boxW, boxH * fallbackRatio);
+    return { x: (boxW - width) / 2, y: (boxH - width / fallbackRatio) / 2, width, height: width / fallbackRatio, natural: null };
+  }
+  const ratio = crop
+    ? (natural.width * crop.w) / (natural.height * crop.h)
+    : natural.width / natural.height;
+  const width = Math.min(boxW, boxH * ratio);
+  const height = width / ratio;
+  return { x: (boxW - width) / 2, y: (boxH - height) / 2, width, height, natural };
+}
 
 /** Runs for one paragraph of Markdown: bold, italic, and citation marks as superscript numbers. */
 function runs(raw: string, base: Base, ink: Ink, last = true, extra: Record<string, unknown> = {}): Run[] {
@@ -374,28 +433,56 @@ async function draw(pptx: PptxGenJS, slide: Slide, source: DeckSlide, layout: st
       if (d.after) after(d.after, top + room + 24);
       break;
     }
-    case "figure": {
+    case "figure":
+    case "figure_detail": {
       const explained = Boolean(d.explanation?.length);
-      const pictureW = explained ? 752 : 1120;
+      const detailed = d.layout === "figure_detail";
+      const pictureW = detailed && explained ? 620 : explained ? 752 : 1120;
+      const wordsW = detailed ? 480 : 340;
       const takeH = !explained && d.takeaway ? heightOf(d.takeaway, 24, 1096, 1.38) + 20 : 0;
       const capH = d.alt ? heightOf(d.alt, 18, pictureW, 1.3) + 8 : 0;
       const pictureH = bodyBottom - top - takeH - capH;
       box(slide, 80, top, pictureW, pictureH, ink.soft);
       const image = options.resolveImage ? await options.resolveImage(d.assetId) : null;
-      if (image) slide.addImage({ data: image, x: inch(92), y: inch(top + 12), w: inch(pictureW - 24), h: inch(pictureH - 24), sizing: { type: "contain", w: inch(pictureW - 24), h: inch(pictureH - 24) } } as never);
+      const fit = image
+        ? await fittedImage(image, d.crop ?? null, pictureW - 24, pictureH - 24)
+        : null;
+      if (image && fit) {
+        const x = 92 + fit.x;
+        const y = top + 12 + fit.y;
+        const crop = d.crop;
+        const full = crop
+          ? { width: fit.width / crop.w, height: fit.height / crop.h }
+          : null;
+        slide.addImage({
+          ...(image.startsWith("data:") ? { data: image } : { path: image }),
+          x: inch(x), y: inch(y), w: inch(full?.width ?? fit.width), h: inch(full?.height ?? fit.height),
+          ...(crop && full ? {
+            sizing: {
+              type: "crop" as const,
+              x: inch(full.width * crop.x),
+              y: inch(full.height * crop.y),
+              w: inch(fit.width),
+              h: inch(fit.height),
+            },
+          } : !fit.natural ? {
+            sizing: { type: "contain" as const, w: inch(fit.width), h: inch(fit.height) },
+          } : {}),
+        } as never);
+      }
       else text(slide, runs(d.alt || "The figure could not be loaded.", { size: 22, color: ink.muted }, ink), 92, top, pictureW - 24, pictureH, { align: "center", valign: "middle" });
       if (d.alt) text(slide, runs(d.alt, { size: 18, color: ink.muted }, ink), 80, top + pictureH + 8, pictureW, capH - 8);
       if (explained) {
         // The column beside the image, centred like the app's; smaller type before it spills.
         const lines = [d.takeaway, ...(d.explanation ?? [])].filter((line): line is string => Boolean(line));
         const room = bodyBottom - top;
-        const tall = (size: number) => lines.reduce((sum, line) => sum + heightOf(line, size, 340, 1.4) + 18, -18);
+        const tall = (size: number) => lines.reduce((sum, line) => sum + heightOf(line, size, wordsW, 1.4) + 18, -18);
         let size = 22;
         while (size > 16 && tall(size) > room) size -= 2;
         let y = top + Math.max(0, (room - tall(size)) / 2);
         for (const line of lines) {
-          const h = heightOf(line, size, 340, 1.4);
-          text(slide, runs(line, { size, color: ink.ink }, ink), 860, y, 340, h);
+          const h = heightOf(line, size, wordsW, 1.4);
+          text(slide, runs(line, { size, color: ink.ink }, ink), 80 + pictureW + 40, y, wordsW, h);
           y += h + 18;
         }
       } else if (d.takeaway) { box(slide, 80, bodyBottom - takeH + 20, 4, takeH - 20, ink.accent); text(slide, runs(d.takeaway, { size: 24, color: ink.ink }, ink), 104, bodyBottom - takeH + 20, 1096, takeH - 20); }

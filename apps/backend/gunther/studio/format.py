@@ -26,6 +26,7 @@ LAYOUTS = (
     "timeline",
     "quote",
     "figure",
+    "figure_detail",
     "statement",
     "points",
     "actions",
@@ -46,11 +47,28 @@ CITE = re.compile(r"\s*\[(?:\?|\d+(?:\s*[,，]\s*\d+)*)\]")
 BOLD_LEAD = re.compile(r"^\*\*(?P<lead>[^*]+?)\*\*\s*[:：—–-]?\s*(?P<rest>.*)$")
 NUMBERED = re.compile(r"^\d+[.)]\s+(?P<text>.+)$")
 BULLET = re.compile(r"^[-*•]\s+(?P<text>.+)$")
-IMAGE = re.compile(r"^!\[[^\]]*\]\(gunther-asset:[A-Za-z0-9_-]+\)\s*$")
+IMAGE = re.compile(
+    r"^!\[[^\]]*\]\(gunther-asset:[A-Za-z0-9_-]+"
+    r"(?:#x=\d+(?:\.\d+)?,y=\d+(?:\.\d+)?,w=\d+(?:\.\d+)?,h=\d+(?:\.\d+)?)?\)\s*$"
+)
 NUMBER = re.compile(r"[-+−]?\d[\d,，.]*")
 # A figure slide with explanations puts its text in a 340 px column beside the image: what
 # fits there (the same in the app, the renderer and PPTX export: deck/units.ts).
 FIGURE_SIDE = {"takeaway": 120, "explanation": 90, "beside": 280}
+FIGURE_DETAIL = {"takeaway": 150, "explanation": 125, "beside": 620}
+# A cover line a writer meant as bibliography: no citation, and either `·`-separated fields or
+# a short dated label with no sentence in it ("Committee briefing · March 2026", "Spring 2026").
+# A subtitle wrapped over two lines is not one, nor is a question that mentions a year.
+COVER_DATE = re.compile(r"\b(19|20)\d{2}\b|\b\d{1,2}\s+\w+\s+\d{4}\b")
+
+
+def cover_meta_line(line: str) -> bool:
+    text = line.strip()
+    if not text or CITE.search(text):
+        return False
+    if " · " in text:
+        return True
+    return bool(COVER_DATE.search(text)) and len(text) <= 60 and not re.search(r"[.?!。？！]", text)
 
 
 def units(text: str) -> int:
@@ -200,19 +218,21 @@ def check_slide(slide: Slide, *, first: bool, read: bool = False) -> list[str]:
     if first and layout != "title":
         problems.append("The first slide must use the title layout.")
     if layout == "title":
-        lines = [line for line in slide.body]
+        lines = [line for line in slide.body if line.strip()]
+        meta = [line for line in lines if cover_meta_line(line)]
+        subtitle = " ".join(line for line in lines if not cover_meta_line(line))
         if not slide.title:
             problems.append('The title slide needs a "# title" line.')
         else:
             limit("title", slide.title, 80, 8)
-        if lines:
-            limit("subtitle", lines[0], 160)
-            if re.search(r"\d", CITE.sub("", lines[0])) and not CITE.search(lines[0]):
+        if subtitle:
+            limit("subtitle", subtitle, 160)
+            if re.search(r"\d", CITE.sub("", subtitle)) and not CITE.search(subtitle):
                 problems.append(
                     "The subtitle states numbers: cite the passages they come from, like [2]."
                 )
-        if len(lines) > 2:
-            problems.append("The title slide has at most a subtitle line and a meta line.")
+        if len(meta) > 1:
+            problems.append("The title slide has at most a subtitle and one meta line.")
         return problems
     if layout == "section":
         if not slide.title:
@@ -380,29 +400,36 @@ def check_slide(slide: Slide, *, first: bool, read: bool = False) -> list[str]:
             problems.append('Add one attribution line: "— who, where [n]".')
         else:
             limit("attribution", re.sub(r"^[—–-]+\s*", "", who[0]), 90)
-    elif layout == "figure":
+    elif layout in ("figure", "figure_detail"):
+        detail = layout == "figure_detail"
         if not body or not IMAGE.match(body[0]):
             problems.append(
                 "The first line is the figure, copied exactly: ![caption](gunther-asset:…)."
             )
-        if len(body) < 2 or len(body) > 5:
-            problems.append("Under the figure, one takeaway and up to three explanation bullets.")
+        most = 6 if detail else 3
+        if len(body) < 2 or len(body) > most + 2:
+            problems.append(
+                f"Under the figure, one takeaway and up to {most} explanation bullets."
+            )
         explanations = [re.sub(r"^[-*]\s+", "", line) for line in body[2:]]
         if any(not re.match(r"^[-*]\s+", line) for line in body[2:]):
             problems.append("Figure explanations are bullets after the takeaway.")
+        if detail and len(explanations) < 3:
+            problems.append("A detailed figure walkthrough has at least three explanation bullets.")
         if len(body) >= 2 and not explanations:
             limit("takeaway", body[1], 160)
         elif len(body) >= 2:
-            # Beside the figure the text has a fixed column, a deck for reading included.
-            limit("takeaway", body[1], FIGURE_SIDE["takeaway"], scaled=False)
+            budgets = FIGURE_DETAIL if detail else FIGURE_SIDE
+            # Beside the image the text has a fixed column, a deck for reading included.
+            limit("takeaway", body[1], budgets["takeaway"], scaled=False)
             for line in explanations:
-                limit("explanation", line, FIGURE_SIDE["explanation"], scaled=False)
+                limit("explanation", line, budgets["explanation"], scaled=False)
             beside = units(body[1]) + sum(units(line) for line in explanations)
-            if beside > FIGURE_SIDE["beside"]:
+            if beside > budgets["beside"]:
                 problems.append(
                     f"The text beside the figure is {beside} units; the takeaway and its "
-                    f"explanations may use {FIGURE_SIDE['beside']} together. Shorten it by "
-                    f"{beside - FIGURE_SIDE['beside']}."
+                    f"explanations may use {budgets['beside']} together. Shorten it by "
+                    f"{beside - budgets['beside']}."
                 )
     elif layout == "statement":
         if not other:

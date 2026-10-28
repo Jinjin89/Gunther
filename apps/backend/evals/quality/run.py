@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from evals.artifacts.run import Counter
 from evals.ask.run import (
@@ -39,7 +40,9 @@ from evals.ask.run import (
 from evals.quality import judge as judging
 from evals.quality import lint as linting
 from evals.quality import materials, report
+from gunther.database import session_scope
 from gunther.llm import ClientFactory
+from gunther.models import ContentBlock, DocumentElement, SourceIndexHead, SourceRevision
 from gunther.outputs import split_document
 
 REPO = materials.BACKEND.parents[1]
@@ -164,6 +167,50 @@ def citation_files(citations: list[dict[str, Any]]) -> tuple[list[dict], list[di
     return short, full
 
 
+def source_material(service: Any, base_id: str) -> tuple[list[dict], list[str]]:
+    """Read the seeded library, independently of retrieval and the writer's selected citations.
+
+    Blocks retain the source's reading order. Figure elements (including figure-like tables)
+    supply the inventory even when no cited passage includes them; equations are not figures.
+    """
+
+    sources = service.list_knowledge_base_sources(base_id)
+    rows, figures = [], []
+    with session_scope(service.sessions) as session:
+        for source in sources:
+            head = session.get(SourceIndexHead, source.id)
+            revision = session.get(SourceRevision, head.revision_id) if head else None
+            if revision is None:
+                rows.append({"sourceTitle": source.title, "supportText": "[Indexed source unavailable]"})
+                continue
+            if revision.warning:
+                rows.append({"sourceTitle": source.title, "supportText": "[Extraction gap] " + revision.warning})
+            blocks = session.scalars(
+                select(ContentBlock).where(ContentBlock.revision_id == revision.id)
+                .order_by(ContentBlock.ordinal)
+            )
+            rows.extend(
+                {"sourceTitle": source.title, "locator": block.locator, "supportText": block.content}
+                for block in blocks
+            )
+            elements = session.scalars(
+                select(DocumentElement).where(
+                    DocumentElement.revision_id == revision.id, DocumentElement.kind == "figure"
+                ).order_by(DocumentElement.ordinal)
+            )
+            for element in elements:
+                payload = json.loads(element.payload_json or "{}")
+                asset = payload.get("imageAssetId")
+                if asset:
+                    figures.append(asset)
+                rows.append({
+                    "sourceTitle": source.title, "locator": element.locator,
+                    "supportText": payload.get("caption") or element.content,
+                    "figures": [{"assetId": asset, "revisionId": revision.id}],
+                })
+    return rows, list(dict.fromkeys(figures))
+
+
 def build_one(
     job: Job,
     template: Path,
@@ -212,6 +259,7 @@ def build_one(
                     f"not {job.method!r}."
                 )
                 return record
+            sources, source_figures = source_material(service, info["knowledgeBaseId"])
             counter = Counter(client.app.state.models)
             body: dict[str, Any] = {
                 "clientRequestId": f"quality_{secrets.token_hex(6)}",
@@ -248,6 +296,12 @@ def build_one(
     (folder / "passages.json").write_text(
         json.dumps(full, ensure_ascii=False, indent=1), encoding="utf-8"
     )
+    (folder / "source-material.json").write_text(
+        json.dumps(sources, ensure_ascii=False, indent=1), encoding="utf-8"
+    )
+    (folder / "source-figures.json").write_text(
+        json.dumps(source_figures, ensure_ascii=False, indent=1), encoding="utf-8"
+    )
     (folder / "outline.json").write_text(
         json.dumps(data.get("outline") or [], ensure_ascii=False, indent=1), encoding="utf-8"
     )  # noqa: E501
@@ -259,7 +313,10 @@ def build_one(
     record["purpose"] = approach.get("purpose", "general")
     # The API's names (camelCase), as the artifact comes back from the service.
     record["study_map"] = approach.get("studyMap")
+    record["coverage_plan"] = approach.get("coveragePlan")
     record["figure_readings"] = approach.get("figureReadings") or []
+    record["allowed_assets"] = approach.get("allowedAssets") or []
+    record["source_figures"] = source_figures
     record["title"] = data.get("title")
     record["parts"] = len(split_document(content, brief.kind)[1])
     record["issues"] = sum(len(s.get("issues") or []) for s in sections)
@@ -331,6 +388,8 @@ def lint_build(record: dict[str, Any], material: materials.MaterialSet) -> None:
         measure,
         purpose=record.get("purpose", "general"),
         study_map=record.get("study_map"),
+        coverage_plan=record.get("coverage_plan"),
+        source_figures=record.get("source_figures"),
         figure_readings=record.get("figure_readings"),
     )
     record["measured"] = measure is not None
@@ -379,9 +438,38 @@ def judge_build(
             if record.get("purpose") == "explain_study"
             else judging.judge_titles_only(gateway, model, kind=brief.kind, content=content)
         )
+        learning = (None, "not a scientific deck")
+        compared = (None, "not a scientific deck")
+        if record.get("purpose") == "explain_study":
+            learning = judging.judge_learner(
+                gateway, model, brief=brief.text(), audience=brief.audience,
+                content=content, pngs=[folder / p for p in record.get("pngs", [])],
+            )
+            source_file = folder / "source-material.json"
+            inventory_file = folder / "source-figures.json"
+            if not source_file.exists() or not inventory_file.exists():
+                compared = (None, "Whole source material or source figure inventory unavailable")
+            elif learning[0] is not None:
+                compared = judging.compare_learner(
+                    gateway, model, brief=brief.text(), audience=brief.audience,
+                    content=content, citations=json.loads(source_file.read_text(encoding="utf-8")),
+                    learner=learning[0],
+                    source_figures=json.loads(inventory_file.read_text(encoding="utf-8")),
+                    study_map=record.get("study_map"), coverage_plan=record.get("coverage_plan"),
+                )
     record["judgeCalls"], record["judgeTokens"] = used.calls, used.tokens
     record["judgeError"] = error
     record["titlesOnly"] = titles
+    record["learningReview"] = (
+        {"error": learning[1], "model": model.ref}
+        if learning[0] is None
+        else {**learning[0].model_dump(), "model": model.ref}
+    )
+    record["learningComparison"] = (
+        {"error": compared[1], "model": model.ref}
+        if compared[0] is None
+        else {**compared[0].model_dump(), "model": model.ref}
+    )
     record["imagesSeen"] = bool(model.vision and record.get("pngs"))
     if absolute is None:
         record["absolute"] = None

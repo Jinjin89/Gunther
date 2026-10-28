@@ -572,6 +572,8 @@ class Notes:
     discussions: tuple[tuple[str, str], ...] = ()  # (title, summary)
     # What the sources are about, for the planner only: (title, overview).
     sources: tuple[tuple[str, str], ...] = ()
+    # Selected-source access/extraction gaps; context for the planner, never citations.
+    extraction_gaps: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

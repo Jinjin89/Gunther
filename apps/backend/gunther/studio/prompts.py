@@ -480,7 +480,8 @@ Reply with the HTML only."""
 # Scientific variants. The general consulting prompts above remain independent.
 PURPOSE = """You own the presentation purpose decision. Read the brief and bounded material
  overview. Return purpose 'explain_study' when the user wants to understand, learn or explain
- a scientific study, method, experiments, theory or review; otherwise 'general'. Explicit user
+ scientific study, method, experiments, theory or review, including a journal-club, paper-club,
+ lab-meeting or journal presentation request; otherwise 'general'. Explicit user
  wording for a different purpose (for example a business decision or pitch) takes precedence
  over the kind of material. Do not ask setup questions. Return a one-line reason.
 """
@@ -503,8 +504,9 @@ SCIENCE_TRUTH = """Scientific evidence rules:
 STUDY_MAP = (
     """Build the study map before planning slides. Brief: {brief}. Audience: {audience}.
 Recover this study's own argument: question, prior gap, contribution, method (inputs, mechanism,
-outputs, assumptions), and central claims. Rank claims by role in the argument, never specificity
-or size of a number. Include the central experiments/analyses, comparisons/controls, measurements,
+outputs, experimental setup, why it addresses the question, assumptions), and central claims.
+Rank claims by role in the argument, never specificity or size of a number. Include the central
+experiments/analyses, comparisons/controls, measurements,
 results (quantity, unit, baseline, condition, uncertainty), interpretation, alternatives and limits.
 Mark claim kind finding or interpretation and attribution authors or ours. Central means necessary
 for understanding the main contribution. Link refs and only the retained figure asset IDs belonging
@@ -518,11 +520,28 @@ limitations/open_questions. Return the structured StudyMap, with language and ti
 FIGURE_READ = """Read the attached original source figure pixels together with its caption and
 linked source passages. Return a FigureReading for the specified asset_id. Describe what it shows,
 each identifiable panel label, axes including units, legend, comparison/control, key observation,
-and which linked claim it supports (or fails to support). Mark legible false when the central
-comparison cannot be read. List uncertain content, including cropped axes or legends. Include in
+and which linked claim it supports (or fails to support). For each identifiable panel, when its
+bounds can be located, return box as four decimals normalized to the whole attached image:
+[x, y, width, height]. Mark legible false when the central comparison cannot be read. List
+uncertain content, including cropped axes or legends. Include in
 confirmed_values only exact numbers/symbols actually readable in pixels, with their units and
 conditions. Never infer a visual observation from a caption alone. Do not claim you saw pixels
 that are absent. Preserve authors' evidence vs interpretation.
+"""
+
+COVERAGE_PLAN = """Make the journal-club coverage plan from the source material and this source
+figure inventory, before a writer chooses slides. Brief: {brief}. Audience: {audience}.
+For every listed source figure exactly once, decide whether it is central, and whether it will be
+taught, grouped with related evidence, or omitted; grouped and omitted items need a scientific
+reason. Do not classify a main figure as peripheral merely because it is complex. Name important
+panels, the method teaching the audience needs, and the dependencies between experiments:
+question → setup/comparison → observation → interpretation → remaining uncertainty → next
+experiment. Distinguish content the source does not report from content the extraction cannot
+read. The plan is internal and automatic; never ask the user to approve it.
+Source figure inventory (every ID must be accounted for): {figures}
+Study map and actual FigureReadings:
+{memo}
+Return CoveragePlan.
 """
 
 STUDY_STORY = (
@@ -533,9 +552,12 @@ reasoning, or a review's synthesis as appropriate. No fixed paper template, mand
 hero numbers, section dividers or closing business recommendation. Topic titles are fine when clear.
 Every slide needs purpose, role in the argument, evidence refs, figures (asset_id, panels, why),
 and intended takeaway, as well as title, layout and job. Plan enough depth to teach the central
-mechanism and experiments; do not promote peripheral parameters over them. Use original figures
-that explain central claims, with axes/legend/comparison on the slide, large enough to read.
-Layouts: title, figure, process, compare, table, chart, points, summary, statement, section.
+mechanism and experiments; do not promote peripheral parameters over them. Follow the coverage
+plan: account for every teach/group figure, use multiple slides for complex figures (orientation,
+setup, focused panel crops, controls, interpretation), and make each transition explain what
+remains uncertain and why the next experiment follows. Essential explanations are visible.
+Layouts: title, figure, figure_detail, process, compare, table, chart, points, summary,
+statement, section.
 Return DeckStory. The study map and actual image readings:
 {memo}
 """
@@ -551,7 +573,13 @@ and legend, the observation that matters and conclusion it supports. Put the lim
 the claim it qualifies. Distinguish the authors' findings from our interpretation. Do not force
 hero numbers, action titles, summary-first consulting rhetoric or a recommendation ending.
 Use legible original source images linked to central claims, never a decorative substitute.
-Never hide an experiment's only explanation in notes. Preserve figure refs exactly.
+For a focused panel, copy the exact figure reference with its normalized #x=…,y=…,w=…,h=… crop
+from the supplied FigureReading; retain an orientation slide with the original whole figure.
+Use figure_detail for a real walkthrough with setup/control/observation/interpretation. Never
+hide an experiment's only explanation in notes. Preserve figure refs exactly.
+Cover: write the paper's central question and briefly why it matters as the subtitle. Do not
+write an event label, venue, author line, publication date, file date or today's date; delivery
+code supplies only source-retained bibliographic metadata. When a field is absent, leave it out.
 {language}
 {format}
 Study map and image readings:
@@ -582,6 +610,8 @@ Return ScientificReview with answers, understood, verdict ready/revise, and conc
 A ready verdict requires all five questions to be adequately answered for this material.
 Study map and image readings:
 {memo}
+Coverage plan:
+{coverage}
 Storyline or full draft:
 {story}
 """
@@ -589,14 +619,38 @@ Storyline or full draft:
 )
 
 STUDY_REVISE = (
-    """Revise the complete scientific deck to resolve every content problem below.
+    """Revise only the scientific slides listed below to resolve every content problem.
 Preserve supported meaning, exact source-image refs, citations and slide format. Essential
 explanations stay on slides. Omit damaged values that cannot be confirmed; never invent substitutes.
-Return only the full deck, slides separated by ---.
+Return only the rewritten listed slides, each complete, separated by ---, in the order listed;
+do not repeat unlisted slides.
 Problems:
 {problems}
-Draft:
-{deck}
+Slides to rewrite:
+{slides}
 """
     + SCIENCE_TRUTH
 )
+
+LEARNER_REVIEW = """You are an independent learner seeing only the rendered slide content below.
+Audience brief: {brief}; intended audience: {audience}. You do not have the source paper, notes,
+planning rationale, captions outside these slides, speaker notes or any other context.
+
+Using only what is visibly shown (and the attached rendered slide images, if any), reconstruct:
+1. the research question and contribution;
+2. how the central method or experiment works;
+3. what the important figures and panels show, including controls or comparisons;
+4. what evidence supports each main conclusion;
+5. assumptions, limitations and unresolved questions.
+Every answer must cite at least one slide number shown in the input; do not use prior knowledge.
+In unexplained, list specific things the slides alone do not explain. Return LearnerReview.
+"""
+
+COVERAGE_COMPARISON = """Compare an independent learner's slide-only reconstruction with the
+source material, study map and coverage plan. Judge whether the learner correctly understands
+the question/contribution, central method, major experiments and panels, comparisons/controls,
+observations, supported conclusions and unresolved issues. Missing, shallow, wrong or
+slide-unsupported reconstruction is a concrete learner problem. Also identify source content or
+planned figures omitted from the draft or explained too shallowly to teach; naming an experiment
+without its setup, comparison or observation is shallow. Return CoverageReview.
+"""

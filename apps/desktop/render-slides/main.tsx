@@ -15,11 +15,15 @@ import "../src/outputs/slides/slides.css";
 
 interface CaptureInput { artifact: Artifact; candidateHash: string; slideIds: string[]; use: "talk" | "read" }
 async function start() {
-const input = await fetch("./candidate.json").then(response => {
+const input = await fetch(`./candidate.json${location.search}`).then(response => {
   if (!response.ok) throw new Error("The capture candidate is unavailable.");
   return response.json() as Promise<CaptureInput>;
 });
 const slides = parseSlides(input.artifact.content);
+const params = new URLSearchParams(location.search);
+const from = Math.max(0, Number(params.get("from")) || 0);
+const to = Math.min(slides.length, Math.max(from, Number(params.get("to")) || slides.length));
+const visible = slides.slice(from, to);
 const layouts = slideLayouts(input.artifact);
 const attrs = splitDocument(input.artifact.content, "slides").sections.map(attrsOf);
 const numbers = input.artifact.citations.map((_, index) => index + 1);
@@ -28,17 +32,17 @@ const theme = slides[0]?.theme ?? "classic";
 const accent = slides[0]?.accent;
 const designVersion = slides[0]?.designVersion ?? 0;
 function Face({ index }: { index: number }) {
-  const slide = slides[index]!;
+  const slide = visible[index]!;
   const [fit, setFit] = useState({ scale: 1, overflow: false });
   const [issue, setIssue] = useState<string | null>(null);
   const change = useCallback((scale: number, overflow: boolean) => setFit(old => old.scale === scale && old.overflow === overflow ? old : { scale, overflow }), []);
-  return <article data-slide-id={input.slideIds[index]} data-fit={fit.scale} data-overflow={fit.overflow} data-scene-issue={issue ?? ""}>
-    <SlideFace body={slide.body} title={index === 0} layout={layouts[index]} theme={theme} accent={accent} designVersion={designVersion} attrs={attrs[index]} deckTheme={slides[0]?.deckTheme} first={index === 0} page={index + 1} composition={slide.composition} scene={slide.scene} design={slide.design} deckStyle={slides[0]?.style} numbers={designVersion === 2 ? numbers : input.artifact.citations.map(citation => citation.ref ?? 0)} sources={sources} onFitChange={change} onSceneIssue={setIssue}/>
+  return <article data-slide-id={input.slideIds[from + index]} data-fit={fit.scale} data-overflow={fit.overflow} data-scene-issue={issue ?? ""}>
+    <SlideFace body={slide.body} title={from + index === 0} layout={layouts[from + index]} theme={theme} accent={accent} designVersion={designVersion} attrs={attrs[from + index]} deckTheme={slides[0]?.deckTheme} first={from + index === 0} page={from + index + 1} composition={slide.composition} scene={slide.scene} design={slide.design} deckStyle={slides[0]?.style} numbers={designVersion === 2 ? numbers : input.artifact.citations.map(citation => citation.ref ?? 0)} sources={sources} onFitChange={change} onSceneIssue={setIssue}/>
   </article>;
 }
 function App() {
   return <><style>{`body{margin:0}#capture-slides{width:1280px}#capture-slides>article{width:1280px;height:720px;position:relative;overflow:hidden}*{animation:none!important;transition:none!important}html{scroll-behavior:auto!important}`}</style>
-    <main id="capture-slides">{slides.map((_, index) => <Face key={index} index={index}/>)}</main><PrintRoot artifact={input.artifact}/></>;
+    <main id="capture-slides">{visible.map((_, index) => <Face key={index} index={index}/>)}</main><PrintRoot artifact={input.artifact} from={from} to={to}/></>;
 }
 createRoot(document.getElementById("root")!).render(<App/>);
 
@@ -47,11 +51,11 @@ Object.assign(window, { guntherCapture: {
   version: 1,
   async ready(print = false) {
     const selector = print ? `#print-root :is(${FACE_SELECTOR})` : `#capture-slides :is(${FACE_SELECTOR})`;
-    await waitForSlides(selector, slides.length, 15000);
+    await waitForSlides(selector, visible.length, 15000);
     return {
       version: 1, candidateHash: input.candidateHash,
       slides: [...document.querySelectorAll<HTMLElement>(selector)].map((face, index) => ({
-        id: input.slideIds[index], index, blocks: splitBlocks(slides[index]!.body).blocks.map(block => ({ id: block.id, type: block.type })),
+        id: input.slideIds[from + index], index: from + index, blocks: splitBlocks(visible[index]!.body).blocks.map(block => ({ id: block.id, type: block.type })),
         ...measureSlide(face, input.use),
       })),
     };

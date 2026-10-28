@@ -27,7 +27,7 @@ Verdict = Literal["ship", "minor edit", "rework"]
 CRITERIA = ("insight", "storyline", "titles", "evidence", "clarity", "correctness")
 PAIR_CRITERIA = ("insight", "storyline", "titles", "evidence", "clarity", "overall")
 MAX_IMAGES = 24
-SOURCE_QUOTE_CHARS = 2400  # whole passages: a studio passage is about 1,400 characters
+SOURCE_QUOTE_CHARS = 6000  # whole studio passages, within the source budget below
 SOURCE_BUDGET_CHARS = 120_000
 
 
@@ -120,6 +120,28 @@ class Compared(BaseModel):
     reason: str = Field(max_length=500)
 
 
+class LearningAnswer(BaseModel):
+    answer: str
+    evidence: list[int]
+
+
+class LearningReconstruction(BaseModel):
+    question_and_contribution: LearningAnswer
+    method_or_experiment: LearningAnswer
+    figures_and_controls: LearningAnswer
+    evidence_for_conclusions: LearningAnswer
+    assumptions_limits_and_questions: LearningAnswer
+    unexplained: list[str] = Field(default_factory=list)
+
+
+class LearningComparison(BaseModel):
+    slide_only_comprehension: int = Field(ge=1, le=10)
+    source_coverage: int = Field(ge=1, le=10)
+    explanation_depth: int = Field(ge=1, le=10)
+    problems: list[str] = Field(default_factory=list, max_length=20)
+    summary: str = Field(max_length=600)
+
+
 # Views of an artifact ----------------------------------------------------------------------
 
 
@@ -141,10 +163,12 @@ def source_view(citations: Sequence[dict[str, Any]]) -> str:
 
     lines, size = [], 0
     for number, cite in enumerate(citations, start=1):
-        quote = " ".join(str(cite.get("quote") or cite.get("supportText") or "").split())
+        quote = " ".join(str(cite.get("supportText") or cite.get("quote") or "").split())
+        figures = cite.get("figures") or []
         line = (
             f"[{cite.get('ref') or number}] {cite.get('sourceTitle') or cite.get('source_title') or ''}"
             f", {cite.get('locator') or 'no locator'}: “{quote[:SOURCE_QUOTE_CHARS]}”"
+            + (f"\nFigures: {json.dumps(figures, ensure_ascii=False)}" if figures else "")
         )
         if size + len(line) > SOURCE_BUDGET_CHARS:
             lines.append("(further passages left out)")
@@ -152,6 +176,29 @@ def source_view(citations: Sequence[dict[str, Any]]) -> str:
         lines.append(line)
         size += len(line)
     return "\n".join(lines) or "(the document cites nothing)"
+
+
+def whole_source_view(passages: Sequence[dict[str, Any]]) -> str:
+    """No per-passage truncation: a single total budget, with any access gap made explicit."""
+
+    lines, size = [], 0
+    for number, passage in enumerate(passages, 1):
+        line = (
+            f"Source block {number}: {passage.get('sourceTitle', '')} "
+            f"{passage.get('locator', '')}\n"
+            + str(passage.get("supportText") or passage.get("quote") or "")
+        )
+        if passage.get("figures"):
+            line += "\nFigure provenance: " + json.dumps(passage["figures"])
+        room = SOURCE_BUDGET_CHARS - size
+        if len(line) > room:
+            lines.append(line[:max(0, room)])
+            lines.append(f"[Source budget reached: block {number} incomplete; "
+                         f"{len(passages) - number} further blocks unavailable to this review.]")
+            break
+        lines.append(line)
+        size += len(line) + 2
+    return "\n\n".join(lines) or "[Whole source material unavailable]"
 
 
 def titles_of(kind: str, content: str) -> list[str]:
@@ -227,6 +274,9 @@ Score 1-10 using the existing score fields, with these purpose-specific meanings
 - clarity: method inputs, mechanism and outputs taught on slides; notes only add detail
 - correctness: compatible comparisons, authors' findings vs interpretation, no association promoted
   to causation or damaged values stated without confirmation; assumptions and limitations beside claims
+Also judge source coverage (every main method/experiment/figure accounted for at teaching depth),
+explanation depth (mechanism, setup, controls, observations and interpretation visible on slides),
+and slide-only comprehension (what a reader can reconstruct without prior knowledge or notes).
 {visual}
 Answer all five reader questions: question/contribution; method beyond terminology; important figures
 and controls; evidence supporting conclusions; assumptions/limits/unresolved questions. Reject missing
@@ -414,6 +464,80 @@ def judge_pair(
         f"{source_view(second['citations'])}"
     )
     return _ask(gateway, model, Compared, system, prompt)
+
+
+LEARNER_SYSTEM = """You are an independent learner. You see only the supplied rendered slide
+content and images; you do not receive sources, notes, planning metadata or prior context.
+Reconstruct what the deck alone teaches about the question, method, figures/controls, evidence,
+and limitations. Cite slide numbers as evidence. List anything the slides do not explain. Do not
+use prior knowledge or infer beyond what is visible.
+"""
+
+
+def judge_learner(
+    gateway: ModelGateway,
+    model: ModelInfo,
+    *,
+    brief: str,
+    audience: str,
+    content: str,
+    pngs: Sequence[Path] = (),
+) -> tuple[LearningReconstruction | None, str]:
+    """The slide-only comprehension test: the prompt deliberately excludes the source."""
+
+    from gunther.studio.format import parse_slide, split_slides
+
+    rows = []
+    for number, slide in enumerate(split_slides(content), 1):
+        parsed = parse_slide(slide)
+        body = []
+        for line in parsed.body:
+            found = re.match(r"^!\[([^]]*)\]\(gunther-asset:[^)]+\)$", line)
+            body.append(f"[Image: {found.group(1) or 'source figure'}]" if found else line)
+        rows.append(
+            f"[Slide {number}; layout {parsed.layout}]\n{parsed.title}\n" + "\n".join(body)
+        )
+    images = load_images(pngs) if (model.vision and pngs) else []
+    return _ask(
+        gateway,
+        model,
+        LearningReconstruction,
+        LEARNER_SYSTEM,
+        f"Audience brief: {brief}\nAudience: {audience}\nVisible slides:\n\n" + "\n\n".join(rows),
+        images,
+    )
+
+
+COMPARISON_SYSTEM = """Compare an independent learner's slide-only reconstruction to the supplied
+source passages, study map and coverage plan. Score source_coverage 1-10 for every central method,
+experiment and main figure accounted for at teaching depth; explanation_depth 1-10 for mechanism,
+controls, observations and interpretation visible on slides; slide_only_comprehension 1-10 for how
+much the learner correctly reconstructed from the deck alone. List concrete omissions and shallow
+or wrong explanations. Do not reward correct statements supported only by prior knowledge."""
+
+
+def compare_learner(
+    gateway: ModelGateway,
+    model: ModelInfo,
+    *,
+    brief: str,
+    audience: str,
+    content: str,
+    citations: Sequence[dict[str, Any]],
+    source_figures: Sequence[str] = (),
+    learner: LearningReconstruction,
+    study_map: dict[str, Any] | None,
+    coverage_plan: dict[str, Any] | None,
+) -> tuple[LearningComparison | None, str]:
+    prompt = (
+        f"Brief: {brief}\nAudience: {audience}\nDeck:\n\n{numbered('slides', content)}\n\n"
+        f"Independent learner reconstruction:\n{learner.model_dump_json()}\n\n"
+        f"Study map:\n{json.dumps(study_map or {}, ensure_ascii=False)}\n\n"
+        f"Coverage plan:\n{json.dumps(coverage_plan or {}, ensure_ascii=False)}\n\n"
+        f"Source figure inventory:\n{', '.join(source_figures) or '(none)'}\n\n"
+        f"Whole selected-source passages, in order:\n{whole_source_view(citations)}"
+    )
+    return _ask(gateway, model, LearningComparison, COMPARISON_SYSTEM, prompt)
 
 
 # Scoring math ------------------------------------------------------------------------------

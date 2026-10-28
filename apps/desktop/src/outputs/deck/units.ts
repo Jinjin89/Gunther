@@ -49,7 +49,7 @@ export const READ_FACTOR = 1.5;
 
 export const DECK_LAYOUTS = [
   "title", "section", "summary", "stat", "stats", "chart", "table", "compare", "process",
-  "timeline", "quote", "figure", "statement", "points", "actions",
+  "timeline", "quote", "figure", "figure_detail", "statement", "points", "actions",
 ] as const;
 export type DeckLayout = (typeof DECK_LAYOUTS)[number];
 export const isDeckLayout = (name: string | null | undefined): name is DeckLayout => DECK_LAYOUTS.some((layout) => layout === name);

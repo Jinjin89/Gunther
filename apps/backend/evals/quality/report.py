@@ -63,6 +63,16 @@ def summarize(builds: list[dict[str, Any]]) -> dict[str, Any]:
         "seconds": judging.mean([b.get("seconds") for b in ok]),
         "calls": judging.mean([b.get("calls") for b in ok]),
         "tokens": judging.mean([b.get("tokens") for b in ok]),
+        "learning": {
+            name: judging.mean(
+                [(b.get("learningComparison") or {}).get(name) for b in ok]
+            )
+            for name in (
+                "slide_only_comprehension",
+                "source_coverage",
+                "explanation_depth",
+            )
+        },
     }
 
 
@@ -73,14 +83,17 @@ def _row(name: str, s: dict[str, Any]) -> str:
         f"| {name} | {s['ok']}/{s['builds']} | {pct(s['shipRate'])} ({s['parts']}) | "
         f"{pct(s['strictShipRate'])} | {pct(s['titlesPass'])} | {scores} | {num(s['scores']['visual'])} | "
         f"{s['defects']} ({rules}) | {num(s['seconds'], 0)} | {num(s['calls'], 0)} / "
-        f"{num((s['tokens'] or 0) / 1000 if s['tokens'] is not None else None, 0)}k |"
+        f"{num((s['tokens'] or 0) / 1000 if s['tokens'] is not None else None, 0)}k | "
+        f"{num(s['learning']['slide_only_comprehension'])} / {num(s['learning']['source_coverage'])} / "
+        f"{num(s['learning']['explanation_depth'])} |"
     )
 
 
 HEAD = (
     "| | Built | Ship rate (slides/sections) | Strict ship | Titles-only pass | "
     "Rubric: insight / storyline / titles / evidence / clarity / correctness | Visual | "
-    "Hard defects | Seconds | Calls / tokens |\n|---|---|---|---|---|---|---|---|---|---|"
+    "Hard defects | Seconds | Calls / tokens | Learning: slide-only / coverage / depth |\n"
+    "|---|---|---|---|---|---|---|---|---|---|---|"
 )
 
 
@@ -195,6 +208,26 @@ def render(raw: dict[str, Any]) -> str:
                 f"| {v['index']} | {v['verdict']} | {v['reason'].replace('|', '/')} |"
                 for v in b["verdicts"]
             ]
+            out.append("")
+        learning = b.get("learningComparison")
+        if learning and not learning.get("error"):
+            out.append(
+                "Slide-only learning: "
+                + ", ".join(
+                    f"{name} {learning.get(name)}"
+                    for name in (
+                        "slide_only_comprehension",
+                        "source_coverage",
+                        "explanation_depth",
+                    )
+                )
+                + f". {learning.get('summary', '')}"
+            )
+            if learning.get("problems"):
+                out += ["", *[f"- {problem}" for problem in learning["problems"]]]
+            out.append("")
+        elif learning and learning.get("error"):
+            out.append(f"Slide-only learning judge failed: {learning['error']}")
             out.append("")
         visual = b.get("visualJudge")
         if visual and visual.get("slides"):

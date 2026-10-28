@@ -33,7 +33,7 @@ from urllib.request import urlopen
 from uuid import uuid4
 
 from PIL import Image, ImageDraw
-from pypdf import PdfReader
+from pypdf import PdfReader, PdfWriter
 from websockets.exceptions import WebSocketException
 from websockets.sync.client import connect
 
@@ -42,6 +42,7 @@ from gunther.slide_scene import scene_marker, source_hash, split_blocks
 
 CAPTURE_VERSION = 1
 _CAPTURE_SLOT = BoundedSemaphore(1)
+CAPTURE_BATCH = 8
 AssetReader = Callable[[str], tuple[Path, str, str]]
 
 
@@ -172,7 +173,6 @@ class _CDP:
 @contextmanager
 def _host(root: Path, payload: dict, assets: dict[str, tuple[bytes, str]]):
     token = secrets.token_urlsafe(32)
-    content = json.dumps(payload, ensure_ascii=False).encode()
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args: Any) -> None:
@@ -190,6 +190,7 @@ def _host(root: Path, payload: dict, assets: dict[str, tuple[bytes, str]]):
                 return
             path = urlsplit(self.path).path
             if path == "/render-slides/candidate.json":
+                content = json.dumps(payload, ensure_ascii=False).encode()
                 data, media = content, "application/json"
             elif path.startswith("/api/assets/") and path.rsplit("/", 1)[-1] in assets:
                 data, media = assets[path.rsplit("/", 1)[-1]]
@@ -290,8 +291,8 @@ class SlideRenderer:
                 raise RenderError("The compiled slide renderer failed its integrity check.")
         browser, distribution = browser_location(self.browser)
         _preamble, sections = split_document(built.content, "slides")
-        if not 1 <= len(sections) <= 14:
-            raise RenderError("Capture supports one to fourteen slides.")
+        if not sections:
+            raise RenderError("Capture needs at least one slide.")
         ids = [
             str(built.outline[i].get("id") or f"slide-{i + 1}")
             if i < len(built.outline)
@@ -300,7 +301,6 @@ class SlideRenderer:
         ]
         if len(set(ids)) != len(ids):
             raise RenderError("Slide identities must be unique before capture.")
-        citations = [item.model_dump(mode="json", by_alias=True) for item in built.citations]
         payload = {
             "candidateHash": built_hash(built),
             "slideIds": ids,
@@ -310,11 +310,17 @@ class SlideRenderer:
                 "title": built.title,
                 "content": built.content,
                 "outline": built.outline,
-                "citations": citations,
+                "citations": [
+                    item.model_dump(mode="json", by_alias=True) for item in built.citations
+                ],
                 "versionNumber": 1,
                 "createdAt": "2026-01-01T00:00:00Z",
             },
         }
+        batches = [
+            (start, min(start + CAPTURE_BATCH, len(sections)))
+            for start in range(0, len(sections), CAPTURE_BATCH)
+        ]
         assets, asset_hashes, missing = {}, {}, []
         for asset_id in sorted(set(re.findall(r"gunther-asset:([A-Za-z0-9_-]+)", built.content))):
             try:
@@ -381,65 +387,121 @@ class SlideRenderer:
                             "Emulation.setDeviceMetricsOverride",
                             {"width": 1280, "height": 720, "deviceScaleFactor": 1, "mobile": False},
                         )
-                        cdp.call("Page.navigate", {"url": f"{base}/{manifest['entry']}"})
-                        result = cdp.evaluate(
-                            "(async()=>{const end=Date.now()+20000;"
-                            "while(!window.guntherCapture&&Date.now()<end)"
-                            "await new Promise(r=>setTimeout(r,50));"
-                            "if(!window.guntherCapture)throw Error('Capture host did not start');"
-                            "return await window.guntherCapture.ready()})()"
-                        )
-                        if result["candidateHash"] != built_hash(built):
-                            raise RenderError("The rendered candidate is out of date.")
-                        document = cdp.call("DOM.getDocument", {"depth": 0})["root"]["nodeId"]
-                        for i, slide in enumerate(result["slides"]):
-                            shot = cdp.call(
-                                "Page.captureScreenshot",
-                                {
-                                    "format": "png",
-                                    "captureBeyondViewport": True,
-                                    "clip": {
-                                        "x": 0,
-                                        "y": i * 720,
-                                        "width": 1280,
-                                        "height": 720,
-                                        "scale": 1,
-                                    },
-                                },
+                        measured_slides = []
+                        print_typography = []
+                        pdf_writer = PdfWriter()
+                        for batch_number, (start, end) in enumerate(batches):
+                            cdp.call("Emulation.setEmulatedMedia", {"media": "screen"})
+                            cdp.call(
+                                "Page.navigate",
+                                {"url": f"{base}/{manifest['entry']}?from={start}&to={end}"},
                             )
-                            filename = f"slide-{i + 1:02}.png"
-                            (output / filename).write_bytes(base64.b64decode(shot["data"]))
-                            slide["image"] = filename
-                            fonts = []
-                            nodes = cdp.call(
-                                "DOM.querySelectorAll",
-                                {
-                                    "nodeId": document,
-                                    "selector": f"#capture-slides article:nth-child({i + 1}) "
-                                    ":is(h1,h2,p,td,svg text)",
-                                },
-                            )["nodeIds"]
-                            for node in nodes[:12]:
-                                fonts.extend(
-                                    cdp.call("CSS.getPlatformFontsForNode", {"nodeId": node})[
-                                        "fonts"
-                                    ]
+                            result = cdp.evaluate(
+                                "(async()=>{const end=Date.now()+20000;"
+                                "while(!window.guntherCapture&&Date.now()<end)"
+                                "await new Promise(r=>setTimeout(r,50));"
+                                "if(!window.guntherCapture)"
+                                "throw Error('Capture host did not start');"
+                                "return await window.guntherCapture.ready()})()"
+                            )
+                            if result["candidateHash"] != payload["candidateHash"]:
+                                raise RenderError("The rendered candidate is out of date.")
+                            if (
+                                len(result.get("slides", [])) != end - start
+                                or any(
+                                    slide.get("index") != i
+                                    for i, slide in zip(
+                                        range(start, end), result["slides"], strict=True
+                                    )
                                 )
-                            slide["resolvedFonts"] = sorted(
-                                {font["postScriptName"] for font in fonts if font["glyphCount"] > 0}
+                            ):
+                                raise RenderError(
+                                    "The slide renderer is stale: it did not mount the requested "
+                                    f"range {start}–{end}. Rebuild the slide renderer."
+                                )
+                            document = cdp.call("DOM.getDocument", {"depth": 0})["root"]["nodeId"]
+                            for local_i, i in enumerate(range(start, end)):
+                                shot = cdp.call(
+                                    "Page.captureScreenshot",
+                                    {
+                                        "format": "png",
+                                        "captureBeyondViewport": True,
+                                        "clip": {
+                                            "x": 0,
+                                            "y": local_i * 720,
+                                            "width": 1280,
+                                            "height": 720,
+                                            "scale": 1,
+                                        },
+                                    },
+                                )
+                                filename = f"slide-{i + 1:02}.png"
+                                (output / filename).write_bytes(base64.b64decode(shot["data"]))
+                                slide = result["slides"][local_i]
+                                slide["image"] = filename
+                                slide["index"] = i
+                                fonts = []
+                                nodes = cdp.call(
+                                    "DOM.querySelectorAll",
+                                    {
+                                        "nodeId": document,
+                                        "selector": f"#capture-slides article:nth-child("
+                                        f"{local_i + 1}) :is(h1,h2,p,td,svg text)",
+                                    },
+                                )["nodeIds"]
+                                for node in nodes[:12]:
+                                    fonts.extend(
+                                        cdp.call("CSS.getPlatformFontsForNode", {"nodeId": node})[
+                                            "fonts"
+                                        ]
+                                    )
+                                slide["resolvedFonts"] = sorted(
+                                    {
+                                        font["postScriptName"]
+                                        for font in fonts
+                                        if font["glyphCount"] > 0
+                                    }
+                                )
+                                slide["contentHash"] = source_hash(sections[i])
+                                slide["sceneHash"] = digest(scene_marker(sections[i])[0])
+                                slide["blockContent"] = [
+                                    {"id": block.id, "hash": digest(block.markdown)}
+                                    for block in split_blocks(sections[i])[1]
+                                ]
+                                measured_slides.append(slide)
+                            cdp.call("Emulation.setEmulatedMedia", {"media": "print"})
+                            print_result = cdp.evaluate("window.guntherCapture.ready(true)")
+                            if (
+                                len(print_result.get("slides", [])) != end - start
+                                or any(
+                                    slide.get("index") != i
+                                    for i, slide in zip(
+                                        range(start, end), print_result["slides"], strict=True
+                                    )
+                                )
+                            ):
+                                raise RenderError(
+                                    "The slide renderer is stale: print slides did not match "
+                                    f"range {start}–{end}. Rebuild the slide renderer."
+                                )
+                            print_typography += print_result["slides"]
+                            pdf = cdp.call(
+                                "Page.printToPDF",
+                                {"printBackground": True, "preferCSSPageSize": True},
                             )
-                            slide["contentHash"] = source_hash(sections[i])
-                            slide["sceneHash"] = digest(scene_marker(sections[i])[0])
-                            slide["blockContent"] = [
-                                {"id": block.id, "hash": digest(block.markdown)}
-                                for block in split_blocks(sections[i])[1]
-                            ]
-                        cdp.call("Emulation.setEmulatedMedia", {"media": "print"})
-                        print_result = cdp.evaluate("window.guntherCapture.ready(true)")
-                        pdf = cdp.call(
-                            "Page.printToPDF", {"printBackground": True, "preferCSSPageSize": True}
-                        )
-                        (output / "deck.pdf").write_bytes(base64.b64decode(pdf["data"]))
+                            batch_pdf = output / f"batch-{batch_number}.pdf"
+                            batch_pdf.write_bytes(base64.b64decode(pdf["data"]))
+                            pdf_writer.append(batch_pdf)
+                            batch_pdf.unlink()
+                        (output / "deck.pdf").write_bytes(b"")
+                        with (output / "deck.pdf").open("wb") as held_pdf:
+                            pdf_writer.write(held_pdf)
+                        result = {
+                            "version": result["version"],
+                            "candidateHash": payload["candidateHash"],
+                            "slides": measured_slides,
+                        }
+                        print_result = {"slides": print_typography}
                         browser_version = cdp.call("Browser.getVersion")["product"]
                 finally:
                     process.terminate()

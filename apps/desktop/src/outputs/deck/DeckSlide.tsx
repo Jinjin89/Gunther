@@ -97,6 +97,8 @@ function TemplateSlide({ body, layout, attrs, theme, accent, first = false, numb
       }
       for (const el of content.querySelectorAll("*")) {
         if (el.closest("svg") && el.tagName !== "svg") continue;
+        // A panel crop scales its image up and clips it: the hidden part is not a spill.
+        if (el.closest(".dk-crop") && !el.classList.contains("dk-crop")) continue;
         const r = el.getBoundingClientRect();
         if (r.width > 0 && (r.top < limit.top - slack || r.bottom > limit.bottom + slack || r.right > limit.right + slack || r.left < limit.left - slack)) return `${name(el)} outside the body`;
       }

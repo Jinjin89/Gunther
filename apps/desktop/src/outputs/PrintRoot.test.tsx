@@ -66,3 +66,26 @@ describe("printing a deck", () => {
     expect(drawn()).toEqual([null, null]);
   });
 });
+
+it("prints a late capture batch with the whole deck's theme, page numbers and citations", async () => {
+  const content = ["<!-- layout: title; design: v2; theme: ink -->\n# Batch fixture\nA longer presentation",
+    ...Array.from({ length: 10 }, (_, n) => `<!-- layout: points -->\n## Controlled experiment ${n + 1}\n- Observation [2]\n- Interpretation [1]\nNote: Private note`)].join("\n\n---\n\n");
+  const artifact = deck(content, [], [
+    { id: "one", sourceTitle: "First study", ref: 12, quote: "First source" },
+    { id: "two", sourceTitle: "Second study", ref: 29, quote: "Second source" },
+  ]);
+  render(<PrintRoot artifact={artifact} />);
+  await waitFor(() => expect(document.querySelectorAll("#print-root .dk-face")).toHaveLength(11));
+  const whole = [...document.querySelectorAll("#print-root .dk-face")].map(el => el.outerHTML);
+  cleanup();
+  render(<PrintRoot artifact={artifact} from={8} to={11} />);
+  await waitFor(() => expect(document.querySelectorAll("#print-root .dk-face")).toHaveLength(3));
+  const batch = [...document.querySelectorAll("#print-root .dk-face")].map(el => el.outerHTML);
+  expect(batch).toEqual(whole.slice(8, 11));
+  expect(document.querySelectorAll(".outputs-print-slide-sources")).toHaveLength(1);
+  expect(document.getElementById("print-root")!.textContent).not.toContain("Private note");
+  cleanup();
+  render(<PrintRoot artifact={artifact} from={0} to={8} />);
+  await waitFor(() => expect(document.querySelectorAll("#print-root .dk-face")).toHaveLength(8));
+  expect(document.querySelectorAll(".outputs-print-slide-sources")).toHaveLength(0);
+});

@@ -168,6 +168,8 @@
 .dk-figure figure { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
 .dk-picture { flex: 1 1 0; min-height: 0; display: grid; place-items: center; background: var(--dk-soft); overflow: hidden; position: relative; }
 .dk-picture img { position: absolute; inset: 12px; width: calc(100% - 24px); height: calc(100% - 24px); object-fit: contain; }
+.dk-crop { position: relative; display: block; overflow: hidden; background: var(--dk-bg); }
+.dk-crop img { position: absolute; inset: 0; max-width: none; object-fit: fill; }
 .dk-missing { padding: 24px; font-size: 22px; color: var(--dk-muted); text-align: center; }
 .dk-figure figcaption { flex: none; margin-top: 10px; font-size: 18px; line-height: 1.3; color: var(--dk-muted); }
 
@@ -267,3 +269,9 @@
 .dk-figure-explanation { flex: 0 0 340px; display: flex; flex-direction: column; justify-content: center; gap: 18px; }
 .dk-figure-explanation p { font-size: 22px; line-height: 1.4; }
 .dk-figure-explanation .dk-after { margin-top: 0; }
+.dk-figure.is-detail.has-explanation { gap: 24px; }
+/* The picture keeps the rest of the 1120px body (about 656px): a flex basis wide enough to
+   overflow the row would be held there by the image's own min-content width. */
+.dk-figure.is-detail figure { flex: 1 1 0; min-width: 0; }
+.dk-figure.is-detail .dk-figure-explanation { flex: 0 0 440px; gap: 14px; }
+.dk-figure.is-detail .dk-figure-explanation p { font-size: 20px; line-height: 1.38; }
