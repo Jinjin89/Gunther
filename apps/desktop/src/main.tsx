@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import CaptureWindowApp from "./capture/CaptureWindowApp";
+import DictationWindowApp from "./dictation/DictationWindowApp";
 import { ensureBackendReady } from "./api";
 import "./styles.css";
 // The design system loads last so its tokens and components win over older layers.
@@ -50,7 +51,7 @@ void initializePersistentStorage().then(() => {
     log.info("startup", `${surface ?? "main"} window connected after ${Math.round(performance.now() - opened)} ms`);
     root.render(
       <StrictMode>
-        {surface === "capture" ? <CaptureWindowApp /> : <App />}
+        {surface === "dictation" ? <DictationWindowApp /> : surface === "capture" ? <CaptureWindowApp /> : <App />}
       </StrictMode>,
     );
   })

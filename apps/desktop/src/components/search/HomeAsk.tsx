@@ -91,7 +91,7 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
   const send = (event: FormEvent) => {
     event.preventDefault();
     const text = followUp.trim();
-    if (!text || busy) return;
+    if (!text || busy || dictation.dictating) return;
     dictation.discard();
     setFollowUp("");
     onAsk(text);
@@ -140,7 +140,7 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
       <button type="button" className={`gx-tool gx-tool-icon gx-mic ${dictation.dictating ? "is-on" : ""} is-${dictation.state}`} onClick={dictation.toggle} disabled={busy} aria-pressed={dictation.listening} aria-label={dictation.listening ? "Stop voice input" : "Voice input"} title={dictation.error ?? withShortcut(dictation.listening ? "Stop voice input" : "Speak instead of typing", "dictate")}><MicGlyph state={dictation.state} /></button>
       {busy
         ? <button type="button" className={`gx-send is-stop ${stopLabel ? "has-label" : ""}`} onClick={onCancel} aria-label={stopLabel ?? "Stop"}><Square size={12} fill="currentColor" />{stopLabel && <span>{stopLabel}</span>}</button>
-        : <button type="submit" className="gx-send" disabled={!followUp.trim()} aria-label="Send"><ArrowUp size={16} /></button>}
+        : <button type="submit" className="gx-send" disabled={!followUp.trim() || dictation.dictating} aria-label="Send"><ArrowUp size={16} /></button>}
     </form>
     {evidence && <EvidencePanel citation={evidence.citation} index={evidence.index} onClose={() => setEvidence(null)} onOpenSource={(id) => { setEvidence(null); onOpenSource({ type: "source", id }); }} />}
   </section>;

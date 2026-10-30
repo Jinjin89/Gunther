@@ -28,6 +28,7 @@ export const SHORTCUTS = [
   { id: "go-libraries", keys: ["mod+2"], label: "Libraries", group: "Go to" },
   { id: "go-inbox", keys: ["mod+3"], label: "Inbox", group: "Go to" },
   { id: "dictate", keys: ["mod+shift+m"], label: "Speak your question (voice input)", group: "General" },
+  { id: "global-dictation", keys: ["alt+space"], label: "Voice input to clipboard (macOS, global)", group: "General" },
   { id: "capture", keys: ["mod+shift+c"], label: "Open Capture", group: "Capture" },
   { id: "new-note", keys: ["mod+n"], label: "New note", group: "Capture" },
   { id: "new-recording", keys: ["mod+shift+r"], label: "New recording", group: "Capture" },

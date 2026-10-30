@@ -106,7 +106,7 @@ export const SearchComposer = forwardRef<SearchComposerHandle, SearchComposerPro
   const slash = useSkillMenu(value, caret, skills, (chosen, at) => selectSkill(chosen.command, at), Boolean(onSkillChange) && !skill);
   const menuOpen = librariesOpen || slash.open;
   const opensLibrary = !value.trim() && mentioned.length === 1;
-  const canSubmit = Boolean(value.trim()) || opensLibrary;
+  const canSubmit = !dictating && (Boolean(value.trim()) || opensLibrary);
   // A chosen skill is for a question: ↵ asks.
   const asks = Boolean(skill && onAsk && value.trim());
 
@@ -156,6 +156,7 @@ export const SearchComposer = forwardRef<SearchComposerHandle, SearchComposerPro
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.nativeEvent.isComposing) return;
+    if (event.key === "Enter" && !event.shiftKey && dictating) { event.preventDefault(); return; }
     if (slash.keyDown(event) || libraries.onKeyDown(event, (base) => selectLibrary(base))) return;
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
@@ -188,6 +189,7 @@ export const SearchComposer = forwardRef<SearchComposerHandle, SearchComposerPro
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (dictating) return;
     if (asks) { dictation.discard(); onAsk?.(); return; }
     if (canSubmit) { dictation.discard(); onSubmit(); }
   };

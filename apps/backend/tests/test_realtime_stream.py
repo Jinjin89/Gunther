@@ -239,6 +239,28 @@ def wait_for(condition: Callable[[], bool], seconds: float = 5.0) -> None:
 V2 = "/api/recordings/live?protocol=2&sample_rate=16000&offset_ms={offset}"
 
 
+def test_live_dictation_overrides_only_this_request_and_keeps_saved_jobs(tmp_path: Path, fake):
+    server = fake()
+    with make_app(tmp_path, server, "qwen-audio-3.1-asr-flash", stream=False) as client:
+        with client.websocket_connect(
+            V2.format(offset=0) + "&purpose=dictation&stream=true", headers=SIDECAR
+        ) as socket:
+            assert socket.receive_json()["live"] == "stream"
+            socket.send_json({"type": "input_audio_buffer.append", "audio": audio(600)})
+            draft, final = socket.receive_json(), socket.receive_json()
+            assert draft["final"] is False and final["final"] is True
+            assert draft["id"] == final["id"]
+            socket.send_json({"type": "input_audio_buffer.commit"})
+            assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": 600}
+        saved = client.get("/api/settings/speech", headers=SIDECAR).json()["roles"]
+        assert all(role["stream"] is False for role in saved)
+        # The runtime override is never applied to the Recorder, even if supplied.
+        with client.websocket_connect(
+            V2.format(offset=0) + "&stream=true", headers=SIDECAR
+        ) as socket:
+            assert socket.receive_json()["stream"] is False
+
+
 @pytest.fixture(autouse=True)
 def quick_reconnects(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(realtime, "RECONNECT_BACKOFF", (0.01, 0.01, 0.01, 0.01))

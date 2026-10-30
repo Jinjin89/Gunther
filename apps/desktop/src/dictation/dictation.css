@@ -1,0 +1,15 @@
+.dictation-window, .dictation-window body, .dictation-window #root { margin: 0; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; background: transparent; }
+.dictation-panel { box-sizing: border-box; height: 100%; padding: 12px 17px 11px; color: var(--gx-ink, #1a1a18); background: var(--gx-surface-2, #fafaf8); font-family: var(--gx-font-sans, -apple-system, sans-serif); border: 1px solid var(--gx-line-2, #e6e6e1); border-radius: 12px; }
+.dictation-panel header { display: flex; align-items: center; gap: 8px; height: 22px; cursor: grab; user-select: none; }
+.dictation-panel header:active { cursor: grabbing; }
+.dictation-signal { flex: none; width: 5px; height: 5px; margin-right: 1px; border-radius: 50%; background: var(--gx-brand, #16745c); transition: opacity 100ms linear, transform 100ms ease-out; }
+.dictation-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; font-weight: 450; color: var(--gx-muted, #5f5e5a); }
+.dictation-key { margin-right: 9px; color: var(--gx-ghost, #a6a59f); font-size: 11px; font-weight: 400; }
+.dictation-stop { display: flex; align-items: center; justify-content: center; flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; color: var(--gx-faint, #6b6a65); background: transparent; cursor: pointer; transition: color 80ms linear, background-color 80ms linear; }
+.dictation-stop:hover { color: var(--gx-ink, #1a1a18); background: var(--gx-active, #ececea); }
+.dictation-stop:active { background: var(--gx-line-2, #e3e3de); }
+.dictation-stop:focus-visible { outline: 1px solid var(--gx-brand, #16745c); outline-offset: 1px; }
+.dictation-preview { height: 44px; overflow: auto; scrollbar-width: none; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; margin-top: 7px; font-size: 16px; line-height: 22px; font-weight: 400; letter-spacing: .005em; }
+.dictation-preview::-webkit-scrollbar { display: none; }
+.dictation-preview.is-empty { color: var(--gx-ghost, #a6a59f); }
+@media (prefers-reduced-motion: reduce) { .dictation-signal, .dictation-stop { transition: none; transform: none !important; } }

@@ -86,7 +86,7 @@ ROLES: tuple[Role, ...] = (
     Role(
         "dictation",
         "Ask dictation",
-        "Writes the words when you speak into Ask. Sending the whole take reads better.",
+        "Writes live text when you speak into a text field or the voice-input window.",
         False,
     ),
 )

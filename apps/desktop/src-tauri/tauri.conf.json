@@ -12,6 +12,23 @@
   "app": {
     "windows": [
       {
+        "label": "dictation",
+        "acceptFirstMouse": true,
+        "create": false,
+        "url": "index.html?surface=dictation",
+        "title": "Voice input — Gunther",
+        "width": 480,
+        "height": 100,
+        "resizable": false,
+        "fullscreen": false,
+        "visible": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visibleOnAllWorkspaces": true,
+        "backgroundThrottling": "disabled"
+      },
+      {
         "label": "main",
         "title": "Gunther — Living Knowledge",
         "width": 1280,

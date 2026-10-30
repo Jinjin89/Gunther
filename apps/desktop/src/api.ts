@@ -282,7 +282,7 @@ export const recordingSocketUrl = (
     ? configuredBase.replace(/^http/, "ws").replace(/\/$/, "")
     : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
   const v2 = live
-    ? `&protocol=2&sample_rate=16000&offset_ms=${Math.max(0, Math.round(live.offsetMs))}${live.recordingId ? `&recording_id=${encodeURIComponent(live.recordingId)}` : ""}`
+    ? `&protocol=2&sample_rate=16000&offset_ms=${Math.max(0, Math.round(live.offsetMs))}${purpose === "dictation" ? "&stream=true" : ""}${live.recordingId ? `&recording_id=${encodeURIComponent(live.recordingId)}` : ""}`
     : "";
   return withQueryToken(`${origin}/api/recordings/live?context=${encodeURIComponent(context)}${purpose === "dictation" ? "&purpose=dictation" : ""}${v2}`);
 };

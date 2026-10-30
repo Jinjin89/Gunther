@@ -12,6 +12,7 @@ mod app_log;
 mod application_menu;
 mod capture_shell;
 mod desktop_storage;
+mod dictation_shell;
 mod external_links;
 mod leftover;
 mod library_location;
@@ -544,15 +545,25 @@ pub fn run() {
         .plugin(app_log::plugin())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(BackendProcess(Mutex::new(BackendRuntime::default())))
         .manage(desktop_storage::DesktopStorage::default())
         .manage(capture_shell::CaptureShell::default())
+        .manage(dictation_shell::DictationShell::default())
         .menu(application_menu::build)
         .on_menu_event(|app, event| {
             log::info!("Menu: {}", event.id().as_ref());
             capture_shell::handle_menu_event(app, event.id().as_ref());
         })
         .on_window_event(|window, event| {
+            if window.label() == dictation_shell::WINDOW_LABEL {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    #[cfg(target_os = "macos")]
+                    let _ = dictation_shell::stop(window.app_handle());
+                }
+            }
             if matches!(window.label(), "main" | capture_shell::CAPTURE_WINDOW_LABEL) {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
@@ -591,6 +602,7 @@ pub fn run() {
             }
             create_capture_window(app)?;
             capture_shell::setup_tray(app)?;
+            dictation_shell::setup(app)?;
             let handle = app.handle().clone();
             app.listen(capture_shell::CAPTURE_SAVED_EVENT, move |event| {
                 // Saving a note beside a running recording leaves the recording's
@@ -626,6 +638,10 @@ pub fn run() {
             capture_shell::set_menu_bar_mode,
             external_links::open_external_url,
             microphone_access::ask_microphone_access,
+            dictation_shell::dictation_request,
+            dictation_shell::stop_dictation_window,
+            dictation_shell::dictation_finished,
+            dictation_shell::copy_dictation_text,
             print_output,
         ])
         .build(tauri::generate_context!())
