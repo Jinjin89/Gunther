@@ -178,7 +178,7 @@ from gunther.schemas import (
     UpdateNotebookNoteInput,
     WebSnapshotOut,
 )
-from gunther.skill_runner import Approach, SkillAgents
+from gunther.skill_runner import SkillAgents
 from gunther.skillbook import AskSkill, ask_skills, skill_for
 from gunther.source_identity import source_fingerprint
 from gunther.topics import topic_block_ids, topic_source_ids
@@ -4077,10 +4077,12 @@ class KnowledgeService:
                     )
                 session.flush()
                 return self._artifact_out(session, artifact)
-        except IntegrityError as error:
+        except (IntegrityError, ArtifactConflictError) as error:
             earlier = self._earlier_output(workspace_id, client_request_id, fingerprint)
             if earlier is not None:
                 return earlier
+            if isinstance(error, ArtifactConflictError):
+                raise
             raise ArtifactConflictError(
                 "Artifact version creation conflicted with another writer; refresh and retry"
             ) from error
@@ -4483,6 +4485,7 @@ class KnowledgeService:
         instruction searches the scope the output was built from. Sections that change
         are checked again; the others keep what the Checker found in them.
         """
+        from gunther.studio.work import StudioWorkAgents
 
         limits = OutputLimits()
         fingerprint = self._output_fingerprint(
@@ -4500,7 +4503,15 @@ class KnowledgeService:
         model, effort = self._output_model(payload.model, payload.effort)
         with usage.job("outputs", ref=artifact_id), session_scope(self.sessions) as session:
             library = self._output_library(session, workspace_id, base_id)
-            parent = self._output_version(session, workspace_id, base_id, artifact_id, latest=True)
+            try:
+                parent = self._output_version(
+                    session, workspace_id, base_id, artifact_id, latest=True
+                )
+            except ArtifactConflictError:
+                earlier = self._earlier_output(workspace_id, payload.client_request_id, fingerprint)
+                if earlier is not None:
+                    return earlier
+                raise
             self._require_agent_output(parent)
             if payload.conversation_id:
                 owner = json.loads(parent.provenance_json).get("conversation_id")
@@ -4515,38 +4526,28 @@ class KnowledgeService:
             notes, _, inputs = self._output_material(session, resolved, limits)
             snapshots = self._unit_snapshots(session, resolved.units)
             pool = Pool(limits.pool)
+            citations = map(
+                ConversationCitationOut.model_validate, json.loads(parent.citations_json)
+            )
             pool.restore(
                 [
-                    evidence_from_citation(ConversationCitationOut.model_validate(item))
-                    for item in json.loads(parent.citations_json)
+                    evidence_from_citation(citation.model_copy(update={"ref": citation.ref or n}))
+                    for n, citation in enumerate(citations, 1)
                 ]
             )
-            known = self._latest_checks(session, parent.id)
-            records = self._latest_check_records(session, parent.id)
-            carried = [
-                known.get(section_hash(text))
-                for text in split_document(parent.content, parent.kind)[1]
-            ]
             tool = self._output_search_tool(
                 session, resolved.source_ids, f"{library.title}: {library.question}"
             )
-            made_by = self._made_by(parent)
-            if made_by is not None:
-                saved = made_by.get("approach")
-                use = made_by.get("use")
-                agents: OutputAgents = SkillAgents(
-                    self.models,
-                    skill_for(parent.kind),
-                    limits,
-                    tools=[tool],
-                    use=use if isinstance(use, str) else None,
-                    approach=Approach.saved_as(saved, use if isinstance(use, str) else None)
-                    if isinstance(saved, dict)
-                    else None,
-                    slide_renderer=self.slide_renderer,
+            made_by = self._made_by(parent) or {}
+            agents = StudioWorkAgents(self.models, parent.kind, limits)
+            agents.use = made_by.get("use")
+            saved = made_by.get("approach") or {}
+            if saved.get("purpose") == "explain_study":
+                numbers = {int(ref): n for ref, n in (saved.get("ref_map") or {}).items()
+                           if ref.isdecimal()}
+                agents.scientific_context = (
+                    workspaces.rebind_approach_refs(saved, numbers) if numbers else saved
                 )
-            else:
-                agents = OutputAgents(self.models, limits)
             with usage.job(detail=parent.kind):
                 built = agents.revise(
                     model,
@@ -4556,58 +4557,22 @@ class KnowledgeService:
                         parent.audience,
                         parent.style,
                         parent.brief,
-                        theme=_marked(split_document(parent.content, "slides")[1][0]).theme
-                        if parent.kind == "slides" and split_document(parent.content, "slides")[1]
-                        else None,
+                        title=parent.title,
                     ),
                     parent.content,
-                    [
-                        Planned(
-                            item["heading"],
-                            item.get("goal", ""),
-                            layout=item.get("layout") or "",
-                            link=item.get("link") or "",
-                            id=item.get("id", ""),
-                            message=item.get("message", ""),
-                            question=item.get("question", ""),
-                            requires=tuple(item.get("requires") or ()),
-                            design=item.get("design"),
-                            layout_locked=bool(
-                                item.get("layoutLocked", item.get("layout_locked", False))
-                            ),
-                            design_locked=bool(
-                                item.get("designLocked", item.get("design_locked", False))
-                            ),
-                            design_attempted=bool(
-                                item.get("designAttempted", item.get("design_attempted", False))
-                            ),
-                        )
-                        for item in json.loads(parent.outline_json)
-                    ],
-                    carried,
+                    json.loads(parent.outline_json),
+                    self._latest_check_records(session, parent.id),
                     payload.instruction,
                     payload.section_index,
                     tool,
                     pool,
                     notes,
                     events,
-                    known_coverage={
-                        digest: record["coverage"]
-                        for digest, record in records.items()
-                        if record.get("coverage")
-                    },
                 )
-            for check in built.checks:
-                previous = records.get(check["hash"], {})
-                if "coverage" not in check and previous.get("coverage"):
-                    check["coverage"] = previous["coverage"]
-            if isinstance(agents, SkillAgents) and parent.kind == "slides":
-                built = replace(built, skill=agents.record())
-                built = agents.review_rendered(built, Spec("slides", parent.audience,
-                                               brief=parent.brief), events)
-                made_by = {**(made_by or {}), "skill": built.skill}
             made_by = {
-                **(made_by or {}),
+                **made_by,
+                "generator": "gunther.studio.v1",
+                "skill": {**(made_by.get("skill") or {}), **agents.record()},
                 "conversation_id": payload.conversation_id,
                 "conversation_title": payload.conversation_title,
                 "request": payload.instruction,
@@ -4618,7 +4583,7 @@ class KnowledgeService:
                 "audience": parent.audience,
                 "brief": parent.brief,
                 "scope": json.loads(parent.scope_json),
-                "outline": json.loads(parent.outline_json),
+                "outline": built.outline,
                 "title": built.title or parent.title,
             }
         if events:

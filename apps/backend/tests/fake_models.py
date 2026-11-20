@@ -284,7 +284,7 @@ def is_outlining(request: dict[str, Any]) -> bool:
     return "planning a written report" in task or "presentation strategist" in task
 
 
-WRITER_MARK = "You are Gunther's writer"
+WRITER_MARK = "as instructed, changing only what the instruction needs:"
 
 
 def is_writing(request: dict[str, Any]) -> bool:
@@ -366,7 +366,9 @@ def output_replies(
                     for i, part in enumerate(parts)
                 )
             return f"# {title}\n\n" + "\n\n".join(parts)
-        if fixed := re.search(r"Slide \d+ as written:\n(.*?)\n\nRewrite it now", prompt, re.S):
+        if fixed := re.search(
+            r"Slide \d+ as written:\n(.*?)\n\nRewrite it now", system + "\n\n" + prompt, re.S
+        ):
             return fixed[1]
         if "A fact-checker compared" in task:
             return task.split("Part 1:\n", 1)[1].split("\n\nUnsupported in part", 1)[0]
@@ -400,12 +402,12 @@ def output_replies(
                     "supported": [n for n in numbers if n not in (flagged or [])],
                 }
             )
-        asked = re.search(r"Write section (\d+) of", prompt)
+        asked = re.search(r"^Rewrite (?:section|slide) (\d+) as instructed", system, re.M)
         if asked is None:
             # Anything else a model is asked while a library is set up (reading a source).
             return "{}"
         index = int(asked.group(1)) - 1
-        return written(index, prompt) if callable(written) else written[index]
+        return written(index, system + "\n" + prompt) if callable(written) else written[index]
 
     return reply
 

@@ -42,7 +42,6 @@ from gunther.outputs import (
     CARRY_CHARS,
     COMPOSITION_LAYOUTS,
     COMPOSITIONS,
-    REVISION,
     UNCHANGED,
     Draft,
     Events,
@@ -94,6 +93,12 @@ from gunther.slide_scene import (
 )
 
 logger = logging.getLogger(__name__)
+
+REVISION = (
+    "You are revising a section that already exists. Change only what the instruction "
+    "asks for and keep the rest as it is, with its numbers. If this section needs no "
+    f"change, reply with exactly {UNCHANGED}."
+)
 
 
 def _scene_leaves(root: SceneGroup | SceneLeaf) -> list[SceneLeaf]:

@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from fake_models import FakeProvider, gateway, skill_replies, skill_step
+from fake_models import FakeProvider, gateway, is_writing, output_replies, skill_replies, skill_step
 from test_outputs import (
     app_for,
     body,
@@ -419,15 +419,9 @@ def test_auto_design_guidance_has_no_pool_citations_but_keeps_planned_evidence()
     assert "Do not put citation markers" in prompt
 
 
-def test_a_skilled_version_is_revised_by_its_skill_and_keeps_its_approach(tmp_path: Path) -> None:
-    fake = FakeProvider(
-        skill_replies(
-            APPROACH,
-            OUTLINE,
-            REPORT,
-            rewrite=lambda index, prompt: "## CD3D is the T-cell marker\n\nCD3D marks T cells [1].",
-        )
-    )
+def test_studio_revises_a_saved_skills_version_and_keeps_its_approach(tmp_path: Path) -> None:
+    changed = "## CD3D is the T-cell marker\n\nCD3D marks T cells [1]."
+    fake = FakeProvider(output_replies(OUTLINE, [REPORT[0], changed, REPORT[2]]))
     with app_for(tmp_path, fake, skills=True) as client:
         base_id, _ = library(client)
         first = saved_skill_output(client, base_id)
@@ -439,20 +433,16 @@ def test_a_skilled_version_is_revised_by_its_skill_and_keeps_its_approach(tmp_pa
             json={"clientRequestId": "edit_request_0001", "content": second["content"] + "\n"},
         ).json()
 
-    rewriting = next(r for r in fake.requests if skill_step(r) == "revise")
-    assert "Instruction: Shorter" in str(rewriting["messages"][-1]["content"])
-    assert "Core question" in str(rewriting["messages"][-1]["content"])
-    # The person's own revision may add facts: the polishing pass's rule is not given to it.
-    assert "Editorial revision must not add" not in str(rewriting["messages"][0]["content"])
+    rewriting = next(r for r in fake.requests if is_writing(r))
+    assert "Rewrite section 2" in rewriting["messages"][0]["content"]
+    assert "Shorter" in rewriting["messages"][0]["content"] and changed in second["content"]
     for version in (second, edited):
-        assert version["provenance"]["skill"]["name"] == "report"
+        assert version["provenance"]["skill"]["name"] == "studio"
         assert version["provenance"]["approach"] == first["provenance"]["approach"]
     assert len(versions(client)) == 3
 
 
 def test_the_direct_route_uses_studio_under_saved_skills_settings(tmp_path: Path) -> None:
-    from fake_models import output_replies
-
     outline = {"title": "Markers", "sections": [{"heading": "T cells", "queries": ["CD3D"]}]}
     fake = FakeProvider(output_replies(outline, ["## T cells\n\nCD3D marks T cells [1]."]))
     with app_for(tmp_path, fake, skills=True) as client:
@@ -507,30 +497,19 @@ RATES_CLOSE = "## Use both markers in every panel\n\n- CD3D was 62% [1]\n\nNote:
 RATES_SEARCH = [{"action": "search_library", "query": "cohort rate"}]
 
 
-def written_again(fake: FakeProvider) -> list[dict]:
-    """The requests that asked a slide to be written again (they carry the instruction)."""
-
-    return [
-        request
-        for request in fake.requests
-        if skill_step(request) == "revise" and "Instruction:" in str(request["messages"][-1])
-    ]
-
-
-def test_a_revision_takes_a_slides_layout_from_its_marker_and_keeps_the_titles_accent(
+def test_studio_can_revise_an_older_slide_layout_and_keeps_the_titles_accent(
     tmp_path: Path,
 ) -> None:
     def rewrite(index: int, prompt: str) -> str:
         if index == 0:
             return "# Markers\n\nA new message"
         return (
-            "## CD3D and CD19 set T and B cells apart\n\n- CD3D marks T cells [1]\n"
+            "<!-- layout: points -->\n## CD3D and CD19 set T and B cells apart\n\n"
+            "- CD3D marks T cells [1]\n"
             "- CD19 marks B cells [2]\n\nNote: Say it as a list [1]."
         )
 
-    fake = FakeProvider(
-        skill_replies(SLIDES_APPROACH, SLIDES_OUTLINE, SLIDES, gather=SEARCH, rewrite=rewrite)
-    )
+    fake = FakeProvider(output_replies(SLIDES_OUTLINE, rewrite))
     with app_for(tmp_path, fake, skills=True) as client:
         base_id, _ = library(client)
         first = saved_skill_output(client, base_id, kind="slides")
@@ -550,17 +529,13 @@ def test_a_revision_takes_a_slides_layout_from_its_marker_and_keeps_the_titles_a
     old = split_document(second["content"], "slides")[1]
     middle = split_document(third["content"], "slides")[1]
     last = split_document(fourth["content"], "slides")[1]
-    # The slide was rewritten as the layout it now has; the others are as they were.
-    assert middle[1].startswith("<!-- layout: cards -->\n## CD3D and CD19 set T and B cells apart")
+    assert middle[1].startswith("<!-- layout: points -->\n## CD3D and CD19 set T and B cells apart")
     assert (middle[0], middle[2]) == (old[0], old[2])
     assert last[0] == "<!-- layout: title; accent: blue; design: v1 -->\n# Markers\n\nA new message"
     assert (last[1], last[2]) == (middle[1], middle[2])
-    asked = written_again(fake)
-    assert "Layout: cards" in str(asked[0]["messages"][-1]["content"])
-    assert "Layout: title" in str(asked[1]["messages"][-1]["content"])
-    assert not any("<!--" in str(request["messages"]) for request in fake.requests)
-    # What was planned is still the plan.
-    assert [item.get("layout") for item in fourth["outline"]] == ["title", "compare", "takeaways"]
+    asked = [r["messages"][0]["content"] for r in fake.requests if is_writing(r)]
+    assert "layout: cards" in asked[0] and "accent: blue" in asked[1]
+    assert [item.get("layout") for item in fourth["outline"]] == ["title", "points", "takeaways"]
 
 
 def test_a_figure_slide_needs_a_figure_kept_with_its_material() -> None:

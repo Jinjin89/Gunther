@@ -5,7 +5,15 @@ import json
 from pathlib import Path
 
 import pytest
-from fake_models import FakeProvider, gateway, model, orchestrator_replies, skill_replies
+from fake_models import (
+    FakeProvider,
+    gateway,
+    is_writing,
+    model,
+    orchestrator_replies,
+    output_replies,
+    skill_replies,
+)
 
 from evals.artifacts import report, score
 from evals.artifacts.run import (
@@ -1095,11 +1103,13 @@ JUDGE_REPLY = json.dumps({"answer": True, "why": "It did."})
 def rewrite(index: int, prompt: str) -> str:
     """What the stand-in writer does with a section it is asked to revise."""
 
-    instruction = prompt.split("Instruction:", 1)[1].strip()
+    start = "Instruction:" if "Instruction:" in prompt else "what the instruction needs:"
+    instruction = prompt.split(start, 1)[1].strip()
+    marker = "<!-- layout: points -->\n" if "The slide now:" in prompt else ""
     if instruction.startswith("Fix the typo") and index == 1:
-        return SLIDES[1]
+        return marker + SLIDES[1]
     if instruction.startswith("Make this one plainer") and index == 2:
-        return (
+        return marker + (
             "## The plan wants thirty percent of roofs coated\n\n- 30% of roofs [1]\n\n"
             "Note: Short [1]."
         )
@@ -1124,11 +1134,14 @@ def stand_in_models() -> FakeProvider:
         gather=[{"action": "search_library", "query": "trial"}] * 200,
         rewrite=rewrite,
     )
+    studio = output_replies(OUTLINE, rewrite)
 
     def reply(request):
         system = str(request["messages"][0]["content"])
         if system.startswith("You grade one reply"):
             return JUDGE_REPLY
+        if is_writing(request):
+            return studio(request)
         return skill(request)
 
     return FakeProvider(reply)
@@ -1248,10 +1261,12 @@ def test_runner_end_to_end_with_fake_models(tmp_path: Path) -> None:
     assert typo["outcome"]["intent"] == "change" and typo["outcome"]["route"] == "revise"
     assert typo["outcome"]["calls"] > 0 and typo["outcome"]["seconds"] > 0
     assert typo["judgement"] == {"answer": True, "why": "It did."}
-    # A selected slide goes through as one section: the other slides are not even asked about.
+    # The selected slide gets one writer request. Fitting and design have their own calls.
     assert records["F1"]["failures"] == [], records["F1"]["why"]
     assert records["F1"]["measures"]["changed"] == [3]
-    assert records["F1"]["outcome"]["calls"] < typo["outcome"]["calls"]
+    writes = [r["messages"][0]["content"] for r in fake.requests if is_writing(r)]
+    assert sum("Make this one plainer." in text for text in writes) == 1
+    assert sum("Fix the typo" in text for text in writes) == len(SLIDES)
     # A report section is shortened.
     assert records["R1"]["failures"] == [], records["R1"]["why"]
     # An insert cannot be asked of the old path; nothing is sent for it.
@@ -1277,13 +1292,12 @@ def test_runner_end_to_end_with_fake_models(tmp_path: Path) -> None:
     assert any(name.startswith("template-") for name in kept)
     assert sum(name.startswith("fixture-") for name in kept) == 2
     # …and reused, so a second run builds nothing again.
-    writes = sum("Write section" in str(r["messages"][-1]["content"]) for r in fake.requests)
     again, fake_again, said_again = run_with_fakes(
         tmp_path, Options(label="again", only=["E1"]), None
     )
     assert any("Reusing the deck fixture" in line for line in said_again)
     assert not any("Building the" in line for line in said_again)
-    assert writes > 0 and again != folder
+    assert again != folder
 
 
 def test_a_session_clones_a_fixture_and_finds_the_newest_version(tmp_path: Path) -> None:

@@ -5,9 +5,11 @@ import contextlib
 import json
 import re
 
-from fake_models import FakeProvider, gateway, model, orchestrator_replies
+import pytest
+from fake_models import FakeProvider, gateway, is_writing, model, orchestrator_replies
 from test_studio_pipeline import PASSAGES, FakeRenderer, looking_router, pool, router
 
+from gunther.llm import ModelError
 from gunther.outputs import Notes, Spec
 from gunther.studio import design as D
 from gunther.studio import format as fmt
@@ -143,11 +145,11 @@ def studio_deck(tmp_path, inner):
         made = done(turn(client, base_id, "talk", "A 10-minute deck on the trial"))
         assert made["outcome"] == "saved", made
 
-        def go(decisions, text):
+        def go(decisions, text, *, outcome="saved"):
             fake.replies[:] = [orchestrator_replies(decisions, inner)]
             before = len(fake.requests)
             result = done(turn(client, base_id, "talk", text))
-            assert result["outcome"] == "saved", result
+            assert result["outcome"] == outcome, result
             designs = [
                 str(r["messages"][0]["content"])
                 for r in fake.requests[before:]
@@ -196,6 +198,52 @@ def test_an_edit_that_changes_a_slides_words_designs_that_slide_again_and_only_t
         assert fmt.design_of(after[0]) == fmt.design_of(slides[0])
         assert fmt.design_of(after[2]) == fmt.design_of(slides[2])
         assert fmt.parse_slide(after[0]).attrs["style"] == "light"
+
+
+@pytest.mark.parametrize("entry", ["direct", "conversation"])
+@pytest.mark.parametrize("valid_writer", [True, False], ids=["formatter-failure", "invalid-writer"])
+def test_revision_saves_only_valid_writer_text_when_the_formatter_is_unavailable(
+    tmp_path, entry, valid_writer,
+):
+    from test_outputs import built, revise, versions
+
+    writer_text = (
+        "<!-- layout: points -->\n## The findings in brief\n"
+        "- Discuss the findings at the next meeting.\nNote: Pause for questions."
+    )
+    fits = []
+
+    def inner(request):
+        if is_writing(request):
+            return writer_text if valid_writer else f"{writer_text}\n---\n{writer_text}"
+        system = request["messages"][0]["content"]
+        if "Slide 2 as written:" in system and writer_text in system:
+            fits.append(request)
+            raise ModelError("The formatter is unavailable.")
+        return studio_inner(request)
+
+    instruction = "Summarize slide 2 for discussion"
+    with studio_deck(tmp_path, inner) as (client, base_id, first, go):
+        if entry == "direct":
+            events = revise(client, base_id, first["id"], instruction, sectionIndex=1)
+            if valid_writer:
+                saved = built(events)
+            else:
+                assert events[-1][0] == "error" and events[-1][1]["status"] == 502
+                saved = None
+        else:
+            saved, _ = go([{"actions": [
+                {"do": "write", "parts": [2], "instruction": instruction},
+                {"do": "save", "text": "Revised slide 2."},
+            ]}], instruction, outcome="saved" if valid_writer else "paused")
+
+        assert bool(fits) == valid_writer
+        if valid_writer:
+            assert saved["supersedesArtifactId"] == first["id"]
+            assert fmt.without_design(fmt.split_slides(saved["content"])[1]) == writer_text
+        else:
+            assert saved is None
+            assert [version.id for version in versions(client)] == [first["id"]]
 
 
 def test_an_edit_of_the_notes_alone_keeps_the_design(tmp_path):

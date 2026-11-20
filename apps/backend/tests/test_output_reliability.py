@@ -17,12 +17,13 @@ from test_documents import FigureParser, capture_pdf, png
 from test_output_skills import APPROACH, OUTLINE, REPORT, SEARCH
 from test_outputs import SIDECAR, app_for, body, build, built, library, revise, saved_output
 
-from gunther.agent import Evidence
+from gunther.agent import Evidence, Tool
 from gunther.asset_service import AssetTextExtraction
 from gunther.database import session_scope
 from gunther.llm import ModelError
 from gunther.models import ArtifactAsset, ArtifactCheck, Asset
 from gunther.outputs import Draft, OutputAgents, Planned, Pool, Spec, section_hash, split_document
+from gunther.schemas import ConversationCitationOut
 
 
 @pytest.mark.parametrize(
@@ -117,15 +118,11 @@ def test_revising_another_slide_preserves_a_verified_chart(tmp_path, historical_
         "| CD19 | 41 [1] |",
         "## Takeaways\n\nCD3D cohort rate was 62% [1].",
     ]
-    fake = FakeProvider(
-        skill_replies(
-            {**APPROACH, "use": "talk"},
-            outline,
-            pages,
-            gather=[{"action": "search_library", "query": "CD3D"}],
-            rewrite=lambda index, prompt: "## Takeaways\n\nThe CD3D cohort measured 62% [1].",
-        )
+    rewritten = (
+        "<!-- layout: points -->\n## Takeaways\n\n- The CD3D cohort measured 62% [1].\n"
+        "Note: Lead with the measured cohort rate."
     )
+    fake = FakeProvider(output_replies(outline, [*pages[:2], rewritten]))
     with app_for(tmp_path, fake, skills=True) as client:
         base_id, _ = library(
             client, notes={"Measured rate": "CD3D cohort rate was 62%. CD19 cohort rate was 41%."}
@@ -171,6 +168,36 @@ def test_output_with_omitted_claim_verdicts_is_saved_as_unchecked(tmp_path):
         version = built(build(client, base_id, body()))
     assert all(not section["checked"] for section in version["sections"])
     assert all(section["coverage"]["unchecked"] > 0 for section in version["sections"])
+
+
+def test_revision_appends_used_sources_and_keeps_parent_numbers(tmp_path, monkeypatch):
+    revised = "## Results\n\nThe trial includes a follow-up [4]."
+    with app_for(tmp_path, FakeProvider(output_replies(OUTLINE, [revised]))) as client:
+        base_id, _ = library(client)
+        first = saved_output(client, base_id)
+        source = client.post("/api/sources", headers=SIDECAR, json={
+            "title": "Trial", "kind": "note", "knowledgeBaseId": base_id,
+            "content": "A trial was run. The trial includes a follow-up.",
+        }).json()["source"]
+        passages = [
+            Evidence("library", "Trial", quote, payload=(ConversationCitationOut(
+                id=f"cit_trial_{n}", source_id=source["id"], source_title="Trial", quote=quote,
+                locator="Note", status="provisional", confidence=1.0,
+            ), None))
+            for n, quote in enumerate(("A trial was run.", "The trial includes a follow-up."))
+        ]
+        tool = Tool("search_library", "Trial", lambda _: passages, "the library")
+        service = client.app.state.knowledge_service
+        monkeypatch.setattr(service, "_output_search_tool", lambda *args: tool)
+        second = built(revise(client, base_id, first["id"], "Include follow-up", sectionIndex=0))
+
+    assert second["citations"][:2] == first["citations"]
+    assert [(c["ref"], c["quote"]) for c in second["citations"][2:]] == [
+        (3, "The trial includes a follow-up.")
+    ]
+    assert "The trial includes a follow-up [3]." in second["content"]
+    assert any(claim["refs"] == [3] for claim in second["sections"][0]["coverage"]["claims"])
+    assert second["sections"][1] == first["sections"][1]
 
 
 @pytest.mark.parametrize("coverage", [None, {}, {"status": "partial"}])

@@ -764,15 +764,15 @@ def _traced(found: Sequence[Evidence]) -> list[dict[str, Any]]:
     ]
 
 
-def renumber_citations(text: str, used: Sequence[int]) -> str:
+def renumber_citations(text: str, used: Sequence[int] | Mapping[int, int]) -> str:
     """Show the pool's numbers as 1, 2, 3 in the order the answer first cites them.
 
     ``used`` is the pool numbers in that order (from ``check_citations``); the source
     list of the answer follows the same order, so a number in the text is the number
-    of the source beside it.
+    of the source beside it. An explicit map can keep numbers from a saved version.
     """
 
-    place = {ref: index for index, ref in enumerate(used, start=1)}
+    place = used if isinstance(used, Mapping) else {ref: n for n, ref in enumerate(used, 1)}
 
     def renumber(match: re.Match[str]) -> str:
         label = f"{match.group(1)}:" if match.group(1) else ""

@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-from gunther.agent import Evidence
+from gunther.agent import Evidence, check_citations, renumber_citations
 from gunther.artifact_workspace import (
     PartRec,
     Work,
@@ -26,15 +26,55 @@ from gunther.artifact_workspace import (
     rebind_approach_refs,
 )
 from gunther.llm import ModelError
-from gunther.outputs import BuiltOutput, Draft, Issue, Pool, Spec, section_hash, split_document
+from gunther.outputs import (
+    UNCHANGED,
+    BuiltOutput,
+    Draft,
+    Issue,
+    Notes,
+    Pool,
+    Spec,
+    _marked,
+    _notes_block,
+    chart_unverified,
+    document_spans,
+    fallback_unverified_diagram,
+    heading_of,
+    numbered_check,
+    section_hash,
+    split_document,
+    title_of,
+)
 from gunther.schemas import OutlineItem
+from gunther.skill_checks import CHARTS
+from gunther.studio import design as D
 from gunther.studio import format as fmt
 from gunther.studio import prompts as P
 from gunther.studio import science as S
-from gunther.studio.pipeline import Run, StudioAgents, _unfence, source_images_kept
+from gunther.studio.pipeline import Run, StudioAgents, _no_events, _unfence, source_images_kept
 from gunther.studio.reference import DECK_FORMAT, READ_NOTE, REPORT_FORMAT, STUDY_DECK_FORMAT
 
 logger = logging.getLogger(__name__)
+
+
+def _single_part(text: str, kind: str, index: int) -> str:
+    """Read a complete part with the same boundaries used to save the document."""
+    preamble, parts = split_document(text, kind)
+    unit = "slide" if kind == "slides" else "section"
+    if preamble or len(parts) != 1:
+        raise ModelError(f"Studio must return one complete {unit} at position {index + 1}.")
+    part, = parts
+    mark, body = "##", part
+    if kind == "slides":
+        layout = fmt.parse_slide(part).layout or ("title" if index == 0 else "")
+        mark = "#" if layout in ("title", "section") else "##"
+        marked = _marked(part)
+        body = marked.body if marked.scene_line else D.visible_content(part)
+        if (layout == "title") != (index == 0):
+            raise ModelError("The title layout belongs on the first slide.")
+    if not re.match(rf"^{mark}[ \t]+\S", body.lstrip()):
+        raise ModelError(f"Studio did not return a valid heading for {unit} {index + 1}.")
+    return part
 
 
 def is_studio(work: Work) -> bool:
@@ -220,7 +260,8 @@ class StudioWorkAgents(StudioAgents):
     def check_built(self, model, text, tool, pool: Pool, emit, section) -> Draft:
         by_ref = pool.by_ref()
         issues, coverage = self._claims(model, text, by_ref)
-        return self._chart_fallback(Draft(text, issues, coverage), section)
+        draft = self._chart_fallback(Draft(text, issues, coverage), section)
+        return fallback_unverified_diagram(draft, section, self.skipped)
 
     def check_unbuilt(self, model, text, by_ref, coverage=None) -> list[Issue]:
         issues, found = self._claims(model, text, by_ref)
@@ -229,7 +270,7 @@ class StudioWorkAgents(StudioAgents):
         return issues
 
     def fit(self, model, effort, spec, planned, index, pool, refs, notes, before, emit, text):
-        """A slide that breaks the format is written again once; else it keeps its words."""
+        """Try fitting once and keep the valid writer text if fitting fails."""
 
         if spec.kind != "slides":
             return text
@@ -249,13 +290,12 @@ class StudioWorkAgents(StudioAgents):
         if scientific:
             system += "\n" + P.SCIENCE_TRUTH
         try:
-            fixed = fmt.split_slides(
-                _unfence(self._text(model, system, "Rewrite it now.", effort, 4000))
-            )
+            fixed = _unfence(self._text(model, system, "Rewrite it now.", effort, 4000))
+            candidate = _single_part(fmt.strip_labels(fixed), spec.kind, index)
         except ModelError as error:
+            _single_part(text, spec.kind, index)
             logger.info("Fitting a slide failed: %s", error)
             return text
-        candidate = fmt.strip_labels(fixed[0]) if fixed else text
         if not source_images_kept(text, candidate):
             return text
         if scientific and self._science_problems(candidate, pool, scientific):
@@ -278,6 +318,8 @@ class StudioWorkAgents(StudioAgents):
         goal: str = "",
         layout: str = "",
         instruction: str | None = None,
+        notes: Notes | None = None,
+        on_text=None,
     ) -> str:
         deck = spec.kind == "slides"
         unit = "slide" if deck else "section"
@@ -294,7 +336,8 @@ class StudioWorkAgents(StudioAgents):
         if instruction and current:
             task = (
                 f"Rewrite {unit} {index + 1} as instructed, changing only what the instruction "
-                f"needs: {instruction}\n\nThe {unit} now:\n{current}"
+                f"needs: {instruction}\nIf this {unit} needs no change, reply {UNCHANGED}."
+                f"\n\nThe {unit} now:\n{current}"
             )
         else:
             task = (
@@ -329,22 +372,27 @@ class StudioWorkAgents(StudioAgents):
                 format=STUDY_DECK_FORMAT + ("\n\n" + READ_NOTE if use == "read" else ""),
                 study=self._study_text(scientific),
             )
-        prompt = f"The whole {self._what(spec)[2:]}:\n\n{whole}\n\nThe material:\n\n{material}"
+        context = "\n".join(_notes_block(notes)) if notes else ""
+        prompt = (
+            f"The whole {self._what(spec)[2:]}:\n\n{whole}\n{context}"
+            f"\n\nThe material:\n\n{material}"
+        )
 
         def written(prompt: str) -> str:
-            text = _unfence(self._text(model, system, prompt, effort, 6000))
-            if deck:
-                pieces = fmt.split_slides(text)
-                text = fmt.strip_labels(pieces[0]) if pieces else text
-                if index == 0 and current:
-                    attrs = fmt.parse_slide(current).attrs
-                    text = fmt.with_marker(text, "title", **{k: v for k, v in attrs.items()})
+            text = _unfence(self._text(model, system, prompt, effort, 6000, on_text=on_text))
+            if instruction and current and text.upper() == UNCHANGED:
+                return current
+            text = _single_part(fmt.strip_labels(text) if deck else text, spec.kind, index)
+            if deck and index == 0 and current:
+                text = fmt.with_marker(text, "title", **fmt.parse_slide(current).attrs)
             return text
 
         text = written(prompt)
         # What code checks on a whole deck, on this slide: damaged values left out and images
         # from the build's material. Asked again once, then the edit fails.
-        if scientific and (found := self._science_problems(text, pool, scientific)):
+        if scientific and text != current and (
+            found := self._science_problems(text, pool, scientific)
+        ):
             text = written(
                 prompt
                 + f"\n\nYour {unit}:\n{text}\n\nFix this and reply with the whole {unit}:\n"
@@ -353,6 +401,111 @@ class StudioWorkAgents(StudioAgents):
             if found := self._science_problems(text, pool, scientific):
                 raise ModelError("The edited slide breaks a scientific rule: " + found[0])
         return text
+
+    def revise(
+        self, model, effort, spec: Spec, content: str, outline, records, instruction: str,
+        target: int | None, tool, pool: Pool, notes: Notes, events=None,
+    ) -> BuiltOutput:
+        """Rewrite selected parts with the saved version's text and citation numbers."""
+        emit = events or _no_events
+        _, spans = document_spans(content, spec.kind)
+        parts = [content[start:end] for start, end in spans]
+        if not parts:
+            raise ValueError("This output has no sections to change.")
+        if target is not None and not 0 <= target < len(parts):
+            raise ValueError(f"There is no section {target + 1} to change.")
+        headings = [heading_of(part) for part in parts]
+        plans = list(outline) if len(outline) == len(parts) else [{"heading": h} for h in headings]
+        saved = pool.by_ref()
+        asked = f"{headings[target]}: {instruction}" if target is not None else instruction
+        self._research_section(model, asked, [asked[:300]], tool, pool,
+                               self.limits.per_section, emit, target)
+        by_ref = pool.by_ref()
+        deck = spec.kind == "slides"
+        style = D.deck_style(parts) if deck else None
+        changed: dict[int, Draft] = {}
+        for index in range(len(parts)) if target is None else [target]:
+            emit({"type": "section", "index": index, "state": "writing"})
+            old = parts[index]
+
+            def stream(piece: str, index: int = index) -> None:
+                emit({"type": "text", "section": index, "text": piece})
+
+            text = self.write_part(
+                model, effort, spec, parts, headings, index, pool,
+                goal=plans[index].get("goal", ""), instruction=instruction, notes=notes,
+                on_text=stream,
+            )
+            if section_hash(text) == section_hash(fmt.without_design(old)):
+                emit({"type": "section", "index": index, "state": "done"})
+                continue
+            text = self.fit(model, effort, spec, [], index, pool, [], notes, "", emit, text)
+            text, _ = check_citations(text, set(by_ref))
+            text = _single_part(text, spec.kind, index)
+            layout = fmt.parse_slide(text).layout if deck else ""
+            if layout in CHARTS:
+                text = fmt.with_marker(text, "chart", chart=layout.removesuffix("_chart"))
+            emit({"type": "section", "index": index, "state": "checking"})
+            draft = self.check_built(model, text, tool, pool, emit, index)
+            parts[index] = draft.text
+            if style and draft.text == text:
+                old_html = fmt.design_of(old)
+                if (old_html and D.visible_content(old) == D.visible_content(draft.text)
+                        and not D.check_design(draft.text, old_html)):
+                    parts[index] = fmt.with_design(draft.text, old_html)
+                else:
+                    try:
+                        designed, _, skipped = D.redesign(
+                            self, model, parts, {index: ""}, workers=1, style=style,
+                            keep_on_fail=False,
+                        )
+                        parts[index] = designed[index]
+                        self.skipped += skipped
+                    except Exception as error:  # noqa: BLE001 - the template can draw this slide
+                        logger.info("Designing revised slide %d failed: %s", index + 1, error)
+            changed[index] = replace(draft, text=parts[index])
+            headings[index] = heading_of(parts[index])
+            plans[index] = {**plans[index], "heading": headings[index]}
+            if deck:
+                plans[index]["layout"] = fmt.parse_slide(parts[index]).layout
+            emit({"type": "section", "index": index, "state": "done"})
+
+        numbers = {ref: ref for ref in saved}
+        citations = [item.payload[0] for item in saved.values()]
+        next_ref = max(numbers, default=0)
+        for draft in changed.values():
+            _, used = check_citations(draft.text, set(by_ref))
+            for ref in used:
+                if ref not in numbers:
+                    next_ref += 1
+                    numbers[ref] = next_ref
+                    citations.append(by_ref[ref].payload[0].model_copy(update={"ref": next_ref}))
+        checks = []
+        for index, part in enumerate(parts):
+            if index in changed:
+                draft = changed[index]
+                parts[index] = renumber_citations(draft.text, numbers)
+                checks.append(numbered_check(draft, parts[index], numbers))
+                continue
+            record = records.get(section_hash(part))
+            if deck and _marked(part).layout in CHARTS:
+                coverage = (record or {}).get("coverage")
+                if coverage:
+                    issues = [Issue(**issue) for issue in record["issues"]]
+                else:
+                    issues, coverage = self._claims(model, part, by_ref)
+                    record = numbered_check(Draft(part, issues, coverage), part, numbers)
+                _, reason = chart_unverified(part, issues, coverage, by_ref, index)
+                if reason is not None:
+                    raise ModelError("Chart values must be verified before saving. " + reason)
+            if record is not None:
+                checks.append(record)
+        for index in reversed(changed):
+            start, end = spans[index]
+            content = content[:start] + parts[index] + content[end:]
+        return BuiltOutput(
+            title_of(content) or spec.title or "", content, plans, citations, checks, model, effort,
+        )
 
     def _part_material(self, pool: Pool, cited: list[int], about: str) -> str:
         """The passages a part may need: those the document cites, then the ones sharing the

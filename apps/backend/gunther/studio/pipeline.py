@@ -355,14 +355,15 @@ class StudioAgents(OutputAgents):
             )
         return result
 
-    def _text(self, model, system, prompt, effort, max_tokens=16_000) -> str:
+    def _text(self, model, system, prompt, effort, max_tokens=16_000, *, on_text=None) -> str:
         if self._active_stages:
             self._count_model_call(self._active_stages[-1])
         # A thinking model spends its budget thinking first: never ask for less than this.
         room = max(max_tokens, 16_000)
         try:
             completion = self.gateway.complete(
-                model, system=system, messages=prompt, effort=effort, max_tokens=room
+                model, system=system, messages=prompt, effort=effort, max_tokens=room,
+                on_text=on_text,
             )
         except ModelError as error:
             if "ran out of room" not in str(error) or effort in (None, "off", "low"):
@@ -370,7 +371,8 @@ class StudioAgents(OutputAgents):
             logger.info("Out of room while thinking; asking again with less thinking")
             self._count_model_call()
             completion = self.gateway.complete(
-                model, system=system, messages=prompt, effort="low", max_tokens=room
+                model, system=system, messages=prompt, effort="low", max_tokens=room,
+                on_text=on_text,
             )
         return completion.text
 
