@@ -1,8 +1,8 @@
 """A visual-only review saves the inspected candidate and preserves version/source identities."""
 
 from fake_models import FakeProvider, skill_replies
-from test_output_skills import SEARCH, SLIDES, SLIDES_APPROACH, SLIDES_OUTLINE
-from test_outputs import app_for, body, build, built, library, read_events, workspace
+from test_output_skills import SEARCH, SLIDES, SLIDES_APPROACH, SLIDES_OUTLINE, saved_skill_output
+from test_outputs import app_for, built, library, read_events, workspace
 from test_slide_review import Renderer
 
 
@@ -10,7 +10,7 @@ def test_review_current_renders_save_reopen_idempotency_freshness_and_access(tmp
     fake = FakeProvider(skill_replies(SLIDES_APPROACH, SLIDES_OUTLINE, SLIDES, gather=SEARCH))
     with app_for(tmp_path, fake, skills=True) as client:
         base, _ = library(client)
-        original = built(build(client, base, body(kind="slides")))
+        original = saved_skill_output(client, base, kind="slides")
         renderer = Renderer(tmp_path)
         client.app.state.knowledge_service.slide_renderer = renderer
         fake.replies[:] = ['{"findings":[]}']

@@ -151,7 +151,6 @@ def _connect_models(
     # Settings → Developer: keep how each answer is made.
     knowledge_service.tracing = bool(store.developer().get("traces"))
     knowledge_service.auto_skills = settings.ask_auto_skills
-    knowledge_service.output_skills = bool(store.developer().get("output_skills", True))
     knowledge_service.output_method = store.developer().get("output_method", "studio")
     index = knowledge_service.index
     index.digest_method = digest_writer.method if digest_writer else None

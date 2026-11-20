@@ -1,5 +1,4 @@
-"""The skill's steps on a saved workspace: WorkSteps does what SkillAgents.make does, one step at
-a time, and only to the parts it is asked about."""
+"""Skill operations on a saved conversation workspace."""
 
 import json
 import re
@@ -24,8 +23,9 @@ from test_output_skills import (
     SLIDES_APPROACH,
     SLIDES_OUTLINE,
     TWO_ROWS,
+    saved_skill_output,
 )
-from test_outputs import body, build, built, library
+from test_outputs import library
 
 from gunther.agent import Evidence, Tool
 from gunther.artifact_steps import REPLACER, PassageNotFound, WorkSteps
@@ -146,19 +146,6 @@ def default_route(steps: WorkSteps) -> tuple[BuiltOutput, list[int]]:
     return steps.assemble()
 
 
-def made(
-    kind: str,
-    replies: Callable[[dict[str, Any]], Any],
-    brief_line: str = "",
-    passages: list[Evidence] | None = None,
-) -> BuiltOutput:
-    """The same artifact made in one go by ``SkillAgents.make``."""
-
-    agents = agents_for(FakeProvider(replies), kind, passages)
-    spec = Spec(kind, "scientist", None, brief_line)
-    return agents.make(agents.gateway.models[0], None, spec, Pool(120), Notes())
-
-
 def tightened(index: int, prompt: str) -> str:
     """What the polishing pass writes for the last section of the report."""
 
@@ -240,35 +227,27 @@ def states(steps: WorkSteps) -> list[str]:
     return [part.state for part in status(steps.work, steps.brief)]
 
 
-# The default route gives what make gives ---------------------------------------------------------
+# Building through the retained work steps ---------------------------------------------------------
 
 
-def test_the_default_route_gives_a_report_what_make_gives() -> None:
-    expected = made("report", report_replies())
+def test_the_work_steps_make_a_report() -> None:
     built, version_map = default_route(steps_for(FakeProvider(report_replies())))
-    assert built.content == expected.content
-    assert built == expected
     assert "so a panel needs it" in built.content
     # The sources are numbered in reading order; the map says which pool passage each one is.
     assert version_map == list(built.pool_refs) == [1, 2]
 
 
-def test_the_default_route_gives_a_report_with_a_goal_what_make_gives() -> None:
+def test_the_work_steps_make_a_report_with_a_goal() -> None:
     goal = "How immune cells are told apart"
     brief = ConversationBrief(goal=Line(text=goal, mark="you"))
-    expected = made("report", report_replies(), brief_line=goal)
     built, _ = default_route(steps_for(FakeProvider(report_replies()), brief=brief))
-    assert built == expected
     # The italic line is the goal's words, not the brief as lines.
     assert built.content.startswith(f"# Telling immune cells apart\n\n_{goal}_\n\n## Surface")
 
 
-def test_the_default_route_gives_a_deck_what_make_gives() -> None:
-    expected = made("slides", deck_replies())
+def test_the_work_steps_make_a_deck() -> None:
     steps = steps_for(FakeProvider(deck_replies()), "slides")
     built, version_map = default_route(steps)
-    assert built.content == expected.content
-    assert built == expected
     slides = split_document(built.content, "slides")[1]
     assert [layout_of(slide)[0] for slide in slides] == ["title", "compare", "takeaways"]
     assert (built.title, version_map) == ("Markers", [1, 2])
@@ -282,10 +261,8 @@ def test_the_default_route_gives_a_deck_what_make_gives() -> None:
 
 def test_a_step_the_skill_skips_is_noted_on_the_work_and_on_the_version() -> None:
     refused = api_error(openai.InternalServerError, 500, "The reader is down")
-    expected = made("report", report_replies(reader=refused))
     steps = steps_for(FakeProvider(report_replies(reader=refused)))
     built, _ = default_route(steps)
-    assert built == expected
     [note] = steps.work.skipped
     assert note["step"] == "reader_test" and "The reader is down" in note["reason"]
     assert built.skill is not None and built.skill["skipped"] == [note]
@@ -307,15 +284,13 @@ def test_a_slide_is_fitted_to_its_layout_after_it_is_written() -> None:
             SLIDES_APPROACH, SLIDES_OUTLINE, written, gather=SEARCH, rewrite=rewrite
         )
 
-    # It fits the second time, as make finds.
+    # It fits the second time.
     steps = steps_for(FakeProvider(replies(lambda index, prompt: SLIDES[1])), "slides")
     built, _ = default_route(steps)
-    assert built == made("slides", replies(lambda index, prompt: SLIDES[1]))
     assert split_document(built.content, "slides")[1][1].startswith("<!-- layout: compare -->")
     # It does not: the slide is drawn as text, and the work says so.
     steps = steps_for(FakeProvider(replies(lambda index, prompt: bullets)), "slides")
     built, _ = default_route(steps)
-    assert built == made("slides", replies(lambda index, prompt: bullets))
     layouts = [layout_of(slide)[0] for slide in split_document(built.content, "slides")[1]]
     assert layouts == ["title", "text", "takeaways"]
     [note] = steps.work.skipped
@@ -333,7 +308,6 @@ def test_the_final_checks_of_the_whole_are_the_versions_notes_but_not_the_works(
 
     steps = steps_for(FakeProvider(replies()))
     built, _ = default_route(steps)
-    assert built == made("report", replies())
     assert built.skill is not None
     [note] = built.skill["skipped"]
     assert note["step"] == "final_checks" and "it is worth noting" in note["reason"]
@@ -1530,8 +1504,7 @@ def rates_replies(table: str = TWO_ROWS, **more: Any) -> Callable[[dict[str, Any
 
 def test_a_chart_of_verified_values_stays_a_chart() -> None:
     steps = steps_for(FakeProvider(rates_replies()), "slides", passages=RATES)
-    built, _ = default_route(steps)
-    assert built == made("slides", rates_replies(), passages=RATES)
+    default_route(steps)
     assert steps.work.parts["p2"].text.startswith("<!-- layout: bar_chart -->\n")
     assert steps.work.skipped == []
 
@@ -1539,8 +1512,7 @@ def test_a_chart_of_verified_values_stays_a_chart() -> None:
 def test_a_chart_with_a_value_its_source_does_not_state_is_stored_as_the_table_it_becomes() -> None:
     invented = TWO_ROWS.replace("62 [1]", "99 [1]")
     steps = steps_for(FakeProvider(rates_replies(invented)), "slides", passages=RATES)
-    built, _ = default_route(steps)
-    assert built == made("slides", rates_replies(invented), passages=RATES)
+    default_route(steps)
     # Whatever the Checker's step returns is what the part is; the plan is still a chart.
     part = steps.work.parts["p2"]
     assert part.text.startswith("<!-- layout: compare -->\n## CD3D is the more common marker")
@@ -1608,7 +1580,7 @@ def test_a_work_with_a_part_not_written_cannot_be_assembled() -> None:
 def test_a_work_brought_in_from_a_saved_deck_takes_a_change_to_one_slide(tmp_path: Path) -> None:
     with a_deck(tmp_path) as client:
         base_id, _ = library(client)
-        saved = built(build(client, base_id, body(kind="slides")))
+        saved = saved_skill_output(client, base_id, kind="slides")
         version, checks = version_of(client, base_id, saved["id"])
     state, brief = Workspace(), ConversationBrief()
     work = import_work(version, checks, state, brief)

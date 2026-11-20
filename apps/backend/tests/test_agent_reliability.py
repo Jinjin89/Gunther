@@ -39,6 +39,23 @@ def test_all_75_claims_are_checked_in_batches_including_the_last_sentence():
     assert check._coverage["claims"][-1]["verdict"] == "supported"
 
 
+def test_adjacent_tables_use_their_own_headers_in_the_checker():
+    fake = FakeProvider(agent_replies("unused", checked=accept_batch))
+    chosen = gateway(fake)
+    text = (
+        "| Measure | Savings (%) |\n| --- | --- |\n| Raw | 18 [1] |\n\n"
+        "| Measure | Duration (days) |\n| --- | --- |\n| Median | 7 [1] |"
+    )
+    AskAgent(chosen).check_sentences(
+        chosen.models[0], "Results?", text,
+        {1: Evidence("library", "Trial", "Raw savings were 18%, median duration 7 days.")},
+        limit=1,
+    )
+    prompts = "\n".join(request["messages"][-1]["content"] for request in fake.requests)
+    assert "| Raw | 18 [1] | (Table header | Measure | Savings (%) |)" in prompts
+    assert "| Median | 7 [1] | (Table header | Measure | Duration (days) |)" in prompts
+
+
 def test_missing_verdict_is_unchecked_even_when_the_provider_returns_valid_json():
     fake = FakeProvider(
         agent_replies("unused", checked={"sentences": [{"n": 1, "verdict": "supported"}]})

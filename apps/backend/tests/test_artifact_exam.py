@@ -1111,7 +1111,7 @@ def rewrite(index: int, prompt: str) -> str:
 def written(index: int, prompt: str) -> str:
     """What the stand-in writer writes for a section of a deck or of a report."""
 
-    if "The whole slides:" in prompt:
+    if "The whole slides:" in prompt or "presentation writer" in prompt:
         return SLIDES[index]
     return SECTIONS[min(index, len(SECTIONS) - 1)]
 

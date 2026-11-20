@@ -16,8 +16,9 @@ from test_output_skills import (
     SLIDES,
     SLIDES_APPROACH,
     SLIDES_OUTLINE,
+    saved_skill_output,
 )
-from test_outputs import SIDECAR, app_for, body, build, built, library, revise, workspace
+from test_outputs import SIDECAR, app_for, built, library, revise, workspace
 
 from gunther.artifact_workspace import (
     Pending,
@@ -53,13 +54,6 @@ def a_library(tmp_path: Path):
     fake = FakeProvider(deck_replies())
     client = app_for(tmp_path, fake, skills=True)
     return fake, client
-
-
-def make(client, fake: FakeProvider, base_id: str, replies, **fields) -> dict:
-    """Build an output with these replies (each build needs its own script)."""
-
-    fake.replies[:] = [replies]
-    return built(build(client, base_id, body(**fields)))
 
 
 # The API ---------------------------------------------------------------------------------------
@@ -285,8 +279,7 @@ def test_a_device_conversation_becomes_messages_and_a_work_and_is_brought_in_onc
     with app as client:
         base_id, _ = library(client)
         headers = workspace(client)
-        deck = make(
-            client, fake, base_id, deck_replies(), kind="slides", brief="Slides on markers",
+        deck = saved_skill_output(client, base_id, kind="slides", brief="Slides on markers",
             conversationId="device-1", conversationTitle="Markers talk",
         )
 
@@ -365,8 +358,7 @@ def test_editing_the_brief_makes_what_depends_on_it_out_of_date_and_nothing_else
     with app as client:
         base_id, _ = library(client)
         headers = workspace(client)
-        make(
-            client, fake, base_id, deck_replies(), kind="slides", brief="Slides on markers",
+        saved_skill_output(client, base_id, kind="slides", brief="Slides on markers",
             conversationId="stale",
         )
         client.get(conversations(base_id), headers=headers)  # brings the deck in as a work
@@ -411,7 +403,7 @@ def test_a_stored_workspace_is_read_back_exactly(tmp_path: Path) -> None:
     with app as client:
         base_id, _ = library(client)
         headers = workspace(client)
-        deck = make(client, fake, base_id, deck_replies(), kind="slides", brief="Slides on markers")
+        deck = saved_skill_output(client, base_id, kind="slides", brief="Slides on markers")
         client.post(
             conversations(base_id, "/import"),
             headers=headers,
@@ -484,8 +476,8 @@ def test_the_lineage_worked_on_last_is_the_active_work(tmp_path: Path) -> None:
     with app as client:
         base_id, _ = library(client)
         headers = workspace(client)
-        deck = make(client, fake, base_id, deck_replies(), kind="slides", brief="Slides")
-        report = make(client, fake, base_id, report_replies(), brief="A report")
+        deck = saved_skill_output(client, base_id, kind="slides", brief="Slides")
+        report = saved_skill_output(client, base_id, brief="A report")
         turns = [
             {"instruction": "A report", "status": "saved", "artifactId": report["id"]},
             {"instruction": "Slides", "status": "saved", "artifactId": deck["id"]},
@@ -525,22 +517,19 @@ def test_listing_gives_a_row_to_a_conversation_the_versions_name(tmp_path: Path)
                 ),
             )
 
-        first = make(
-            client, fake, base_id, shortening(), brief="A report on markers",
+        first = saved_skill_output(client, base_id, brief="A report on markers",
             conversationId="lost-1", conversationTitle="Lost one",
         )
-        deck = make(
-            client, fake, base_id, deck_replies(), kind="slides", brief="Slides on markers",
+        deck = saved_skill_output(client, base_id, kind="slides", brief="Slides on markers",
             conversationId="lost-1",
         )
         # The report is worked on again after the deck was made.
         fake.replies[:] = [shortening()]
         second = built(revise(client, base_id, first["id"], "Shorter", sectionIndex=1))
-        alone = make(
-            client, fake, base_id, report_replies(), brief="Another conversation",
+        alone = saved_skill_output(client, base_id, brief="Another conversation",
             conversationId="lost-2",
         )
-        nameless = make(client, fake, base_id, report_replies(), brief="No conversation at all")
+        nameless = saved_skill_output(client, base_id, brief="No conversation at all")
 
         listed = client.get(conversations(base_id), headers=headers)
         assert listed.status_code == 200, listed.text
@@ -591,7 +580,7 @@ def test_two_requests_for_a_missing_conversation_make_it_once(tmp_path: Path) ->
     fake, app = a_library(tmp_path)
     with app as client:
         base_id, _ = library(client)
-        make(client, fake, base_id, report_replies(), brief="A report", conversationId="twice")
+        saved_skill_output(client, base_id, brief="A report", conversationId="twice")
         service = client.app.state.knowledge_service
         workspace_id = workspace(client)["X-Gunther-Workspace-Id"]
 
@@ -610,8 +599,7 @@ def test_a_conversation_that_exists_is_not_rebuilt_from_its_versions(tmp_path: P
     with app as client:
         base_id, _ = library(client)
         headers = workspace(client)
-        make(
-            client, fake, base_id, report_replies(), brief="A report", conversationId="kept",
+        saved_skill_output(client, base_id, brief="A report", conversationId="kept",
             conversationTitle="From the version",
         )
         client.post(conversations(base_id), headers=headers, json={"id": "kept", "title": "Mine"})
@@ -630,8 +618,7 @@ def test_deleting_a_library_forever_takes_its_conversations_and_messages(tmp_pat
         base_id, _ = library(client)
         other_id, _ = library(client, "Other")
         headers = workspace(client)
-        make(
-            client, fake, base_id, report_replies(), brief="A report", conversationId="gone-soon"
+        saved_skill_output(client, base_id, brief="A report", conversationId="gone-soon"
         )
         client.get(conversations(base_id), headers=headers)  # recovers the conversation
         client.post(conversations(other_id), headers=headers, json={"id": "stays"})

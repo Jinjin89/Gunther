@@ -1,13 +1,12 @@
 """The skill's steps, run one at a time on one artifact's saved workspace.
 
-``SkillAgents.make`` follows a skill from the material to a finished output in one go, from
-nothing. ``WorkSteps`` runs the same steps on a ``Work`` (see artifact_workspace), so that an
-agent can go to the step a message needs, on the whole artifact or on one part of it:
+``WorkSteps`` runs the remaining skill operations on a ``Work`` (see artifact_workspace).
+The conversation can run these operations on the whole artifact or on one part of it:
 
 - ``understand`` writes the approach and the material cards again;
 - ``plan_whole`` plans the outline again; ``plan_insert``, ``plan_delete``, ``plan_move`` and
   ``plan_item`` change it by one part, in code, with no model call;
-- ``write`` writes some parts as ``make`` writes each one; ``edit`` changes one passage of a
+- ``write`` writes selected parts; ``edit`` changes one passage of a
   part; ``review`` has the editor and a reader go through the whole and revises some parts;
 - ``assemble`` puts the parts in order and numbers the sources, ready to be saved.
 
@@ -816,7 +815,7 @@ class WorkSteps:
     # 3. Write -------------------------------------------------------------------------------
 
     def write(self, item_ids: Sequence[str], instruction: str | None = None) -> list[str]:
-        """Write these parts, in outline order, each as ``SkillAgents.make`` writes one: the
+        """Write these parts in outline order. The
         library is searched for a part with fewer than two planned sources (its own searches,
         then the write step's), the writer writes it, a slide that does not fit its layout is
         written again once, and the Checker looks at it. Then it is stamped as made from what

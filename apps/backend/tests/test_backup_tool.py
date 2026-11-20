@@ -777,7 +777,7 @@ def test_outputs_built_by_agents_are_verified_in_a_backup(tmp_path: Path) -> Non
         ],
     }
     fake = FakeProvider(output_replies(outline, ["## T cells\n\nCD3D marks T cells [1]."]))
-    # Made by the agents alone; a version made by a skill is checked in test_output_skills.
+    # Direct Studio builds also seal correctly when earlier settings are on disk.
     (tmp_path / "service-settings.json").write_text(
         json.dumps(
             {"developer": {"output_skills": False, "output_method": "skills"}}

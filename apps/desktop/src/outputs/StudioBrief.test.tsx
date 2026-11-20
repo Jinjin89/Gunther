@@ -62,7 +62,7 @@ describe("a saved studio artifact", () => {
   });
   it("extends the approach panel with the answer, cited insights and the quality report", () => {
     const cite = vi.fn();
-    render(<ApproachPanel artifact={saved} busy={false} onRebuild={vi.fn()} onCite={cite} />);
+    render(<ApproachPanel artifact={saved} onCite={cite} />);
     fireEvent.click(screen.getByRole("button", { name: /How it was made/ }));
     fireEvent.click(screen.getByRole("button", { name: "Source 1" }));
     expect(cite).toHaveBeenCalledWith(0);

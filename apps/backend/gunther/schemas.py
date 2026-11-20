@@ -11,6 +11,7 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+from pydantic.json_schema import SkipJsonSchema
 
 from gunther.brief import SettledItem
 from gunther.model_profiles import Effort
@@ -889,6 +890,7 @@ class OutputProvenanceOut(ArtifactProvenanceOut):
     skill: SkillRunOut | None = None
     approach: OutputApproachOut | None = None
     use: Literal["talk", "read"] | None = None
+    # The option can still appear in earlier sealed versions.
     library_supplements: bool = False
     conversation_id: str | None = None
     conversation_title: str | None = None
@@ -1035,7 +1037,7 @@ class OutputRequestInput(ApiModel):
 class BuildOutputInput(OutputRequestInput):
     client_request_id: str = REQUEST_ID
     kind: OutputKind
-    # Reports only; slides have none. A report without one is an overview.
+    # Reports only. A rebuild inherits an omitted style.
     style: OutputStyle | None = "auto"
     # Slides only: a visual theme, separate from a report's structural style.
     theme: Literal[
@@ -1049,14 +1051,14 @@ class BuildOutputInput(OutputRequestInput):
     # A rebuild with the outline as the person edited it.
     outline: list[OutlineItem] | None = Field(default=None, min_length=1, max_length=14)
     supersedes_artifact_id: str | None = Field(default=None, min_length=1, max_length=80)
-    # A rebuild with the approach as the person edited it (skills only).
+    # Retained for replay of requests made by earlier clients.
     approach: ApproachInput | None = None
     # A deck's use: for a talk, or to be read; "auto" lets the skill tell from the brief.
     use: Literal["auto", "talk", "read"] = "auto"
     # Whether the web may be searched to add to the chosen material (when it is set up).
     web: bool = False
-    # Opt-in only: keep the selection central, permit other sources in this same library.
-    library_supplements: bool = False
+    # Accepted for compatibility with earlier clients and saved request fingerprints.
+    library_supplements: SkipJsonSchema[bool] = False
 
     @model_validator(mode="after")
     def tidy(self) -> "BuildOutputInput":

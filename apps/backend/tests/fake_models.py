@@ -164,7 +164,9 @@ SENTENCE_CHECKER_MARK = "You are the sentence-checking step"
 
 
 def is_sentence_checking(request: dict[str, Any]) -> bool:
-    return SENTENCE_CHECKER_MARK in str(request["messages"][0]["content"])
+    return SENTENCE_CHECKER_MARK in (
+        str(request["messages"][0]["content"]) + studio_task(request)
+    )
 
 
 def _quiet_sentence_check(request: dict[str, Any]) -> dict[str, Any]:
@@ -271,11 +273,15 @@ def agent_replies(
     return reply
 
 
-OUTLINER_MARK = "You are the outline step"
+def studio_task(request: dict[str, Any]) -> str:
+    from gunther.studio.prompts import TASK_BOUNDARY
+
+    return str(request["messages"][-1]["content"]).partition(TASK_BOUNDARY)[2]
 
 
 def is_outlining(request: dict[str, Any]) -> bool:
-    return OUTLINER_MARK in str(request["messages"][0]["content"])
+    task = studio_task(request)
+    return "planning a written report" in task or "presentation strategist" in task
 
 
 WRITER_MARK = "You are Gunther's writer"
@@ -310,8 +316,7 @@ def output_replies(
     verdict: dict[str, list[int]] | None = None,
     unsupported: Any = None,
 ) -> Callable[[dict[str, Any]], Any]:
-    """Replies for building an output: the outline, then each section as the writer is
-    asked for it, and quiet checks (nothing unmarked, nothing unsupported) unless given.
+    """Replies for a Studio build and for checking or revising saved versions.
 
     ``written`` is the sections' texts in order, or a function of (section index, prompt)
     that returns a reply (an exception is raised, as ``FakeProvider`` does).
@@ -322,8 +327,53 @@ def output_replies(
     import re
 
     def reply(request: dict[str, Any]) -> Any:
+        system = str(request["messages"][0]["content"])
+        prompt = str(request["messages"][-1]["content"])
+        task = studio_task(request)
+        title = outline["title"]
+        rows = outline["sections"]
+        if "You own the presentation purpose decision" in system + task:
+            return '{"purpose":"general","reason":"A general deck"}'
+        if "lead analyst" in task:
+            return json.dumps({"answer": title})
         if is_outlining(request):
-            return json.dumps(outline)
+            if "presentation strategist" in task:
+                return json.dumps({"title": title, "slides": [
+                    {"title": row["heading"],
+                     "layout": "title" if not i else row.get("layout", "points")}
+                    for i, row in enumerate(rows)
+                ]})
+            return json.dumps({"title": title, "sections": rows})
+        if "senior partner reviewing a storyline" in task:
+            return '{"verdict":"ready"}'
+        if "\n\nYour report:\n\n" in task:
+            return task.rsplit("\n\nYour report:\n\n", 1)[1]
+        if "presentation writer" in task or "Write the report" in task:
+            deck = "presentation writer" in task
+            approved = re.findall(r"^\d+\. (.+?) — goal: ", task, re.M)
+            headings = approved or [row["heading"] for row in rows]
+            parts = [
+                written(i, f"Write section {i + 1} of {len(headings)}: {heading}\n{task}")
+                if callable(written) else written[i]
+                for i, heading in enumerate(headings)
+            ]
+            for part in parts:
+                if isinstance(part, Exception):
+                    raise part
+            if deck:
+                return "\n\n---\n\n".join(
+                    part if not i or part.startswith("<!--") else "<!-- layout: points -->\n" + part
+                    for i, part in enumerate(parts)
+                )
+            return f"# {title}\n\n" + "\n\n".join(parts)
+        if fixed := re.search(r"Slide \d+ as written:\n(.*?)\n\nRewrite it now", prompt, re.S):
+            return fixed[1]
+        if "A fact-checker compared" in task:
+            return task.split("Part 1:\n", 1)[1].split("\n\nUnsupported in part", 1)[0]
+        if "Choose the visual style" in system + task:
+            return '{"style":"light","why":"A quiet style"}'
+        if "core message" in task:
+            return re.search(r"^Subtitle: (.*)$", task, re.M)[1]
         if is_grading(request):
             return json.dumps(
                 {"relevant": relevant if relevant is not None else list(range(1, 41))}
@@ -331,7 +381,13 @@ def output_replies(
         if is_auditing(request):
             return json.dumps({"claims": unmarked or []})
         if is_sentence_checking(request):
-            return json.dumps(_quiet_sentence_check(request))
+            quiet = _quiet_sentence_check(request)
+            if task and unsupported:
+                flagged = unsupported(request) if callable(unsupported) else unsupported
+                for sentence in quiet["sentences"]:
+                    if sentence["n"] in flagged:
+                        sentence["verdict"] = "not"
+            return json.dumps(quiet)
         if is_checking(request):
             return json.dumps(verdict or {"supports": [], "contradicts": []})
         if is_support_checking(request):
@@ -344,7 +400,6 @@ def output_replies(
                     "supported": [n for n in numbers if n not in (flagged or [])],
                 }
             )
-        prompt = str(request["messages"][-1]["content"])
         asked = re.search(r"Write section (\d+) of", prompt)
         if asked is None:
             # Anything else a model is asked while a library is set up (reading a source).
@@ -398,6 +453,7 @@ def skill_replies(
     import re
 
     actions = list(gather or [])
+    whole = output_replies(outline, written)
 
     def answer(reply: Any, request: dict[str, Any]) -> Any:
         if isinstance(reply, Exception):
@@ -426,7 +482,7 @@ def skill_replies(
             if is_support_checking(request):
                 numbers = [int(n) for n in re.findall(r"^\[(\d+)\]", prompt, re.M)]
                 return json.dumps({"unsupported": [], "supported": numbers})
-            return "{}"
+            return whole(request)
         if "Choose the next action" in system:
             return json.dumps(actions.pop(0) if actions else {"action": "done"})
         if step == "understand":

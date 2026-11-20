@@ -355,7 +355,7 @@ def test_template_slides_keep_the_old_path_beside_designed_ones(tmp_path):
             return "<section>no</section>"
         return lookable()(request)
 
-    renderer = DesignedRenderer(tmp_path, crowded=("stats", "table"))
+    renderer = DesignedRenderer(tmp_path, crowded=("stats", "chart"))
     agents, built, _ = deck(route, renderer=renderer)
     slides = fmt.split_slides(built.content)
     record = built.skill["look"]

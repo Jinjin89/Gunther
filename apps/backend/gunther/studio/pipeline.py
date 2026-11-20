@@ -24,7 +24,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from gunther import usage
-from gunther.agent import Evidence
+from gunther.agent import CITATION_GROUP, MARKDOWN_TABLE, Evidence, collapse_citations
 from gunther.llm import Image, ModelError, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.outputs import (
@@ -68,7 +68,11 @@ STUDIO_CHECK = (
     "'not' or 'partly': numbers, names, dates, events, and what a source says or found — "
     "use 'not' when the cited source does not state it or states otherwise. Recommendations, "
     "decisions, priorities, interpretations and transitions are the author's judgement: mark "
-    "them 'inference' or 'nonfactual', never 'not', even when the sources do not say them."
+    "them 'inference' or 'nonfactual', never 'not', even when the sources do not say them. "
+    "For a chart row, support requires the source to state each value for that row label "
+    "and series, including its unit. Use the citations in each value cell, or the row "
+    "label's citations if the value cell has none. A value for a different label or series "
+    "does not support the row."
 )
 # What the claim fix works on: a cited fact its passage does not state, and a number with no
 # source (the fixer cites the passage that states it, or drops the number).
@@ -272,7 +276,6 @@ class StudioAgents(OutputAgents):
         limits=None,
         *,
         use: str | None = None,
-        tool=None,
         renderer=None,
         design: bool | None = None,
         asset_reader=None,
@@ -285,7 +288,6 @@ class StudioAgents(OutputAgents):
         self.asset_reader = asset_reader or getattr(renderer, "asset_reader", None)
         self.scientific_context: dict[str, Any] | None = None
         self.use = use if use in ("talk", "read") else None
-        self.tool = tool
         self.trail: list[dict[str, Any]] = []
         self._started: dict[str, float] = {}
         self._active_stages: list[str] = []
@@ -1545,9 +1547,10 @@ class StudioAgents(OutputAgents):
         rest = "\n".join(parts[1:])
 
         def check(text: str) -> Draft:
+            if run.spec.kind == "report":
+                text = fmt.cite_exhibit_rows(fmt.cite_captions(fmt.table_separators(text)))
             text, _ = check_citations(text, set(by_ref))
             issues, coverage = self._claims(model, text, by_ref, rest, material=material)
-            issues += self._chart_issues(text, by_ref)
             return Draft(text, issues, coverage)
 
         def check_and_fix(text: str) -> Draft:
@@ -1574,19 +1577,6 @@ class StudioAgents(OutputAgents):
                 emit, "verify", label, f"{done} of {total} slides checked"
             ),
         )
-        for index, draft in enumerate(drafts):
-            if any(issue.note.startswith("Chart value") for issue in draft.issues or []):
-                # A chart whose values its sources do not state is drawn as a table.
-                drafts[index] = Draft(
-                    fmt.with_marker(draft.text, "table"), draft.issues, draft.coverage
-                )
-                self.skipped.append(
-                    {
-                        "step": "verify",
-                        "label": f"Part {index + 1} drawn as a table",
-                        "reason": "Some chart values were not found in their cited sources.",
-                    }
-                )
         left = sum(
             1
             for d in drafts
@@ -1730,7 +1720,7 @@ class StudioAgents(OutputAgents):
         if any(i.verdict in ("unsupported", "contradicted") for i in issues):
             logger.info("The aligned subtitle is not supported; keeping the old one")
             return drafts
-        return [Draft(text, issues + self._chart_issues(text, by_ref), coverage), *drafts[1:]]
+        return [Draft(text, issues, coverage), *drafts[1:]]
 
     def _refit(
         self,
@@ -1759,25 +1749,45 @@ class StudioAgents(OutputAgents):
 
         def check(text: str) -> Draft:
             issues, coverage = self._claims(model, text, by_ref, rest, material=material)
-            return Draft(text, issues + self._chart_issues(text, by_ref), coverage)
+            return Draft(text, issues, coverage)
 
         again = warm_map(check, [fitted[i] for i in changed], WORKERS)
         for index, draft in zip(changed, again, strict=True):
             drafts[index] = draft
         return drafts
 
-    @staticmethod
-    def _chart_issues(text: str, by_ref: dict[int, Evidence]):
-        from gunther.outputs import Issue
+    def _chart_fallback(self, draft: Draft, index: int) -> Draft:
+        """Keep the reader's data and citations when the Checker cannot license a chart."""
+        is_chart = fmt.parse_slide(draft.text).layout == "chart"
+        source = D.visible_content(draft.text) if is_chart else draft.text
+        tables = list(enumerate(MARKDOWN_TABLE.finditer(source)))
 
-        issues = []
-        for value, refs in fmt.chart_numbers(text):
-            sources = " ".join((by_ref[r].context or by_ref[r].text) for r in refs if r in by_ref)
-            if not refs or fmt.normal_number(value) not in fmt.numbers_in(sources):
-                issues.append(
-                    Issue(value, "unsupported", "Chart value not found in its cited source.")
-                )
-        return issues
+        def exhibit(match: re.Match[str]) -> str:
+            attrs = match["attrs"]
+            if not fmt.EXHIBIT_CHART.search(attrs):
+                return match[0]
+            inside = [
+                (i, table) for i, table in tables
+                if match.start("body") <= table.start() < match.end("body")
+            ]
+            if _chart_rows_supported(inside, draft.coverage):
+                return match[0]
+            return match[0].replace(attrs, fmt.EXHIBIT_CHART.sub("", attrs).rstrip(), 1)
+
+        if is_chart:
+            if _chart_rows_supported(tables, draft.coverage):
+                return draft
+            text = fmt.with_marker(fmt.without_design(draft.text), "table")
+        else:
+            text = fmt.EXHIBIT.sub(exhibit, draft.text)
+        if text == draft.text:
+            return draft
+        self.skipped.append({
+            "step": "verify",
+            "label": f"Part {index + 1} drawn as a table",
+            "reason": "The Checker did not support every chart row against its citations.",
+        })
+        return replace(draft, text=text)
 
     def _fix_claims(
         self,
@@ -1881,7 +1891,9 @@ class StudioAgents(OutputAgents):
 
     # 4. Designing -------------------------------------------------------------------------
 
-    def design_deck(self, model, run: Run, drafts: list[Draft], emit: Events) -> list[Draft]:
+    def design_deck(
+        self, model, run: Run, drafts: list[Draft], emit: Events, *, only: list[int]
+    ) -> list[Draft]:
         """The deck's style, then every slide designed on its own. The words are final by now:
         a design may not change one. It never fails a build: whatever goes wrong, the slides
         stay as they are and the template draws them."""
@@ -1903,6 +1915,7 @@ class StudioAgents(OutputAgents):
                 D.apply_style(slides, style),
                 style,
                 workers=WORKERS,
+                only=only,
                 progress=lambda done, total: self._progress(
                     emit, "design", label, f"{done} of {total} slides designed"
                 ),
@@ -1954,7 +1967,7 @@ class StudioAgents(OutputAgents):
         material. A matching request can carry on after a Stop."""
 
         emit = events or _no_events
-        if not pool.items:
+        if not (pool.items or notes.knowledge or notes.discussions):
             raise ModelError("There is no material to work from: choose some sources first.")
         use = self.use or ("read" if re.search(READ_HINT, spec.brief, re.I) else "talk")
         plan = tuple(Planned(p.heading.strip(), p.goal, id=p.id) for p in fixed_outline or ())
@@ -2193,8 +2206,11 @@ class StudioAgents(OutputAgents):
                     }
                     if checkpoint:
                         checkpoint(dict(state))
-            if self.design and drafts:
-                drafts = self.design_deck(model, run, drafts, emit)
+            checked = [self._chart_fallback(d, i) for i, d in enumerate(drafts)]
+            if self.design and checked:
+                only = [i for i, draft in enumerate(drafts) if draft is checked[i]]
+                checked = self.design_deck(model, run, checked, emit, only=only)
+            drafts = checked
             outline = [
                 Planned(
                     fmt.parse_slide(d.text).title or f"Slide {n}",
@@ -2234,14 +2250,7 @@ class StudioAgents(OutputAgents):
             if not sections:
                 raise ModelError("The report came back without sections.")
             drafts = self.verify(model, run, sections, pool, emit, material)
-            # A claim fix may rewrite an exhibit: its caption and rows cite their sources again.
-            drafts = [
-                replace(
-                    d,
-                    text=fmt.cite_exhibit_rows(fmt.cite_captions(fmt.table_separators(d.text))),
-                )
-                for d in drafts
-            ]
+            drafts = [self._chart_fallback(d, i) for i, d in enumerate(drafts)]
             # A sentence repeating a figure cited elsewhere in the report cites it too.
             # (Sections hold blank lines themselves: they are joined on a line of their own.)
             cut = "\n\n<!-- section break -->\n\n"
@@ -2303,6 +2312,37 @@ class StudioAgents(OutputAgents):
                 **({"renderCheck": snapshot} if snapshot else {}),
             },
         )
+
+
+def _chart_rows_supported(
+    tables: list[tuple[int, re.Match[str]]], coverage: Mapping[str, Any] | None
+) -> bool:
+    if len(tables) != 1:
+        return False
+    index, table = tables[0]
+    rows = [
+        (row_index, row)
+        for row_index, line in enumerate(collapse_citations(table[0]).split("\n"))
+        for row in fmt.read_table([line.strip()])[0]
+    ]
+    if len(rows) < 3 or not 2 <= len(rows[0][1]) <= 4:
+        return False
+    (_, head), *data = rows
+    supported = {
+        tuple(claim["tableRow"]) for claim in (coverage or {}).get("claims", [])
+        if claim.get("tableRow") and claim["verdict"] == "supported"
+    }
+    for row_index, (label, *cells) in data:
+        if (index, row_index) not in supported:
+            return False
+        if len(cells) != len(head) - 1 or not fmt.CITE.sub("", label).strip(" *_`"):
+            return False
+        if not all(
+            fmt.number_cell(cell) and CITATION_GROUP.search(cell + " " + label) for cell in cells
+        ):
+            return False
+
+    return True
 
 
 def source_images_kept(before: str, after: str) -> bool:

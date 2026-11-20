@@ -14,26 +14,20 @@ sourced. The model plans and writes; the *facts* come from the library.
 - **A brief** (optional, up to 2000 characters), a **kind** (report or slides), a report
   **style** (Auto, Overview, Field guide, Teaching path, Decision brief), a deck's **use**
   (Auto, a talk, reading) and an **audience** (Scientist, Student, Collaborator).
-- **Web** (optional, when web search is set up): the shared Web switch lets a skill add web
-  results where the chosen material has a gap.
-- **Library supplements** (API opt-in, `librarySupplements: true`): additional live sources
-  from the same library may support the selected material. Citation origin is labeled and
-  recorded with the version; the option does not expand into another library.
-- **Notes and sources are different things.** Saved knowledge and discussions are *notes*:
-  they shape the plan and the writing, but are never cited. The passages they cite seed the
-  pool instead, so the text can cite the passage itself.
+- **Web** lets Studio add results when the switch is on and web search is available.
+- **Saved knowledge and discussions** serve as context for the plan and the writing.
+  Their cited passages can support the output while those sources are still in the library.
+  A saved note remains available as context after its source goes to Trash.
+
 - The model is the **Outputs** job in Settings → Models. Until a model is chosen for it, it
   follows Ask's. With neither, a build fails with "Outputs need a model. Set one up under
   Settings → Models." and nothing is saved.
 
 ## Skills
 
-By default an output is made by following a **skill**: the method for one kind of output,
-kept as files in `apps/backend/gunther/skills/<name>/` and shipped with the backend. There is
-one for reports and one for slides. Settings → Developer → *Make outputs with skills* turns
-them off; outputs are then made by the agents alone, as in "One build" below (Auto counts as
-Overview), so the two can be compared on the same material. A version records which way it was
-made (`provenance.generator`: `gunther.output-skills.v1` or `gunther.output-agents.v1`).
+Direct builds and rebuilds use Studio. The earlier Skills workflows still support
+conversation work and revision of saved versions. They are packaged as files under
+`apps/backend/gunther/skills/<name>/`.
 
 A skill folder holds:
 
@@ -134,50 +128,20 @@ recomposition. Manual Markdown editing hides
 the scene payload behind a short per-slide retained marker and restores it to the same page on
 preview/save; inserted, deleted or duplicated markers are not silently attached to another page.
 
-On the page, **Approach** sits above the outline: question, answer, who it is for, structure,
-deck, web supplements, gaps and skipped steps. *Edit approach* changes the question, answer or
-purpose and rebuilds with those words kept; the outline is planned again. The outline shows a
-slide's layout, which can be changed before *Rebuild with this outline*.
+Studio’s **How it was made** and a saved skill’s **Approach** are read-only. An outline
+rebuild accepts headings, goals and order. Saved layout and design details can still
+be inspected.
 
 The skill files also go into the packaged backend (`--add-data` in
 `scripts/build-backend-sidecar.mjs`; a test checks the line is there).
 
-## One build
+## Direct builds and rebuilds
 
-Without a skill, everything is read first; the version is written only after the agents finish, so a failed
-or stopped build leaves nothing behind.
-
-1. **Planner** (low effort, small JSON call). It sees the brief, the notes (up to 20 saved
-   answers, 10 discussions) and what each source is about (title and overview of up to 40,
-   most recent first), and returns a title and the sections, each with a goal and up to
-   three searches. A report has 3–8 sections; a deck has 6–14 slides, the first a title
-   slide and the last "Takeaways". A rebuild with an outline the person edited skips it,
-   and each section is searched by its heading and goal.
-2. **Researcher** (per section, every section before any writing). The searches run on the
-   library tool (the same one Ask uses, over the chosen sources only), one relevance call
-   keeps what is about the section, and up to 8 new passages join the pool. What is left of
-   the pool (120 in all) is shared by the sections still to search.
-3. **Writer** (per section, at the job's effort, streaming). Ask's citation rules, then the
-   format (a report section is `## Heading` and prose; a slide is `## Heading`, 3–5 bullets
-   of at most 14 words and a `Note:` of speaker notes, all cited; the title slide is `# Title`
-   and a line), the style and the audience, with the rules winning over the style. It sees
-   the brief, the whole outline, this section's goal, the notes, up to 30 passages (this
-   section's first) and the end of the previous section.
-4. **Checker** (per section, right after it is written):
-   - numbers the pool does not have are dropped, then a low-effort call marks sentences with
-     neither a number nor `[?]`;
-   - each `[?]` claim (at most two per section) is looked up in the library: a passage that
-     states it becomes its citation, one that states the opposite removes the claim, and
-     otherwise it stays `[?]`;
-   - bounded batches list the cited sentences whose cited passages do **not** state
-     them; each loses its numbers and becomes `[?]`;
-   - shared claim checking records coverage across headings, prose, tables and notes,
-     including title-slide facts. Missing or failed verdicts remain unchecked.
-5. **Assemble.** The report is `# Title`, an optional one-line brief in italics, then the
-   sections; a deck is the slides separated by `---`. Citations are renumbered 1, 2, 3 in the
-   order the whole text first cites them, and the version stores the passages in that order,
-   so a number in the text is the number of the passage beside it. The title is the first
-   `# ` line (at most 160 characters).
+Studio reads the selected material, plans the storyline, writes the report or deck,
+and checks it against its passages. A rebuild gives the Story stage the saved or edited
+outline and keeps the current style unless a different one is requested. Studio designs
+the slides. It records the approach and coverage, renumbers citations in reading order,
+and saves only after the build finishes. See [Studio format](STUDIO_FORMAT.md).
 
 ## The pool
 
@@ -341,12 +305,9 @@ them: they have no citations or scope to edit.
 
 ## Streaming
 
-`POST /api/knowledge-bases/{id}/outputs/build/stream` and
-`…/artifacts/{id}/revise/stream` run as server-sent events: `outline`, `section`
-(`researching`, `writing`, `checking`, `revising`, `done`), `step` (a search or a reading, with
-its section), `text` (a section as it is written; the page hides its numbers until the finished
-text replaces it), with a skill also `stage` (a step: `running`, `done` or `failed` with a
-`detail`) and `approach`, then `done` with the saved version, `error` (`status`, `detail`) or
+`POST /api/knowledge-bases/{id}/outputs/build/stream` streams Studio stages and the
+outline. `…/artifacts/{id}/revise/stream` streams section progress, searches and revised
+text. Both end with `done` and the saved version, `error` with status and detail, or
 `stopped`. They use
 Ask's `AnswerRuns` under the key `outputs:<library id>`:
 

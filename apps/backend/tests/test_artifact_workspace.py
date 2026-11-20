@@ -15,8 +15,9 @@ from test_output_skills import (
     SLIDES,
     SLIDES_APPROACH,
     SLIDES_OUTLINE,
+    saved_skill_output,
 )
-from test_outputs import app_for, body, build, built, library, route, workspace
+from test_outputs import app_for, library, route, workspace
 
 from gunther.agent import Evidence
 from gunther.artifact_workspace import (
@@ -834,7 +835,7 @@ def hand_edit(client, base_id: str, artifact_id: str, content: str) -> str:
 def test_import_work_restores_a_composed_scene_after_citation_mapping(tmp_path: Path) -> None:
     with a_deck(tmp_path) as client:
         base_id, _ = library(client)
-        saved = built(build(client, base_id, body(kind="slides")))
+        saved = saved_skill_output(client, base_id, kind="slides")
         version, checks = version_of(client, base_id, saved["id"])
 
     sections = split_document(version.content, "slides")[1]
@@ -882,7 +883,7 @@ def test_import_work_restores_a_composed_scene_after_citation_mapping(tmp_path: 
 def test_a_saved_deck_becomes_a_work_that_is_up_to_date(tmp_path: Path) -> None:
     with a_deck(tmp_path) as client:
         base_id, _ = library(client)
-        saved = built(build(client, base_id, body(kind="slides", theme="editorial")))
+        saved = saved_skill_output(client, base_id, kind="slides", theme="editorial")
         version, checks = version_of(client, base_id, saved["id"])
 
     state, brief = Workspace(), ConversationBrief()
@@ -938,7 +939,7 @@ def test_a_saved_report_becomes_a_work_that_is_up_to_date(tmp_path: Path) -> Non
     fake = FakeProvider(skill_replies(APPROACH, OUTLINE, REPORT, gather=SEARCH))
     with app_for(tmp_path, fake, skills=True) as client:
         base_id, _ = library(client)
-        saved = built(build(client, base_id, body(style="decision_brief")))
+        saved = saved_skill_output(client, base_id, style="decision_brief")
         version, checks = version_of(client, base_id, saved["id"])
 
     state, brief = Workspace(), ConversationBrief()
@@ -962,7 +963,7 @@ def test_a_saved_report_becomes_a_work_that_is_up_to_date(tmp_path: Path) -> Non
 def test_a_version_with_no_matching_outline_gets_items_from_its_headings(tmp_path: Path) -> None:
     with a_deck(tmp_path) as client:
         base_id, _ = library(client)
-        saved = built(build(client, base_id, body(kind="slides")))
+        saved = saved_skill_output(client, base_id, kind="slides")
         content = saved["content"] + "\n\n---\n\n## An extra slide\n\n- Added by hand\n"
         head_id = hand_edit(client, base_id, saved["id"], content)
         version, checks = version_of(client, base_id, head_id)
@@ -999,11 +1000,11 @@ def test_a_second_version_joins_the_pool_without_changing_any_number(tmp_path: P
     other = FakeProvider(skill_replies(APPROACH, OUTLINE, swapped, gather=SEARCH))
     with app_for(tmp_path / "one", fake, skills=True) as one:
         base_id, _ = library(one)
-        first = built(build(one, base_id, body()))
+        first = saved_skill_output(one, base_id)
         v1, c1 = version_of(one, base_id, first["id"])
     with app_for(tmp_path / "two", other, skills=True) as two:
         base_id, _ = library(two)
-        second = built(build(two, base_id, body()))
+        second = saved_skill_output(two, base_id, written=swapped)
         v2, c2 = version_of(two, base_id, second["id"])
 
     state, brief = Workspace(), ConversationBrief()
@@ -1032,11 +1033,10 @@ def test_the_same_passages_keep_their_pool_numbers_in_a_second_work(tmp_path: Pa
     ]
     with app_for(tmp_path, fake, skills=True) as client:
         base_id, _ = library(client)
-        first = built(build(client, base_id, body()))
+        first = saved_skill_output(client, base_id)
         v1, c1 = version_of(client, base_id, first["id"])
         # Another output in the same library, citing the same passages in another order.
-        fake.replies[:] = [skill_replies(APPROACH, OUTLINE, swapped, gather=SEARCH)]
-        second = built(build(client, base_id, body()))
+        second = saved_skill_output(client, base_id, written=swapped)
         v2, c2 = version_of(client, base_id, second["id"])
 
     assert [c.quote for c in v1.citations] != [c.quote for c in v2.citations]
@@ -1062,7 +1062,7 @@ def a_report_work(tmp_path: Path):
     fake = FakeProvider(skill_replies(APPROACH, OUTLINE, REPORT, gather=SEARCH))
     with app_for(tmp_path, fake, skills=True) as client:
         base_id, _ = library(client)
-        saved = built(build(client, base_id, body()))
+        saved = saved_skill_output(client, base_id)
         version, checks = version_of(client, base_id, saved["id"])
         state, brief = Workspace(), ConversationBrief()
         work = import_work(version, checks, state, brief)
@@ -1128,7 +1128,7 @@ def test_a_slide_added_by_hand_is_a_new_item_and_the_others_keep_their_ids(
 ) -> None:
     with a_deck(tmp_path) as client:
         base_id, _ = library(client)
-        saved = built(build(client, base_id, body(kind="slides")))
+        saved = saved_skill_output(client, base_id, kind="slides")
         version, checks = version_of(client, base_id, saved["id"])
         state, brief = Workspace(), ConversationBrief()
         work = import_work(version, checks, state, brief)
@@ -1162,7 +1162,7 @@ def test_a_slide_deleted_by_hand_drops_its_item_and_its_id_is_never_used_again(
 ) -> None:
     with a_deck(tmp_path) as client:
         base_id, _ = library(client)
-        saved = built(build(client, base_id, body(kind="slides")))
+        saved = saved_skill_output(client, base_id, kind="slides")
         version, checks = version_of(client, base_id, saved["id"])
         state, brief = Workspace(), ConversationBrief()
         work = import_work(version, checks, state, brief)
@@ -1185,7 +1185,7 @@ def test_a_slide_deleted_by_hand_drops_its_item_and_its_id_is_never_used_again(
 def test_a_retitled_slide_keeps_its_item_and_moved_slides_keep_theirs(tmp_path: Path) -> None:
     with a_deck(tmp_path) as client:
         base_id, _ = library(client)
-        saved = built(build(client, base_id, body(kind="slides")))
+        saved = saved_skill_output(client, base_id, kind="slides")
         version, checks = version_of(client, base_id, saved["id"])
         state, brief = Workspace(), ConversationBrief()
         work = import_work(version, checks, state, brief)

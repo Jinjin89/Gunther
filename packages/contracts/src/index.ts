@@ -1491,7 +1491,7 @@ export interface BuildOutputRequest {
   conversationId?: string;
   conversationTitle?: string;
   kind: OutputKind;
-  /** Reports only; an overview when left out. */
+  /** Reports only. A rebuild inherits an omitted style. */
   style?: OutputStyle;
   /** Slides only: the visual theme to retain when rebuilding an existing deck. */
   theme?: "classic" | "briefing" | "editorial" | "keynote" | "paper" | "ink" | "brand";
@@ -1500,18 +1500,14 @@ export interface BuildOutputRequest {
   brief?: string;
   title?: string;
   scope: OutputScope;
-  /** A rebuild with the outline as the person edited it: the planner is skipped. */
-  outline?: OutlineItem[];
+  /** The headings, goals and order for a Studio rebuild. */
+  outline?: Pick<OutlineItem, "id" | "heading" | "goal">[];
   /** Makes it the next version of an existing output. */
   supersedesArtifactId?: string;
-  /** A rebuild with the approach as the person edited it: these words are kept as they are. */
-  approach?: { question?: string; answer?: string; purpose?: string };
   /** A deck's use; the skill tells from the brief when left out. */
   use?: "auto" | DeckUse;
   /** The web may be searched to add to the chosen material (when it is set up). */
   web?: boolean;
-  /** Allow other sources from the same library while keeping selected sources primary. */
-  librarySupplements?: boolean;
 }
 
 export interface ReviseOutputRequest {

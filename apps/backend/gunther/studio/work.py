@@ -220,14 +220,10 @@ class StudioWorkAgents(StudioAgents):
     def check_built(self, model, text, tool, pool: Pool, emit, section) -> Draft:
         by_ref = pool.by_ref()
         issues, coverage = self._claims(model, text, by_ref)
-        issues += self._chart_issues(text, by_ref)
-        if any(issue.note.startswith("Chart value") for issue in issues):
-            text = fmt.with_marker(text, "table")
-        return Draft(text, issues, coverage)
+        return self._chart_fallback(Draft(text, issues, coverage), section)
 
     def check_unbuilt(self, model, text, by_ref, coverage=None) -> list[Issue]:
         issues, found = self._claims(model, text, by_ref)
-        issues += self._chart_issues(text, by_ref)
         if coverage is not None:
             coverage.update(found)
         return issues

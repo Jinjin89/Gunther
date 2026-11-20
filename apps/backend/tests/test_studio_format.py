@@ -74,9 +74,7 @@ def test_talk_slides_need_notes():
     assert fmt.check_deck(deck, notes_required=False) == []
 
 
-def test_chart_numbers_carry_their_citations():
-    slide = fmt.split_slides(GOOD)[2]
-    assert fmt.chart_numbers(slide)[:2] == [("21", [1]), ("10", [2])]
+def test_chart_number_normalization():
     assert fmt.normal_number("1,200") == "1200"
 
 

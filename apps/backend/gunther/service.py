@@ -6,7 +6,7 @@ import logging
 import re
 import secrets
 from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -476,10 +476,7 @@ class KnowledgeService:
         self.web_search: OnlineSearchProvider = DisabledOnlineSearch()
         # Settings → Developer: keep how each answer is made (see trace).
         self.tracing = False
-        # Settings → Developer: outputs are made by following a skill (see skill_runner);
-        # off, by the agents in outputs alone.
-        self.output_skills = True
-        self.output_method = "studio"  # "skills": the earlier skill steps make Outputs
+        self.output_method = "studio"  # Selects the remaining conversation work steps.
         self.slide_renderer = None
         # Reads a stored asset: id -> (path, media type, name). Set by the app.
         self.asset_reader: Callable[[str], tuple[Path, str, str]] | None = None
@@ -2433,33 +2430,23 @@ class KnowledgeService:
         )
 
     def _output_search_tool(
-        self, session: Session, base_id: str, primary: list[str], supplements: bool, about: str
+        self, session: Session, source_ids: list[str], about: str
     ) -> Tool:
-        allowed = (
-            self._resolve_output_scope(session, base_id, OutputScope()).source_ids
-            if supplements
-            else primary
-        )
-        tool = self._library_tool(session, self._library_scope(session, allowed), about)
-        primary_ids = set(primary)
+        tool = self._library_tool(session, self._library_scope(session, source_ids), about)
 
         def search(query: str) -> list[Evidence]:
             found = []
             for item in tool.run(query):
                 citation, claim = item.payload
-                origin = "selected" if citation.source_id in primary_ids else "library_supplement"
                 found.append(
                     replace(
-                        item, payload=(citation.model_copy(update={"source_origin": origin}), claim)
+                        item,
+                        payload=(citation.model_copy(update={"source_origin": "selected"}), claim),
                     )
                 )
-            return sorted(found, key=lambda item: item.payload[0].source_id not in primary_ids)
+            return found
 
-        return replace(
-            tool,
-            run=search,
-            about=tool.about + "; selected materials are primary; additions are labeled",
-        )
+        return replace(tool, run=search)
 
     @staticmethod
     def _nearby_figures(session: Session, citation: ConversationCitationOut) -> list[dict]:
@@ -3371,7 +3358,7 @@ class KnowledgeService:
 
     def _earlier_output(
         self, workspace_id: str, client_request_id: str, fingerprint: str,
-        *, previous: str | None = None,
+        *, previous: Sequence[str] = (),
     ) -> ArtifactOut | None:
         """The version an earlier try of this same request already saved, if there is one."""
 
@@ -3384,7 +3371,7 @@ class KnowledgeService:
             )
             if existing is None:
                 return None
-            if existing.request_fingerprint not in (fingerprint, previous):
+            if existing.request_fingerprint not in (fingerprint, *previous):
                 raise ArtifactConflictError(
                     "clientRequestId was already used for a different Artifact request"
                 )
@@ -3724,7 +3711,8 @@ class KnowledgeService:
         return figures, list(warnings.values())
 
     def _studio_reading(
-        self, session: Session, source_ids: list[str], pool: Pool, *, most: int = 900
+        self, session: Session, source_ids: list[str], pool: Pool, *,
+        pinned: Sequence[Evidence] = (), most: int = 900,
     ) -> list[str]:
         """Every selected source read whole into the pool, in its own order, as passages of
         consecutive blocks under one heading (about 1,400 characters each). The studio reads
@@ -3752,11 +3740,12 @@ class KnowledgeService:
                 )
             ).all()
         )
-        # This is a temporary build pool: prior conversation material cannot widen scope.
+        # Pinned evidence comes from the selected notes and discussions in the live library.
+        pinned_keys = {item.key for item in pinned}
         scoped = []
         for item in pool.items:
             citation = item.payload[0] if isinstance(item.payload, tuple) and item.payload else None
-            if item.kind != "library" or (
+            if item.key in pinned_keys or item.kind != "library" or (
                 getattr(citation, "source_id", None) in heads
                 and getattr(citation, "source_revision_id", None) == heads[citation.source_id]
             ):
@@ -3983,7 +3972,6 @@ class KnowledgeService:
                     skill=skilled.get("skill"),
                     approach=skilled.get("approach"),
                     use=skilled.get("use"),
-                    library_supplements=bool(skilled.get("library_supplements", False)),
                     conversation_id=conversation_id,
                     conversation_title=skilled.get("conversation_title")
                     or parent_provenance.get("conversation_title"),
@@ -4106,7 +4094,7 @@ class KnowledgeService:
     ) -> ArtifactOut:
         """Build a report or slides from the library, or from what was picked.
 
-        Planner, researcher, writer and checker run first, with only reads; the version is
+        Studio reads, plans, writes and verifies first; the version is
         written afterwards, so a failed build saves nothing. ``supersedesArtifactId`` makes
         it the next version of an existing output (a rebuild). ``events`` hears the
         progress and may raise to stop the work.
@@ -4114,11 +4102,13 @@ class KnowledgeService:
 
         limits = OutputLimits()
         fields = self._output_request_fields(payload)
-        previous = None
+        # The retired option was part of saved fingerprints, including the old style hash.
+        previous = [self._output_fingerprint(workspace_id, base_id, "build", fields)]
         inherits_style = payload.kind == "report" and "style" not in payload.model_fields_set
         if payload.kind == "report" and payload.supersedes_artifact_id:
-            previous = self._output_fingerprint(workspace_id, base_id, "build", fields)
             fields["inherit_style"] = inherits_style
+            previous.append(self._output_fingerprint(workspace_id, base_id, "build", fields))
+        fields.pop("library_supplements")
         fingerprint = self._output_fingerprint(workspace_id, base_id, "build", fields)
         earlier = self._earlier_output(
             workspace_id, payload.client_request_id, fingerprint, previous=previous
@@ -4126,12 +4116,6 @@ class KnowledgeService:
         if earlier is not None:
             return earlier
         model, effort = self._output_model(payload.model, payload.effort)
-        skilled = self.output_skills
-        studio_mode = self.output_method == "studio"
-        # Without a skill there is nothing to choose a structure: "auto" is an overview.
-        style = payload.style
-        if style == "auto" and not (studio_mode or skilled):
-            style = "overview"
         with (
             usage.job("outputs", payload.kind, ref=payload.conversation_id),
             session_scope(self.sessions) as session,
@@ -4144,7 +4128,8 @@ class KnowledgeService:
                 if payload.supersedes_artifact_id
                 else None
             )
-            if studio_mode and inherits_style and parent and parent.kind == "report":
+            style = payload.style
+            if inherits_style and parent and parent.kind == "report":
                 style = parent.style or "auto"
             parent_theme = None
             parent_sections = []
@@ -4175,145 +4160,68 @@ class KnowledgeService:
             notes, seeds, inputs = self._output_material(session, resolved, limits)
             snapshots = self._unit_snapshots(session, resolved.units)
             pool = self._output_pool(seeds, limits)
-            tool = self._output_search_tool(
-                session,
-                base_id,
-                resolved.source_ids,
-                payload.library_supplements,
-                f"{library.title}: {library.question}",
-            )
             outline = (
-                [
-                    Planned(
-                        item.heading,
-                        item.goal,
-                        layout=item.layout or "",
-                        link=item.link or "",
-                        id=item.id,
-                        message=item.message,
-                        question=item.question,
-                        requires=tuple(item.requires),
-                        design=item.design.model_dump() if item.design else None,
-                        layout_locked=item.layout_locked
-                        or (
-                            item.layout is not None and "layout_locked" not in item.model_fields_set
-                        ),
-                        design_locked=item.design_locked
-                        or (
-                            item.design is not None and "design_locked" not in item.model_fields_set
-                        ),
-                        design_attempted=item.design_attempted,
-                    )
-                    for item in payload.outline
-                ]
-                if payload.outline
-                else None
+                [Planned(item.heading, item.goal, id=item.id) for item in payload.outline]
+                if payload.outline else None
             )
             fallback_title = parent.title if parent else library.title
-            made_by = None
-            if studio_mode:
-                from gunther.studio import format as studio_format
-                from gunther.studio.pipeline import StudioAgents
+            from gunther.studio import format as studio_format
+            from gunther.studio.pipeline import StudioAgents
 
-                if parent_sections:
-                    cover = studio_format.parse_slide(parent_sections[0])
-                    spec = replace(
-                        spec,
-                        theme=payload.theme or cover.attrs.get("theme") or theme,
-                        deck_style=cover.attrs.get("style"),
-                    )
-                reading_gaps = self._studio_reading(session, resolved.source_ids, pool)
-                notes = replace(notes, extraction_gaps=tuple(reading_gaps))
-                studio = StudioAgents(
-                    self.models,
-                    limits,
-                    use=None if payload.use == "auto" else payload.use,
-                    tool=tool,
-                    renderer=self.slide_renderer,
-                    asset_reader=self.asset_reader,
-                    reusable_figures=self._reusable_figure_readings(session, base_id),
-                )
-                purpose = None
-                same_plan = parent and (outline is not None or payload.brief == parent.brief)
-                if same_plan and parent.kind == payload.kind:
-                    saved = json.loads(parent.provenance_json).get("approach") or {}
-                    purpose = "explain_study" if saved.get("study_map") else saved.get("purpose")
-                    if outline is None:
-                        outline = [
-                            Planned(p["heading"], p.get("goal", ""), id=p.get("id", ""))
-                            for p in json.loads(parent.outline_json)
-                        ]
-                web, web_reason = self._web_tool(payload.web)
-                query = payload.brief or payload.title
-                if web and query and len(pool) < pool.limit:
-                    try:
-                        for item in web.run(query)[: limits.per_section]:
-                            if len(pool) >= pool.limit:
-                                break
-                            pool.adopt(item)
-                    except ToolFailure as error:
-                        web_reason = str(error)
-                if payload.web and web_reason:
-                    studio.skipped.append(
-                        {"step": "web", "label": "Web search unavailable", "reason": web_reason}
-                    )
-                built = studio.make(
-                    model, effort, spec, pool, notes, events,
-                    fallback_title=fallback_title,
-                    purpose=purpose,
-                    fixed_outline=outline,
-                    scope={"selection": payload.scope.model_dump(), "inputs": inputs},
-                    web=payload.web,
-                )
-                made_by = {
-                    "generator": "gunther.studio.v1",
-                    "skill": built.skill,
-                    "approach": built.approach,
-                    "use": studio.use or (built.approach or {}).get("use"),
-                }
-            elif skilled:
-                web, _ = self._web_tool(payload.web)
-                agents = SkillAgents(
-                    self.models,
-                    skill_for(payload.kind),
-                    limits,
-                    tools=[tool, *([web] if web else [])],
-                    reader=self._source_reader(session),
-                    use=None if payload.use == "auto" else payload.use,
-                    slide_renderer=self.slide_renderer,
-                )
-                built = agents.make(
-                    model,
-                    effort,
+            if parent_sections:
+                cover = studio_format.parse_slide(parent_sections[0])
+                spec = replace(
                     spec,
-                    pool,
-                    notes,
-                    events,
-                    fixed=payload.approach.model_dump() if payload.approach else None,
-                    outline=outline,
-                    fallback_title=fallback_title,
+                    theme=payload.theme or cover.attrs.get("theme") or theme,
+                    deck_style=cover.attrs.get("style"),
                 )
-                made_by = {
-                    "generator": "gunther.output-skills.v1",
-                    "skill": built.skill,
-                    "approach": built.approach,
-                    "use": agents.use,
-                }
-            else:
-                built = OutputAgents(self.models, limits).build(
-                    model,
-                    effort,
-                    spec,
-                    tool,
-                    pool,
-                    notes,
-                    events,
-                    outline=outline,
-                    fallback_title=fallback_title,
+            reading_gaps = self._studio_reading(session, resolved.source_ids, pool, pinned=seeds)
+            notes = replace(notes, extraction_gaps=tuple(reading_gaps))
+            studio = StudioAgents(
+                self.models,
+                limits,
+                use=None if payload.use == "auto" else payload.use,
+                renderer=self.slide_renderer,
+                asset_reader=self.asset_reader,
+                reusable_figures=self._reusable_figure_readings(session, base_id),
+            )
+            purpose = None
+            same_plan = parent and (outline is not None or payload.brief == parent.brief)
+            if same_plan and parent.kind == payload.kind:
+                saved = json.loads(parent.provenance_json).get("approach") or {}
+                purpose = "explain_study" if saved.get("study_map") else saved.get("purpose")
+                if outline is None:
+                    outline = [
+                        Planned(p["heading"], p.get("goal", ""), id=p.get("id", ""))
+                        for p in json.loads(parent.outline_json)
+                    ]
+            web, web_reason = self._web_tool(payload.web)
+            query = payload.brief or payload.title
+            if web and query and len(pool) < pool.limit:
+                try:
+                    for item in web.run(query)[: limits.per_section]:
+                        if len(pool) >= pool.limit:
+                            break
+                        pool.adopt(item)
+                except ToolFailure as error:
+                    web_reason = str(error)
+            if payload.web and web_reason:
+                studio.skipped.append(
+                    {"step": "web", "label": "Web search unavailable", "reason": web_reason}
                 )
+            built = studio.make(
+                model, effort, spec, pool, notes, events,
+                fallback_title=fallback_title,
+                purpose=purpose,
+                fixed_outline=outline,
+                scope={"selection": payload.scope.model_dump(), "inputs": inputs},
+                web=payload.web,
+            )
             made_by = {
-                **(made_by or {}),
-                "library_supplements": payload.library_supplements,
+                "generator": "gunther.studio.v1",
+                "skill": built.skill,
+                "approach": built.approach,
+                "use": studio.use or (built.approach or {}).get("use"),
                 "conversation_id": payload.conversation_id,
                 "conversation_title": payload.conversation_title,
                 "request": payload.brief,
@@ -4362,7 +4270,6 @@ class KnowledgeService:
                          if key in skill}},
             "approach": provenance.get("approach"),
             "use": provenance.get("use"),
-            "library_supplements": provenance.get("library_supplements", False),
         }
 
     @staticmethod
@@ -4621,11 +4528,7 @@ class KnowledgeService:
                 for text in split_document(parent.content, parent.kind)[1]
             ]
             tool = self._output_search_tool(
-                session,
-                base_id,
-                resolved.source_ids,
-                bool(json.loads(parent.provenance_json).get("library_supplements", False)),
-                f"{library.title}: {library.question}",
+                session, resolved.source_ids, f"{library.title}: {library.question}"
             )
             made_by = self._made_by(parent)
             if made_by is not None:
@@ -4708,9 +4611,6 @@ class KnowledgeService:
                 "conversation_id": payload.conversation_id,
                 "conversation_title": payload.conversation_title,
                 "request": payload.instruction,
-                "library_supplements": json.loads(parent.provenance_json).get(
-                    "library_supplements", False
-                ),
             }
             fields = {
                 "kind": parent.kind,
@@ -4827,7 +4727,6 @@ class KnowledgeService:
             if parent.kind != "slides":
                 raise ValueError("Only a deck has a style.")
             records = self._latest_check_records(session, parent.id)
-            provenance = json.loads(parent.provenance_json)
             made_by = self._made_by(parent) or {}
             content = parent.content
             fields = {
@@ -4886,7 +4785,6 @@ class KnowledgeService:
             "conversation_id": payload.conversation_id,
             "conversation_title": payload.conversation_title,
             "request": f"Restyle: {payload.style}",
-            "library_supplements": provenance.get("library_supplements", False),
         }
         if events:
             events({"type": "saving"})
@@ -5679,7 +5577,7 @@ class KnowledgeService:
             notes, seeds, inputs = self._output_material(session, resolved, limits)
             snapshots = self._unit_snapshots(session, resolved.units)
             tool = self._output_search_tool(
-                session, base_id, resolved.source_ids, False, f"{library.title}: {library.question}"
+                session, resolved.source_ids, f"{library.title}: {library.question}"
             )
             web, web_reason = self._web_tool(payload.web)
             reader = self._source_reader(session)
@@ -5754,13 +5652,14 @@ class KnowledgeService:
                     spec: Spec, made: Pool, use: str | None, resume=None, checkpoint=None,
                     *, purpose=None, fixed_outline=None,
                 ) -> BuiltOutput:
-                    reading_gaps = self._studio_reading(session, resolved.source_ids, made)
+                    reading_gaps = self._studio_reading(
+                        session, resolved.source_ids, made, pinned=seeds
+                    )
                     scoped_notes = replace(notes, extraction_gaps=tuple(reading_gaps))
                     return StudioAgents(
                         gateway,
                         limits,
                         use=use,
-                        tool=tool,
                         renderer=self.slide_renderer,
                         asset_reader=self.asset_reader,
                         reusable_figures=self._reusable_figure_readings(session, base_id),

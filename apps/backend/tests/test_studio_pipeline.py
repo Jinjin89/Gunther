@@ -4,7 +4,7 @@ import re
 from dataclasses import replace
 
 import pytest
-from fake_models import FakeProvider, gateway, model
+from fake_models import FakeProvider, gateway, model, output_replies
 
 from gunther.agent import Evidence, Tool
 from gunther.outputs import Issue, Notes, Planned, Pool, Spec, split_document
@@ -37,10 +37,11 @@ Note: Size first.
 | Measure | Saving (%) |
 | --- | --- |
 | Raw | 18 [2] |
-| **Adjusted** | 7 [2] |
+| **Adjusted** | 9 [2] |
 Plan with the adjusted figure [2]
 Note: The bars.
 """
+UNSUPPORTED_DECK = DECK.replace("9 [2] |", "7 [2] |")
 
 
 def pool() -> Pool:
@@ -103,7 +104,7 @@ def request_text(request):
     return "\n\n".join(texts)
 
 
-def router(request):
+def router(request, deck=DECK):
     system = request_text(request)
     if "knowledge assertions" in system:
         return '{"assertions": []}'
@@ -149,19 +150,22 @@ def router(request):
     if "senior partner" in system:
         return json.dumps({"understood": "Saving halves", "verdict": "ready", "problems": []})
     if "presentation writer" in system:
-        return DECK
+        return deck
     if "core message" in system:
         return re.search(r"^Subtitle: (.*)$", system, re.M).group(1)
     if "fact-checker" in system:
-        return fmt.split_slides(DECK)[2]  # could not fix it
+        return fmt.split_slides(deck)[2]  # could not fix it
     if "checking step" in system:
-        sentences = re.findall(r"^\((\d+)\)", request["messages"][-1]["content"], re.M)
-        return json.dumps({"sentences": [{"n": int(n), "verdict": "supported"} for n in sentences]})
+        sentences = re.findall(r"^\((\d+)\) (.+)$", request["messages"][-1]["content"], re.M)
+        return json.dumps({"sentences": [
+            {"n": int(n), "verdict": "not" if "| **Adjusted** | 7 " in line else "supported"}
+            for n, line in sentences
+        ]})
     raise AssertionError(system[:200])
 
 
 def test_a_deck_is_made_in_the_new_format_and_an_unstated_chart_value_becomes_a_table():
-    fake = FakeProvider(router)
+    fake = FakeProvider(lambda request: router(request, UNSUPPORTED_DECK))
     agents = StudioAgents(gateway(fake), use="talk")
     events = []
     built = agents.make(
@@ -174,7 +178,7 @@ def test_a_deck_is_made_in_the_new_format_and_an_unstated_chart_value_becomes_a_
     )
     slides = fmt.split_slides(built.content)
     assert slides[0].startswith("<!-- layout: title; design: v2; theme: paper; style: light -->")
-    # 7% is not in passage 2, so the chart is drawn as a table.
+    # The Checker rejects the adjusted value, so the chart is drawn as a table.
     assert fmt.parse_slide(slides[2]).layout == "table"
     assert any(item["step"] == "verify" for item in agents.skipped)
     # Citations are renumbered in reading order: 2, 1 → 1, 2.
@@ -192,11 +196,102 @@ def test_a_deck_is_made_in_the_new_format_and_an_unstated_chart_value_becomes_a_
     assert len(asked) <= 11
 
 
+@pytest.mark.parametrize(
+    ("kind", "verdict"),
+    [("slides", value) for value in ("not", "unchecked", "uncited", "supported")]
+    + [("report", "not"), ("report", "supported")],
+)
+def test_direct_build_draws_a_chart_only_when_each_cited_row_is_supported(tmp_path, kind, verdict):
+    from test_outputs import app_for, body, build, built, library
+
+    adjusted = 18 if verdict == "not" else 9
+    coverage_ref = "" if verdict == "uncited" else " [1]"
+    label = "Weather adjusted" if verdict == "not" else "Weather adj. estimate"
+    row = f"| {label} | {adjusted} [1] | 30{coverage_ref} |"
+    table = (
+        "| Measure | Saving (%) | Coverage (%) |\n| --- | --- | --- |\n"
+        "| Raw | 18 [1] | 30 [1] |"
+    )
+    if kind == "slides":
+        opening = DECK.split("| Measure", 1)[0].replace("[2]", "[1]")
+        proposed = f"{opening}{table}\n{row}\nNote: Rates."
+    else:
+        proposed = (
+            "# Findings\n\n## Results\n\n:::exhibit chart=column\nCooling savings by estimate\n"
+            f"{table}\n{row}\nSource: Field trial [1]\n:::"
+        )
+    seen = []
+
+    def reply(request):
+        task = request_text(request)
+        if "presentation writer" in task or "Write the report" in task:
+            return proposed
+        if "A fact-checker compared" in task:
+            return task.split("Part 1:\n", 1)[1].split("\n\nUnsupported in part", 1)[0]
+        if "checking step" in task:
+            sentences = []
+            for n, line in re.findall(r"^\((\d+)\) (.+)$", task, re.M):
+                decision = "supported"
+                if line.startswith(row):
+                    seen.append(line)
+                    if verdict == "unchecked":
+                        continue
+                    if verdict == "not":
+                        decision = "not"
+                sentences.append({"n": int(n), "verdict": decision})
+            return json.dumps({"sentences": sentences})
+        return router(request)
+
+    adjusted_in_source = "nine percent" if verdict == "supported" else "9%"
+    evidence = f"Raw savings were 18%, adjusted savings {adjusted_in_source}, both at 30% coverage."
+    with app_for(tmp_path, FakeProvider(reply), skills=True) as client:
+        base, _ = library(client, notes={"Field trial": evidence})
+        version = built(build(client, base, body(kind=kind, use="talk")))
+
+    assert row in version["content"]
+    drawn = "chart" if verdict == "supported" else "table"
+    if kind == "slides":
+        assert fmt.parse_slide(fmt.split_slides(version["content"])[2]).layout == drawn
+        assert ("<gunther-chart>" in version["content"]) == (drawn == "chart")
+    else:
+        assert (":::exhibit chart=column" in version["content"]) == (drawn == "chart")
+    assert seen and all("Table header | Measure | Saving (%) | Coverage (%) |" in s for s in seen)
+    if drawn == "table":
+        skipped = version["provenance"]["skill"]["skipped"]
+        assert any(item["label"].endswith("drawn as a table") for item in skipped)
+
+
+def test_direct_report_keeps_the_supported_exhibit_when_its_rows_are_repeated(tmp_path):
+    from test_outputs import app_for, body, build, built, library
+
+    exhibit = (
+        ":::exhibit chart=column\nSavings by estimate\n| Measure | Saving (%) |\n"
+        "| --- | --- |\n| Raw | 18 [1] |\n| Adjusted | 9 [1] |\nSource: Trial [1]\n:::"
+    )
+    section = "## Results\n\n" + exhibit + "\n\n" + exhibit.replace("(%)", "(points)")
+
+    def unsupported(request):
+        prompt = request["messages"][-1]["content"]
+        return [int(n) for n in re.findall(r"^\((\d+)\) \| Raw .+Saving \(points\)", prompt, re.M)]
+
+    outline = {"title": "Findings", "sections": [{"heading": "Results"}]}
+    fake = FakeProvider(output_replies(outline, [section], unsupported=unsupported))
+    with app_for(tmp_path, fake) as client:
+        base, _ = library(client, notes={"Trial": "The raw saving was 18%, adjusted saving 9%."})
+        version = built(build(client, base, body()))
+
+    exhibits = list(fmt.EXHIBIT.finditer(version["content"]))
+    assert [block["attrs"].strip() for block in exhibits] == ["chart=column", ""]
+    assert all("| Raw | 18 [1] |" in block["body"] for block in exhibits)
+
+
 def test_a_direct_deck_rebuild_keeps_approved_headings_through_repairs(tmp_path):
     from test_outputs import app_for, body, build, built, library
 
     base_slides = fmt.split_slides(DECK)
-    draft = DECK.replace("## The trial was large enough to trust the direction", "## Costs")
+    draft = UNSUPPORTED_DECK.replace(
+        "## The trial was large enough to trust the direction", "## Costs"
+    )
     attempted = set()
 
     def repair(request):
@@ -206,7 +301,7 @@ def test_a_direct_deck_rebuild_keeps_approved_headings_through_repairs(tmp_path)
             return base_slides[1]
         if "fact-checker" in task:
             attempted.add("claim")
-            return base_slides[2].replace("7 [2]", "9 [2]").replace(
+            return base_slides[2].replace(
                 "## Weather adjustment halves the saving", "## The adjusted estimate is lower"
             )
         return draft if "presentation writer" in task else router(request)
@@ -636,7 +731,6 @@ def test_the_subtitle_is_rewritten_to_state_what_the_slide_titles_say():
     agent = SimpleNamespace(
         _text=lambda *a, **k: "Cool roofs save 9% [2], half the plan's figure",
         _claims=lambda model, text, by_ref, rest="", **kwargs: ([], {}),
-        _chart_issues=lambda text, by_ref: [],
     )
     pool = SimpleNamespace(by_ref=lambda: {2: object()})
     out = StudioAgents._cover(agent, None, [Draft(t, [], {}) for t in deck], pool, "material")

@@ -685,6 +685,8 @@ def _write_prompt(
 
 CITATION_GROUP = re.compile(r"\[(\d+(?:\s*[,，、]\s*\d+)*)\]")
 SENTENCE_END = re.compile(r"[.!?](?=\s|$)|[。！？\n]")
+_MARKDOWN_ROW = r"^[ \t]*\|[^\n]*"
+MARKDOWN_TABLE = re.compile(rf"(?:{_MARKDOWN_ROW}(?:\n|\Z))+", re.M)
 # What the checker adds: [i:3] an inference from source 3, [p:3] partly supported by it,
 # [d:3] disputed by it (the look-up found it contradicted).
 MARKED = re.compile(r"\[(i|p|d):(\d+)\]")
@@ -816,8 +818,8 @@ def sentence_spans(text: str) -> list[tuple[int, int]]:
     """Where each sentence of an answer is: (start, end) in ``text``.
 
     A citation group or ``[?]`` right after a sentence end belongs to the sentence
-    before it. Lines of a Markdown list are sentences of their own; empty spans and
-    lines that are only Markdown (``---``, table rules) are left out.
+    before it. A Markdown table row stays together so its labels, values and citations
+    can be checked as one claim. Empty spans and Markdown rules are left out.
     """
 
     spans: list[tuple[int, int]] = []
@@ -828,7 +830,7 @@ def sentence_spans(text: str) -> list[tuple[int, int]]:
         if not _NO_PROSE.match(re.sub(r"[.!?。！？]", "", prose)):
             spans.append((start, end))
 
-    for match in SENTENCE_END.finditer(text):
+    for match in re.finditer(rf"{_MARKDOWN_ROW}|{SENTENCE_END.pattern}", text, re.M):
         if match.end() <= start:
             continue
         end = match.end()
@@ -1750,6 +1752,11 @@ class AskAgent:
             return text, check, [], []
         batch_size = max(1, min(60, self.limits.check_sentences if limit is None else limit))
         claims: list[dict[str, Any]] = []
+        table_rows: dict[int, tuple[int, int, str]] = {}
+        for index, table in enumerate(MARKDOWN_TABLE.finditer(text)):
+            header, *rows = re.finditer(_MARKDOWN_ROW, table[0], re.M)
+            for row_index, row in enumerate(rows, 1):
+                table_rows[table.start() + row.start()] = (index, row_index, header[0].strip())
         lines: dict[int, str] = {}
         for ref, item in by_ref.items():
             if ref is None:
@@ -1776,6 +1783,9 @@ class AskAgent:
                     "evidence": [list(by_ref[r].key) for r in refs if r in by_ref],
                 }
             )
+            if row := table_rows.get(start):
+                # Table and line indices survive changes to citation numbering.
+                claims[-1]["tableRow"] = list(row[:2])
         batches: list[list[dict[str, Any]]] = []
         batch: list[dict[str, Any]] = []
         batch_refs: set[int] = set()
@@ -1811,7 +1821,12 @@ class AskAgent:
                     f"Question:\n{question}",
                     "",
                     "Answer, by sentence:",
-                    *(f"({n}) {claim['text']}" for n, claim in enumerate(batch, 1)),
+                    *(
+                        f"({n}) {claim['text']}"
+                        + (f" (Table header {row[2]})"
+                           if (row := table_rows.get(claim["start"])) else "")
+                        for n, claim in enumerate(batch, 1)
+                    ),
                     "",
                     "Sources:",
                     *(lines[r] for r in refs),

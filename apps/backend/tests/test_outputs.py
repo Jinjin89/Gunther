@@ -21,6 +21,7 @@ from fake_models import (
     is_support_checking,
     is_writing,
     output_replies,
+    studio_task,
 )
 from fastapi.testclient import TestClient
 from legacy_artifacts import insert_legacy_version
@@ -29,10 +30,12 @@ from sqlalchemy import func, select, text
 from gunther.agent import Evidence, Tool
 from gunther.config import Settings
 from gunther.main import create_app
-from gunther.models import Artifact, ArtifactCheck, ArtifactUnitBinding
+from gunther.models import Artifact, ArtifactCheck, ArtifactUnitBinding, Source
 from gunther.outputs import (
     Draft,
     OutputAgents,
+    OutputLimits,
+    Planned,
     Pool,
     Spec,
     _marked,
@@ -48,6 +51,8 @@ from gunther.outputs import (
     unsource,
     with_layout,
 )
+from gunther.schemas import BuildOutputInput
+from gunther.skillbook import skill_for
 
 SIDECAR_TOKEN = "sidecar-token-with-at-least-256-bits-000000000000000000000000"
 SIDECAR = {"X-Gunther-Token": SIDECAR_TOKEN}
@@ -97,8 +102,7 @@ def body(**fields) -> dict:
 
 
 def app_for(tmp_path: Path, fake: FakeProvider, *, skills: bool = False, **overrides) -> TestClient:
-    """An app whose model is ``fake``. These tests are for the agents alone, so outputs are
-    made without a skill unless ``skills`` (see test_output_skills)."""
+    """An app with fixture model responses and saved settings from the Skills era."""
 
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "service-settings.json").write_text(
@@ -192,11 +196,74 @@ def revise(
 
 @contextmanager
 def built_output(tmp_path: Path, fake: FakeProvider, **fields):
-    """An app with a library and one built output: (client, library id, the version)."""
+    """An app with a sealed version of the earlier writer's output."""
 
     with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
-        yield client, base_id, built(build(client, base_id, body(**fields)))
+        yield client, base_id, saved_output(client, base_id, **fields)
+
+
+def saved_output(client, base_id, outline=None, written=None, *, approach=None, **fields):
+    """Store test content directly for tests of readers, edits, Check and Revise."""
+    service = client.app.state.knowledge_service
+    workspace_id = workspace(client)["X-Gunther-Workspace-Id"]
+    payload = BuildOutputInput.model_validate(body(**fields))
+    deck = payload.kind == "slides"
+    outline = outline or (SLIDES_OUTLINE if deck else OUTLINE)
+    written = written or (SLIDES if deck else REPORT)
+    title = outline["title"]
+    style = "overview" if not approach and payload.style == "auto" else payload.style
+    spec = Spec(payload.kind, payload.audience, style, payload.brief, theme=payload.theme)
+    with service.sessions() as session:
+        limits = OutputLimits()
+        resolved = service._resolve_output_scope(session, base_id, payload.scope)
+        _, seeds, inputs = service._output_material(session, resolved, limits)
+        pool = service._output_pool(seeds, limits)
+        service._studio_reading(session, resolved.source_ids, pool, pinned=seeds)
+        snapshots = service._unit_snapshots(session, resolved.units)
+    plans, drafts = [], []
+    for index, (row, part) in enumerate(zip(outline["sections"], written, strict=True)):
+        layout = row.get("layout", "") if deck and approach else ""
+        if deck and approach:
+            layout = "title" if index == 0 else (
+                "takeaways" if index == len(written) - 1 else layout
+            )
+        if layout:
+            part = with_layout(part, layout, theme=payload.theme, design_version=1)
+        identity = row.get("id") or (f"p{index + 1}" if deck and approach else "")
+        design = {
+            "intent": row.get("goal") or row["heading"],
+            "visual": "Use the assigned content in a clear visual hierarchy.",
+            "composition": "standard", "emphasis": "", "notes": "", "layout": layout,
+        } if layout else None
+        plans.append(Planned(row["heading"], row.get("goal", ""), layout=layout,
+                             link=row.get("link", ""), id=identity, design=design))
+        claims = [
+            {"text": text, "refs": refs, "verdict": "supported"}
+            for _, _, text, refs in cited_sentences(part)
+        ]
+        drafts.append(Draft(part, [], {"status": "complete", "claims": claims}))
+    preamble = "" if deck else f"# {title}"
+    if preamble and payload.brief:
+        preamble += f"\n\n_{payload.brief}_"
+    model, effort = service._output_model(payload.model, payload.effort)
+    version = OutputAgents(service.models).assemble(
+        spec, title, preamble, drafts, pool, plans, model, effort
+    )
+    provenance = {"conversation_id": payload.conversation_id,
+                  "conversation_title": payload.conversation_title, "request": payload.brief}
+    if approach:
+        provenance.update(generator="gunther.output-skills.v1", approach=approach,
+                          skill={"name": payload.kind, "version": skill_for(payload.kind).version},
+                          use=approach.get("use"))
+    return service._save_output(
+        workspace_id=workspace_id, base_id=base_id, client_request_id=payload.client_request_id,
+        fingerprint=payload.client_request_id, parent_id=None, kind=payload.kind, style=style,
+        audience=payload.audience, title=title, brief=payload.brief, origin="build",
+        content=version.content, scope=payload.scope.model_dump(), inputs=inputs,
+        outline=version.outline, citations=[c.model_dump() for c in version.citations],
+        snapshots=snapshots, model=None, checks=version.checks, made_by=provenance,
+    ).model_dump(mode="json", by_alias=True)
 
 
 def versions(client: TestClient) -> list[Artifact]:
@@ -501,7 +568,7 @@ def test_the_checker_reads_a_slide_under_its_marker_and_gives_the_marker_back() 
 # Building --------------------------------------------------------------------------------------
 
 
-def test_a_report_is_planned_researched_written_and_checked(tmp_path: Path) -> None:
+def test_a_studio_report_is_planned_written_checked_and_saved(tmp_path: Path) -> None:
     fake = FakeProvider(output_replies(OUTLINE, REPORT))
     with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
@@ -511,12 +578,9 @@ def test_a_report_is_planned_researched_written_and_checked(tmp_path: Path) -> N
         stored = client.get(route(base_id, artifact["id"]), headers=headers).json()
         listed = client.get(f"/api/knowledge-bases/{base_id}/artifacts", headers=headers).json()
 
-    # Numbers follow reading order, and every one has its passage in the list.
-    assert artifact["content"] == (
-        "# Immune markers\n\n_How immune cells are told apart_\n\n"
-        "## T cells\n\nB cells are set apart by CD19 [1], and T cells by CD3D [2].\n\n"
-        "## B cells\n\nCD19 marks B cells [1]."
-    )
+    assert artifact["content"].startswith("<!-- report: v2 -->\n# Immune markers")
+    assert "B cells are set apart by CD19 [1], and T cells by CD3D [2]." in artifact["content"]
+    assert artifact["content"].endswith("CD19 marks B cells [1].")
     assert [(c["sourceTitle"], c["ref"]) for c in artifact["citations"]] == [
         ("Receptors", 1),
         ("Markers", 2),
@@ -525,17 +589,14 @@ def test_a_report_is_planned_researched_written_and_checked(tmp_path: Path) -> N
     assert (artifact["title"], artifact["kind"], artifact["style"]) == (
         "Immune markers",
         "report",
-        "overview",
+        "auto",
     )
     assert (artifact["origin"], artifact["versionNumber"], artifact["format"]) == (
         "build",
         1,
         "report",
     )
-    assert artifact["outline"] == [
-        {"heading": "T cells", "goal": "How T cells are told apart"},
-        {"heading": "B cells", "goal": "How B cells are told apart"},
-    ]
+    assert [item["heading"] for item in artifact["outline"]] == ["T cells", "B cells"]
     assert [{k: v for k, v in s.items() if k != "coverage"} for s in artifact["sections"]] == [
         {"index": 0, "heading": "T cells", "checked": True, "issues": []},
         {"index": 1, "heading": "B cells", "checked": True, "issues": []},
@@ -551,7 +612,7 @@ def test_a_report_is_planned_researched_written_and_checked(tmp_path: Path) -> N
     assert artifact["modelLabel"] == "DeepSeek · Flash"
     provenance = artifact["provenance"]
     assert (provenance["schemaVersion"], provenance["acceptedOnly"]) == (2, False)
-    assert provenance["generator"] == "gunther.output-agents.v1"
+    assert provenance["generator"] == "gunther.studio.v1"
     assert provenance["model"] == {
         "ref": "deepseek/deepseek-flash",
         "label": "DeepSeek · Flash",
@@ -564,34 +625,19 @@ def test_a_report_is_planned_researched_written_and_checked(tmp_path: Path) -> N
     )
     assert stored == artifact
     assert [(item["kind"], item["style"], item["origin"]) for item in listed] == [
-        ("report", "overview", "build")
+        ("report", "auto", "build")
     ]
     assert "content" not in listed[0]
 
-    # The stream said what it was doing, in order, and wrote the text as it came.
-    names = [name for name, _ in events]
-    assert names[0] == "outline" and names[-1] == "done"
-    assert events[0][1]["title"] == "Immune markers"
-    states = [(d["index"], d["state"]) for n, d in events if n == "section"]
-    assert states == [
-        (0, "researching"), (1, "researching"),
-        (0, "writing"), (0, "checking"), (0, "done"),
-        (1, "writing"), (1, "checking"), (1, "done"),
-    ]  # fmt: skip
-    for index in (0, 1):
-        live = "".join(d["text"] for n, d in events if n == "text" and d["section"] == index)
-        assert live == REPORT[index]
-    searches = [d for n, d in events if n == "step" and d["state"] == "done"]
-    # The library offers both notes for each search; a model grades what is relevant.
-    assert [(d["query"], d["found"], d["section"]) for d in searches] == [
-        ("CD3D T cells", 2, 0),
-        ("CD19 B cells", 2, 1),
-    ]
+    assert events[-1][0] == "done"
+    outline = next(data for name, data in events if name == "outline")
+    assert outline["title"] == "Immune markers"
+    stages = [data["id"] for name, data in events if name == "stage" and data["state"] == "done"]
+    assert stages == ["memo", "story", "write", "verify"]
     assert sum(is_outlining(r) for r in fake.requests) == 1
-    assert sum(is_writing(r) for r in fake.requests) == 2
 
 
-def test_a_deck_is_written_slide_by_slide_with_speaker_notes(tmp_path: Path) -> None:
+def test_a_studio_deck_keeps_its_speaker_notes(tmp_path: Path) -> None:
     fake = FakeProvider(output_replies(SLIDES_OUTLINE, SLIDES))
     with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
@@ -601,7 +647,7 @@ def test_a_deck_is_written_slide_by_slide_with_speaker_notes(tmp_path: Path) -> 
     assert artifact["kind"] == "slides" and artifact["style"] is None
     assert artifact["format"] == "slides"
     assert artifact["title"] == "Immune markers"
-    assert artifact["content"] == "\n\n---\n\n".join(SLIDES)
+    assert "layout: title; design: v2" in artifact["content"]
     slides = split_document(artifact["content"], "slides")[1]
     assert [heading_of(slide) for slide in slides] == ["Immune markers", "T cells", "Takeaways"]
     assert "\nNote: The marker is found on every T cell [1]." in slides[1]
@@ -610,29 +656,9 @@ def test_a_deck_is_written_slide_by_slide_with_speaker_notes(tmp_path: Path) -> 
         "T cells",
         "Takeaways",
     ]
-    # A claim from the model's own knowledge that no source could back stays marked.
-    assert artifact["sections"][1]["issues"] == [
-        {
-            "claim": "- It sits on the cell surface",
-            "verdict": "unverified",
-            "note": "From the model's own knowledge; no source was found.",
-        }
-    ]
     assert [c["sourceTitle"] for c in artifact["citations"]] == ["Markers"]
-    # Only the slide that makes a point searches; the title and closing slides do not.
-    assert {d["section"] for n, d in events if n == "step"} == {1}
-    # Titles can also make factual claims; all slides are audited.
-    assert sum(is_auditing(r) for r in fake.requests) == 3
-    assert {k: v for k, v in artifact["sections"][0].items() if k != "coverage"} == {
-        "index": 0,
-        "heading": "Immune markers",
-        "checked": True,
-        "issues": [],
-    }
-    writing = [r for r in fake.requests if is_writing(r)]
-    title_rules = writing[0]["messages"][0]["content"]
-    assert 'Format: the title slide. Write "# Immune markers"' in title_rules
-    assert "3 to 5 bullets" in writing[1]["messages"][0]["content"]
+    assert artifact["provenance"]["generator"] == "gunther.studio.v1"
+    assert artifact["sections"][0]["checked"]
 
 
 def test_a_title_slide_that_is_typed_over_is_checked(tmp_path: Path) -> None:
@@ -657,30 +683,6 @@ def test_a_title_slide_that_is_typed_over_is_checked(tmp_path: Path) -> None:
         assert checked["content"] == typed
 
 
-def test_a_plan_that_runs_on_is_cut_to_size_not_refused(tmp_path: Path) -> None:
-    plan = {
-        "title": "",
-        "sections": [
-            {
-                "heading": "T cells " + "x" * 300,
-                "goal": "How " + "y" * 500,
-                "queries": ["CD3D T cells", "CD3D", "T cells", "T", "cells"],
-            }
-        ],
-    }
-    fake = FakeProvider(output_replies(plan, ["## T cells\n\nCD3D marks T cells [1]."]))
-    with app_for(tmp_path, fake) as client:
-        base_id, _ = library(client)
-        events = build(client, base_id, body())
-    artifact = built(events)
-    [section] = events[0][1]["sections"]
-    assert len(section["heading"]) == 160 and len(section["goal"]) == 400
-    # With no title from the plan, the first heading names the output.
-    assert artifact["title"] == section["heading"]
-    # Only three of the five searches were made.
-    assert len([d for n, d in events if n == "step" and d["state"] == "done"]) == 3
-
-
 def test_a_selection_searches_only_what_was_chosen(tmp_path: Path) -> None:
     written = ["## T cells\n\nCD3D marks T cells [1].", "## B cells\n\nNothing was found."]
     fake = FakeProvider(output_replies(OUTLINE, written))
@@ -688,9 +690,12 @@ def test_a_selection_searches_only_what_was_chosen(tmp_path: Path) -> None:
         base_id, ids = library(client)
         other_id, other = library(client, "Other", {"Elsewhere": "CD8 marks killer T cells."})
         start = len(fake.requests)  # what a model is asked while sources are read is not ours
-        artifact = built(
-            build(client, base_id, body(scope={"mode": "selection", "sourceIds": [ids["Markers"]]}))
-        )
+        request = body(scope={"mode": "selection", "sourceIds": [ids["Markers"]]},
+                       librarySupplements=True)
+        assert "librarySupplements" not in BuildOutputInput.model_json_schema()["properties"]
+        artifact = built(build(client, base_id, request))
+        assert not artifact["provenance"]["librarySupplements"]
+        assert built(build(client, base_id, dict(request, librarySupplements=False))) == artifact
         before = len(fake.requests)
         refused = build(
             client, base_id, body(scope={"mode": "selection", "sourceIds": [other["Elsewhere"]]})
@@ -765,7 +770,9 @@ def test_saved_knowledge_seeds_the_pool_so_its_passages_can_be_cited_without_a_s
                 select(ArtifactUnitBinding).where(ArtifactUnitBinding.artifact_id == artifact["id"])
             ).all()
 
-    # The passage the saved answer cites is in the pool, and no search was needed for it.
+    pinned = turn["assistantMessage"]["citations"][0]
+    assert artifact["citations"][0]["sourceRevisionId"] == pinned["sourceRevisionId"]
+    assert artifact["citations"][0]["blockId"] == pinned["blockId"]
     [citation] = artifact["citations"]
     assert (citation["sourceTitle"], citation["quote"]) == (
         "Markers",
@@ -781,8 +788,8 @@ def test_saved_knowledge_seeds_the_pool_so_its_passages_can_be_cited_without_a_s
     # The planner and the writer read the saved answer as a note, not as a source.
     planning = next(r for r in new if is_outlining(r))
     assert "The T-cell marker" in planning["messages"][-1]["content"]
-    writing = next(r for r in new if is_writing(r))
-    assert "Saved knowledge" in writing["messages"][-1]["content"]
+    writing = next(r for r in new if "Write the report" in studio_task(r))
+    assert "saved notes (context, never cited)" in writing["messages"][-1]["content"]
 
 
 def test_a_saved_answers_passage_from_a_source_that_has_left_the_library_is_not_used(
@@ -816,10 +823,14 @@ def test_a_saved_answers_passage_from_a_source_that_has_left_the_library_is_not_
         artifact = built(
             build(client, base_id, body(scope={"mode": "selection", "unitIds": [unit_id]}))
         )
-    # Its passage is not the library's now: not cited, and no model was shown it.
+        with client.app.state.knowledge_service.sessions() as session:
+            assert session.get(Source, ids["Markers"]).trashed_at is not None
+    assert artifact["content"].endswith("CD3D marks T cells.")
+    assert artifact["acceptedUnitIds"] == [unit_id]
     assert artifact["citations"] == []
     assert "[1]" not in artifact["content"]
     shown = json.dumps([r["messages"] for r in fake.requests[start:]])
+    assert "The T-cell marker" in shown and "CD3D marks T cells" in shown
     assert "CD3D is a marker of T cells." not in shown
 
 
@@ -836,74 +847,29 @@ def test_a_discussion_seeds_the_pool_too(tmp_path: Path) -> None:
         session_id = client.post(
             f"/api/knowledge-bases/{base_id}/sessions", headers=SIDECAR, json={}
         ).json()["id"]
-        client.post(
+        turn = client.post(
             f"/api/sessions/{session_id}/messages", headers=SIDECAR, json={"content": "CD3D?"}
-        )
+        ).json()
         fake.replies = [output_replies(ONE_SECTION, ["## T cells\n\nCD3D marks T cells [1]."])]
         artifact = built(
             build(client, base_id, body(scope={"mode": "selection", "sessionIds": [session_id]}))
         )
     assert artifact["inputs"]["sessions"] == 1
     assert [c["sourceTitle"] for c in artifact["citations"]] == ["Markers"]
+    pinned = turn["assistantMessage"]["citations"][0]
+    assert artifact["citations"][0]["sourceRevisionId"] == pinned["sourceRevisionId"]
+    assert artifact["citations"][0]["quote"] == pinned["quote"]
     assert artifact["acceptedUnitIds"] == []
 
 
-def test_a_sentence_its_passages_do_not_state_loses_its_number_and_is_flagged(
-    tmp_path: Path,
-) -> None:
-    fake = FakeProvider(
-        output_replies(ONE_SECTION, ["## T cells\n\nCD3D marks T cells [1]."], unsupported=[1])
-    )
+def test_the_studio_report_can_record_an_unsupported_claim(tmp_path: Path) -> None:
+    fake = FakeProvider(output_replies(
+        ONE_SECTION, ["## T cells\n\nCD3D marks T cells [1]."], unsupported=[1, 2]
+    ))
     with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         artifact = built(build(client, base_id, body()))
-    assert artifact["content"] == "# Immune markers\n\n## T cells\n\nCD3D marks T cells [?]."
-    assert artifact["citations"] == []
-    assert artifact["sections"][0]["issues"] == [
-        {
-            "claim": "CD3D marks T cells.",
-            "verdict": "unsupported",
-            "note": "The sources it cites do not state this.",
-        }
-    ]
-    check = next(r for r in fake.requests if is_support_checking(r))
-    assert "cites 1: CD3D is a marker of T cells." in check["messages"][-1]["content"]
-
-
-def test_a_claim_with_no_source_is_marked_and_stays_unverified(tmp_path: Path) -> None:
-    written = ["## T cells\n\nCD3D marks T cells [1]. The moon is made of cheese."]
-    fake = FakeProvider(
-        output_replies(ONE_SECTION, written, unmarked=["The moon is made of cheese"])
-    )
-    with app_for(tmp_path, fake) as client:
-        base_id, _ = library(client)
-        artifact = built(build(client, base_id, body()))
-    assert artifact["content"].endswith("CD3D marks T cells [1]. The moon is made of cheese [?].")
-    assert artifact["sections"][0]["issues"] == [
-        {
-            "claim": "The moon is made of cheese",
-            "verdict": "unverified",
-            "note": "From the model's own knowledge; no source was found.",
-        }
-    ]
-
-
-def test_a_claim_from_memory_that_the_sources_contradict_is_left_out(tmp_path: Path) -> None:
-    written = ["## T cells\n\nCD3D marks T cells [1]. T cells are red [?]."]
-    fake = FakeProvider(
-        output_replies(ONE_SECTION, written, verdict={"supports": [], "contradicts": [1]})
-    )
-    with app_for(tmp_path, fake) as client:
-        base_id, _ = library(client)
-        artifact = built(build(client, base_id, body()))
-    assert artifact["content"] == "# Immune markers\n\n## T cells\n\nCD3D marks T cells [1]."
-    assert artifact["sections"][0]["issues"] == [
-        {
-            "claim": "T cells are red",
-            "verdict": "contradicted",
-            "note": "Left out: the sources disagree (Markers).",
-        }
-    ]
+    assert any(issue["verdict"] == "unsupported" for issue in artifact["sections"][0]["issues"])
 
 
 def test_without_a_model_or_when_a_model_fails_nothing_is_saved(tmp_path: Path) -> None:
@@ -953,7 +919,7 @@ def test_without_a_model_or_when_a_model_fails_nothing_is_saved(tmp_path: Path) 
         base_id, _ = library(client)
         events = build(client, base_id, body())
         assert versions(client) == []
-    [(name, error)] = events
+    name, error = events[-1]
     assert name == "error" and error["status"] == 502
     assert "could not read" in error["detail"]
 
@@ -1044,7 +1010,7 @@ def test_the_same_request_is_answered_from_what_it_saved(tmp_path: Path) -> None
 # Rebuilding, editing, revising and checking -------------------------------------------------------
 
 
-def test_a_rebuild_with_an_edited_outline_skips_the_planner_and_is_the_next_version(
+def test_a_rebuild_gives_the_edited_outline_to_studio_and_is_the_next_version(
     tmp_path: Path,
 ) -> None:
     fake = FakeProvider(
@@ -1063,16 +1029,15 @@ def test_a_rebuild_with_an_edited_outline_skips_the_planner_and_is_the_next_vers
         )
         stale = build(client, base_id, body(supersedesArtifactId=first["id"]))
 
-    assert planners == 1 and sum(is_outlining(r) for r in fake.requests) == 1
+    assert planners == 1 and sum(is_outlining(r) for r in fake.requests) == 2
     assert (second["versionNumber"], second["origin"]) == (2, "rebuild")
     assert second["lineageId"] == first["lineageId"]
     assert second["supersedesArtifactId"] == first["id"]
     assert second["title"] == "Immune markers"
     assert [item["heading"] for item in second["outline"]] == ["B cells", "T cells"]
     assert [s["heading"] for s in second["sections"]] == ["B cells", "T cells"]
-    # Each section was searched by its heading and goal.
-    searches = [r["messages"][-1]["content"] for r in fake.requests if is_grading(r)]
-    assert any("Search: B cells Start with B cells" in prompt for prompt in searches)
+    story = [studio_task(r) for r in fake.requests if is_outlining(r)][-1]
+    assert "1. B cells — goal: Start with B cells" in story
     # Only the latest version can be built on.
     [(name, error)] = stale
     assert name == "error" and error["status"] == 409 and "latest version" in error["detail"]
@@ -1208,6 +1173,7 @@ def test_a_version_from_the_old_builder_cannot_be_changed_but_can_be_rebuilt(
     assert "old builder" in revised[-1][1]["detail"]
     assert legacy["origin"] == "legacy"
     assert (rebuilt["versionNumber"], rebuilt["origin"]) == (2, "rebuild")
+    assert rebuilt["provenance"]["generator"] == "gunther.studio.v1"
     assert rebuilt["lineageId"] == legacy["lineageId"]
     assert rebuilt["supersedesArtifactId"] == legacy_id
 
@@ -1351,13 +1317,14 @@ def test_a_second_build_waits_and_a_page_that_comes_back_follows_the_first(
     [followed] = again_box
     assert followed[0][0] == "resumed" and followed[-1][0] == "done"
     assert followed[-1][1]["id"] == first_box[0][-1][1]["id"]
-    assert followed[1][0] == "outline"
+    assert next(data["title"] for name, data in followed if name == "outline") == "Immune markers"
     assert after.status_code == 204
 
 
 def writing(run) -> bool:
     return run is not None and any(
-        name == "section" and data["state"] == "writing" for name, data in run.events
+        name == "stage" and data["id"] == "write" and data["state"] == "running"
+        for name, data in run.events
     )
 
 
@@ -1438,7 +1405,7 @@ def test_a_build_is_listed_while_it_works_and_when_it_is_done(
         item = activity_of(client)[key]
         assert (item["title"], item["state"], item["kind"]) == (words[0], "running", "output")
         assert item["about"] == "Immune cells" and item["canStop"] is True
-        assert re.fullmatch(rf"Writing section \d of {len(outline['sections'])}", item["detail"])
+        assert item["detail"] in ("Writing the report", "Writing the slides")
         assert item["open"] == {"view": "library", "libraryId": base_id, "tab": "outputs"}
         gate.set()
         first.join(10)
@@ -1527,7 +1494,7 @@ def test_conversation_membership_and_instructions_survive_revise_and_edit(tmp_pa
             conversationTitle="Lab briefing",
             brief="Make notes",
         )
-        first = built(build(client, base_id, request))
+        first = saved_output(client, base_id, ONE_SECTION, [REPORT[0]], **request)
         assert first["conversationId"] == "conversation_first"
         assert first["conversationTitle"] == "Lab briefing"
         assert first["clientRequestId"] == request["clientRequestId"]

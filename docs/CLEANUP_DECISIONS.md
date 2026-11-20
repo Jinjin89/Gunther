@@ -160,3 +160,15 @@ should run as an action on the conversation work, not as a separate direct route
 result `sync` then has to import. One entry, one state owner; then delete the
 rebuild-import branch in `artifact_workspace.sync`. Keep the HTTP build route only if a
 current client still needs it.
+
+# Round 5 — batch caps and batch 02
+
+- **Caps count added lines only** (insertions in `git diff --numstat`). Deletions are
+  free: removing code is the goal. Soft limit ~450 insertions per batch; going over by
+  a little is fine when the batch can't sensibly split. Don't stop at a cap, note it.
+- **`library_supplements` retires.** No client sets it and Studio never ran it. Accept
+  and ignore it on input for one release (old callers don't 422), drop it from
+  contracts, keep old provenance readable.
+- Tests that compare against `SkillAgents.make` (the retired engine) are deleted with
+  it. Tests that only used the old build route to create a first version switch to
+  saved-version fixtures or the Studio fixture gateway.

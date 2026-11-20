@@ -578,12 +578,14 @@ describe("reading, versions and editing", () => {
     const user = userEvent.setup(); const build = vi.spyOn(knowledgeApi, "buildOutputStream").mockResolvedValue(version(2)); await setup({ history: [version()] }); await showControls(user);
     await user.click(screen.getByRole("button", { name: /Outline/ })); await user.click(screen.getByRole("button", { name: "Edit outline" }));
     await user.clear(screen.getByRole("textbox", { name: "Heading 2" })); await user.type(screen.getByRole("textbox", { name: "Heading 2" }), "Plasma cells"); await user.click(screen.getByRole("button", { name: "Move 2 up" })); await user.click(screen.getByRole("button", { name: "Rebuild with this outline" }));
-    expect(build.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ supersedesArtifactId: "art_1", outline: [{ heading: "Plasma cells", goal: "", layoutLocked: false, designLocked: false, designAttempted: false }, { heading: "T cells", goal: "How T cells are told apart", layoutLocked: false, designLocked: false, designAttempted: false }] }));
+    expect(build.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ supersedesArtifactId: "art_1", outline: [{ heading: "Plasma cells", goal: "" }, { heading: "T cells", goal: "How T cells are told apart" }] }));
   });
-  it("opens a saved Studio outline and rebuilds with headings, goals and order", async () => {
+  it.each(["studio", "legacy"])("rebuilds a saved %s outline with headings, goals and order", async (method) => {
     const user = userEvent.setup();
     const first = deck(1, {
-      content: deckContent.replace("layout: title -->", "layout: title; design: v2; theme: ink -->"),
+      content: method === "studio"
+        ? deckContent.replace("layout: title -->", "layout: title; design: v2; theme: ink -->")
+        : deckContent,
       outline: [
         { id: "cover", heading: "Deck", goal: "" },
         { id: "costs", heading: "Costs", goal: "", layout: "points", layoutLocked: true, designLocked: true, message: "An earlier plan", requires: ["retired"] },
@@ -601,7 +603,9 @@ describe("reading, versions and editing", () => {
     await user.click(screen.getByRole("button", { name: "Move 2 down" }));
     await user.click(screen.getByRole("button", { name: "Rebuild with this outline" }));
     const request = build.mock.calls[0]?.[1];
-    expect(request).toMatchObject({ kind: "slides", theme: "ink", supersedesArtifactId: first.id });
+    expect(request).toMatchObject({
+      kind: "slides", theme: method === "studio" ? "ink" : "classic", supersedesArtifactId: first.id,
+    });
     expect(request?.outline).toEqual([
       { id: "cover", heading: "Deck", goal: "" },
       { id: "results", heading: "Results", goal: "" },
@@ -609,11 +613,12 @@ describe("reading, versions and editing", () => {
     ]);
     expect(request).not.toHaveProperty("web");
   });
-  it("retains the skill's approach and rebuilds with the edited question", async () => {
+  it("opens a saved Skill approach in read-only form", async () => {
     const user = userEvent.setup(); const first = version(1, { provenance: { ...version().provenance, skill: { name: "report", version: 1, skipped: [] }, approach: { question: "Which marker?", answer: "CD3D", purpose: "Scientists", structure: "which", structureReason: "A choice", pages: null, supplements: [], gaps: [] } } });
-    const build = vi.spyOn(knowledgeApi, "buildOutputStream").mockResolvedValue(version(2)); await setup({ history: [first] }); await showControls(user);
-    await user.click(screen.getByRole("button", { name: /Approach/ })); await user.click(screen.getByRole("button", { name: "Edit approach" })); await user.clear(screen.getByLabelText("Question")); await user.type(screen.getByLabelText("Question"), "Which panel?"); await user.click(screen.getByRole("button", { name: "Rebuild with this approach" }));
-    expect(build.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ supersedesArtifactId: "art_1", approach: { question: "Which panel?", answer: "CD3D", purpose: "Scientists" } }));
+    await setup({ history: [first] }); await showControls(user);
+    await user.click(screen.getByRole("button", { name: /Approach/ }));
+    expect(within(screen.getByRole("region", { name: "Approach" })).getByText("Scientists")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Edit approach" })).toBeNull();
   });
   it("keeps citation checks and opens the cited evidence", async () => {
     const user = userEvent.setup(); await setup({ history: [version(1, { sections: [{ index: 0, heading: "T cells", checked: true, issues: [] }, { index: 1, heading: "B cells", checked: false, issues: [{ claim: "CD19 marks B cells", verdict: "unverified", note: "No source was found." }] }] })] });

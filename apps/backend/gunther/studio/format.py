@@ -178,7 +178,8 @@ def _items(body: list[str]) -> tuple[list[str], list[str]]:
     return items, other
 
 
-def _table(body: list[str]) -> tuple[list[list[str]], list[str]]:
+def read_table(body: list[str]) -> tuple[list[list[str]], list[str]]:
+    """Return the table rows and remaining lines; the separator isn't a row."""
     rows, other = [], []
     for line in body:
         if line.startswith("|"):
@@ -191,7 +192,7 @@ def _table(body: list[str]) -> tuple[list[list[str]], list[str]]:
     return rows, other
 
 
-def _number_cell(cell: str) -> bool:
+def number_cell(cell: str) -> bool:
     plain = CITE.sub("", cell).replace("**", "").strip()
     return bool(re.fullmatch(r"[-+−]?\d[\d,，]*(?:\.\d+)?\s*(?:%|[A-Za-z€$£¥%°一-鿿]{0,6})", plain))
 
@@ -299,7 +300,7 @@ def check_slide(slide: Slide, *, first: bool, read: bool = False) -> list[str]:
         elif other:
             limit("closing line", other[0], 140)
     elif layout in ("chart", "table"):
-        rows, rest = _table(body)
+        rows, rest = read_table(body)
         if len(rows) < 3:
             problems.append("Write a Markdown table: a header row and at least two rows.")
         else:
@@ -317,7 +318,7 @@ def check_slide(slide: Slide, *, first: bool, read: bool = False) -> list[str]:
                     problems.append(f"A chart has 2–12 rows; there are {len(data)}.")
                 for number, row in enumerate(data, 1):
                     for cell in row[1:]:
-                        if not _number_cell(cell):
+                        if not number_cell(cell):
                             problems.append(
                                 f'Row {number}: "{cell}" is not a number; a chart cell is a number '
                                 "with its citation, the unit in the header. Use the table layout "
@@ -533,26 +534,6 @@ def check_deck(
     return found
 
 
-def chart_numbers(text: str) -> list[tuple[str, list[int]]]:
-    """Each numeric cell of a chart slide with the source numbers it cites (same cell, else the
-    row's label cell)."""
-
-    slide = parse_slide(text)
-    if slide.layout != "chart":
-        return []
-    rows, _ = _table(slide.body)
-    out = []
-    for row in rows[1:]:
-        label_refs = [int(n) for n in re.findall(r"\[(\d+)\]", row[0])] if row else []
-        for cell in row[1:]:
-            refs = [int(n) for n in re.findall(r"\[(\d+)\]", cell)] or label_refs
-            value = CITE.sub("", cell).replace("**", "").strip()
-            number = NUMBER.search(value)
-            if number:
-                out.append((number.group(), refs))
-    return out
-
-
 def normal_number(text: str) -> str:
     text = text.replace(",", "").replace("，", "").replace("−", "-")
     try:
@@ -577,7 +558,11 @@ def with_marker(text: str, layout: str, **attrs: str) -> str:
 
 REPORT_HEADING_UNITS = 90
 SUMMARY_MARK = "<!-- block: summary -->"
-EXHIBIT = re.compile(r"^:::exhibit(?P<attrs>[^\n]*)\n(?P<body>.*?)\n:::\s*$", re.M | re.S)
+EXHIBIT = re.compile(
+    r"^[ \t]*:::exhibit\b(?P<attrs>[^\n]*)\n(?P<body>.*?)(?:\n[ \t]*:::[ \t]*$|\Z)",
+    re.M | re.S,
+)
+EXHIBIT_CHART = re.compile(r"\bchart\s*=\s*(?:" + "|".join(CHART_KINDS) + r")\b")
 
 
 def check_report(text: str) -> list[str]:

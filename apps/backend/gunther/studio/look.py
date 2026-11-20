@@ -362,9 +362,7 @@ def look(
 
         def recheck(n: int) -> Draft:
             issues, coverage = agents._claims(model, candidate[n - 1], by_ref, material=material)
-            return Draft(
-                candidate[n - 1], issues + agents._chart_issues(candidate[n - 1], by_ref), coverage
-            )
+            return Draft(candidate[n - 1], issues, coverage)
 
         rechecked = dict(zip(changed, warm_map(recheck, changed, 4), strict=True))
         revised = list(drafts)
@@ -376,7 +374,7 @@ def look(
                     {"slide": n, "why": "a claim lost its source"}
                 )
                 continue
-            revised[n - 1] = draft
+            revised[n - 1] = agents._chart_fallback(draft, n - 1)
         changed = [n for n in changed if revised[n - 1] is not drafts[n - 1]]
         if not changed:
             return {}, ("", "the fix lost a claim's source; dropped")

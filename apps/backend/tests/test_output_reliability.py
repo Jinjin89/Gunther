@@ -1,13 +1,21 @@
 """Editorial changes, supplementary sources and retained figures keep their boundaries."""
 
 import json
+import re
 
 import pytest
-from fake_models import FakeProvider, gateway, is_sentence_checking, skill_replies, skill_step
+from fake_models import (
+    FakeProvider,
+    gateway,
+    is_sentence_checking,
+    output_replies,
+    skill_replies,
+    skill_step,
+)
 from sqlalchemy import select
 from test_documents import FigureParser, capture_pdf, png
 from test_output_skills import APPROACH, OUTLINE, REPORT, SEARCH
-from test_outputs import SIDECAR, app_for, body, build, built, library, revise
+from test_outputs import SIDECAR, app_for, body, build, built, library, revise, saved_output
 
 from gunther.agent import Evidence
 from gunther.asset_service import AssetTextExtraction
@@ -40,35 +48,25 @@ def test_editor_cannot_introduce_facts_even_when_the_citations_are_unchanged(tmp
             return json.dumps({"faithful": False})  # An absent reason must still reject it.
         return replies(request)
 
-    with app_for(tmp_path, FakeProvider(reply), skills=True) as client:
-        base_id, _ = library(client)
-        version = built(build(client, base_id, body()))
-    assert "every patient" not in version["content"] and "99%" not in version["content"]
-    assert any(
-        item["step"] == "editor_fidelity" for item in version["provenance"]["skill"]["skipped"]
-    )
+    from test_artifact_steps import default_route, steps_for
+
+    version, _ = default_route(steps_for(FakeProvider(reply)))
+    assert "every patient" not in version.content and "99%" not in version.content
+    assert any(item["step"] == "editor_fidelity" for item in version.skill["skipped"])
 
 
-def test_supplements_are_opt_in_and_cannot_search_another_library(tmp_path):
+def test_retained_output_search_stays_in_its_source_scope(tmp_path):
     with app_for(tmp_path, FakeProvider("{}")) as client:
         base_id, ids = library(client)
         _, other = library(client, "Unrelated", {"Foreign": "CD19 is a marker of B cells."})
         service = client.app.state.knowledge_service
         with session_scope(service.sessions) as session:
             primary = [ids["Markers"]]
-            restricted = service._output_search_tool(session, base_id, primary, False, "selection")
-            assert all(item.payload[0].source_id in primary for item in restricted.run("marker"))
-            extended = service._output_search_tool(session, base_id, primary, True, "selection")
-            results = extended.run("marker")
-            assert {item.payload[0].source_id for item in results} == set(ids.values())
+            tool = service._output_search_tool(session, primary, "selection")
+            results = tool.run("marker")
+            assert {item.payload[0].source_id for item in results} == set(primary)
             assert not set(other.values()) & {item.payload[0].source_id for item in results}
-            assert results[0].payload[0].source_origin == "selected"
-            assert (
-                next(item for item in results if item.payload[0].source_id == ids["Receptors"])
-                .payload[0]
-                .source_origin
-                == "library_supplement"
-            )
+            assert all(item.payload[0].source_origin == "selected" for item in results)
 
 
 def test_invented_chart_values_are_never_drawn_as_a_chart(tmp_path):
@@ -82,21 +80,25 @@ def test_invented_chart_values_are_never_drawn_as_a_chart(tmp_path):
     }
     pages = [
         "# Markers\n\nHow the markers compare",
-        "## Marker levels\n\n| Marker | Level (%) |\n| --- | --- |\n| CD3D | 62 [1] |\n"
-        "| CD19 | 41 [1] |",
+        "<!-- layout: chart -->\n## Marker levels\n\n| Marker | Level (%) |\n| --- | --- |\n"
+        "| CD3D | 62 [1] |\n| CD19 | 41 [1] |",
         "## Choose markers\n\nCD3D marks T cells [1].",
     ]
-    fake = FakeProvider(skill_replies({**APPROACH, "use": "talk"}, outline, pages, gather=SEARCH))
+    def unsupported(request):
+        prompt = request["messages"][-1]["content"]
+        return [int(n) for n in re.findall(r"^\((\d+)\) \| CD", prompt, re.M)]
+
+    fake = FakeProvider(output_replies(outline, pages, unsupported=unsupported))
     with app_for(tmp_path, fake, skills=True) as client:
         base_id, _ = library(client)
         version = built(build(client, base_id, body(kind="slides")))
     # The deck is saved, but the slide whose values its source does not state is drawn as a
     # table with what the Checker found, never as a chart, and the version says why.
     chart = version["content"].split("\n---\n")[1].strip()
-    assert chart.startswith("<!-- layout: compare -->")
+    assert chart.startswith("<!-- layout: table -->")
     assert version["sections"][1]["issues"]
     skipped = version["provenance"]["skill"]["skipped"]
-    assert any(item["label"] == "Slide 2 drawn as a table" for item in skipped)
+    assert any(item["label"] == "Part 2 drawn as a table" for item in skipped)
 
 
 @pytest.mark.parametrize("historical_check", [False, True])
@@ -128,7 +130,8 @@ def test_revising_another_slide_preserves_a_verified_chart(tmp_path, historical_
         base_id, _ = library(
             client, notes={"Measured rate": "CD3D cohort rate was 62%. CD19 cohort rate was 41%."}
         )
-        first = built(build(client, base_id, body(kind="slides")))
+        first = saved_output(client, base_id, outline, pages, kind="slides",
+                             approach={**APPROACH, "use": "talk"})
         if historical_check:
             with session_scope(client.app.state.knowledge_service.sessions) as session:
                 for check in session.scalars(
@@ -167,11 +170,7 @@ def test_output_with_omitted_claim_verdicts_is_saved_as_unchecked(tmp_path):
         base_id, _ = library(client)
         version = built(build(client, base_id, body()))
     assert all(not section["checked"] for section in version["sections"])
-    assert any(
-        issue["verdict"] == "unchecked"
-        for section in version["sections"]
-        for issue in section["issues"]
-    )
+    assert all(section["coverage"]["unchecked"] > 0 for section in version["sections"])
 
 
 @pytest.mark.parametrize("coverage", [None, {}, {"status": "partial"}])

@@ -24,12 +24,10 @@ from test_output_skills import (
     SLIDES,
     SLIDES_APPROACH,
     SLIDES_OUTLINE,
+    saved_skill_output,
 )
 from test_outputs import (
     app_for,
-    body,
-    build,
-    built,
     in_background,
     library,
     read_events,
@@ -87,15 +85,11 @@ def script(decisions: list[Any], inner=None, **more: Any):
 
 
 def a_deck(client, fake: FakeProvider, base_id: str, cid: str = "talk") -> str:
-    """A deck made the old way for a conversation, which the agent then finds as its work."""
+    """A saved Skills deck, which the conversation picks up as its work."""
 
     fake.replies[:] = [skill()]
-    version = built(
-        build(
-            client,
-            base_id,
-            body(kind="slides", conversationId=cid, conversationTitle="Markers talk"),
-        )
+    version = saved_skill_output(
+        client, base_id, kind="slides", conversationId=cid, conversationTitle="Markers talk",
     )
     client.get(conversations(base_id), headers=workspace(client))  # gives it its row and work
     return version["id"]

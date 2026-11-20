@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OutlineEditor } from "./OutlineEditor";
@@ -35,7 +35,7 @@ describe("slide planning and design persistence", () => {
     expect(view.container.querySelector(".outputs-theme-picker")).toBeNull();
   });
 
-  it("preserves slide identities and messages and prevents losing a prerequisite on rebuild", async () => {
+  it("keeps saved slide identities when rebuilding after removing an old prerequisite", async () => {
     const rebuild = vi.fn();
     const outline = [
       { id: "cover", heading: "Pilot", goal: "Frame the question", layout: "title" },
@@ -45,14 +45,13 @@ describe("slide planning and design persistence", () => {
     render(<OutlineEditor outline={outline} label="slides" max={14} busy={false} onRebuild={rebuild}/>);
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /Outline/ }));
+    expect(screen.getByText("Quality remains unknown")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Edit outline" }));
-    await user.click(screen.getByRole("button", { name: "Rebuild with this outline" }));
-    expect(rebuild.mock.calls[0]?.[0][2]).toMatchObject({ id: "result", message: "Quality remains unknown", question: "What does the result establish?", requires: ["definition"] });
     await user.click(screen.getByRole("button", { name: "Remove 2" }));
-    expect(screen.getByRole("alert").textContent).toContain("prerequisite");
-    expect(screen.getByRole("button", { name: "Rebuild with this outline" })).toBeDisabled();
-    await user.clear(screen.getByRole("textbox", { name: "Preceding slides 2" }));
-    await act(async () => undefined);
-    expect(screen.getByRole("button", { name: "Rebuild with this outline" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Rebuild with this outline" }));
+    expect(rebuild).toHaveBeenCalledWith([
+      { id: "cover", heading: "Pilot", goal: "Frame the question" },
+      { id: "result", heading: "A shorter wait", goal: "Interpret the result" },
+    ]);
   });
 });
