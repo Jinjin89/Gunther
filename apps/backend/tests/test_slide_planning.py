@@ -9,9 +9,9 @@ from gunther.agent import Evidence
 from gunther.llm import ModelError
 from gunther.outputs import Planned, Pool, Spec, _marked, with_layout
 from gunther.schemas import OutlineItem
-from gunther.skill_runner import Approach, Card, SkillAgents
+from gunther.skill_runner import Approach, Card, SkillAgents, _requested_pages
 from gunther.skillbook import skill_for
-from gunther.slide_planning import dependency_problems, requested_pages
+from gunther.slide_planning import dependency_problems
 
 
 @pytest.mark.parametrize(
@@ -26,7 +26,7 @@ from gunther.slide_planning import dependency_problems, requested_pages
     ],
 )
 def test_explicit_counts_are_separate_from_duration_and_ranges(brief, expected):
-    assert requested_pages(brief) == expected
+    assert _requested_pages(brief) == expected
 
 
 def planner(initial, repaired=None, review=None):

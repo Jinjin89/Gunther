@@ -7,6 +7,7 @@ import pytest
 from fake_models import FakeProvider, gateway, model, output_replies
 
 from gunther.agent import Evidence, Tool
+from gunther.llm import ModelError
 from gunther.outputs import Issue, Notes, Planned, Pool, Spec, split_document
 from gunther.schemas import ConversationCitationOut
 from gunther.studio import format as fmt
@@ -354,6 +355,79 @@ def test_report_repair_cannot_add_a_section_or_displace_the_existing_work(monkey
         )
     assert work.model_dump() == before
     assert sources.by_ref() == prior_refs
+
+
+def test_studio_build_checks_the_written_count_against_the_storyline():
+    def wrong_count(request):
+        reply = router(request)
+        if "presentation strategist" in request_text(request):
+            story = json.loads(reply)
+            story.update(requested_count=2, slides=story["slides"][:2])
+            return json.dumps(story)
+        return reply
+
+    agents = StudioAgents(gateway(FakeProvider(wrong_count)), use="talk")
+    with pytest.raises(ModelError, match="written deck has 3 slides. The brief asks for 2"):
+        agents.make(model(), "low", Spec("slides", "Everyone", brief="Two pages"), pool(), Notes())
+
+
+def test_making_a_draft_after_replan_still_requires_saving(tmp_path):
+    from fake_models import orchestrator_replies
+    from test_artifact_agent import conversations, done, turn, versions_of
+    from test_outputs import app_for, library, workspace
+
+    def inner(request):
+        prompt = request_text(request)
+        reply = router(request)
+        if "lead analyst" in prompt:
+            memo = json.loads(reply)
+            memo["insights"][0]["refs"] = [1, 2]
+            return json.dumps(memo)
+        if "presentation strategist" in prompt:
+            story = json.loads(reply)
+            story.update(requested_count=3, requested_minutes=8)
+            for page, text in zip(story["slides"], fmt.split_slides(DECK), strict=True):
+                page["title"] = fmt.parse_slide(text).title
+            return json.dumps(story)
+        if "presentation writer" in prompt:
+            assert "speaker notes for a talk lasting 8 minutes" in prompt
+        return reply
+
+    fake = FakeProvider(orchestrator_replies([
+        {
+            "brief": [{
+                "field": "length", "text": "3 slides for an 8-minute talk",
+                "quote": "3 slides for an 8-minute talk",
+            }],
+            "actions": [
+                {"do": "select", "artifact": "new:slides"},
+                {"do": "understand"},
+                {"do": "plan", "change": "whole"},
+                {"do": "make"},
+                {"do": "reply", "text": "The deck is ready."},
+            ],
+        },
+        {"actions": [{"do": "save", "text": "Saved the deck."}]},
+    ], inner))
+    with app_for(tmp_path, fake) as client:
+        client.app.state.knowledge_service.output_method = "studio"
+        base, _ = library(client, notes={"Size": PASSAGES[0], "Trial": PASSAGES[1]})
+        client.post(conversations(base), headers=workspace(client), json={
+            "id": "planned-deck",
+        }).raise_for_status()
+        events = turn(
+            client, base, "planned-deck", "Plan, then write 3 slides for an 8-minute talk.",
+        )
+        assert any(
+            event == "action" and data["state"] == "failed"
+            and "changed in this turn and is not saved" in data["note"]
+            for event, data in events
+        )
+        result = done(events)
+        assert result["outcome"] == "saved" and result["reply"] == "Saved the deck."
+        content = result["artifact"]["content"]
+        assert len(split_document(content, "slides")[1]) == 3
+        assert len(versions_of(client)) == 1
 
 
 def test_a_conversation_makes_a_studio_deck_in_one_action_and_can_rewrite_one_slide(tmp_path):

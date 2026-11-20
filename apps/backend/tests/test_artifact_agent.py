@@ -31,6 +31,7 @@ from test_outputs import (
     in_background,
     library,
     read_events,
+    saved_output,
     wait_for,
     workspace,
 )
@@ -60,7 +61,7 @@ from gunther.models import (
     SourceRevision,
 )
 from gunther.outputs import Pool, section_hash, split_document
-from gunther.service import KnowledgeService
+from gunther.service import KnowledgeService, manifest_hash_of
 
 _turns = itertools.count(1)
 
@@ -186,6 +187,186 @@ def test_selected_documents_reach_the_first_decision_before_evidence_is_loaded(
         assert "Thermal measurements" in first and selected in first
         assert "no evidence passages loaded yet; the material above is available" in first
         assert ("Unselected garden notes" in first) == (mode == "library")
+
+
+def test_studio_understand_and_replan_refresh_the_approach_after_narrowing_scope(tmp_path: Path) -> None:
+    def analyst(request):
+        prompt = str(request["messages"][-1]["content"])
+        assert "lead analyst" in prompt and "Focus for this reading: operating cost" in prompt
+        assert "[2] (Cost records" in prompt and "The repairs cost 70 dollars" in prompt
+        assert "Garden" not in prompt
+        return json.dumps({
+            "answer": "The repairs cost 70 dollars.",
+            "insights": [{"claim": "Repair cost", "refs": [2, 999]}],
+        })
+
+    fake = FakeProvider(skill())
+    with app_for(tmp_path, fake) as client:
+        client.app.state.knowledge_service.output_method = "studio"
+        base_id, ids = library(client, notes={
+            "Estimates": "Estimates are collected separately.",
+            "Cost records": "The repairs cost 70 dollars.", "Garden": "Grass seed grew.",
+        })
+        fake.replies[:] = [orchestrator_replies([{"actions": [
+            {"do": "select", "artifact": "new:report"},
+            {"do": "understand", "focus": "operating cost"},
+            {"do": "reply", "text": "The approach is ready."},
+        ]}], analyst)]
+        client.post(conversations(base_id), headers=workspace(client), json={
+            "id": "understand",
+            "scope": {"mode": "selection", "sourceIds": [ids["Estimates"], ids["Cost records"]]},
+        }).raise_for_status()
+        result = done(turn(client, base_id, "understand", "Understand the operating cost first."))
+        assert result["outcome"] == "replied" and result["artifact"] is None
+        workspace_, _ = kept(client, "understand")
+        (work,) = workspace_.works
+        assert work.approach["method"] == "studio" and work.approach["storyline"] is None
+        assert work.outline == [] and work.parts == {} and versions_of(client) == []
+        (citation,) = workspace_.pool
+        assert citation["source_id"] == ids["Cost records"] and citation["ref"] == 1
+        assert work.cards[0].refs == [citation["ref"]]
+        assert work.approach["memo"]["insights"][0]["refs"] == [citation["ref"]]
+
+        narrowed = {"mode": "selection", "sourceIds": [ids["Estimates"]]}
+        client.patch(conversations(base_id, "/understand"), headers=workspace(client), json={
+            "scope": narrowed,
+        }).raise_for_status()
+        tasks = []
+
+        def replan(request):
+            prompt = str(request["messages"][-1]["content"])
+            assert "The repairs cost 70 dollars" not in prompt and "Cost records" not in prompt
+            if "lead analyst" in prompt:
+                tasks.append("understand")
+                (ref,) = re.findall(r"\[(\d+)\] \(Estimates", prompt)
+                return json.dumps({
+                    "answer": "Estimates are collected separately.",
+                    "insights": [{"claim": "Separate estimates", "refs": [int(ref)]}],
+                })
+            if "planning a written report" in prompt:
+                tasks.append("plan")
+                assert "Answer: Estimates are collected separately." in prompt
+                return '{"title":"Estimates","sections":[{"heading":"How estimates are collected"}]}'
+            assert "senior partner reviewing a storyline" in prompt
+            return '{"verdict":"ready"}'
+
+        fake.replies[:] = [orchestrator_replies([{"actions": [
+            {"do": "plan", "change": "whole"},
+            {"do": "reply", "text": "The outline is ready."},
+        ]}], replan)]
+        result = done(turn(client, base_id, "understand", "Plan from the remaining source."))
+        assert result["outcome"] == "replied" and result["artifact"] is None
+        assert tasks == ["understand", "plan"]
+        after, _ = kept(client, "understand")
+        (work,) = after.works
+        assert work.approach["answer"] == "Estimates are collected separately."
+        (card,) = work.cards
+        assert card.claim == "Separate estimates" and card.refs == [2]
+        assert after.pool[1]["source_id"] == ids["Estimates"]
+
+
+def test_studio_replan_migrates_a_saved_plan_within_its_constraints(tmp_path: Path) -> None:
+    headings = [row["heading"] for row in SLIDES_OUTLINE["sections"]]
+    goals = ["Set the topic", "Compare the measurements", "Draw the conclusion"]
+    plan = {**SLIDES_OUTLINE, "sections": [
+        {**row, "goal": goal, "id": f"saved-{n}"}
+        for n, (row, goal) in enumerate(zip(SLIDES_OUTLINE["sections"], goals, strict=True))
+    ]}
+    instruction = "Retitle the comparison and replace the last slide with limits under its old title"
+    counts = "请做3页幻灯片，用2张图，演讲8分钟。"
+    retitled = "What the measurements tell us"
+    valid = False
+
+    def planner(request):
+        prompt = str(request["messages"][-1]["content"])
+        if "senior partner reviewing a storyline" in prompt:
+            return '{"verdict": "ready"}'
+        assert "presentation strategist" in prompt and "lead analyst" not in prompt
+        assert counts in prompt and "Avoid jargon" in prompt
+        assert "requested_count" in prompt and "requested_minutes" in prompt
+        assert instruction in prompt and "Garden" not in prompt
+        assert json.dumps([
+            {"id": f"saved-{n}", "heading": h, "goal": g}
+            for n, (h, g) in enumerate(zip(headings, goals, strict=True))
+        ]) in prompt
+        assert "Old planner message" not in prompt and "introduces the distinction" not in prompt
+        (ref,) = re.findall(r"\[(\d+)\] \(Receptors", prompt)
+        slides = [
+            {"title": headings[0], "job": goals[0], "layout": "title", "id": "saved-0"},
+            {"title": retitled, "job": goals[1], "layout": "points", "refs": [int(ref)], "id": "saved-1"},
+            {"title": headings[2], "job": "Explain the limits", "id": None, "refs": [999]},
+        ]
+        return json.dumps({
+            "title": "Proposed title", "slides": slides if valid else slides[:2],
+            "requested_count": 3, "requested_minutes": 8,
+        })
+
+    def decisions():
+        return orchestrator_replies([{"actions": [
+            {"do": "plan", "change": "whole", "instruction": instruction},
+            {"do": "reply", "text": "The outline is ready."},
+        ]}], planner)
+
+    fake = FakeProvider(skill())
+    with app_for(tmp_path, fake) as client:
+        service = client.app.state.knowledge_service
+        service.output_method = "studio"
+        base_id, ids = library(client, notes={
+            "Cells": "CD3D marks T cells.", "Receptors": "CD19 marks B cells.",
+            "Garden": "Grass seed grew.",
+        })
+        headers = workspace(client)
+        scope = {"mode": "selection", "sourceIds": [ids["Cells"], ids["Receptors"]]}
+        first = saved_output(client, base_id, plan, SLIDES, kind="slides", scope=scope,
+                             approach=SLIDES_APPROACH, conversationId="replan")
+        with service.sessions() as session:
+            row = session.get(Artifact, first["id"])
+            outline = json.loads(row.outline_json)
+            outline[1].update(message="Old planner message", layout_locked=True, design_locked=True)
+            row.outline_json = json.dumps(outline)
+            row.manifest_hash = manifest_hash_of(row)
+            session.commit()
+        client.get(conversations(base_id), headers=headers).raise_for_status()
+        url = conversations(base_id, "/replan")
+        client.patch(url + "/brief", headers=headers, json={
+            "constraints": [counts, "Avoid jargon"],
+        }).raise_for_status()
+        before, _ = kept(client, "replan")
+        fake.replies[:] = [decisions()]
+        failed = turn(client, base_id, "replan", instruction)
+        assert any("The brief asks for 3" in data.get("note", "") for _, data in failed)
+        assert not any(event == "outline" for event, _ in failed)
+        assert kept(client, "replan")[0].works == before.works
+
+        valid = True
+        fake.replies[:] = [decisions()]
+        completed = done(turn(client, base_id, "replan", instruction))
+        assert completed["outcome"] == "replied" and completed["artifact"] is None
+        after, _ = kept(client, "replan")
+        (work,) = after.works
+        assert (work.key, work.title, work.version_id) == (
+            first["lineageId"], first["title"], first["id"],
+        )
+        assert work.approach["method"] == "studio" and work.version_map == before.works[0].version_map
+        assert [(item.heading, item.goal) for item in work.outline] == list(zip(
+            [headings[0], retitled, headings[2]], [*goals[:2], "Explain the limits"], strict=True,
+        ))
+        story = work.approach["storyline"]
+        assert (story["requested_count"], story["requested_minutes"]) == (3, 8)
+        assert [item.id for item in work.outline[:2]] == ["saved-0", "saved-1"]
+        assert work.outline[2].id != "saved-2"
+        for item in work.outline[:2]:
+            assert work.parts[item.id].text == before.works[0].parts[item.id].text
+            assert work.parts[item.id].checked == before.works[0].parts[item.id].checked
+            assert not (item.layout_locked or item.design_locked or item.design or item.message or item.link)
+        assert not work.outline[2].refs and work.outline[2].id not in work.parts
+        assert work.outline[1].refs and all(row["source_id"] != ids["Garden"] for row in after.pool)
+        assert [v.id for v in versions_of(client)] == [first["id"]]
+        detail = client.get(url, headers=headers).json()
+        assert detail["scope"]["sourceIds"] == scope["sourceIds"]
+        assert [part["state"] for part in detail["works"][0]["parts"]] == [
+            "ok", "out_of_date", "not_written",
+        ]
 
 
 def test_a_vague_request_is_asked_about_and_the_answer_makes_the_deck(tmp_path: Path) -> None:

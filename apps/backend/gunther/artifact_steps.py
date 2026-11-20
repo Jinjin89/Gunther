@@ -41,10 +41,12 @@ from gunther.artifact_workspace import (
     Work,
     _cited,
     _fold,
+    approach_refs,
     digest_approach_inputs,
     digest_outline_inputs,
     digest_part_inputs,
     locate,
+    rebind_approach_refs,
     spec_of,
 )
 from gunther.llm import ModelInfo
@@ -158,6 +160,8 @@ class WorkSteps:
         model: ModelInfo,
         effort: Effort | None,
         emit: Events | None = None,
+        *,
+        read_material: Callable[[Pool], Notes] | None = None,
     ) -> None:
         if agents.skill.kind != work.spec.kind:
             raise ValueError(
@@ -169,6 +173,7 @@ class WorkSteps:
         self.brief = brief
         self.pool = pool
         self.notes = notes
+        self.read_material = read_material
         self.model = model
         self.effort = effort
         self.emit: Events = emit or _no_events
@@ -201,9 +206,7 @@ class WorkSteps:
             first = work.parts.get(work.outline[0].id)
             if first is not None:
                 work.spec.design_version = _marked(first.text).design_version
-        line = work.spec.use
-        use = _fold(line.text) if line and not (asking and line.mark == "guessed") else None
-        agents.use = use if use in agents.skill.uses else None
+        self._load_use(asking=asking)
         agents.cards = [
             Card(
                 claim=card.claim,
@@ -225,6 +228,11 @@ class WorkSteps:
             agents.scientific_context = work.approach if scientific else None
         agents.outline_review = work.outline_review
         return spec_of(self.brief, work)
+
+    def _load_use(self, *, asking: bool = False) -> None:
+        line = self.work.spec.use
+        use = _fold(line.text) if line and not (asking and line.mark == "guessed") else None
+        self.agents.use = use if use in self.agents.skill.uses else None
 
     def _ref_of(self, supplement: dict[str, Any]) -> int | None:
         """The pool number of a supplement the approach relies on: the number it had, if the
@@ -478,9 +486,8 @@ class WorkSteps:
         model is shown them and told to keep what still holds. A card whose claim is the same
         keeps its id. Stamps the approach, and nothing after it."""
         if getattr(self.agents, "studio", False):
-            raise ValueError(
-                "This artifact was made by the studio: use make to make it again as a whole."
-            )
+            self._understand_studio(focus)
+            return
 
         work = self.work
         spec = self._load(asking=True)
@@ -502,6 +509,52 @@ class WorkSteps:
         if approach.use and (work.spec.use is None or work.spec.use.mark == "guessed"):
             # What the model chose is the deck's use now, and a guess until the person says.
             work.spec.use = Line(text=approach.use, mark="guessed")
+        work.approach_inputs = digest_approach_inputs(self.brief, work)
+
+    def _planning_material(self) -> tuple[Pool, Notes]:
+        made = Pool(self.pool.limit)
+        made.restore(self.pool.items)
+        notes = self.read_material(made) if self.read_material else self.notes
+        return made, notes
+
+    def _keep_studio_approach(self, approach: dict, made: Pool) -> dict[int, int]:
+        wanted = set(approach_refs(approach))
+        numbers = {
+            ref: self.pool.adopt(item).ref
+            for ref, item in made.by_ref().items()
+            if ref in wanted
+        }
+        self.work.approach = rebind_approach_refs(approach, numbers)
+        return numbers
+
+    def _understand_studio(self, focus: str | None) -> None:
+        work = self.work
+        made, notes = self._planning_material()
+        self._load_use()
+        spec = spec_of(self.brief, work)
+        if focus:
+            spec = replace(spec, brief=f"{spec.brief}\nFocus for this reading: {focus}".lstrip())
+        purpose = (work.approach or {}).get("purpose")
+        with self._noting():
+            approach = self.agents.understand_work(
+                self.model, self.effort, spec, made, notes, self.emit, purpose,
+            )
+        self._keep_studio_approach(approach, made)
+        self._stamp_understanding()
+
+    def _stamp_understanding(self) -> None:
+        work = self.work
+        understood = work.approach or {}
+        rows = (understood.get("memo") or {}).get("insights") or (
+            understood.get("study_map") or {}
+        ).get("claims", [])
+        self._keep_cards([
+            Card(claim=row["claim"], refs=row["refs"], note=row.get("so_what", ""))
+            for row in rows
+        ])
+        work.approach_top = self.pool.top
+        if understood.get("use") and work.spec.use is None:
+            work.spec.use = Line(text=understood["use"], mark="guessed")
         work.approach_inputs = digest_approach_inputs(self.brief, work)
 
     def _keep_cards(self, cards: Sequence[Card]) -> None:
@@ -538,20 +591,18 @@ class WorkSteps:
 
     # 2. Plan --------------------------------------------------------------------------------
 
-    def plan_whole(self) -> None:
+    def plan_whole(self, instruction: str = "") -> None:
         """Plan the outline again from the approach and the cards. A part that is still the
         same keeps its id, and so its text and its checks: one with the same heading (spacing
         and capitals aside) is the same part; so is one with the same cards and the same
         layout. Any other is new. A part that has no place in the new outline is dropped with
         its text. Stamps the outline, and no part."""
-        if getattr(self.agents, "studio", False):
-            raise ValueError(
-                "This artifact was made by the studio: use make to make it again as a whole."
-            )
-
         work = self.work
         if work.approach is None:
             raise ValueError("The approach is not written yet; understand the material first.")
+        if getattr(self.agents, "studio", False):
+            self._plan_studio(instruction)
+            return
         spec = self._load()
         with self._noting():
             title, planned = self.agents.structure(
@@ -566,6 +617,65 @@ class WorkSteps:
         kept = {item.id for item in work.outline}
         work.parts = {key: part for key, part in work.parts.items() if key in kept}
         work.title = title
+        work.outline_inputs = digest_outline_inputs(work)
+        self._announce()
+
+    def _plan_studio(self, instruction: str) -> None:
+        work = self.work
+        made, notes = self._planning_material()
+        self._load_use()
+        spec = spec_of(self.brief, work)
+        saved = work.approach or {}
+        previous = [
+            Planned(item.heading, item.goal, id=item.id, refs=tuple(item.refs))
+            for item in work.outline
+        ]
+        with self._noting():
+            title, planned, approach, refreshed = self.agents.replan_work(
+                self.model, self.effort, spec, made, notes, self.emit, saved, work.cards,
+                previous, instruction,
+            )
+        by_id = {item.id: item for item in work.outline}
+        continued = [plan.id for plan in planned if plan.id]
+        if len(continued) != len(set(continued)) or set(continued) - by_id.keys():
+            raise ValueError("The storyline must use each existing part ID at most once.")
+        numbers = self._keep_studio_approach(approach, made)
+        if refreshed:
+            self._stamp_understanding()
+        known = made.by_ref()
+        taken = set(by_id)
+        outline, parts = [], {}
+        for index, plan in enumerate(planned):
+            old = by_id.get(plan.id)
+            identity = plan.id
+            if not identity:
+                identity, work.next_item = self._fresh("p", work.next_item, taken)
+                taken.add(identity)
+            refs = [numbers[ref] for ref in plan.refs if ref in numbers]
+            refs += [ref for ref in old.refs if ref in known] if old else []
+            part = work.parts.get(identity)
+            cover_changed = (
+                old is not None and self._deck and (index == 0) != (work.outline[0] is old)
+            )
+            same_plan = old is not None and (old.heading, old.goal) == (plan.heading, plan.goal)
+            layout = plan.layout
+            if part and self._deck and same_plan and not cover_changed:
+                layout = studio_fmt.parse_slide(part.text).layout or plan.layout
+            item = ItemRec(
+                id=identity, heading=plan.heading, goal=plan.goal, layout=layout,
+                refs=list(dict.fromkeys(refs)), cards=list(old.cards) if old else [],
+            )
+            if part and old:
+                if cover_changed or set(item.refs) != set(old.refs):
+                    part.inputs = ""
+                elif same_plan and part.inputs == digest_part_inputs(self.brief, work, old):
+                    # Retiring old outline metadata does not invalidate an unchanged draft.
+                    part.inputs = digest_part_inputs(self.brief, work, item)
+                parts[identity] = part
+            outline.append(item)
+        work.outline, work.parts = outline, parts
+        work.title = work.title or title
+        work.outline_review = None
         work.outline_inputs = digest_outline_inputs(work)
         self._announce()
 
@@ -985,6 +1095,7 @@ class WorkSteps:
                 goal=item.goal,
                 layout=item.layout,
                 instruction=instruction if part is not None else None,
+                refs=item.refs,
             )
             if part is not None and section_hash(text) == section_hash(without_design(part.text)):
                 self.emit({"type": "section", "index": index, "state": "done"})

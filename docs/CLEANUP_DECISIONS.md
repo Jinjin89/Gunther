@@ -172,3 +172,24 @@ current client still needs it.
 - Tests that compare against `SkillAgents.make` (the retired engine) are deleted with
   it. Tests that only used the old build route to create a first version switch to
   saved-version fixtures or the Studio fixture gateway.
+
+# Round 6 — no parsing of user intent from free text (batch 04)
+
+Batch 04 widened `requested_pages` with `张`, which also counts figures. The root problem
+is the pattern: `slide_planning.requested_pages` and `studio/pipeline.py:_length` read the
+user's brief with English/Chinese regexes (slides, pages, 页, minutes, 分钟, words, 字) and
+turn the matches into hard rules. Rule from now on: **code never infers what the user
+asked for from free text with word lists or regexes.** The model that already reads the
+brief declares it as structured fields in the reply it already returns (e.g. the
+storyline step adds `requested_count: int | null` and `requested_minutes: int | null`),
+and code validates against those fields. No extra model calls. Default length guidance
+stays plain text. Delete `requested_pages` and the `_length` regexes. Typed UI inputs
+(a number field) are of course fine.
+
+# Round 7 — every batch runs the full backend suite
+
+`test_journal_club.py:259` passed in batch 00 and fails at `321ad62`: batches 01–03
+broke it and the focused suites missed it. From batch 04 on, before stopping, run the
+**full** backend pytest (loopback namespace, as in batch 00), plus the full desktop
+vitest when desktop files changed, and report pass/fail totals in NN.md. The Skills
+planner's private brief parser stays until batch 07 deletes the planner.

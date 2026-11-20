@@ -68,12 +68,7 @@ from gunther.outputs import (
 )
 from gunther.skill_checks import Context, Finding, Page, figures_of, run_checks
 from gunther.skillbook import Skill, SkillStep
-from gunther.slide_planning import (
-    OutlineReview,
-    coverage_record,
-    outline_problems,
-    requested_pages,
-)
+from gunther.slide_planning import OutlineReview, coverage_record, outline_problems
 from gunther.slide_scene import (
     MAX_BLOCKS,
     MAX_DEPTH,
@@ -353,6 +348,26 @@ class EditorialFidelity(BaseModel):
 
 
 # The approach ---------------------------------------------------------------------------------
+
+
+def _requested_pages(brief: str) -> int | None:
+    """Recognize explicit counts, without treating duration or a range as an exact count."""
+    found = list(
+        re.finditer(
+            r"(?<![\d.\-–])\b(\d+)\s*(?:slides?|pages?)\b|(?<![\d.\-–])(\d+)\s*页", brief, re.I
+        )
+    )
+    exact = []
+    for match in found:
+        prefix = brief[max(0, match.start() - 20) : match.start()]
+        if re.search(
+            r"(?:about|around|roughly|approximately|to|至|到|约|大约)\s*$|[\d\s][\-–]\s*$",
+            prefix,
+            re.I,
+        ):
+            continue
+        exact.append(int(match.group(1) or match.group(2)))
+    return exact[-1] if exact else None
 
 
 def _line(text: str, limit: int) -> str:
@@ -1035,7 +1050,7 @@ class SkillAgents(OutputAgents):
         structure = self.skill.step("structure")
         assert step is not None and structure is not None
         _, high = self._bounds(spec)
-        exact = requested_pages(spec.brief)
+        exact = _requested_pages(spec.brief)
         if exact is not None and not 1 <= exact <= high:
             raise ModelError(f"The requested {exact} slides exceed the supported 1–{high} range.")
         for i, page in enumerate(plan.sections, 1):

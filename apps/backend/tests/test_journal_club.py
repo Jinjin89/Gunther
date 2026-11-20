@@ -3,6 +3,7 @@
 import hashlib
 import json
 from copy import deepcopy
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -240,25 +241,46 @@ def test_revision_accepts_slide_ranges_and_records_rejections():
     assert result == DECK and any("rejected" in row["label"] for row in agents.skipped)
 
 
-@pytest.mark.parametrize("change", [None, "asset_id", "source_revision_id", "vision_model"])
-def test_cross_build_readings_need_same_asset_revision_and_model(tmp_path, change):
-    saved = {
-        **READING,
-        "source_revision_id": "rev_study",
-        "vision_model": model().ref,
-        "legible": False,
-        "uncertain": ["Legend unreadable"],
-    }
-    if change:
-        saved[change] = "different"
-    fake = FakeProvider(science_router())
-    agents = StudioAgents(gateway(fake), asset_reader=pixels(tmp_path), reusable_figures=[saved])
+@pytest.mark.parametrize(
+    "change", [None, "legacy", "assetId", "revisionId", "caption", "vision_model"],
+)
+def test_cross_build_readings_require_matching_inputs(tmp_path, change):
+    pool = science_pool()
+    reader = pixels(tmp_path)
+    old_reading = {**READING, "legible": False, "uncertain": ["Legend unreadable"]}
+    original = StudioAgents(
+        gateway(FakeProvider(science_router(reading=old_reading))), asset_reader=reader,
+    )
+    (cached,) = original.read_figures(model(), "low", run(), pool)
+    saved = cached.model_dump()
+    assert cached.source_fingerprint
+
+    asset_id = cached.asset_id
+    if change == "legacy":
+        saved.pop("source_fingerprint")
+        assert S.FigureReading.model_validate(saved).uncertain == ["Legend unreadable"]
+    elif change in {"assetId", "revisionId", "caption"}:
+        for index, passage in enumerate(pool.items):
+            citation, extra = passage.payload
+            figures = [dict(figure, **{change: "different"}) for figure in citation.figures]
+            pool.items[index] = replace(
+                passage, payload=(citation.model_copy(update={"figures": figures}), extra),
+            )
+        if change == "assetId":
+            asset_id = "different"
+
+    eye = model("another-vision-model", vision=True) if change == "vision_model" else model()
+    fake = FakeProvider(science_router(reading={**READING, "asset_id": asset_id}))
+    agents = StudioAgents(gateway(fake, eye), asset_reader=reader, reusable_figures=[saved])
     held = run()
-    readings = agents.read_figures(model(), "low", held, science_pool())
-    assert len(readings) == 1
+    (reading,) = agents.read_figures(eye, "low", held, pool)
     assert len(fake.requests) == (0 if change is None else 1)
     if change is None:
+        assert reading == cached
         assert any("Legend unreadable" in reason for reason in held.limitations)
+    else:
+        assert reading.legible and reading.asset_id == asset_id and reading.source_fingerprint
+        assert (reading.source_fingerprint == cached.source_fingerprint) == (change == "legacy")
     assert agents.trail[-1]["modelCalls"] == len(fake.requests)
 
 

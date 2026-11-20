@@ -78,11 +78,21 @@ Reply with a JSON object:
 
 # 2. Storyline ------------------------------------------------------------------------------
 
+STORY_LENGTH = """\
+In the same JSON reply, return requested_count and requested_minutes as integers or null. \
+Set requested_count only for an exact number of {parts} explicitly requested for this output. \
+Include the {first} in the count. Use null for ranges, approximate counts and counts of figures \
+or other contents inside the output. Set requested_minutes only for an explicitly requested \
+presentation duration in whole minutes. Use null for any field without an explicit request. \
+Apply the latest request when it supersedes an earlier length. Honor the requested length \
+when planning the storyline."""
+
+
 DECK_STORY = """\
 You are a top presentation strategist (think McKinsey engagement manager crossed with a TED \
 speaker coach). Plan the storyline of a {use} deck for: {audience}. Brief: {brief}
 
-Length: {pages}. A {use_word} deck: {use_rule}
+Default length: {pages}. A {use_word} deck: {use_rule}
 
 How great decks are planned:
 - Start from the answer and the audience's questions, not from the material's order. Open \
@@ -119,14 +129,15 @@ The analyst's memo:
 
 Reply with a JSON object:
 {{"title": "deck title, a claim or a sharp framing", "subtitle": "one line",
- "slides": [{{"title": "action title", "layout": "layout id", "job": "what this slide must \
-do and which evidence it uses", "refs": [n]}}]}}"""
+ "requested_count": null, "requested_minutes": null,
+ "slides": [{{"title": "action title", "id": null, "layout": "layout id", \
+"job": "what this slide must do and which evidence it uses", "refs": [n]}}]}}"""
 
 REPORT_STORY = """\
 You are the editor of a top consulting firm's research practice, planning a written report \
 for: {audience}. Brief: {brief}
 
-Length: {pages}.
+Default length: {pages}.
 
 How great reports are planned:
 - Answer first. The executive summary states the answer and the 3–5 findings that support \
@@ -145,8 +156,10 @@ The analyst's memo:
 
 Reply with a JSON object:
 {{"title": "report title", "summary_heading": "the answer as a heading",
+ "requested_count": null, "requested_minutes": null,
+ "summary_id": null, "summary_job": "what the summary must deliver",
  "summary_points": ["finding with number"],
- "sections": [{{"heading": "claim", "job": "what it proves and with which evidence", \
+ "sections": [{{"heading": "claim", "id": null, "job": "what it proves and with which evidence", \
 "exhibits": ["what each exhibit shows"], "refs": [n]}}]}}"""
 
 CRITIC = """\
@@ -546,7 +559,8 @@ Return CoveragePlan.
 
 STUDY_STORY = (
     """Plan a scientific explanation deck. Brief: {brief}. Audience: {audience}.
-Length: {pages}. Delivery: {use}. Follow the study's own argument and study_type: teach a method's
+Default length: {pages}. Delivery: {use}. Follow the study's own argument and study_type: \
+teach a method's
 mechanism and evaluation, an experimental study's central experiments, a theory's assumptions and
 reasoning, or a review's synthesis as appropriate. No fixed paper template, mandatory action titles,
 hero numbers, section dividers or closing business recommendation. Topic titles are fine when clear.

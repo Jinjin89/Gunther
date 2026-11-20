@@ -3867,8 +3867,7 @@ class KnowledgeService:
 
     @staticmethod
     def _reusable_figure_readings(session: Session, base_id: str) -> list[dict]:
-        """Earlier studio decks in this library: readings reused only when pipeline checks the
-        asset, revision and vision model all match."""
+        """Earlier Studio figure records in this library, checked by fingerprint before reuse."""
 
         found: list[dict] = []
         rows = session.scalars(
@@ -5608,19 +5607,22 @@ class KnowledgeService:
                     slide_renderer=self.slide_renderer,
                 )
 
-            studio = make_studio_agents = None
+            studio = make_studio_agents = studio_reading = None
             if self.output_method == "studio":
                 from gunther.studio.pipeline import StudioAgents
                 from gunther.studio.work import StudioWorkAgents
+
+                def studio_reading(made: Pool) -> Notes:
+                    reading_gaps = self._studio_reading(
+                        session, resolved.source_ids, made, pinned=seeds
+                    )
+                    return replace(notes, extraction_gaps=tuple(reading_gaps))
 
                 def studio(
                     spec: Spec, made: Pool, use: str | None, resume=None, checkpoint=None,
                     *, purpose=None, fixed_outline=None,
                 ) -> BuiltOutput:
-                    reading_gaps = self._studio_reading(
-                        session, resolved.source_ids, made, pinned=seeds
-                    )
-                    scoped_notes = replace(notes, extraction_gaps=tuple(reading_gaps))
+                    scoped_notes = studio_reading(made)
                     return StudioAgents(
                         gateway,
                         limits,
@@ -5646,13 +5648,16 @@ class KnowledgeService:
 
                 def make_studio_agents(kind: str) -> StudioWorkAgents:
                     return StudioWorkAgents(
-                        gateway, kind, limits, tools=[tool, *([web] if web else [])], reader=reader
+                        gateway, kind, limits, tools=[tool, *([web] if web else [])], reader=reader,
+                        asset_reader=self.asset_reader,
+                        reusable_figures=self._reusable_figure_readings(session, base_id),
                     )
 
             agent = artifact_agent.ArtifactAgent(
                 artifact_agent.TurnContext(
                     studio=studio,
                     make_studio_agents=make_studio_agents,
+                    studio_reading=studio_reading,
                     workspace=workspace,
                     brief=brief,
                     gateway=gateway,  # type: ignore[arg-type]

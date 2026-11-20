@@ -1,6 +1,7 @@
 """The Artifacts agent's conversations on the backend: the API, bringing in a device's
 conversations, recovering them from the versions that name them, and the tables."""
 
+import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from test_output_skills import (
     SLIDES_OUTLINE,
     saved_skill_output,
 )
-from test_outputs import SIDECAR, app_for, built, library, revise, workspace
+from test_outputs import SIDECAR, app_for, built, library, revise, route, workspace
 
 from gunther.artifact_workspace import (
     Pending,
@@ -33,7 +34,8 @@ from gunther.migrations import (
     get_schema_version,
     run_migrations,
 )
-from gunther.models import ArtifactConversation, ArtifactMessage, Base
+from gunther.models import Artifact, ArtifactConversation, ArtifactMessage, Base
+from gunther.service import manifest_hash_of
 
 
 def conversations(base_id: str, tail: str = "") -> str:
@@ -574,6 +576,50 @@ def test_listing_gives_a_row_to_a_conversation_the_versions_name(tmp_path: Path)
         ]
         with client.app.state.knowledge_service.sessions() as session:
             assert session.scalar(select(func.count()).select_from(ArtifactConversation)) == 2
+
+
+def test_opening_a_saved_skills_plan_uses_the_legacy_reader(tmp_path: Path) -> None:
+    fake, app = a_library(tmp_path)
+    with app as client:
+        service = client.app.state.knowledge_service
+        service.output_method = "studio"
+        base_id, ids = library(client)
+        headers = workspace(client)
+        scope = {"mode": "selection", "sourceIds": list(ids.values())}
+        saved = saved_skill_output(
+            client, base_id, kind="slides", conversationId="old-plan", scope=scope,
+        )
+        with service.sessions() as session:
+            row = session.get(Artifact, saved["id"])
+            outline = json.loads(row.outline_json)
+            outline[0].pop("id", None)
+            outline[1].update(id="p1", heading="Compare the markers", goal="Pair the findings",
+                              message="Old planner message", layout_locked=True)
+            row.outline_json = json.dumps(outline)
+            row.manifest_hash = manifest_hash_of(row)
+            session.commit()
+
+        before = len(fake.requests)
+        client.get(conversations(base_id), headers=headers).raise_for_status()
+        opened = client.get(conversations(base_id, "/old-plan"), headers=headers).json()
+        (shown,) = opened["works"]
+        assert (shown["key"], shown["title"], shown["versionId"]) == (
+            saved["lineageId"], saved["title"], saved["id"],
+        )
+        assert opened["scope"]["sourceIds"] == scope["sourceIds"]
+        assert [part["heading"] for part in shown["parts"]] == [i["heading"] for i in outline]
+        assert all(part["state"] == "ok" for part in shown["parts"])
+        with service.sessions() as session:
+            work, = load_workspace(session.get(ArtifactConversation, "old-plan").state_json).works
+            assert not work.approach.get("method") and not work.approach.get("memo")
+            assert [item.goal for item in work.outline] == [
+                item.get("goal", "") for item in outline
+            ]
+            assert [item.id for item in work.outline] == ["p4", "p1", "p3"]
+            assert work.outline[1].layout_locked
+            assert work.outline[1].message == "Old planner message"
+        read = client.get(route(base_id, saved["id"]), headers=headers).json()
+        assert read["content"] == saved["content"] and len(fake.requests) == before
 
 
 def test_two_requests_for_a_missing_conversation_make_it_once(tmp_path: Path) -> None:

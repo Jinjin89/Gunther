@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from collections.abc import Sequence
 from typing import Any, Literal
 
@@ -35,26 +34,6 @@ class OutlineReview(BaseModel):
     omitted: list[OmittedCard] = Field(default_factory=list, max_length=40)
     requirements: list[ContentRequirement] = Field(default_factory=list, max_length=20)
     factual_pages: list[str] = Field(default_factory=list, max_length=64)
-
-
-def requested_pages(brief: str) -> int | None:
-    """Recognize explicit counts, without treating duration or a range as an exact count."""
-    found = list(
-        re.finditer(
-            r"(?<![\d.\-–])\b(\d+)\s*(?:slides?|pages?)\b|(?<![\d.\-–])(\d+)\s*页", brief, re.I
-        )
-    )
-    exact = []
-    for match in found:
-        prefix = brief[max(0, match.start() - 20) : match.start()]
-        if re.search(
-            r"(?:about|around|roughly|approximately|to|至|到|约|大约)\s*$|[\d\s][\-–]\s*$",
-            prefix,
-            re.I,
-        ):
-            continue
-        exact.append(int(match.group(1) or match.group(2)))
-    return exact[-1] if exact else None
 
 
 def outline_metadata(item: Any) -> dict[str, Any]:

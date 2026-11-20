@@ -23,7 +23,7 @@ import hashlib
 import json
 import logging
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -1138,6 +1138,31 @@ def rebind_approach_refs(value: Any, numbers: Mapping[int, int]) -> Any:
     return value
 
 
+def approach_refs(value: Any) -> Iterator[int]:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key == "refs" and isinstance(item, list):
+                yield from (ref for ref in item if isinstance(ref, int))
+            else:
+                yield from approach_refs(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from approach_refs(item)
+
+
+def approach_in_pool(approach: dict[str, Any], version_map: Sequence[int]) -> dict[str, Any]:
+    """Translate references in saved provenance into the conversation's numbers."""
+    refs = approach.get("ref_map")
+    if refs is None:
+        return approach
+    data = {key: value for key, value in approach.items() if key != "ref_map"}
+    return rebind_approach_refs(data, {
+        int(ref): version_map[number - 1]
+        for ref, number in refs.items()
+        if ref.isdecimal() and 1 <= number <= len(version_map)
+    })
+
+
 def import_work(
     version: ArtifactOut,
     checks: Mapping[str, Mapping[str, Any]],
@@ -1177,18 +1202,26 @@ def import_work(
     )
     approach = getattr(version.provenance, "approach", None)
     if approach is not None:
-        work.approach = approach.model_dump(mode="json")
+        work.approach = approach_in_pool(approach.model_dump(mode="json"), version_map)
     planned = list(version.outline) if len(version.outline) == len(sections) else []
+    work.next_item = max(
+        (int(plan.id[1:]) + 1 for plan in planned if re.fullmatch(r"p[0-9]+", plan.id)),
+        default=1,
+    )
     for position, section in enumerate(sections):
         plan = planned[position] if planned else None
+        identity = plan.id if plan and plan.id not in work.parts else ""
+        if not identity:
+            identity = f"p{work.next_item}"
+            work.next_item += 1
         text, dropped = _translate(section, version_map)
         marked = _marked(section) if kind == "slides" else None
         design = plan.design.model_dump(exclude_none=True) if plan and plan.design else None
         if marked and marked.composition != "standard":
             design = {**(design or {}), "composition": marked.composition}
         item = ItemRec(
-            id=plan.id if plan and plan.id else f"p{work.next_item}",
-            heading=heading_of(section) or (plan.heading if plan else ""),
+            id=identity,
+            heading=(plan.heading if plan else "") or heading_of(section),
             goal=plan.goal if plan else "",
             message=plan.message if plan else "",
             question=plan.question if plan else "",
@@ -1201,7 +1234,6 @@ def import_work(
             design_attempted=plan.design_attempted if plan else False,
             refs=_cited(text),
         )
-        work.next_item += 1
         part = PartRec(text=text, inputs="")
         _take_check(part, section, checks.get(section_hash(section)), version_map)
         work.outline.append(item)
@@ -1349,14 +1381,7 @@ def sync(
     work.title, work.version_map, work.version_id = head.title, version_map, head.id
     if plans and approach:
         work.spec = _spec_of_version(head)
-        work.approach = approach.model_dump(mode="json")
-        if approach.ref_map:
-            numbers = {
-                int(ref): version_map[number - 1]
-                for ref, number in approach.ref_map.items()
-                if ref.isdecimal() and 1 <= number <= len(version_map)
-            }
-            work.approach = rebind_approach_refs(work.approach, numbers)
+        work.approach = approach_in_pool(approach.model_dump(mode="json"), version_map)
         work.cards = []
         _stamp(work, brief)
         return True

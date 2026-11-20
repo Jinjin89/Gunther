@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -17,12 +18,15 @@ from pydantic import BaseModel, Field
 
 from gunther.agent import Evidence, check_citations, renumber_citations
 from gunther.artifact_workspace import (
+    CardRec,
     PartRec,
     Work,
     _section_item,
     _stamp,
     _take_check,
     _translate,
+    approach_in_pool,
+    approach_refs,
     rebind_approach_refs,
 )
 from gunther.llm import ModelError
@@ -32,6 +36,7 @@ from gunther.outputs import (
     Draft,
     Issue,
     Notes,
+    Planned,
     Pool,
     Spec,
     _marked,
@@ -51,7 +56,16 @@ from gunther.studio import design as D
 from gunther.studio import format as fmt
 from gunther.studio import prompts as P
 from gunther.studio import science as S
-from gunther.studio.pipeline import Run, StudioAgents, _no_events, _unfence, source_images_kept
+from gunther.studio.pipeline import (
+    DeckStory,
+    Insight,
+    Memo,
+    Run,
+    StudioAgents,
+    _no_events,
+    _unfence,
+    source_images_kept,
+)
 from gunther.studio.reference import DECK_FORMAT, READ_NOTE, REPORT_FORMAT, STUDY_DECK_FORMAT
 
 logger = logging.getLogger(__name__)
@@ -160,8 +174,13 @@ Reply with a JSON object: {{"understood": "the core message in one sentence", "c
 
 
 class StudioWorkAgents(StudioAgents):
-    def __init__(self, gateway, kind: str, limits=None, *, tools=(), reader=None) -> None:
-        super().__init__(gateway, limits)
+    def __init__(
+        self, gateway, kind: str, limits=None, *, tools=(), reader=None,
+        asset_reader=None, reusable_figures=None,
+    ) -> None:
+        super().__init__(
+            gateway, limits, asset_reader=asset_reader, reusable_figures=reusable_figures,
+        )
         self.studio = True
         self.skill = StudioSkill(kind)
         self.tools = {tool.name: tool for tool in tools}
@@ -170,8 +189,8 @@ class StudioWorkAgents(StudioAgents):
         self.approach = None
         self.outline_review = None
 
-    def _science_run(self, spec: Spec) -> Run | None:
-        data = self.scientific_context or {}
+    def _science_run(self, spec: Spec, saved: dict | None = None) -> Run | None:
+        data = (self.scientific_context if saved is None else saved) or {}
         if data.get("purpose") != "explain_study" or not data.get("study_map"):
             return None
         return Run(
@@ -192,6 +211,68 @@ class StudioWorkAgents(StudioAgents):
             ],
             limitations=list(data.get("limitations") or []),
         )
+
+    def understand_work(self, model, effort, spec, pool, notes, emit, purpose):
+        run, _, _, _ = self._prepare(model, effort, spec, pool, notes, emit, purpose=purpose)
+        return self._saved_approach(run, pool)
+
+    def replan_work(
+        self, model, effort, spec, pool, notes, emit, saved: dict, cards: Sequence[CardRec],
+        outline: Sequence[Planned], instruction: str,
+    ) -> tuple[str, list[Planned], dict, bool]:
+        refs = set(approach_refs(saved))
+        refs.update(ref for card in cards for ref in card.refs)
+        refs.update(ref for part in outline for ref in part.refs)
+        run = self._science_run(spec, saved)
+        # Passage numbers keep their identity across turns, including source revisions.
+        refreshed = bool(refs - pool.by_ref().keys()) or bool(
+            run and (
+                (run.study and S.map_problems(run.study, pool.items))
+                or (run.coverage_plan and S.coverage_problems(run.coverage_plan, pool.items))
+            )
+        )
+        if refreshed:
+            run, material, _, _ = self._prepare(
+                model, effort, spec, pool, notes, emit, purpose=saved.get("purpose"),
+            )
+        else:
+            material = self._notes_text(notes) + self._material(pool.items)
+        if run is None:
+            memo = Memo.model_validate(saved["memo"]) if saved.get("memo") else Memo(
+                answer=saved.get("answer", ""),
+                insights=[
+                    Insight(claim=card.claim, so_what=card.note, refs=card.refs)
+                    for card in cards
+                ],
+            )
+            run = Run(
+                spec, (self.use or "talk") if spec.kind == "slides" else "",
+                memo.language or self._language(spec, pool), memo=memo,
+            )
+        run.story = self.storyline(
+            model, effort, run, material, emit, previous_outline=outline, instruction=instruction,
+            preview_outline=False,
+        )
+        if isinstance(run.story, DeckStory):
+            planned = [
+                Planned(s.title.strip(), s.job, id=s.id or "", layout=s.layout, refs=tuple(s.refs))
+                for s in run.story.slides
+            ]
+        else:
+            planned = [
+                Planned(
+                    run.story.summary_heading.strip() or "Summary", run.story.summary_job,
+                    id=run.story.summary_id or "",
+                )
+            ] + [
+                Planned(s.heading.strip(), s.job, id=s.id or "", refs=tuple(s.refs))
+                for s in run.story.sections
+            ]
+        if any(len(item.heading.splitlines()) != 1 for item in planned):
+            raise ModelError("Outline headings must be single lines.")
+        for item in planned:
+            OutlineItem(heading=item.heading, goal=item.goal, id=item.id)
+        return run.story.title, planned, self._saved_approach(run, pool, len(planned)), refreshed
 
     def final_notes(self, spec, planned, drafts, pool) -> list[dict[str, Any]]:
         """Form problems left in the finished whole, as notes for the version."""
@@ -319,6 +400,7 @@ class StudioWorkAgents(StudioAgents):
         layout: str = "",
         instruction: str | None = None,
         notes: Notes | None = None,
+        refs: Sequence[int] = (),
         on_text=None,
     ) -> str:
         deck = spec.kind == "slides"
@@ -345,7 +427,7 @@ class StudioWorkAgents(StudioAgents):
                 + (f" Its job: {goal}." if goal else "")
                 + (f" Layout: {layout}." if deck and layout else "")
             )
-        cited = [int(n) for n in re.findall(r"\[(\d+)\]", whole)]
+        cited = [*refs, *(int(n) for n in re.findall(r"\[(\d+)\]", whole))]
         material = self._part_material(pool, cited, f"{headings[index]} {goal} {instruction or ''}")
         system = PART_WRITE.format(
             unit=unit,
@@ -588,7 +670,10 @@ def load_built(work: Work, built: BuiltOutput, made: Pool, pool: Pool, brief) ->
     checks = {item["hash"]: item for item in built.checks}
     approach = dict(built.approach or {})
     if scientific_map:
+        approach.pop("ref_map", None)
         approach = rebind_approach_refs(approach, scientific_map)
+    else:
+        approach = approach_in_pool(approach, version_map)
     outline, parts = [], {}
     next_item = work.next_item
     reserved = set(ids)

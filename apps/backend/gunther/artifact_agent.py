@@ -144,10 +144,12 @@ STUDIO_NOTE = """
 This conversation uses the studio method. make: write the whole active artifact at once from \
 the material, as a strong analyst and writer would (what is worth saying, the storyline, every \
 part, checked). With no artifact yet and a clear request: select new:report or new:slides, \
-then make, then save — do not use understand or plan whole. Use make again only when the user \
-wants it remade from scratch (a new focus, audience or length). For changes to parts, use \
-write, edit, plan (insert, delete, move, item) and check as usual; review asks a senior reader \
-for the few parts that most need improving."""
+then make, then save. Use make again when the user wants a complete new draft. For an approach \
+or outline on its own, use understand to read the selected material and plan with change \
+"whole" to plan from the approach. For a replan, put the requested outline change in \
+"instruction". Finish with reply if the user only asked for planning. For changes to parts, \
+use write, edit, plan (insert, delete, move, item) and check as usual. Review asks a senior \
+reader for the few parts that most need improving."""
 
 # What the orchestrator and the answerer are told. Each starts with its own first sentence,
 # so that a test can tell the requests apart.
@@ -876,6 +878,7 @@ class TurnContext:
     # artifact; ``make_studio_agents(kind)`` gives the agents for working on one it made.
     studio: Callable[..., BuiltOutput] | None = None
     make_studio_agents: Callable[[str], Any] | None = None
+    studio_reading: Callable[[Pool], Notes] | None = None
 
 
 def _brief_json(brief: ConversationBrief, spec: WorkSpec | None) -> dict[str, Any]:
@@ -934,6 +937,7 @@ class ArtifactAgent:
         # Each work as the turn found it, to tell what the turn changed; what was done to a
         # part and why, for the change list.
         self.started: dict[str, dict[str, Any]] = {}
+        self.replanned: dict[str, dict[str, Any]] = {}
         self.touched: dict[str, dict[str, tuple[str, str]]] = {}
         for work in self.workspace.works:
             self._remember(work)
@@ -941,7 +945,12 @@ class ArtifactAgent:
     # Bookkeeping -----------------------------------------------------------------------------
 
     def _remember(self, work: Work) -> None:
-        self.started[work.key] = {
+        self.started[work.key] = self._draft_state(work)
+
+    @staticmethod
+    def _draft_state(work: Work) -> dict[str, Any]:
+        return {
+            "title": work.title,
             "ids": [item.id for item in work.outline],
             "headings": {item.id: item.heading for item in work.outline},
             "texts": {key: part.text for key, part in work.parts.items()},
@@ -978,14 +987,15 @@ class ArtifactAgent:
             self.agents[kind] = self.ctx.make_agents(kind)
         return self.agents[kind]
 
-    def _steps(self, work: Work) -> WorkSteps:
+    def _steps(self, work: Work, *, planning: bool = False) -> WorkSteps:
         c = self.ctx
-        agents: Any = self._agents(work.spec.kind)
-        if is_studio(work) and c.make_studio_agents is not None:
+        if (planning or is_studio(work)) and c.make_studio_agents is not None:
             key = f"studio:{work.spec.kind}"
             if key not in self.agents:
                 self.agents[key] = c.make_studio_agents(work.spec.kind)
             agents = self.agents[key]
+        else:
+            agents = self._agents(work.spec.kind)
         return WorkSteps(
             agents,
             work,
@@ -995,6 +1005,7 @@ class ArtifactAgent:
             c.model,
             c.effort,
             c.emit,
+            read_material=c.studio_reading if planning else None,
         )
 
     def _view(self) -> str:
@@ -1248,7 +1259,10 @@ class ArtifactAgent:
         A reply would tell the user of a change they never get."""
 
         work = active_work(self.workspace)
-        if work is None or not self._changes(work):
+        if work is None:
+            return None
+        draft = self._draft_state(work)
+        if draft == self.started.get(work.key) or draft == self.replanned.get(work.key):
             return None
         return (
             "The artifact changed in this turn and is not saved: save it instead (its text is "
@@ -1538,7 +1552,7 @@ class ArtifactAgent:
     def _do_understand(self, m: Mapped) -> Outcome:
         work = active_work(self.workspace)
         assert work is not None
-        steps = self._steps(work)
+        steps = self._steps(work, planning=True)
         steps.understand(m.act.focus.strip() or None)
         note = f"Wrote the approach and {len(work.cards)} material cards"
         if outline_state(work).state == "out_of_date":
@@ -1548,12 +1562,15 @@ class ArtifactAgent:
     def _do_plan(self, m: Mapped) -> Outcome:
         act, work = m.act, active_work(self.workspace)
         assert work is not None
-        steps = self._steps(work)
         unit = _unit(work)
         change = act.change
+        steps = self._steps(work, planning=change == "whole")
         if change == "whole":
             was = {i.id: i for i in work.outline}
-            steps.plan_whole()
+            planning_only = getattr(steps.agents, "studio", False) and self._unsaved() is None
+            steps.plan_whole(act.instruction.strip())
+            if planning_only:
+                self.replanned[work.key] = self._draft_state(work)
             parts = status(work, self.brief)
             changed = sum(1 for p in parts if p.state == "out_of_date")
             added = sum(1 for p in parts if p.state == "not_written")

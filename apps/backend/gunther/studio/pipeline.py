@@ -137,6 +137,7 @@ class Memo(BaseModel):
 
 class StorySlide(BaseModel):
     title: str
+    id: str | None = None
     layout: str = "points"
     job: str = ""
     refs: list[int] = Field(default_factory=list)
@@ -146,7 +147,12 @@ class StorySlide(BaseModel):
     takeaway: str = ""
 
 
-class DeckStory(BaseModel):
+class StoryLength(BaseModel):
+    requested_count: int | None = Field(default=None, gt=0, strict=True)
+    requested_minutes: int | None = Field(default=None, gt=0, strict=True)
+
+
+class DeckStory(StoryLength):
     title: str
     subtitle: str = ""
     slides: list[StorySlide] = Field(min_length=1)
@@ -154,16 +160,19 @@ class DeckStory(BaseModel):
 
 class StorySection(BaseModel):
     heading: str
+    id: str | None = None
     job: str = ""
     exhibits: list[str] = Field(default_factory=list)
     refs: list[int] = Field(default_factory=list)
 
 
-class ReportStory(BaseModel):
+class ReportStory(StoryLength):
     title: str
+    summary_id: str | None = None
     summary_heading: str = ""
+    summary_job: str = ""
     summary_points: list[str] = Field(default_factory=list)
-    sections: list[StorySection] = Field(min_length=1)
+    sections: list[StorySection]
 
 
 class Problem(BaseModel):
@@ -210,6 +219,18 @@ def _outline_text(plan: Sequence[Planned]) -> str:
 
 def _matches_plan(run: Run, parts: Sequence[str]) -> bool:
     return not run.plan or [heading_of(part) for part in parts] == [p.heading for p in run.plan]
+
+
+def _validate_count(story: DeckStory | ReportStory, actual: int, stage: str) -> None:
+    count = story.requested_count
+    if count is not None and actual != count:
+        unit = "slides" if isinstance(story, DeckStory) else "sections"
+        raise ModelError(f"The {stage} has {actual} {unit}. The brief asks for {count}.")
+
+
+def _validate_storyline(run: Run, story: DeckStory | ReportStory) -> None:
+    parts = len(story.slides) if isinstance(story, DeckStory) else 1 + len(story.sections)
+    _validate_count(story, len(run.plan) if run.plan else parts, "outline")
 
 
 def _keeps_heading(run: Run, original: str, repaired: Sequence[str]) -> bool:
@@ -1146,30 +1167,20 @@ class StudioAgents(OutputAgents):
     # 3. Storyline -------------------------------------------------------------------------
 
     def _length(self, run: Run) -> str:
-        spec = run.spec
-        brief = spec.brief
-        minutes = re.search(r"(\d+)\s*(?:-|\s)?\s*(?:min|minute|分钟)", brief, re.I)
-        pages = re.search(r"(\d+)\s*(?:slides|pages|页|张)", brief, re.I)
-        if spec.kind == "slides":
-            if pages:
-                return f"exactly {pages.group(1)} slides, as the brief asks"
+        if run.spec.kind == "slides":
             if run.study:
-                duration = f" within {minutes.group(1)} minutes" if minutes else ""
                 return (
                     "as many slides as needed to teach the central method and source figures"
-                    + duration
-                    + "; split complex figures into explanatory sequences, never shrink evidence"
+                    "; split complex figures into explanatory sequences, never shrink evidence"
                 )
-            if minutes:
-                count = max(5, min(20, round(int(minutes.group(1)) * 0.9)))
-                return f"about {count} slides for {minutes.group(1)} minutes"
             return "as many slides as the argument needs, usually 8–12; never pad"
-        words = re.search(r"(\d+)\s*(?:words|字)", brief, re.I)
-        if words:
-            return f"about {words.group(1)} words"
         return "as long as the argument needs, usually 1,500–3,000 words in 4–7 sections"
 
-    def storyline(self, model, effort, run: Run, material: str, emit: Events):
+    def storyline(
+        self, model, effort, run: Run, material: str, emit: Events, *,
+        previous_outline: Sequence[Planned] = (), instruction: str = "",
+        preview_outline: bool = True,
+    ) -> DeckStory | ReportStory:
         spec = run.spec
         self._stage(emit, "story", "Planning the storyline", "running")
         memo = (
@@ -1195,11 +1206,34 @@ class StudioAgents(OutputAgents):
                 pages=self._length(run),
                 memo=memo,
             )
+        deck = spec.kind == "slides"
+        system += "\n\n" + P.STORY_LENGTH.format(
+            parts="slides" if deck else "report sections",
+            first="title slide" if deck else "summary",
+        )
         if run.plan:
-            system += "\nThe approved outline, in order:\n" + _outline_text(run.plan)
+            system += (
+                "\nThe approved outline sets the count and order, superseding earlier counts.\n"
+                "The approved outline, in order:\n" + _outline_text(run.plan)
+            )
+        if previous_outline:
+            system += (
+                "\nThe existing outline, in order. Preserve headings, goals and order where "
+                "they still fit the brief and the requested change. Return the existing id for "
+                "each continuing part, even if its title or position changes. Use null for a new "
+                "part and omit removed parts. Return the report summary's id as summary_id. "
+                "Keep only claims supported by the selected material.\n"
+                + json.dumps(
+                    [{"id": p.id, "heading": p.heading, "goal": p.goal} for p in previous_outline],
+                    ensure_ascii=False,
+                )
+            )
+        if instruction:
+            system += "\nRequested change to the outline: " + instruction
         figures = self._figures(material)
         system, prompt = material_request(material, system + figures)
         story = self._json(model, schema, system, prompt, effort)
+        length = story.model_dump(include={"requested_count", "requested_minutes"})
         run.reviews = []
         for round_ in range(CRITIC_ROUNDS):
             review = self.critique(model, run, story, material)
@@ -1235,13 +1269,17 @@ class StudioAgents(OutputAgents):
                 break
         if isinstance(story, DeckStory):
             story = self._tidy_deck_story(story)
+        story = story.model_copy(update=length)
+        _validate_storyline(run, story)
         self._stage(emit, "story", "Planning the storyline", "done", story.title)
         emit({"type": "storyline", "storyline": story.model_dump()})
+        if not preview_outline:
+            return story
         # The planned titles, as the live outline the app already shows while a build runs.
         planned = (
             [{"heading": s.title, "goal": s.job} for s in story.slides]
             if isinstance(story, DeckStory)
-            else [{"heading": story.summary_heading or "Summary", "goal": ""}]
+            else [{"heading": story.summary_heading or "Summary", "goal": story.summary_job}]
             + [{"heading": s.heading, "goal": s.job} for s in story.sections]
         )
         if run.plan:
@@ -1260,7 +1298,7 @@ class StudioAgents(OutputAgents):
         for index, slide in enumerate(slides[1:], 1):
             if slide.layout == "title":
                 slides[index] = replace_layout(slide, "statement")
-        return DeckStory(title=story.title, subtitle=story.subtitle, slides=slides)
+        return story.model_copy(update={"slides": slides})
 
     def critique(self, model, run: Run, story, material: str) -> Review:
         spec = run.spec
@@ -1343,6 +1381,8 @@ class StudioAgents(OutputAgents):
         )
         if run.plan:
             system += "\nUse the approved slide titles in order:\n" + _outline_text(run.plan)
+        if story.requested_minutes is not None:
+            system += f"\nWrite speaker notes for a talk lasting {story.requested_minutes} minutes."
         system, prompt = material_request(material, system + self._figures(material))
         text = self._text(model, system, prompt, effort, max_tokens=24_000)
         deck = _unfence(text)
@@ -1361,6 +1401,7 @@ class StudioAgents(OutputAgents):
             )
             slides += fmt.split_slides(_unfence(more))
         slides = self._title_marker([fmt.strip_labels(slide) for slide in slides], theme)
+        _validate_count(story, len(slides), "written deck")
         if not _matches_plan(run, slides):
             raise ModelError("The written deck did not follow the approved outline.")
         self._stage(emit, "write", "Writing the slides", "done", f"{len(slides)} slides")
@@ -1476,7 +1517,7 @@ class StudioAgents(OutputAgents):
         system = P.REPORT_WRITE.format(
             brief=spec.brief or "(none)",
             audience=spec.audience,
-            length=f"Length: {self._length(run)}.",
+            length=f"Default length when the brief gives none: {self._length(run)}.",
             language=P.LANGUAGE.format(language=run.language),
             format=REPORT_FORMAT,
             memo=self._memo_text(run.memo) if run.memo else "",
@@ -1943,32 +1984,24 @@ class StudioAgents(OutputAgents):
     # The whole run ------------------------------------------------------------------------
 
     @usage.job("outputs")
-    def make(
+    def _prepare(
         self,
         model: ModelInfo,
         effort: Effort | None,
         spec: Spec,
         pool: Pool,
         notes: Notes,
-        events: Events | None = None,
+        emit: Events,
         *,
-        fallback_title: str = "",
         purpose: str | None = None,
         fixed_outline: Sequence[Planned] | None = None,
         scope: Mapping[str, Any] | None = None,
         web: bool = False,
         resume: dict[str, Any] | None = None,
         checkpoint: Any = None,
-        **_ignored: Any,
-    ) -> BuiltOutput:
-        """``resume``: what an earlier, failed or stopped run finished; ``checkpoint(state)``
-        hears that state after each step, so a failure or a Stop later does not lose it.
+    ) -> tuple[Run, str, dict[str, Any], dict[str, Any]]:
+        """Read and understand the material for a build or a standalone Understand."""
 
-        Reuse binds source work to the evidence and scope, and later stages to the request and
-        approved plan. A changed brief can reuse a study map and figure readings from the same
-        material. A matching request can carry on after a Stop."""
-
-        emit = events or _no_events
         if not (pool.items or notes.knowledge or notes.discussions):
             raise ModelError("There is no material to work from: choose some sources first.")
         use = self.use or ("read" if re.search(READ_HINT, spec.brief, re.I) else "talk")
@@ -2093,6 +2126,34 @@ class StudioAgents(OutputAgents):
                 checkpoint(dict(state))
             if run.memo.language:
                 run.language = run.memo.language
+        return run, material, state, saved
+
+    def make(
+        self,
+        model: ModelInfo,
+        effort: Effort | None,
+        spec: Spec,
+        pool: Pool,
+        notes: Notes,
+        events: Events | None = None,
+        *,
+        fallback_title: str = "",
+        purpose: str | None = None,
+        fixed_outline: Sequence[Planned] | None = None,
+        scope: Mapping[str, Any] | None = None,
+        web: bool = False,
+        resume: dict[str, Any] | None = None,
+        checkpoint: Any = None,
+        **_ignored: Any,
+    ) -> BuiltOutput:
+        """Reuse completed stages only when their material and request still match."""
+
+        emit = events or _no_events
+        run, material, state, saved = self._prepare(
+            model, effort, spec, pool, notes, emit, purpose=purpose, fixed_outline=fixed_outline,
+            scope=scope, web=web, resume=resume, checkpoint=checkpoint,
+        )
+        plan = run.plan
         same_science = (
             saved.get("coverage_key") == state.get("coverage_key")
             and saved.get("coverage_plan") == state.get("coverage_plan")
@@ -2104,6 +2165,7 @@ class StudioAgents(OutputAgents):
         if reuse_story:
             schema = DeckStory if spec.kind == "slides" else ReportStory
             run.story = schema.model_validate(saved["storyline"])
+            _validate_storyline(run, run.story)
             self._stage(emit, "story", "Planning the storyline", "done", "kept from before")
         else:
             run.story = self.storyline(model, effort, run, material, emit)
@@ -2223,6 +2285,7 @@ class StudioAgents(OutputAgents):
             title = outline[0].heading if outline else (run.story.title or fallback_title)
 
             def assemble_deck(parts: list[Draft]) -> BuiltOutput:
+                _validate_count(run.story, len(parts), "assembled deck")
                 if not _matches_plan(run, [d.text for d in parts]):
                     raise ModelError("The deck no longer follows the approved outline.")
                 planned = [
@@ -2269,12 +2332,32 @@ class StudioAgents(OutputAgents):
             ]
             title = run.story.title or fallback_title
             built = self.assemble(spec, title, preamble, drafts, pool, outline, model, effort)
-            if len(split_document(built.content, "report")[1]) != len(outline):
+            count = len(split_document(built.content, "report")[1])
+            _validate_count(run.story, count, "assembled report")
+            if count != len(outline):
                 raise ModelError("The assembled report does not match its outline.")
-        approach = {
+        return replace(
+            built,
+            approach=self._saved_approach(run, pool, len(drafts)) | {
+                "question": spec.brief,
+                "ref_map": {str(ref): n for n, ref in enumerate(built.pool_refs, 1)},
+            },
+            skill={
+                "name": "studio",
+                "version": 1,
+                "skipped": self.skipped,
+                "trail": self.trail,
+                **({"look": looked} if looked else {}),
+                **({"renderCheck": snapshot} if snapshot else {}),
+            },
+        )
+
+    @staticmethod
+    def _saved_approach(run: Run, pool: Pool, pages: int | None = None) -> dict[str, Any]:
+        return {
             "method": "studio",
             # The fields an approach has everywhere (Approach.saved_as reads them).
-            "question": spec.brief,
+            "question": run.spec.brief,
             "purpose": run.purpose.purpose if run.purpose else "general",
             "purpose_reason": run.purpose.reason if run.purpose else None,
             # A scientific deck's argument and checks; absent on every other artifact.
@@ -2288,7 +2371,7 @@ class StudioAgents(OutputAgents):
             "allowed_assets": S.allowed_assets(pool.items) if run.study else None,
             "structure": "",
             "structure_reason": "",
-            "pages": len(drafts) if spec.kind == "slides" else None,
+            "pages": pages if run.spec.kind == "slides" else None,
             "supplements": [],
             "gaps": run.study.limitations
             if run.study
@@ -2300,20 +2383,7 @@ class StudioAgents(OutputAgents):
             "memo": run.memo.model_dump() if run.memo else None,
             "storyline": run.story.model_dump() if run.story else None,
             "reviews": [r.model_dump() for r in run.reviews or []],
-            "ref_map": {str(ref): n for n, ref in enumerate(built.pool_refs, 1)},
         }
-        return replace(
-            built,
-            approach=approach,
-            skill={
-                "name": "studio",
-                "version": 1,
-                "skipped": self.skipped,
-                "trail": self.trail,
-                **({"look": looked} if looked else {}),
-                **({"renderCheck": snapshot} if snapshot else {}),
-            },
-        )
 
 
 def _chart_rows_supported(
