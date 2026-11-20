@@ -19,7 +19,7 @@ import logging
 import re
 import uuid
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -49,7 +49,7 @@ from gunther.artifact_workspace import (
 )
 from gunther.llm import ModelError, ModelGateway, ModelInfo, Turn
 from gunther.model_profiles import Effort
-from gunther.outputs import ACCENTS, BuiltOutput, Notes, Pool, _marked, layout_of
+from gunther.outputs import ACCENTS, BuiltOutput, Notes, Planned, Pool, _marked, layout_of
 from gunther.run_budget import RunBudget
 from gunther.skill_runner import SkillAgents
 from gunther.skillbook import skill_for
@@ -1495,12 +1495,24 @@ class ArtifactAgent:
         made = Pool(1_000_000)
         made.restore(list(self.pool.items))
         use = _fold_use(work)
-        resume = (work.approach or {}).get("studio_progress")
-        if resume is None and (work.approach or {}).get("purpose") == "explain_study":
+        approach = work.approach or {}
+        current = approach_state(work, self.brief).state
+        outline = [
+            Planned(item.heading, item.goal, id=item.id) for item in work.outline
+        ] if current != "out_of_date" and outline_state(work).state == "ok" else None
+        if work.outline and spec.kind == "slides":
+            cover = work.parts.get(work.outline[0].id)
+            if cover:
+                attrs = studio_format.parse_slide(cover.text).attrs
+                theme = attrs.get("theme")
+                spec = replace(spec, theme=theme if theme in studio_format.THEMES else spec.theme,
+                               deck_style=attrs.get("style"))
+        resume = approach.get("studio_progress")
+        if resume is None and approach.get("purpose") == "explain_study":
             resume = {
                 "previous_purpose": {
                     "purpose": "explain_study",
-                    "reason": work.approach.get("purpose_reason") or "Kept from this deck",
+                    "reason": approach.get("purpose_reason") or "Kept from this deck",
                 },
                 "brief": spec.brief,
                 "passages": len(made),
@@ -1510,7 +1522,11 @@ class ArtifactAgent:
             # Kept in the work (the workspace is saved even when the turn fails).
             work.approach = {**(work.approach or {}), "studio_progress": state}
 
-        built = c.studio(spec, made, use, resume, keep)
+        built = c.studio(
+            spec, made, use, resume, keep,
+            purpose=approach.get("purpose") if current == "ok" else None,
+            fixed_outline=outline,
+        )
         load_built(work, built, made, self.pool, self.brief)
         name = "deck" if work.spec.kind == "slides" else "report"
         return Outcome(

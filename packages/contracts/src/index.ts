@@ -1494,7 +1494,7 @@ export interface BuildOutputRequest {
   /** Reports only; an overview when left out. */
   style?: OutputStyle;
   /** Slides only: the visual theme to retain when rebuilding an existing deck. */
-  theme?: "classic" | "briefing" | "editorial" | "keynote";
+  theme?: "classic" | "briefing" | "editorial" | "keynote" | "paper" | "ink" | "brand";
   designVersion?: 0 | 1;
   audience: ArtifactAudience;
   brief?: string;

@@ -580,6 +580,35 @@ describe("reading, versions and editing", () => {
     await user.clear(screen.getByRole("textbox", { name: "Heading 2" })); await user.type(screen.getByRole("textbox", { name: "Heading 2" }), "Plasma cells"); await user.click(screen.getByRole("button", { name: "Move 2 up" })); await user.click(screen.getByRole("button", { name: "Rebuild with this outline" }));
     expect(build.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ supersedesArtifactId: "art_1", outline: [{ heading: "Plasma cells", goal: "", layoutLocked: false, designLocked: false, designAttempted: false }, { heading: "T cells", goal: "How T cells are told apart", layoutLocked: false, designLocked: false, designAttempted: false }] }));
   });
+  it("opens a saved Studio outline and rebuilds with headings, goals and order", async () => {
+    const user = userEvent.setup();
+    const first = deck(1, {
+      content: deckContent.replace("layout: title -->", "layout: title; design: v2; theme: ink -->"),
+      outline: [
+        { id: "cover", heading: "Deck", goal: "" },
+        { id: "costs", heading: "Costs", goal: "", layout: "points", layoutLocked: true, designLocked: true, message: "An earlier plan", requires: ["retired"] },
+        { id: "results", heading: "Results", goal: "" },
+      ],
+    });
+    const build = vi.spyOn(knowledgeApi, "buildOutputStream").mockResolvedValue(deck(2));
+    await setup({ history: [first], web: true });
+    await showControls(user);
+    await user.click(screen.getByRole("button", { name: /Outline/ }));
+    await user.click(screen.getByRole("button", { name: "Edit outline" }));
+    expect(screen.queryByLabelText("Layout 2")).toBeNull();
+    expect(screen.queryByLabelText("Message 2")).toBeNull();
+    await user.type(screen.getByRole("textbox", { name: "Goal 2" }), "Explain the costs");
+    await user.click(screen.getByRole("button", { name: "Move 2 down" }));
+    await user.click(screen.getByRole("button", { name: "Rebuild with this outline" }));
+    const request = build.mock.calls[0]?.[1];
+    expect(request).toMatchObject({ kind: "slides", theme: "ink", supersedesArtifactId: first.id });
+    expect(request?.outline).toEqual([
+      { id: "cover", heading: "Deck", goal: "" },
+      { id: "results", heading: "Results", goal: "" },
+      { id: "costs", heading: "Costs", goal: "Explain the costs" },
+    ]);
+    expect(request).not.toHaveProperty("web");
+  });
   it("retains the skill's approach and rebuilds with the edited question", async () => {
     const user = userEvent.setup(); const first = version(1, { provenance: { ...version().provenance, skill: { name: "report", version: 1, skipped: [] }, approach: { question: "Which marker?", answer: "CD3D", purpose: "Scientists", structure: "which", structureReason: "A choice", pages: null, supplements: [], gaps: [] } } });
     const build = vi.spyOn(knowledgeApi, "buildOutputStream").mockResolvedValue(version(2)); await setup({ history: [first] }); await showControls(user);

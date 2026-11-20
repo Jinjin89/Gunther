@@ -31,7 +31,7 @@ LAYOUTS = (
     "points",
     "actions",
 )
-THEMES = ("paper", "ink", "editorial")
+THEMES = ("paper", "ink", "editorial", "brand")
 # The looks a designed deck can take (gunther/studio/styles/<name>.md).
 STYLES = ("light", "dark", "bold")
 CHART_KINDS = ("bar", "column", "line")

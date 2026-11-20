@@ -1,11 +1,13 @@
 import contextlib
 import json
 import re
+from dataclasses import replace
 
+import pytest
 from fake_models import FakeProvider, gateway, model
 
-from gunther.agent import Evidence
-from gunther.outputs import Notes, Pool, Spec
+from gunther.agent import Evidence, Tool
+from gunther.outputs import Issue, Notes, Planned, Pool, Spec, split_document
 from gunther.schemas import ConversationCitationOut
 from gunther.studio import format as fmt
 from gunther.studio.pipeline import StudioAgents
@@ -103,6 +105,12 @@ def request_text(request):
 
 def router(request):
     system = request_text(request)
+    if "knowledge assertions" in system:
+        return '{"assertions": []}'
+    if "planning a written report" in system:
+        return json.dumps({"title": "Findings", "sections": [{"heading": "Results"}]})
+    if "Write the report" in system:
+        return "# Findings\n\n## Results\nThe trial establishes the outcome [1]."
     if "You own the presentation purpose decision" in system:
         return json.dumps({"purpose": "general", "reason": "A general briefing"})
     if "Choose the visual style" in system:
@@ -184,10 +192,79 @@ def test_a_deck_is_made_in_the_new_format_and_an_unstated_chart_value_becomes_a_
     assert len(asked) <= 11
 
 
+def test_a_direct_deck_rebuild_keeps_approved_headings_through_repairs(tmp_path):
+    from test_outputs import app_for, body, build, built, library
+
+    base_slides = fmt.split_slides(DECK)
+    draft = DECK.replace("## The trial was large enough to trust the direction", "## Costs")
+    attempted = set()
+
+    def repair(request):
+        task = request_text(request)
+        if "Slide 2 as written:" in task:
+            attempted.add("format")
+            return base_slides[1]
+        if "fact-checker" in task:
+            attempted.add("claim")
+            return base_slides[2].replace("7 [2]", "9 [2]").replace(
+                "## Weather adjustment halves the saving", "## The adjusted estimate is lower"
+            )
+        return draft if "presentation writer" in task else router(request)
+
+    fake = FakeProvider(router)
+    with app_for(tmp_path, fake) as client:
+        client.app.state.knowledge_service.output_method = "studio"
+        base, _ = library(client, notes={f"Source {n}": text for n, text in enumerate(PASSAGES, 1)})
+        first = built(build(client, base, body(kind="slides", use="talk")))
+        approved = first["outline"]
+        approved[1]["heading"] = "Costs"
+        fake.replies[:] = [repair]
+        rebuilt = built(build(client, base, body(
+            kind="slides", use="talk", outline=approved, supersedesArtifactId=first["id"],
+        )))
+        slides = [fmt.parse_slide(text) for text in fmt.split_slides(rebuilt["content"])]
+        assert attempted == {"format", "claim"}
+        assert [slide.title for slide in slides] == [row["heading"] for row in approved]
+        assert slides[2].layout == "table"
+
+
+def test_report_repair_cannot_add_a_section_or_displace_the_existing_work(monkeypatch):
+    from gunther.artifact_workspace import ConversationBrief, Work, WorkSpec
+    from gunther.llm import ModelError
+    from gunther.studio.work import load_built
+
+    agents = StudioAgents(gateway(FakeProvider(router)))
+    monkeypatch.setattr(
+        agents, "_claims", lambda *a, **k: ([Issue("Trial", "unsupported", "")], None)
+    )
+    monkeypatch.setattr(
+        agents, "_fix_claims", lambda *a, **k: ["## Results\nA repair.\n\n## Added\nExtra."]
+    )
+    made = pool()
+    built = agents.make(
+        model(), "high", Spec("report", "scientist"), made, Notes(),
+        fixed_outline=[Planned("Results", id="results")],
+    )
+    assert len(split_document(built.content, "report")[1]) == 1
+    assert "The trial establishes the outcome" in built.content
+
+    work = Work(key="work", spec=WorkSpec(kind="report"))
+    brief, sources = ConversationBrief(), Pool(50)
+    load_built(work, built, made, sources, brief)
+    before, prior_refs = work.model_dump(), sources.by_ref()
+    with pytest.raises(ModelError, match="does not match its outline"):
+        load_built(
+            work, replace(built, content=built.content + "\n\n## Added\nExtra."),
+            made, sources, brief,
+        )
+    assert work.model_dump() == before
+    assert sources.by_ref() == prior_refs
+
+
 def test_a_conversation_makes_a_studio_deck_in_one_action_and_can_rewrite_one_slide(tmp_path):
     from fake_models import orchestrator_replies
     from test_artifact_agent import done, kept, turn
-    from test_outputs import app_for, library, workspace
+    from test_outputs import app_for, library, route, workspace
 
     from gunther.studio.work import is_studio
 
@@ -227,9 +304,29 @@ def test_a_conversation_makes_a_studio_deck_in_one_action_and_can_rewrite_one_sl
         assert result["outcome"] == "saved", result
         content = result["artifact"]["content"]
         assert "design: v2" in content and "## The trial was large" in content
-        workspace, _ = kept(client, "talk")
-        work = workspace.works[0]
+        held, _ = kept(client, "talk")
+        work = held.works[0]
         assert is_studio(work) and len(work.outline) == 3
+        deck = result["artifact"]
+        themed = deck["content"].replace("theme: paper; style: light", "theme: ink; style: dark")
+        assert themed != deck["content"]
+        themed = themed.replace("Note: Size first.", "Note: State the sample limits.")
+        updated = client.post(route(base_id, deck["id"], "/edits"), headers=workspace(client),
+                              json={"clientRequestId": "edit_deck_style", "content": themed})
+        assert updated.status_code in (200, 201), updated.text
+        before = len(fake.requests)
+        goal = "Focus on the budget evidence"
+        fake.replies[:] = [orchestrator_replies([{
+            "brief": [{"field": "goal", "text": goal, "quote": goal}],
+            "actions": [{"do": "make"}, {"do": "save", "text": "Refocused the deck."}],
+        }], inner)]
+        replanned = done(turn(client, base_id, "talk", goal))
+        assert replanned["outcome"] == "saved", replanned["reply"]
+        tasks = [request_text(r) for r in fake.requests[before:]]
+        assert any("presentation strategist" in task for task in tasks)
+        assert not any("Choose the visual style" in task for task in tasks)
+        cover = fmt.parse_slide(fmt.split_slides(replanned["artifact"]["content"])[0])
+        assert cover.attrs["theme"] == "ink" and cover.attrs["style"] == "dark"
         fake.replies[:] = [
             orchestrator_replies(
                 [
@@ -319,6 +416,46 @@ def test_a_failed_build_resumes_after_its_memo_and_storyline():
     again = [request_text(r) for r in fake.requests[before:]]
     assert not any("lead analyst" in s or "presentation strategist" in s for s in again)
     assert "design: v2" in built.content
+
+
+def test_report_rebuild_fingerprints_style_intent_and_replays_legacy(tmp_path, monkeypatch):
+    from test_outputs import app_for, body, build, built, library
+
+    from gunther.models import Artifact
+    from gunther.schemas import BuildOutputInput
+
+    queries = []
+    with app_for(tmp_path, FakeProvider(router)) as client:
+        service = client.app.state.knowledge_service
+        service.output_method = "studio"
+        web = Tool("search_web", "Public web", lambda query: queries.append(query) or [], "web")
+        monkeypatch.setattr(service, "_web_tool", lambda wanted: (web if wanted else None, None))
+        base, _ = library(client)
+        outline = [{"heading": "Results", "id": "results", "goal": "Explain the result",
+                    "layout": "points", "layoutLocked": True, "requires": ["older"]}]
+        first = built(build(client, base, body(style="decision_brief", outline=outline)))
+        request = body(supersedesArtifactId=first["id"], outline=outline, brief="Budget", web=True)
+        inherited = built(build(client, base, request))
+        assert inherited["style"] == "decision_brief" and queries == ["Budget"]
+        assert inherited["outline"] == [{"heading": "Results", "id": "results",
+                                         "goal": "Explain the result"}]
+        assert built(build(client, base, request))["id"] == inherited["id"]
+        assert build(client, base, dict(request, style="auto"))[-1][1]["status"] == 409
+
+        reset = body(style="auto", supersedesArtifactId=inherited["id"], outline=outline)
+        assert built(build(client, base, reset))["style"] == "auto"
+        assert build(client, base, {k: v for k, v in reset.items() if k != "style"})[-1][1][
+            "status"
+        ] == 409
+        with service.sessions() as session:
+            row = session.get(Artifact, inherited["id"])
+            row.request_fingerprint = service._output_fingerprint(
+                row.workspace_id, base, "build",
+                service._output_request_fields(BuildOutputInput.model_validate(request)),
+            )
+            session.commit()
+        assert built(build(client, base, request))["id"] == inherited["id"]
+        assert queries == ["Budget"]
 
 
 # Render and look ------------------------------------------------------------------------

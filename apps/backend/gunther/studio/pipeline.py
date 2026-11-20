@@ -14,9 +14,10 @@ import json
 import logging
 import re
 import time
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from copy import copy
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from threading import Lock
 from typing import Any
 
@@ -27,6 +28,7 @@ from gunther.agent import Evidence
 from gunther.llm import Image, ModelError, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.outputs import (
+    STYLES,
     BuiltOutput,
     Draft,
     Events,
@@ -38,9 +40,11 @@ from gunther.outputs import (
     Spec,
     check_citations,
     figure_lines,
+    heading_of,
     split_document,
 )
 from gunther.skill_checks import figures_of
+from gunther.slide_render import digest
 from gunther.studio import design as D
 from gunther.studio import format as fmt
 from gunther.studio import prompts as P
@@ -141,7 +145,7 @@ class StorySlide(BaseModel):
 class DeckStory(BaseModel):
     title: str
     subtitle: str = ""
-    slides: list[StorySlide] = Field(min_length=2)
+    slides: list[StorySlide] = Field(min_length=1)
 
 
 class StorySection(BaseModel):
@@ -189,10 +193,23 @@ class Run:
     review_status: str | None = None
     # The notes made when the material was too long to give whole and was read part by part.
     read_digest: str = ""
+    plan: tuple[Planned, ...] = ()
 
 
 def _no_events(_event: dict[str, Any]) -> None:
     return None
+
+
+def _outline_text(plan: Sequence[Planned]) -> str:
+    return "\n".join(f"{n}. {p.heading} — goal: {p.goal}" for n, p in enumerate(plan, 1))
+
+
+def _matches_plan(run: Run, parts: Sequence[str]) -> bool:
+    return not run.plan or [heading_of(part) for part in parts] == [p.heading for p in run.plan]
+
+
+def _keeps_heading(run: Run, original: str, repaired: Sequence[str]) -> bool:
+    return not run.plan or (len(repaired) == 1 and heading_of(repaired[0]) == heading_of(original))
 
 
 def _in_context(function):
@@ -598,20 +615,26 @@ class StudioAgents(OutputAgents):
             self._science_limit(run, "Source image pixels are unavailable; figures were not read.")
             return []
         eye, eye_effort = selected
-        revisions: dict[str, str] = {}
-        for item in pool.items:
-            for figure in figures_of(item):
-                revisions.setdefault(figure["assetId"], figure.get("revisionId") or "")
         self._stage(emit, "figures", "Looking at the figures", "running")
 
         def read(asset_id: str) -> S.FigureReading | None:
+            passages = [
+                e for e in pool.items if any(f["assetId"] == asset_id for f in figures_of(e))
+            ]
+            source = next(f for f in figures_of(passages[0]) if f["assetId"] == asset_id)
+            prompt = (
+                f"asset_id: {asset_id}\nLinked claims: "
+                + "\n".join(
+                    c.model_dump_json()
+                    for c in run.study.claims
+                    if any(f.asset_id == asset_id for f in c.figures)
+                )
+                + "\nCaption, provenance and linked passages:\n"
+                + self._material(passages)
+            )
+            fingerprint = digest([prompt, S.pool_print(passages), eye.ref, eye_effort])
             reusable = next(
-                (
-                    row
-                    for row in self.reusable_figures
-                    if (row.get("asset_id"), row.get("source_revision_id"), row.get("vision_model"))
-                    == (asset_id, revisions.get(asset_id), eye.ref)
-                ),
+                (r for r in self.reusable_figures if r.get("source_fingerprint") == fingerprint),
                 None,
             )
             if reusable is not None:
@@ -626,9 +649,6 @@ class StudioAgents(OutputAgents):
                     return reading
                 except ValueError:
                     pass  # an old saved shape is reread, never guessed
-            passages = [
-                e for e in pool.items if any(f["assetId"] == asset_id for f in figures_of(e))
-            ]
             # The study map step already bounded these IDs to the chosen passages and revision.
             try:
                 path, media, _name = self.asset_reader(asset_id)
@@ -637,21 +657,15 @@ class StudioAgents(OutputAgents):
                     eye,
                     S.FigureReading,
                     system=P.FIGURE_READ,
-                    prompt=f"asset_id: {asset_id}\nLinked claims: "
-                    + "\n".join(
-                        c.model_dump_json()
-                        for c in run.study.claims
-                        if any(f.asset_id == asset_id for f in c.figures)
-                    )
-                    + "\nCaption, provenance and linked passages:\n"
-                    + self._material(passages),
+                    prompt=prompt,
                     images=[Image.from_path(path, media)],
                     effort=eye_effort or "low",
                     schema_at="end",
                 )
                 if reading.asset_id != asset_id:
                     raise ValueError("The figure reading returned a different asset identity.")
-                reading.source_revision_id = revisions.get(asset_id, "")
+                reading.source_revision_id = source.get("revisionId") or ""
+                reading.source_fingerprint = fingerprint
                 reading.vision_model = eye.ref
                 if not reading.legible or reading.uncertain:
                     self._science_limit(
@@ -955,7 +969,8 @@ class StudioAgents(OutputAgents):
 
         assert run.study is not None
         step, label = "science", "Reviewing the scientific explanation"
-        deck = S.apply_source_cover(deck, pool.items)
+        cover = run.plan[0].heading if run.plan else None
+        deck = S.apply_source_cover(deck, pool.items, title=cover)
         self._stage(emit, step, label, "running", "checking the slides against the material")
         if run.reviews is None:
             run.reviews = []
@@ -1000,7 +1015,9 @@ class StudioAgents(OutputAgents):
             revised = self._revise_science(
                 model, effort, run, deck, pool, material, [*found, *code]
             )
-            revised = S.apply_source_cover(revised, pool.items)
+            revised = S.apply_source_cover(revised, pool.items, title=cover)
+            if not _matches_plan(run, fmt.split_slides(revised)):
+                revised = deck
             if found and revised != deck:
                 self._progress(emit, step, label, "checking that the fixes worked")
                 still_open = self._recheck_science(model, run, revised, material, found)
@@ -1174,6 +1191,8 @@ class StudioAgents(OutputAgents):
                 pages=self._length(run),
                 memo=memo,
             )
+        if run.plan:
+            system += "\nThe approved outline, in order:\n" + _outline_text(run.plan)
         figures = self._figures(material)
         system, prompt = material_request(material, system + figures)
         story = self._json(model, schema, system, prompt, effort)
@@ -1221,6 +1240,8 @@ class StudioAgents(OutputAgents):
             else [{"heading": story.summary_heading or "Summary", "goal": ""}]
             + [{"heading": s.heading, "goal": s.job} for s in story.sections]
         )
+        if run.plan:
+            planned = [{"heading": p.heading, "goal": p.goal} for p in run.plan]
         emit({"type": "outline", "title": story.title, "sections": planned})
         return story
 
@@ -1316,11 +1337,13 @@ class StudioAgents(OutputAgents):
             story=story_text,
             theme=theme,
         )
+        if run.plan:
+            system += "\nUse the approved slide titles in order:\n" + _outline_text(run.plan)
         system, prompt = material_request(material, system + self._figures(material))
         text = self._text(model, system, prompt, effort, max_tokens=24_000)
         deck = _unfence(text)
         slides = fmt.split_slides(deck)
-        if len(slides) < len(story.slides):
+        if len(slides) < len(run.plan or story.slides):
             # Ran out of room: ask for the rest, from where it stopped.
             more = self._text(
                 model,
@@ -1334,6 +1357,8 @@ class StudioAgents(OutputAgents):
             )
             slides += fmt.split_slides(_unfence(more))
         slides = self._title_marker([fmt.strip_labels(slide) for slide in slides], theme)
+        if not _matches_plan(run, slides):
+            raise ModelError("The written deck did not follow the approved outline.")
         self._stage(emit, "write", "Writing the slides", "done", f"{len(slides)} slides")
         return "\n\n---\n\n".join(slides)
 
@@ -1387,7 +1412,7 @@ class StudioAgents(OutputAgents):
                 except ModelError as error:
                     logger.info("Fixing slide %d failed: %s", n, error)
                     return None
-                if not again:
+                if not again or not _keeps_heading(run, slides[n - 1], again):
                     return None
                 text = fmt.strip_labels(again[0])
                 if not source_images_kept(slides[n - 1], text):
@@ -1453,10 +1478,17 @@ class StudioAgents(OutputAgents):
             memo=self._memo_text(run.memo) if run.memo else "",
             story=story_text,
         )
+        if run.plan:
+            system += (
+                "\nUse exactly these approved section headings in order. "
+                "The first section is the summary.\n" + _outline_text(run.plan)
+            )
         system, prompt = material_request(material, system + self._figures(material))
         text = _unfence(self._text(model, system, prompt, effort, max_tokens=24_000))
         if not text.lstrip().startswith("<!-- report: v2 -->"):
             text = "<!-- report: v2 -->\n" + text.lstrip()
+        if not _matches_plan(run, split_document(text, "report")[1]):
+            raise ModelError("The written report did not follow the approved outline.")
         problems = fmt.check_report(text)
         if problems:
             # One revision of the whole report for what its form gets wrong.
@@ -1473,7 +1505,10 @@ class StudioAgents(OutputAgents):
                         max_tokens=24_000,
                     )
                 )
-                if fixed.count("\n## ") >= text.count("\n## ") - 1:
+                if (
+                    fixed.count("\n## ") >= text.count("\n## ") - 1
+                    and _matches_plan(run, split_document(fixed, "report")[1])
+                ):
                     text = fixed
             except ModelError as error:
                 logger.info("Fixing the report's form failed: %s", error)
@@ -1523,7 +1558,13 @@ class StudioAgents(OutputAgents):
             fixed = self._fix_claims(
                 model, [draft], by_ref, rest if title else "", material=material
             )
-            return check(fixed[0]) if fixed else draft
+            if not fixed:
+                return draft
+            if run.plan or run.spec.kind == "report":
+                preamble, repaired = split_document(fixed[0], run.spec.kind)
+                if preamble or len(repaired) != 1 or not _keeps_heading(run, text, repaired):
+                    return draft
+            return check(fixed[0])
 
         drafts = warm_map(
             check_and_fix,
@@ -1815,7 +1856,9 @@ class StudioAgents(OutputAgents):
         if not run.study:
             # The subtitle restates what the action titles claim; a scientific deck's
             # titles may name topics, so its subtitle stays as written and reviewed.
-            drafts = self._cover(model, drafts, pool, material)
+            aligned = self._cover(model, drafts, pool, material)
+            if _matches_plan(run, [d.text for d in aligned]):
+                drafts = aligned
         drafts = self._refit(model, effort, run, drafts, pool, material)
         if not run.study:
             return drafts
@@ -1848,14 +1891,12 @@ class StudioAgents(OutputAgents):
         try:
             slides = [d.text for d in drafts]
             first = fmt.parse_slide(slides[0])
-            style = D.pick_style(
-                self,
-                model,
-                title=first.title,
-                subtitle=first.body[0] if first.body else "",
-                brief=run.spec.brief,
-                audience=run.spec.audience,
-            )
+            style = run.spec.deck_style
+            if style not in fmt.STYLES:
+                style = D.pick_style(
+                    self, model, title=first.title, subtitle=first.body[0] if first.body else "",
+                    brief=run.spec.brief, audience=run.spec.audience,
+                )
             designed, count, notes = D.design_slides(
                 self,
                 model,
@@ -1897,6 +1938,10 @@ class StudioAgents(OutputAgents):
         events: Events | None = None,
         *,
         fallback_title: str = "",
+        purpose: str | None = None,
+        fixed_outline: Sequence[Planned] | None = None,
+        scope: Mapping[str, Any] | None = None,
+        web: bool = False,
         resume: dict[str, Any] | None = None,
         checkpoint: Any = None,
         **_ignored: Any,
@@ -1904,27 +1949,37 @@ class StudioAgents(OutputAgents):
         """``resume``: what an earlier, failed or stopped run finished; ``checkpoint(state)``
         hears that state after each step, so a failure or a Stop later does not lose it.
 
-        Each step is reused unless what it depends on changed. The figure readings depend on
-        each figure only; the study map and coverage plan on the passages; the purpose, the
-        reading notes, the storyline, the reviewed draft and its checked slides also on the
-        brief. So a reworded brief keeps the reading of the study and replans only the story,
-        and a turn that carries on after a Stop starts where the run stopped."""
+        Reuse binds source work to the evidence and scope, and later stages to the request and
+        approved plan. A changed brief can reuse a study map and figure readings from the same
+        material. A matching request can carry on after a Stop."""
 
         emit = events or _no_events
         if not pool.items:
             raise ModelError("There is no material to work from: choose some sources first.")
         use = self.use or ("read" if re.search(READ_HINT, spec.brief, re.I) else "talk")
-        run = Run(spec, use if spec.kind == "slides" else "", self._language(spec, pool))
+        plan = tuple(Planned(p.heading.strip(), p.goal, id=p.id) for p in fixed_outline or ())
+        ids = [p.id for p in plan if p.id]
+        if len(set(ids)) != len(ids) or any(len(p.heading.splitlines()) != 1 for p in plan):
+            raise ModelError("Approved outline headings must be single lines with unique part IDs.")
+        brief = spec.brief
+        if spec.kind == "report" and spec.style in STYLES:
+            brief += f"\n\nReport style ({spec.style}): {STYLES[spec.style]}"
+        run = Run(replace(spec, brief=brief), use if spec.kind == "slides" else "",
+                  self._language(spec, pool), plan=plan)
         printed = S.pool_print(pool.items)
         resumed = resume or {}
-        # What depends on the passages alone, and what also depends on the brief.
-        same_material = (
-            bool(resumed)
-            and resumed.get("passages") == len(pool)
-            and resumed.get("pool", printed) == printed
-        )
+        eye = vision_model(self.gateway, model, effort) if spec.kind == "slides" else None
+        material_key = digest([
+            printed, scope, asdict(notes), model.ref, effort, web, spec.kind,
+            [eye[0].ref, eye[1]] if eye else None,
+        ])
+        request_key = digest([
+            asdict(spec), run.use, purpose, [(p.id, p.heading, p.goal) for p in plan],
+        ])
+        # A changed request can keep its reading of the same material, but not the draft.
+        same_material = resumed.get("material_key") == material_key
         studied = resumed if same_material else {}
-        saved = studied if resumed.get("brief") == spec.brief else {}
+        saved = studied if resumed.get("request_key") == request_key else {}
         # A figure's reading is kept for that figure, whatever else changed.
         self.reusable_figures = [*self.reusable_figures, *(resumed.get("figure_readings") or [])]
         state: dict[str, Any] = {
@@ -1932,10 +1987,14 @@ class StudioAgents(OutputAgents):
             "pool": printed,
             "kind": spec.kind,
             "brief": spec.brief,
+            "material_key": material_key,
+            "request_key": request_key,
         }
         # The purpose is the model's decision, from the brief and a short look at the material.
         if spec.kind == "slides":
-            if saved.get("purpose"):
+            if purpose in ("explain_study", "general"):
+                run.purpose = S.Purpose(purpose=purpose, reason="Kept the saved purpose")
+            elif saved.get("purpose"):
                 run.purpose = S.Purpose.model_validate(saved["purpose"])
             else:
                 self._stage(emit, "purpose", "Understanding the request", "running")
@@ -1962,7 +2021,7 @@ class StudioAgents(OutputAgents):
             if checkpoint:
                 checkpoint(dict(state))
         if run.purpose and run.purpose.purpose == "explain_study":
-            run.limitations = list(studied.get("limitations") or [])
+            run.limitations = []
             kept = (
                 S.StudyMap.model_validate(studied["study_map"])
                 if studied.get("study_map")
@@ -1975,42 +2034,20 @@ class StudioAgents(OutputAgents):
             state["study_map"] = run.study.model_dump()
             if checkpoint:
                 checkpoint(dict(state))
-            revisions = {
-                figure["assetId"]: figure.get("revisionId") or ""
-                for item in pool.items
-                for figure in figures_of(item)
-            }
-            if "figure_readings" in studied:
-                run.figure_readings = []
-                for row in studied["figure_readings"]:
-                    try:
-                        reading = S.FigureReading.model_validate(row)
-                    except ValueError:
-                        continue
-                    if (
-                        reading.asset_id in revisions
-                        and (
-                            not revisions.get(reading.asset_id)
-                            or reading.source_revision_id
-                            == revisions[reading.asset_id]
-                        )
-                        and reading.vision_model in ("", model.ref)
-                    ):
-                        run.figure_readings.append(reading)
-            else:
-                run.figure_readings = self.read_figures(model, effort, run, pool, emit)
-                warned = [item.ref for item in pool.items if S.warnings_of(item)]
-                if warned:
-                    self._science_limit(
-                        run,
-                        f"{len(warned)} passages have extraction warnings; a value from them is "
-                        "stated only when clean text or a figure reading confirms it.",
-                    )
+            run.figure_readings = self.read_figures(model, effort, run, pool, emit)
+            warned = [item.ref for item in pool.items if S.warnings_of(item)]
+            if warned:
+                self._science_limit(
+                    run,
+                    f"{len(warned)} passages have extraction warnings; a value from them is "
+                    "stated only when clean text or a figure reading confirms it.",
+                )
             state["figure_readings"] = [r.model_dump() for r in run.figure_readings]
             state["limitations"] = run.limitations
+            coverage_key = state["coverage_key"] = digest(self._study_text(run))
             kept_plan = (
                 S.CoveragePlan.model_validate(studied["coverage_plan"])
-                if studied.get("coverage_plan")
+                if studied.get("coverage_plan") and studied.get("coverage_key") == coverage_key
                 else None
             )
             if kept_plan and not S.coverage_problems(kept_plan, pool.items):
@@ -2042,7 +2079,7 @@ class StudioAgents(OutputAgents):
             if run.memo.language:
                 run.language = run.memo.language
         same_science = (
-            saved.get("study_map") == state.get("study_map")
+            saved.get("coverage_key") == state.get("coverage_key")
             and saved.get("coverage_plan") == state.get("coverage_plan")
         )
         reuse_story = bool(
@@ -2063,7 +2100,8 @@ class StudioAgents(OutputAgents):
         if spec.kind == "slides":
             reused_draft = bool(run.study and reuse_story and saved.get("draft"))
             if reused_draft:
-                text = S.apply_source_cover(saved["draft"], pool.items)
+                text = saved["draft"]
+                run.limitations = state["limitations"] = list(saved.get("limitations") or [])
                 run.review_status = saved.get("review_status") or "unavailable"
                 run.reviews = []
                 kinds = {
@@ -2167,6 +2205,8 @@ class StudioAgents(OutputAgents):
             title = outline[0].heading if outline else (run.story.title or fallback_title)
 
             def assemble_deck(parts: list[Draft]) -> BuiltOutput:
+                if not _matches_plan(run, [d.text for d in parts]):
+                    raise ModelError("The deck no longer follows the approved outline.")
                 planned = [
                     Planned(
                         fmt.parse_slide(d.text).title or f"Slide {n}",
@@ -2174,6 +2214,10 @@ class StudioAgents(OutputAgents):
                     )
                     for n, d in enumerate(parts, 1)
                 ]
+                if plan:
+                    planned = [
+                        replace(p, layout=s.layout) for p, s in zip(plan, planned, strict=True)
+                    ]
                 return self.assemble(spec, title, "", parts, pool, planned, model, effort)
 
             built = assemble_deck(drafts)
@@ -2209,11 +2253,13 @@ class StudioAgents(OutputAgents):
             # those its own section cites.
             stated = {r: (e.context or e.text) for r, e in pool.by_ref().items() if r is not None}
             drafts = [replace(d, text=fmt.cite_stated_numbers(d.text, stated)) for d in drafts]
-            outline = [
+            outline = list(plan) or [
                 Planned(re.sub(r"^##\s*", "", d.text.splitlines()[0]).strip()[:160]) for d in drafts
             ]
             title = run.story.title or fallback_title
             built = self.assemble(spec, title, preamble, drafts, pool, outline, model, effort)
+            if len(split_document(built.content, "report")[1]) != len(outline):
+                raise ModelError("The assembled report does not match its outline.")
         approach = {
             "method": "studio",
             # The fields an approach has everywhere (Approach.saved_as reads them).

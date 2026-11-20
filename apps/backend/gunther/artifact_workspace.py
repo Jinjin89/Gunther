@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field, ValidationError
 from gunther.agent import ANY_CITATION, Evidence, sentence_spans
 from gunther.brief import _quoted
 from gunther.outputs import Pool, Spec, _marked, heading_of, layout_of, section_hash, split_document
-from gunther.schemas import ArtifactOut, ConversationCitationOut
+from gunther.schemas import ArtifactOut, ConversationCitationOut, OutlineItem
 from gunther.skillbook import skill_for
 from gunther.slide_scene import rebind_graphics_hash
 
@@ -509,7 +509,10 @@ def digest_approach_inputs(brief: ConversationBrief, work: Work) -> str:
 def digest_outline_inputs(work: Work) -> str:
     """What the outline is planned from: the approach, and the material cards it points to."""
 
-    return _digest({"approach": work.approach, "cards": [card.model_dump() for card in work.cards]})
+    approach = work.approach
+    if approach is not None:
+        approach = {key: value for key, value in approach.items() if key != "studio_progress"}
+    return _digest({"approach": approach, "cards": [card.model_dump() for card in work.cards]})
 
 
 def digest_part_inputs(brief: ConversationBrief, work: Work, item: ItemRec) -> str:
@@ -1113,6 +1116,28 @@ def _spec_of_version(version: ArtifactOut) -> WorkSpec:
     return spec
 
 
+def _section_item(
+    kind: str, position: int, section: str, text: str, identity: str, plan: OutlineItem | None
+) -> ItemRec:
+    return ItemRec(
+        id=identity, heading=heading_of(section) or (plan.heading if plan else ""),
+        goal=plan.goal if plan else "",
+        layout=_layout_of(kind, position, section), refs=_cited(text),
+    )
+
+
+def rebind_approach_refs(value: Any, numbers: Mapping[int, int]) -> Any:
+    if isinstance(value, list):
+        return [rebind_approach_refs(item, numbers) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: [numbers[ref] for ref in item if isinstance(ref, int) and ref in numbers]
+            if key == "refs" and isinstance(item, list) else rebind_approach_refs(item, numbers)
+            for key, item in value.items()
+        }
+    return value
+
+
 def import_work(
     version: ArtifactOut,
     checks: Mapping[str, Mapping[str, Any]],
@@ -1158,7 +1183,7 @@ def import_work(
         plan = planned[position] if planned else None
         text, dropped = _translate(section, version_map)
         marked = _marked(section) if kind == "slides" else None
-        design = plan.design.model_dump() if plan and plan.design else None
+        design = plan.design.model_dump(exclude_none=True) if plan and plan.design else None
         if marked and marked.composition != "standard":
             design = {**(design or {}), "composition": marked.composition}
         item = ItemRec(
@@ -1265,16 +1290,23 @@ def sync(
     3. A section no item matches becomes a new item with the next id. An item no section
        matches is dropped, and its id is never used again.
 
-    The approach and the outline are not touched: the head's own are not read.
+    A rebuilt head also supplies its approved approach, outline and explicit part identities.
     """
 
     if work.version_id == head.id:
         return _refresh_checks(work, head, checks)
-    kind = work.spec.kind
+    approach = head.provenance.approach
+    rebuilt = head.origin == "rebuild" and approach and approach.method == "studio"
+    kind = head.kind if rebuilt else work.spec.kind
     pool = pool_from(workspace)
     version_map = _adopt(pool, head.citations)
     store_pool(workspace, pool)
     sections = split_document(head.content, kind)[1]
+    plans = head.outline if rebuilt and len(head.outline) == len(sections) else []
+    explicit_ids = {plan.id for plan in plans if plan.id}
+    if len(explicit_ids) != sum(bool(plan.id) for plan in plans):
+        plans = []
+    reserved = explicit_ids | work.parts.keys()
     translated = [_translate(section, version_map) for section in sections]
     texts = [text for text, _ in translated]
     matched = _match(work, sections, texts)
@@ -1284,20 +1316,23 @@ def sync(
     for position, (section, (text, dropped), old) in enumerate(
         zip(sections, translated, matched, strict=True)
     ):
-        if old is None:
-            item = ItemRec(
-                id=f"p{work.next_item}",
-                heading=heading_of(section),
-                layout=_layout_of(kind, position, section),
-                refs=_cited(text),
+        if plans or old is None:
+            plan = plans[position] if plans else None
+            identity = (plan.id if plan else "") or (
+                old.id if old and old.id not in explicit_ids else ""
             )
-            work.next_item += 1
+            if not identity:
+                while f"p{work.next_item}" in reserved:
+                    work.next_item += 1
+                identity = f"p{work.next_item}"
+                work.next_item += 1
+            item = _section_item(kind, position, section, text, identity, plan)
             part = None
         else:
             item, part = old, work.parts.get(old.id)
         _note_dropped(work, "sync", position + 1, dropped)
         if part is None or part.text != text:
-            if old is not None:
+            if not plans and old is not None:
                 # What the user typed says what the slide is called and how it is drawn now.
                 item = item.model_copy(
                     update={
@@ -1312,6 +1347,19 @@ def sync(
         parts[item.id] = part
     work.outline, work.parts = items, parts
     work.title, work.version_map, work.version_id = head.title, version_map, head.id
+    if plans and approach:
+        work.spec = _spec_of_version(head)
+        work.approach = approach.model_dump(mode="json")
+        if approach.ref_map:
+            numbers = {
+                int(ref): version_map[number - 1]
+                for ref, number in approach.ref_map.items()
+                if ref.isdecimal() and 1 <= number <= len(version_map)
+            }
+            work.approach = rebind_approach_refs(work.approach, numbers)
+        work.cards = []
+        _stamp(work, brief)
+        return True
     for item in work.outline:
         if item.id in written:
             parts[item.id].inputs = digest_part_inputs(brief, work, item)

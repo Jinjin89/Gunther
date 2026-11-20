@@ -133,3 +133,30 @@ a batch must not add any.
 **Next:** update `CLEANUP_PLAN.md` to these decisions. If you disagree with any of
 them, write the pushback at the top and stop. If not, mark the plan `FINAL`, run
 batch 00, write `/tmp/gunther-cleanup/batches/00.md`, and stop for approval.
+
+---
+
+# Round 4 — batch 01 scope cut (supervisor)
+
+Batch 01 grew to ~1,150 lines while retrofitting Skills-era outline controls into Studio,
+and each review found new lock-vs-verification edge cases. Top-down decision:
+
+- **Retire** per-slide layout locks, design locks, and the outline fields only the
+  Skills planner used (message, audience question, preceding slides, transition,
+  composition). They go with the old engines. Studio designs each slide; people change
+  the look with the style menu and the words with typed edit.
+- **Outline rebuild keeps** headings, goals and order as guidance for Studio's story
+  stage. Approach stays read-only "How it was made" for Studio work.
+- **Old saved outlines** with those fields still open (ignored on rebuild, shown
+  read-only at most).
+- Batch 01 keeps: style intent (resolution + request fingerprint, with replay of old
+  fingerprints), sync of a direct rebuild into the conversation (including a later
+  typed edit), checkpoint/figure keys from the inputs actually used, report repairs that
+  keep the approved section count and never clear parts before validating, kind,
+  explicit web choice, scientific purpose.
+
+**Directive for batch 13 (from batch 01 review):** the UI's Approach/Outline rebuild
+should run as an action on the conversation work, not as a separate direct route whose
+result `sync` then has to import. One entry, one state owner; then delete the
+rebuild-import branch in `artifact_workspace.sync`. Keep the HTTP build route only if a
+current client still needs it.

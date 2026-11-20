@@ -1036,15 +1036,17 @@ class BuildOutputInput(OutputRequestInput):
     client_request_id: str = REQUEST_ID
     kind: OutputKind
     # Reports only; slides have none. A report without one is an overview.
-    style: OutputStyle | None = None
+    style: OutputStyle | None = "auto"
     # Slides only: a visual theme, separate from a report's structural style.
-    theme: Literal["classic", "briefing", "editorial", "keynote"] | None = None
+    theme: Literal[
+        "classic", "briefing", "editorial", "keynote", "paper", "ink", "brand"
+    ] | None = None
     design_version: Literal[0, 1] | None = None
     audience: ArtifactAudience
     brief: str = Field(default="", max_length=2_000)
     title: str | None = Field(default=None, min_length=1, max_length=160)
     scope: OutputScope = Field(default_factory=OutputScope)
-    # A rebuild with the outline as the person edited it: the planner is skipped.
+    # A rebuild with the outline as the person edited it.
     outline: list[OutlineItem] | None = Field(default=None, min_length=1, max_length=14)
     supersedes_artifact_id: str | None = Field(default=None, min_length=1, max_length=80)
     # A rebuild with the approach as the person edited it (skills only).
@@ -1058,7 +1060,8 @@ class BuildOutputInput(OutputRequestInput):
 
     @model_validator(mode="after")
     def tidy(self) -> "BuildOutputInput":
-        self.style = (self.style or "auto") if self.kind == "report" else None
+        if self.kind == "slides" or self.style is None:
+            self.style = "auto" if self.kind == "report" else None
         if self.kind == "report":
             self.use = "auto"
             self.theme = None

@@ -3370,7 +3370,8 @@ class KnowledgeService:
         ).hexdigest()
 
     def _earlier_output(
-        self, workspace_id: str, client_request_id: str, fingerprint: str
+        self, workspace_id: str, client_request_id: str, fingerprint: str,
+        *, previous: str | None = None,
     ) -> ArtifactOut | None:
         """The version an earlier try of this same request already saved, if there is one."""
 
@@ -3383,7 +3384,7 @@ class KnowledgeService:
             )
             if existing is None:
                 return None
-            if existing.request_fingerprint != fingerprint:
+            if existing.request_fingerprint not in (fingerprint, previous):
                 raise ArtifactConflictError(
                     "clientRequestId was already used for a different Artifact request"
                 )
@@ -4112,19 +4113,25 @@ class KnowledgeService:
         """
 
         limits = OutputLimits()
-        fingerprint = self._output_fingerprint(
-            workspace_id,
-            base_id,
-            "build",
-            self._output_request_fields(payload),
+        fields = self._output_request_fields(payload)
+        previous = None
+        inherits_style = payload.kind == "report" and "style" not in payload.model_fields_set
+        if payload.kind == "report" and payload.supersedes_artifact_id:
+            previous = self._output_fingerprint(workspace_id, base_id, "build", fields)
+            fields["inherit_style"] = inherits_style
+        fingerprint = self._output_fingerprint(workspace_id, base_id, "build", fields)
+        earlier = self._earlier_output(
+            workspace_id, payload.client_request_id, fingerprint, previous=previous
         )
-        earlier = self._earlier_output(workspace_id, payload.client_request_id, fingerprint)
         if earlier is not None:
             return earlier
         model, effort = self._output_model(payload.model, payload.effort)
         skilled = self.output_skills
+        studio_mode = self.output_method == "studio"
         # Without a skill there is nothing to choose a structure: "auto" is an overview.
-        style = "overview" if not skilled and payload.style == "auto" else payload.style
+        style = payload.style
+        if style == "auto" and not (studio_mode or skilled):
+            style = "overview"
         with (
             usage.job("outputs", payload.kind, ref=payload.conversation_id),
             session_scope(self.sessions) as session,
@@ -4137,8 +4144,11 @@ class KnowledgeService:
                 if payload.supersedes_artifact_id
                 else None
             )
+            if studio_mode and inherits_style and parent and parent.kind == "report":
+                style = parent.style or "auto"
             parent_theme = None
-            if parent and payload.kind == "slides":
+            parent_sections = []
+            if parent and parent.kind == payload.kind == "slides":
                 parent_sections = split_document(parent.content, "slides")[1]
                 if parent_sections:
                     parent_theme = _marked(parent_sections[0]).theme
@@ -4201,9 +4211,17 @@ class KnowledgeService:
             )
             fallback_title = parent.title if parent else library.title
             made_by = None
-            if self.output_method == "studio":
+            if studio_mode:
+                from gunther.studio import format as studio_format
                 from gunther.studio.pipeline import StudioAgents
 
+                if parent_sections:
+                    cover = studio_format.parse_slide(parent_sections[0])
+                    spec = replace(
+                        spec,
+                        theme=payload.theme or cover.attrs.get("theme") or theme,
+                        deck_style=cover.attrs.get("style"),
+                    )
                 reading_gaps = self._studio_reading(session, resolved.source_ids, pool)
                 notes = replace(notes, extraction_gaps=tuple(reading_gaps))
                 studio = StudioAgents(
@@ -4215,8 +4233,37 @@ class KnowledgeService:
                     asset_reader=self.asset_reader,
                     reusable_figures=self._reusable_figure_readings(session, base_id),
                 )
+                purpose = None
+                same_plan = parent and (outline is not None or payload.brief == parent.brief)
+                if same_plan and parent.kind == payload.kind:
+                    saved = json.loads(parent.provenance_json).get("approach") or {}
+                    purpose = "explain_study" if saved.get("study_map") else saved.get("purpose")
+                    if outline is None:
+                        outline = [
+                            Planned(p["heading"], p.get("goal", ""), id=p.get("id", ""))
+                            for p in json.loads(parent.outline_json)
+                        ]
+                web, web_reason = self._web_tool(payload.web)
+                query = payload.brief or payload.title
+                if web and query and len(pool) < pool.limit:
+                    try:
+                        for item in web.run(query)[: limits.per_section]:
+                            if len(pool) >= pool.limit:
+                                break
+                            pool.adopt(item)
+                    except ToolFailure as error:
+                        web_reason = str(error)
+                if payload.web and web_reason:
+                    studio.skipped.append(
+                        {"step": "web", "label": "Web search unavailable", "reason": web_reason}
+                    )
                 built = studio.make(
-                    model, effort, spec, pool, notes, events, fallback_title=fallback_title
+                    model, effort, spec, pool, notes, events,
+                    fallback_title=fallback_title,
+                    purpose=purpose,
+                    fixed_outline=outline,
+                    scope={"selection": payload.scope.model_dump(), "inputs": inputs},
+                    web=payload.web,
                 )
                 made_by = {
                     "generator": "gunther.studio.v1",
@@ -5642,7 +5689,7 @@ class KnowledgeService:
             for work in list(workspace.works):
                 head = None
                 if not work.key.startswith("draft_"):
-                    head = session.scalar(
+                    lineage = (
                         select(Artifact)
                         .where(
                             Artifact.lineage_id == work.key,
@@ -5650,10 +5697,25 @@ class KnowledgeService:
                             Artifact.knowledge_base_id == base_id,
                         )
                         .order_by(Artifact.version_number.desc())
-                        .limit(1)
                     )
+                    head = session.scalar(lineage.limit(1))
                 if head is None:
                     continue
+                if work.version_id != head.id:
+                    prior = session.get(Artifact, work.version_id) if work.version_id else None
+                    synced = prior.version_number if prior else 0
+                    rebuild = session.scalar(lineage.where(
+                        Artifact.origin == "rebuild",
+                        func.json_extract(
+                            Artifact.provenance_json, "$.approach.method"
+                        ) == "studio",
+                        Artifact.version_number.between(synced + 1, head.version_number),
+                    ).limit(1))
+                    if rebuild and rebuild.id != head.id:
+                        workspaces.sync(
+                            work, self._artifact_out(session, rebuild),
+                            self._latest_check_records(session, rebuild.id), workspace, brief,
+                        )
                 shown = self._artifact_out(session, head)
                 workspaces.sync(
                     work, shown, self._latest_check_records(session, head.id), workspace, brief
@@ -5689,7 +5751,8 @@ class KnowledgeService:
                 from gunther.studio.work import StudioWorkAgents
 
                 def studio(
-                    spec: Spec, made: Pool, use: str | None, resume=None, checkpoint=None
+                    spec: Spec, made: Pool, use: str | None, resume=None, checkpoint=None,
+                    *, purpose=None, fixed_outline=None,
                 ) -> BuiltOutput:
                     reading_gaps = self._studio_reading(session, resolved.source_ids, made)
                     scoped_notes = replace(notes, extraction_gaps=tuple(reading_gaps))
@@ -5709,6 +5772,10 @@ class KnowledgeService:
                         scoped_notes,
                         emit,
                         fallback_title=library.title,
+                        purpose=purpose,
+                        fixed_outline=fixed_outline,
+                        scope={"selection": scope.model_dump(), "inputs": inputs},
+                        web=payload.web,
                         resume=resume,
                         checkpoint=checkpoint,
                     )

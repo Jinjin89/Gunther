@@ -919,15 +919,17 @@ def test_explicit_business_purpose_uses_the_existing_general_prompts(tmp_path):
     assert not any(t.startswith("Build the study map") for t in tasks)
 
 
-def test_artifact_conversation_edit_keeps_the_study_workflow(tmp_path):
+@pytest.mark.parametrize("restyle", [False, True], ids=["edit", "restyle"])
+def test_artifact_conversation_edit_keeps_the_study_workflow(tmp_path, restyle):
     from fake_models import orchestrator_replies
     from test_artifact_agent import done, kept, turn
-    from test_outputs import app_for, library, workspace
+    from test_outputs import app_for, body, build, built, library, read_events, workspace
+    from test_outputs import route as output_route
 
     study = deepcopy(STUDY)
     for claim in study["claims"]:
         claim["figures"] = []
-    route = science_router(study, first=NO_IMAGE)
+    route = science_router(study, first=NO_IMAGE, revised=NO_IMAGE)
 
     def inner(request):
         task = request_text(request).split(P.TASK_BOUNDARY)[-1]
@@ -968,6 +970,55 @@ def test_artifact_conversation_edit_keeps_the_study_workflow(tmp_path):
         assert result["outcome"] == "saved", json.dumps(result, ensure_ascii=False)
         held, _ = kept(client, "study")
         assert held.works[0].approach["purpose"] == "explain_study"
+        ids = [item.id for item in held.works[0].outline]
+        approved = result["artifact"]["outline"]
+        goal, heading = "Explain how the controller reacts", "How the controller responds"
+        ids[1] = "mechanism"
+        approved[1].update(goal=goal, id=ids[1])
+        fake.replies[:] = [inner]
+        rebuilt = built(build(client, base_id, body(
+            kind="slides", use="read", conversationId="study", theme="editorial",
+            supersedesArtifactId=result["artifact"]["id"], outline=approved,
+        )))
+        assert rebuilt["origin"] == "rebuild"
+        typed = rebuilt["content"].replace("## How the filter works", f"## {heading}").replace(
+            "theme: editorial", "theme: ink"
+        )
+        edit = client.post(
+            output_route(base_id, rebuilt["id"], "/edits"), headers=workspace(client),
+            json={"clientRequestId": "typed_study_edit", "content": typed},
+        )
+        assert edit.status_code == 201 and edit.json()["content"] == typed
+        if restyle:
+            head = built(read_events(client.post(
+                output_route(base_id, edit.json()["id"], "/restyle/stream"),
+                headers=workspace(client),
+                json={"clientRequestId": "restyle_study", "style": "bold"},
+            )))
+            assert head["origin"] == "revise"
+        before = len(fake.requests)
+
+        def next_writer(request):
+            if request_text(request).split(P.TASK_BOUNDARY)[-1].startswith(
+                "Write the scientific explanation deck"
+            ):
+                return typed.replace("Compare the sensor stream", "Check the sensor stream")
+            return inner(request)
+
+        fake.replies[:] = [orchestrator_replies(
+            [{"actions": [{"do": "make"}, {"do": "save", "text": "Rebuilt the study."}]}],
+            next_writer,
+        )]
+        events = turn(client, base_id, "study", "Make it again with the approved plan")
+        story = next(t for t in _tasks(fake.requests[before:]) if t.startswith("Plan a scientific"))
+        assert heading in story and goal in story
+        result = done(events)
+        assert result["outcome"] == "saved", result["reply"]
+        next_outline = result["artifact"]["outline"]
+        assert [item["id"] for item in next_outline] == ids
+        assert (next_outline[1]["heading"], next_outline[1]["goal"]) == (heading, goal)
+        cover = fmt.parse_slide(fmt.split_slides(result["artifact"]["content"])[0])
+        assert cover.attrs["theme"] == "ink"
         fake.replies[:] = [
             orchestrator_replies(
                 [
@@ -1047,13 +1098,21 @@ def test_blank_model_answers_are_not_success(tmp_path):
     assert built.approach["review_status"] == "unavailable"
 
 
-def test_a_saved_study_map_is_reused_only_for_the_same_passages(tmp_path):
-    built, agents, fake, saved = make(tmp_path)
+@pytest.mark.parametrize("change", ["block_id", "locator", "source_metadata", "figures"])
+def test_a_saved_study_map_is_reused_only_for_the_same_passages(tmp_path, change):
+    _, agents, fake, saved = make(tmp_path)
+    agents.reusable_figures = saved["figure_readings"]
     other = science_pool()
-    first = other.items[0]
-    other.items[0] = replace(
-        first,
-        payload=(first.payload[0].model_copy(update={"block_id": "other_block"}), None),
+    second = other.items[1]
+    cite = second.payload[0]
+    updated = {
+        "block_id": {"block_id": "other_block"},
+        "source_metadata": {"source_metadata": dict(cite.source_metadata, year=2025)},
+        "figures": {"figures": [dict(cite.figures[0], caption="Two controlled trials")]},
+    }.get(change, {})
+    other.items[1] = replace(
+        second, locator="p. 12" if change == "locator" else second.locator,
+        payload=(cite.model_copy(update=updated), None),
     )
     assert S.pool_print(other.items) != saved["pool"]
     fake.requests.clear()
@@ -1066,6 +1125,7 @@ def test_a_saved_study_map_is_reused_only_for_the_same_passages(tmp_path):
         resume=saved,
     )
     assert not any("Build the study map" in request_text(r) for r in fake.requests)
+    assert not any("Read the attached original" in request_text(r) for r in fake.requests)
     fake.requests.clear()
     other_pool = Pool(50)
     for item in other.items:
@@ -1079,6 +1139,24 @@ def test_a_saved_study_map_is_reused_only_for_the_same_passages(tmp_path):
         resume=saved,
     )
     assert any("Build the study map" in request_text(r) for r in fake.requests)
+    assert any("Read the attached original" in request_text(r) for r in fake.requests)
+
+
+def test_recovering_a_figure_refreshes_coverage_and_limitations(tmp_path):
+    _, agents, fake, saved = make(tmp_path, first=NO_IMAGE, revised=NO_IMAGE, read_error=True)
+    assert saved["figure_readings"] == []
+    assert any("Synthetic image read failed" in note for note in saved["limitations"])
+    fake.requests.clear()
+    fake.replies[:] = [science_router(first=NO_IMAGE, revised=NO_IMAGE)]
+    resumed = StudioAgents(
+        gateway(fake), use="read", design=False, asset_reader=agents.asset_reader,
+    ).make(
+        model(), "low", Spec("slides", "Researchers", brief="Explain this study"),
+        science_pool(), Notes(), resume=saved,
+    )
+    assert [row["asset_id"] for row in resumed.approach["figure_readings"]] == ["ast_signal"]
+    assert any(t.startswith("Make the journal-club coverage plan") for t in _tasks(fake.requests))
+    assert all("image read failed" not in note for note in resumed.approach["limitations"])
 
 
 def test_an_edit_may_only_show_the_builds_own_images(tmp_path):

@@ -132,6 +132,8 @@ class FigureReading(BaseModel):
     source_revision_id: str = ""
     # The vision model that inspected the pixels; readings are reused only when this matches.
     vision_model: str = ""
+    # The exact caption and provenance supplied with the pixels.
+    source_fingerprint: str = ""
 
     _filled = field_validator("asset_id", "shows")(_said)
 
@@ -566,7 +568,7 @@ def cover_metadata(items: list[Evidence]) -> list[str]:
     return out
 
 
-def apply_source_cover(deck: str, items: list[Evidence]) -> str:
+def apply_source_cover(deck: str, items: list[Evidence], *, title: str | None = None) -> str:
     """The model writes the question; delivery code owns bibliographic metadata."""
 
     slides = fmt.split_slides(deck)
@@ -585,9 +587,8 @@ def apply_source_cover(deck: str, items: list[Evidence]) -> str:
     body = [question] if question else []
     if bibliographic:
         body.append(" · ".join(bibliographic))
-    rebuilt = "#" + (" " if first.title else "") + (
-        metadata[0] if metadata and metadata[0].strip() else first.title
-    )
+    heading = title or (metadata[0] if metadata and metadata[0].strip() else first.title)
+    rebuilt = f"# {heading}" if heading else "#"
     slides[0] = fmt.with_marker(
         "\n".join([rebuilt, *body, *(["Note: " + first.notes] if first.notes else [])]),
         first.layout,
@@ -782,5 +783,11 @@ def pool_print(items: list[Evidence]) -> str:
     import hashlib
     import json
 
-    rows = sorted([item.ref or 0, *item.key] for item in items)
-    return hashlib.sha256(json.dumps(rows).encode()).hexdigest()[:16]
+    rows = [
+        (
+            item.ref, item.key, item.source_key, item.title, item.text, item.context, item.locator,
+            figures_of(item), warnings_of(item), source_metadata([item]),
+        )
+        for item in items
+    ]
+    return hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()[:16]

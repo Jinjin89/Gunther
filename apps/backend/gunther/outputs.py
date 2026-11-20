@@ -562,6 +562,7 @@ class Spec:
     title: str | None = None  # asked for; otherwise the planner's
     theme: str | None = None  # a slides deck's visual theme; never a report structure
     design_version: int | None = None
+    deck_style: str | None = None
 
 
 @dataclass(frozen=True)

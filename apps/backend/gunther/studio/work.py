@@ -17,15 +17,17 @@ from pydantic import BaseModel, Field
 
 from gunther.agent import Evidence
 from gunther.artifact_workspace import (
-    ItemRec,
     PartRec,
     Work,
+    _section_item,
     _stamp,
     _take_check,
     _translate,
+    rebind_approach_refs,
 )
 from gunther.llm import ModelError
 from gunther.outputs import BuiltOutput, Draft, Issue, Pool, Spec, section_hash, split_document
+from gunther.schemas import OutlineItem
 from gunther.studio import format as fmt
 from gunther.studio import prompts as P
 from gunther.studio import science as S
@@ -419,53 +421,44 @@ def load_built(work: Work, built: BuiltOutput, made: Pool, pool: Pool, brief) ->
     numbers. Only the passages the build cites join the conversation pool (``made`` is the
     larger pool the studio read; ``built.pool_refs`` are its numbers)."""
 
+    sections = split_document(built.content, work.spec.kind)[1]
+    plans = [OutlineItem.model_validate(row) for row in built.outline]
+    ids = [plan.id for plan in plans if plan.id]
+    if len(sections) != len(plans) or len(ids) != len(set(ids)):
+        raise ModelError("The assembled artifact does not match its outline.")
+
+    updated_pool = Pool(pool.limit)
+    updated_pool.restore(pool.items)
+    updated_pool.top = pool.top
     by_ref = made.by_ref()
-    version_map = [pool.adopt(by_ref[ref]).ref for ref in built.pool_refs]
+    version_map = [updated_pool.adopt(by_ref[ref]).ref for ref in built.pool_refs]
     scientific_map = {}
     if (built.approach or {}).get("purpose") == "explain_study":
         # The argument may need uncited passages during a later edit. Keep its scoped evidence.
-        scientific_map = {ref: pool.adopt(item).ref for ref, item in by_ref.items()}
-    sections = split_document(built.content, work.spec.kind)[1]
+        scientific_map = {ref: updated_pool.adopt(item).ref for ref, item in by_ref.items()}
     checks = {item["hash"]: item for item in built.checks}
-    work.title = built.title
-    work.approach = dict(built.approach or {})
+    approach = dict(built.approach or {})
     if scientific_map:
-
-        def rebind(value):
-            if isinstance(value, list):
-                return [rebind(v) for v in value]
-            if isinstance(value, dict):
-                return {
-                    k: [scientific_map[r] for r in v if r in scientific_map]
-                    if k == "refs"
-                    else rebind(v)
-                    for k, v in value.items()
-                }
-            return value
-
-        work.approach = rebind(work.approach)
-    work.outline = []
-    work.parts = {}
-    work.version_map = list(version_map)
-    for section in sections:
+        approach = rebind_approach_refs(approach, scientific_map)
+    outline, parts = [], {}
+    next_item = work.next_item
+    reserved = set(ids)
+    for position, (section, plan) in enumerate(zip(sections, plans, strict=True)):
         text, _ = _translate(section, version_map)
-        if work.spec.kind == "slides":
-            slide = fmt.parse_slide(section)
-            heading, layout = slide.title, slide.layout
-        else:
-            heading = re.sub(r"^##\s*", "", section.splitlines()[0]).strip()
-            layout = ""
-        item = ItemRec(
-            id=f"p{work.next_item}",
-            heading=heading[:200],
-            layout=layout,
-            refs=sorted({int(n) for n in re.findall(r"\[(\d+)\]", text)}),
+        while f"p{next_item}" in reserved:
+            next_item += 1
+        item = _section_item(
+            work.spec.kind, position, section, text, plan.id or f"p{next_item}", plan,
         )
-        work.next_item += 1
+        next_item += 1
         part = PartRec(text=text, inputs="")
         _take_check(part, section, checks.get(section_hash(section)), version_map)
-        work.outline.append(item)
-        work.parts[item.id] = part
+        outline.append(item)
+        parts[item.id] = part
+    work.title, work.approach = built.title, approach
+    work.outline, work.parts = outline, parts
+    work.version_map, work.next_item = list(version_map), next_item
+    pool.items, pool.known, pool.top = updated_pool.items, updated_pool.known, updated_pool.top
     work.approach_top = pool.top
     work.skipped = [*work.skipped, *[dict(s) for s in (built.skill or {}).get("skipped", [])]]
     _stamp(work, brief)

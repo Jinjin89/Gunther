@@ -29,7 +29,7 @@ const newOutlineId = () => `p_${Array.from(crypto.getRandomValues(new Uint8Array
  * planned it). Collapsed to one row; "Edit outline" opens it for changes, and rebuilding with it
  * skips the planner.
  */
-export function OutlineEditor({ outline, label, max, busy, onRebuild, review }: {
+export function OutlineEditor({ outline, label, max, busy, onRebuild, review, studio = false }: {
   outline: OutlineItem[];
   /** "sections" or "slides". */
   label: string;
@@ -37,9 +37,10 @@ export function OutlineEditor({ outline, label, max, busy, onRebuild, review }: 
   busy: boolean;
   onRebuild: (outline: OutlineItem[]) => void;
   review?: SkillRun["outlineReview"];
+  studio?: boolean;
 }) {
   // Layouts show, and can be changed, only on a deck a skill planned.
-  const withLayouts = outline.some((item) => item.layout);
+  const withLayouts = !studio && outline.some((item) => item.layout);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(outline);
@@ -62,10 +63,14 @@ export function OutlineEditor({ outline, label, max, busy, onRebuild, review }: 
     return next;
   });
   const usable = draft.filter((item) => item.heading.trim());
-  const dependencyIssues = draft.flatMap((item, index) => (item.requires ?? []).filter(id => {
+  const dependencyIssues = studio ? [] : draft.flatMap((item, index) => (item.requires ?? []).filter(id => {
     const at = draft.findIndex(page => page.id === id);
     return at < 0 || at >= index;
   }).map(() => `Slide ${index + 1} needs its prerequisite before it. Update the order or preceding slides.`));
+
+  const rebuild = (items: OutlineItem[]) => onRebuild(studio
+    ? items.map(({ id, heading, goal }) => ({ ...(id ? { id } : {}), heading, goal }))
+    : items);
 
   if (outline.length === 0) return null;
   return <section className="outputs-outline" aria-label="Outline">
@@ -126,7 +131,7 @@ export function OutlineEditor({ outline, label, max, busy, onRebuild, review }: 
         <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={draft.length >= max} onClick={() => setDraft((current) => [...current, { ...(label === "slides" ? { id: newOutlineId() } : {}), heading: "", goal: "", ...(withLayouts ? { layout: "text", link: "" } : {}) }])}><Plus size={13} />Add</button>
         <span>
           <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => { setDraft(outline); setEditing(false); }}>Cancel</button>
-          <button type="button" className="gx-btn gx-btn-primary gx-btn-sm" disabled={busy || usable.length === 0 || dependencyIssues.length > 0} onClick={() => onRebuild(usable.map((item) => ({ heading: item.heading.trim(), goal: item.goal.trim(), ...(item.id ? { id: item.id } : {}), ...(item.message ? { message: item.message.trim() } : {}), ...(item.question ? { question: item.question.trim() } : {}), ...(item.requires?.length ? { requires: item.requires } : {}), ...(item.layout ? { layout: item.layout } : {}), ...(item.link ? { link: item.link.trim() } : {}), ...(item.design ? { design: item.design } : {}), layoutLocked: item.layoutLocked ?? false, designLocked: item.designLocked ?? false, designAttempted: item.designAttempted ?? false })))}>Rebuild with this outline</button>
+          <button type="button" className="gx-btn gx-btn-primary gx-btn-sm" disabled={busy || usable.length === 0 || dependencyIssues.length > 0} onClick={() => rebuild(usable.map((item) => ({ heading: item.heading.trim(), goal: item.goal.trim(), ...(item.id ? { id: item.id } : {}), ...(item.message ? { message: item.message.trim() } : {}), ...(item.question ? { question: item.question.trim() } : {}), ...(item.requires?.length ? { requires: item.requires } : {}), ...(item.layout ? { layout: item.layout } : {}), ...(item.link ? { link: item.link.trim() } : {}), ...(item.design ? { design: item.design } : {}), layoutLocked: item.layoutLocked ?? false, designLocked: item.designLocked ?? false, designAttempted: item.designAttempted ?? false })))}>Rebuild with this outline</button>
         </span>
       </footer>
     </div>}
