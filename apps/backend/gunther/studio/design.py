@@ -18,7 +18,7 @@ import html as htmllib
 import logging
 import re
 import unicodedata
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -238,6 +238,7 @@ def design_slides(
     only: Collection[int] | None = None,
     requests: Mapping[int, str] | None = None,
     keep_on_fail: bool = False,
+    progress: Callable[[int, int], None] | None = None,
 ) -> tuple[list[str], int, list[dict[str, str]]]:
     """Warm with one slide, then design the remaining slides in parallel. Back: the slides
     (each that passed the guard now ends with its design block), how many were designed, and
@@ -246,7 +247,8 @@ def design_slides(
     ``only`` (positions counted from 0) designs just those slides; the others come back as
     they are. ``requests`` maps a position to what the person (or the measuring) wants changed
     in the look: the slide's earlier design is then shown too. A slide that fails the guard
-    twice loses its design, unless ``keep_on_fail``: then it keeps the one it had."""
+    twice loses its design, unless ``keep_on_fail``: then it keeps the one it had.
+    ``progress(done, total)`` hears each slide finished."""
 
     from gunther.studio.pipeline import warm_map
 
@@ -291,7 +293,7 @@ def design_slides(
                 else ""
             )
             try:
-                reply = agents._text(model, system, prompt, "medium", 16_000)
+                reply = agents._text(model, system, prompt, "low", 16_000)
             except ModelError as error:
                 logger.info("Designing slide %d failed: %s", index + 1, error)
                 problems = [f"The model could not answer: {error}"]
@@ -317,7 +319,7 @@ def design_slides(
     wanted = list(wanted)
     eligible = [index for index in wanted if designable(slides[index])]
     done = dict.fromkeys(wanted, ("", ""))
-    done.update(zip(eligible, warm_map(design, eligible, workers), strict=True))
+    done.update(zip(eligible, warm_map(design, eligible, workers, progress), strict=True))
     out: list[str] = []
     notes: list[dict[str, str]] = []
     for index, slide in enumerate(slides):

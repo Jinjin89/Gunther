@@ -225,6 +225,18 @@ class CoverageReview(BaseModel):
     learner_problems: list[ScientificProblem] = Field(default_factory=list)
 
 
+class ProblemStatus(BaseModel):
+    n: int
+    resolved: bool
+    reason: str = ""
+
+
+class ProblemCheck(BaseModel):
+    """After a targeted revision: which of the problems it was given are now resolved."""
+
+    problems: list[ProblemStatus] = Field(default_factory=list)
+
+
 def warnings_of(item: Evidence) -> list[dict]:
     citation = item.payload[0] if isinstance(item.payload, tuple) and item.payload else None
     warnings = list(item.extraction_warnings or getattr(citation, "extraction_warnings", []))
@@ -419,6 +431,8 @@ def content_problems(
         for asset in sorted(required - shown)
     ]
     by_asset = {r.asset_id: r for r in readings}
+    # Panels still unnamed, per figure: one problem per figure, however many claims link it.
+    missing: dict[str, dict[str, str]] = {}
     for claim in study.claims:
         if not claim.central:
             continue
@@ -426,36 +440,69 @@ def content_problems(
             reading = by_asset.get(linked.asset_id)
             if not reading or not reading.legible:
                 continue
-            known = {panel.label.casefold() for panel in reading.panels if panel.label}
-            wanted = {panel.casefold() for panel in linked.panels if panel} & known
-            said = "\n".join(
-                "\n".join(fmt.parse_slide(s).body) for s in slides if linked.asset_id in s
-            ).casefold()
-            linked_boxes = {
-                tuple(panel.box)
-                for panel in reading.panels
-                if panel.label.casefold() in wanted and panel.box
-            }
-            problems += [
-                f"Central panel {linked.asset_id}:{panel} is named in the study map but not "
-                "identified on a visible slide."
-                for panel in sorted(wanted)
-                if not re.search(
-                    rf"(?m)(?:panel\s+{re.escape(panel)}|\({re.escape(panel)}\)|"
-                    rf"(?:^|[\s·|]){re.escape(panel)}:)(?!\w)",
-                    said,
-                )
-                and not any(
-                    crop[0] == linked.asset_id
-                    and any(
-                        len(box) == 4
-                        and all(abs(a - b) <= 0.005 for a, b in zip(crop[1], box, strict=True))
-                        for box in linked_boxes
-                    )
-                    for crop in crops
-                )
-            ]
+            panels = {panel.label.casefold(): panel for panel in reading.panels if panel.label}
+            wanted = {label.casefold() for label in linked.panels if label} & panels.keys()
+            visible = []
+            for s in slides:
+                if linked.asset_id in s:
+                    parsed = fmt.parse_slide(s)
+                    visible += [parsed.title, *parsed.body]
+            named = named_panels("\n".join(visible))
+            for label in sorted(wanted - named):
+                box = panels[label].box
+                # A crop identifies the one panel whose box it is, not its neighbours.
+                if box and any(
+                    asset == linked.asset_id and _same_box(crop, box) for asset, crop in crops
+                ):
+                    continue
+                missing.setdefault(linked.asset_id, {})[label] = panels[label].label
+    for asset, labels in sorted(missing.items()):
+        shown_labels = [labels[key] for key in sorted(labels)]
+        several = len(shown_labels) > 1
+        problems.append(
+            f"Figure gunther-asset:{asset}: central panel{'s' if several else ''} "
+            f"{_listed(shown_labels)} {'are' if several else 'is'} not identified on a visible "
+            "slide. Name each where it is explained (\"Panel B: …\") or show its crop."
+        )
     return list(dict.fromkeys(problems))
+
+
+# How a slide names a panel: "Panel B", "panels B and C", "panels B–D", "(B)", "(B, C)",
+# "Fig. 2B", "Figure 2B–D", "图2B", or "B:" opening a line. Read case-blind from the slide's
+# title, body and image captions, never its notes.
+_LABEL = r"(?<![a-z])[a-z]{1,2}(?![a-z])"
+_JOIN = r"\s*(?:,|;|/|&|\band\b|\bor\b|和|与|及|、|–|—|-|\bto\b|至)\s*"
+_LIST = rf"{_LABEL}(?:{_JOIN}{_LABEL})*"
+_NAMED = re.compile(
+    rf"(?:\bpanels?|面板|子图|分图)\s*\(?\s*({_LIST})"
+    rf"|(?:\bfig(?:ure)?s?\.?|图)\s*\d+({_LIST})"
+    rf"|\(\s*({_LIST})\s*\)"
+    rf"|(?:^\s*(?:[-*•]\s+)?|[·|]\s*)({_LABEL})\s*[:：]",
+    re.M,
+)
+_RANGE = re.compile(r"(?<![a-z])([a-z])\s*(?:–|—|-|\bto\b|至)\s*([a-z])(?![a-z])")
+
+
+def named_panels(text: str) -> set[str]:
+    """The panel labels visible text names, case-folded, ranges expanded ("B–D": B, C, D).
+    Other words caught in a list ("and", "to") are harmless: callers intersect with real labels."""
+
+    found: set[str] = set()
+    for match in _NAMED.finditer(text.casefold()):
+        listed = next(group for group in match.groups() if group)
+        for start, end in _RANGE.findall(listed):
+            if start <= end:
+                found.update(chr(code) for code in range(ord(start), ord(end) + 1))
+        found.update(re.findall(_LABEL, listed))
+    return found
+
+
+def _same_box(crop: list[float], box: list[float]) -> bool:
+    return len(box) == 4 and all(abs(a - b) <= 0.005 for a, b in zip(crop, box, strict=True))
+
+
+def _listed(labels: list[str]) -> str:
+    return labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
 
 
 def crop_problems(deck: str, readings: list[FigureReading]) -> list[str]:
@@ -659,15 +706,73 @@ def code_problems(
     allowed: list[str] | None = None,
     plan: CoveragePlan | None = None,
 ) -> list[str]:
-    """What code checks before delivery: central figures shown, values readable, scope kept."""
+    """What code checks before delivery: central figures shown, values readable, crops read,
+    scope kept, the coverage plan whole.
+
+    None of these stops a build. Image problems are repaired by ``heal_images`` first; the
+    rest go to one targeted revision, and what remains is delivered as an open problem, listed
+    with the version, so one imperfect slide never costs the whole build."""
 
     return (
         content_problems(study, readings, deck, plan)
-        + crop_problems(deck, readings)
         + value_problems(deck, items, readings)
+        + crop_problems(deck, readings)
         + scope_problems(deck, items, allowed)
         + (coverage_problems(plan, items) if plan else [])
     )
+
+
+def heal_images(
+    deck: str,
+    readings: list[FigureReading],
+    items: list[Evidence],
+    allowed: list[str] | None = None,
+) -> tuple[str, list[str]]:
+    """The image problems code can repair, repaired: an image from outside the chosen material
+    is removed, and a crop the image reader never returned (or a malformed one) shows its whole
+    original figure instead, which is in the material, so provenance holds. What was changed is
+    returned, to be noted with the version."""
+
+    keep = set(allowed_assets(items) if allowed is None else allowed)
+    boxes = {
+        reading.asset_id: [panel.box for panel in reading.panels if panel.box]
+        for reading in readings
+    }
+    notes: list[str] = []
+
+    def asset_of(reference: str) -> str | None:
+        found = re.match(r"gunther-asset:([A-Za-z0-9_-]+)", reference)
+        return found.group(1) if found else None
+
+    def outside(found: re.Match[str]) -> str:
+        asset = asset_of(found.group(1))
+        if asset is None or asset in keep:
+            return found.group(0)
+        notes.append(
+            f"An image from outside the chosen material (gunther-asset:{asset}) was removed."
+        )
+        return ""
+
+    def whole(found: re.Match[str]) -> str:
+        reference = found.group(1)
+        parts = image_parts(reference)
+        if parts is not None and (
+            not parts[1] or any(_same_box(parts[1], box) for box in boxes.get(parts[0], []))
+        ):
+            return found.group(0)
+        asset = asset_of(reference)
+        if asset is None:
+            return found.group(0)
+        notes.append(
+            f"A panel crop of gunther-asset:{asset} was not one the image reader returned; "
+            "the whole figure is shown instead."
+        )
+        return f"(gunther-asset:{asset})"
+
+    deck = re.sub(r"!\[[^\]]*\]\((gunther-asset:[^)]+)\)", outside, deck)
+    deck = re.sub(r"\((gunther-asset:[^)]+)\)", outside, deck)
+    deck = re.sub(r"\((gunther-asset:[^)]+)\)", whole, deck)
+    return deck, list(dict.fromkeys(notes))
 
 
 def pool_print(items: list[Evidence]) -> str:

@@ -4,8 +4,7 @@ import { BrandMark } from "../design/BrandMark";
 import { AnswerBody, citationNumbers, withoutMarks } from "../pages/AnswerBody";
 import { LiveSections } from "./LiveSections";
 import { StudioLive } from "./StudioBrief";
-import type { LiveAction, LiveOutputState } from "./liveOutput";
-import { outputActivity } from "./ArtifactAgentPlan";
+import { outputActivity, type LiveAction, type LiveOutputState } from "./liveOutput";
 
 /** One line of what the agent did in a turn: a search, a slide written, a check. */
 export interface StepLine {

@@ -1,34 +1,72 @@
-.usage-section .setting-heading { color: var(--gx-ink); }
+/*
+ * Settings → Usage. One question per block: how much, how much of it was a cache hit,
+ * and who spent it. Neutral ink on white; the only colour is the red of a failed request.
+ */
+.usage-section .setting-heading { min-height: 0; padding: 14px 17px 12px; color: var(--gx-ink); border-bottom: 0; }
+.usage-section .setting-heading strong { font-size: var(--gx-text-md); font-weight: 600; }
+.usage-section .setting-heading small { font-size: var(--gx-text-xs); }
 .usage-section .is-problem { color: var(--gx-ink); }
-.usage-totals { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 0; padding: 20px 17px; font-variant-numeric: tabular-nums; }
-.usage-totals dt { color: var(--gx-muted); font-size: var(--gx-text-sm); }
-.usage-totals dd { margin: 5px 0; color: var(--gx-ink); font-size: var(--gx-text-xl); font-weight: 600; }
+
+/* The range sits in the first card, with the headline numbers under it. */
+.usage-range { padding: 14px 17px 0; border-bottom: 0; min-height: 0; }
+.usage-totals { display: grid; grid-template-columns: 1.35fr 1.35fr 1fr 0.7fr; gap: 0; margin: 0; padding: 4px 0 6px; font-variant-numeric: tabular-nums; }
+.usage-totals > div { display: grid; align-content: start; gap: 4px; padding: 14px 17px 16px; }
+.usage-totals > div + div { border-left: 1px solid var(--gx-line); }
+.usage-totals dt { color: var(--gx-muted); font-size: var(--gx-text-xs); font-weight: 500; }
+.usage-totals dd { margin: 0; color: var(--gx-ink); font-size: var(--gx-text-xl); font-weight: 600; line-height: 1.15; }
 .usage-totals small { color: var(--gx-faint); font-size: var(--gx-text-xs); }
-.usage-table-scroll { overflow-x: auto; }
+.usage-hero dd { font-family: var(--gx-font-display); font-size: var(--gx-text-3xl); font-weight: 500; letter-spacing: -0.02em; line-height: 1.05; }
+.usage-meter { display: block; height: 6px; margin: 6px 0 2px; overflow: hidden; border-radius: 3px; background: var(--gx-active); }
+.usage-meter i { display: block; height: 100%; border-radius: 3px; background: var(--gx-ink); }
+
+.usage-table-scroll { overflow-x: auto; border-top: 1px solid var(--gx-line); }
 .usage-table { width: 100%; border-collapse: collapse; color: var(--gx-ink); font-size: var(--gx-text-xs); font-variant-numeric: tabular-nums; }
-.usage-table th, .usage-table td { padding: 10px 12px; border-bottom: 1px solid var(--gx-line-2); text-align: right; white-space: nowrap; }
-.usage-table thead th { font-weight: 500; color: var(--gx-muted); }
+.usage-table th, .usage-table td { padding: 10px 12px; border-bottom: 1px solid var(--gx-line); text-align: right; white-space: nowrap; }
+.usage-table th:first-child, .usage-table td:first-child { padding-left: 17px; }
+.usage-table th:last-child, .usage-table td:last-child { padding-right: 17px; }
+.usage-table thead th { padding-top: 9px; padding-bottom: 9px; background: var(--gx-surface-2); color: var(--gx-muted); font-size: var(--gx-text-2xs); font-weight: 500; }
 .usage-table th:first-child, .usage-table tbody th { text-align: left; }
-.usage-table tbody th { font-weight: 400; white-space: normal; overflow-wrap: anywhere; min-width: 140px; }
+.usage-table tbody th { font-weight: 500; white-space: normal; overflow-wrap: anywhere; min-width: 160px; }
 .usage-table tbody tr:last-child > * { border-bottom: 0; }
-.usage-recent { table-layout: fixed; min-width: 680px; }
-.usage-recent th, .usage-recent td { padding: 10px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-table tbody tr:hover > * { background: var(--gx-surface-2); }
+
+/* By model / by job: a thin bar under each name shows its share of the input. */
+.usage-share { display: block; height: 3px; margin-top: 6px; overflow: hidden; border-radius: 2px; background: var(--gx-hover); }
+.usage-share i { display: block; height: 100%; border-radius: 2px; background: var(--gx-ink); opacity: 0.55; }
+.usage-hit-col { font-weight: 600; }
+.usage-breakdown thead .usage-hit-col { font-weight: 500; }
+.usage-breakdown td.usage-hit-col { border-left: 1px solid var(--gx-line); border-right: 1px solid var(--gx-line); }
+.usage-breakdown thead .usage-hit-col { border-left: 1px solid var(--gx-line); border-right: 1px solid var(--gx-line); }
+
+/* Recent requests: what it was, then the numbers, aligned on the right. */
+.usage-recent { table-layout: fixed; min-width: 720px; }
+.usage-recent th, .usage-recent td { padding: 9px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .usage-recent th:nth-child(-n+3), .usage-recent td:nth-child(-n+3) { text-align: left; }
-.usage-recent th:nth-child(1) { width: 17%; }
-.usage-recent th:nth-child(2) { width: 19%; }
-.usage-recent th:nth-child(3) { width: 18%; }
+.usage-recent th:nth-child(1) { width: 19%; }
+.usage-recent th:nth-child(2) { width: 17%; }
+.usage-recent th:nth-child(3) { width: 17%; }
 .usage-recent th:nth-child(4) { width: 15%; }
-.usage-recent th:nth-child(5) { width: 7%; }
-.usage-recent th:nth-child(6) { width: 10%; }
-.usage-recent th:nth-child(7) { width: 14%; }
+.usage-recent th:nth-child(5) { width: 8%; }
+.usage-recent th:nth-child(6) { width: 11%; }
+.usage-recent th:nth-child(7) { width: 13%; }
+.usage-recent td:nth-child(1) { color: var(--gx-muted); }
+.usage-job { font-weight: 500; }
+.usage-detail { margin-left: 6px; }
+.usage-detail::before { content: "·"; margin-right: 6px; }
 .usage-muted { color: var(--gx-faint); }
-.usage-chart { padding: 14px 17px; }
+.usage-status { font-size: var(--gx-text-2xs); }
+.usage-status.is-error { color: var(--gx-danger); font-weight: 600; }
+
+.usage-chart { padding: 2px 17px 14px; }
 .usage-chart svg { display: block; width: 100%; }
 .usage-chart text { fill: var(--gx-faint); font-family: inherit; font-size: 11px; }
-.usage-chart-tick line { stroke: var(--gx-line-2); }
+.usage-chart-tick line { stroke: var(--gx-line); }
 .usage-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; color: var(--gx-muted); font-size: var(--gx-text-xs); }
 .usage-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .usage-legend i { width: 8px; height: 8px; border-radius: 2px; }
+.usage-footer { min-height: 0; padding: 10px 17px; border-bottom: 0; justify-content: flex-end; }
 @media (max-width: 600px) {
   .usage-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .usage-totals > div:nth-child(odd) { border-left: 0; }
 }
+.usage-recent td:nth-child(1) { overflow: visible; text-overflow: clip; }

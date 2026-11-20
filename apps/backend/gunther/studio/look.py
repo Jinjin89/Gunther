@@ -307,7 +307,7 @@ def look(
         try:
             fixed = fmt.split_slides(
                 unfence(
-                    agents._text(model, fix_system, asked + "\n\nRewrite them now.", effort, 12_000)
+                    agents._text(model, fix_system, asked + "\n\nRewrite them now.", "low", 12_000)
                 )
             )
         except ModelError as error:

@@ -330,6 +330,9 @@ def science_router(study=None, *, first=DECK, revised=DECK, reading=READING, rea
             return first
         if task.startswith("Revise only the scientific slides"):
             return revised
+        if task.startswith("Check whether a targeted revision resolved"):
+            # Nothing confirmed: every problem stays open (unknown counts as open).
+            return json.dumps({"problems": []})
         if task.startswith("You are working on one slide of an existing scientific"):
             return fmt.split_slides(DECK)[1]
         if written := re.search(r"Slide \d+ as written:\n(.*?)\n\nRewrite it now\.", task, re.S):
@@ -449,18 +452,43 @@ def test_unavailable_vision_never_invents_a_reading(tmp_path, failure):
         )
 
 
-def test_repeated_content_failure_stops_before_design(tmp_path):
+def test_a_central_figure_still_missing_after_revision_is_delivered_as_an_open_problem(tmp_path):
+    # A teaching gap is revised once, then delivered and listed: never a lost build.
     fake = FakeProvider(science_router(first=NO_IMAGE, revised=NO_IMAGE))
     agents = StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path))
-    with pytest.raises(ModelError, match="after revision"):
-        agents.make(
-            model(),
-            "low",
-            Spec("slides", "Readers", brief="Explain the study"),
-            science_pool(),
-            Notes(),
-        )
-    assert not any("Choose the visual style" in request_text(r) for r in fake.requests)
+    built = agents.make(
+        model(),
+        "low",
+        Spec("slides", "Readers", brief="Explain the study"),
+        science_pool(),
+        Notes(),
+    )
+    assert built.approach["review_status"] == "open_problems"
+    assert any(
+        "needs source image gunther-asset:ast_signal" in line
+        for line in built.approach["limitations"]
+    )
+    tasks = [request_text(r).split(P.TASK_BOUNDARY)[-1] for r in fake.requests]
+    assert sum(t.startswith("Revise only the scientific slides") for t in tasks) == 1
+
+
+def test_an_image_from_outside_the_material_is_removed_and_the_deck_still_delivered(tmp_path):
+    outside = DECK.replace("gunther-asset:ast_signal", "gunther-asset:ast_elsewhere")
+    fake = FakeProvider(science_router(first=outside, revised=outside))
+    agents = StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path))
+    built = agents.make(
+        model(),
+        "low",
+        Spec("slides", "Readers", brief="Explain the study"),
+        science_pool(),
+        Notes(),
+    )
+    assert "ast_elsewhere" not in built.content
+    assert built.approach["review_status"] == "open_problems"
+    assert any(
+        "outside the chosen material (gunther-asset:ast_elsewhere) was removed" in line
+        for line in built.approach["limitations"]
+    )
 
 
 def test_failed_purpose_or_review_is_not_replaced_by_a_general_or_ready_answer(tmp_path):
@@ -1138,3 +1166,117 @@ def test_text_beside_a_figure_fits_its_column():
     problems = fmt.check_slide(slide, first=False, read=True)
     assert any("explanation is 95 units" in p for p in problems)
     assert any("beside the figure is 299 units" in p for p in problems)
+
+
+def _tasks(requests) -> list[str]:
+    return [request_text(r).split(P.TASK_BOUNDARY)[-1] for r in requests]
+
+
+class _Stopped(Exception):
+    pass
+
+
+def _stop_at_design(event):
+    if event.get("type") == "stage" and event["id"] == "design" and event["state"] == "running":
+        raise _Stopped
+
+
+def test_a_stopped_build_carries_on_where_it_stopped(tmp_path):
+    fake = FakeProvider(science_router())
+    spec = Spec("slides", "Readers", brief="Explain the study")
+    saved: dict = {}
+    with pytest.raises(_Stopped):
+        StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)).make(
+            model(), "low", spec, science_pool(), Notes(), _stop_at_design, checkpoint=saved.update
+        )
+    assert saved["checked"]["slides"]
+    before = len(fake.requests)
+    events: list[dict] = []
+    built = StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)).make(
+        model(), "low", spec, science_pool(), Notes(), events.append, resume=saved
+    )
+    redone = _tasks(fake.requests[before:])
+    assert not any(
+        t.startswith(
+            (
+                "Build the study map",
+                "Read the attached original source figure pixels",
+                "Make the journal-club coverage plan",
+                "Plan a scientific explanation deck",
+                "Write the scientific explanation deck",
+                "Scientific review of the complete argument",
+            )
+        )
+        for t in redone
+    ), redone
+    kept = {
+        e["id"]
+        for e in events
+        if e.get("type") == "stage" and e.get("detail") == "kept from before"
+    }
+    assert {"write", "science", "verify"} <= kept
+    assert built.approach["review_status"] in ("ready", "open_problems")
+
+
+def test_a_reworded_brief_keeps_the_reading_of_the_study_and_replans_the_story(tmp_path):
+    fake = FakeProvider(science_router())
+    saved: dict = {}
+    StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)).make(
+        model(),
+        "low",
+        Spec("slides", "Readers", brief="Explain the study"),
+        science_pool(),
+        Notes(),
+        checkpoint=saved.update,
+    )
+    before = len(fake.requests)
+    StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)).make(
+        model(),
+        "low",
+        Spec("slides", "Readers", brief="Explain the study, for a journal club"),
+        science_pool(),
+        Notes(),
+        resume=saved,
+    )
+    redone = _tasks(fake.requests[before:])
+    assert not any(t.startswith("Read the attached original source figure pixels") for t in redone)
+    assert not any(t.startswith("Make the journal-club coverage plan") for t in redone)
+    assert not any(t.startswith("Build the study map") for t in redone)
+    assert any(t.startswith("Plan a scientific explanation deck") for t in redone)
+    assert any(t.startswith("Write the scientific explanation deck") for t in redone)
+
+
+def test_review_and_design_think_little_and_say_what_they_are_doing(tmp_path):
+    fake = FakeProvider(science_router(first=NO_IMAGE, revised=NO_IMAGE))
+    events: list[dict] = []
+    StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)).make(
+        model(),
+        "high",
+        Spec("slides", "Readers", brief="Explain the study"),
+        science_pool(),
+        Notes(),
+        events.append,
+    )
+    effort = {
+        task.split("\n", 1)[0][:60]: r.get("reasoning_effort")
+        for task, r in zip(_tasks(fake.requests), fake.requests, strict=True)
+    }
+    checks = (
+        "Scientific review of the complete argument",
+        "You are an independent learner",
+        "Compare an independent learner",
+        "Revise only the scientific slides",
+        "Check whether a targeted revision resolved",
+    )
+    seen = {key: value for key, value in effort.items() if key.startswith(checks)}
+    assert len(seen) >= 4 and set(seen.values()) == {"low"}, seen
+    # The steps that write keep the chosen thinking.
+    assert any(k.startswith("Build the study map") and v == "high" for k, v in effort.items())
+    running = [
+        (e["id"], e.get("detail"))
+        for e in events
+        if e.get("type") == "stage" and e["state"] == "running" and e.get("detail")
+    ]
+    assert ("science", "a fresh reader is reading only the slides") in running
+    assert any(step == "verify" and "slides checked" in detail for step, detail in running)
+    assert any(step == "design" and "slides designed" in detail for step, detail in running)

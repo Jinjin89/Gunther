@@ -236,12 +236,12 @@
 .settings-nav-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--gx-danger); }
 
 .settings-pane { min-width: 0; }
-.settings-pane-header { margin: 2px 0 14px; }
-.settings-pane-header h2 { margin: 0; font-size: var(--gx-text-lg); font-weight: 600; color: var(--gx-ink); }
-.settings-pane-header p { margin: 4px 0 0; color: var(--gx-faint); font-size: var(--gx-text-sm); }
+.settings-pane-header { margin: 0 0 18px; }
+.settings-pane-header h2 { margin: 0; font-family: var(--gx-font-display); font-size: var(--gx-text-2xl); font-weight: 500; letter-spacing: -0.015em; line-height: 1.15; color: var(--gx-ink); }
+.settings-pane-header p { margin: 6px 0 0; color: var(--gx-muted); font-size: var(--gx-text-sm); }
 /* Every block of a topic is one card; the first sits right under the heading. */
 .settings-pane > section {
-  margin-top: 13px;
+  margin-top: 16px;
   overflow: hidden;
   border: 1px solid var(--gx-line-2);
   border-radius: var(--gx-radius-lg);
@@ -249,6 +249,24 @@
 }
 .settings-pane > header + section { margin-top: 0; }
 .settings-pane > section > .setting-row:last-child { border-bottom: 0; }
+
+/*
+ * Hierarchy inside a topic: the pane title is the serif, each card's title is the
+ * quieter serif under it, a row's label is the bold sans, its help text is faint.
+ * The icon sits on the first line of the title, not centred against a long description.
+ */
+.settings-pane > section > .setting-heading { min-height: 0; padding: 16px 17px 14px; align-items: flex-start; gap: 10px; }
+.settings-pane > section > .setting-heading > svg { flex: none; margin-top: 3px; color: var(--gx-muted); }
+.settings-pane > section > .setting-heading > span { gap: 3px; }
+.settings-pane > section > .setting-heading strong { font-family: var(--gx-font-display); font-size: var(--gx-text-lg); font-weight: 500; letter-spacing: -0.005em; }
+.settings-pane > section > .setting-heading small { font-size: var(--gx-text-xs); line-height: 1.45; }
+.settings-pane .setting-row { min-height: 60px; }
+.settings-pane .setting-row > span:first-child { gap: 2px; }
+.settings-pane .setting-row strong { font-size: var(--gx-text-sm); font-weight: 600; }
+.settings-pane .setting-row small { font-size: var(--gx-text-xs); line-height: 1.45; }
+.settings-pane .setting-row.is-problem { background: var(--gx-danger-wash); }
+.settings-pane .gx-menu-label { padding-top: 14px; font-size: var(--gx-text-2xs); text-transform: uppercase; letter-spacing: 0.07em; }
+.model-roles-alert { margin-left: 8px; padding: 1px 7px; border-radius: var(--gx-radius-pill); background: var(--gx-danger-wash); color: var(--gx-danger); font-size: var(--gx-text-2xs); font-weight: 600; letter-spacing: 0; text-transform: none; }
 
 @media (max-width: 900px) {
   .settings-layout { grid-template-columns: 1fr; gap: 14px; }
@@ -288,3 +306,21 @@
 .developer-jobs p { margin: 0; color: var(--gx-danger); font-size: var(--gx-text-2xs); }
 .developer-job-state { color: var(--gx-muted); font-size: var(--gx-text-2xs); text-transform: capitalize; }
 .developer-job-state.is-failed { color: var(--gx-danger); }
+
+/* Settings → Devices: the address is a plain white row, and an unavailable gateway is a status, not a button. */
+.settings-pane .mobile-connection-overview { background: transparent; padding: 14px 17px; }
+.settings-pane .mobile-address-boundary > span { width: 32px; height: 32px; border: 1px solid var(--gx-line); background: var(--gx-surface); color: var(--gx-muted); }
+.settings-pane .mobile-address-boundary small { font-size: var(--gx-text-2xs); }
+.settings-pane .mobile-address-boundary strong { font-size: var(--gx-text-sm); }
+.settings-pane .mobile-connection-overview + .paired-devices-heading { margin-top: 0; border-top: 0; }
+.mobile-gateway-status { flex: none; display: inline-flex; align-items: center; gap: 6px; color: var(--gx-muted); font-size: var(--gx-text-xs); font-weight: 600; }
+.mobile-gateway-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--gx-danger); }
+
+/* Settings → Library & storage: the folder is the point; the workbook is a quiet status line. */
+.library-folder-settings .setting-row:has(.library-folder-path) { min-height: 76px; }
+.library-folder-settings .library-folder-path { font-size: var(--gx-text-md); font-weight: 500; }
+.settings-pane > .local-workbook { border-color: var(--gx-line); }
+.local-workbook .setting-row { min-height: 0; padding: 11px 17px; }
+.local-workbook .setting-row strong { font-weight: 500; color: var(--gx-muted); }
+.local-workbook .setting-row small { color: var(--gx-faint); }
+.library-folder-settings .setting-row > span > strong { font-size: var(--gx-text-md); }

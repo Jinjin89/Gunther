@@ -1,6 +1,6 @@
 import type { Effort, ModelProvider, ModelRole, ModelsOverview, ProviderKind, ProviderTestResult } from "@gunther/contracts";
 import { EFFORTS } from "@gunther/contracts";
-import { Check, ChevronRight, CircleAlert, Eye, EyeOff, KeyRound, Plug, Plus, RefreshCw, Server, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
+import { Check, ChevronRight, CircleAlert, Eye, EyeOff, KeyRound, Plug, Plus, RefreshCw, Server, Trash2, TriangleAlert, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { knowledgeApi } from "../api";
 import { announceModelsChanged, EFFORT_NAMES, resolveEffort } from "./askModel";
@@ -316,16 +316,12 @@ export function ModelSettings({ onNotify }: { onNotify: (message: string) => voi
     }
   };
 
-  return <section className="service-settings model-settings" aria-labelledby="model-settings-heading">
-    <div className="setting-heading">
-      <Sparkles size={16} />
-      <span><strong id="model-settings-heading">Models</strong><small>The language models Gunther uses, and which one does each job. Keys stay on this computer.</small></span>
-    </div>
+  return <section className="service-settings model-settings" aria-label="Models">
     {!overview && !problem && <div className="setting-row"><span><strong>Loading…</strong><small>Asking the local service which models are set up.</small></span></div>}
     {problem && <div className="setting-row is-problem"><span><strong><CircleAlert size={13} />Unavailable</strong><small>{problem}</small></span></div>}
     {overview && <>
       <div className="model-roles" role="group" aria-label="Used for">
-        <div className="gx-menu-label">Used for</div>
+        <div className="gx-menu-label">Used for{overview.roles.some((role) => role.problem) && <span className="model-roles-alert">{overview.roles.filter((role) => role.problem).length} need attention</span>}</div>
         {overview.roles.map((role) => <RoleRow key={role.id} role={role} overview={overview} onSave={(id, choice) => void saveRole(id, choice)} />)}
         <p className="model-roles-note">Ask can switch model and effort in any conversation; these are where new ones start.</p>
       </div>

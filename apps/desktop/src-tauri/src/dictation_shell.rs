@@ -79,8 +79,13 @@ mod motion {
                 alpha(native, if seconds > 0.0 { 0.0 } else { 1.0 }, 0.0);
             }
             let _ = window.show();
-            let _ = window.set_focus();
+            // Order the overlay above the frontmost application without activating Gunther.
+            // Taking focus would activate the app and make this window key; hiding a key
+            // window hands key status to the next window in the app, so the main window
+            // would jump in front of whatever the user was typing in. The window is also
+            // declared not focusable, so it never becomes the key or main window.
             unsafe {
+                let _: () = msg_send![native, orderFrontRegardless];
                 alpha(native, 1.0, seconds);
             }
         } else {

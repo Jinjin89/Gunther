@@ -1177,6 +1177,22 @@ class ArtifactAgent:
                 self._event(aid, "failed", label, str(error))
                 self.not_done.append(f"{label}: {error}")
                 self._store()
+                if act.do == "make":
+                    # A build is most of a turn's calls. Making it again, or saving what was
+                    # never made, only spends more: the person hears what happened and decides.
+                    for later in range(at + 1, len(mapped)):
+                        self._event(
+                            ids[later],
+                            "skipped",
+                            self._label(mapped[later]),
+                            "Dropped: the turn ended before it.",
+                        )
+                    return self._finish(
+                        "paused",
+                        f"Making it stopped: {str(error).rstrip('.')}. The steps it finished "
+                        "are kept, so "
+                        "“continue” tries again from there; or tell me what to change.",
+                    )
                 continue
             self.done.add(key)
             self._store()
@@ -1265,7 +1281,7 @@ class ArtifactAgent:
         n = max(1, len(m.ids))
         act = m.act
         if act.do == "make":
-            return 40
+            return 100  # a whole build: read, plan, write, review, check every claim, design
         if act.do == "write":
             return 6 * n
         if act.do == "edit":
@@ -1893,7 +1909,17 @@ class ArtifactAgent:
         if work is not None:
             left += ready(work, self.brief)
         said = " ".join(self.notes[-3:])
-        text = "I ran out of room for this message" + (f". So far: {said}" if said else "")
+        decisions, calls, _ = self._left()
+        used = (
+            f"{c.limits.calls} model calls"
+            if calls <= 0 or self.spent
+            else f"{c.limits.decisions} decisions"
+            if decisions <= 0
+            else "its budget"
+        )
+        text = f"I stopped: this message used all {used} it may" + (
+            f". So far: {said}" if said else ""
+        )
         if left:
             text += " Still to do: " + " ".join(dict.fromkeys(left))
         text += " Say “continue” to carry on."

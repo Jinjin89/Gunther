@@ -39,9 +39,12 @@ export function LiveSections({ state, kind, onStop, stopping, only }: {
   only?: number | null | undefined;
 }) {
   const unit = kind === "slides" ? "slide" : "section";
+  // A studio build reports steps, not sections: say which one is running, not "Planning the outline…".
+  const stage = [...state.stages].reverse().find((item) => item.state === "running");
+  const now = stage ? `${stage.label}…` : state.approach ? "Planning the outline…" : "Reading what is in the library…";
   return <div className="outputs-live" aria-live="polite" aria-busy="true">
     <header className="outputs-live-head">
-      <span><BrandMark size={14} busy /><strong>{state.title ?? (state.sections.length ? "Building…" : "Planning the outline…")}</strong></span>
+      <span><BrandMark size={14} busy /><strong>{state.title ?? (state.sections.length ? "Building…" : stage ? "Building…" : "Planning the outline…")}</strong></span>
       <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={onStop} disabled={stopping}>{stopping ? "Stopping…" : "Stop"}</button>
     </header>
     {state.question && <p className="outputs-live-brief">{state.question}</p>}
@@ -55,7 +58,7 @@ export function LiveSections({ state, kind, onStop, stopping, only }: {
       <dt>Answer</dt><dd>{state.approach.answer}</dd>
     </dl>}
     <AgentSteps steps={state.steps} />
-    {state.sections.length === 0 && <div className="live-wait"><span><i /><i /><i /></span><small>{state.approach ? "Planning the outline…" : "Reading what is in the library…"}</small></div>}
+    {state.sections.length === 0 && <div className="live-wait"><span><i /><i /><i /></span><small>{now}</small></div>}
     <ol className="outputs-live-sections">
       {state.sections.map((section, index) => {
         // A section a revision leaves alone is answered with the one word UNCHANGED.

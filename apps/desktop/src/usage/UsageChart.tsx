@@ -28,7 +28,7 @@ export function UsageChart({ days, range }: { days: UsageDay[]; range: UsageRang
   const labelEvery = Math.max(1, Math.ceil(dates.length / 6));
 
   return <section className="usage-section" aria-label="Daily usage">
-    <div className="setting-heading"><span><strong>Daily usage</strong></span></div>
+    <div className="setting-heading"><span><strong>Daily usage</strong><small>Tokens per day, split into cached input, uncached input and output.</small></span></div>
     <div className="usage-chart">
       <svg viewBox={`0 0 ${width} ${height + 28}`} role="img" aria-label="Daily tokens: cached input, uncached input and output">
         {ticks.map((tick) => <g key={tick} className="usage-chart-tick">

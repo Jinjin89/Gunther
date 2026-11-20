@@ -66,10 +66,12 @@ def test_only_reader_boxes_authorize_crops_and_panel_labels_are_visible_tokens()
     slide = "<!-- layout: figure -->\n## Evidence\n![Data](gunther-asset:ast_signal)\nA baseline"
     study = S.StudyMap.model_validate(STUDY)
     readings = run().figure_readings
-    assert len(S.content_problems(study, readings, slide + "\nNote: Panel A and Panel B")) == 2
+    # Notes are not visible; both unnamed panels of the figure are one problem.
+    noted = S.content_problems(study, readings, slide + "\nNote: Panel A and Panel B")
+    assert len(noted) == 1 and "panels A and B are not identified" in noted[0]
     cropped = slide.replace("ast_signal)", "ast_signal#x=0,y=0,w=0.5,h=1)")
     problems = S.content_problems(study, readings, cropped)
-    assert len(problems) == 1 and "panel ast_signal:b" in problems[0]
+    assert len(problems) == 1 and "central panel B is not identified" in problems[0]
     both = cropped + "\n\n---\n\n" + cropped.replace("#x=0,", "#x=0.5,")
     assert S.content_problems(study, readings, both) == []
     assert S.crop_problems(both, readings) == []
@@ -371,3 +373,77 @@ def test_a_cover_question_wrapped_over_two_lines_keeps_all_of_it():
         "Only Author",
     ]
     assert fmt.check_slide(parsed, first=True) == []
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "Panels A and B compare the two filters.",
+        "Panels A–B compare the two filters.",
+        "panels a-b compare the two filters.",
+        "Fig. 1A and Fig. 1B compare the two filters.",
+        "Figure 1A–B compares the two filters.",
+        "The drift (A) and the ablation (B) compare the two filters.",
+        "Both panels (A, B) compare the two filters.",
+        "- A: drift under noise\n- B: ablation",
+        "图1A和图1B比较两种滤波器。",
+    ],
+)
+def test_panels_named_the_way_people_write_them_count_as_identified(said):
+    slide = f"<!-- layout: figure -->\n## Evidence\n![Data](gunther-asset:ast_signal)\n{said}"
+    study = S.StudyMap.model_validate(STUDY)
+    assert S.content_problems(study, run().figure_readings, slide) == []
+
+
+def test_a_panel_named_in_the_title_counts_and_a_word_that_looks_like_a_label_does_not():
+    study = S.StudyMap.model_validate(STUDY)
+    readings = run().figure_readings
+    titled = "<!-- layout: figure -->\n## Panels A and B: drift\n![Data](gunther-asset:ast_signal)"
+    assert S.content_problems(study, readings, titled) == []
+    # "a" as an article, or "B" inside a word, does not name a panel.
+    loose = (
+        "<!-- layout: figure -->\n## Evidence\n![Data](gunther-asset:ast_signal)\nA baseline Beats"
+    )
+    assert "panels A and B" in S.content_problems(study, readings, loose)[0]
+
+
+def test_one_crop_identifies_only_its_own_panel():
+    both = deepcopy(STUDY)
+    both["claims"][0]["figures"][0]["panels"] = ["A", "B"]
+    study = S.StudyMap.model_validate(both)
+    slide = (
+        "<!-- layout: figure -->\n## Evidence\n"
+        "![Data](gunther-asset:ast_signal#x=0,y=0,w=0.5,h=1)"
+    )
+    problems = S.content_problems(study, run().figure_readings, slide)
+    assert len(problems) == 1 and "central panel B is not identified" in problems[0]
+
+
+def test_an_unnamed_panel_is_delivered_as_an_open_problem_not_a_failed_build(tmp_path):
+    # Every model reply is ready, but the deck never names a central panel: the build is
+    # delivered with the problem recorded, and nothing is re-reviewed from scratch.
+    unnamed = DECK.replace("- A: fixed", "- Fixed").replace("- B: feedback", "- Feedback")
+    assert unnamed != DECK
+    built, agents, fake, _ = make(tmp_path, first=unnamed, revised=unnamed)
+    record = built.approach or {}
+    assert record["review_status"] == "open_problems"
+    assert any("not identified on a visible slide" in line for line in record["limitations"])
+    reviews = [r for r in fake.requests if "Scientific review of the complete" in request_text(r)]
+    learners = [r for r in fake.requests if "You are an independent learner" in request_text(r)]
+    assert len(learners) == 1 and len(reviews) <= 2  # the storyline critic shares the prompt
+
+
+def test_a_code_problem_rewrites_only_the_slides_showing_its_figure():
+    deck = (
+        "<!-- layout: title -->\n# Study\nWhy it matters [1]\n\n---\n\n"
+        "<!-- layout: points -->\n## Method\n- Step [1]\n\n---\n\n"
+        "<!-- layout: figure -->\n## Evidence\n![Data](gunther-asset:ast_signal)\nA baseline [1]"
+    )
+    problem = (
+        "Figure gunther-asset:ast_signal: central panel B is not identified on a visible slide."
+    )
+    _, _, fake = revise("<!-- layout: figure -->\n## Evidence\n"
+                          "![Data](gunther-asset:ast_signal)\nPanel B: the ablation [1]",
+                          [problem], deck)
+    asked = request_text(fake.requests[0])
+    assert "Slide 3:" in asked and "Slide 1:" not in asked and "Slide 2:" not in asked

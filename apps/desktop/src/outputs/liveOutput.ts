@@ -64,6 +64,20 @@ export interface LiveOutputState {
 }
 
 export const EMPTY_LIVE: LiveOutputState = { question: null, title: null, sections: [], steps: [], stages: [], approach: null, memo: null, reviews: [], actions: [], reply: "", asking: null, brief: null, turn: null };
+
+const DOING: Record<SectionState, string> = { waiting: "Waiting", researching: "Reading sources", writing: "Writing", checking: "Checking sources", revising: "Revising", done: "Done" };
+
+/** What the agent is doing now, in one line. Labels come only from stream events. */
+export function outputActivity(live: LiveOutputState | null): string {
+  if (!live) return "Ready";
+  const action = [...live.actions].reverse().find((item) => item.state === "running");
+  if (action) return action.label;
+  const stage = [...live.stages].reverse().find((item) => item.state === "running");
+  const section = [...live.sections].reverse().find((item) => item.state !== "waiting" && item.state !== "done");
+  const step = [...live.steps].reverse().find((item) => item.running);
+  if (stage) return stage.detail ? `${stage.label} · ${stage.detail}` : stage.label;
+  return (section ? `${DOING[section.state]}${section.heading ? ` · ${section.heading}` : ""}` : step?.label) || "Starting…";
+}
 const blank = (): LiveSection => ({ heading: "", goal: "", state: "waiting", text: "", steps: [] });
 
 /** The same step, updated: a running search is replaced by its result. */

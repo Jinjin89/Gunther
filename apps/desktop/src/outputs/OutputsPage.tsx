@@ -1,7 +1,7 @@
 import type { Artifact, ArtifactBriefState, ArtifactConversationMessage, ArtifactSummary, ArtifactTurnInput, ArtifactTurnOut, BuildOutputRequest, ConversationCitation, EditArtifactBriefRequest, OutputKind, OutputScope, OutputStyle } from "@gunther/contracts";
 import { outputStyles } from "@gunther/contracts";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowRight, ChevronDown, ChevronRight, CircleAlert, Copy, Download, FileDown, History, ListChecks, LoaderCircle, Maximize2, MessageSquare, Minimize2, PanelsTopLeft, Pencil, Plus, Presentation, ShieldCheck } from "lucide-react";
+import { ArrowRight, ChevronDown, CircleAlert, Copy, Download, FileDown, History, ListChecks, LoaderCircle, Maximize2, MessageSquare, Minimize2, PanelsTopLeft, Pencil, Plus, Presentation, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isTurnResult, knowledgeApi, OutputStoppedError, type ArtifactTurnEvent } from "../api";
 import type { KnowledgeBase } from "../atlas";
@@ -12,7 +12,6 @@ import { BrandMark } from "../design/BrandMark";
 import { useModelMenu, useDeviceChoice, usableChoice, useWebSearch } from "../models/askModel";
 import { persistentStorage } from "../persistentStorage";
 import { ApproachPanel } from "./ApproachPanel";
-import { ArtifactAgentPlan, outputActivity } from "./ArtifactAgentPlan";
 import { ArtifactBriefPanel } from "./ArtifactBriefPanel";
 import { ArtifactComposer } from "./ArtifactComposer";
 import { ArtifactMessageList, LiveTurn } from "./ArtifactMessages";
@@ -134,7 +133,6 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
   const head = versions[0] ?? null;
   const latest = !open || !head || head.id === open.id;
   const changeable = open !== null && open.origin !== "legacy";
-  const lastReply = [...messages].reverse().find((message) => message.role === "assistant") ?? null;
   const activeLive = activeJob ? live.live : null;
   const scope = active.scope;
   const scopeText = scope.mode === "library" ? library ? describeScope(library) : "Reading the library…" : describeScope({ sources: scope.sourceIds.length, units: scope.unitIds.length, sessions: scope.sessionIds.length });
@@ -475,12 +473,11 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
     <div className="aw-preview-controls" id="artifact-preview-controls" hidden={!controlsExpanded} style={{ height: "var(--aw-controls-height)" }}>
       <header className="aw-controls-heading"><strong>Artifacts</strong><span>{activeGroups.length} from this conversation</span><button type="button" className="gx-icon-button" aria-label="Collapse details area" onClick={() => setControlsExpanded(false)}><ChevronDown size={14} /></button></header>
       <aside className="artifact-saved-artifacts" aria-label="Saved artifacts"><ul className="aw-artifact-tray">{activeGroups.map((items) => { const item = items[0]!; return <li className="artifact-tray-entry" key={item.lineageId}><button type="button" className={`aw-artifact-card${open?.lineageId === item.lineageId ? " is-active" : ""}`} aria-current={open?.lineageId === item.lineageId ? "page" : undefined} aria-label={`Preview ${item.title}`} disabled={editing || saving || opening} onClick={() => void openVersion(item)}><span className="aw-file-icon">{item.kind === "slides" ? <Presentation size={19} /> : <FileDown size={19} />}</span><strong>{item.title}</strong><small>{kindLabel(item.kind)}<span>v{item.versionNumber}</span></small></button>{artifactMenu(item)}</li>; })}</ul>{activeGroups.length === 0 && <p className="outputs-hint">No artifacts yet.</p>}</aside>
-      <ArtifactAgentPlan live={activeLive} latest={lastReply} stopping={stopping} onStop={() => void stop()} />
       <div className="aw-controls-brief"><ArtifactBriefPanel state={briefState} disabled={building} error={briefError} onEdit={(change) => void editBrief(change)} /></div>
       {open && <div ref={outlinePanel} className="aw-controls-outline"><ApproachPanel artifact={open} busy={busy || !latest || !changeable} onRebuild={(approach) => runRebuild({ approach }, "Rebuild with the updated approach")} onCite={(index) => { const citation = open.citations[index]; if (citation) cite(citation, index); }} /><OutlineEditor key={open.id} review={open.provenance.skill?.outlineReview} outline={open.outline} label={open.kind === "slides" ? "slides" : "sections"} max={open.kind === "slides" ? 14 : 8} busy={busy || !latest || !changeable} onRebuild={(outline) => runRebuild({ outline }, "Rebuild with the updated outline")} /></div>}
       {versionsOpen && <section className="artifacts-version-list" aria-label="Artifact version history">{versions.map((item) => <button type="button" key={item.id} disabled={item.id === open?.id} className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => void openVersion(item)}>v{item.versionNumber} · {item.title}</button>)}</section>}
     </div>
-    {controlsExpanded ? <PreviewHeightHandle value={controlsHeight} onChange={setControlsHeight} /> : activeLive && <button type="button" className="aw-compact-agent" aria-label="Show agent plan" onClick={() => setControlsExpanded(true)}><LoaderCircle className="spin" size={11} /><span>{outputActivity(activeLive)}</span><ChevronRight size={12} /></button>}
+    {controlsExpanded && <PreviewHeightHandle value={controlsHeight} onChange={setControlsHeight} />}
     {open ? <div className={`aw-preview-scroll${open.kind === "slides" ? " is-slides" : ""}`}>
       {workspaceId && <SlideReviewPanel key={open.id} artifact={open} baseId={base.id} workspaceId={workspaceId} disabled={busy || !latest || !changeable || noModel} onReview={reviewSlides} onFollowUp={send} />}
       <div className="artifact-reading-actions">{changeable && latest && !editing && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={busy} onClick={() => setEditing(true)}><Pencil size={12} />Edit</button>}{open.sections.some((section) => !section.checked) && changeable && latest && !editing && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={busy || noModel} onClick={() => void checkAgain()}><ShieldCheck size={12} />Check again</button>}</div>

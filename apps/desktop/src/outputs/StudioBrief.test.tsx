@@ -2,9 +2,9 @@ import type { Artifact } from "@gunther/contracts";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ApproachPanel } from "./ApproachPanel";
-import { applyOutputEvent, EMPTY_LIVE } from "./liveOutput";
+import { applyOutputEvent, EMPTY_LIVE, outputActivity } from "./liveOutput";
 import { StudioLive } from "./StudioBrief";
-import { qualityReport } from "./studioReport";
+import { qualityReport, spoken } from "./studioReport";
 
 const memo = { answer: "Cool roofs save 9% once weather is adjusted", insights: [{ claim: "The saving halves", so_what: "Budget with 9%", refs: [2, 7] }], tensions: [{ issue: "Costs are not in the material", refs: [] }] };
 
@@ -40,6 +40,16 @@ describe("a studio artifact being made", () => {
     expect(screen.getByText("12 s")).toBeInTheDocument();
     expect(screen.getByLabelText("Planned")).toHaveTextContent("One");
   });
+
+  it("shows what a running step is doing now", () => {
+    const state = [
+      { type: "stage", id: "science", label: "Reviewing the scientific explanation", state: "running", detail: "checking the slides against the material" },
+      { type: "stage", id: "science", label: "Reviewing the scientific explanation", state: "running", detail: "fixing 3 problems" },
+    ].reduce((all, event) => applyOutputEvent(all, event as never), EMPTY_LIVE);
+    render(<StudioLive state={state} />);
+    expect(screen.getByText("fixing 3 problems")).toBeInTheDocument();
+    expect(outputActivity(state)).toBe("Reviewing the scientific explanation · fixing 3 problems");
+  });
 });
 
 describe("a saved studio artifact", () => {
@@ -74,5 +84,13 @@ describe("a scientific deck's review", () => {
     expect(screen.getByText(/Not reviewed/)).toBeInTheDocument();
     rerender(<ScientificReview status="ready" limitations={[]} />);
     expect(screen.getByText("The scientific review found the deck ready.")).toBeInTheDocument();
+  });
+});
+
+describe("a stage time", () => {
+  it("reads in whole seconds", () => {
+    expect(spoken(263.338)).toBe("4 min 23 s");
+    expect(spoken(12.6)).toBe("13 s");
+    expect(spoken(119.7)).toBe("2 min");
   });
 });

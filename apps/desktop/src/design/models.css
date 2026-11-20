@@ -127,7 +127,8 @@
 .model-role-name { min-width: 0; display: grid; gap: 2px; }
 .model-role-name strong { font-size: var(--gx-text-sm); font-weight: 600; }
 .model-role-name small { color: var(--gx-faint); font-size: var(--gx-text-xs); }
-.model-role-controls { display: flex; align-items: center; gap: 6px; }
+.model-role-controls { display: grid; grid-template-columns: 220px 110px; align-items: center; gap: 6px; justify-self: end; }
+.model-role-controls select { width: 100%; min-width: 0; }
 .model-role-controls select,
 .provider-model select {
   height: 30px;
@@ -138,10 +139,12 @@
   color: var(--gx-ink);
   font-size: var(--gx-text-xs);
 }
-.model-role-controls select:first-child { min-width: 200px; }
+.model-role-controls select:first-child { min-width: 0; }
 .model-role-controls select:focus-visible,
 .provider-model select:focus-visible { outline: none; box-shadow: var(--gx-ring); }
-.model-role-problem { grid-column: 1 / -1; display: inline-flex; align-items: center; gap: 5px; color: var(--gx-danger); font-size: var(--gx-text-2xs); }
+.model-role-problem { grid-column: 1 / -1; display: inline-flex; align-items: center; gap: 5px; color: var(--gx-danger); font-size: var(--gx-text-xs); font-weight: 500; }
+.model-role.has-problem { box-shadow: inset 2px 0 0 var(--gx-danger); }
+.model-role.has-problem .model-role-controls select:first-child { border-color: color-mix(in srgb, var(--gx-danger) 40%, transparent); }
 .model-roles-note { margin: 2px 17px 6px; color: var(--gx-faint); font-size: var(--gx-text-2xs); }
 .model-role .tts-role-options .model-roles-note { margin: 0; }
 .model-providers-label { display: block; }
@@ -186,7 +189,7 @@
 
 @media (max-width: 720px) {
   .model-role { grid-template-columns: 1fr; }
-  .model-role-controls select:first-child { min-width: 0; flex: 1; }
+  .model-role-controls { grid-template-columns: minmax(0, 1fr) 110px; justify-self: stretch; }
   .provider-model { grid-template-columns: 1fr auto; }
   .provider-model code, .provider-model-vision, .provider-model select { grid-column: 1 / -1; }
 }
@@ -233,3 +236,6 @@
   border-radius: 4px;
   background: transparent;
 }
+
+/* Settings → Voice: the "check again" switch reads as an option of its row, not a heading. */
+.model-role .speech-live { display: inline-flex; align-items: center; gap: 7px; font-size: var(--gx-text-xs); font-weight: 500; color: var(--gx-ink); }

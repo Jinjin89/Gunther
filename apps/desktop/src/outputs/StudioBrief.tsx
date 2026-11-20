@@ -43,7 +43,7 @@ export function StudioLive({ state }: { state: LiveOutputState }) {
     {state.stages.length > 0 && <ol className="studio-stages" aria-label="Progress">
       {state.stages.map((stage) => <li key={stage.id} className={`is-${stage.state}`} title={stage.detail ?? undefined}>
         {stage.state === "done" ? <Check size={11} aria-hidden="true" /> : stage.state === "failed" ? <CircleAlert size={11} aria-hidden="true" /> : <LoaderCircle className="spin" size={11} aria-hidden="true" />}
-        {stage.label}{stage.seconds !== null && stage.state !== "running" && <small>{spoken(stage.seconds)}</small>}
+        {stage.label}{stage.state === "running" ? stage.detail && <small>{stage.detail}</small> : stage.seconds !== null && <small>{spoken(stage.seconds)}</small>}
       </li>)}
     </ol>}
     {state.memo && <MemoView memo={state.memo} />}

@@ -1429,7 +1429,7 @@ def test_the_budget_pauses_a_turn_and_continue_picks_it_up(tmp_path: Path) -> No
         events = turn(client, base_id, "talk", "Find out everything")
         end = done(events)
         assert end["outcome"] == "paused" and end["artifact"] is None
-        assert "I ran out of room" in end["reply"] and "continue" in end["reply"]
+        assert "used all 2 decisions" in end["reply"] and "continue" in end["reply"]
         assert end["message"]["kind"] == "paused"
         stored, _ = kept(client, "talk")
         assert stored.pending is None

@@ -30,6 +30,7 @@ from gunther.outputs import (
     BuiltOutput,
     Draft,
     Events,
+    Issue,
     Notes,
     OutputAgents,
     Planned,
@@ -186,6 +187,8 @@ class Run:
     limitations: list[str] | None = None
     # The scientific review's outcome: "ready", "open_problems" or "unavailable".
     review_status: str | None = None
+    # The notes made when the material was too long to give whole and was read part by part.
+    read_digest: str = ""
 
 
 def _no_events(_event: dict[str, Any]) -> None:
@@ -205,17 +208,28 @@ def material_request(material: str, task: str) -> tuple[str, str]:
     return P.STUDIO_BASE, "The material:\n\n" + material + P.TASK_BOUNDARY + task
 
 
-def warm_map(function, items, workers: int):
-    """Finish the first item before submitting the rest, preserving context and order."""
+def warm_map(function, items, workers: int, progress=None):
+    """Finish the first item before submitting the rest, preserving context and order.
+    ``progress(done, total)`` hears each finished item, one at a time."""
 
     items = list(items)
     if not items:
         return []
-    first = function(items[0])
+    lock, finished = Lock(), [0]
+
+    def counted(item):
+        out = function(item)
+        if progress is not None:
+            with lock:
+                finished[0] += 1
+                progress(finished[0], len(items))
+        return out
+
+    first = counted(items[0])
     if len(items) == 1:
         return [first]
     with ThreadPoolExecutor(workers) as pool:
-        return [first, *pool.map(_in_context(function), items[1:])]
+        return [first, *pool.map(_in_context(counted), items[1:])]
 
 
 class _MaterialCheckerGateway:
@@ -290,6 +304,11 @@ class StudioAgents(OutputAgents):
                 self._active_stages.pop()
             logger.info("Studio %s %s in %ss: %s", step, state, took, detail[:120])
         emit(event)
+
+    def _progress(self, emit: Events, step: str, label: str, detail: str) -> None:
+        """What a running stage is doing now, shown beside its label; its clock keeps going."""
+
+        emit({"type": "stage", "id": step, "label": label, "state": "running", "detail": detail})
 
     def _count_model_call(self, stage: str | None = None) -> None:
         stage = stage or (self._active_stages[-1] if self._active_stages else None)
@@ -371,14 +390,28 @@ class StudioAgents(OutputAgents):
 
     # 1. Reading ---------------------------------------------------------------------------
 
-    def read(self, model, run: Run, pool: Pool, notes: Notes, emit: Events) -> str:
-        """The material as the memo step reads it: whole when it fits, else notes per part."""
+    def read(
+        self,
+        model,
+        run: Run,
+        pool: Pool,
+        notes: Notes,
+        emit: Events,
+        kept: dict[str, Any] | None = None,
+    ) -> str:
+        """The material as the memo step reads it: whole when it fits, else notes per part.
+        ``kept``: the notes an earlier run of the same request made, reused when the person's
+        own notes are the same."""
 
         items = sorted(pool.items, key=lambda item: item.ref)
         whole = self._material(items)
         extra = self._notes_text(notes)
         if tokens(whole) <= DIRECT_TOKENS:
             return extra + whole
+        if kept and kept.get("notes") == extra and kept.get("digest"):
+            self._stage(emit, "read", "Reading the material", "done", "kept from before")
+            run.read_digest = kept["digest"]
+            return extra + run.read_digest + "\n\n" + whole
         self._stage(emit, "read", "Reading the material", "running")
         parts: list[list[Evidence]] = [[]]
         size = 0
@@ -418,17 +451,12 @@ class StudioAgents(OutputAgents):
             ]
         self._stage(emit, "read", "Reading the material", "done", f"{len(parts)} parts")
         sources = sorted({item.title for item in items})
+        run.read_digest = (
+            "Sources: " + "; ".join(sources) + "\n\nNotes from the material:\n" + "\n".join(lines)
+        )
         # Keep raw passages too: writers and checks previously fetched them after
         # reading notes. No step may lose evidence to make its opening match.
-        return (
-            extra
-            + "Sources: "
-            + "; ".join(sources)
-            + "\n\nNotes from the material:\n"
-            + "\n".join(lines)
-            + "\n\n"
-            + whole
-        )
+        return extra + run.read_digest + "\n\n" + whole
 
     @staticmethod
     def _notes_text(notes: Notes) -> str:
@@ -649,7 +677,7 @@ class StudioAgents(OutputAgents):
             coverage=(run.coverage_plan.model_dump_json() if run.coverage_plan else "(none)"),
             story=content,
         )
-        return self._json(model, S.ScientificReview, *material_request(material, task), "medium")
+        return self._json(model, S.ScientificReview, *material_request(material, task), "low")
 
     @staticmethod
     def _plain_built(deck: str, run: Run, pool: Pool, model, effort) -> BuiltOutput:
@@ -729,7 +757,7 @@ class StudioAgents(OutputAgents):
                 prompt="Visible slides (notes are deliberately absent):\n\n"
                 + self._visible_slides(deck),
                 images=images,
-                effort="medium",
+                effort="low",
                 schema_at="end",
             )
             supplied = len(fmt.split_slides(deck))
@@ -768,7 +796,7 @@ class StudioAgents(OutputAgents):
             + deck
         )
         try:
-            return self._json(model, S.CoverageReview, *material_request(material, task), "medium")
+            return self._json(model, S.CoverageReview, *material_request(material, task), "low")
         except ModelError as error:
             logger.info("Comparing the learner with the source failed: %s", error)
             self.skipped.append(
@@ -795,7 +823,23 @@ class StudioAgents(OutputAgents):
         for problem in problems:
             references: set[int] = set()
             if isinstance(problem, str):
-                structural = True
+                # A code problem names its figure or its values: the slides showing them are
+                # rewritten. Only a figure no slide shows yet needs the whole deck (a new slide
+                # must be placed for it).
+                assets = re.findall(r"gunther-asset:([\w-]+)", problem)
+                stated = re.search(r"unreadable glyphs:\s*(.+?)\.\s+Omit", problem)
+                values = fmt.numbers_in(stated.group(1)) if stated else set()
+                showing = {
+                    number
+                    for number, slide in enumerate(slides, 1)
+                    if any(f"gunther-asset:{asset}" in slide for asset in assets)
+                    or values
+                    & fmt.numbers_in(re.sub(r"\[\d+\]|\(gunther-asset:[^)]*\)", "", slide))
+                }
+                if showing:
+                    wanted |= showing
+                else:
+                    structural = True
                 continue
             for low, high in re.findall(
                 r"slides?\s+(\d+)\s*(?:[-–]\s*(\d+))?", problem.where, re.I
@@ -845,7 +889,7 @@ class StudioAgents(OutputAgents):
             )
             task += "\nStudy map, image readings and coverage plan:\n" + self._study_text(run)
             revised = _unfence(
-                self._text(model, *material_request(material, task), effort, 24_000)
+                self._text(model, *material_request(material, task), "low", 24_000)
             )
         except ModelError as error:
             logger.info("The targeted scientific revision failed: %s", error)
@@ -902,87 +946,74 @@ class StudioAgents(OutputAgents):
     ) -> str:
         """Source-aware coverage, an independent slide-only learner, comparison and code gates.
 
-        Content is settled here, before design. Revision is targeted unless the reviewer finds a
-        structural omission; an unavailable review or remaining content problem is never ready."""
+        Content is settled here, before design. One full review finds the problems; a targeted
+        revision fixes them; a re-check asks only whether those problems are gone. A second
+        full review of a revised deck always finds something new, so it never settles: what
+        the re-check still finds is delivered as open problems. Image problems are repaired
+        by code (``S.heal_images``); nothing here stops the build. An unavailable review is
+        never ready."""
 
         assert run.study is not None
         step, label = "science", "Reviewing the scientific explanation"
         deck = S.apply_source_cover(deck, pool.items)
-        self._stage(emit, step, label, "running")
+        self._stage(emit, step, label, "running", "checking the slides against the material")
         if run.reviews is None:
             run.reviews = []
-        review: S.ScientificReview | None = None
-        comparison: S.CoverageReview | None = None
-        learner: S.LearnerReview | None = None
-        code: list[str] = []
-        for round_ in range(2):
-            try:
-                review = self.scientific_review(model, run, deck, material)
-            except ModelError as error:
-                logger.info("The scientific review failed: %s", error)
-                review = None
-                self.skipped.append(
-                    {"step": step, "label": "Scientific review unavailable", "reason": str(error)}
-                )
-            code = S.code_problems(
-                run.study, run.figure_readings or [], deck, pool.items, plan=run.coverage_plan
+        try:
+            review: S.ScientificReview | None = self.scientific_review(model, run, deck, material)
+        except ModelError as error:
+            logger.info("The scientific review failed: %s", error)
+            review = None
+            self.skipped.append(
+                {"step": step, "label": "Scientific review unavailable", "reason": str(error)}
             )
-            for problem in S.cover_problems(deck, pool.items):
-                self._science_limit(run, problem)
-            if review is not None:
-                run.reviews.append(review)
-                emit({"type": "review", "round": round_ + 1, **review.model_dump()})
-            learner, _images = self._learner_review(model, effort, run, deck, pool, emit)
-            comparison = (
-                self._compare_learner(model, run, deck, learner, material)
-                if learner is not None
-                else None
-            )
-            if comparison is not None:
-                run.reviews.append(comparison)
-                emit(
-                    {
-                        "type": "coverage_comparison",
-                        "round": round_ + 1,
-                        **comparison.model_dump(),
-                    }
-                )
-            content_problems: list[S.ScientificProblem | str] = list(
-                review.problems or [] if review is not None else []
-            )
-            if comparison is not None:
-                content_problems += comparison.coverage_problems + comparison.learner_problems
-            content_problems += code
-            ready = bool(
-                comparison
-                and comparison.verdict == "ready"
-                and not comparison.coverage_problems
-                and not comparison.learner_problems
-                and review is not None
-                and review.verdict == "ready"
-                and not review.problems
-                and not code
-            )
-            if ready or round_ == 1:
-                break
-            deck = self._revise_science(model, effort, run, deck, pool, material, content_problems)
-            deck = S.apply_source_cover(deck, pool.items)
-            code = S.code_problems(
-                run.study, run.figure_readings or [], deck, pool.items, plan=run.coverage_plan
-            )
-            for problem in S.cover_problems(deck, pool.items):
-                self._science_limit(run, problem)
-        if code:
-            reason = "; ".join(code)
-            self._science_limit(run, reason)
-            self._stage(emit, step, label, "failed", reason)
-            raise ModelError("The deck still breaks a scientific rule after revision: " + reason)
-        unavailable = review is None or learner is None or comparison is None
-        open_problems: list[S.ScientificProblem] = []
         if review is not None:
-            open_problems += review.problems
+            run.reviews.append(review)
+            emit({"type": "review", "round": 1, **review.model_dump()})
+        self._progress(emit, step, label, "a fresh reader is reading only the slides")
+        learner, _images = self._learner_review(model, effort, run, deck, pool, emit)
+        if learner is not None:
+            self._progress(emit, step, label, "comparing what the reader understood")
+        comparison = (
+            self._compare_learner(model, run, deck, learner, material)
+            if learner is not None
+            else None
+        )
         if comparison is not None:
-            open_problems += comparison.coverage_problems + comparison.learner_problems
+            run.reviews.append(comparison)
+            emit({"type": "coverage_comparison", "round": 1, **comparison.model_dump()})
+        found: list[S.ScientificProblem] = list(review.problems if review is not None else [])
+        if comparison is not None:
+            found += comparison.coverage_problems + comparison.learner_problems
+        code = self._science_code(run, deck, pool)
+        unavailable = review is None or learner is None or comparison is None
+        verdicts_ready = bool(
+            review and review.verdict == "ready" and comparison and comparison.verdict == "ready"
+        )
+        still_open = found
+        fixed = 0
+        if found or code:
+            count = len(found) + len(code)
+            self._progress(
+                emit, step, label, f"fixing {count} problem{'' if count == 1 else 's'}"
+            )
+            revised = self._revise_science(
+                model, effort, run, deck, pool, material, [*found, *code]
+            )
+            revised = S.apply_source_cover(revised, pool.items)
+            if found and revised != deck:
+                self._progress(emit, step, label, "checking that the fixes worked")
+                still_open = self._recheck_science(model, run, revised, material, found)
+                fixed = len(found) - len(still_open)
+            deck = revised
+            code = self._science_code(run, deck, pool)
+        deck, healed = S.heal_images(deck, run.figure_readings or [], pool.items)
+        if healed:
+            for note in healed:
+                self._science_limit(run, note)
+            code = self._science_code(run, deck, pool)
+        for problem in code:
+            self._science_limit(run, problem)
         if unavailable:
             run.review_status = "unavailable"
             self._science_limit(
@@ -994,24 +1025,62 @@ class StudioAgents(OutputAgents):
             elif review is not None and comparison is None:
                 detail = "learner comparison unavailable"
             self._stage(emit, step, label, "done", detail)
-        elif (review and review.verdict != "ready") or (
-            comparison
-            and (comparison.verdict != "ready" or open_problems)
-        ):
+        elif still_open or code or (not found and not verdicts_ready):
             run.review_status = "open_problems"
-            for problem in open_problems:
+            for problem in still_open:
                 self._science_limit(run, f"Review: {problem.where}: {problem.problem}")
+            if not found and not verdicts_ready:
+                self._science_limit(
+                    run, "The review did not mark the deck ready, but named no problem to fix."
+                )
             if learner and learner.unexplained:
                 self._science_limit(
                     run,
                     "Independent learner could not explain: " + "; ".join(learner.unexplained),
                 )
-            self._stage(emit, step, label, "done", "open problems recorded")
+            left = len(still_open) + len(code)
+            done = f"{fixed} fixed, " if fixed else ""
+            self._stage(emit, step, label, "done", f"{done}{left} open problems recorded")
         else:
             run.review_status = "ready"
-            self._stage(emit, step, label, "done", "ready")
+            self._stage(emit, step, label, "done", f"ready, {fixed} fixed" if fixed else "ready")
         return deck
 
+    def _science_code(self, run: Run, deck: str, pool: Pool) -> list[str]:
+        """Every code check of a scientific deck; cover metadata is noted, never revised."""
+
+        assert run.study is not None
+        for problem in S.cover_problems(deck, pool.items):
+            self._science_limit(run, problem)
+        return S.code_problems(
+            run.study, run.figure_readings or [], deck, pool.items, plan=run.coverage_plan
+        )
+
+    def _recheck_science(
+        self, model, run: Run, deck: str, material: str, problems: list[S.ScientificProblem]
+    ) -> list[S.ScientificProblem]:
+        """Which of the review's problems the revision did not resolve. Unknown counts as open."""
+
+        task = P.SCIENCE_RECHECK.format(
+            problems="\n".join(
+                f"{n}. {p.where}: {p.problem} — fix: {p.fix}" for n, p in enumerate(problems, 1)
+            ),
+            deck=deck,
+        )
+        try:
+            check = self._json(model, S.ProblemCheck, *material_request(material, task), "low")
+        except ModelError as error:
+            logger.info("The scientific re-check failed: %s", error)
+            self.skipped.append(
+                {
+                    "step": "science",
+                    "label": "Scientific re-check unavailable",
+                    "reason": str(error),
+                }
+            )
+            return problems
+        resolved = {row.n for row in check.problems if row.resolved}
+        return [p for n, p in enumerate(problems, 1) if n not in resolved]
 
     # 2. Memo ------------------------------------------------------------------------------
 
@@ -1136,7 +1205,7 @@ class StudioAgents(OutputAgents):
                     schema,
                     system,
                     prompt + "\n\nYour storyline:\n" + story.model_dump_json() + "\n\n" + again,
-                    "medium",
+                    "low",
                 )
             except ModelError as error:
                 logger.info("Revising the storyline failed: %s", error)
@@ -1200,7 +1269,7 @@ class StudioAgents(OutputAgents):
         )
         try:
             return self._json(
-                model, Review, *material_request(material, system + "\n\nReview it now."), "medium"
+                model, Review, *material_request(material, system + "\n\nReview it now."), "low"
             )
         except ModelError as error:
             logger.info("The storyline review failed: %s", error)
@@ -1310,8 +1379,10 @@ class StudioAgents(OutputAgents):
                     + "\n\nRewrite it now."
                 )
                 try:
+                    # A format fix is mechanical: little thinking, so its 4,000 tokens are
+                    # spent on the slide (high thinking ran out of room and asked again).
                     again = fmt.split_slides(
-                        _unfence(self._text(model, system, prompt, effort, 4000))
+                        _unfence(self._text(model, system, prompt, "low", 4000))
                     )
                 except ModelError as error:
                     logger.info("Fixing slide %d failed: %s", n, error)
@@ -1432,7 +1503,8 @@ class StudioAgents(OutputAgents):
     ) -> list[Draft]:
         """Warm with the first part, then check and repair the remaining parts in parallel."""
 
-        self._stage(emit, "verify", "Checking every claim against its source", "running")
+        label = "Checking every claim against its source"
+        self._stage(emit, "verify", label, "running", f"{len(parts)} slides")
         by_ref = pool.by_ref()
 
         rest = "\n".join(parts[1:])
@@ -1453,7 +1525,14 @@ class StudioAgents(OutputAgents):
             )
             return check(fixed[0]) if fixed else draft
 
-        drafts = warm_map(check_and_fix, parts, WORKERS)
+        drafts = warm_map(
+            check_and_fix,
+            parts,
+            WORKERS,
+            lambda done, total: self._progress(
+                emit, "verify", label, f"{done} of {total} slides checked"
+            ),
+        )
         for index, draft in enumerate(drafts):
             if any(issue.note.startswith("Chart value") for issue in draft.issues or []):
                 # A chart whose values its sources do not state is drawn as a table.
@@ -1476,7 +1555,7 @@ class StudioAgents(OutputAgents):
         self._stage(
             emit,
             "verify",
-            "Checking every claim against its source",
+            label,
             "done",
             f"{left} claim(s) still flagged" if left else "all claims supported",
         )
@@ -1698,7 +1777,9 @@ class StudioAgents(OutputAgents):
             system + "\n\nRewrite them now.",
         )
         try:
-            text = _unfence(self._text(model, system, prompt, "medium", 16_000))
+            # Repairing listed sentences from given passages is constrained work: on DeepSeek
+            # "medium" rounds up to high thinking, which this does not need.
+            text = _unfence(self._text(model, system, prompt, "low", 16_000))
         except ModelError as error:
             logger.info("Fixing unsupported claims failed: %s", error)
             return None
@@ -1724,6 +1805,37 @@ class StudioAgents(OutputAgents):
             out.append(piece if source_images_kept(draft.text, piece) else draft.text)
         return out
 
+    def _checked(
+        self, model, effort, run: Run, text: str, pool: Pool, material: str, emit: Events
+    ) -> list[Draft]:
+        """The written deck's slides with every claim checked, refitted, and (for a scientific
+        deck) its images repaired and what code still finds recorded as open problems."""
+
+        drafts = self.verify(model, run, fmt.split_slides(text), pool, emit, material)
+        if not run.study:
+            # The subtitle restates what the action titles claim; a scientific deck's
+            # titles may name topics, so its subtitle stays as written and reviewed.
+            drafts = self._cover(model, drafts, pool, material)
+        drafts = self._refit(model, effort, run, drafts, pool, material)
+        if not run.study:
+            return drafts
+        healed = []
+        for draft in drafts:
+            fixed, repaired = S.heal_images(draft.text, run.figure_readings or [], pool.items)
+            for note in repaired:
+                self._science_limit(run, note)
+            healed.append(replace(draft, text=fixed) if repaired else draft)
+        deck = "\n\n---\n\n".join(d.text for d in healed)
+        # Claim repairs may reword a slide that named a panel: that is delivered as an open
+        # problem, never a lost build.
+        known = set(run.limitations or [])
+        for problem in self._science_code(run, deck, pool):
+            if problem not in known:
+                self._science_limit(run, problem)
+                if run.review_status == "ready":
+                    run.review_status = "open_problems"
+        return healed
+
     # 4. Designing -------------------------------------------------------------------------
 
     def design_deck(self, model, run: Run, drafts: list[Draft], emit: Events) -> list[Draft]:
@@ -1745,7 +1857,14 @@ class StudioAgents(OutputAgents):
                 audience=run.spec.audience,
             )
             designed, count, notes = D.design_slides(
-                self, model, D.apply_style(slides, style), style, workers=WORKERS
+                self,
+                model,
+                D.apply_style(slides, style),
+                style,
+                workers=WORKERS,
+                progress=lambda done, total: self._progress(
+                    emit, "design", label, f"{done} of {total} slides designed"
+                ),
             )
         except Exception as error:  # noqa: BLE001 - designing never fails a build
             logger.warning("Designing the slides failed: %s", error)
@@ -1782,9 +1901,14 @@ class StudioAgents(OutputAgents):
         checkpoint: Any = None,
         **_ignored: Any,
     ) -> BuiltOutput:
-        """``resume``: what an earlier, failed run of the same request finished (its memo and
-        storyline), used when the pool still has the same passages; ``checkpoint(state)`` hears
-        that state after each of those steps, so a failure later does not lose them."""
+        """``resume``: what an earlier, failed or stopped run finished; ``checkpoint(state)``
+        hears that state after each step, so a failure or a Stop later does not lose it.
+
+        Each step is reused unless what it depends on changed. The figure readings depend on
+        each figure only; the study map and coverage plan on the passages; the purpose, the
+        reading notes, the storyline, the reviewed draft and its checked slides also on the
+        brief. So a reworded brief keeps the reading of the study and replans only the story,
+        and a turn that carries on after a Stop starts where the run stopped."""
 
         emit = events or _no_events
         if not pool.items:
@@ -1792,14 +1916,17 @@ class StudioAgents(OutputAgents):
         use = self.use or ("read" if re.search(READ_HINT, spec.brief, re.I) else "talk")
         run = Run(spec, use if spec.kind == "slides" else "", self._language(spec, pool))
         printed = S.pool_print(pool.items)
-        saved = (
-            resume
-            if resume
-            and resume.get("passages") == len(pool)
-            and resume.get("brief") == spec.brief
-            and resume.get("pool", printed) == printed
-            else {}
+        resumed = resume or {}
+        # What depends on the passages alone, and what also depends on the brief.
+        same_material = (
+            bool(resumed)
+            and resumed.get("passages") == len(pool)
+            and resumed.get("pool", printed) == printed
         )
+        studied = resumed if same_material else {}
+        saved = studied if resumed.get("brief") == spec.brief else {}
+        # A figure's reading is kept for that figure, whatever else changed.
+        self.reusable_figures = [*self.reusable_figures, *(resumed.get("figure_readings") or [])]
         state: dict[str, Any] = {
             "passages": len(pool),
             "pool": printed,
@@ -1829,10 +1956,18 @@ class StudioAgents(OutputAgents):
             emit({"type": "purpose", **state["purpose"]})
             if checkpoint:
                 checkpoint(dict(state))
-        material = self.read(model, run, pool, notes, emit)
+        material = self.read(model, run, pool, notes, emit, kept=saved.get("read"))
+        if run.read_digest:
+            state["read"] = {"notes": self._notes_text(notes), "digest": run.read_digest}
+            if checkpoint:
+                checkpoint(dict(state))
         if run.purpose and run.purpose.purpose == "explain_study":
-            run.limitations = list(saved.get("limitations") or [])
-            kept = S.StudyMap.model_validate(saved["study_map"]) if saved.get("study_map") else None
+            run.limitations = list(studied.get("limitations") or [])
+            kept = (
+                S.StudyMap.model_validate(studied["study_map"])
+                if studied.get("study_map")
+                else None
+            )
             if kept and not S.map_problems(kept, pool.items):
                 run.study = kept
             else:
@@ -1845,9 +1980,9 @@ class StudioAgents(OutputAgents):
                 for item in pool.items
                 for figure in figures_of(item)
             }
-            if "figure_readings" in saved:
+            if "figure_readings" in studied:
                 run.figure_readings = []
-                for row in saved["figure_readings"]:
+                for row in studied["figure_readings"]:
                     try:
                         reading = S.FigureReading.model_validate(row)
                     except ValueError:
@@ -1874,8 +2009,8 @@ class StudioAgents(OutputAgents):
             state["figure_readings"] = [r.model_dump() for r in run.figure_readings]
             state["limitations"] = run.limitations
             kept_plan = (
-                S.CoveragePlan.model_validate(saved["coverage_plan"])
-                if saved.get("coverage_plan")
+                S.CoveragePlan.model_validate(studied["coverage_plan"])
+                if studied.get("coverage_plan")
                 else None
             )
             if kept_plan and not S.coverage_problems(kept_plan, pool.items):
@@ -1926,7 +2061,8 @@ class StudioAgents(OutputAgents):
         looked: dict[str, Any] | None = None
         snapshot: dict[str, Any] | None = None
         if spec.kind == "slides":
-            if run.study and reuse_story and saved.get("draft"):
+            reused_draft = bool(run.study and reuse_story and saved.get("draft"))
+            if reused_draft:
                 text = S.apply_source_cover(saved["draft"], pool.items)
                 run.review_status = saved.get("review_status") or "unavailable"
                 run.reviews = []
@@ -1953,49 +2089,72 @@ class StudioAgents(OutputAgents):
                 if run.study:
                     # Content is settled before claim checking and visual design.
                     text = self.scientific_gate(model, effort, run, text, pool, material, emit)
-                    state["draft"] = text
-                    state["reviews"] = []
-                    for review in run.reviews or []:
-                        kind = (
-                            "scientific"
-                            if isinstance(review, S.ScientificReview)
-                            else "learner"
-                            if isinstance(review, S.LearnerReview)
-                            else "coverage"
-                        )
-                        state["reviews"].append({"kind": kind, "review": review.model_dump()})
-                    state["review_status"] = run.review_status
-                    self.scientific_context.update(
-                        {
-                            "coverage_plan": run.coverage_plan.model_dump()
-                            if run.coverage_plan
-                            else None,
-                            "reviews": state["reviews"],
-                            "review_status": run.review_status,
-                        }
+            if run.study:
+                state["draft"] = text
+                state["reviews"] = []
+                for review in run.reviews or []:
+                    kind = (
+                        "scientific"
+                        if isinstance(review, S.ScientificReview)
+                        else "learner"
+                        if isinstance(review, S.LearnerReview)
+                        else "coverage"
                     )
+                    state["reviews"].append({"kind": kind, "review": review.model_dump()})
+                state["review_status"] = run.review_status
+                self.scientific_context.update(
+                    {
+                        "coverage_plan": run.coverage_plan.model_dump()
+                        if run.coverage_plan
+                        else None,
+                        "reviews": state["reviews"],
+                        "review_status": run.review_status,
+                    }
+                )
+                if checkpoint:
+                    checkpoint(dict(state))
+            checked = saved.get("checked") if reused_draft else None
+            if checked:
+                # The claims of this same draft were checked before the run stopped.
+                drafts = [
+                    Draft(
+                        row["text"],
+                        None
+                        if row.get("issues") is None
+                        else [Issue(**issue) for issue in row["issues"]],
+                        row.get("coverage"),
+                    )
+                    for row in checked["slides"]
+                ]
+                run.limitations = list(checked.get("limitations") or [])
+                state["limitations"] = run.limitations
+                run.review_status = checked.get("review_status") or run.review_status
+                self._stage(
+                    emit,
+                    "verify",
+                    "Checking every claim against its source",
+                    "done",
+                    "kept from before",
+                )
+            else:
+                drafts = self._checked(model, effort, run, text, pool, material, emit)
+                if run.study:
+                    state["checked"] = {
+                        "slides": [
+                            {
+                                "text": d.text,
+                                "issues": None
+                                if d.issues is None
+                                else [issue.out() for issue in d.issues],
+                                "coverage": d.coverage,
+                            }
+                            for d in drafts
+                        ],
+                        "limitations": list(run.limitations or []),
+                        "review_status": run.review_status,
+                    }
                     if checkpoint:
                         checkpoint(dict(state))
-            parts = fmt.split_slides(text)
-            drafts = self.verify(model, run, parts, pool, emit, material)
-            if not run.study:
-                # The subtitle restates what the action titles claim; a scientific deck's
-                # titles may name topics, so its subtitle stays as written and reviewed.
-                drafts = self._cover(model, drafts, pool, material)
-            drafts = self._refit(model, effort, run, drafts, pool, material)
-            if run.study:
-                deck = "\n\n---\n\n".join(d.text for d in drafts)
-                left = S.code_problems(
-                    run.study,
-                    run.figure_readings or [],
-                    deck,
-                    pool.items,
-                    plan=run.coverage_plan,
-                )
-                for problem in S.cover_problems(deck, pool.items):
-                    self._science_limit(run, problem)
-                if left:
-                    raise ModelError("The checked deck broke a scientific rule: " + "; ".join(left))
             if self.design and drafts:
                 drafts = self.design_deck(model, run, drafts, emit)
             outline = [

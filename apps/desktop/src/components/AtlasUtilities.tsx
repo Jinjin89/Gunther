@@ -1043,13 +1043,19 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
     <div className="settings-pane" role="region" aria-labelledby="settings-pane-title">
     <header className="settings-pane-header"><h2 id="settings-pane-title">{current.label}</h2><p>{current.description}</p></header>
 
-    {pane === "general" && <section>
-      <label className="setting-row"><span><strong>Theme</strong><small>Applied immediately and remembered on this device.</small></span><select value={theme} aria-label="Theme" onChange={(event) => onTheme(event.target.value as ThemePreference)}><option value="light">Light</option><option value="dark">Dark</option><option value="system">Match system</option></select></label>
-      <TypographySettings />
-      <AnswerStyleSetting />
-      {isTauriRuntime() && <label className="setting-row"><span><strong>Menu bar</strong><small>Gunther’s mark stays in the menu bar for quick capture. Recordings always show there, with their timer, while they run.</small></span><select value={menuBarMode} aria-label="Menu bar" onChange={(event) => changeMenuBarMode(event.target.value as MenuBarMode)}><option value="always">Always show</option><option value="whileCapturing">Only while capturing</option></select></label>}
-      <div className="setting-row"><span><strong>Keyboard shortcuts</strong><small>Capture, search and move through Inbox without the mouse. Press {formatCombo("mod+/")} any time.</small></span><button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => window.dispatchEvent(new CustomEvent("gunther:show-shortcuts"))}>Show all</button></div>
-    </section>}
+    {pane === "general" && <>
+      <section>
+        <div className="setting-heading"><span><strong>Appearance</strong><small>How Gunther looks on this computer.</small></span></div>
+        <label className="setting-row"><span><strong>Theme</strong><small>Applied immediately and remembered on this device.</small></span><select value={theme} aria-label="Theme" onChange={(event) => onTheme(event.target.value as ThemePreference)}><option value="light">Light</option><option value="dark">Dark</option><option value="system">Match system</option></select></label>
+        <TypographySettings />
+      </section>
+      <section>
+        <div className="setting-heading"><span><strong>Preferences</strong><small>How Ask answers, and how you reach Gunther.</small></span></div>
+        <AnswerStyleSetting />
+        {isTauriRuntime() && <label className="setting-row"><span><strong>Menu bar</strong><small>Gunther’s mark stays in the menu bar for quick capture. Recordings always show there, with their timer, while they run.</small></span><select value={menuBarMode} aria-label="Menu bar" onChange={(event) => changeMenuBarMode(event.target.value as MenuBarMode)}><option value="always">Always show</option><option value="whileCapturing">Only while capturing</option></select></label>}
+        <div className="setting-row"><span><strong>Keyboard shortcuts</strong><small>Capture, search and move through Inbox without the mouse. Press {formatCombo("mod+/")} any time.</small></span><button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => window.dispatchEvent(new CustomEvent("gunther:show-shortcuts"))}>Show all</button></div>
+      </section>
+    </>}
 
     {pane === "models" && <>
       <ModelSettings onNotify={onNotify} />
@@ -1072,10 +1078,10 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
     </>}
 
     {pane === "library" && <>
-      <section>
+      <LibraryFolderSettings onNotify={onNotify} onCopy={(label, value) => void copyValue(label, value)} />
+      <section className="local-workbook">
         <div className="setting-row"><span><strong>Local workbook</strong><small>Sources, audio, and accepted revisions stay on this device.</small></span><span className={`setting-state ${online === false ? "is-muted" : ""}`}><i />{online === null ? "Checking" : online ? "Ready" : "Offline"}</span></div>
       </section>
-      <LibraryFolderSettings onNotify={onNotify} onCopy={(label, value) => void copyValue(label, value)} />
     </>}
 
     {pane === "developer" && <DeveloperSettings onNotify={onNotify} />}
@@ -1087,13 +1093,15 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
           <span><Laptop size={17} /></span>
           <div><small>Phone connection address</small><strong>{gatewayLoading ? "Checking secure gateway…" : connection.displayValue}</strong><p>{connection.explanation}</p>{connection.caFingerprint && <code className="gateway-ca-fingerprint">CA SHA-256 · {connection.caFingerprint}</code>}</div>
         </div>
-        <button className="primary-button" type="button" disabled={gatewayLoading || connection.kind !== "secure" || pairingWorking || Boolean(pairing && !pairingExpired)} onClick={() => void createPairing()}>
+        {!gatewayLoading && connection.kind !== "secure"
+          ? <span className="mobile-gateway-status">Gateway not running</span>
+          : <button className="primary-button" type="button" disabled={gatewayLoading || connection.kind !== "secure" || pairingWorking || Boolean(pairing && !pairingExpired)} onClick={() => void createPairing()}>
           {gatewayLoading ? "Checking gateway…" : connection.kind !== "secure" ? "Gateway unavailable" : pairingWorking ? "Creating…" : pairing && !pairingExpired ? "Pairing code active" : pairing ? "Generate a new code" : "Generate 2-minute code"}
           <ArrowRight size={13} />
-        </button>
+        </button>}
       </div>
 
-      {devicesError && <p className="mobile-connection-error"><CircleAlert size={14} />{devicesError}</p>}
+      {devicesError && devicesError !== connection.explanation && <p className="mobile-connection-error"><CircleAlert size={14} />{devicesError}</p>}
 
       {pairing && <article className={`pairing-details ${pairingExpired ? "is-expired" : ""}`}>
         <header>

@@ -632,6 +632,21 @@ Slides to rewrite:
     + SCIENCE_TRUTH
 )
 
+SCIENCE_RECHECK = (
+    """Check whether a targeted revision resolved each numbered problem below. Judge only these
+problems, against the source material and the revised deck; do not look for new ones. A problem is
+resolved when the revised slides visibly do what its fix asked, or otherwise remove the defect.
+Moving the explanation into presenter notes does not resolve it.
+Return ProblemCheck with one entry per problem, by its number: resolved true or false, and a short
+reason when it is not.
+Problems:
+{problems}
+Revised deck:
+{deck}
+"""
+    + SCIENCE_TRUTH
+)
+
 LEARNER_REVIEW = """You are an independent learner seeing only the rendered slide content below.
 Audience brief: {brief}; intended audience: {audience}. You do not have the source paper, notes,
 planning rationale, captions outside these slides, speaker notes or any other context.

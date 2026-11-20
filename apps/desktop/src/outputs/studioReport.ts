@@ -51,7 +51,9 @@ export function qualityReport(artifact: Artifact): QualityReport {
 
 /** "3 min 20 s" / "45 s". */
 export function spoken(seconds: number): string {
-  if (seconds < 60) return `${seconds} s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes} min${seconds % 60 ? ` ${seconds % 60} s` : ""}`;
+  // Stage times arrive as fractions ("263.338"); show whole seconds.
+  const total = Math.max(0, Math.round(seconds));
+  if (total < 60) return `${total} s`;
+  const minutes = Math.floor(total / 60);
+  return `${minutes} min${total % 60 ? ` ${total % 60} s` : ""}`;
 }

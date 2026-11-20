@@ -162,7 +162,7 @@ describe("artifact conversations", () => {
     expect(chat().getByRole("button", { name: "Model: DeepSeek · Flash" })).toBeVisible();
   });
 
-  it("sends a message to the agent, shows its steps and its plan, and opens the saved version", async () => {
+  it("sends a message to the agent, shows its steps, and opens the saved version", async () => {
     const user = userEvent.setup(); const running = held<ArtifactTurnOut>(); let conversationId = "";
     const turn = vi.spyOn(knowledgeApi, "artifactTurnStream").mockImplementation(async (_base, id, _payload, _workspace, hear) => {
       conversationId = id;
@@ -177,9 +177,6 @@ describe("artifact conversations", () => {
       return running.promise;
     });
     const context = await setup(); await send(user, "For the lab"); await showControls(user);
-    const plan = within(screen.getByRole("region", { name: "Agent plan" }));
-    expect(plan.getByText("Searched your library for “markers”")).toBeVisible();
-    expect(plan.getByText("Writing section 1", { selector: "strong" })).toBeVisible();
     const steps = chat().getByRole("list", { name: "What the agent did" });
     expect(within(steps).getByText("Searched your library for “markers”")).toBeVisible(); expect(within(steps).getByText("6 found")).toBeVisible(); expect(within(steps).getByText("Writing section 1")).toBeVisible();
     expect(chat().getByText("For the lab", { selector: "p" })).toBeVisible();
@@ -780,7 +777,7 @@ describe("reading, versions and editing", () => {
     expect(within(screen.getByRole("article")).getByText(/Pinned text \[1\]/)).toBeVisible(); expect(chat().getByText("This version came from the old builder. Rebuild it to edit it.")).toBeVisible(); expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
   });
   it("collapses preview controls and returns from focus mode", async () => {
-    const user = userEvent.setup(); await setup({ history: [version()] }); expect(screen.queryByRole("region", { name: "Agent plan" })).not.toBeInTheDocument(); await showControls(user); expect(screen.getByRole("region", { name: "Agent plan" })).toBeVisible();
+    const user = userEvent.setup(); await setup({ history: [version()] }); expect(screen.queryByRole("complementary", { name: "Saved artifacts" })).toBeNull(); await showControls(user); expect(screen.getByRole("complementary", { name: "Saved artifacts" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Hide preview controls" })); await user.click(screen.getByRole("button", { name: "Expand preview" })); expect(screen.getByRole("button", { name: "Exit preview focus" })).toHaveAttribute("aria-pressed", "true"); await user.keyboard("{Escape}"); expect(screen.getByRole("button", { name: "Expand preview" })).toBeVisible(); expect(chat().getByRole("textbox", { name: "Artifact message" })).toBeVisible();
   });
 });

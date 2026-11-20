@@ -13,4 +13,4 @@
 /* Native controls do not inherit the face on their own. */
 :root[data-font] button, :root[data-font] input, :root[data-font] select, :root[data-font] textarea { font-family: inherit; }
 
-.type-preview { margin: 8px 0 4px; padding: 14px 16px; border-radius: var(--gx-radius-sm); background: var(--gx-surface-2); color: var(--gx-ink); font-size: var(--gx-text-md); line-height: 1.6; }
+.type-preview { margin: 4px 17px 16px; padding: 12px 14px; border: 1px solid var(--gx-line); border-radius: var(--gx-radius-sm); background: transparent; color: var(--gx-ink); font-size: var(--gx-text-md); line-height: 1.6; }

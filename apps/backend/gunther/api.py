@@ -1653,6 +1653,12 @@ def _output_run(
                     raise Stopped
                 if event["type"] == "action" and event.get("state") == "running":
                     tracked.update(detail=event.get("label") or "Working")
+                elif event["type"] == "stage" and event.get("state") == "running":
+                    # A studio build's step, with what it is doing now ("4 of 11 slides checked").
+                    tracked.update(
+                        detail=" · ".join(filter(None, (event.get("label"), event.get("detail"))))
+                        or "Working"
+                    )
                 elif event["type"] == "outline":
                     sections = len(event.get("sections") or [])
                 elif event["type"] == "section":

@@ -107,29 +107,6 @@
 .aw-artifact-card strong { font-size: 12px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .aw-artifact-card small { font-size: 10px; display: flex; justify-content: space-between; color: var(--gx-faint); gap: 8px; }
 .aw-empty-tray { display: flex; gap: 8px; align-items: center; color: var(--gx-faint); font-size: 11px; padding-block: 12px; }
-.aw-agent-plan { flex: none; margin: 10px 16px; border: 1px solid var(--gx-line); border-radius: 9px; background: var(--gx-canvas); overflow: hidden; }
-.aw-agent-plan > header { min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 11px; }
-.aw-agent-plan-toggle { display: flex; align-items: center; gap: 7px; border: 0; padding: 0; background: transparent; color: var(--gx-muted); }
-.aw-agent-plan-toggle strong { color: var(--gx-ink); font-size: 12px; font-weight: 550; }
-.aw-agent-plan-toggle[aria-expanded="false"] > svg:last-child { transform: rotate(-90deg); }
-.aw-agent-plan-state { display: inline-flex; align-items: center; gap: 4px; color: var(--gx-faint); font-size: 10px; }
-.aw-agent-plan.is-running .aw-agent-plan-state { color: var(--gx-brand); }
-.aw-agent-plan-steps { list-style: none; padding: 0 7px 5px; margin: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 3px; }
-.aw-agent-plan-steps > li { display: flex; align-items: flex-start; gap: 6px; padding: 7px 6px; color: var(--gx-faint); border-radius: 5px; }
-.aw-agent-plan-steps > li.is-current { grid-column: 1 / -1; padding-block: 8px; background: color-mix(in srgb, var(--gx-brand) 6%, var(--gx-canvas)); color: var(--gx-brand); }
-.aw-agent-step-mark { display: grid; place-items: center; width: 14px; height: 16px; flex: none; }
-.aw-agent-plan-steps strong { font-size: 10px; font-weight: 500; line-height: 1.5; display: block; }
-.aw-agent-plan-steps .is-done strong { color: var(--gx-muted); }
-.aw-agent-plan-steps .is-done .aw-agent-step-mark { color: var(--gx-brand); }
-.aw-agent-plan-steps small { display: block; font-size: 10px; color: var(--gx-muted); line-height: 1.55; margin-top: 2px; }
-.aw-agent-now { margin-left: auto; flex: none; font-size: 9px; line-height: 16px; padding-inline: 5px; border-radius: 3px; background: color-mix(in srgb, var(--gx-brand) 9%, var(--gx-canvas)); }
-.aw-agent-plan > footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 11px; border-top: 1px solid var(--gx-line); color: var(--gx-faint); font-size: 9px; }
-.aw-agent-demo-label { opacity: .7; }
-.aw-agent-plan > footer > div { display: flex; align-items: center; gap: 9px; }
-.aw-agent-plan > footer button { border: 0; padding: 2px 0; display: flex; align-items: center; gap: 3px; background: transparent; color: var(--gx-muted); font: inherit; }
-.aw-agent-plan > footer button:hover { color: var(--gx-brand); }
-.aw-agent-plan > footer button:disabled { cursor: default; color: var(--gx-faint); }
-.aw-agent-plan-summary { margin: 0; padding: 0 11px 10px; color: var(--gx-muted); font-size: 10px; line-height: 1.6; }
 .aw-preview-toolbar { flex: none; display: flex; gap: 6px; align-items: center; padding: 9px 16px; border-bottom: 1px solid var(--gx-line); color: var(--gx-muted); font-size: 11px; background: var(--gx-surface-2); }
 .aw-preview-toolbar > span { display: flex; align-items: center; gap: 6px; margin-right: auto; }
 .aw-preview-toolbar strong { font-weight: 500; }
@@ -150,12 +127,9 @@
 .aw-controls-heading button { margin-left: auto; }
 .aw-preview-controls .aw-artifact-tray { padding-top: 3px; padding-bottom: 10px; background: transparent; border-bottom: 0; }
 .aw-preview-controls .aw-artifact-card { gap: 8px; }
-.aw-preview-controls .aw-agent-plan { margin-top: 0; }
 .aw-controls-outline { margin: 0 16px 9px; }
 .aw-controls-outline .outputs-outline { margin: 0; }
 .aw-controls-download { display: inline-flex; gap: 5px; align-items: center; font-size: 10px; color: var(--gx-muted); background: transparent; border: 0; margin: 0 16px 10px; }
-.aw-compact-agent { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 26px; padding: 4px 15px; border: 0; border-bottom: 1px solid var(--gx-line); background: color-mix(in srgb, var(--gx-brand) 3%, var(--gx-canvas)); color: var(--gx-brand); font-size: 10px; text-align: left; flex: none; }
-.aw-compact-agent > small { color: var(--gx-faint); margin-left: auto; font-size: 9px; }
 .aw-preview-scroll { flex: 1; min-height: 0; overflow: auto; padding: 16px 22px 30px; }
 .aw-preview-plan { margin-bottom: 14px; }
 .aw-preview-plan .outputs-outline { margin: 0; border-radius: 6px; background: transparent; }
@@ -221,10 +195,6 @@
 .artifact-live-details .outputs-live-head strong { font-size: var(--gx-text-md); }
 .aw-workspace .aw-paper.outputs-document { height: auto; overflow: visible; padding: 28px 30px 22px; }
 .aw-workspace.is-preview-focused .aw-paper.outputs-document { padding: 42px 52px 30px; }
-.aw-agent-plan-steps > li > div { min-width: 0; }
-.aw-agent-plan-steps strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.aw-agent-plan > footer { min-width: 0; }
-.aw-agent-plan > footer > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .aw-controls-height-divider.is-dragging .aw-resize-handle > span { background: var(--gx-brand); }
 .aw-input-box.is-dictating { border-color: var(--gx-brand); }
 .aw-message-scroll .outputs-setup-note { margin-block: 16px; }
