@@ -193,3 +193,11 @@ broke it and the focused suites missed it. From batch 04 on, before stopping, ru
 **full** backend pytest (loopback namespace, as in batch 00), plus the full desktop
 vitest when desktop files changed, and report pass/fail totals in NN.md. The Skills
 planner's private brief parser stays until batch 07 deletes the planner.
+
+# Round 8 — evals of retired code (batch 06)
+
+An eval that only measured the retired Skills planner (`evals/slides/plan.py`,
+`over_limit.py`, `verify.py`) is **deleted with its archived fixtures**
+(`artifacts/validation/presentation-batches-0-2/…`), not ported. Git keeps them. Evals
+that measure current behaviour stay and must be able to fail. This overrides the
+plan's "repoint the slide evals" for those three.

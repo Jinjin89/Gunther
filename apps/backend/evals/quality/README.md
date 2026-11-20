@@ -10,8 +10,8 @@ uses it.
 From `apps/backend` (keys as for the Ask exam: the repo-root `.env`, or `--settings PATH`):
 
 ```
-.venv/bin/python -m evals.quality.run --sets velmora --methods skills --label dev
-.venv/bin/python -m evals.quality.run --sets rag-papers,ev-outlook --methods skills,studio --jobs 3
+.venv/bin/python -m evals.quality.run --sets velmora --label dev
+.venv/bin/python -m evals.quality.run --sets rag-papers,ev-outlook --jobs 3
 .venv/bin/python -m evals.quality.report evals/results/<folder>      # re-render report.md from raw.json
 ```
 
@@ -23,9 +23,9 @@ method, model and a hash of `gunther/` already have a result in an earlier run),
 scores the rendered slide PNGs 1-10 with a ship / minor edit / rework verdict per slide; it fills the
 report's Visual column, the text judge is unchanged).
 
-Methods: `skills` runs the app with `developer.output_skills = true`; `studio` sets
-`developer.output_method = "studio"`. A studio build whose content is not in the studio format
-(no `design: v2` / `<!-- report: v2 -->`) is reported as an error; nothing falls back.
+New builds use Studio. To compare with saved Skills results, pass
+`--methods skills,studio --baseline-from FOLDER`.
+The eval checks the Studio format marker on each new build.
 
 ## Material
 

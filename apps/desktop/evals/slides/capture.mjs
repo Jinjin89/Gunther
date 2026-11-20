@@ -3,15 +3,24 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => args.includes(name) ? args[args.indexOf(name) + 1] : fallback;
-const output = path.resolve(option("--output", "../../artifacts/validation/presentation-batches-0-2/renders"));
+const requestedOutput = option("--output", null);
 const design = option("--design", "1");
 const origin = option("--origin", "http://127.0.0.1:5184");
 const packets = JSON.parse(await fs.readFile(new URL("../../../backend/evals/slides/packets.json", import.meta.url), "utf8"));
 const expectedSlides = packets.reduce((total, p) => total + p.slides.length, 0);
-await fs.mkdir(output, { recursive: true });
+let output;
+if (requestedOutput === null) {
+  const resultsRoot = fileURLToPath(new URL("../../../backend/evals/results/", import.meta.url));
+  await fs.mkdir(resultsRoot, { recursive: true });
+  output = await fs.mkdtemp(path.join(resultsRoot, "slide-capture-"));
+} else {
+  output = path.resolve(requestedOutput);
+  await fs.mkdir(output, { recursive: true });
+}
 const browser = await chromium.launch({ channel: "chrome", headless: true });
 const page = await browser.newPage({ viewport: { width: 1344, height: 1600 }, deviceScaleFactor: 1 });
 const cdp = await page.context().newCDPSession(page);
@@ -109,5 +118,11 @@ try {
   results.peakBrowserMiB = Math.round(peakBrowserMiB);
   await fs.writeFile(path.join(output, completed && !errors.length ? "measurements.json" : "measurements.incomplete.json"), JSON.stringify(results, null, 2) + "\n");
 }
-console.log(JSON.stringify({ slides: results.slides.length, overflows: results.slides.filter(s => s.overflow).length, missingImages: results.slides.filter(s => s.missingImages).length, errors }));
+console.log(JSON.stringify({
+  output,
+  slides: results.slides.length,
+  overflows: results.slides.filter(s => s.overflow).length,
+  missingImages: results.slides.filter(s => s.missingImages).length,
+  errors,
+}));
 if (errors.length || results.slides.length !== expectedSlides * 3) process.exitCode = 1;

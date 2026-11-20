@@ -244,18 +244,6 @@ class Session:
         return score.Version.from_artifact(full.json())
 
 
-def write_exam_settings(target: Path, source: Path | None) -> Path:
-    """The Ask exam's copy of the settings, and outputs are made with their skills, which is
-    what the app does unless a developer turns it off."""
-
-    write_settings_file(target, source)
-    payload = json.loads(target.read_text(encoding="utf-8"))
-    payload["developer"]["output_skills"] = True
-    payload["developer"].setdefault("output_method", "skills")
-    target.write_text(json.dumps(payload), encoding="utf-8")
-    return target
-
-
 @contextmanager
 def open_session(
     template: Path,
@@ -273,7 +261,7 @@ def open_session(
     with tempfile.TemporaryDirectory(prefix="gunther-exam-") as scratch:
         copy = Path(scratch) / "library"
         shutil.copytree(template, copy)
-        settings_file = write_exam_settings(
+        settings_file = write_settings_file(
             Path(scratch) / "service-settings.json", settings_source
         )
         app = make_app(
@@ -884,7 +872,7 @@ def run_exam(
     results_root.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="gunther-exam-settings-") as scratch:
-        settings_file = write_exam_settings(
+        settings_file = write_settings_file(
             Path(scratch) / "service-settings.json", settings_source
         )
         template, info = ensure_template(

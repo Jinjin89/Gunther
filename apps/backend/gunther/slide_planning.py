@@ -36,17 +36,6 @@ class OutlineReview(BaseModel):
     factual_pages: list[str] = Field(default_factory=list, max_length=64)
 
 
-def outline_metadata(item: Any) -> dict[str, Any]:
-    """Additive metadata: old outlines still serialize exactly as before."""
-    values = {
-        "id": item.id,
-        "message": item.message,
-        "question": item.question,
-        "requires": list(item.requires),
-    }
-    return {key: value for key, value in values.items() if value}
-
-
 def planning_fingerprint(pages: Sequence[Any]) -> str:
     positions = {page.id: index for index, page in enumerate(pages) if page.id}
     value = [

@@ -135,7 +135,6 @@ def studio_deck(tmp_path, inner):
     ]
     fake = FakeProvider(orchestrator_replies(first, inner))
     with app_for(tmp_path, fake) as client:
-        client.app.state.knowledge_service.output_method = "studio"
         base_id, _ = library(client, notes=notes)
         client.post(
             f"/api/knowledge-bases/{base_id}/artifact-conversations",

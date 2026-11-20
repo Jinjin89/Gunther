@@ -957,7 +957,6 @@ def test_artifact_conversation_edit_keeps_the_study_workflow(tmp_path, restyle):
         )
     )
     with app_for(tmp_path, fake) as client:
-        client.app.state.knowledge_service.output_method = "studio"
         base_id, _ = library(
             client, notes={f"Experiment {i}": e.text for i, e in enumerate(science_pool().items, 1)}
         )

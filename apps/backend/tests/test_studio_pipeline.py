@@ -309,7 +309,6 @@ def test_a_direct_deck_rebuild_keeps_approved_headings_through_repairs(tmp_path)
 
     fake = FakeProvider(router)
     with app_for(tmp_path, fake) as client:
-        client.app.state.knowledge_service.output_method = "studio"
         base, _ = library(client, notes={f"Source {n}": text for n, text in enumerate(PASSAGES, 1)})
         first = built(build(client, base, body(kind="slides", use="talk")))
         approved = first["outline"]
@@ -410,7 +409,6 @@ def test_making_a_draft_after_replan_still_requires_saving(tmp_path):
         {"actions": [{"do": "save", "text": "Saved the deck."}]},
     ], inner))
     with app_for(tmp_path, fake) as client:
-        client.app.state.knowledge_service.output_method = "studio"
         base, _ = library(client, notes={"Size": PASSAGES[0], "Trial": PASSAGES[1]})
         client.post(conversations(base), headers=workspace(client), json={
             "id": "planned-deck",
@@ -462,7 +460,6 @@ def test_a_conversation_makes_a_studio_deck_in_one_action_and_can_rewrite_one_sl
     ]
     fake = FakeProvider(orchestrator_replies(decisions, inner))
     with app_for(tmp_path, fake) as client:
-        client.app.state.knowledge_service.output_method = "studio"
         base_id, _ = library(client, notes=notes)
         client.post(
             f"/api/knowledge-bases/{base_id}/artifact-conversations",
@@ -541,7 +538,6 @@ def test_a_failed_build_ends_the_turn_instead_of_building_or_saving_again(tmp_pa
     ]
     fake = FakeProvider(orchestrator_replies(decisions, inner))
     with app_for(tmp_path, fake) as client:
-        client.app.state.knowledge_service.output_method = "studio"
         notes = {f"Source {n}": text for n, text in enumerate(PASSAGES, 1)}
         base_id, _ = library(client, notes=notes)
         client.post(
@@ -612,7 +608,6 @@ def test_report_rebuild_fingerprints_style_intent_and_replays_legacy(tmp_path, m
     queries = []
     with app_for(tmp_path, FakeProvider(router)) as client:
         service = client.app.state.knowledge_service
-        service.output_method = "studio"
         web = Tool("search_web", "Public web", lambda query: queries.append(query) or [], "web")
         monkeypatch.setattr(service, "_web_tool", lambda wanted: (web if wanted else None, None))
         base, _ = library(client)

@@ -582,7 +582,6 @@ def test_opening_a_saved_skills_plan_uses_the_legacy_reader(tmp_path: Path) -> N
     fake, app = a_library(tmp_path)
     with app as client:
         service = client.app.state.knowledge_service
-        service.output_method = "studio"
         base_id, ids = library(client)
         headers = workspace(client)
         scope = {"mode": "selection", "sourceIds": list(ids.values())}

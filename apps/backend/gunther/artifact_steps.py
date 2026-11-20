@@ -32,6 +32,7 @@ from pydantic import BaseModel
 
 from gunther import usage
 from gunther.agent import Evidence, Tool, check_citations
+from gunther.artifact_legacy import Approach
 from gunther.artifact_workspace import (
     CardRec,
     ConversationBrief,
@@ -78,7 +79,6 @@ from gunther.outputs import (
 from gunther.skill_checks import CHARTS
 from gunther.skill_runner import (
     ROLES,
-    Approach,
     Card,
     SkillAgents,
     _line,

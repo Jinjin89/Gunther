@@ -184,6 +184,10 @@ def test_planning_fields_round_trip_and_legacy_outlines_stay_small():
         "heading": "Legacy",
         "goal": "",
     }
+    metadata = planned.model_dump(exclude={"heading", "goal"})
+    saved = Planned("A result", **{**metadata, "requires": tuple(planned.requires)})
+    assert saved.planning_metadata() == metadata
+    assert Planned("Legacy").planning_metadata() == {}
 
 
 def test_design_version_is_kept_with_the_title_without_changing_its_body():

@@ -178,7 +178,6 @@ from gunther.schemas import (
     UpdateNotebookNoteInput,
     WebSnapshotOut,
 )
-from gunther.skill_runner import SkillAgents
 from gunther.skillbook import AskSkill, ask_skills, skill_for
 from gunther.source_identity import source_fingerprint
 from gunther.topics import topic_block_ids, topic_source_ids
@@ -476,7 +475,6 @@ class KnowledgeService:
         self.web_search: OnlineSearchProvider = DisabledOnlineSearch()
         # Settings → Developer: keep how each answer is made (see trace).
         self.tracing = False
-        self.output_method = "studio"  # Selects the remaining conversation work steps.
         self.slide_renderer = None
         # Reads a stored asset: id -> (path, media type, name). Set by the app.
         self.asset_reader: Callable[[str], tuple[Path, str, str]] | None = None
@@ -5605,16 +5603,7 @@ class KnowledgeService:
             )
             gateway = BudgetedGateway(self.models, budget)
 
-            def make_agents(kind: str) -> SkillAgents:
-                return SkillAgents(
-                    gateway,  # type: ignore[arg-type]
-                    skill_for(kind),
-                    limits,
-                    tools=[tool, *([web] if web else [])],
-                    reader=reader,
-                    slide_renderer=self.slide_renderer,
-                )
-
+            from gunther.studio.pipeline import StudioAgents
             from gunther.studio.work import StudioWorkAgents
 
             def make_studio_agents(kind: str) -> StudioWorkAgents:
@@ -5635,43 +5624,39 @@ class KnowledgeService:
                     item, selected_heads, pinned_keys, web=web is not None,
                 )
 
-            studio = studio_reading = None
-            if self.output_method == "studio":
-                from gunther.studio.pipeline import StudioAgents
+            def studio_reading(made: Pool) -> Notes:
+                reading_gaps = self._studio_reading(
+                    session, resolved.source_ids, made, pinned=seeds
+                )
+                return replace(notes, extraction_gaps=tuple(reading_gaps))
 
-                def studio_reading(made: Pool) -> Notes:
-                    reading_gaps = self._studio_reading(
-                        session, resolved.source_ids, made, pinned=seeds
-                    )
-                    return replace(notes, extraction_gaps=tuple(reading_gaps))
-
-                def studio(
-                    spec: Spec, made: Pool, use: str | None, resume=None, checkpoint=None,
-                    *, purpose=None, fixed_outline=None,
-                ) -> BuiltOutput:
-                    scoped_notes = studio_reading(made)
-                    return StudioAgents(
-                        gateway,
-                        limits,
-                        use=use,
-                        renderer=self.slide_renderer,
-                        asset_reader=self.asset_reader,
-                        reusable_figures=self._reusable_figure_readings(session, base_id),
-                    ).make(  # type: ignore[arg-type]
-                        model,
-                        effort,
-                        spec,
-                        made,
-                        scoped_notes,
-                        emit,
-                        fallback_title=library.title,
-                        purpose=purpose,
-                        fixed_outline=fixed_outline,
-                        scope={"selection": scope.model_dump(), "inputs": inputs},
-                        web=payload.web,
-                        resume=resume,
-                        checkpoint=checkpoint,
-                    )
+            def studio(
+                spec: Spec, made: Pool, use: str | None, resume=None, checkpoint=None,
+                *, purpose=None, fixed_outline=None,
+            ) -> BuiltOutput:
+                scoped_notes = studio_reading(made)
+                return StudioAgents(
+                    gateway,
+                    limits,
+                    use=use,
+                    renderer=self.slide_renderer,
+                    asset_reader=self.asset_reader,
+                    reusable_figures=self._reusable_figure_readings(session, base_id),
+                ).make(  # type: ignore[arg-type]
+                    model,
+                    effort,
+                    spec,
+                    made,
+                    scoped_notes,
+                    emit,
+                    fallback_title=library.title,
+                    purpose=purpose,
+                    fixed_outline=fixed_outline,
+                    scope={"selection": scope.model_dump(), "inputs": inputs},
+                    web=payload.web,
+                    resume=resume,
+                    checkpoint=checkpoint,
+                )
 
             agent = artifact_agent.ArtifactAgent(
                 artifact_agent.TurnContext(
@@ -5685,7 +5670,6 @@ class KnowledgeService:
                     budget=budget,
                     model=model,
                     effort=effort,
-                    make_agents=make_agents,
                     notes=notes,
                     library_tool=tool,
                     web_tool=web,

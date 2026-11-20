@@ -51,7 +51,6 @@ from gunther.llm import ModelError, ModelGateway, ModelInfo, Turn
 from gunther.model_profiles import Effort
 from gunther.outputs import ACCENTS, BuiltOutput, Notes, Planned, Pool, _marked, layout_of
 from gunther.run_budget import RunBudget
-from gunther.skill_runner import SkillAgents
 from gunther.skillbook import skill_for
 from gunther.studio import design as studio_design
 from gunther.studio import format as studio_format
@@ -139,18 +138,6 @@ class Decision(BaseModel):
         return data
 
 
-STUDIO_NOTE = """
-
-This conversation uses the studio method. make: write the whole active artifact at once from \
-the material, as a strong analyst and writer would (what is worth saying, the storyline, every \
-part, checked). With no artifact yet and a clear request: select new:report or new:slides, \
-then make, then save. Use make again when the user wants a complete new draft. For an approach \
-or outline on its own, use understand to read the selected material and plan with change \
-"whole" to plan from the approach. For a replan, put the requested outline change in \
-"instruction". Finish with reply if the user only asked for planning. For changes to parts, \
-use write, edit, plan (insert, delete, move, item) and check as usual. Review asks a senior \
-reader for the few parts that most need improving."""
-
 # What the orchestrator and the answerer are told. Each starts with its own first sentence,
 # so that a test can tell the requests apart.
 ORCHESTRATOR = """\
@@ -182,10 +169,12 @@ answer. Nothing changes.
 the user's sentence. The library may hold sources in other languages: when a search finds \
 nothing on the point, search again in the language the sources may be in. read_source: read \
 more of pool source "query" (its number).
-- understand: write the approach and the material cards again from the pool; "focus" says what \
-to look at when the focus changed. Needed before planning a new artifact, and whenever the \
-approach is out of date.
-- plan: change the outline. "change": "whole" plans it again after understand; "insert" adds a \
+- make: read the selected material, plan, write and check a whole draft of the active artifact.
+- understand: read the selected material for the approach and material cards. Use "focus" for \
+what to look at when the focus changed. Do this before planning if the approach is missing or \
+out of date.
+- plan: change the outline. "change": "whole" plans it from the approach, with the requested \
+change in "instruction"; "insert" adds a \
 part after position "after" (0 = first), with "heading", "goal" and, in a deck, "layout"; \
 "delete" removes part "item"; "move" puts part "item" after position "after"; "item" changes the \
 "heading", "goal" or "layout" of part "item" (on a deck's first part also its "accent": ink, \
@@ -225,11 +214,10 @@ selected. Use the overview to understand a request about the selected material, 
 through the workflow. The overviews identify sources; only loaded evidence can be cited.
 - Find the part a message means from what the user points at (selected beats on screen), its \
 number or its content, and the conversation and the changes so far.
-- With no artifact yet and a clear request, follow the skill: understand, plan whole, write every \
-part, review, save (start it with select new:report or new:slides). When it is unclear, look \
-at the library first (one or two searches), then ask. A remake of an existing artifact goes \
-the same way: understand once, plan whole, write what is out of date or new (all of it in one \
-write), save.
+- With no artifact yet and a clear request, select new:report or new:slides, make, then save. \
+For a complete new draft of an existing artifact, make on that artifact, then save. When the \
+request is unclear, look at the library first (one or two searches), then ask. For an approach \
+or outline on its own, use understand or plan whole as requested, then reply.
 - A change to every part ("translate it") reaches every part: write all of them with the \
 instruction in one action; then look at the view and finish any part that was missed before \
 you save. A change to the headings only ("shorter titles") is an edit of each heading line.
@@ -854,8 +842,9 @@ class TurnContext:
     budget: RunBudget
     model: ModelInfo
     effort: Effort | None
-    make_agents: Callable[[str], SkillAgents]
     make_studio_agents: Callable[[str], StudioWorkAgents]
+    studio: Callable[..., BuiltOutput]
+    studio_reading: Callable[[Pool], Notes]
     notes: Notes
     library_tool: Tool
     web_tool: Tool | None
@@ -873,9 +862,6 @@ class TurnContext:
     emit: Events = lambda _event: None
     limits: AgentLimits = field(default_factory=AgentLimits)
     effort_for_decisions: Effort | None = "low"
-    # The remaining Method setting selects how the work is initially understood and planned.
-    studio: Callable[..., BuiltOutput] | None = None
-    studio_reading: Callable[[Pool], Notes] | None = None
     evidence_allowed: Callable[[Evidence], bool] | None = None
 
 
@@ -931,7 +917,7 @@ class ArtifactAgent:
         self.spent = False
         self.asked: Any = None
         self.next_id = 1
-        self.agents: dict[str, SkillAgents | StudioWorkAgents] = {}
+        self.agents: dict[str, StudioWorkAgents] = {}
         # Each work as the turn found it, to tell what the turn changed; what was done to a
         # part and why, for the change list.
         self.started: dict[str, dict[str, Any]] = {}
@@ -982,14 +968,12 @@ class ArtifactAgent:
 
     def _steps(self, work: Work, *, planning: bool = False) -> WorkSteps:
         c = self.ctx
-        legacy_plan = planning and c.studio is None
         kind = work.spec.kind
-        key = f"skills:{kind}" if legacy_plan else f"studio:{kind}"
-        if key not in self.agents:
-            self.agents[key] = c.make_agents(kind) if legacy_plan else c.make_studio_agents(kind)
+        if kind not in self.agents:
+            self.agents[kind] = c.make_studio_agents(kind)
         saved = c.saved.get(work.key)
         return WorkSteps(
-            self.agents[key],
+            self.agents[kind],
             work,
             self.brief,
             self.pool,
@@ -1059,7 +1043,7 @@ class ArtifactAgent:
             decision, _ = c.gateway.complete_json(
                 c.model,
                 Decision,
-                system=ORCHESTRATOR + (STUDIO_NOTE if c.studio is not None else ""),
+                system=ORCHESTRATOR,
                 prompt=view,
                 effort=c.effort_for_decisions,
             )
@@ -1497,8 +1481,6 @@ class ArtifactAgent:
     def _do_make(self, m: Mapped) -> Outcome:
         c, work = self.ctx, active_work(self.workspace)
         assert work is not None
-        if c.studio is None:
-            raise ValueError("make is not available here: follow the skill's steps.")
         spec = spec_of(self.brief, work)
         made = Pool(1_000_000)
         made.restore(list(self.pool.items))
@@ -1561,7 +1543,7 @@ class ArtifactAgent:
         steps = self._steps(work, planning=change == "whole")
         if change == "whole":
             was = {i.id: i for i in work.outline}
-            planning_only = getattr(steps.agents, "studio", False) and self._unsaved() is None
+            planning_only = self._unsaved() is None
             steps.plan_whole(act.instruction.strip())
             if planning_only:
                 self.replanned[work.key] = self._draft_state(work)

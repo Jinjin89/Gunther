@@ -17,6 +17,7 @@ from fake_models import (
     is_sentence_checking,
     orchestrator_replies,
     skill_replies,
+    studio_task,
 )
 from sqlalchemy import select
 from test_artifact_steps import replacing
@@ -212,7 +213,8 @@ def test_studio_understand_and_replan_refresh_the_approach_after_narrowing_scope
 
     fake = FakeProvider(skill())
     with app_for(tmp_path, fake) as client:
-        client.app.state.knowledge_service.output_method = "studio"
+        settings = client.get("/api/settings/developer", headers=workspace(client)).json()
+        assert settings["outputMethod"] == "skills"
         base_id, ids = library(client, notes={
             "Estimates": "Estimates are collected separately.",
             "Cost records": "The repairs cost 70 dollars.", "Garden": "Grass seed grew.",
@@ -320,7 +322,6 @@ def test_studio_replan_migrates_a_saved_plan_within_its_constraints(tmp_path: Pa
     fake = FakeProvider(skill())
     with app_for(tmp_path, fake) as client:
         service = client.app.state.knowledge_service
-        service.output_method = "studio"
         base_id, ids = library(client, notes={
             "Cells": "CD3D marks T cells.", "Receptors": "CD19 marks B cells.",
             "Garden": "Grass seed grew.",
@@ -686,39 +687,35 @@ def test_the_one_before_it_is_found_from_the_changes_so_far(tmp_path: Path) -> N
         assert [(c["position"], c["what"]) for c in end["changes"]] == [(2, "rewritten")]
 
 
-ALTERED = {
-    **SLIDES_APPROACH,
-    "cards": [
-        {"claim": "Cost is mostly the coating", "refs": [1], "type": "data"},
-        {"claim": "Labour is the rest", "refs": [2], "type": "data"},
-    ],
-}
-
-
-def answering_understand(inner, answer):
-    def reply(request: dict) -> Any:
-        system = str(request["messages"][0]["content"])
-        if "Gunther skill step: understand" in system and "Write the approach" in system:
-            return json.dumps(answer)
-        return inner(request)
-
-    return reply
-
-
 def test_a_changed_goal_makes_only_what_depends_on_it_out_of_date(tmp_path: Path) -> None:
     """§2.9 example 3: the goal changes, the approach is out of date, and only the slides whose
-    cards changed are written again; the title slide is untouched."""
+    plans changed are written again."""
 
     fake = FakeProvider(skill())
     with app_for(tmp_path, fake, skills=True) as client:
         base_id, _ = library(client)
         first = a_deck(client, fake, base_id)
         before_parts = works_text(client, "talk")
+        outline = kept(client, "talk")[0].works[0].outline
 
         def costing(index: int, prompt: str) -> str:
             return SLIDES[index].replace("Marker |", "Cost |").replace("T cells", "T-cell cost")
 
-        inner = answering_understand(skill(written=costing), ALTERED)
+        writer = skill(written=costing)
+
+        def inner(request):
+            task = studio_task(request)
+            if "lead analyst" in task:
+                return '{"answer":"Compare coating and labour costs."}'
+            if "presentation strategist" in task:
+                return json.dumps({"title": "Markers", "slides": [
+                    {"id": item.id, "title": item.heading, "layout": layout,
+                     "job": item.goal if i == 0 else "Explain the cost"}
+                    for i, (item, layout) in enumerate(zip(
+                        outline, ("title", "compare", "points"), strict=True,
+                    ))
+                ]})
+            return writer(request)
         fake.replies[:] = [
             script(
                 [
@@ -1627,7 +1624,6 @@ def test_studio_report_edit_checks_only_the_changed_paragraph(tmp_path: Path) ->
     ]}], skill(replacer=replacing({second: revised}))))
     with app_for(tmp_path, fake) as client:
         service = client.app.state.knowledge_service
-        service.output_method = "studio"
         base, _ = library(client, notes={"Planning": "The estimate guides planning."})
         saved = saved_output(client, base, {"title": "Plan", "sections": [
             {"heading": "Use the estimates"},

@@ -17,6 +17,19 @@ SIDECAR = {"X-Gunther-Token": SIDECAR_TOKEN}
 KEY = "sk-test-0000000000001234"
 
 
+def test_saved_output_method_round_trips_with_other_developer_settings(tmp_path: Path) -> None:
+    path = tmp_path / "service-settings.json"
+    path.write_text(json.dumps({
+        "developer": {"output_method": "skills", "output_skills": False, "traces": False},
+    }))
+    store = ServiceSettingsStore(path)
+    assert store.developer()["output_method"] == "skills"
+    store.save_developer(traces=True)
+    assert ServiceSettingsStore(path).developer() == {
+        "output_method": "skills", "output_skills": False, "traces": True,
+    }
+
+
 def settings_for(tmp_path: Path, **overrides: object) -> Settings:
     values: dict[str, object] = {
         "database_url": f"sqlite+pysqlite:///{tmp_path / 'gunther.sqlite'}",

@@ -619,9 +619,14 @@ class Planned:
     requires: tuple[str, ...] = ()
 
     def planning_metadata(self) -> dict[str, Any]:
-        from gunther.slide_planning import outline_metadata
-
-        return outline_metadata(self)
+        """Persist the stable identity and populated metadata of older outlines."""
+        values = {
+            "id": self.id,
+            "message": self.message,
+            "question": self.question,
+            "requires": list(self.requires),
+        }
+        return {key: value for key, value in values.items() if value}
 
 
 @dataclass(frozen=True)

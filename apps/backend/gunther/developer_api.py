@@ -23,6 +23,7 @@ class DeveloperIn(ApiModel):
     traces: bool
     # Left out, it stays as it is.
     output_skills: bool | None = None
+    # Round-trip saved preferences for older clients.
     output_method: Literal["skills", "studio"] | None = None
 
 
@@ -64,7 +65,6 @@ def save_developer(payload: DeveloperIn, request: Request) -> dict[str, Any]:
             output_skills=payload.output_skills,
             output_method=payload.output_method,
         )
-        _service(request).output_method = _store(request).developer().get("output_method", "studio")
     except OSError as error:
         raise HTTPException(503, "The settings could not be saved to disk") from error
     return _developer(request)

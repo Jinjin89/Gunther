@@ -2,7 +2,7 @@
 """The quality evaluation: real material, reports and decks built through the real app path,
 rendered, linted and judged.
 
-Run from ``apps/backend``: ``python -m evals.quality.run --sets velmora --methods skills``.
+Run from ``apps/backend``: ``python -m evals.quality.run --sets velmora``.
 See ``evals/quality/README.md``. It is a developer tool: nothing in the app or the sidecar
 uses it.
 """
@@ -57,7 +57,7 @@ RENDER_TIMEOUT_SECONDS = 600
 class Options:
     settings: Path | None = None
     sets: list[str] = field(default_factory=list)
-    methods: list[str] = field(default_factory=lambda: ["skills"])
+    methods: list[str] = field(default_factory=lambda: ["studio"])
     kinds: list[str] = field(default_factory=lambda: ["deck", "report"])
     model: str | None = None
     judge: str | None = None
@@ -65,8 +65,7 @@ class Options:
     label: str = "quality"
     reuse: bool = False
     seed_only: bool = False
-    # Earlier results folders whose skills builds stand in for this run's (the old method's
-    # code does not change; rebuilding it costs about 25 minutes an artifact).
+    # Earlier results folders that supply archived Skills builds.
     baseline_from: tuple[str, ...] = ()
     # Earlier results folders whose builds (any method) are judged again as they are.
     builds_from: tuple[str, ...] = ()
@@ -116,15 +115,6 @@ def build_key(job: Job, model: str, effort: str | None, code: str, info: dict[st
 # One build --------------------------------------------------------------------------------
 
 
-def exam_settings(target: Path, source: Path | None, method: str) -> Path:
-    write_settings_file(target, source)
-    payload = json.loads(target.read_text(encoding="utf-8"))
-    payload["developer"]["output_skills"] = True
-    payload["developer"]["output_method"] = method
-    target.write_text(json.dumps(payload), encoding="utf-8")
-    return target
-
-
 def read_stream(
     client: TestClient, url: str, headers: dict, body: dict[str, Any], events: list[dict]
 ) -> tuple[str, dict[str, Any]]:
@@ -150,11 +140,7 @@ def studio_format_problem(label: str, content: str) -> str:
     marker = "design: v2" if label == "deck" else "<!-- report: v2 -->"
     if marker in content:
         return ""
-    return (
-        "The studio method did not produce the studio format (no "
-        f"`{marker}` in the content): developer.output_method is probably not wired into the "
-        "build path yet. Nothing was substituted."
-    )
+    return f"The Studio output is missing `{marker}`."
 
 
 def citation_files(citations: list[dict[str, Any]]) -> tuple[list[dict], list[dict]]:
@@ -230,12 +216,8 @@ def build_one(
         "set": job.material.id, "kind": brief.kind, "label": job.label, "method": job.method,
         "model": model, "dir": str(folder), "error": "", "errors": [],
     }  # fmt: skip
-    from gunther.service_settings import OUTPUT_METHODS
-
-    if job.method not in OUTPUT_METHODS:
-        record["error"] = (
-            f"This build has no output method {job.method!r} (known: {OUTPUT_METHODS})."
-        )
+    if job.method != "studio":
+        record["error"] = f"Supply saved {job.method} builds with --baseline-from or --builds-from."
         return record
     token = secrets.token_hex(32)
     headers = {"X-Gunther-Token": token}
@@ -243,8 +225,8 @@ def build_one(
     with tempfile.TemporaryDirectory(prefix="gunther-quality-") as scratch:
         copy = Path(scratch) / "library"
         shutil.copytree(template, copy)
-        settings_file = exam_settings(
-            Path(scratch) / "service-settings.json", options.settings, job.method
+        settings_file = write_settings_file(
+            Path(scratch) / "service-settings.json", options.settings
         )
         app = make_app(copy, settings_file, token, factory, {**(overrides or {}), "processing_worker_enabled": False})  # fmt: skip
         with TestClient(app) as client:
@@ -253,12 +235,6 @@ def build_one(
             ]
             headers["X-Gunther-Workspace-Id"] = workspace
             service = client.app.state.knowledge_service
-            if getattr(service, "output_method", None) != job.method:
-                record["error"] = (
-                    f"The app runs output_method={getattr(service, 'output_method', None)!r}, "
-                    f"not {job.method!r}."
-                )
-                return record
             sources, source_figures = source_material(service, info["knowledgeBaseId"])
             counter = Counter(client.app.state.models)
             body: dict[str, Any] = {
@@ -762,7 +738,7 @@ def parse(argv: list[str] | None = None) -> Options:
         help="a service-settings.json (else SERVICE_SETTINGS_FILE, else .env)",
     )  # noqa: E501
     parser.add_argument("--sets", default="", help="set ids, comma-separated (default: all)")
-    parser.add_argument("--methods", default="skills", help="skills, studio or both")
+    parser.add_argument("--methods", default="studio", help="studio or skills with a saved baseline")
     parser.add_argument("--kinds", default="deck,report")
     parser.add_argument("--model", help="writing model ref (default: the Outputs job's)")
     parser.add_argument("--judge", help=f"judge model ref (default: {DEFAULT_JUDGE})")
