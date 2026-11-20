@@ -1265,11 +1265,12 @@ def test_a_failed_revision_can_be_retried_with_the_same_request(tmp_path: Path) 
 
 
 def test_revision_accepts_a_divider_with_its_layout_heading(tmp_path):
+    cover = f"<!-- layout: title; design: v2 -->\n{SLIDES[0]}"
     divider = "<!-- layout: section -->\n# Evidence from the trial"
     renamed = divider.replace("Evidence from the trial", "What the trial found")
     fake = FakeProvider(output_replies(SLIDES_OUTLINE, [SLIDES[0], renamed, SLIDES[2]]))
     with built_output(tmp_path, fake, kind="slides",
-                      written=[SLIDES[0], divider, SLIDES[2]]) as (client, base_id, first):
+                      written=[cover, divider, SLIDES[2]]) as (client, base_id, first):
         second = built(revise(client, base_id, first["id"], "Rename the divider", sectionIndex=1))
     assert second["content"] == first["content"].replace(divider, renamed, 1)
 
@@ -1279,6 +1280,7 @@ def test_revision_accepts_a_divider_with_its_layout_heading(tmp_path):
     ("fit", "empty"),
 ])
 def test_revision_handles_invalid_writer_and_fitter_replies(tmp_path, stage, problem):
+    cover = f"<!-- layout: title; design: v2 -->\n{SLIDES[0]}"
     heading = "<!-- layout: points -->\n## The evidence distinguishes the two cell populations"
     short = heading + "\n- CD3D marks T cells [1]."
     complete = short + "\n- CD19 marks B cells [2]."
@@ -1297,7 +1299,8 @@ def test_revision_handles_invalid_writer_and_fitter_replies(tmp_path, stage, pro
         return written(request)
 
     fake = FakeProvider(reply)
-    with built_output(tmp_path, fake, kind="slides") as (client, base_id, first):
+    with built_output(tmp_path, fake, kind="slides",
+                      written=[cover, *SLIDES[1:]]) as (client, base_id, first):
         options = {"clientRequestId": "revise_slide_retry_01", "sectionIndex": 1}
         events = revise(client, base_id, first["id"], "Clarify the slide", **options)
         assert bool(fits) == (stage == "fit")

@@ -43,7 +43,7 @@ from gunther.outputs import (
     heading_of,
     split_document,
 )
-from gunther.skill_checks import figures_of
+from gunther.skill_checks import CHARTS, figures_of
 from gunther.slide_render import digest
 from gunther.studio import design as D
 from gunther.studio import format as fmt
@@ -1801,7 +1801,8 @@ class StudioAgents(OutputAgents):
 
     def _chart_fallback(self, draft: Draft, index: int) -> Draft:
         """Keep the reader's data and citations when the Checker cannot license a chart."""
-        is_chart = fmt.parse_slide(draft.text).layout == "chart"
+        layout = fmt.parse_slide(draft.text).layout
+        is_chart = layout in ("chart", *CHARTS)
         source = D.visible_content(draft.text) if is_chart else draft.text
         tables = list(enumerate(MARKDOWN_TABLE.finditer(source)))
 
@@ -1820,7 +1821,8 @@ class StudioAgents(OutputAgents):
         if is_chart:
             if _chart_rows_supported(tables, draft.coverage):
                 return draft
-            text = fmt.with_marker(fmt.without_design(draft.text), "table")
+            fallback = "compare" if layout in CHARTS else "table"
+            text = fmt.with_marker(fmt.without_design(draft.text), fallback)
         else:
             text = fmt.EXHIBIT.sub(exhibit, draft.text)
         if text == draft.text:
@@ -2418,7 +2420,7 @@ def _chart_rows_supported(
 
 
 def source_images_kept(before: str, after: str) -> bool:
-    pattern = r"!\[[^\]]*\]\(gunther-asset:([A-Za-z0-9_-]+)\)"
+    pattern = r"!\[[^\]]*\]\(gunther-asset:([A-Za-z0-9_-]+(?:#[^)\s]+)?)\)"
     return set(re.findall(pattern, before)) <= set(re.findall(pattern, after))
 
 

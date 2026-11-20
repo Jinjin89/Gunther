@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from fake_models import FakeProvider, gateway, model
 from pydantic import BaseModel
-from test_studio_pipeline import DECK, FakeRenderer, pool, request_text, router
+from test_studio_pipeline import DECK, UNSUPPORTED_DECK, FakeRenderer, pool, request_text, router
 
 from gunther.llm import Turn
 from gunther.outputs import Notes, Spec
@@ -92,7 +92,7 @@ def build_router(request):
         return REPORT
     if step == "look":
         return '{"findings": []}'
-    return router(request)
+    return router(request, UNSUPPORTED_DECK)
 
 
 class TrackedProvider(FakeProvider):

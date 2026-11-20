@@ -1,17 +1,19 @@
 """A visual-only review saves the inspected candidate and preserves version/source identities."""
 
+import pytest
 from fake_models import FakeProvider, skill_replies
 from test_output_skills import SEARCH, SLIDES, SLIDES_APPROACH, SLIDES_OUTLINE, saved_skill_output
 from test_outputs import app_for, built, library, read_events, workspace
 from test_slide_review import Renderer
 
 
-def test_review_current_renders_save_reopen_idempotency_freshness_and_access(tmp_path):
+@pytest.mark.parametrize("failure", [False, True])
+def test_review_current_renders_save_reopen_idempotency_freshness_and_access(tmp_path, failure):
     fake = FakeProvider(skill_replies(SLIDES_APPROACH, SLIDES_OUTLINE, SLIDES, gather=SEARCH))
     with app_for(tmp_path, fake, skills=True) as client:
         base, _ = library(client)
         original = saved_skill_output(client, base, kind="slides")
-        renderer = Renderer(tmp_path)
+        renderer = Renderer(tmp_path, failure=failure)
         client.app.state.knowledge_service.slide_renderer = renderer
         fake.replies[:] = ['{"findings":[]}']
         before_calls = len(fake.requests)
@@ -25,16 +27,21 @@ def test_review_current_renders_save_reopen_idempotency_freshness_and_access(tmp
         assert reviewed["citations"] == original["citations"]
         assert reviewed["outline"] == original["outline"]
         assert reviewed["sections"] == original["sections"]
-        assert reviewed["provenance"]["skill"]["visualReview"]["status"] == "clean"
+        visual = reviewed["provenance"]["skill"]["visualReview"]
+        assert visual["status"] == ("unavailable" if failure else "clean")
         again = built(read_events(client.post(path, json=payload, headers=headers)))
         assert again["id"] == reviewed["id"]
-        assert len(fake.requests) == before_calls + 1 and len(renderer.candidates) == 1
+        assert len(fake.requests) == before_calls + (not failure)
+        assert len(renderer.candidates) == 1
         saved_path = f"/api/knowledge-bases/{base}/artifacts/{reviewed['id']}"
         reopened = client.get(saved_path, headers=headers).json()
         assert (
             reopened["provenance"]["skill"]["renderCheck"]["candidateHash"]
             == reviewed["provenance"]["skill"]["visualReview"]["candidateHash"]
         )
+        if failure:
+            assert visual["reason"] == "Browser unavailable"
+            return
         workspace_id = headers["X-Gunther-Workspace-Id"]
         image = saved_path + f"/renders/capture1/contact.png?workspace_id={workspace_id}"
         assert client.get(image, headers=headers).status_code == 200

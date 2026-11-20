@@ -31,6 +31,7 @@ from gunther.artifact_workspace import (
 )
 from gunther.llm import ModelError
 from gunther.outputs import (
+    COMPOSITION_LAYOUTS,
     UNCHANGED,
     BuiltOutput,
     Draft,
@@ -89,6 +90,35 @@ def _single_part(text: str, kind: str, index: int) -> str:
     if not re.match(rf"^{mark}[ \t]+\S", body.lstrip()):
         raise ModelError(f"Studio did not return a valid heading for {unit} {index + 1}.")
     return part
+
+
+def slide_in_deck_format(text: str, cover: str, index: int) -> str:
+    """Give a revised slide a marker that the saved deck's renderer understands."""
+    if not cover:
+        return text
+    attrs = fmt.parse_slide(cover).attrs
+    if index == 0:
+        return fmt.with_marker(text, "title", **attrs)
+    slide = fmt.parse_slide(text)
+    if attrs.get("design") == fmt.DESIGN:
+        if slide.layout in CHARTS:
+            return fmt.with_marker(text, "chart", chart=slide.layout.removesuffix("_chart"))
+        return text
+    if slide.layout in ("chart", *CHARTS):
+        rows, _ = fmt.read_table(slide.body)
+        # The legacy renderer draws just one value column per label.
+        if any(len(row) > 2 for row in rows):
+            return fmt.with_marker(text, "compare")
+    if not slide.layout or slide.layout in COMPOSITION_LAYOUTS["standard"]:
+        return text
+    if slide.layout == "chart":
+        layout = "line_chart" if slide.attrs.get("chart") == "line" else "bar_chart"
+        return fmt.with_marker(text, layout)
+    if slide.layout == "table":
+        return fmt.with_marker(text, "compare")
+    if slide.layout == "section":
+        text = "#" + _marked(text).body  # The legacy body uses a second-level heading.
+    return fmt.with_marker(text, "text")
 
 
 def is_studio(work: Work) -> bool:
@@ -191,7 +221,11 @@ class StudioWorkAgents(StudioAgents):
 
     def _science_run(self, spec: Spec, saved: dict | None = None) -> Run | None:
         data = (self.scientific_context if saved is None else saved) or {}
-        if data.get("purpose") != "explain_study" or not data.get("study_map"):
+        if (
+            spec.kind != "slides"
+            or data.get("purpose") != "explain_study"
+            or not data.get("study_map")
+        ):
             return None
         return Run(
             spec,
@@ -350,6 +384,19 @@ class StudioWorkAgents(StudioAgents):
             coverage.update(found)
         return issues
 
+    def validate_evidence(self, spec: Spec, text: str, pool: Pool) -> None:
+        scientific = self._science_run(spec)
+        problems = S.scope_problems(text, pool.items)
+        if scientific:
+            problems += self._science_problems(text, pool, scientific)
+        if problems:
+            raise ModelError(problems[0])
+
+    def validated_part(self, spec: Spec, text: str, index: int, pool: Pool) -> str:
+        text = _single_part(text, spec.kind, index)
+        self.validate_evidence(spec, text, pool)
+        return text
+
     def fit(self, model, effort, spec, planned, index, pool, refs, notes, before, emit, text):
         """Try fitting once and keep the valid writer text if fitting fails."""
 
@@ -377,7 +424,7 @@ class StudioWorkAgents(StudioAgents):
             _single_part(text, spec.kind, index)
             logger.info("Fitting a slide failed: %s", error)
             return text
-        if not source_images_kept(text, candidate):
+        if not source_images_kept(text, candidate) or S.scope_problems(candidate, pool.items):
             return text
         if scientific and self._science_problems(candidate, pool, scientific):
             # Fitting may not bring in what the edit was checked to leave out.
@@ -523,10 +570,9 @@ class StudioWorkAgents(StudioAgents):
                 continue
             text = self.fit(model, effort, spec, [], index, pool, [], notes, "", emit, text)
             text, _ = check_citations(text, set(by_ref))
+            if deck:
+                text = slide_in_deck_format(text, parts[0], index)
             text = _single_part(text, spec.kind, index)
-            layout = fmt.parse_slide(text).layout if deck else ""
-            if layout in CHARTS:
-                text = fmt.with_marker(text, "chart", chart=layout.removesuffix("_chart"))
             emit({"type": "section", "index": index, "state": "checking"})
             draft = self.check_built(model, text, tool, pool, emit, index)
             parts[index] = draft.text
@@ -642,8 +688,10 @@ class StudioWorkAgents(StudioAgents):
                 model, ReviewPlan, system=system, prompt=whole, effort="medium"
             )
         except ModelError as error:
-            logger.info("The review failed: %s", error)
-            return []
+            self.skipped.append({
+                "step": "review", "label": "Review unavailable", "reason": str(error),
+            })
+            raise
         return [c for c in plan.changes if 1 <= c.part <= len(parts)][:most]
 
 

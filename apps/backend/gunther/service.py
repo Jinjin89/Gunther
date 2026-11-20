@@ -6,7 +6,7 @@ import logging
 import re
 import secrets
 from collections import Counter
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -3710,6 +3710,19 @@ class KnowledgeService:
                 }
         return figures, list(warnings.values())
 
+    @staticmethod
+    def _output_evidence_in_scope(
+        item: Evidence, heads: Mapping[str, str], pinned_keys: set[tuple[str, str, str]], *,
+        web: bool = True,
+    ) -> bool:
+        if item.key in pinned_keys:
+            return True
+        if item.kind != "library":
+            return item.kind != "web" or web
+        citation = item.payload[0] if isinstance(item.payload, tuple) and item.payload else None
+        source = getattr(citation, "source_id", None)
+        return source in heads and citation.source_revision_id == heads[source]
+
     def _studio_reading(
         self, session: Session, source_ids: list[str], pool: Pool, *,
         pinned: Sequence[Evidence] = (), most: int = 900,
@@ -3742,14 +3755,9 @@ class KnowledgeService:
         )
         # Pinned evidence comes from the selected notes and discussions in the live library.
         pinned_keys = {item.key for item in pinned}
-        scoped = []
-        for item in pool.items:
-            citation = item.payload[0] if isinstance(item.payload, tuple) and item.payload else None
-            if item.key in pinned_keys or item.kind != "library" or (
-                getattr(citation, "source_id", None) in heads
-                and getattr(citation, "source_revision_id", None) == heads[citation.source_id]
-            ):
-                scoped.append(item)
+        scoped = [
+            item for item in pool.items if self._output_evidence_in_scope(item, heads, pinned_keys)
+        ]
         pool.items = scoped
         pool.known = {item.key: item for item in scoped}
         for source in sorted(sources, key=lambda item: item.created_at):
@@ -5607,10 +5615,29 @@ class KnowledgeService:
                     slide_renderer=self.slide_renderer,
                 )
 
-            studio = make_studio_agents = studio_reading = None
+            from gunther.studio.work import StudioWorkAgents
+
+            def make_studio_agents(kind: str) -> StudioWorkAgents:
+                return StudioWorkAgents(
+                    gateway, kind, limits, tools=[tool, *([web] if web else [])], reader=reader,
+                    asset_reader=self.asset_reader,
+                    reusable_figures=self._reusable_figure_readings(session, base_id),
+                )
+
+            selected_heads = {
+                str(source["id"]): str(source["revisionId"])
+                for source in inputs["sources"] if source.get("revisionId")
+            }
+            pinned_keys = {item.key for item in seeds}
+
+            def evidence_allowed(item: Evidence) -> bool:
+                return self._output_evidence_in_scope(
+                    item, selected_heads, pinned_keys, web=web is not None,
+                )
+
+            studio = studio_reading = None
             if self.output_method == "studio":
                 from gunther.studio.pipeline import StudioAgents
-                from gunther.studio.work import StudioWorkAgents
 
                 def studio_reading(made: Pool) -> Notes:
                     reading_gaps = self._studio_reading(
@@ -5646,18 +5673,12 @@ class KnowledgeService:
                         checkpoint=checkpoint,
                     )
 
-                def make_studio_agents(kind: str) -> StudioWorkAgents:
-                    return StudioWorkAgents(
-                        gateway, kind, limits, tools=[tool, *([web] if web else [])], reader=reader,
-                        asset_reader=self.asset_reader,
-                        reusable_figures=self._reusable_figure_readings(session, base_id),
-                    )
-
             agent = artifact_agent.ArtifactAgent(
                 artifact_agent.TurnContext(
                     studio=studio,
                     make_studio_agents=make_studio_agents,
                     studio_reading=studio_reading,
+                    evidence_allowed=evidence_allowed,
                     workspace=workspace,
                     brief=brief,
                     gateway=gateway,  # type: ignore[arg-type]

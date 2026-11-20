@@ -14,6 +14,7 @@ from fake_models import (
     FakeProvider,
     is_answering,
     is_orchestrating,
+    is_sentence_checking,
     orchestrator_replies,
     skill_replies,
 )
@@ -53,8 +54,10 @@ from gunther.artifact_workspace import (
     Pending,
     Workspace,
 )
+from gunther.llm import ModelError
 from gunther.models import (
     Artifact,
+    ArtifactCheck,
     ArtifactConversation,
     ArtifactMessage,
     SourceIndexHead,
@@ -143,6 +146,13 @@ def requests_since(fake: FakeProvider, before: int) -> list[dict]:
 
 def calls(fake: FakeProvider, before: int) -> int:
     return len(fake.requests) - before
+
+
+def part_writes(fake: FakeProvider, before: int) -> list[str]:
+    return [
+        request["messages"][0]["content"] for request in fake.requests[before:]
+        if "working on one slide" in request["messages"][0]["content"]
+    ]
 
 
 def works_text(client, cid: str) -> list[str]:
@@ -462,7 +472,7 @@ def test_a_vague_request_is_asked_about_and_the_answer_makes_the_deck(tmp_path: 
         assert provenance["conversationId"] == "roofs" and provenance["reply"] == end["reply"]
         assert provenance["request"] == "Trial, about 10 minutes"
         assert "work" not in provenance
-        assert provenance["skill"]["name"] == "slides" and provenance["audience"] == "scientist"
+        assert provenance["skill"]["name"] == "studio" and provenance["audience"] == "scientist"
         assert provenance["use"] == "talk"
         assert end["artifact"]["origin"] == "build"
         assert [c["what"] for c in end["changes"]] == ["added", "added", "added"]
@@ -480,7 +490,7 @@ def test_a_vague_request_is_asked_about_and_the_answer_makes_the_deck(tmp_path: 
         assert work.spec.length == Line(text="about 10 minutes", mark="you")
         assert kept_workspace.log[-1].startswith("v1 (deck): Made the first version of the talk.")
         assert kept_workspace.log[-1].endswith("added 1–3")
-        assert calls(fake, before) > 20
+        assert len(part_writes(fake, before)) == 3
         # The version has the deck, a marker on each slide, and its work is sealed with it.
         [saved] = versions_of(client)
         assert json.loads(saved.provenance_json)["work"]["key"].startswith("draft_")
@@ -549,12 +559,8 @@ def test_a_slide_that_is_too_long_is_rewritten_alone_and_saved(tmp_path: Path) -
         assert end["changes"][0]["note"] == "shorter"
         assert names(events, "action", "done") == ["Rewrote slide 2", "Saved a version"]
         # Only the writer of slide 2 was asked, and the model's decisions were two.
-        writing = [
-            r for r in fake.requests[start:] if "Write section" in str(r["messages"][-1]["content"])
-        ]
-        assert len(writing) == 1 and "Write section 2 of 3" in str(
-            writing[0]["messages"][-1]["content"]
-        )
+        writing = part_writes(fake, start)
+        assert len(writing) == 1 and "Rewrite slide 2 as instructed" in writing[0]
         assert len(seen_by_the_orchestrator(fake, start)) == 2
         after_parts = works_text(client, "talk")
         assert after_parts[0] == before_parts[0] and after_parts[2] == before_parts[2]
@@ -572,6 +578,76 @@ def test_a_slide_that_is_too_long_is_rewritten_alone_and_saved(tmp_path: Path) -
         assert [s["label"] for s in end["message"]["payload"]["steps"]] == names(
             events, "action", "done"
         )
+
+
+@pytest.mark.parametrize("result", ["rewritten", "unchanged", "foreign_figure"])
+def test_imported_parts_use_only_the_selected_evidence_for_writes(tmp_path: Path, result: str):
+    fake = FakeProvider(skill())
+    with app_for(tmp_path, fake, skills=True) as client:
+        base, _ = library(client)
+        first = a_deck(client, fake, base)
+        before = kept(client, "talk")[0].works[0]
+        original = head_of(client, base, first)
+        selected, excluded = original["citations"]
+        pool_ref, excluded_ref = before.version_map
+        assert not before.approach.get("method")
+        client.patch(conversations(base, "/talk"), headers=workspace(client), json={
+            "scope": {"mode": "selection", "sourceIds": [selected["sourceId"]]},
+        }).raise_for_status()
+
+        def rewrite(index: int, prompt: str) -> str:
+            assert index == 1
+            material = prompt.split("The material:\n\n", 1)[1]
+            assert selected["sourceTitle"] in material and excluded["sourceTitle"] not in material
+            if result == "unchanged":
+                return "UNCHANGED"
+            if result == "foreign_figure":
+                return "## Evidence\n\n![Another figure](gunther-asset:outside)"
+            return f"## Evidence\n\nThe selected marker is recorded [{pool_ref}][{excluded_ref}]."
+
+        terminal = {"do": "save" if result == "rewritten" else "reply", "text": "Finished."}
+        fake.replies[:] = [script([{"actions": [
+            {"do": "write", "parts": [2], "instruction": "Use the selected evidence"},
+            terminal,
+        ]}], skill(rewrite=rewrite))]
+        events = turn(client, base, "talk", "Rewrite slide 2 with the selected source.")
+        after = kept(client, "talk")[0].works[0]
+        if result == "rewritten":
+            assert done(events)["outcome"] == "saved"
+            assert after.outline[1].refs == [pool_ref]
+            assert f"[{excluded_ref}]" not in after.parts[before.outline[1].id].text
+            for item in (before.outline[0], before.outline[2]):
+                assert after.parts[item.id] == before.parts[item.id]
+        else:
+            assert done(events)["outcome"] == "replied"
+            assert after.parts == before.parts and after.version_id == first
+            if result == "foreign_figure":
+                assert any("outside the chosen material" in note for note in failures(events))
+            else:
+                assert failures(events) == []
+
+
+def test_a_failed_review_leaves_the_imported_parts_and_checks_in_place(tmp_path: Path) -> None:
+    fake = FakeProvider(skill())
+    with app_for(tmp_path, fake, skills=True) as client:
+        base, _ = library(client)
+        first = a_deck(client, fake, base)
+        original = kept(client, "talk")[0].works[0]
+
+        def review(request):
+            assert "senior partner reading a finished" in request["messages"][0]["content"]
+            raise ModelError("Reviewer unavailable")
+
+        fake.replies[:] = [script([{"actions": [
+            {"do": "review", "parts": [2]},
+            {"do": "reply", "text": "The reviewer was unavailable."},
+        ]}], review)]
+        events = turn(client, base, "talk", "Review slide 2.")
+        assert done(events)["outcome"] == "replied"
+        assert failures(events) == ["Reviewer unavailable"]
+        after = kept(client, "talk")[0].works[0]
+        assert after.parts == original.parts and after.version_id == first
+        assert after.skipped[-1]["label"] == "Review unavailable"
 
 
 def test_the_one_before_it_is_found_from_the_changes_so_far(tmp_path: Path) -> None:
@@ -674,12 +750,8 @@ def test_a_changed_goal_makes_only_what_depends_on_it_out_of_date(tmp_path: Path
         # After the plan, slides 2 and 3 are out of date and the title slide is not.
         assert "2 [compare] CD3D and CD19 set T and B cells apart · out of date" in views[1]
         assert "1 [title] Markers · ok" in views[1]
-        writing = [
-            str(r["messages"][-1]["content"])
-            for r in fake.requests[start:]
-            if "Write section" in str(r["messages"][-1]["content"])
-        ]
-        assert not any("Write section 1 of" in text for text in writing)
+        assert len(part_writes(fake, start)) == 2
+        assert not any("Write slide 1." in text for text in part_writes(fake, start))
         assert works_text(client, "talk")[0] == before_parts[0]
         assert head_of(client, base_id, first)["versionNumber"] == 1
 
@@ -1098,7 +1170,7 @@ def test_the_view_has_its_headings_in_order_and_the_numbers_the_user_sees() -> N
     cut = f"Note: {words}"[:149].rstrip() + "…"
     expected = f"""\
 Library: Cells. Web: off.
-slides skill: understand → plan → write → review. Layouts: title, big_number, compare, two_column, flow, timeline, bar_chart, line_chart, cards, quote, figure, diagram, text, composed, takeaways. Uses: talk, read
+slides skill: understand → plan → write → review. Layouts: title, section, summary, stat, stats, chart, table, compare, process, timeline, quote, figure, figure_detail, statement, points, actions. Uses: talk, read
 Brief (you said = the user's words; edited = the user typed it; guessed = yours):
 - goal: Explain the Velmora trial (you said)
 - audience: lab members (you said)
@@ -1246,9 +1318,9 @@ CHECKS = [
     ({"do": "plan", "change": "whole"}, None),
     ({"do": "plan", "change": "insert", "after": 4, "heading": "X", "layout": "text"}, "no place after 4"),
     ({"do": "plan", "change": "insert", "after": 1, "layout": "text"}, "needs a heading"),
-    ({"do": "plan", "change": "insert", "after": 1, "heading": "X"}, "is not one of the deck's layouts"),
+    ({"do": "plan", "change": "insert", "after": 1, "heading": "X"}, None),
     ({"do": "plan", "change": "insert", "after": 1, "heading": "X", "layout": "title"}, "one title slide"),
-    ({"do": "plan", "change": "insert", "after": 1, "heading": "X", "layout": "text"}, None),
+    ({"do": "plan", "change": "insert", "after": 1, "heading": "X", "layout": "points"}, None),
     ({"do": "plan", "change": "delete", "item": 1}, "The title slide stays first."),
     ({"do": "plan", "change": "delete", "item": 4}, "There is no slide 4; there are 3."),
     ({"do": "plan", "change": "delete", "item": 2}, None),
@@ -1257,7 +1329,7 @@ CHECKS = [
     ({"do": "plan", "change": "move", "item": 1, "after": 3}, "The title slide stays first."),
     ({"do": "plan", "change": "item", "item": 2}, "Say what to change"),
     ({"do": "plan", "change": "item", "item": 2, "layout": "pie"}, "is not one of the deck's layouts"),
-    ({"do": "plan", "change": "item", "item": 2, "layout": "flow"}, None),
+    ({"do": "plan", "change": "item", "item": 2, "layout": "process"}, None),
     ({"do": "plan", "change": "item", "item": 2, "accent": "blue"}, "Only a deck's title slide"),
     ({"do": "plan", "change": "item", "item": 1, "accent": "pink"}, "is not an accent"),
     ({"do": "plan", "change": "item", "item": 1, "accent": "blue"}, None),
@@ -1351,7 +1423,7 @@ def test_a_slide_is_added_and_the_other_slides_are_not_touched(tmp_path: Path) -
     )
 
     def written(index: int, prompt: str) -> str:
-        return inserted if "Write section 2 of 4" in prompt else SLIDES[min(index, 2)]
+        return inserted if "Write slide 2. Its title: The 2024 trial." in prompt else SLIDES[index]
 
     fake = FakeProvider(skill())
     with app_for(tmp_path, fake, skills=True) as client:
@@ -1369,7 +1441,6 @@ def test_a_slide_is_added_and_the_other_slides_are_not_touched(tmp_path: Path) -
                                 "after": 1,
                                 "heading": "The 2024 trial",
                                 "goal": "The newest result",
-                                "layout": "text",
                             },
                             # After the insert, slide 2 is the new one.
                             {"do": "write", "parts": [2]},
@@ -1442,14 +1513,9 @@ def test_a_title_and_an_accent_are_set_by_code_and_a_slide_can_be_moved_and_remo
         # rules; the person asked for it to move).
         assert {(c["what"], c["was"]) for c in end["changes"]} >= {("rewritten", 1), ("moved", 3)}
         assert works_text(client, "talk")[1] == before[2]
-        writer_prompts = [
-            str(r["messages"][-1]["content"])
-            for r in fake.requests[start:]
-            if not is_orchestrating(r)
-            and "Write section " in str(r["messages"][-1]["content"])
-        ]
+        writer_prompts = part_writes(fake, start)
         assert len(writer_prompts) == 1
-        assert "Write section 1 of 3: Telling T and B cells apart" in writer_prompts[0]
+        assert "Write slide 1. Its title: Telling T and B cells apart." in writer_prompts[0]
 
 
 def test_a_slide_is_removed_by_code_alone(tmp_path: Path) -> None:
@@ -1547,6 +1613,104 @@ def test_one_passage_is_changed_and_checked(tmp_path: Path) -> None:
         assert after[1] == before[1].replace(row, "| Gene | CD3D [1] | CD19 [2] |")
         assert after[0] == before[0] and after[2] == before[2]
         assert calls(fake, start) <= 8
+
+
+def test_studio_report_edit_checks_only_the_changed_paragraph(tmp_path: Path) -> None:
+    first = "The initial estimate has uncertain support [1]."
+    second = "Use the estimate as a planning input [1]."
+    revised = "Use the estimate as guidance for planning [1]."
+    text = f"## Use the estimates\n\n{first}\n\n{second}"
+    issue = {"claim": first, "verdict": "unsupported", "note": "The source does not state it."}
+    fake = FakeProvider(script([{"actions": [
+        {"do": "edit", "item": 1, "passage": second, "instruction": "Rephrase for clarity"},
+        {"do": "save", "text": "Edited the second paragraph."},
+    ]}], skill(replacer=replacing({second: revised}))))
+    with app_for(tmp_path, fake) as client:
+        service = client.app.state.knowledge_service
+        service.output_method = "studio"
+        base, _ = library(client, notes={"Planning": "The estimate guides planning."})
+        saved = saved_output(client, base, {"title": "Plan", "sections": [
+            {"heading": "Use the estimates"},
+        ]}, [text], conversationId="paragraph-edit")
+        with service.sessions() as session:
+            row = session.scalar(select(ArtifactCheck).where(ArtifactCheck.artifact_id == saved["id"]))
+            checks = json.loads(row.checks_json)
+            checks["sections"][0]["issues"] = [issue]
+            row.checks_json = json.dumps(checks)
+            session.commit()
+        client.get(conversations(base), headers=workspace(client)).raise_for_status()
+
+        result = done(turn(client, base, "paragraph-edit", "Rephrase the second paragraph."))
+        assert result["outcome"] == "saved"
+        assert split_document(result["artifact"]["content"], "report")[1] == [
+            text.replace(second, revised)
+        ]
+        assert result["artifact"]["sections"][0]["issues"] == [issue]
+        prompts = [request["messages"][-1]["content"] for request in fake.requests
+                   if is_sentence_checking(request)]
+        assert len(prompts) == 1 and revised in prompts[0] and first not in prompts[0]
+
+
+@pytest.mark.parametrize(
+    "operation, supported, multi_series",
+    [("edit", True, False), ("edit", False, False), ("write", True, False), ("write", True, True)],
+    ids=["verified-notes", "unchecked-row", "studio-marker", "two-series"],
+)
+def test_a_legacy_chart_revision_keeps_the_renderer_format(
+    tmp_path: Path, operation: str, supported: bool, multi_series: bool,
+) -> None:
+    table = (
+        "## Rates vary by time of day\n\n| Time | Rate (%) |\n| --- | --- |\n"
+        "| Morning | 62 [1] |\n| Afternoon | 41 [1] |"
+    )
+    revised_table = (
+        "## Rates vary by time of day\n\n| Time | Rate (%) | Adjusted rate (%) |\n| --- | --- | --- |\n"
+        "| Morning | 62 [1] | 54 [1] |\n| Afternoon | 41 [1] | 35 [1] |"
+    ) if multi_series else table
+    before, after = "Note: Read the table.", "Note: Compare both rows."
+    revised = f"<!-- layout: chart; chart: bar -->\n{revised_table}\n\n{after}"
+    reply = skill(replacer=replacing({before: after}), rewrite=lambda _index, _prompt: revised)
+
+    def inner(request):
+        answer = reply(request)
+        if not supported and is_sentence_checking(request):
+            prompt = request["messages"][-1]["content"]
+            unchecked = int(re.search(r"^\((\d+)\) \| Afternoon", prompt, re.M)[1])
+            return json.dumps({"sentences": [
+                row for row in json.loads(answer)["sentences"] if row["n"] != unchecked
+            ]})
+        return answer
+
+    action = ({"do": "edit", "item": 2, "passage": before} if operation == "edit"
+              else {"do": "write", "parts": [2]})
+    fake = FakeProvider(script([{"actions": [
+        {**action, "instruction": "Clarify the notes"},
+        {"do": "save", "text": "Edited the speaker notes."},
+    ]}], inner))
+    with app_for(tmp_path, fake) as client:
+        base, _ = library(client, notes={"Rates": (
+            "Morning rate was 62%, adjusted rate 54%. Afternoon rate was 41%, adjusted rate 35%."
+        )})
+        outline = {**SLIDES_OUTLINE, "sections": [
+            SLIDES_OUTLINE["sections"][0], {"heading": "Rates vary by time of day", "layout": "bar_chart"},
+            SLIDES_OUTLINE["sections"][2],
+        ]}
+        saved = saved_output(client, base, outline, [SLIDES[0], f"{table}\n\n{before}", SLIDES[2]],
+                             approach=SLIDES_APPROACH, kind="slides", conversationId="chart-edit")
+        client.get(conversations(base), headers=workspace(client)).raise_for_status()
+
+        result = done(turn(client, base, "chart-edit", "Clarify the notes of slide 2."))
+        assert result["outcome"] == "saved", result
+        cover, chart, close = split_document(result["artifact"]["content"], "slides")[1]
+        old_cover, _, old_close = split_document(saved["content"], "slides")[1]
+        assert cover == old_cover and "design: v1" in cover and close == old_close
+        layout = "bar_chart" if supported and not multi_series else "compare"
+        assert chart == f"<!-- layout: {layout} -->\n{revised_table}\n\n{after}"
+        claim_rows = result["artifact"]["sections"][1]["coverage"]["claims"]
+        assert {tuple(claim["tableRow"]): claim["verdict"]
+                for claim in claim_rows if "tableRow" in claim} == {
+            (0, 2): "supported", (0, 3): "supported" if supported else "unchecked",
+        }
 
 
 def test_an_edit_that_breaks_the_form_of_a_layout_is_written_again_or_drawn_as_text(

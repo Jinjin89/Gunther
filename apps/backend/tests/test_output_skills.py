@@ -529,13 +529,13 @@ def test_studio_can_revise_an_older_slide_layout_and_keeps_the_titles_accent(
     old = split_document(second["content"], "slides")[1]
     middle = split_document(third["content"], "slides")[1]
     last = split_document(fourth["content"], "slides")[1]
-    assert middle[1].startswith("<!-- layout: points -->\n## CD3D and CD19 set T and B cells apart")
+    assert middle[1].startswith("<!-- layout: text -->\n## CD3D and CD19 set T and B cells apart")
     assert (middle[0], middle[2]) == (old[0], old[2])
     assert last[0] == "<!-- layout: title; accent: blue; design: v1 -->\n# Markers\n\nA new message"
     assert (last[1], last[2]) == (middle[1], middle[2])
     asked = [r["messages"][0]["content"] for r in fake.requests if is_writing(r)]
     assert "layout: cards" in asked[0] and "accent: blue" in asked[1]
-    assert [item.get("layout") for item in fourth["outline"]] == ["title", "points", "takeaways"]
+    assert [item.get("layout") for item in fourth["outline"]] == ["title", "text", "takeaways"]
 
 
 def test_a_figure_slide_needs_a_figure_kept_with_its_material() -> None:

@@ -31,7 +31,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from gunther import usage
-from gunther.agent import Tool
+from gunther.agent import Evidence, Tool, check_citations
 from gunther.artifact_workspace import (
     CardRec,
     ConversationBrief,
@@ -75,6 +75,7 @@ from gunther.outputs import (
     shape_section,
     with_layout,
 )
+from gunther.skill_checks import CHARTS
 from gunther.skill_runner import (
     ROLES,
     Approach,
@@ -86,6 +87,7 @@ from gunther.skill_runner import (
 from gunther.studio import design as designing
 from gunther.studio import format as studio_fmt
 from gunther.studio.format import without_design
+from gunther.studio.work import StudioWorkAgents, _single_part, slide_in_deck_format
 
 # What the writer is asked when one passage of a part is changed. Its first sentence is its
 # own, so that a test can tell this request from the others.
@@ -152,7 +154,7 @@ class WorkSteps:
 
     def __init__(
         self,
-        agents: SkillAgents,
+        agents: SkillAgents | StudioWorkAgents,
         work: Work,
         brief: ConversationBrief,
         pool: Pool,
@@ -162,6 +164,8 @@ class WorkSteps:
         emit: Events | None = None,
         *,
         read_material: Callable[[Pool], Notes] | None = None,
+        evidence_allowed: Callable[[Evidence], bool] | None = None,
+        report_v2: bool = True,
     ) -> None:
         if agents.skill.kind != work.spec.kind:
             raise ValueError(
@@ -174,6 +178,8 @@ class WorkSteps:
         self.pool = pool
         self.notes = notes
         self.read_material = read_material
+        self.evidence_allowed = evidence_allowed
+        self.report_v2 = report_v2
         self.model = model
         self.effort = effort
         self.emit: Events = emit or _no_events
@@ -224,7 +230,7 @@ class WorkSteps:
         agents.approach = self._approach()
         if getattr(agents, "studio", False):
             # Only a deck made to explain a study is held to the scientific rules.
-            scientific = (work.approach or {}).get("purpose") == "explain_study"
+            scientific = self._deck and (work.approach or {}).get("purpose") == "explain_study"
             agents.scientific_context = work.approach if scientific else None
         agents.outline_review = work.outline_review
         return spec_of(self.brief, work)
@@ -349,6 +355,11 @@ class WorkSteps:
         """The outline as the skill's steps take it: planned parts, with the numbers
         SkillAgents knows the material cards by."""
 
+        if isinstance(self.agents, StudioWorkAgents):
+            return [
+                Planned(item.heading, item.goal, id=item.id, layout=item.layout)
+                for item in self.work.outline
+            ]
         return [
             Planned(
                 heading=item.heading,
@@ -781,6 +792,8 @@ class WorkSteps:
         """A layout as the kind allows it: one of the deck skill's, or none in a report."""
 
         layout = (layout or "").strip()
+        if not layout and isinstance(self.agents, StudioWorkAgents):
+            return ""
         if not self._deck:
             if layout:
                 raise ValueError("The sections of a report have no layout.")
@@ -820,7 +833,7 @@ class WorkSteps:
             heading=heading,
             goal=goal,
             layout=layout,
-            layout_locked=bool(layout),
+            layout_locked=bool(layout) and not isinstance(self.agents, StudioWorkAgents),
             queries=[f"{heading} {goal}".strip()],
         )
         outline.insert(at, item)
@@ -831,7 +844,9 @@ class WorkSteps:
         """Take a part out of the outline, with its text. A deck keeps its title slide."""
 
         at = self._at(item_id)
-        if any(item_id in item.requires for item in self.work.outline):
+        if not isinstance(self.agents, StudioWorkAgents) and any(
+            item_id in item.requires for item in self.work.outline
+        ):
             raise ValueError("This page is a prerequisite; update its dependent pages first.")
         if self._deck and at == 0:
             raise ValueError("The title slide stays: a deck cannot lose it.")
@@ -866,8 +881,10 @@ class WorkSteps:
         rest.insert(to, item)
         from gunther.slide_planning import dependency_problems
 
-        problems = dependency_problems(rest)
-        if problems:
+        if (
+            not isinstance(self.agents, StudioWorkAgents)
+            and (problems := dependency_problems(rest))
+        ):
             raise ValueError(" ".join(problems))
         work.outline = rest
         self._announce()
@@ -898,7 +915,7 @@ class WorkSteps:
             update["message"] = ""
         if layout is not None:
             update["layout"] = self._layout(layout)
-            update["layout_locked"] = True
+            update["layout_locked"] = not isinstance(self.agents, StudioWorkAgents)
             update["design_attempted"] = False
             if self._deck and at == 0 and layout != "title":
                 raise ValueError("A deck has one title slide, and it stays first.")
@@ -1068,7 +1085,18 @@ class WorkSteps:
             self.agents._stage(self.emit, step, "done")
         return wrote
 
-    def _studio_write(self, item_ids: Sequence[str], instruction: str | None) -> list[str]:
+    def _part_pool(self, keep: Sequence[int] = ()) -> Pool:
+        if self.evidence_allowed is None:
+            return self.pool
+        pool = Pool(self.pool.limit)
+        pool.restore([
+            item for item in self.pool.items if item.ref in keep or self.evidence_allowed(item)
+        ])
+        return pool
+
+    def _studio_write(
+        self, item_ids: Sequence[str], instruction: str | None, *, review: bool = False,
+    ) -> list[str]:
         """A studio work's parts, each written with the whole document in view (studio/work.py),
         fitted to the format, and checked. A rewrite that changes nothing leaves the part."""
 
@@ -1082,6 +1110,16 @@ class WorkSteps:
         for index in positions:
             item = work.outline[index]
             part = work.parts.get(item.id)
+            pool = self._part_pool()
+            refs = list(dict.fromkeys([*item.refs, *(_cited(part.text) if part else [])]))
+            refs = [ref for ref in refs if ref in pool.by_ref()]
+            if len(refs) < 2 and not (self._deck and index == 0):
+                query = " ".join(filter(None, (item.heading, item.goal, instruction)))
+                refs += agents._research_section(
+                    self.model, query, [query[:300]], tool, self.pool,
+                    agents.limits.per_section, self.emit, index,
+                )
+                pool = self._part_pool()
             self.emit({"type": "section", "index": index, "state": "writing"})
             parts = [work.parts[i.id].text if i.id in work.parts else "" for i in work.outline]
             text = agents.write_part(  # type: ignore[attr-defined]
@@ -1091,11 +1129,12 @@ class WorkSteps:
                 parts,
                 [i.heading for i in work.outline],
                 index,
-                self.pool,
+                pool,
                 goal=item.goal,
                 layout=item.layout,
                 instruction=instruction if part is not None else None,
-                refs=item.refs,
+                refs=refs,
+                notes=self.notes,
             )
             if part is not None and section_hash(text) == section_hash(without_design(part.text)):
                 self.emit({"type": "section", "index": index, "state": "done"})
@@ -1106,17 +1145,22 @@ class WorkSteps:
                 spec,
                 [],
                 index,
-                self.pool,
+                pool,
                 [],
                 self.notes,
                 "",
                 self.emit,
                 text,
             )
+            if self._deck:
+                text = slide_in_deck_format(text, parts[0], index)
+            text, _ = check_citations(text, set(pool.by_ref()))
+            text = agents.validated_part(spec, text, index, pool)
             self.emit({"type": "section", "index": index, "state": "checking"})
             with self._noting():
-                draft = agents.check_built(self.model, text, tool, self.pool, self.emit, index)
+                draft = agents.check_built(self.model, text, tool, pool, self.emit, index)
                 draft = self._designed(index, draft, part.text if part else "")
+            was_current = part is None or part.inputs == digest_part_inputs(self.brief, work, item)
             heading = heading_of(draft.text) if self._deck else draft.text.splitlines()[0][3:]
             if heading and _fold(heading) != _fold(item.heading):
                 item = work.outline[index] = item.model_copy(update={"heading": heading[:200]})
@@ -1124,7 +1168,10 @@ class WorkSteps:
                     work.title = heading
             if self._deck:
                 item.layout = _marked(draft.text).layout or item.layout
-            self._keep_part(item, draft, digest_part_inputs(self.brief, work, item))
+            inputs = part.inputs if review and part and not was_current else digest_part_inputs(
+                self.brief, work, item,
+            )
+            self._keep_part(item, draft, inputs)
             item.refs = list(dict.fromkeys(_cited(draft.text)))
             wrote.append(item.id)
             self.emit({"type": "section", "index": index, "state": "done"})
@@ -1137,15 +1184,16 @@ class WorkSteps:
         self._written()
         spec = self._load()
         only = set(self._positions(item_ids)) if item_ids else None
-        asks = agents.review_parts(  # type: ignore[attr-defined]
-            self.model, self.effort, spec, [work.parts[i.id].text for i in work.outline]
-        )
+        with self._noting():
+            asks = agents.review_parts(
+                self.model, self.effort, spec, [work.parts[i.id].text for i in work.outline],
+            )
         revised: list[str] = []
         for ask in asks:
             at = ask.part - 1
             if only is not None and at not in only:
                 continue
-            revised += self._studio_write([work.outline[at].id], ask.instruction)
+            revised += self._studio_write([work.outline[at].id], ask.instruction, review=True)
         return revised
 
     def _written_before(self, index: int) -> bool:
@@ -1231,6 +1279,8 @@ class WorkSteps:
             raise ValueError("Say what to change.")
         tool = self._tool()
         spec = self._load()
+        studio = isinstance(self.agents, StudioWorkAgents)
+        pool = self._part_pool() if studio else self.pool
         marked = _marked(part.text) if self._deck else None
         body = marked.body if marked else part.text
         found = locate(span, body)
@@ -1249,7 +1299,7 @@ class WorkSteps:
             f"Instruction: {instruction.strip()}",
             *_notes_block(self.notes),
             "",
-            *self.agents._pool_lines(self.pool, [*_cited(body), *item.refs]),
+            *self.agents._pool_lines(pool, [*_cited(body), *item.refs]),
         ]
         self.emit({"type": "section", "index": at, "state": "writing"})
         reply, _ = self.agents.gateway.complete_json(
@@ -1265,6 +1315,9 @@ class WorkSteps:
         new = reply.text.strip()
         if HEADING_LINE.fullmatch(passage.strip()):
             new = _bare_headings(new)  # a new heading for the part
+        if studio and new != passage.strip():
+            new, _ = check_citations(new, set(pool.by_ref()))
+            self.agents.validate_evidence(spec, new, pool)
         replacement = lead + new + tail if new else ""
         after = body[end:]
         if not new and body[:start].endswith("\n") and after.startswith("\n"):
@@ -1273,6 +1326,16 @@ class WorkSteps:
         if spliced == body:
             self.emit({"type": "section", "index": at, "state": "done"})
             return False
+        if studio:
+            plain = without_design(part.text) if self._deck else part.text
+            shaped = plain[:len(plain) - len(body)] + spliced
+            _single_part(shaped, spec.kind, at)
+            self.emit({"type": "section", "index": at, "state": "checking"})
+            with self._noting():
+                draft = self._check_changed(part, shaped, tool, self._part_pool(_cited(body)), at)
+                draft = self._designed(at, draft, part.text)
+            self._keep_edit(item, part, draft, at)
+            return True
         layout = (marked.layout if marked else None) or item.layout or None
         shaped = shape_section(
             spliced,
@@ -1307,22 +1370,30 @@ class WorkSteps:
             self.emit({"type": "section", "index": at, "state": "checking"})
         with self._noting():
             draft = fallback_unverified_diagram(
-                self._check_changed(part, shaped, tool, at), at, self.agents.skipped
+                self._check_changed(part, shaped, tool, self.pool, at), at, self.agents.skipped
             )
             draft = self._designed(at, draft, part.text)
             draft = self._compose_page(at, draft, spec, instruction=instruction, force=True)
+        self._keep_edit(item, part, draft, at)
+        return True
+
+    def _keep_edit(self, item: ItemRec, part: PartRec, draft: Draft, at: int) -> None:
+        work = self.work
         was_current = part.inputs == digest_part_inputs(self.brief, work, item)
         heading = heading_of(draft.text)
         if heading and _fold(heading) != _fold(item.heading):
             item.heading = heading
             if self._deck and at == 0:
                 work.title = heading
+        if self._deck and isinstance(self.agents, StudioWorkAgents):
+            item.layout = _marked(draft.text).layout or item.layout
+        if isinstance(self.agents, StudioWorkAgents):
+            item.refs = _cited(draft.text)
         inputs = digest_part_inputs(self.brief, work, item) if was_current else part.inputs
         self._keep_part(item, draft, inputs)
         self.emit({"type": "section", "index": at, "state": "done"})
-        return True
 
-    def _check_changed(self, part: PartRec, text: str, tool: Tool, at: int) -> Draft:
+    def _check_changed(self, part: PartRec, text: str, tool: Tool, pool: Pool, at: int) -> Draft:
         """Check an edited part where it changed. The Checker marks and trims what it checks,
         so only the paragraphs that differ from the part's checked text go through it, and the
         rest stays word for word with its findings. A part with no check of its own, or a
@@ -1332,9 +1403,14 @@ class WorkSteps:
         text = without_design(text)
         old = _marked(part.text)
         new = _marked(text)
-        whole = new.layout in ("bar_chart", "line_chart") or old.layout != new.layout
+        whole = (
+            new.layout in ("chart", *CHARTS, "diagram")
+            or old.layout != new.layout
+            or any(studio_fmt.EXHIBIT_CHART.search(exhibit["attrs"])
+                   for exhibit in studio_fmt.EXHIBIT.finditer(new.body))
+        )
         if whole or part.issues is None or part.checked != section_hash(part.text):
-            return self.agents.check_built(self.model, text, tool, self.pool, self.emit, at)
+            return self.agents.check_built(self.model, text, tool, pool, self.emit, at)
         was, now = _blocks(old.body), _blocks(new.body)
         first = 0
         while first < min(len(was), len(now)) and was[first][0] == now[first][0]:
@@ -1360,7 +1436,7 @@ class WorkSteps:
             return Draft(text, issues, part.coverage)
         start, end = changed[0][1], changed[-1][1] + len(changed[-1][0])
         checked = self.agents.check_built(
-            self.model, new.body[start:end], tool, self.pool, self.emit, at
+            self.model, new.body[start:end], tool, pool, self.emit, at
         )
         body = new.body[:start] + checked.text.strip() + new.body[end:]
         return Draft(
@@ -1497,13 +1573,14 @@ class WorkSteps:
             if work.outline[at].id not in work.parts:
                 raise ValueError(f"{self._unit} {at + 1} is not written yet.")
         self._tool()
-        by_ref = self.pool.by_ref()
+        self._load()
         done: list[str] = []
         for at in positions:
             item = work.outline[at]
             part = work.parts[item.id]
             self.emit({"type": "section", "index": at, "state": "checking"})
             coverage: dict[str, Any] = {}
+            by_ref = self._part_pool(_cited(part.text)).by_ref()
             issues = self.agents.check_unbuilt(self.model, part.text, by_ref, coverage)
             part.checked = section_hash(part.text)
             part.issues = [issue.out() for issue in issues]
@@ -1632,7 +1709,7 @@ class WorkSteps:
             if len(goal) > 200:
                 goal = goal[:199].rstrip() + "…"
             preamble = f"# {title}" + (f"\n\n_{goal}_" if goal else "")
-            if getattr(agents, "studio", False):
+            if getattr(agents, "studio", False) and self.report_v2:
                 preamble = "<!-- report: v2 -->\n" + preamble
         built = agents.assemble(
             spec, title, preamble, drafts, self.pool, planned, self.model, self.effort

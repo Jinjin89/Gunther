@@ -315,6 +315,7 @@ def output_replies(
     unmarked: list[str] | None = None,
     verdict: dict[str, list[int]] | None = None,
     unsupported: Any = None,
+    rewrite: Any = None,
 ) -> Callable[[dict[str, Any]], Any]:
     """Replies for a Studio build and for checking or revising saved versions.
 
@@ -402,12 +403,15 @@ def output_replies(
                     "supported": [n for n in numbers if n not in (flagged or [])],
                 }
             )
-        asked = re.search(r"^Rewrite (?:section|slide) (\d+) as instructed", system, re.M)
+        asked = re.search(
+            r"^(Write|Rewrite) (?:section|slide) (\d+)(?:\.| as instructed)", system, re.M,
+        )
         if asked is None:
             # Anything else a model is asked while a library is set up (reading a source).
             return "{}"
-        index = int(asked.group(1)) - 1
-        return written(index, system + "\n" + prompt) if callable(written) else written[index]
+        index = int(asked.group(2)) - 1
+        answer = rewrite if asked.group(1) == "Rewrite" and rewrite is not None else written
+        return answer(index, system + "\n" + prompt) if callable(answer) else answer[index]
 
     return reply
 
@@ -455,7 +459,7 @@ def skill_replies(
     import re
 
     actions = list(gather or [])
-    whole = output_replies(outline, written)
+    whole = output_replies(outline, written, rewrite=rewrite)
 
     def answer(reply: Any, request: dict[str, Any]) -> Any:
         if isinstance(reply, Exception):

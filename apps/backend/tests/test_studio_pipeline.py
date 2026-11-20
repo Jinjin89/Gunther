@@ -516,14 +516,14 @@ def test_a_conversation_makes_a_studio_deck_in_one_action_and_can_rewrite_one_sl
 
 def test_a_failed_build_ends_the_turn_instead_of_building_or_saving_again(tmp_path):
     from fake_models import is_orchestrating, orchestrator_replies
-    from test_artifact_agent import done, turn
+    from test_artifact_agent import done, kept, turn, versions_of
     from test_outputs import app_for, library, workspace
 
-    from gunther.llm import ModelError
+    fail_writer = True
 
     def inner(request):
         system = request_text(request)
-        if "presentation writer" in system:
+        if fail_writer and "presentation writer" in system:
             raise ModelError("The connection broke")
         if "knowledge assertions" in system:
             return json.dumps({"assertions": []})
@@ -542,7 +542,8 @@ def test_a_failed_build_ends_the_turn_instead_of_building_or_saving_again(tmp_pa
     fake = FakeProvider(orchestrator_replies(decisions, inner))
     with app_for(tmp_path, fake) as client:
         client.app.state.knowledge_service.output_method = "studio"
-        base_id, _ = library(client, notes={"Source 1": PASSAGES[0]})
+        notes = {f"Source {n}": text for n, text in enumerate(PASSAGES, 1)}
+        base_id, _ = library(client, notes=notes)
         client.post(
             f"/api/knowledge-bases/{base_id}/artifact-conversations",
             headers=workspace(client),
@@ -550,13 +551,28 @@ def test_a_failed_build_ends_the_turn_instead_of_building_or_saving_again(tmp_pa
         )
         events = turn(client, base_id, "talk", "A 10-minute deck on the trial")
         result = done(events)
-    assert result["outcome"] == "paused", result
-    assert "Making it stopped: The connection broke." in result["reply"]
-    assert "continue" in result["reply"]
-    actions = [body for kind, body in events if kind == "action"]
-    assert any(a["state"] == "skipped" and "turn ended" in a["note"] for a in actions)
-    # One decision: the failed build is not made again, and nothing unmade is saved.
-    assert sum(is_orchestrating(r) for r in fake.requests) == 1
+        assert result["outcome"] == "paused", result
+        assert "Making it stopped: The connection broke." in result["reply"]
+        assert "continue" in result["reply"]
+        actions = [body for kind, body in events if kind == "action"]
+        assert any(a["state"] == "skipped" and "turn ended" in a["note"] for a in actions)
+        assert sum(is_orchestrating(r) for r in fake.requests) == 1
+        progress = kept(client, "talk")[0].works[0].approach["studio_progress"]
+        assert progress["memo"] and progress["storyline"] and versions_of(client) == []
+
+        fail_writer = False
+        before = len(fake.requests)
+        fake.replies[:] = [orchestrator_replies([{"actions": [
+            {"do": "make"},
+            {"do": "save", "text": "Resumed the deck."},
+        ]}], inner)]
+        resumed = done(turn(client, base_id, "talk", "", kind="continue"))
+        assert resumed["outcome"] == "saved" and resumed["artifact"]["versionNumber"] == 1
+        tasks = [request_text(request) for request in fake.requests[before:]]
+        assert any("presentation writer" in task for task in tasks)
+        assert not any(
+            "lead analyst" in task or "presentation strategist" in task for task in tasks
+        )
 
 
 def test_a_failed_build_resumes_after_its_memo_and_storyline():

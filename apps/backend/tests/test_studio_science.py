@@ -1193,6 +1193,25 @@ def test_an_edit_may_only_show_the_builds_own_images(tmp_path):
         )  # fmt: skip
 
 
+def test_fitting_keeps_the_part_writers_source_crop():
+    from gunther.studio.work import StudioWorkAgents
+
+    original = (
+        "<!-- layout: figure -->\n## Signal\n"
+        "![Panel A](gunther-asset:ast_signal#x=0,y=0,w=0.5,h=1)\n"
+    )
+    fitted = original.replace("#x=0,", "#x=0.5,") + "A concise description.\nNote: Read the axes."
+    fake = FakeProvider(fitted)
+    agents = StudioWorkAgents(gateway(fake), "slides")
+    pool = science_pool()
+    text = original + "A detailed description of the signal. " * 20
+    result = agents.fit(
+        model(), "low", Spec("slides", "Readers"), [], 1, pool, [], Notes(), "",
+        lambda _: None, text,
+    )
+    assert len(fake.requests) == 1 and result == text
+
+
 def test_finished_edits_are_checked_and_fitting_keeps_the_checks(tmp_path):
     from gunther.artifact_workspace import ConversationBrief, Work, WorkSpec
     from gunther.outputs import Draft

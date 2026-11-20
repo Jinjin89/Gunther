@@ -56,7 +56,7 @@ from gunther.skillbook import skill_for
 from gunther.studio import design as studio_design
 from gunther.studio import format as studio_format
 from gunther.studio.format import without_design
-from gunther.studio.work import is_studio, load_built
+from gunther.studio.work import StudioWorkAgents, load_built
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +199,7 @@ says what to change; the rest of the part stays word for word. In a report "pass
 "¶2" (its paragraph 2); a passage cut short with "…" runs on to the end of its paragraph (of the \
 notes, on a slide). Use edit for any change inside a part: a sentence, a paragraph, a list item, \
 the notes, a heading.
-- redesign: (decks of the studio method with designed slides) change only how the slides at \
+- redesign: (decks with designed slides) change only how the slides at \
 "parts" look, as "instruction" asks ("make slide 4 a diagram", "less text on this slide", "make \
 it more visual", "use a bigger number"): the words, numbers, citations and notes stay exactly \
 as they are, so nothing is checked again. Use it when the request is about the look alone; \
@@ -475,7 +475,7 @@ def build_view(v: View) -> str:
     for kind in [work.spec.kind] if work else ["slides", "report"]:
         skill = skill_for(kind)
         options = (
-            f"Layouts: {', '.join(skill.layouts)}"
+            f"Layouts: {', '.join(studio_format.LAYOUTS)}"
             if kind == "slides"
             else f"Structures: {', '.join(skill.structures)}"
         )
@@ -686,14 +686,12 @@ def validate(act: Act, g: Gate) -> str | None:
         return "There is no artifact yet; start one with select new:report or new:slides."
     unit, size = _unit(work), len(g.view_ids)
     deck = work.spec.kind == "slides"
-    skill = skill_for(work.spec.kind)
-    layouts = studio_format.LAYOUTS if is_studio(work) else skill.layouts
     if do == "make":
         return None
     if do == "understand":
         return None
     if do == "plan":
-        return _validate_plan(act, g, work, layouts, deck, unit, size)
+        return _validate_plan(act, g, work, studio_format.LAYOUTS, deck, unit, size)
     if do in ("write", "check"):
         if not act.parts:
             return f"Name the {unit}s (parts)."
@@ -797,7 +795,7 @@ def _validate_plan(
             return f"There is no place after {act.after}; there are {size} {unit}s."
         if not act.heading.strip():
             return "A new part needs a heading."
-        return layout_problem(act.layout, False) if deck or act.layout else None
+        return layout_problem(act.layout, False) if act.layout else None
     if wrong := _positions([act.item], size, unit):
         return wrong
     assert act.item is not None
@@ -857,6 +855,7 @@ class TurnContext:
     model: ModelInfo
     effort: Effort | None
     make_agents: Callable[[str], SkillAgents]
+    make_studio_agents: Callable[[str], StudioWorkAgents]
     notes: Notes
     library_tool: Tool
     web_tool: Tool | None
@@ -874,11 +873,10 @@ class TurnContext:
     emit: Events = lambda _event: None
     limits: AgentLimits = field(default_factory=AgentLimits)
     effort_for_decisions: Effort | None = "low"
-    # The studio method (Settings → Developer): ``studio(spec, pool, use)`` makes a whole
-    # artifact; ``make_studio_agents(kind)`` gives the agents for working on one it made.
+    # The remaining Method setting selects how the work is initially understood and planned.
     studio: Callable[..., BuiltOutput] | None = None
-    make_studio_agents: Callable[[str], Any] | None = None
     studio_reading: Callable[[Pool], Notes] | None = None
+    evidence_allowed: Callable[[Evidence], bool] | None = None
 
 
 def _brief_json(brief: ConversationBrief, spec: WorkSpec | None) -> dict[str, Any]:
@@ -933,7 +931,7 @@ class ArtifactAgent:
         self.spent = False
         self.asked: Any = None
         self.next_id = 1
-        self.agents: dict[str, SkillAgents] = {}
+        self.agents: dict[str, SkillAgents | StudioWorkAgents] = {}
         # Each work as the turn found it, to tell what the turn changed; what was done to a
         # part and why, for the change list.
         self.started: dict[str, dict[str, Any]] = {}
@@ -982,22 +980,16 @@ class ArtifactAgent:
             max(0, lim.searches - b.searches),
         )
 
-    def _agents(self, kind: str) -> SkillAgents:
-        if kind not in self.agents:
-            self.agents[kind] = self.ctx.make_agents(kind)
-        return self.agents[kind]
-
     def _steps(self, work: Work, *, planning: bool = False) -> WorkSteps:
         c = self.ctx
-        if (planning or is_studio(work)) and c.make_studio_agents is not None:
-            key = f"studio:{work.spec.kind}"
-            if key not in self.agents:
-                self.agents[key] = c.make_studio_agents(work.spec.kind)
-            agents = self.agents[key]
-        else:
-            agents = self._agents(work.spec.kind)
+        legacy_plan = planning and c.studio is None
+        kind = work.spec.kind
+        key = f"skills:{kind}" if legacy_plan else f"studio:{kind}"
+        if key not in self.agents:
+            self.agents[key] = c.make_agents(kind) if legacy_plan else c.make_studio_agents(kind)
+        saved = c.saved.get(work.key)
         return WorkSteps(
-            agents,
+            self.agents[key],
             work,
             self.brief,
             self.pool,
@@ -1006,6 +998,8 @@ class ArtifactAgent:
             c.effort,
             c.emit,
             read_material=c.studio_reading if planning else None,
+            evidence_allowed=c.evidence_allowed,
+            report_v2=saved is None or saved.lstrip().startswith("<!-- report: v2 -->"),
         )
 
     def _view(self) -> str:
@@ -1647,16 +1641,9 @@ class ArtifactAgent:
         act, work = m.act, active_work(self.workspace)
         assert work is not None
         steps = self._steps(work)
-        first = work.outline[0].id if work.outline else ""
-        accent = _marked(work.parts[first].text).accent if first in work.parts else None
-        theme = _marked(work.parts[first].text).theme if first in work.parts else None
         existing = {i for i in m.ids if i in work.parts}
         instruction = act.instruction.strip() or None
         wrote = steps.write(m.ids, instruction)
-        if accent and first in wrote and work.spec.kind == "slides":
-            steps.set_accent(accent)
-        if theme and first in wrote and work.spec.kind == "slides":
-            steps.set_theme(theme)
         for item_id in wrote:
             self._touch(work, item_id, "rewritten", instruction or "written from its plan")
         where = self._where(work, wrote)
