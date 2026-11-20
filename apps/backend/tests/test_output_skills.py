@@ -1,9 +1,9 @@
-"""Outputs made by following a skill: approach, outline, writing, review and revision."""
+"""Saved legacy output fixtures and regressions for the current readers and reviser."""
 
 import json
 from pathlib import Path
 
-from fake_models import FakeProvider, gateway, is_writing, output_replies, skill_replies, skill_step
+from fake_models import FakeProvider, gateway, is_writing, output_replies
 from test_outputs import (
     app_for,
     body,
@@ -19,8 +19,6 @@ from test_outputs import (
 from gunther.agent import Evidence
 from gunther.outputs import Draft, OutputAgents, Planned, Pool, Spec, split_document
 from gunther.schemas import ConversationCitationOut
-from gunther.skill_runner import Approach, Card, SkillAgents, _scene_leaves
-from gunther.skillbook import skill_for
 from gunther.slide_scene import (
     SceneEnvelope,
     SceneGroup,
@@ -61,7 +59,6 @@ REPORT = [
     "## CD3D is the T-cell marker\n\nCD3D is a marker of T cells [1].",
     "## CD19 is the B-cell marker\n\nCD19 is a marker of B cells [2].",
 ]
-SEARCH = [{"action": "search_library", "query": "CD3D CD19 markers"}]
 
 
 SLIDES_APPROACH = {**APPROACH, "use": "talk", "pages": 6}
@@ -101,197 +98,8 @@ def saved_skill_output(client, base_id, *, kind="report", written=None, **fields
     return saved_output(client, base_id, OUTLINE, written or REPORT, approach=APPROACH, **fields)
 
 
-def test_one_design_call_shares_each_source_excerpt_once_for_a_fourteen_page_deck() -> None:
-    marker = "SINGLE_SHARED_SOURCE_EXCERPT_7f6a"
-    fake = FakeProvider(skill_replies(SLIDES_APPROACH, SLIDES_OUTLINE, SLIDES, gather=SEARCH))
-    agents = SkillAgents(gateway(fake), skill_for("slides"), use="talk")
-    planned = [
-        Planned(
-            "Deck title" if index == 0 else "Takeaways" if index == 13 else f"Claim {index}",
-            "A bounded goal",
-            layout="title" if index == 0 else "takeaways" if index == 13 else "text",
-            refs=(1,),
-        )
-        for index in range(14)
-    ]
-    pool = Pool(40)
-    pool.adopt(Evidence("library", "Source", marker))
-
-    designed = agents.design_pages(
-        agents.gateway.models[0], "off", Spec("slides", "scientist"), planned, pool, lambda _: None
-    )
-
-    assert len(designed) == 14 and all(item.design for item in designed)
-    assert len([request for request in fake.requests if skill_step(request) == "design"]) == 1
-    prompt = str(fake.requests[0]["messages"][-1]["content"])
-    assert prompt.count(marker) == 1
-    assert len(prompt) < 30_000
-
-
-def test_composer_can_choose_two_trees_for_the_same_checked_body() -> None:
-    body = (
-        "<!-- layout: composed -->\n## A measured result\n\n**72%** [1]\n\n"
-        "Measured within the study group [2].\n\n> The condition held throughout [1]\n— Source [1]"
-    )
-    first = {
-        "root": {
-            "kind": "row",
-            "weights": [2, 1],
-            "children": [
-                {"kind": "leaf", "blockId": "b1", "view": "stat", "size": "display"},
-                {
-                    "kind": "column",
-                    "weights": [1, 1],
-                    "children": [
-                        {"kind": "leaf", "blockId": "b2", "view": "text"},
-                        {"kind": "leaf", "blockId": "b3", "view": "quote"},
-                    ],
-                },
-            ],
-        }
-    }
-    second = {
-        "root": {
-            "kind": "column",
-            "weights": [1, 1],
-            "children": [
-                {
-                    "kind": "row",
-                    "weights": [1, 2],
-                    "children": [
-                        {"kind": "leaf", "blockId": "b1", "view": "stat"},
-                        {"kind": "leaf", "blockId": "b2", "view": "text"},
-                    ],
-                },
-                {"kind": "leaf", "blockId": "b3", "view": "quote", "role": "support"},
-            ],
-        }
-    }
-    outputs = iter((first, second))
-    fake = FakeProvider(
-        skill_replies(
-            SLIDES_APPROACH,
-            SLIDES_OUTLINE,
-            SLIDES,
-            compose=lambda _request: json.dumps(next(outputs)),
-        )
-    )
-    agents = SkillAgents(gateway(fake), skill_for("slides"), use="talk")
-    plan = [Planned("A measured result", layout="composed", goal="Explain the finding")]
-
-    trees = []
-    for _ in range(2):
-        draft = Draft(body, [], {"status": "complete"})
-        composed = agents.compose_pages(
-            agents.gateway.models[0],
-            "off",
-            Spec("slides", "scientist"),
-            plan,
-            [draft],
-            lambda _: None,
-            force=True,
-        )[0]
-        _, marker = scene_marker(composed.text)
-        scene = decode_scene(marker)
-        assert scene is not None
-        trees.append(scene)
-
-    assert trees[0].source_hash == trees[1].source_hash
-    assert trees[0].root != trees[1].root
-    assert len([request for request in fake.requests if skill_step(request) == "compose"]) == 2
-
-
-def test_composer_gets_one_repair_for_a_structurally_invalid_tree() -> None:
-    body = "<!-- layout: composed -->\n## Message\n\n**72%** [1]\n\nMeasured [2]."
-    bad = {
-        "root": {
-            "kind": "row",
-            "weights": [1, 1],
-            "children": [
-                {"kind": "leaf", "blockId": "b1", "view": "stat"},
-                {"kind": "leaf", "blockId": "b1", "view": "stat"},
-            ],
-        }
-    }
-    good = {
-        "root": {
-            "kind": "row",
-            "weights": [1, 1],
-            "children": [
-                {"kind": "leaf", "blockId": "b1", "view": "stat"},
-                {"kind": "leaf", "blockId": "b2", "view": "text"},
-            ],
-        }
-    }
-    replies = iter((bad, good))
-    fake = FakeProvider(
-        skill_replies(
-            SLIDES_APPROACH,
-            SLIDES_OUTLINE,
-            SLIDES,
-            compose=lambda _request: json.dumps(next(replies)),
-        )
-    )
-    agents = SkillAgents(gateway(fake), skill_for("slides"), use="talk")
-    plan = [Planned("Message", layout="composed")]
-    result = agents.compose_pages(
-        agents.gateway.models[0],
-        "off",
-        Spec("slides", "scientist"),
-        plan,
-        [Draft(body, [], {"status": "complete"})],
-        lambda _: None,
-        force=True,
-    )[0]
-
-    assert decode_scene(scene_marker(result.text)[1]) is not None
-    assert len([request for request in fake.requests if skill_step(request) == "compose"]) == 2
-    assert agents.skipped == []
-
-
-def test_unverified_graphic_falls_back_inside_its_block_and_keeps_other_elements() -> None:
-    body = (
-        "<!-- layout: composed -->\n## Quarterly change\n\n"
-        "| Quarter | Change (points) |\n| --- | --- |\n"
-        "| Q1 | −3.5 points [1] |\n| Q2 | +2 points [2]\n\n"
-        "The two periods moved in opposite directions [1][2]."
-    )
-    response = {
-        "root": {
-            "kind": "row",
-            "weights": [2, 1],
-            "children": [
-                {"kind": "leaf", "blockId": "b1", "view": "bar_chart"},
-                {"kind": "leaf", "blockId": "b2", "view": "text"},
-            ],
-        }
-    }
-    fake = FakeProvider(
-        skill_replies(
-            SLIDES_APPROACH,
-            SLIDES_OUTLINE,
-            SLIDES,
-            compose=lambda _request: json.dumps(response),
-        )
-    )
-    agents = SkillAgents(gateway(fake), skill_for("slides"), use="talk")
-    result = agents.compose_pages(
-        agents.gateway.models[0],
-        "off",
-        Spec("slides", "scientist"),
-        [Planned("Quarterly change", layout="composed")],
-        [Draft(body, [], {"status": "complete"})],
-        lambda _: None,
-        force=True,
-    )[0]
-    scene = decode_scene(scene_marker(result.text)[1])
-    assert scene is not None and scene.graphics == {}
-    assert [leaf.view for leaf in _scene_leaves(scene.root)] == ["table", "text"]
-    assert "Slide 1, block b1 kept as table" in agents.skipped[0]["label"]
-
-
 def test_assemble_citation_renumbering_keeps_the_scene_source_fingerprint() -> None:
-    fake = FakeProvider(skill_replies(SLIDES_APPROACH, SLIDES_OUTLINE, SLIDES))
+    fake = FakeProvider()
     agents = OutputAgents(gateway(fake))
     pool = Pool(10)
     evidence = []
@@ -365,66 +173,17 @@ def test_assemble_citation_renumbering_keeps_the_scene_source_fingerprint() -> N
     assert final_scene.graphics_hash == graphics_hash(final_page)
 
 
-def test_auto_design_guidance_has_no_pool_citations_but_keeps_planned_evidence() -> None:
-    fake = FakeProvider(
-        skill_replies(
-            SLIDES_APPROACH,
-            SLIDES_OUTLINE,
-            SLIDES,
-            design={
-                "pages": [
-                    {
-                        "index": 2,
-                        "heading": "Middle claim",
-                        "intent": "Connect the claim to the study [3]",
-                        "visual": "Show the result as a line [3]",
-                        "composition": "standard",
-                        "emphasis": "The observed change [3]",
-                        "notes": "Transition from this evidence [3]",
-                        "layout": "text",
-                    }
-                ]
-            },
-        )
-    )
-    agents = SkillAgents(gateway(fake), skill_for("slides"), use="talk")
-    agents.cards = [
-        Card(claim="The source reports a change", refs=[3], evidence="A change was measured.")
-    ]
-    planned = [
-        Planned("Deck title", layout="title"),
-        Planned(
-            "Middle claim", "Explain the measured change", layout="text", refs=(3,), cards=(1,)
-        ),
-        Planned("Takeaways", layout="takeaways"),
-    ]
-    pool = Pool(10)
-    pool.adopt(Evidence("library", "First", "First source passage."))
-    pool.adopt(Evidence("library", "Second", "Second source passage."))
-    pool.adopt(Evidence("library", "Third", "A change was measured."))
-
-    designed = agents.design_pages(
-        agents.gateway.models[0], "off", Spec("slides", "scientist"), planned, pool, lambda _: None,
-        indices=[1],
-    )
-
-    page = designed[1]
-    assert page.refs == (3,) and page.cards == (1,)
-    assert agents.cards[0].refs == [3]
-    assert page.design is not None
-    assert all(
-        "[3]" not in page.design[field] for field in ("intent", "visual", "emphasis", "notes")
-    )
-    prompt = str(fake.requests[0]["messages"][0]["content"])
-    assert "Do not put citation markers" in prompt
-
-
 def test_studio_revises_a_saved_skills_version_and_keeps_its_approach(tmp_path: Path) -> None:
     changed = "## CD3D is the T-cell marker\n\nCD3D marks T cells [1]."
     fake = FakeProvider(output_replies(OUTLINE, [REPORT[0], changed, REPORT[2]]))
-    with app_for(tmp_path, fake, skills=True) as client:
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
-        first = saved_skill_output(client, base_id)
+        supplement = {"title": "Trial update", "url": "https://news.test/a", "role": "update",
+                      "why": "A newer trial."}
+        first = saved_output(
+            client, base_id, OUTLINE, REPORT, approach={**APPROACH, "supplements": [supplement]},
+        )
+        assert first["provenance"]["approach"]["supplements"][0]["url"] == supplement["url"]
         fake.requests.clear()
         second = built(revise(client, base_id, first["id"], "Shorter", sectionIndex=1))
         edited = client.post(
@@ -442,61 +201,6 @@ def test_studio_revises_a_saved_skills_version_and_keeps_its_approach(tmp_path: 
     assert len(versions(client)) == 3
 
 
-def test_the_direct_route_uses_studio_under_saved_skills_settings(tmp_path: Path) -> None:
-    outline = {"title": "Markers", "sections": [{"heading": "T cells", "queries": ["CD3D"]}]}
-    fake = FakeProvider(output_replies(outline, ["## T cells\n\nCD3D marks T cells [1]."]))
-    with app_for(tmp_path, fake, skills=True) as client:
-        headers = workspace(client)
-        assert client.get("/api/settings/developer", headers=headers).json()["outputSkills"] is True
-        saved = client.put(
-            "/api/settings/developer",
-            headers=headers,
-            json={"traces": False, "outputSkills": False},
-        ).json()
-        assert saved == {"traces": False, "outputSkills": False, "outputMethod": "skills"}
-        # Saving only the traces switch leaves this one as it is.
-        client.put("/api/settings/developer", headers=headers, json={"traces": True})
-        assert (
-            client.get("/api/settings/developer", headers=headers).json()["outputSkills"] is False
-        )
-        base_id, _ = library(client)
-        version = built(build(client, base_id, body()))
-    assert version["provenance"]["generator"] == "gunther.studio.v1"
-    assert version["provenance"]["skill"]["name"] == "studio"
-    assert version["style"] == "auto"
-    saved_file = json.loads((tmp_path / "service-settings.json").read_text())
-    assert saved_file["developer"]["output_skills"] is False
-
-
-# A slide's layout: its marker, and the form its body takes ---------------------------------------
-
-RATES_OUTLINE = {
-    "title": "Rates",
-    "sections": [
-        {"heading": "Rates", "layout": "title", "cards": []},
-        {
-            "heading": "CD3D is the more common marker",
-            "layout": "bar_chart",
-            "cards": [1],
-            "link": "moves from the two-marker comparison to prevalence",
-        },
-        {
-            "heading": "Use both markers in every panel",
-            "layout": "takeaways",
-            "cards": [1],
-            "link": "turn the comparison into a practice",
-        },
-    ],
-}
-RATES_TITLE = "# Rates\n\nTwo cohort rates"
-ONE_ROW = (
-    "## CD3D is the more common marker\n\n| Marker | Rate (%) |\n| --- | --- |\n| CD3D | 62 [1] |"
-)
-TWO_ROWS = ONE_ROW + "\n| CD19 | 41 [1] |"
-RATES_CLOSE = "## Use both markers in every panel\n\n- CD3D was 62% [1]\n\nNote: Close here [1]."
-RATES_SEARCH = [{"action": "search_library", "query": "cohort rate"}]
-
-
 def test_studio_can_revise_an_older_slide_layout_and_keeps_the_titles_accent(
     tmp_path: Path,
 ) -> None:
@@ -510,7 +214,7 @@ def test_studio_can_revise_an_older_slide_layout_and_keeps_the_titles_accent(
         )
 
     fake = FakeProvider(output_replies(SLIDES_OUTLINE, rewrite))
-    with app_for(tmp_path, fake, skills=True) as client:
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         first = saved_skill_output(client, base_id, kind="slides")
         # The person changed this slide's layout, and picked an accent for the title slide, by hand.
@@ -535,55 +239,23 @@ def test_studio_can_revise_an_older_slide_layout_and_keeps_the_titles_accent(
     assert (last[1], last[2]) == (middle[1], middle[2])
     asked = [r["messages"][0]["content"] for r in fake.requests if is_writing(r)]
     assert "layout: cards" in asked[0] and "accent: blue" in asked[1]
+    assert [row["ref"] for row in fourth["citations"]] == [1, 2]
+    assert fourth["provenance"]["approach"] == first["provenance"]["approach"]
+    assert not any("world-class presentation designer" in r["messages"][0]["content"]
+                   for r in fake.requests)
     assert [item.get("layout") for item in fourth["outline"]] == ["title", "text", "takeaways"]
 
 
-def test_a_figure_slide_needs_a_figure_kept_with_its_material() -> None:
-    plan = {
-        "title": "Curves",
-        "sections": [
-            {"heading": "Curves", "layout": "title", "cards": []},
-            {"heading": "The curve rises after week four", "layout": "figure", "cards": [1]},
-            {"heading": "Nothing was kept for this slide", "layout": "figure", "cards": [2]},
-            {"heading": "The steps were the same in both", "layout": "flow", "cards": [2]},
-            {"heading": "Three causes were found", "layout": "cards", "cards": [2]},
-            {"heading": "Takeaways", "layout": "takeaways", "cards": [1]},
-        ],
-    }
-    fake = FakeProvider(json.dumps(plan))
-    chosen = gateway(fake)
-    agents = SkillAgents(chosen, skill_for("slides"))
-    agents.approach = Approach("Q", "A", "P", "what")
-    agents.cards = [Card(claim="The curve rises", refs=[1]), Card(claim="Another claim", refs=[2])]
-    citation = ConversationCitationOut(
-        id="cit_1",
-        source_id="src_1",
-        source_title="Paper",
-        quote="Figure 2 shows the curve.",
-        locator="p. 3",
-        status="provisional",
-        confidence=0.0,
-        figures=[{"assetId": "ast_1", "caption": "Figure 2: the curve"}],
-    )
-    pool = Pool(10)
-    pool.adopt(Evidence("library", "Paper", "Figure 2 shows the curve.", payload=(citation, None)))
-    pool.adopt(Evidence("library", "Notes", "Nothing is drawn here."))
-
-    title, planned = agents.structure(
-        chosen.models[0], "off", Spec("slides", "scientist"), lambda event: None, pool=pool
-    )
-
-    assert [item.layout for item in planned] == [
-        "title", "figure", "text", "flow", "cards", "takeaways",
-    ]  # fmt: skip
-    assert agents.skipped == [
-        {
-            "step": "layout",
-            "label": "Slide 3 drawn as text",
-            "reason": "No figure is kept with the material this slide uses.",
+def test_studio_builds_with_retired_output_settings_on_disk(tmp_path: Path) -> None:
+    (tmp_path / "service-settings.json").write_text(json.dumps({
+        "developer": {"traces": True, "output_skills": False, "output_method": "skills"},
+    }))
+    with app_for(tmp_path, FakeProvider(output_replies(OUTLINE, REPORT))) as client:
+        base_id, _ = library(client)
+        assert client.get("/api/settings/developer", headers=workspace(client)).json() == {
+            "traces": True,
         }
-    ]
-    # The planner was told which cards come with a figure.
-    prompt = str(fake.requests[0]["messages"][-1]["content"])
-    assert "Figures kept with the material" in prompt
-    assert "- C1: Figure 2: the curve" in prompt and "- C2:" not in prompt
+        version = built(build(client, base_id, body()))
+    assert version["provenance"]["generator"] == "gunther.studio.v1"
+    assert version["provenance"]["skill"]["name"] == "studio"
+    assert version["style"] == "auto"

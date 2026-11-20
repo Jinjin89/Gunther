@@ -72,24 +72,12 @@ describe("Settings → Developer", () => {
     expect(api.developerLogs).toHaveBeenCalledWith("warning");
     expect(screen.getByText("Summary")).toBeTruthy();
     expect(screen.getByText("failed · 3 tries")).toBeTruthy();
+    expect(screen.queryByLabelText("Method")).toBeNull();
+    expect(screen.queryByRole("switch", { name: "Make outputs with skills" })).toBeNull();
     await user.click(screen.getByRole("switch", { name: "Keep how answers are made" }));
     expect(api.saveDeveloperSettings).toHaveBeenCalledWith({ traces: true });
     await waitFor(() => expect(onNotify).toHaveBeenCalledWith(expect.stringMatching(/choose Trace/)));
     await user.selectOptions(screen.getByLabelText("Which lines"), "info");
     await waitFor(() => expect(api.developerLogs).toHaveBeenLastCalledWith("info"));
-  });
-
-  it("turns making outputs with skills off, keeping the traces switch as it is", async () => {
-    const user = userEvent.setup();
-    const onNotify = vi.fn();
-    api.developerSettings.mockResolvedValue({ traces: false, outputSkills: true });
-    api.saveDeveloperSettings.mockResolvedValue({ traces: false, outputSkills: false });
-    render(<DeveloperSettings onNotify={onNotify} />);
-    const skills = await screen.findByRole("switch", { name: "Make outputs with skills" });
-    await waitFor(() => expect((skills as HTMLInputElement).checked).toBe(true));
-    await user.click(skills);
-    expect(api.saveDeveloperSettings).toHaveBeenCalledWith({ traces: false, outputSkills: false });
-    await waitFor(() => expect((skills as HTMLInputElement).checked).toBe(false));
-    expect(onNotify).toHaveBeenCalledWith(expect.stringMatching(/without a skill/));
   });
 });

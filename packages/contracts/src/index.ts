@@ -686,10 +686,6 @@ export interface TtsSampleInput {
 export interface DeveloperSettings {
   /** Each answer keeps how it was made, shown in a conversation's Trace tab. */
   traces: boolean;
-  /** Outputs are made by following a skill; off, by the agents alone. Left out when saving, it stays as it is. */
-  outputSkills?: boolean;
-  /** How Outputs are made: "studio" (insight → storyline → whole draft) or "skills" (the earlier steps). */
-  outputMethod?: "studio" | "skills";
 }
 
 /**

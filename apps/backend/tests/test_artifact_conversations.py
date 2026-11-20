@@ -6,16 +6,13 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-from fake_models import FakeProvider, skill_replies
+from fake_models import FakeProvider, output_replies
 from sqlalchemy import func, inspect, select
 from sqlalchemy.exc import IntegrityError
 from test_output_skills import (
-    APPROACH,
     OUTLINE,
     REPORT,
-    SEARCH,
     SLIDES,
-    SLIDES_APPROACH,
     SLIDES_OUTLINE,
     saved_skill_output,
 )
@@ -43,18 +40,18 @@ def conversations(base_id: str, tail: str = "") -> str:
 
 
 def deck_replies():
-    return skill_replies(SLIDES_APPROACH, SLIDES_OUTLINE, SLIDES, gather=SEARCH)
+    return output_replies(SLIDES_OUTLINE, SLIDES)
 
 
 def report_replies():
-    return skill_replies(APPROACH, OUTLINE, REPORT, gather=SEARCH)
+    return output_replies(OUTLINE, REPORT)
 
 
 def a_library(tmp_path: Path):
     """An app whose model builds decks and reports by their skills, and a library."""
 
     fake = FakeProvider(deck_replies())
-    client = app_for(tmp_path, fake, skills=True)
+    client = app_for(tmp_path, fake)
     return fake, client
 
 
@@ -509,11 +506,9 @@ def test_listing_gives_a_row_to_a_conversation_the_versions_name(tmp_path: Path)
         headers = workspace(client)
 
         def shortening():
-            return skill_replies(
-                APPROACH,
-                OUTLINE,
+            return output_replies(
+                            OUTLINE,
                 REPORT,
-                gather=SEARCH,
                 rewrite=lambda index, prompt: (
                     "## CD3D is the T-cell marker\n\nCD3D marks T cells [1]."
                 ),

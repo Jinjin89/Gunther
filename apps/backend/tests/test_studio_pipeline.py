@@ -11,7 +11,7 @@ from gunther.llm import ModelError
 from gunther.outputs import Issue, Notes, Planned, Pool, Spec, split_document
 from gunther.schemas import ConversationCitationOut
 from gunther.studio import format as fmt
-from gunther.studio.pipeline import StudioAgents
+from gunther.studio.pipeline import Run, StudioAgents
 
 PASSAGES = [
     "The trial followed 412 buildings in six districts over the summers 2021 to 2023.",
@@ -245,7 +245,7 @@ def test_direct_build_draws_a_chart_only_when_each_cited_row_is_supported(tmp_pa
 
     adjusted_in_source = "nine percent" if verdict == "supported" else "9%"
     evidence = f"Raw savings were 18%, adjusted savings {adjusted_in_source}, both at 30% coverage."
-    with app_for(tmp_path, FakeProvider(reply), skills=True) as client:
+    with app_for(tmp_path, FakeProvider(reply)) as client:
         base, _ = library(client, notes={"Field trial": evidence})
         version = built(build(client, base, body(kind=kind, use="talk")))
 
@@ -254,6 +254,12 @@ def test_direct_build_draws_a_chart_only_when_each_cited_row_is_supported(tmp_pa
     if kind == "slides":
         assert fmt.parse_slide(fmt.split_slides(version["content"])[2]).layout == drawn
         assert ("<gunther-chart>" in version["content"]) == (drawn == "chart")
+        if verdict != "uncited":
+            claims = version["sections"][2]["coverage"]["claims"]
+            rows = {tuple(claim["tableRow"]): claim for claim in claims if "tableRow" in claim}
+            assert rows[(0, 2)]["verdict"] == "supported" and rows[(0, 2)]["refs"] == [1]
+            assert rows[(0, 3)]["verdict"] == verdict
+            assert rows[(0, 3)]["refs"] == [1]
     else:
         assert (":::exhibit chart=column" in version["content"]) == (drawn == "chart")
     assert seen and all("Table header | Measure | Saving (%) | Coverage (%) |" in s for s in seen)
@@ -370,6 +376,49 @@ def test_studio_build_checks_the_written_count_against_the_storyline():
         agents.make(model(), "low", Spec("slides", "Everyone", brief="Two pages"), pool(), Notes())
 
 
+@pytest.mark.parametrize("drops_part", [False, True], ids=["keeps-limitation", "wrong-count"])
+def test_storyline_repair_keeps_the_requested_count_and_evidence_context(drops_part):
+    slides = [
+        {"title": "The trial measured time", "layout": "title"},
+        {"title": "Quality was not measured", "layout": "points", "refs": [2]},
+        {"title": "The trial measured time", "layout": "points", "refs": [1]},
+    ]
+    changes = []
+
+    def reply(request):
+        task = request_text(request)
+        if "presentation strategist" in task:
+            if "Your storyline:" not in task:
+                return json.dumps({"title": "Pilot", "requested_count": 3,
+                                   "requested_minutes": 8, "slides": slides})
+            assert "Quality was not measured" in task and "Repeats the cover" in task
+            changes.append(task)
+            amended = [*slides[:2], {**slides[2], "title": "The duration sets the scope"}]
+            return json.dumps({"title": "Pilot", "requested_count": 2, "requested_minutes": 3,
+                               "slides": amended[::2] if drops_part else amended})
+        if "senior partner reviewing a storyline" in task:
+            if changes:
+                return '{"verdict":"ready"}'
+            return json.dumps({"verdict": "revise", "problems": [
+                {"where": "Slide 3", "problem": "Repeats the cover",
+                 "fix": "Explain the handoff from the limit to the scope."},
+            ]})
+        raise AssertionError(task)
+
+    agents = StudioAgents(gateway(FakeProvider(reply)))
+    run = Run(Spec("slides", "Everyone"), "talk", "en")
+    evidence = "[1] The trial ran for three summers.\n[2] Quality was not measured."
+    if drops_part:
+        with pytest.raises(ModelError, match="outline has 2 slides. The brief asks for 3"):
+            agents.storyline(model(), "low", run, evidence, lambda _event: None)
+    else:
+        story = agents.storyline(model(), "low", run, evidence, lambda _event: None)
+        assert (story.requested_count, story.requested_minutes) == (3, 8)
+        assert story.slides[1].title == "Quality was not measured" and story.slides[1].refs == [2]
+        assert story.slides[2].title == "The duration sets the scope"
+    assert len(changes) == 1
+
+
 def test_making_a_draft_after_replan_still_requires_saving(tmp_path):
     from fake_models import orchestrator_replies
     from test_artifact_agent import conversations, done, turn, versions_of
@@ -433,7 +482,6 @@ def test_a_conversation_makes_a_studio_deck_in_one_action_and_can_rewrite_one_sl
     from test_artifact_agent import done, kept, turn
     from test_outputs import app_for, library, route, workspace
 
-    from gunther.studio.work import is_studio
 
     notes = {f"Source {n}": text for n, text in enumerate(PASSAGES, 1)}
     rewritten = (
@@ -472,7 +520,7 @@ def test_a_conversation_makes_a_studio_deck_in_one_action_and_can_rewrite_one_sl
         assert "design: v2" in content and "## The trial was large" in content
         held, _ = kept(client, "talk")
         work = held.works[0]
-        assert is_studio(work) and len(work.outline) == 3
+        assert work.approach["method"] == "studio" and len(work.outline) == 3
         deck = result["artifact"]
         themed = deck["content"].replace("theme: paper; style: light", "theme: ink; style: dark")
         assert themed != deck["content"]

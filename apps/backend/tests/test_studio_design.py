@@ -204,6 +204,9 @@ def test_the_guard_checks_the_chart_placeholder_and_its_citations():
     # The chart's own row citation [2] and values need no copy; the takeaway's [3] does.
     lost = GOOD_CHART.replace(" [3]", "")
     assert "[3]" in " ".join(D.check_design(CHART, lost))
+    invented = GOOD_CHART.replace(" [3]", " [3][99]")
+    assert any("citations are not in the content: [99]" in issue
+               for issue in D.check_design(CHART, invented))
     # A value that is also stated outside the table must still be on the slide.
     table_and_text = CHART.replace("Plan with", "Raw is 18 and plan with")
     assert "missing: 18" in " ".join(D.check_design(table_and_text, GOOD_CHART))

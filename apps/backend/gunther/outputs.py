@@ -1,29 +1,4 @@
-"""Outputs: a report or slides written by agents from what someone chose.
-
-Four steps, all by the chosen model, over one *pool* of numbered passages:
-
-1. **Planner.** One low-effort call reads the brief, the person's saved knowledge and
-   discussions, and what the sources are about, and returns a title and the sections,
-   each with a goal and a few searches. A rebuild with an outline the person edited
-   skips it.
-2. **Researcher.** Per section, the searches run on the library (only the chosen
-   sources), one relevance call keeps what is about the section, and a few new
-   passages join the pool.
-3. **Writer.** Per section, one call at the job's effort writes it from the pool.
-   Every claim carries its passage number; what the model adds from its own knowledge
-   is marked ``[?]``.
-4. **Checker.** Per section: claims with neither a number nor ``[?]`` are marked, each
-   ``[?]`` is looked up in the library, and one call finds the sentences whose cited
-   passages do not state them; those lose their number and become ``[?]``.
-
-The pool is Ask's idea (see agent): a passage keeps its number for good, and only
-passages the text cites are kept, renumbered 1, 2, 3 in reading order across the whole
-document. Saved knowledge and discussions are *notes*: they shape the plan and the
-writing but are never cited. The passages they cite seed the pool instead.
-
-Nothing here fakes a result: a model that fails to plan or write fails the build.
-A failed grading, audit or check call is skipped, as in Ask.
-"""
+"""Evidence pools, assembly, and checks shared by output creation and saved versions."""
 
 from __future__ import annotations
 
@@ -46,11 +21,9 @@ from gunther.agent import (
     Limits,
     Step,
     Tool,
-    Toolbox,
     ToolFailure,
     check_citations,
     leads_in,
-    place_marks,
     renumber_citations,
 )
 from gunther.llm import ModelError, ModelGateway, ModelInfo
@@ -70,7 +43,6 @@ from gunther.slide_scene import (
     SceneEnvelope,
     decode_scene,
     rebind_graphics_hash,
-    with_scene_line,
 )
 from gunther.studio.format import design_of, without_design
 
@@ -162,68 +134,6 @@ def chart_unverified(
     if any(claim.get("verdict") != "supported" for claim in claims):
         return [], "Its verification is incomplete: not every value was found supported."
     return [], None
-
-
-def chart_rows_coverage_reason(text: str, coverage: Mapping[str, Any] | None) -> str | None:
-    """Require complete, block-local coverage for every chart row.
-
-    The general Checker can group or paraphrase claims, so a complete page status and one
-    supported numeric claim are not enough to license a multi-row chart. Each row needs a
-    supported claim that binds its label, numeric value and cited passages.
-    """
-    if not coverage or coverage.get("status") != "complete":
-        return "The Checker did not complete coverage of this chart's rows."
-    layout, body = layout_of(text)
-    page = Page(0, heading_of(body), layout or "bar_chart", body)
-    table_lines = [line.strip() for line in page.body if line.strip().startswith("|")]
-    if len(table_lines) < 4:
-        return "The chart does not contain the required numeric rows."
-    rows = [[cell.strip() for cell in line.strip("|").split("|")] for line in table_lines[2:]]
-    claims = coverage.get("claims", [])
-
-    def clean(value: str) -> str:
-        value = CITATION_GROUP.sub("", value)
-        value = re.sub(r"[*_`|]", " ", value)
-        return " ".join(value.split()).casefold()
-
-    for row in rows:
-        if len(row) != 2:
-            return "Every chart row must contain exactly one label and one value."
-        label = clean(row[0])
-        values = {
-            _normalized_chart_value(value).rstrip("%")
-            for value in VALUE_IN.findall(CITATION_GROUP.sub("", row[1]))
-        }
-        refs = set(_numbers(row[1]))
-        if not label or not values or not refs:
-            return "Every chart row needs a label, a numeric value and its own citation."
-
-        def supports_row(
-            claim: Mapping[str, Any],
-            label: str = label,
-            values: set[str] = values,
-            refs: set[int] = refs,
-        ) -> bool:
-            claim_text = clean(str(claim.get("text", "")))
-            claim_value_text = claim_text.replace(label, " ", 1)
-            claim_values = {
-                _normalized_chart_value(value).rstrip("%")
-                for value in VALUE_IN.findall(claim_value_text)
-            }
-            claim_refs = set(claim.get("refs", []))
-            return (
-                label in claim_text
-                and bool(values & claim_values)
-                and refs.issubset(claim_refs)
-                and claim.get("verdict") == "supported"
-            )
-
-        if not any(supports_row(claim) for claim in claims):
-            return (
-                "One or more chart rows lack a supported Checker claim bound to that row's "
-                "label, value and citation."
-            )
-    return None
 
 
 def figure_lines(item: Evidence) -> list[str]:
@@ -601,33 +511,9 @@ class Issue:
 class Planned:
     heading: str
     goal: str = ""
-    queries: tuple[str, ...] = ()
-    # Set by a skill (see skill_runner): a slide's layout, how a section follows the one
-    # before it, the pool numbers of the material planned for it, and the numbers (counted
-    # from 1, as the planner was shown them) of the material cards it chose.
     layout: str = ""
-    link: str = ""
     refs: tuple[int, ...] = ()
-    cards: tuple[int, ...] = ()
-    design: dict[str, str] | None = None
-    layout_locked: bool = False
-    design_locked: bool = False
-    design_attempted: bool = False
     id: str = ""
-    message: str = ""
-    question: str = ""
-    requires: tuple[str, ...] = ()
-
-    def planning_metadata(self) -> dict[str, Any]:
-        """Persist the stable identity and populated metadata of older outlines."""
-        values = {
-            "id": self.id,
-            "message": self.message,
-            "question": self.question,
-            "requires": list(self.requires),
-        }
-        return {key: value for key, value in values.items() if value}
-
 
 @dataclass(frozen=True)
 class BuiltOutput:
@@ -660,6 +546,15 @@ Events = Callable[[dict[str, Any]], None]
 
 # Prompts ----------------------------------------------------------------------------------
 
+DECK_USES = ("talk", "read")
+OUTPUT_STRUCTURES = ("what", "why", "how", "guide", "which", "change", "learn")
+REPORT_STYLE_STRUCTURES = {
+    "overview": "what",
+    "field_guide": "guide",
+    "teaching_path": "learn",
+    "decision_brief": "which",
+}
+
 STYLES = {
     "overview": "Explain the subject and lead with the main point, then the support.",
     "field_guide": "Cover what it is, when to use it, how to use it, and the pitfalls.",
@@ -667,12 +562,6 @@ STYLES = {
     "and end each section with one question the reader can check themselves against.",
     "decision_brief": "Set out the options, the evidence for and against each, a "
     "recommendation, and the risks.",
-}
-
-AUDIENCES = {
-    "scientist": "Scientist: precise terms, methods and limits.",
-    "student": "Student: plain words, defined terms and examples.",
-    "collaborator": "Collaborator: what it means for shared work, decisions and open questions.",
 }
 
 SUPPORT = """\
@@ -712,70 +601,6 @@ def _notes_block(notes: Notes) -> list[str]:
 
 
 # Shaping what the writer returns -----------------------------------------------------------
-
-
-def _unfence(text: str) -> str:
-    """The text without a code fence some models put around the whole reply."""
-
-    body = text.strip()
-    match = re.fullmatch(r"```[\w-]*\n(.*)\n```", body, re.DOTALL)
-    return match.group(1).strip() if match else body
-
-
-def shape_section(
-    text: str,
-    spec: Spec,
-    heading: str,
-    title_slide: bool,
-    layout: str | None = None,
-    *,
-    accent: str | None = None,
-    theme: str | None = None,
-    composition: str | None = None,
-    scene_line: str | None = None,
-    design_version: int | None = None,
-) -> str:
-    """The section as the rules want it: its own heading first, no stray section starts.
-
-    This is structure only. What the model said is left as it is, except that a deck's slide
-    starts with the marker of its planned ``layout`` (see the rules above): the plan chooses
-    that, not the writer, so a marker the writer wrote is dropped. A slide with no planned
-    layout has no marker. ``accent`` is the title slide's, kept from the slide being rewritten.
-    """
-
-    body = _unfence(text)
-    if spec.kind == "slides":
-        body = layout_of(body)[1]
-    rows = _lines(body)
-    out: list[str] = []
-    for position, (line, fenced) in enumerate(rows):
-        if not fenced and spec.kind == "slides" and line.strip() == "---":
-            continue
-        if not fenced and line.startswith("## ") and position:
-            line = "#" + line
-        out.append(line)
-    body = "\n".join(out).strip()
-    first = next((line for line in body.splitlines() if line.strip()), "")
-    mark = "# " if title_slide else "## "
-    if first.startswith(mark) and not first.startswith(mark + "#"):
-        shaped = body
-    elif first.startswith("#") and not first.startswith("###"):
-        # A heading of another level: the same heading, at the right one.
-        shaped = mark + re.sub(r"^#+\s*", "", first) + body[len(first) :]
-    else:
-        shaped = f"{mark}{heading}\n\n{body}" if body else f"{mark}{heading}"
-    chosen_layout = layout or ("title" if title_slide and spec.theme else None)
-    shaped = (
-        with_layout(shaped, chosen_layout, accent, theme or spec.theme, composition, design_version)
-        if spec.kind == "slides" and chosen_layout
-        else shaped
-    )
-    if spec.kind == "slides" and chosen_layout == "composed" and scene_line:
-        shaped = with_scene_line(shaped, scene_line)
-    return shaped
-
-
-# Checking -------------------------------------------------------------------------------------
 
 
 def _numbers(chunk: str) -> list[int]:
@@ -1095,107 +920,6 @@ class OutputAgents:
             )
         return sorted(bad)
 
-    def check_built(
-        self,
-        model: ModelInfo,
-        text: str,
-        tool: Tool,
-        pool: Pool,
-        emit: Events,
-        section: int,
-    ) -> Draft:
-        """Check a section as it is built: mark what has no source, look up what the model
-        said from memory, and take the number off what its passages do not state. A slide's
-        marker is not looked at, and is on the text that comes back."""
-
-        def say(event: dict[str, Any]) -> None:
-            emit({**event, "section": section})
-
-        marked = _marked(text)
-        marker, text = marked.line, marked.body
-        issues: list[Issue] = []
-        # An image that is not one of the figures kept with the material cannot be saved (it
-        # belongs to no cited source): it is left out, and the section says so.
-        text, left_out = drop_unknown_figures(text, kept_figures(pool))
-        issues += [
-            Issue(
-                f"Figure: {caption}"[:300],
-                "unsupported",
-                "Left out: it is not one of the figures kept with the material.",
-            )
-            for caption in left_out
-        ]
-        if left_out and marked.layout == "figure" and not IMAGE.search(text):
-            marker = with_layout("", "text")
-            self.skipped.append(
-                {
-                    "step": "layout",
-                    "label": f"Slide {section + 1} drawn as text",
-                    "reason": "Its figure is not one of those kept with the material.",
-                }
-            )
-        # A number the pool does not have is dropped first, as in Ask, so what is left
-        # uncited is seen as uncited.
-        text, _ = check_citations(text, set(pool.by_ref()))
-        text = place_marks(text, self.ask.unsourced_claims(model, text))
-        dropped: list[tuple[str, str]] = []
-        text = self.ask.check_leads(model, text, Toolbox((tool,)), pool.adopt, [], [], say, dropped)
-        issues += [
-            Issue(claim, "contradicted", f"Left out: the sources disagree ({titles}).")
-            for claim, titles in dropped
-        ]
-        issues += [
-            Issue(claim, "unverified", "From the model's own knowledge; no source was found.")
-            for _, _, claim in leads_in(text, 40)
-        ]
-        coverage: dict[str, Any] = {}
-        flagged = self._unsupported(
-            model, text, pool.by_ref(), coverage, diagram=marked.layout == "diagram"
-        )
-        issues += [
-            Issue(_plain(chunk)[:300], "unsupported", "The sources it cites do not state this.")
-            for _, _, chunk, _ in flagged
-        ]
-        issues += [
-            Issue(claim["text"][:300], "unchecked", "The Checker returned no verdict.")
-            for claim in coverage.get("claims", [])
-            if claim["verdict"] == "unchecked"
-        ]
-        # From the end, so the positions of the earlier sentences stay true.
-        for begin, end, chunk, _ in reversed(flagged):
-            text = text[:begin] + unsource(chunk) + text[end:]
-        text = f"{marker}\n{text}" if marker else text
-        coverage = self._full_coverage(model, text, pool.by_ref(), issues)
-        text = self._chart_or_table(text, issues, coverage, pool, section)
-        return Draft(text, issues, coverage)
-
-    def _chart_or_table(
-        self,
-        text: str,
-        issues: list[Issue],
-        coverage: dict[str, Any],
-        pool: Pool,
-        section: int,
-    ) -> str:
-        """A chart is drawn only from values that were all verified; otherwise the same table is
-        drawn as a table, with what the Checker found, and the version says so. A value its
-        cited source does not state is added to what the Checker found."""
-
-        layout = layout_of(text)[0]
-        if layout not in CHARTS:
-            return text
-        problems, reason = chart_unverified(text, issues, coverage, pool.by_ref(), section)
-        if reason is None:
-            return text
-        issues += [
-            Issue(problem[:300], "unsupported", "Its cited source does not state this.")
-            for problem in problems
-        ]
-        self.skipped.append(
-            {"step": "layout", "label": f"Slide {section + 1} drawn as a table", "reason": reason}
-        )
-        return with_layout(text, "compare")
-
     def _full_coverage(
         self, model: ModelInfo, text: str, by_ref: dict[int, Evidence], issues: list[Issue]
     ) -> dict[str, Any]:
@@ -1338,13 +1062,8 @@ class OutputAgents:
             content=content,
             outline=[
                 {"heading": item.heading, "goal": item.goal}
-                | item.planning_metadata()
+                | ({"id": item.id} if item.id else {})
                 | ({"layout": item.layout} if item.layout else {})
-                | ({"link": item.link} if item.link else {})
-                | ({"design": item.design} if item.design else {})
-                | ({"layoutLocked": True} if item.layout_locked else {})
-                | ({"designLocked": True} if item.design_locked else {})
-                | ({"designAttempted": True} if item.design_attempted else {})
                 for item in outline
             ],
             citations=citations,

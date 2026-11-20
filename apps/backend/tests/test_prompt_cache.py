@@ -119,6 +119,7 @@ def test_build_requests_share_material_and_warm_workers(kind, tmp_path):
     sources = pool()
     notes = Notes(knowledge=[("Preference", "Keep the distinction between raw and adjusted")])
     material = agents._notes_text(notes) + agents._material(sources.items)
+    assert all(material.count(item.text) == 1 for item in sources.items)
     built = agents.make(
         model(), "high", Spec(kind, "collaborator", brief="A short briefing"), sources, notes
     )
@@ -137,6 +138,7 @@ def test_build_requests_share_material_and_warm_workers(kind, tmp_path):
         material_calls.append(request)
         assert system == expected_system
         assert request["messages"][1]["content"].startswith(expected_prompt)
+        assert request["messages"][1]["content"].count(material) == 1
         assert request_text(request).count(P.TASK_BOUNDARY) == 1
         if request.get("response_format"):
             assert "JSON schema:" not in system

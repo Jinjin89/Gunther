@@ -2,7 +2,7 @@ import type { OutlineItem, SkillRun } from "@gunther/contracts";
 import { ArrowDown, ArrowUp, ChevronRight, Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
-/** The slide layouts the Slides skill plans with (skills/slides/references/layouts.md). */
+/** Labels used when displaying saved legacy slide layouts. */
 export const SLIDE_LAYOUTS: Record<string, string> = {
   title: "Title",
   composed: "Composed elements",
@@ -24,9 +24,7 @@ export const SLIDE_LAYOUTS: Record<string, string> = {
 const newOutlineId = () => `p_${Array.from(crypto.getRandomValues(new Uint8Array(12)), byte => byte.toString(16).padStart(2, "0")).join("")}`;
 
 /**
- * The plan of an output: its sections and what each is for (and a slide's layout, when a skill
- * planned it). Collapsed to one row; "Edit outline" opens it for changes, and rebuilding with it
- * gives Studio the edited headings and goals.
+ * Show the saved plan and let Studio rebuild it from edited headings, goals and order.
  */
 export function OutlineEditor({ outline, label, max, busy, onRebuild, review }: {
   outline: OutlineItem[];

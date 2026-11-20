@@ -1,9 +1,9 @@
-"""The Artifacts agent: one orchestrator over the skill's steps.
+"""The Artifacts agent: one orchestrator over Studio's steps.
 
 For each message of the user the orchestrator reads a *view* of the conversation (the brief, a
 map of the artifact with what is out of date, the changes so far, the last messages, what this
 turn did), and decides the next one to three actions. Code checks each action, runs it over
-the skill's steps (``WorkSteps``), the tools and the answerer, and the orchestrator decides
+Studio's steps (``WorkSteps``), the tools and the answerer, and the orchestrator decides
 again with the notes of what happened, until an action ends the turn: ``ask``, ``answer``,
 ``save`` or ``reply``. See docs/ARTIFACT_AGENT_PLAN.md.
 
@@ -49,9 +49,18 @@ from gunther.artifact_workspace import (
 )
 from gunther.llm import ModelError, ModelGateway, ModelInfo, Turn
 from gunther.model_profiles import Effort
-from gunther.outputs import ACCENTS, BuiltOutput, Notes, Planned, Pool, _marked, layout_of
+from gunther.outputs import (
+    ACCENTS,
+    DECK_USES,
+    OUTPUT_STRUCTURES,
+    BuiltOutput,
+    Notes,
+    Planned,
+    Pool,
+    _marked,
+    layout_of,
+)
 from gunther.run_budget import RunBudget
-from gunther.skillbook import skill_for
 from gunther.studio import design as studio_design
 from gunther.studio import format as studio_format
 from gunther.studio.format import without_design
@@ -67,7 +76,7 @@ Audience = Literal["scientist", "student", "collaborator"]
 class AgentLimits:
     decisions: int = 12  # orchestrator calls in one turn
     calls: int = 200  # all model calls in one turn (a full build is about 100)
-    searches: int = 8  # search_library / search_web / read_source outside skill steps
+    searches: int = 8  # search_library / search_web / read_source outside Studio steps
     questions_in_a_row: int = 2
     history: int = 4  # exchanges shown word for word
     log: int = 12  # change-log lines shown
@@ -461,15 +470,14 @@ def build_view(v: View) -> str:
                 for title, text in items
             ]
     for kind in [work.spec.kind] if work else ["slides", "report"]:
-        skill = skill_for(kind)
         options = (
             f"Layouts: {', '.join(studio_format.LAYOUTS)}"
             if kind == "slides"
-            else f"Structures: {', '.join(skill.structures)}"
+            else f"Structures: {', '.join(OUTPUT_STRUCTURES)}"
         )
         if kind == "slides":
-            options += f". Uses: {', '.join(skill.uses)}"
-        out.append(f"{kind} skill: understand → plan → write → review. {options}")
+            options += f". Uses: {', '.join(DECK_USES)}"
+        out.append(f"{kind} in Studio: understand → plan → write → review. {options}")
     out.append("Brief (you said = the user's words; edited = the user typed it; guessed = yours):")
     shown = [
         _line("- goal:", brief.goal, "") if brief.goal else None,

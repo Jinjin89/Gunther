@@ -31,9 +31,19 @@ from pydantic import BaseModel, Field, ValidationError
 
 from gunther.agent import ANY_CITATION, Evidence, sentence_spans
 from gunther.brief import _quoted
-from gunther.outputs import Pool, Spec, _marked, heading_of, layout_of, section_hash, split_document
+from gunther.outputs import (
+    DECK_USES,
+    OUTPUT_STRUCTURES,
+    REPORT_STYLE_STRUCTURES,
+    Pool,
+    Spec,
+    _marked,
+    heading_of,
+    layout_of,
+    section_hash,
+    split_document,
+)
 from gunther.schemas import ArtifactOut, ConversationCitationOut, OutlineItem
-from gunther.skillbook import skill_for
 from gunther.slide_scene import rebind_graphics_hash
 
 logger = logging.getLogger(__name__)
@@ -82,7 +92,7 @@ class WorkSpec(BaseModel):
 
 
 class CardRec(BaseModel):
-    """A material card (see skill_runner.Card) with an id that stays the same."""
+    """A claim and its evidence, with a stable id."""
 
     id: str  # "C1", "C2"…: stable within the work
     claim: str
@@ -739,15 +749,15 @@ def _find(lines: Sequence[Line], text: str) -> int | None:
 
 
 def _brief_value(kind: Kind, name: str, text: str) -> str | None:
-    """A use or a structure as the kind's skill knows it, or None. Other fields are free text."""
-
-    skill = skill_for(kind)
     wanted = _fold(text)
     if name == "use":
-        return wanted if wanted in skill.uses else None
+        return wanted if kind == "slides" and wanted in DECK_USES else None
     if name == "structure":
-        # A report style ("decision brief") names the structure it fixes.
-        return wanted if wanted in skill.structures else skill.styles.get(wanted.replace(" ", "_"))
+        if wanted in OUTPUT_STRUCTURES:
+            return wanted
+        if kind == "report":
+            return REPORT_STYLE_STRUCTURES.get(wanted.replace(" ", "_"))
+        return None
     return " ".join(text.split())
 
 
@@ -852,11 +862,8 @@ def apply_brief_updates(
         elif name == "use" and spec.kind != "slides":
             note = "A report has no use; it was left out."
         elif (value := _brief_value(spec.kind, name, text)) is None:
-            skill = skill_for(spec.kind)
-            known = skill.uses if name == "use" else skill.structures
-            note = f"“{text[:60]}” is not a {name} of the {spec.kind} skill" + (
-                f"; choose one of: {', '.join(known)}." if known else "."
-            )
+            known = DECK_USES if name == "use" else OUTPUT_STRUCTURES
+            note = f"“{text[:60]}” is not a {name} for {spec.kind}. Choose from {', '.join(known)}."
         else:
             line, note = _set_line(getattr(spec, name), value, mark, name)
             setattr(spec, name, line)
@@ -994,14 +1001,14 @@ def _style_of(work: Work) -> str | None:
     line = work.spec.structure
     if work.spec.kind != "report" or line is None or line.mark == "guessed":
         return None
-    styles = skill_for("report").styles
     return next(
-        (style for style, structure in styles.items() if structure == _fold(line.text)), None
+        (style for style, structure in REPORT_STYLE_STRUCTURES.items()
+         if structure == _fold(line.text)), None
     )
 
 
 def spec_of(brief: ConversationBrief, work: Work) -> Spec:
-    """The request the skill's steps are given: the brief's audience (a scientist when there
+    """The request Studio receives, with the brief's audience (a scientist when there
     is none), the brief as lines, and for a report the style that fixes the chosen structure."""
 
     return Spec(
@@ -1097,7 +1104,6 @@ def _note_dropped(work: Work, step: str, position: int, dropped: Sequence[int]) 
 def _spec_of_version(version: ArtifactOut) -> WorkSpec:
     """The spec a version was made to: its kind, a deck's use, and the structure it follows."""
 
-    skill = skill_for(version.kind)
     spec = WorkSpec(kind=version.kind)
     if version.kind == "slides":
         first = split_document(version.content, version.kind)[1]
@@ -1108,9 +1114,9 @@ def _spec_of_version(version: ArtifactOut) -> WorkSpec:
     if use:
         spec.use = Line(text=use, mark="guessed")
     approach = getattr(version.provenance, "approach", None)
-    if version.style in skill.styles:
+    if version.kind == "report" and version.style in REPORT_STYLE_STRUCTURES:
         # A report style the person picked fixes its structure; "auto" does not.
-        spec.structure = Line(text=skill.styles[version.style], mark="edited")
+        spec.structure = Line(text=REPORT_STYLE_STRUCTURES[version.style], mark="edited")
     elif approach is not None and approach.structure:
         spec.structure = Line(text=approach.structure, mark="guessed")
     return spec

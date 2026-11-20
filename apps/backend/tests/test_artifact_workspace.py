@@ -6,14 +6,12 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
-from fake_models import FakeProvider, skill_replies
+from fake_models import FakeProvider, model, output_replies
 from test_output_skills import (
     APPROACH,
     OUTLINE,
     REPORT,
-    SEARCH,
     SLIDES,
-    SLIDES_APPROACH,
     SLIDES_OUTLINE,
     saved_skill_output,
 )
@@ -51,8 +49,9 @@ from gunther.artifact_workspace import (
     store_pool,
     sync,
 )
-from gunther.outputs import _marked, layout_of, section_hash, split_document
+from gunther.outputs import BuiltOutput, _marked, layout_of, section_hash, split_document
 from gunther.schemas import ConversationCitationOut
+from gunther.slide_review import VisualRepairs, apply_repairs
 from gunther.slide_scene import (
     SceneEnvelope,
     SceneGroup,
@@ -809,8 +808,8 @@ def test_a_part_keeps_its_own_check_unless_the_versions_is_more_complete() -> No
 
 
 def a_deck(tmp_path: Path, **overrides):
-    fake = FakeProvider(skill_replies(SLIDES_APPROACH, SLIDES_OUTLINE, SLIDES, gather=SEARCH))
-    return app_for(tmp_path, fake, skills=True, **overrides)
+    fake = FakeProvider(output_replies(SLIDES_OUTLINE, SLIDES))
+    return app_for(tmp_path, fake, **overrides)
 
 
 def version_of(client, base_id: str, artifact_id: str):
@@ -832,7 +831,10 @@ def hand_edit(client, base_id: str, artifact_id: str, content: str) -> str:
     return response.json()["id"]
 
 
-def test_import_work_restores_a_composed_scene_after_citation_mapping(tmp_path: Path) -> None:
+@pytest.mark.parametrize("licensed", [False, True])
+def test_import_work_restores_a_repaired_scene_and_its_checks(tmp_path: Path, licensed) -> None:
+    from test_artifact_steps import passage
+
     with a_deck(tmp_path) as client:
         base_id, _ = library(client)
         saved = saved_skill_output(client, base_id, kind="slides")
@@ -848,36 +850,61 @@ def test_import_work_restores_a_composed_scene_after_citation_mapping(tmp_path: 
         kind="row",
         weights=[2, 1],
         children=[
-            SceneLeaf(kind="leaf", blockId="b1", view="bar_chart"),
+            SceneLeaf(kind="leaf", blockId="b1", view="bar_chart" if licensed else "table"),
             SceneLeaf(kind="leaf", blockId="b2", view="text"),
         ],
     )
+    graphics = {"b1": "bar_chart"} if licensed else {}
     composed = with_scene(
         page_body,
         SceneEnvelope(
-            version=2,
+            version=2 if licensed else 1,
             sourceHash=source_hash(page_body),
-            graphicsHash=graphics_hash(page_body),
-            graphics={"b1": "bar_chart"},
+            graphicsHash=graphics_hash(page_body) if licensed else None,
+            graphics=graphics,
             root=tree,
         ),
     )
     sections[1] = composed
     outline = list(version.outline)
     outline[1] = outline[1].model_copy(update={"heading": "A mixed result", "layout": "composed"})
+    record = {"hash": section_hash(composed), "issues": [], "coverage": {
+        "answerHash": section_hash(composed), "status": "complete",
+        "claims": [{"text": "Measured within the study group [2].", "refs": [2],
+                    "verdict": "supported"}],
+    }}
+    candidate = BuiltOutput(
+        version.title, "\n\n---\n\n".join(sections),
+        [row.model_dump(by_alias=True) for row in outline],
+        version.citations, [record], model(), None,
+    )
+    repair = VisualRepairs(
+        pages=[{"slideId": "p2", "root": tree.model_copy(update={"weights": [3, 2]})}],
+    )
+    repaired = apply_repairs(candidate, repair, {"p2"})
     restored_version = version.model_copy(
-        update={"content": "\n\n---\n\n".join(sections), "outline": outline}
+        update={"content": repaired.content, "outline": outline}
     )
     state, brief = Workspace(), ConversationBrief()
+    pool = pool_from(state)
+    pool.adopt(passage("Unused", "Previously stored evidence."))
+    store_pool(state, pool)
+    checks.update({row["hash"]: row for row in repaired.checks})
 
     work = import_work(restored_version, checks, state, brief)
 
-    assert _marked(work.parts["p2"].text).scene is not None
-    assert source_hash(work.parts["p2"].text) == source_hash(composed)
-    imported_scene = _marked(work.parts["p2"].text).scene
-    assert imported_scene is not None and imported_scene.graphics == {"b1": "bar_chart"}
-    assert imported_scene.graphics_hash == graphics_hash(work.parts["p2"].text)
+    part = work.parts["p2"]
+    assert _marked(part.text).body == pool_numbered(_marked(composed).body, [2, 3])
+    assert source_hash(part.text) == source_hash(composed)
+    imported_scene = _marked(part.text).scene
+    assert imported_scene is not None and imported_scene.graphics == graphics
+    assert imported_scene.root.weights == [3, 2]
+    if licensed:
+        assert imported_scene.graphics_hash == graphics_hash(part.text)
     assert work.outline[1].layout == "composed"
+    assert part.checked == section_hash(part.text) and part.issues == []
+    assert part.coverage["claims"][0]["refs"] == [3]
+    assert part.inputs == digest_part_inputs(brief, work, work.outline[1])
 
 
 def test_a_saved_deck_becomes_a_work_that_is_up_to_date(tmp_path: Path) -> None:
@@ -936,8 +963,8 @@ def test_a_saved_deck_becomes_a_work_that_is_up_to_date(tmp_path: Path) -> None:
 
 
 def test_a_saved_report_becomes_a_work_that_is_up_to_date(tmp_path: Path) -> None:
-    fake = FakeProvider(skill_replies(APPROACH, OUTLINE, REPORT, gather=SEARCH))
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(output_replies(OUTLINE, REPORT))
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         saved = saved_skill_output(client, base_id, style="decision_brief")
         version, checks = version_of(client, base_id, saved["id"])
@@ -990,19 +1017,19 @@ def test_a_version_with_no_matching_outline_gets_items_from_its_headings(tmp_pat
 
 
 def test_a_second_version_joins_the_pool_without_changing_any_number(tmp_path: Path) -> None:
-    fake = FakeProvider(skill_replies(APPROACH, OUTLINE, REPORT, gather=SEARCH))
+    fake = FakeProvider(output_replies(OUTLINE, REPORT))
     # The second report cites the second passage first, so its numbers are the other way round.
     swapped = [
         "## Surface markers tell T and B cells apart\n\nCD19 marks B cells [2].",
         "## CD3D is the T-cell marker\n\nCD3D marks T cells [1].",
         "## CD19 is the B-cell marker\n\nCD19 again [2] and CD3D [1].",
     ]
-    other = FakeProvider(skill_replies(APPROACH, OUTLINE, swapped, gather=SEARCH))
-    with app_for(tmp_path / "one", fake, skills=True) as one:
+    other = FakeProvider(output_replies(OUTLINE, swapped))
+    with app_for(tmp_path / "one", fake) as one:
         base_id, _ = library(one)
         first = saved_skill_output(one, base_id)
         v1, c1 = version_of(one, base_id, first["id"])
-    with app_for(tmp_path / "two", other, skills=True) as two:
+    with app_for(tmp_path / "two", other) as two:
         base_id, _ = library(two)
         second = saved_skill_output(two, base_id, written=swapped)
         v2, c2 = version_of(two, base_id, second["id"])
@@ -1025,13 +1052,13 @@ def test_a_second_version_joins_the_pool_without_changing_any_number(tmp_path: P
 
 
 def test_the_same_passages_keep_their_pool_numbers_in_a_second_work(tmp_path: Path) -> None:
-    fake = FakeProvider(skill_replies(APPROACH, OUTLINE, REPORT, gather=SEARCH))
+    fake = FakeProvider(output_replies(OUTLINE, REPORT))
     swapped = [
         "## Surface markers tell T and B cells apart\n\nCD19 marks B cells [2].",
         "## CD3D is the T-cell marker\n\nCD3D marks T cells [1].",
         "## CD19 is the B-cell marker\n\nCD19 again [2] and CD3D [1].",
     ]
-    with app_for(tmp_path, fake, skills=True) as client:
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         first = saved_skill_output(client, base_id)
         v1, c1 = version_of(client, base_id, first["id"])
@@ -1059,8 +1086,8 @@ def a_report_work(tmp_path: Path):
     """An app with a saved three-section report imported as a work: the client, the library,
     the saved version, the work, the workspace and the brief."""
 
-    fake = FakeProvider(skill_replies(APPROACH, OUTLINE, REPORT, gather=SEARCH))
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(output_replies(OUTLINE, REPORT))
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         saved = saved_skill_output(client, base_id)
         version, checks = version_of(client, base_id, saved["id"])

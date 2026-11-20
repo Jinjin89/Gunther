@@ -16,13 +16,12 @@ from fake_models import (
     is_orchestrating,
     is_sentence_checking,
     orchestrator_replies,
-    skill_replies,
+    output_replies,
     studio_task,
 )
 from sqlalchemy import select
 from test_artifact_steps import replacing
 from test_output_skills import (
-    SEARCH,
     SLIDES,
     SLIDES_APPROACH,
     SLIDES_OUTLINE,
@@ -81,18 +80,18 @@ REWRITTEN = (
 )
 
 
-def skill(written: Any = SLIDES, **more: Any):
-    return skill_replies(SLIDES_APPROACH, SLIDES_OUTLINE, written, gather=SEARCH, **more)
+def deck_replies(written: Any = SLIDES, **more: Any):
+    return output_replies(SLIDES_OUTLINE, written, **more)
 
 
 def script(decisions: list[Any], inner=None, **more: Any):
-    return orchestrator_replies(decisions, inner or skill(), **more)
+    return orchestrator_replies(decisions, inner or deck_replies(), **more)
 
 
 def a_deck(client, fake: FakeProvider, base_id: str, cid: str = "talk") -> str:
     """A saved Skills deck, which the conversation picks up as its work."""
 
-    fake.replies[:] = [skill()]
+    fake.replies[:] = [deck_replies()]
     version = saved_skill_output(
         client, base_id, kind="slides", conversationId=cid, conversationTitle="Markers talk",
     )
@@ -177,7 +176,7 @@ def test_selected_documents_reach_the_first_decision_before_evidence_is_loaded(
 ) -> None:
     selected = "Insulated rooms stayed cooler during the afternoon trial."
     fake = FakeProvider(script([{"actions": [{"do": "reply", "text": "Material is available."}]}]))
-    with app_for(tmp_path, fake, skills=True) as client:
+    with app_for(tmp_path, fake) as client:
         base_id, ids = library(client, title="Experiments", notes={
             "Thermal measurements": selected,
             "Unselected garden notes": "Watering changed the growth rate.",
@@ -211,10 +210,10 @@ def test_studio_understand_and_replan_refresh_the_approach_after_narrowing_scope
             "insights": [{"claim": "Repair cost", "refs": [2, 999]}],
         })
 
-    fake = FakeProvider(skill())
+    fake = FakeProvider(deck_replies())
     with app_for(tmp_path, fake) as client:
         settings = client.get("/api/settings/developer", headers=workspace(client)).json()
-        assert settings["outputMethod"] == "skills"
+        assert settings == {"traces": False}
         base_id, ids = library(client, notes={
             "Estimates": "Estimates are collected separately.",
             "Cost records": "The repairs cost 70 dollars.", "Garden": "Grass seed grew.",
@@ -319,7 +318,7 @@ def test_studio_replan_migrates_a_saved_plan_within_its_constraints(tmp_path: Pa
             {"do": "reply", "text": "The outline is ready."},
         ]}], planner)
 
-    fake = FakeProvider(skill())
+    fake = FakeProvider(deck_replies())
     with app_for(tmp_path, fake) as client:
         service = client.app.state.knowledge_service
         base_id, ids = library(client, notes={
@@ -420,7 +419,7 @@ def test_a_vague_request_is_asked_about_and_the_answer_makes_the_deck(tmp_path: 
         {"actions": [{"do": "save", "text": "Made the first version of the talk."}]},
     ]
     fake = FakeProvider(script(first))
-    with app_for(tmp_path, fake, skills=True) as client:
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         client.post(conversations(base_id), headers=workspace(client), json={"id": "roofs"})
 
@@ -532,8 +531,8 @@ def test_a_slide_that_is_too_long_is_rewritten_alone_and_saved(tmp_path: Path) -
     """§2.9 example 4: one write with an instruction, then save. The other slides are the same,
     byte for byte in the workspace and by passage in the version, and it costs few calls."""
 
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         first = a_deck(client, fake, base_id)
         before_parts = works_text(client, "talk")
@@ -543,7 +542,7 @@ def test_a_slide_that_is_too_long_is_rewritten_alone_and_saved(tmp_path: Path) -
                     {"actions": [{"do": "write", "parts": [2], "instruction": "shorter"}]},
                     {"actions": [{"do": "save", "text": "Shortened slide 2."}]},
                 ],
-                skill(rewrite=shortening),
+                deck_replies(rewrite=shortening),
             )
         ]
         start = len(fake.requests)
@@ -583,8 +582,8 @@ def test_a_slide_that_is_too_long_is_rewritten_alone_and_saved(tmp_path: Path) -
 
 @pytest.mark.parametrize("result", ["rewritten", "unchanged", "foreign_figure"])
 def test_imported_parts_use_only_the_selected_evidence_for_writes(tmp_path: Path, result: str):
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base, _ = library(client)
         first = a_deck(client, fake, base)
         before = kept(client, "talk")[0].works[0]
@@ -610,7 +609,7 @@ def test_imported_parts_use_only_the_selected_evidence_for_writes(tmp_path: Path
         fake.replies[:] = [script([{"actions": [
             {"do": "write", "parts": [2], "instruction": "Use the selected evidence"},
             terminal,
-        ]}], skill(rewrite=rewrite))]
+        ]}], deck_replies(rewrite=rewrite))]
         events = turn(client, base, "talk", "Rewrite slide 2 with the selected source.")
         after = kept(client, "talk")[0].works[0]
         if result == "rewritten":
@@ -629,8 +628,8 @@ def test_imported_parts_use_only_the_selected_evidence_for_writes(tmp_path: Path
 
 
 def test_a_failed_review_leaves_the_imported_parts_and_checks_in_place(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base, _ = library(client)
         first = a_deck(client, fake, base)
         original = kept(client, "talk")[0].works[0]
@@ -655,8 +654,8 @@ def test_the_one_before_it_is_found_from_the_changes_so_far(tmp_path: Path) -> N
     """§2.9 example 5: the change log says the last version changed slide 3, so "the one before
     it" is slide 2."""
 
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         fake.replies[:] = [
@@ -665,7 +664,7 @@ def test_the_one_before_it_is_found_from_the_changes_so_far(tmp_path: Path) -> N
                     {"actions": [{"do": "write", "parts": [3], "instruction": "shorter"}]},
                     {"actions": [{"do": "save", "text": "Shortened slide 3."}]},
                 ],
-                skill(rewrite=shortening),
+                deck_replies(rewrite=shortening),
             )
         ]
         assert done(turn(client, base_id, "talk", "Shorten slide 3"))["outcome"] == "saved"
@@ -679,7 +678,7 @@ def test_the_one_before_it_is_found_from_the_changes_so_far(tmp_path: Path) -> N
         fake.replies[:] = [
             script(
                 [second, {"actions": [{"do": "save", "text": "Shortened slide 2 instead."}]}],
-                skill(rewrite=shortening),
+                deck_replies(rewrite=shortening),
             )
         ]
         end = done(turn(client, base_id, "talk", "No, the one before it"))
@@ -691,8 +690,8 @@ def test_a_changed_goal_makes_only_what_depends_on_it_out_of_date(tmp_path: Path
     """§2.9 example 3: the goal changes, the approach is out of date, and only the slides whose
     plans changed are written again."""
 
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         first = a_deck(client, fake, base_id)
         before_parts = works_text(client, "talk")
@@ -701,7 +700,7 @@ def test_a_changed_goal_makes_only_what_depends_on_it_out_of_date(tmp_path: Path
         def costing(index: int, prompt: str) -> str:
             return SLIDES[index].replace("Marker |", "Cost |").replace("T cells", "T-cell cost")
 
-        writer = skill(written=costing)
+        writer = deck_replies(written=costing)
 
         def inner(request):
             task = studio_task(request)
@@ -757,8 +756,8 @@ def test_a_question_about_the_deck_is_answered_and_saves_nothing(tmp_path: Path)
     """§2.9 example 6: the answer names the source by the number the user sees, a number that
     is not one of the sources is dropped, and no version is made."""
 
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         fake.replies[:] = [
@@ -799,9 +798,9 @@ def states(events: list[tuple[str, dict]]) -> list[str]:
 
 
 def test_a_third_question_in_a_row_is_refused(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
+    fake = FakeProvider(deck_replies())
     ask = {"do": "ask", "question": "Which one?", "options": ["A", "B"]}
-    with app_for(tmp_path, fake, skills=True) as client:
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         counts = []
@@ -833,8 +832,8 @@ def test_a_third_question_in_a_row_is_refused(tmp_path: Path) -> None:
 
 
 def test_just_start_turns_off_asking_for_that_message(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         fake.replies[:] = [
@@ -858,8 +857,8 @@ def test_just_start_turns_off_asking_for_that_message(tmp_path: Path) -> None:
 
 
 def test_saving_is_refused_while_a_part_is_out_of_date(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         fake.replies[:] = [
@@ -894,8 +893,8 @@ def test_saving_is_refused_while_a_part_is_out_of_date(tmp_path: Path) -> None:
 
 
 def test_nothing_is_saved_when_nothing_changed(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         fake.replies[:] = [
@@ -913,9 +912,9 @@ def test_nothing_is_saved_when_nothing_changed(tmp_path: Path) -> None:
 
 
 def test_a_repeated_action_is_skipped(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
+    fake = FakeProvider(deck_replies())
     search = {"do": "search_library", "query": "CD3D markers"}
-    with app_for(tmp_path, fake, skills=True) as client:
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         fake.replies[:] = [
@@ -936,8 +935,8 @@ def test_a_repeated_action_is_skipped(tmp_path: Path) -> None:
 
 
 def test_a_position_that_does_not_exist_becomes_a_note_and_a_new_decision(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         fake.replies[:] = [
@@ -962,8 +961,8 @@ def test_a_position_that_does_not_exist_becomes_a_note_and_a_new_decision(tmp_pa
 
 
 def test_a_decision_with_no_action_is_asked_again_once_and_then_fails(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         fake.replies[:] = [
@@ -994,8 +993,8 @@ def test_stop_keeps_what_was_found_and_saves_no_version(tmp_path: Path) -> None:
         assert gate.wait(10)
         return {"actions": [{"do": "reply", "text": "Never said."}]}
 
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         fake.replies[:] = [
@@ -1031,8 +1030,8 @@ def test_follow_gets_the_new_done_payload(tmp_path: Path) -> None:
         assert gate.wait(10)
         return {"actions": [{"do": "reply", "text": "All good."}]}
 
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         fake.replies[:] = [script([waiting])]
@@ -1068,8 +1067,8 @@ def test_follow_gets_the_new_done_payload(tmp_path: Path) -> None:
 
 
 def test_the_same_request_id_returns_the_first_result_and_runs_nothing(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         fake.replies[:] = [script([{"actions": [{"do": "reply", "text": "All good."}]}])]
@@ -1096,8 +1095,8 @@ def test_the_same_request_id_returns_the_first_result_and_runs_nothing(tmp_path:
 
 
 def test_a_saved_turn_repeated_returns_the_version(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         fake.replies[:] = [
@@ -1106,7 +1105,7 @@ def test_a_saved_turn_repeated_returns_the_version(tmp_path: Path) -> None:
                     {"actions": [{"do": "write", "parts": [2], "instruction": "shorter"}]},
                     {"actions": [{"do": "save", "text": "Shortened slide 2."}]},
                 ],
-                skill(rewrite=shortening),
+                deck_replies(rewrite=shortening),
             )
         ]
         request = {"clientRequestId": "turn_request_save1", "text": "Shorten 2"}
@@ -1167,7 +1166,7 @@ def test_the_view_has_its_headings_in_order_and_the_numbers_the_user_sees() -> N
     cut = f"Note: {words}"[:149].rstrip() + "…"
     expected = f"""\
 Library: Cells. Web: off.
-slides skill: understand → plan → write → review. Layouts: title, section, summary, stat, stats, chart, table, compare, process, timeline, quote, figure, figure_detail, statement, points, actions. Uses: talk, read
+slides in Studio: understand → plan → write → review. Layouts: title, section, summary, stat, stats, chart, table, compare, process, timeline, quote, figure, figure_detail, statement, points, actions. Uses: talk, read
 Brief (you said = the user's words; edited = the user typed it; guessed = yours):
 - goal: Explain the Velmora trial (you said)
 - audience: lab members (you said)
@@ -1237,7 +1236,7 @@ def test_a_reports_view_numbers_its_paragraphs_and_a_question_is_shown_with_its_
         )  # fmt: skip
     )
     assert "Web: on." in text.splitlines()[0]
-    assert text.splitlines()[1].startswith("report skill:") and "Structures: what," in text
+    assert text.splitlines()[1].startswith("report in Studio:") and "Structures: what," in text
     assert 'Artifacts: [1] report "The trial" not saved yet (active)' in text
     assert (
         "  2 Heat fell · not re-checked · sources 1, 2 · cards C1\n      ¶1 First paragraph [1].\n      ¶2 Second one"
@@ -1246,12 +1245,12 @@ def test_a_reports_view_numbers_its_paragraphs_and_a_question_is_shown_with_its_
     assert "…" in text.split("¶2 ")[1].splitlines()[0]
     assert 'You asked: "Which focus?" Options: Trial | Debate (this message answers it)' in text
     assert "Latest message (answer to your question):\nTrial" in text
-    # With no artifact both skills are offered, and nothing is pointed at.
+    # With no active artifact, both output kinds are available.
     empty = build_view(
         View("Cells", False, Workspace(), ConversationBrief(), Pool(160), {}, [], [], [], (12, 200, 8), "message", "Hi")
     )  # fmt: skip
     assert "Artifacts: none yet." in empty and "- (nothing yet)" in empty
-    assert empty.count(" skill: understand") == 2 and "Pointed at" not in empty
+    assert empty.count(" in Studio: understand") == 2 and "Pointed at" not in empty
 
 
 def test_numbers_are_the_versions_and_sources_it_does_not_cite_follow() -> None:
@@ -1422,8 +1421,8 @@ def test_a_slide_is_added_and_the_other_slides_are_not_touched(tmp_path: Path) -
     def written(index: int, prompt: str) -> str:
         return inserted if "Write slide 2. Its title: The 2024 trial." in prompt else SLIDES[index]
 
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         first = a_deck(client, fake, base_id)
         before = works_text(client, "talk")
@@ -1445,7 +1444,7 @@ def test_a_slide_is_added_and_the_other_slides_are_not_touched(tmp_path: Path) -
                     },
                     {"actions": [{"do": "save", "text": "Added a slide on the 2024 trial."}]},
                 ],
-                skill(written=written),
+                deck_replies(written=written),
             )
         ]
         events = turn(client, base_id, "talk", "Add a slide on the 2024 trial after the title")
@@ -1466,8 +1465,8 @@ def test_a_slide_is_added_and_the_other_slides_are_not_touched(tmp_path: Path) -
 def test_a_title_and_an_accent_are_set_by_code_and_a_slide_can_be_moved_and_removed(
     tmp_path: Path,
 ) -> None:
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         before = works_text(client, "talk")
@@ -1492,7 +1491,7 @@ def test_a_title_and_an_accent_are_set_by_code_and_a_slide_can_be_moved_and_remo
                         ]
                     },
                 ],
-                skill(written=retitling),
+                deck_replies(written=retitling),
             )
         ]
         start = len(fake.requests)
@@ -1516,8 +1515,8 @@ def test_a_title_and_an_accent_are_set_by_code_and_a_slide_can_be_moved_and_remo
 
 
 def test_a_slide_is_removed_by_code_alone(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         fake.replies[:] = [
@@ -1539,8 +1538,8 @@ def test_a_slide_is_removed_by_code_alone(tmp_path: Path) -> None:
 
 
 def test_text_the_user_typed_is_checked_again_without_being_rewritten(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         first = a_deck(client, fake, base_id)
         old = head_of(client, base_id, first)
@@ -1576,9 +1575,9 @@ def test_text_the_user_typed_is_checked_again_without_being_rewritten(tmp_path: 
 
 
 def test_one_passage_is_changed_and_checked(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
+    fake = FakeProvider(deck_replies())
     row = "| Marker | CD3D [1] | CD19 [2] |"
-    with app_for(tmp_path, fake, skills=True) as client:
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         before = works_text(client, "talk")
@@ -1597,7 +1596,7 @@ def test_one_passage_is_changed_and_checked(tmp_path: Path) -> None:
                     },
                     {"actions": [{"do": "save", "text": "Named the row."}]},
                 ],
-                skill(replacer=replacing({row: "| Gene | CD3D [1] | CD19 [2] |"})),
+                deck_replies(replacer=replacing({row: "| Gene | CD3D [1] | CD19 [2] |"})),
             )
         ]
         start = len(fake.requests)
@@ -1621,7 +1620,7 @@ def test_studio_report_edit_checks_only_the_changed_paragraph(tmp_path: Path) ->
     fake = FakeProvider(script([{"actions": [
         {"do": "edit", "item": 1, "passage": second, "instruction": "Rephrase for clarity"},
         {"do": "save", "text": "Edited the second paragraph."},
-    ]}], skill(replacer=replacing({second: revised}))))
+    ]}], deck_replies(replacer=replacing({second: revised}))))
     with app_for(tmp_path, fake) as client:
         service = client.app.state.knowledge_service
         base, _ = library(client, notes={"Planning": "The estimate guides planning."})
@@ -1648,12 +1647,16 @@ def test_studio_report_edit_checks_only_the_changed_paragraph(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize(
-    "operation, supported, multi_series",
-    [("edit", True, False), ("edit", False, False), ("write", True, False), ("write", True, True)],
-    ids=["verified-notes", "unchecked-row", "studio-marker", "two-series"],
+    "operation, verdict, multi_series",
+    [
+        ("edit", "supported", False), ("edit", "unchecked", False), ("edit", "not", False),
+        ("write", "supported", False), ("write", "not", False), ("write", "supported", True),
+    ],
+    ids=["verified-notes", "unchecked-row", "unsupported-edit", "studio-marker",
+         "unsupported-write", "two-series"],
 )
 def test_a_legacy_chart_revision_keeps_the_renderer_format(
-    tmp_path: Path, operation: str, supported: bool, multi_series: bool,
+    tmp_path: Path, operation: str, verdict: str, multi_series: bool,
 ) -> None:
     table = (
         "## Rates vary by time of day\n\n| Time | Rate (%) |\n| --- | --- |\n"
@@ -1664,20 +1667,26 @@ def test_a_legacy_chart_revision_keeps_the_renderer_format(
         "| Morning | 62 [1] | 54 [1] |\n| Afternoon | 41 [1] | 35 [1] |"
     ) if multi_series else table
     before, after = "Note: Read the table.", "Note: Compare both rows."
-    revised = f"<!-- layout: chart; chart: bar -->\n{revised_table}\n\n{after}"
-    reply = skill(replacer=replacing({before: after}), rewrite=lambda _index, _prompt: revised)
+    span, replacement = before, after
+    if verdict == "not":
+        span, replacement = "| Afternoon | 41 [1] |", "| Afternoon | 70 [1] |"
+        revised_table = revised_table.replace(span, replacement)
+    revised_notes = before if operation == "edit" and verdict == "not" else after
+    revised = f"<!-- layout: chart; chart: bar -->\n{revised_table}\n\n{revised_notes}"
+    reply = deck_replies(replacer=replacing({span: replacement}), rewrite=lambda _i, _p: revised)
 
     def inner(request):
         answer = reply(request)
-        if not supported and is_sentence_checking(request):
+        if verdict != "supported" and is_sentence_checking(request):
             prompt = request["messages"][-1]["content"]
-            unchecked = int(re.search(r"^\((\d+)\) \| Afternoon", prompt, re.M)[1])
-            return json.dumps({"sentences": [
-                row for row in json.loads(answer)["sentences"] if row["n"] != unchecked
-            ]})
+            row_number = int(re.search(r"^\((\d+)\) \| Afternoon", prompt, re.M)[1])
+            results = [row for row in json.loads(answer)["sentences"] if row["n"] != row_number]
+            if verdict == "not":
+                results.append({"n": row_number, "verdict": "not"})
+            return json.dumps({"sentences": results})
         return answer
 
-    action = ({"do": "edit", "item": 2, "passage": before} if operation == "edit"
+    action = ({"do": "edit", "item": 2, "passage": span} if operation == "edit"
               else {"do": "write", "parts": [2]})
     fake = FakeProvider(script([{"actions": [
         {**action, "instruction": "Clarify the notes"},
@@ -1700,55 +1709,21 @@ def test_a_legacy_chart_revision_keeps_the_renderer_format(
         cover, chart, close = split_document(result["artifact"]["content"], "slides")[1]
         old_cover, _, old_close = split_document(saved["content"], "slides")[1]
         assert cover == old_cover and "design: v1" in cover and close == old_close
-        layout = "bar_chart" if supported and not multi_series else "compare"
-        assert chart == f"<!-- layout: {layout} -->\n{revised_table}\n\n{after}"
+        layout = "bar_chart" if verdict == "supported" and not multi_series else "compare"
+        assert chart == f"<!-- layout: {layout} -->\n{revised_table}\n\n{revised_notes}"
         claim_rows = result["artifact"]["sections"][1]["coverage"]["claims"]
         assert {tuple(claim["tableRow"]): claim["verdict"]
                 for claim in claim_rows if "tableRow" in claim} == {
-            (0, 2): "supported", (0, 3): "supported" if supported else "unchecked",
+            (0, 2): "supported", (0, 3): verdict,
         }
-
-
-def test_an_edit_that_breaks_the_form_of_a_layout_is_written_again_or_drawn_as_text(
-    tmp_path: Path,
-) -> None:
-    from test_artifact_steps import steps_for
-
-    row = "| Marker | CD3D [1] | CD19 [2] |"
-    deck_fake = FakeProvider(skill(replacer=replacing({row: "CD3D and CD19 mark cells."})))
-    steps = steps_for(deck_fake, "slides")
-    steps.understand()
-    steps.plan_whole()
-    steps.write([item.id for item in steps.work.outline])
-    second = steps.work.outline[1].id
-    assert steps.edit(second, row, "say it in words") is True
-    # The slide was written again once (as the skill's fit does), and still had no table.
-    assert layout_of_part(steps.work.parts[second].text) == "text"
-    assert [note["label"] for note in steps.work.skipped] == ["Slide 2 drawn as text"]
-    assert steps.work.outline[1].layout == "compare"
-
-    again = skill(
-        replacer=replacing({row: "CD3D and CD19 mark cells."}), rewrite=lambda i, p: SLIDES[1]
-    )
-    steps = steps_for(FakeProvider(again), "slides")
-    steps.understand()
-    steps.plan_whole()
-    steps.write([item.id for item in steps.work.outline])
-    second = steps.work.outline[1].id
-    steps.edit(second, row, "say it in words")
-    assert layout_of_part(steps.work.parts[second].text) == "compare"
-    assert steps.work.skipped == []
-
-
-def layout_of_part(text: str) -> str | None:
-    from gunther.outputs import layout_of
-
-    return layout_of(text)[0]
+        if verdict != "supported":
+            assert any("drawn as a table" in note["label"]
+                       for note in result["artifact"]["provenance"]["skill"]["skipped"])
 
 
 def test_the_budget_pauses_a_turn_and_continue_picks_it_up(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         service = client.app.state.knowledge_service
@@ -1778,8 +1753,8 @@ def test_the_budget_pauses_a_turn_and_continue_picks_it_up(tmp_path: Path) -> No
 
 
 def test_a_finished_change_is_saved_when_the_budget_runs_out(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         client.app.state.knowledge_service.artifact_limits = AgentLimits(decisions=2)
@@ -1789,7 +1764,7 @@ def test_a_finished_change_is_saved_when_the_budget_runs_out(tmp_path: Path) -> 
                     {"actions": [{"do": "write", "parts": [2], "instruction": "shorter"}]},
                     {"actions": [{"do": "search_library", "query": "CD3D markers"}]},
                 ],
-                skill(rewrite=shortening),
+                deck_replies(rewrite=shortening),
             )
         ]
         end = done(turn(client, base_id, "talk", "Shorten 2 and look around"))
@@ -1799,8 +1774,8 @@ def test_a_finished_change_is_saved_when_the_budget_runs_out(tmp_path: Path) -> 
 
 
 def test_an_action_that_needs_more_calls_than_are_left_is_not_started(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         client.app.state.knowledge_service.artifact_limits = AgentLimits(calls=4)
@@ -1818,8 +1793,8 @@ def test_an_action_that_needs_more_calls_than_are_left_is_not_started(tmp_path: 
 def test_what_the_user_typed_in_the_panel_during_a_turn_is_kept(tmp_path: Path) -> None:
     from gunther.schemas import EditArtifactBriefInput
 
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         service = client.app.state.knowledge_service
@@ -1857,8 +1832,8 @@ def test_what_the_user_typed_in_the_panel_during_a_turn_is_kept(tmp_path: Path) 
 
 
 def test_a_report_made_from_a_deck_starts_from_the_decks_approach(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         fake.replies[:] = [
@@ -1889,7 +1864,7 @@ def test_a_report_made_from_a_deck_starts_from_the_decks_approach(tmp_path: Path
         assert stored.active == deck.key  # the second decision selected the first artifact
         view = seen_by_the_orchestrator(fake, start)[1]
         assert '[2] report "untitled" not saved yet (active)' in view
-        assert "report skill:" in view and "Structures:" in view
+        assert "report in Studio:" in view and "Structures:" in view
         assert "Choosing" not in view
 
 
@@ -1913,8 +1888,8 @@ def test_the_web_is_refused_when_it_is_not_set_up_and_works_when_it_is(tmp_path:
                 ],
             )
 
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         fake.replies[:] = [
@@ -1958,8 +1933,8 @@ def test_the_web_is_refused_when_it_is_not_set_up_and_works_when_it_is(tmp_path:
 def test_more_of_a_source_is_read_and_actions_after_the_end_of_a_turn_are_dropped(
     tmp_path: Path,
 ) -> None:
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         fake.replies[:] = [
@@ -1985,8 +1960,8 @@ def test_more_of_a_source_is_read_and_actions_after_the_end_of_a_turn_are_droppe
 
 
 def test_a_turn_that_cannot_start_says_why(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         missing = turn(client, base_id, "no-such", "Hello")
         assert missing[-1][0] == "error" and missing[-1][1]["status"] == 404
@@ -2004,9 +1979,9 @@ def test_a_turn_that_cannot_start_says_why(tmp_path: Path) -> None:
 
 
 def test_a_reply_after_a_change_is_refused_until_it_is_saved(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
+    fake = FakeProvider(deck_replies())
     row = "| Marker | CD3D [1] | CD19 [2] |"
-    with app_for(tmp_path, fake, skills=True) as client:
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         fake.replies[:] = [
@@ -2020,7 +1995,7 @@ def test_a_reply_after_a_change_is_refused_until_it_is_saved(tmp_path: Path) -> 
                     },
                     {"actions": [{"do": "save", "text": "Named the row."}]},
                 ],
-                skill(replacer=replacing({row: "| Gene | CD3D [1] | CD19 [2] |"})),
+                deck_replies(replacer=replacing({row: "| Gene | CD3D [1] | CD19 [2] |"})),
             )
         ]
         start = len(fake.requests)
@@ -2048,8 +2023,8 @@ def test_a_passage_may_be_a_paragraph_number_or_an_opening_cut_short() -> None:
 
 
 def test_a_request_about_one_part_leaves_the_whole_works_brief_alone(tmp_path: Path) -> None:
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)
         fake.replies[:] = [
@@ -2065,7 +2040,7 @@ def test_a_request_about_one_part_leaves_the_whole_works_brief_alone(tmp_path: P
                     },
                     {"actions": [{"do": "save", "text": "Made slide 2 simpler."}]},
                 ],
-                skill(replacer=replacing({ROW: "| Gene | CD3D [1] | CD19 [2] |"})),
+                deck_replies(replacer=replacing({ROW: "| Gene | CD3D [1] | CD19 [2] |"})),
             )
         ]
         start = len(fake.requests)
@@ -2085,8 +2060,8 @@ def test_a_search_passage_without_its_block_is_found_in_the_block_it_starts_in(
     from gunther.models import ContentBlock, SourceRevision
     from gunther.schemas import ConversationCitationOut
 
-    fake = FakeProvider(skill())
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
         library(client)
         service = client.app.state.knowledge_service
         with service.sessions() as session:

@@ -13,7 +13,6 @@ from gunther.model_registry import build_gateway, effective
 from gunther.outputs import BuiltOutput, _marked, split_document
 from gunther.schemas import ConversationCitationOut
 from gunther.service_settings import ServiceSettingsStore
-from gunther.skillbook import skill_for
 from gunther.slide_render import SlideRenderer, built_hash
 from gunther.slide_review import geometry_findings, review_deck
 from gunther.slide_scene import SceneEnvelope, source_hash, with_scene
@@ -141,11 +140,7 @@ def main():
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     gateway, model, effort = configured()
-    skill = skill_for("slides")
-    instructions = skill.instructions(skill.step("visual_review"))
-    protocol_hash = hashlib.sha256(
-        Path(slide_review.__file__).read_bytes() + instructions.encode()
-    ).hexdigest()
+    protocol_hash = hashlib.sha256(Path(slide_review.__file__).read_bytes()).hexdigest()
     renderer_hash = json.loads(
         (Path(__file__).parents[3] / "desktop/render-dist/manifest.json").read_text()
     )["rendererHash"]
@@ -210,7 +205,6 @@ def main():
                     "rendered subset, not the missing pages of the full planned deck."
                 ),
                 use=use,
-                instructions=instructions,
                 emit=lambda event, identity=identity: print(
                     identity + ": " + event.get("detail", event.get("state", "")), flush=True
                 ),

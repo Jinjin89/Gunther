@@ -3,9 +3,7 @@
  * drawn in. The result says what each part of the layout holds; `null` says the body does not
  * take that layout's form, and the slide is drawn as plain text, as every slide was before layouts.
  *
- * The rules are those of the service's `layout_shape` check (skill_checks.py, `_misfit`); the same
- * cases are in parseSlide.test.ts and tests/test_skillbook.py. Where this differs it is to draw
- * more, never to draw something the text does not say:
+ * The legacy layouts preserve the contents of saved slides:
  * - a table that will not draw as a chart (a value that is not a number, a unit that changes from
  *   row to row, fewer or more rows than a chart takes) is drawn as the `compare` table it is;
  * - a `two_column` table with other than two columns is drawn as `compare`;
@@ -151,7 +149,7 @@ export const SLIDE_LAYOUTS = [
 // What counts as a citation in a table cell: [3], [1, 2], [?], and the marks the Checker adds,
 // [i:3] (an inference), [p:3] (partly supported) and [d:3] (disputed). Each with the space before it.
 const MARK = /\s*\[(?:[ipd]:)?(?:\d+(?:\s*[,，、]\s*\d+)*|\?)\]/g;
-// A number with at most a sign and a currency sign before it and a unit after it: VALUE in skill_checks.py.
+// A number with an optional sign, currency and unit.
 const VALUE = /^([~≈<>≤≥±+\-−–]?)([$€£¥￥]?)(\d+(?:\.\d+)?)(\D{0,12})$/;
 // "1,200" and "1 200" are 1200: a separator followed by exactly three digits. Written without a
 // look-behind, which the oldest Safari the app is built for does not have.

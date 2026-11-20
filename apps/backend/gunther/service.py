@@ -178,7 +178,7 @@ from gunther.schemas import (
     UpdateNotebookNoteInput,
     WebSnapshotOut,
 )
-from gunther.skillbook import AskSkill, ask_skills, skill_for
+from gunther.skillbook import AskSkill, ask_skills
 from gunther.source_identity import source_fingerprint
 from gunther.topics import topic_block_ids, topic_source_ids
 from gunther.trash import live_membership_source_ids, trashed_library_ids
@@ -4632,13 +4632,12 @@ class KnowledgeService:
             provenance = json.loads(parent.provenance_json)
             made_by = self._made_by(parent) or {}
             previous_skill = provenance.get("skill") or {}
-            skill = skill_for("slides")
             use = provenance.get("use") or "talk"
             built = BuiltOutput(parent.title, parent.content, json.loads(parent.outline_json),
                 [ConversationCitationOut.model_validate(c)
                  for c in json.loads(parent.citations_json)],
                 list(self._latest_check_records(session, parent.id).values()), model, effort,
-                skill={**previous_skill, "name": "slides", "version": skill.version})
+                skill={"name": "slides", "version": 11, **previous_skill})
             fields = {
                 "kind": parent.kind, "style": parent.style, "audience": parent.audience,
                 "brief": parent.brief, "scope": json.loads(parent.scope_json),
@@ -4648,8 +4647,7 @@ class KnowledgeService:
             }
         with usage.job("outputs", "slides", ref=artifact_id):
             built = review_deck(built, self.slide_renderer, self.models, model, "medium",
-                                brief=fields["brief"], use=use, emit=events or (lambda _: None),
-                                instructions=skill.instructions(skill.step("visual_review")))
+                                brief=fields["brief"], use=use, emit=events or (lambda _: None))
         if events:
             events({"type": "saving"})
         return self._save_output(workspace_id=workspace_id, base_id=base_id,
@@ -5608,7 +5606,7 @@ class KnowledgeService:
 
             def make_studio_agents(kind: str) -> StudioWorkAgents:
                 return StudioWorkAgents(
-                    gateway, kind, limits, tools=[tool, *([web] if web else [])], reader=reader,
+                    gateway, kind, limits, tools=[tool, *([web] if web else [])],
                     asset_reader=self.asset_reader,
                     reusable_figures=self._reusable_figure_readings(session, base_id),
                 )

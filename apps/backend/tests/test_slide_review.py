@@ -141,20 +141,26 @@ def run(candidate, renderer, fake):
     )
 
 
-def test_layout_repair_keeps_exact_words_notes_citations_and_check_coverage():
+@pytest.mark.parametrize("checked", [False, True])
+def test_layout_repair_keeps_exact_words_notes_citations_and_check_coverage(checked):
     before = deck()
+    if not checked:
+        before = replace(before, checks=before.checks[:1])
     result = apply_repairs(before, VisualRepairs(pages=[{"slideId": "p2", "root": root()}]), {"p2"})
     old = split_document(before.content, "slides")[1][1]
     new = split_document(result.content, "slides")[1][1]
     assert _marked(old).body == _marked(new).body
     assert result.citations == before.citations and result.pool_refs == (7,)
-    assert result.checks[1]["hash"] == section_hash(new)
-    assert result.checks[1]["coverage"]["answerHash"] == section_hash(new)
-    assert result.checks[1]["coverage"]["claims"] == before.checks[1]["coverage"]["claims"]
+    if checked:
+        assert result.checks[1]["hash"] == section_hash(new)
+        assert result.checks[1]["coverage"]["answerHash"] == section_hash(new)
+        assert result.checks[1]["coverage"]["claims"] == before.checks[1]["coverage"]["claims"]
+    else:
+        assert result.checks == before.checks
 
 
 @pytest.mark.parametrize(
-    "change", ["unknown", "duplicate", "missing", "graphic", "locked", "title"]
+    "change", ["unknown", "duplicate", "missing", "graphic", "title"]
 )
 def test_invalid_repair_cannot_mutate_the_candidate(change):
     before = deck()
@@ -167,8 +173,6 @@ def test_invalid_repair_cannot_mutate_the_candidate(change):
         repair["root"]["children"][1]["blockId"] = "b3"
     if change == "graphic":
         repair["root"] = root("flow")
-    if change == "locked":
-        before.outline[1]["designLocked"] = True
     if change == "title":
         repair["slideId"] = "p1"
     content = before.content
@@ -421,15 +425,19 @@ def test_one_cycle_changes_at_most_four_pages_and_reports_the_rest(tmp_path):
     assert result.skill["visualReview"]["calls"] == 6
 
 
-def test_a_locked_design_is_reviewed_but_never_automatically_changed(tmp_path):
+def test_visual_review_repairs_a_legacy_deck_with_saved_locks(tmp_path):
     import json
 
     candidate = deck()
-    candidate.outline[1]["designLocked"] = True
-    fake = FakeProvider(json.dumps({"findings": [finding()]}))
+    candidate.outline[1].update(layoutLocked=True, designLocked=True)
+    fake = FakeProvider(
+        json.dumps({"findings": [finding()]}),
+        json.dumps({"pages": [{"slideId": "p2", "root": root()}]}),
+        json.dumps({"findings": []}),
+    )
     result = run(candidate, Renderer(tmp_path), fake)
-    assert result.content == candidate.content and len(fake.requests) == 1
-    assert result.skill["visualReview"]["repairCycles"] == 0
+    assert result.skill["visualReview"]["repairedSlides"] == ["p2"]
+    assert result.outline[1]["layoutLocked"] and result.outline[1]["designLocked"]
 
 
 def test_pdf_glyph_comparison_keeps_raw_text_and_detects_a_real_change():
@@ -440,62 +448,3 @@ def test_pdf_glyph_comparison_keeps_raw_text_and_detects_a_real_change():
     assert pdf_glyph_text(raw) == pdf_glyph_text(expected)
     assert raw == "討論意⻅：12 units [1]"
     assert pdf_glyph_text(raw) != pdf_glyph_text("討論意见：21 units [2]")
-
-
-@pytest.mark.parametrize("licensed", [False, True])
-def test_workspace_keeps_repaired_scene_fresh_with_original_pool_citations(licensed):
-    from test_artifact_steps import passage, steps_for
-
-    from gunther.artifact_workspace import ItemRec, PartRec, digest_part_inputs
-    from gunther.outputs import Pool
-
-    pool = Pool(20)
-    pool.adopt(passage("unused", "Unassigned context."))
-    pool.adopt(passage("scope", "Collect, check. Quality was not measured."))
-    steps = steps_for(FakeProvider(), "slides", pool=pool)
-    title = "<!-- layout: title; design: v1 -->\n# Scope [2]"
-    body = "<!-- layout: text -->\n## The checked scope [2]\n\n"
-    body += "1. Collect. [2]\n2. Check. [2]" if licensed else "Measured scope. [2]"
-    body += "\n\nQuality was not measured. [2]\n\nNote: Keep the qualification. [2]"
-    tree = root("flow" if licensed else "text")
-    if licensed:
-        body = with_scene(
-            with_layout(body, "composed"),
-            SceneEnvelope(
-                version=2,
-                sourceHash=source_hash(body),
-                graphicsHash=graphics_hash(body),
-                graphics={"b1": "flow"},
-                root=tree,
-            ),
-        )
-    steps.work.outline = [
-        ItemRec(id="p1", heading="Scope", layout="title"),
-        ItemRec(id="p2", heading="The checked scope", layout="composed" if licensed else "text"),
-    ]
-    for item, text in zip(steps.work.outline, [title, body], strict=True):
-        steps.work.parts[item.id] = PartRec(
-            text=text,
-            inputs=digest_part_inputs(steps.brief, steps.work, item),
-            checked=section_hash(text),
-            issues=[],
-        )
-    changed_tree = {**tree, "weights": [3, 2]}
-    steps.agents.review_rendered = lambda built, spec, events: apply_repairs(
-        built, VisualRepairs(pages=[{"slideId": "p2", "root": changed_tree}]), {"p2"}
-    )
-    saved, mapping = steps.assemble()
-    current = steps.work.parts["p2"]
-    assert mapping == [2] and "[2]" in _marked(current.text).body
-    assert _marked(current.text).body == _marked(body).body
-    assert current.checked == section_hash(current.text)
-    assert current.inputs == digest_part_inputs(steps.brief, steps.work, steps.work.outline[1])
-    final_scene = _marked(split_document(saved.content, "slides")[1][1]).scene
-    workspace_scene = _marked(current.text).scene
-    assert workspace_scene.root.weights == final_scene.root.weights == [3, 2]
-    if licensed:
-        assert workspace_scene.graphics == final_scene.graphics == {"b1": "flow"}
-        assert workspace_scene.graphics_hash == graphics_hash(current.text)
-        assert final_scene.graphics_hash == graphics_hash(
-            split_document(saved.content, "slides")[1][1]
-        )

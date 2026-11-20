@@ -118,12 +118,14 @@ describe("a slide face", () => {
     expect(fitOf(container)).toBe("1");
   });
 
-  it("keeps the layout it was given on the face, and draws the text the same", () => {
-    const plain = render(<SlideFace body="A short line" title={false} numbers={[]} />);
-    const marked = render(<SlideFace body="A short line" title={false} layout="compare" numbers={[]} />);
+  it("renders every line when a legacy comparison no longer has a table", () => {
+    const body = "## The findings in brief\n\n- First finding [1]\n- Second finding [2]";
+    const plain = render(<SlideFace body={body} title={false} numbers={[1, 2]} />);
+    const marked = render(<SlideFace body={body} title={false} layout="compare" numbers={[1, 2]} />);
     expect(plain.container.querySelector(".outputs-slide-face")).not.toHaveAttribute("data-layout");
     expect(marked.container.querySelector(".outputs-slide-face")).toHaveAttribute("data-layout", "compare");
     expect(marked.container.querySelector(".answer-markdown")?.innerHTML).toBe(plain.container.querySelector(".answer-markdown")?.innerHTML);
+    expect(marked.container.querySelector(".answer-markdown")?.textContent).toContain("Second finding");
   });
 
   it("draws a slide that takes its layout's form as that layout, in the deck's accent", () => {

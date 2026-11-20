@@ -83,11 +83,16 @@ def test_the_designer_sees_the_stored_slide_as_it_is_with_its_own_citation_numbe
     assert not any("<section" in system.split("Deck outline")[1] for system in asked)
 
 
-def test_a_restyle_leaves_a_slide_that_fails_the_guard_plain():
+@pytest.mark.parametrize("repaired", [False, True], ids=["fallback", "one-repair"])
+def test_a_restyle_repairs_a_failed_design_once_or_leaves_it_plain(repaired):
+    attempts = []
+
     def route(request):
         system = str(request["messages"][0]["content"])
         if "world-class" in system and 'Its content (layout hint "stats")' in system:
-            return '<section class="slide"><h2>Big trial</h2></section>'
+            attempts.append(system)
+            if len(attempts) == 1 or not repaired:
+                return '<section class="slide"><h2>Big trial</h2></section>'
         return dressed(request)
 
     _, built, _ = deck()
@@ -95,10 +100,12 @@ def test_a_restyle_leaves_a_slide_that_fails_the_guard_plain():
     assert fmt.design_of(slides[1])
     agents = StudioAgents(gateway(FakeProvider(route)))
     restyled, count, notes = D.restyle(agents, model(), slides, "dark", workers=2)
-    assert count == 2 and fmt.design_of(restyled[1]) is None
+    assert len(attempts) == 2
+    assert words(restyled[1]) == words(slides[1])
+    assert bool(fmt.design_of(restyled[1])) is repaired
     assert fmt.design_of(restyled[0]) and fmt.design_of(restyled[2])
-    assert restyled[1] == fmt.without_design(slides[1])
-    assert notes[0]["label"] == "Slide 2 drawn plainly"
+    labels = [note["label"] for note in notes]
+    assert (count, labels) == ((3, []) if repaired else (2, ["Slide 2 drawn plainly"]))
 
 
 def test_a_restyle_of_a_plain_deck_designs_it_and_an_unknown_style_is_refused():
@@ -197,6 +204,25 @@ def test_an_edit_that_changes_a_slides_words_designs_that_slide_again_and_only_t
         assert fmt.design_of(after[0]) == fmt.design_of(slides[0])
         assert fmt.design_of(after[2]) == fmt.design_of(slides[2])
         assert fmt.parse_slide(after[0]).attrs["style"] == "light"
+
+
+def test_review_saves_checked_words_and_a_skip_if_redesign_fails(tmp_path):
+    def reply(request):
+        system = request["messages"][0]["content"]
+        if "You are a demanding senior partner" in system:
+            return '{"changes":[{"part":2,"instruction":"Lead with the sample size."}]}'
+        if "world-class presentation designer" in system and "back the result" in system:
+            return '<section class="slide"><h2>Unrelated heading</h2></section>'
+        return studio_inner(request)
+
+    with studio_deck(tmp_path, reply) as (_client, _base_id, first, go):
+        actions = [{"do": "review", "parts": [2]}, {"do": "save", "text": "Reviewed slide 2"}]
+        saved, designs = go([{"actions": actions}], "Improve slide 2")
+        old, updated = (fmt.split_slides(version["content"]) for version in (first, saved))
+        assert updated[1] == REWRITTEN and (updated[0], updated[2]) == (old[0], old[2])
+        assert len(designs) == 2 and saved["sections"][1]["checked"]
+        assert any(note["label"] == "Slide 2 drawn plainly"
+                   for note in saved["provenance"]["skill"]["skipped"])
 
 
 @pytest.mark.parametrize("entry", ["direct", "conversation"])

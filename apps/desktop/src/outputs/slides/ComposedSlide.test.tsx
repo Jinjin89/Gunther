@@ -18,12 +18,13 @@ const sceneFor = async (kind: "row" | "column"): Promise<SceneEnvelope> => ({
 });
 
 describe("composed slides", () => {
-  it("draws the heading and exactly the original Markdown blocks in the requested nested layout", async () => {
-    const scene = await sceneFor("row");
+  it.each(["row", "column"] as const)("draws the same Markdown blocks in a saved %s scene", async (kind) => {
+    const scene = await sceneFor(kind);
     const issue = vi.fn();
     const { container } = render(<SlideFace body={body} title={false} layout="composed" scene={{ scene, issue: null }} numbers={[1, 2]} onSceneIssue={issue} />);
-    await waitFor(() => expect(container.querySelector(".outputs-composed-group.is-row")).toBeInTheDocument());
+    await waitFor(() => expect(container.querySelector(`.outputs-composed-group.is-${kind}`)).toBeInTheDocument());
     expect(screen.getByRole("heading", { name: "Scope" })).toBeInTheDocument();
+    expect(container.querySelector('[data-block-id="b1"]')?.textContent).toContain("72%");
     expect(container.querySelector('[data-block-id="b2"]')?.textContent).toContain("The measured change kept its original scope");
     expect(container.querySelectorAll("[data-block-id]")).toHaveLength(2);
     expect(issue).toHaveBeenLastCalledWith(null);
@@ -55,9 +56,11 @@ describe("composed slides", () => {
     const { container } = render(<SlideFace body={body} title={false} layout="composed" scene={{ scene, issue: null }} numbers={[1, 2]} onSceneIssue={issue} />);
     await waitFor(() => expect(container.querySelector('[data-graphic-fallback="true"]')).toBeInTheDocument());
     const fallback = container.querySelector('[data-block-id="b1"]');
+    expect(fallback?.querySelector("table")).toBeInTheDocument();
     expect(fallback?.textContent).toContain("Change");
     expect(fallback?.textContent).toContain("−6");
     expect(fallback?.textContent).toContain("2021");
+    expect(fallback?.querySelectorAll("tbody tr")).toHaveLength(2);
     expect(container.querySelector('[data-block-id="b2"]')?.textContent).toContain("The measurement scope stayed the same");
     await waitFor(() => expect(issue.mock.calls.at(-1)?.[0]).toContain("Graphic elements fell back"));
   });

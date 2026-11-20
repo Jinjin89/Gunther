@@ -32,7 +32,7 @@ DeviceScope = Literal["api:access", "transcription:stream"]
 ArtifactFormat = Literal["field_guide", "teaching_path", "decision_brief", "report", "slides"]
 ArtifactAudience = Literal["scientist", "student", "collaborator"]
 OutputKind = Literal["report", "slides"]
-# "auto": the skill chooses how the report unfolds (see skill_runner).
+# "auto": Studio chooses how the report unfolds.
 OutputStyle = Literal["auto", "overview", "field_guide", "teaching_path", "decision_brief"]
 # How a version came about; "legacy" is a version from before agents wrote them.
 OutputOrigin = Literal["legacy", "build", "rebuild", "edit", "revise"]
@@ -941,7 +941,7 @@ class OutlineItem(ApiModel):
     message: str = Field(default="", max_length=600)
     question: str = Field(default="", max_length=400)
     requires: list[str] = Field(default_factory=list, max_length=14)
-    # A slide's layout, when a skill planned it (see skills/slides/references/layouts.md).
+    # The slide layout stored with the outline.
     layout: str | None = Field(default=None, max_length=40)
     link: str = Field(default="", max_length=200)
     design: SlideDesignInput | None = None

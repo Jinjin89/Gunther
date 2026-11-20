@@ -9,12 +9,11 @@ from fake_models import (
     gateway,
     is_sentence_checking,
     output_replies,
-    skill_replies,
-    skill_step,
 )
 from sqlalchemy import select
+from test_artifact_steps import drafted
 from test_documents import FigureParser, capture_pdf, png
-from test_output_skills import APPROACH, OUTLINE, REPORT, SEARCH
+from test_output_skills import APPROACH, OUTLINE, REPORT
 from test_outputs import SIDECAR, app_for, body, build, built, library, revise, saved_output
 
 from gunther.agent import Evidence, Tool
@@ -33,27 +32,19 @@ from gunther.schemas import ConversationCitationOut
         "## CD19 is the B-cell marker\n\nCD19 marks 99% of B cells [2].",
     ],
 )
-def test_editor_cannot_introduce_facts_even_when_the_citations_are_unchanged(tmp_path, rewrite):
-    replies = skill_replies(
-        APPROACH,
-        OUTLINE,
-        REPORT,
-        gather=SEARCH,
-        editor={"issues": [{"section": 3, "problem": "Improve its ending."}]},
-        revision={"sections": [{"section": 3, "instruction": "Clarify the ending."}]},
-        rewrite=lambda index, prompt: rewrite,
-    )
+def test_studio_checks_changed_claims_even_when_the_citation_is_unchanged(rewrite):
+    replies = output_replies(OUTLINE, REPORT, rewrite=lambda *_: rewrite)
 
     def reply(request):
-        if skill_step(request) == "editor_fidelity":
-            return json.dumps({"faithful": False})  # An absent reason must still reject it.
+        if is_sentence_checking(request):
+            return json.dumps({"sentences": [{"n": 1, "verdict": "not"}]})
         return replies(request)
 
-    from test_artifact_steps import default_route, steps_for
-
-    version, _ = default_route(steps_for(FakeProvider(reply)))
-    assert "every patient" not in version.content and "99%" not in version.content
-    assert any(item["step"] == "editor_fidelity" for item in version.skill["skipped"])
+    steps = drafted(FakeProvider(reply))
+    assert steps.write(["p3"], "Clarify the ending.") == ["p3"]
+    changed = steps.work.parts["p3"]
+    assert changed.text == rewrite
+    assert any(issue["verdict"] == "unsupported" for issue in changed.issues)
 
 
 def test_retained_output_search_stays_in_its_source_scope(tmp_path):
@@ -90,7 +81,7 @@ def test_invented_chart_values_are_never_drawn_as_a_chart(tmp_path):
         return [int(n) for n in re.findall(r"^\((\d+)\) \| CD", prompt, re.M)]
 
     fake = FakeProvider(output_replies(outline, pages, unsupported=unsupported))
-    with app_for(tmp_path, fake, skills=True) as client:
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         version = built(build(client, base_id, body(kind="slides")))
     # The deck is saved, but the slide whose values its source does not state is drawn as a
@@ -123,7 +114,7 @@ def test_revising_another_slide_preserves_a_verified_chart(tmp_path, historical_
         "Note: Lead with the measured cohort rate."
     )
     fake = FakeProvider(output_replies(outline, [*pages[:2], rewritten]))
-    with app_for(tmp_path, fake, skills=True) as client:
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(
             client, notes={"Measured rate": "CD3D cohort rate was 62%. CD19 cohort rate was 41%."}
         )
@@ -158,12 +149,12 @@ def test_revising_another_slide_preserves_a_verified_chart(tmp_path, historical_
 
 
 def test_output_with_omitted_claim_verdicts_is_saved_as_unchecked(tmp_path):
-    replies = skill_replies(APPROACH, OUTLINE, REPORT, gather=SEARCH)
+    replies = output_replies(OUTLINE, REPORT)
 
     def reply(request):
         return json.dumps({"sentences": []}) if is_sentence_checking(request) else replies(request)
 
-    with app_for(tmp_path, FakeProvider(reply), skills=True) as client:
+    with app_for(tmp_path, FakeProvider(reply)) as client:
         base_id, _ = library(client)
         version = built(build(client, base_id, body()))
     assert all(not section["checked"] for section in version["sections"])
@@ -241,15 +232,8 @@ def test_output_retains_its_figure_when_the_original_source_is_deleted(tmp_path,
             return f"## Evidence\n\nEvidence [1].\n\n![Figure](gunther-asset:{image_ids[0]}) [1]."
         return f"## Evidence {index}\n\nEvidence [1]."
 
-    fake = FakeProvider(
-        skill_replies(
-            APPROACH,
-            OUTLINE,
-            written,
-            gather=[{"action": "search_library", "query": "CD3D"}],
-        )
-    )
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider(output_replies(OUTLINE, written))
+    with app_for(tmp_path, fake) as client:
         client.headers.update(SIDECAR)
         base_id, _ = library(client, notes={})
         saved = capture_pdf(client, base_id)

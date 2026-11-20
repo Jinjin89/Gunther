@@ -1204,10 +1204,7 @@ def test_fitting_keeps_the_part_writers_source_crop():
     agents = StudioWorkAgents(gateway(fake), "slides")
     pool = science_pool()
     text = original + "A detailed description of the signal. " * 20
-    result = agents.fit(
-        model(), "low", Spec("slides", "Readers"), [], 1, pool, [], Notes(), "",
-        lambda _: None, text,
-    )
+    result = agents.fit(model(), "low", Spec("slides", "Readers"), 1, pool, text)
     assert len(fake.requests) == 1 and result == text
 
 
@@ -1233,12 +1230,12 @@ def test_finished_edits_are_checked_and_fitting_keeps_the_checks(tmp_path):
     broken = "<!-- layout: points -->\n## Too short"
     damaged = "<!-- layout: points -->\n## What remains open\n- The peak was 12.8 mV [1]\n- Two"
     agents.gateway = gateway(FakeProvider(damaged))
-    kept = agents.fit(model(), "low", spec, [], 2, conversation, [], None, "", None, broken)
+    kept = agents.fit(model(), "low", spec, 2, conversation, broken)
     assert kept == broken
     clean = "<!-- layout: points -->\n## What remains open\n- Drift was 2 mV vs 6 mV [1]\n- Two"
     agents.gateway = gateway(FakeProvider(clean))
     assert (
-        agents.fit(model(), "low", spec, [], 2, conversation, [], None, "", None, broken) == clean
+        agents.fit(model(), "low", spec, 2, conversation, broken) == clean
     )
 
 

@@ -12,7 +12,6 @@ from fake_models import (
     model,
     orchestrator_replies,
     output_replies,
-    skill_replies,
 )
 
 from evals.artifacts import report, score
@@ -29,8 +28,7 @@ from evals.artifacts.run import (
     run_exam,
 )
 from evals.ask.run import ExamError
-from gunther.outputs import join_document
-from gunther.skillbook import skill_for
+from gunther.outputs import COMPOSITION_LAYOUTS, join_document
 
 CASES = {case.id: case for case in score.load_cases()}
 FIXTURES = score.load_fixtures()
@@ -46,23 +44,20 @@ def test_the_case_file_is_well_formed() -> None:
     # Every part a case names is in its fixture, every placeholder is set up.
     assert score.problems(cases, FIXTURES) == []
     deck, written = FIXTURES["deck"], FIXTURES["report"]
-    slides = skill_for("slides")
-    reports = skill_for("report")
     assert (deck.kind, deck.use, deck.audience) == ("slides", "talk", "student")
-    assert 10 <= len(deck.outline) <= slides.limits["pages_max"]
+    assert len(deck.outline) >= 10
     assert [slot.layout for slot in deck.outline][0] == "title"
     assert [slot.layout for slot in deck.outline][-1] == "takeaways"
-    assert {slot.layout for slot in deck.outline} <= set(slides.layouts)
-    # Mixed layouts, a chart among them, and no layout run longer than the skill allows.
+    assert {slot.layout for slot in deck.outline} <= set(COMPOSITION_LAYOUTS["standard"])
+    # Keep the fixture varied so cases exercise different saved layouts.
     assert len({slot.layout for slot in deck.outline}) >= 8
     assert sum(slot.layout in ("bar_chart", "line_chart") for slot in deck.outline) <= 1
     assert (written.kind, written.style) == ("report", "overview")
     assert len(written.outline) == 5
-    assert reports.limits["sections_min"] <= len(written.outline) <= reports.limits["sections_max"]
     # The layouts a case asks for exist.
     wanted = {name for case in cases for name in case.expect.layout.values()}
     wanted |= {edit.layout for case in cases for edit in case.today.edit if edit.layout}
-    assert wanted <= set(slides.layouts)
+    assert wanted <= set(COMPOSITION_LAYOUTS["standard"])
     # A fixture's definition names its hash; the outline can be sent as it is.
     assert len({fixture.hash for fixture in FIXTURES.values()}) == 2
     request = deck.request()
@@ -1127,22 +1122,13 @@ def written(index: int, prompt: str) -> str:
 
 
 def stand_in_models() -> FakeProvider:
-    skill = skill_replies(
-        APPROACH,
-        OUTLINE,
-        written,
-        gather=[{"action": "search_library", "query": "trial"}] * 200,
-        rewrite=rewrite,
-    )
-    studio = output_replies(OUTLINE, rewrite)
+    studio = output_replies(OUTLINE, written, rewrite=rewrite)
 
     def reply(request):
         system = str(request["messages"][0]["content"])
         if system.startswith("You grade one reply"):
             return JUDGE_REPLY
-        if is_writing(request):
-            return studio(request)
-        return skill(request)
+        return studio(request)
 
     return FakeProvider(reply)
 

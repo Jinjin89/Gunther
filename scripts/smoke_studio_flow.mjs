@@ -6,7 +6,7 @@
  *
  * Nothing real is called. A tiny OpenAI-compatible model server answers the studio's prompts
  * (memo, storyline, critic, deck, checker, the Artifacts agent's decisions); a disposable
- * backend (output method "studio") talks to it; the production web bundle is built and served
+ * backend talks to it through Studio. The production web bundle is built and served
  * on loopback; Playwright's Chromium drives it. Everything is removed at the end.
  *
  * Run (from the repository root, about two minutes):
@@ -268,8 +268,6 @@ async function main() {
     });
     logs = logsOf(backend);
     await waitForHttp(`${backendOrigin}/api/health`, backend, logs);
-    // Studio is the default output method; say so anyway.
-    await fetch(`${backendOrigin}/api/developer/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ outputMethod: "studio" }) }).catch(() => {});
 
     // Material: a library with three notes.
     const post = async (url, body) => {

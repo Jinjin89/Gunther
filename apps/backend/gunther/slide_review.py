@@ -103,15 +103,11 @@ def apply_repairs(built: BuiltOutput, repairs: VisualRepairs, allowed: set[str])
         seen.add(identity)
         at = positions[identity]
         plan, before = outline[at], pages[at]
-        if plan.get("designLocked"):
-            raise ModelError("A visual repair tried to change a locked design.")
         after = before
         marked = _marked(before)
         if repair.root is not None:
             if at == 0 and marked.layout == "title":
                 raise ModelError("Keep the title marker and the deck's selected style intact.")
-            if plan.get("layoutLocked") and marked.layout != "composed":
-                raise ModelError("A visual repair tried to change a locked layout.")
             old_marker = scene_marker(before)[0]
             old_scene = decode_scene(f"<!-- scene: {old_marker} -->") if old_marker else None
             if old_scene and (
@@ -134,8 +130,6 @@ def apply_repairs(built: BuiltOutput, repairs: VisualRepairs, allowed: set[str])
             after = with_scene(with_layout(before, "composed"), scene)
             plan["layout"] = "composed"
         if repair.composition is not None:
-            if plan.get("layoutLocked") or plan.get("designLocked"):
-                raise ModelError("A visual repair tried to change a locked composition.")
             after = with_layout(
                 after, _marked(after).layout or "text", composition=repair.composition
             )
@@ -219,6 +213,8 @@ Treat a qualification that restricts the headline as essential content: demoting
 unreadable or misleadingly weak emphasis is an error, not a cosmetic preference.
 An empty findings list is correct for clean pages. The first image is deck context; subsequent
 images, in order, are the named full-size slides. Do not review context-only pages in this batch.
+Use the render bounds, scene fallbacks and source-figure readiness in the measurements.
+A repair must preserve wording, speaker notes, values, units, source bindings and graphic licenses.
 """
 
 
@@ -233,7 +229,6 @@ def review_deck(
     brief: str,
     use: str,
     emit=lambda _event: None,
-    instructions: str = "",
 ) -> BuiltOutput:
     started = time.monotonic()
     budget = RunBudget(0, 0, 8, 8, phase="visual")
@@ -269,8 +264,7 @@ def review_deck(
             result, _ = bounded.complete_json(
                 model,
                 VisualReview,
-                system=REVIEW_RULES
-                + ("\n\nSkill instructions:\n" + instructions if instructions else ""),
+                system=REVIEW_RULES,
                 prompt="\n".join(
                     [
                         "Use: " + use + "\nDesign brief: " + brief,
@@ -331,7 +325,6 @@ def review_deck(
                     if f["severity"] == "error"
                     and f["route"] == "layout"
                     and f["slideId"] in by_id
-                    and not by_id[f["slideId"]].get("designLocked")
                 )
             )[:4]
             record["status"] = (
@@ -347,7 +340,10 @@ def review_deck(
                         repair_inputs.append(
                             {
                                 "slideId": identity,
-                                "page": page,
+                                "page": {
+                                    key: page[key] for key in ("heading", "goal", "layout")
+                                    if key in page
+                                },
                                 "text": sections[i],
                                 "blocks": [b.model_dump() for b in blocks],
                                 "findings": [f for f in findings if f["slideId"] == identity],
@@ -369,7 +365,7 @@ def review_deck(
                     "type (or an already licensed graphic), size small/medium/large/display, "
                     "align start/center/end/stretch, role main/support/focus. "
                     "Each block exactly once. "
-                    "Keep the deck's theme. Respect designLocked/layoutLocked. Return no change "
+                    "Keep the deck's theme. Return no change "
                     "if it requires editing text or citation markers. Keep essential "
                     "qualifications at a readable body size and comparable emphasis "
                     "to the observation they limit. "

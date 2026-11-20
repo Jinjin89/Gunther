@@ -9,7 +9,6 @@ import pytest
 from gunther.outputs import (
     Spec,
     _marked,
-    chart_rows_coverage_reason,
     heading_of,
     layout_of,
     unmarked,
@@ -264,40 +263,6 @@ def test_chart_source_numbers_allow_cjk_adjacent_values_and_keep_negative_signs(
     page = Page(0, "Graphic block", "bar_chart", text)
     assert chart_numbers_cited([page], {}, Context("slides", evidence=evidence)) == []
     assert VALUE_IN.findall("A-12 v2.5 完成−12%") == ["−12%"]
-
-
-def test_chart_coverage_must_bind_every_row_to_its_label_value_and_citation() -> None:
-    text = (
-        "<!-- layout: bar_chart -->\n## Graphic block\n\n"
-        "| Quarter | Change (points) |\n| --- | --- |\n"
-        "| Q1 | −3.5 points [1] |\n| Q2 | +2 points [2] |"
-    )
-    partial = {
-        "status": "complete",
-        "claims": [
-            {"text": "Q1 changed by −3.5 points.", "refs": [1], "verdict": "supported"}
-        ],
-    }
-    reason = chart_rows_coverage_reason(text, partial)
-    assert reason and "rows" in reason
-
-    all_rows = {
-        "status": "complete",
-        "claims": [
-            {"text": "Q1 changed by −3.5 points.", "refs": [1], "verdict": "supported"},
-            {"text": "Q2 changed by +2 points.", "refs": [2], "verdict": "supported"},
-        ],
-    }
-    assert chart_rows_coverage_reason(text, all_rows) is None
-
-    same_value_other_label = {
-        "status": "complete",
-        "claims": [
-            {"text": "Q1 changed by −3.5 points.", "refs": [1], "verdict": "supported"},
-            {"text": "Q3 changed by +2 points.", "refs": [2], "verdict": "supported"},
-        ],
-    }
-    assert chart_rows_coverage_reason(text, same_value_other_label) is not None
 
 
 def test_graphic_hash_rebind_requires_the_trusted_reference_mapping() -> None:

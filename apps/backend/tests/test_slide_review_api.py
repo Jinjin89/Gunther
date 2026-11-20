@@ -1,16 +1,16 @@
 """A visual-only review saves the inspected candidate and preserves version/source identities."""
 
 import pytest
-from fake_models import FakeProvider, skill_replies
-from test_output_skills import SEARCH, SLIDES, SLIDES_APPROACH, SLIDES_OUTLINE, saved_skill_output
+from fake_models import FakeProvider
+from test_output_skills import saved_skill_output
 from test_outputs import app_for, built, library, read_events, workspace
 from test_slide_review import Renderer
 
 
 @pytest.mark.parametrize("failure", [False, True])
 def test_review_current_renders_save_reopen_idempotency_freshness_and_access(tmp_path, failure):
-    fake = FakeProvider(skill_replies(SLIDES_APPROACH, SLIDES_OUTLINE, SLIDES, gather=SEARCH))
-    with app_for(tmp_path, fake, skills=True) as client:
+    fake = FakeProvider()
+    with app_for(tmp_path, fake) as client:
         base, _ = library(client)
         original = saved_skill_output(client, base, kind="slides")
         renderer = Renderer(tmp_path, failure=failure)

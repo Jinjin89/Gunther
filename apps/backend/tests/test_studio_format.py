@@ -55,6 +55,31 @@ def test_problems_name_the_slide_and_the_fix():
     assert "bold value" in found[2][0]
 
 
+def test_deck_checks_structure_density_and_evidence_without_counting_a_figure_as_points():
+    cover, _, chart, _ = fmt.split_slides(GOOD)
+    title = fmt.parse_slide(cover).title
+    items = "\n- One finding [1]\n- Another finding [2]\nNote: Explain the findings."
+    repeated = fmt.with_marker(f"## {title}{items}", "points")
+    normal = fmt.with_marker(f"## The observed change persists across summers{items}", "points")
+    crowded = normal.replace("Note:", "- A third finding\n- A fourth finding\n- A fifth\nNote:")
+    uncited = chart.replace("[1]", "").replace("[2]", "")
+    figure = fmt.with_marker(
+        "## The measured trajectory confirms the comparison\n"
+        "![Source plot](gunther-asset:ast_plot)\nThe direction is consistent [1].\n"
+        "Note: Point out the axes.",
+        "figure",
+    )
+    slides = [cover, repeated, normal, crowded, uncited, figure]
+    found = dict(fmt.check_deck("\n\n---\n\n".join(slides)))
+    assert any("repeats the deck title" in problem for problem in found[2])
+    assert any("there are 5" in problem for problem in found[4])
+    assert any("Three points slides in a row" in problem for problem in found[4])
+    assert any("two points slides" in problem for problem in found[4])
+    assert any("without a citation" in problem for problem in found[5])
+    assert 1 not in found and 3 not in found and 6 not in found
+    assert "The first slide must use the title layout." in dict(fmt.check_deck(normal))[1]
+
+
 def test_over_budget_is_measured():
     long = "x" * 130
     deck = GOOD.replace("## The pilot cut review time by 60%", f"## {long}")

@@ -1,17 +1,11 @@
-"""The studio inside an Artifacts conversation.
-
-``StudioWorkAgents`` stands where ``SkillAgents`` stands for ``WorkSteps`` (artifact_steps), for a
-work the studio made: checking, fitting and rewriting one part follow the studio's format and
-checker, and ``write_part`` / ``review_parts`` replace the skill's per-part writer and polish.
-``load_built`` puts a whole studio build into a work, as ``import_work`` does for a version.
-"""
+"""Studio operations on a saved artifact conversation."""
 
 from __future__ import annotations
 
 import logging
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -121,24 +115,6 @@ def slide_in_deck_format(text: str, cover: str, index: int) -> str:
     return fmt.with_marker(text, "text")
 
 
-def is_studio(work: Work) -> bool:
-    return bool(work.approach and work.approach.get("method") == "studio")
-
-
-@dataclass(frozen=True)
-class StudioSkill:
-    """Just enough of a skill for WorkSteps: the kind, the uses, no steps of its own."""
-
-    kind: str
-    name: str = "studio"
-    version: int = 1
-    uses: tuple[str, ...] = ("talk", "read")
-    layouts: tuple[str, ...] = fmt.LAYOUTS
-
-    def step(self, _id: str) -> None:
-        return None
-
-
 PART_WRITE = """\
 You are the best writer at a top consulting firm, working on one {unit} of an existing \
 {what}. The whole document is shown so the {unit} fits it: same voice, no repetition, the \
@@ -205,19 +181,14 @@ Reply with a JSON object: {{"understood": "the core message in one sentence", "c
 
 class StudioWorkAgents(StudioAgents):
     def __init__(
-        self, gateway, kind: str, limits=None, *, tools=(), reader=None,
+        self, gateway, kind: str, limits=None, *, tools=(),
         asset_reader=None, reusable_figures=None,
     ) -> None:
         super().__init__(
             gateway, limits, asset_reader=asset_reader, reusable_figures=reusable_figures,
         )
-        self.studio = True
-        self.skill = StudioSkill(kind)
+        self.kind = kind
         self.tools = {tool.name: tool for tool in tools}
-        self.reader = reader
-        self.cards: list[Any] = []
-        self.approach = None
-        self.outline_review = None
 
     def _science_run(self, spec: Spec, saved: dict | None = None) -> Run | None:
         data = (self.scientific_context if saved is None else saved) or {}
@@ -363,16 +334,13 @@ class StudioWorkAgents(StudioAgents):
     def record(self) -> dict[str, Any]:
         return {"name": "studio", "version": 1, "skipped": self.skipped, "trail": self.trail}
 
-    def review_rendered(self, built, spec, events=None):
-        return built
-
     @staticmethod
     def _what(spec: Spec) -> str:
         return "a slide deck" if spec.kind == "slides" else "a report"
 
     # What WorkSteps calls for edits and checks --------------------------------------------
 
-    def check_built(self, model, text, tool, pool: Pool, emit, section) -> Draft:
+    def check_built(self, model, text, pool: Pool, section) -> Draft:
         by_ref = pool.by_ref()
         issues, coverage = self._claims(model, text, by_ref)
         draft = self._chart_fallback(Draft(text, issues, coverage), section)
@@ -397,7 +365,7 @@ class StudioWorkAgents(StudioAgents):
         self.validate_evidence(spec, text, pool)
         return text
 
-    def fit(self, model, effort, spec, planned, index, pool, refs, notes, before, emit, text):
+    def fit(self, model, effort, spec, index, pool, text):
         """Try fitting once and keep the valid writer text if fitting fails."""
 
         if spec.kind != "slides":
@@ -568,13 +536,13 @@ class StudioWorkAgents(StudioAgents):
             if section_hash(text) == section_hash(fmt.without_design(old)):
                 emit({"type": "section", "index": index, "state": "done"})
                 continue
-            text = self.fit(model, effort, spec, [], index, pool, [], notes, "", emit, text)
+            text = self.fit(model, effort, spec, index, pool, text)
             text, _ = check_citations(text, set(by_ref))
             if deck:
                 text = slide_in_deck_format(text, parts[0], index)
             text = _single_part(text, spec.kind, index)
             emit({"type": "section", "index": index, "state": "checking"})
-            draft = self.check_built(model, text, tool, pool, emit, index)
+            draft = self.check_built(model, text, pool, index)
             parts[index] = draft.text
             if style and draft.text == text:
                 old_html = fmt.design_of(old)

@@ -4,10 +4,7 @@ import { type ChartShape, parseGraphicBlock, parseSlide, plainText, SLIDE_LAYOUT
 
 const TABLE = "| Item | Share (%) |\n| --- | --- |\n";
 
-// The form each layout asks for: [layout, the slide, whether it takes the form]. The same list as
-// SHAPES in tests/test_skillbook.py, which tests `layout_shape`, the check the service makes while a
-// deck is written. A fourth item says how the app draws a slide the service accepts but that it will
-// not draw as its layout.
+// Saved slide layout, body and whether it parses. A fourth item names the fallback layout.
 const SHAPES: Array<[string, string, boolean, string?]> = [
   ["title", "# Deck\n\nOne line saying it", true],
   // A title without its message line is still the title.

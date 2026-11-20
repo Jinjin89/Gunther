@@ -316,6 +316,7 @@ def output_replies(
     verdict: dict[str, list[int]] | None = None,
     unsupported: Any = None,
     rewrite: Any = None,
+    replacer: Reply | None = None,
 ) -> Callable[[dict[str, Any]], Any]:
     """Replies for a Studio build and for checking or revising saved versions.
 
@@ -331,6 +332,10 @@ def output_replies(
         system = str(request["messages"][0]["content"])
         prompt = str(request["messages"][-1]["content"])
         task = studio_task(request)
+        if replacer is not None and is_replacing(request):
+            if isinstance(replacer, Exception):
+                raise replacer
+            return replacer(request) if callable(replacer) else replacer
         title = outline["title"]
         rows = outline["sections"]
         if "You own the presentation purpose decision" in system + task:
@@ -412,167 +417,6 @@ def output_replies(
         index = int(asked.group(2)) - 1
         answer = rewrite if asked.group(1) == "Rewrite" and rewrite is not None else written
         return answer(index, system + "\n" + prompt) if callable(answer) else answer[index]
-
-    return reply
-
-
-SKILL_MARK = "Gunther skill step: "
-
-
-def skill_step(request: dict[str, Any]) -> str | None:
-    """Which step of a skill a request is from (see skill_runner), if any."""
-
-    system = str(request["messages"][0]["content"])
-    if not system.startswith(SKILL_MARK):
-        return None
-    return system[len(SKILL_MARK) :].split("\n", 1)[0].strip()
-
-
-def skill_replies(
-    approach: dict[str, Any],
-    outline: dict[str, Any],
-    written: Any,
-    *,
-    gather: list[dict[str, Any]] | None = None,
-    editor: Reply | None = None,
-    reader: Reply | None = None,
-    revision: dict[str, Any] | None = None,
-    design: Reply | None = None,
-    outline_review: Reply | None = None,
-    compose: Reply | None = None,
-    rewrite: Any = None,
-    relevant: list[int] | None = None,
-    replacer: Reply | None = None,
-) -> Callable[[dict[str, Any]], Any]:
-    """Replies for an output made by a skill.
-
-    ``gather`` is what the understand step chooses to do, in turn (then "done"); the
-    approach and the outline come next. ``written`` is the sections' texts in order, or a
-    function of (section index, prompt). The editor and the reader find nothing unless
-    given; ``revision`` is the revise step's plan ({"sections": [...]}) and ``rewrite``
-    a function of (section index, prompt) for what it rewrites. The Checker's calls are
-    quiet, as in ``output_replies``. ``replacer`` is what the writer answers when asked to
-    change one passage: {"text": ...}, or a function of the request that returns the JSON text.
-    """
-
-    import json
-    import re
-
-    actions = list(gather or [])
-    whole = output_replies(outline, written, rewrite=rewrite)
-
-    def answer(reply: Any, request: dict[str, Any]) -> Any:
-        if isinstance(reply, Exception):
-            raise reply
-        return reply(request) if callable(reply) else json.dumps(reply)
-
-    def reply(request: dict[str, Any]) -> Any:
-        system = str(request["messages"][0]["content"])
-        prompt = str(request["messages"][-1]["content"])
-        step = skill_step(request)
-        if step == "editor_fidelity":
-            return json.dumps({"faithful": True})
-        if step is None:
-            if replacer is not None and is_replacing(request):
-                return answer(replacer, request)
-            if is_sentence_checking(request):
-                return json.dumps(_quiet_sentence_check(request))
-            if is_grading(request):
-                return json.dumps(
-                    {"relevant": relevant if relevant is not None else list(range(1, 41))}
-                )
-            if is_auditing(request):
-                return json.dumps({"claims": []})
-            if is_checking(request):
-                return json.dumps({"supports": [], "contradicts": []})
-            if is_support_checking(request):
-                numbers = [int(n) for n in re.findall(r"^\[(\d+)\]", prompt, re.M)]
-                return json.dumps({"unsupported": [], "supported": numbers})
-            return whole(request)
-        if "Choose the next action" in system:
-            return json.dumps(actions.pop(0) if actions else {"action": "done"})
-        if step == "understand":
-            return json.dumps(approach)
-        if step == "structure":
-            return json.dumps(outline)
-        if step == "outline_review":
-            return (
-                answer(outline_review, request)
-                if outline_review is not None
-                else json.dumps({"issues": [], "omitted": []})
-            )
-        if step == "design":
-            if design is not None:
-                return answer(design, request)
-            match = re.search(
-                r"Requested page evidence and material cards:\n(\[.*?\])\nShared material cards",
-                prompt,
-                re.S,
-            )
-            pages = json.loads(match.group(1)) if match else []
-            return json.dumps(
-                {
-                    "pages": [
-                        {
-                            "index": page["index"],
-                            "heading": page["heading"],
-                            "intent": page.get("goal") or page["heading"],
-                            "visual": "Use the assigned content in a clear visual hierarchy.",
-                            "composition": "standard",
-                            "emphasis": "",
-                            "notes": "",
-                            "layout": page.get("layout", ""),
-                        }
-                        for page in pages
-                    ]
-                }
-            )
-        if step == "compose":
-            if compose is not None:
-                return answer(compose, request)
-            match = re.search(
-                r"Content blocks .*?:\n(\[.*?\])(?:\n|$)",
-                prompt,
-                re.S,
-            )
-            blocks = json.loads(match.group(1)) if match else []
-
-            def arrange(items: list[dict[str, Any]]) -> dict[str, Any]:
-                if len(items) > 4:
-                    children = [
-                        arrange(items[start : start + 4]) for start in range(0, len(items), 4)
-                    ]
-                    return {
-                        "kind": "column",
-                        "weights": [1] * len(children),
-                        "children": children,
-                    }
-                return {
-                    "kind": "row",
-                    "weights": [1] * len(items),
-                    "children": [
-                        {
-                            "kind": "leaf",
-                            "blockId": block["id"],
-                            "view": block["type"],
-                        }
-                        for block in items
-                    ],
-                }
-
-            return json.dumps({"root": arrange(blocks)})
-        if step == "edit_review":
-            return answer(editor if editor is not None else {"issues": []}, request)
-        if step == "reader_test":
-            return answer(
-                reader if reader is not None else {"core": approach.get("answer", "")}, request
-            )
-        if step == "revise" and "This section now:" not in prompt:
-            return json.dumps(revision or {"sections": []})
-        index = int(re.search(r"Write section (\d+) of", prompt).group(1)) - 1
-        if step == "revise":
-            return rewrite(index, prompt) if rewrite else "UNCHANGED"
-        return written(index, prompt) if callable(written) else written[index]
 
     return reply
 

@@ -28,7 +28,7 @@ from fastapi.testclient import TestClient
 from legacy_artifacts import insert_legacy_version
 from sqlalchemy import func, select, text
 
-from gunther.agent import Evidence, Tool
+from gunther.agent import Evidence
 from gunther.config import Settings
 from gunther.main import create_app
 from gunther.models import Artifact, ArtifactCheck, ArtifactUnitBinding, Source
@@ -46,14 +46,13 @@ from gunther.outputs import (
     heading_of,
     layout_of,
     section_hash,
-    shape_section,
     split_document,
     title_of,
     unsource,
     with_layout,
 )
 from gunther.schemas import BuildOutputInput, ReviseOutputInput
-from gunther.skillbook import skill_for
+from gunther.studio.work import StudioWorkAgents
 
 SIDECAR_TOKEN = "sidecar-token-with-at-least-256-bits-000000000000000000000000"
 SIDECAR = {"X-Gunther-Token": SIDECAR_TOKEN}
@@ -102,15 +101,8 @@ def body(**fields) -> dict:
     }
 
 
-def app_for(tmp_path: Path, fake: FakeProvider, *, skills: bool = False, **overrides) -> TestClient:
-    """An app with fixture model responses and saved settings from the Skills era."""
-
+def app_for(tmp_path: Path, fake: FakeProvider, **overrides) -> TestClient:
     tmp_path.mkdir(parents=True, exist_ok=True)
-    (tmp_path / "service-settings.json").write_text(
-        json.dumps(
-            {"developer": {"traces": False, "output_skills": skills, "output_method": "skills"}}
-        ), encoding="utf-8"
-    )
     settings = Settings(
         database_url=f"sqlite+pysqlite:///{tmp_path / 'gunther.sqlite'}",
         assets_dir=tmp_path / "assets",
@@ -232,13 +224,7 @@ def saved_output(client, base_id, outline=None, written=None, *, approach=None, 
         if layout:
             part = with_layout(part, layout, theme=payload.theme, design_version=1)
         identity = row.get("id") or (f"p{index + 1}" if deck and approach else "")
-        design = {
-            "intent": row.get("goal") or row["heading"],
-            "visual": "Use the assigned content in a clear visual hierarchy.",
-            "composition": "standard", "emphasis": "", "notes": "", "layout": layout,
-        } if layout else None
-        plans.append(Planned(row["heading"], row.get("goal", ""), layout=layout,
-                             link=row.get("link", ""), id=identity, design=design))
+        plans.append(Planned(row["heading"], row.get("goal", ""), layout=layout, id=identity))
         claims = [
             {"text": text, "refs": refs, "verdict": "supported"}
             for _, _, text, refs in cited_sentences(part)
@@ -254,8 +240,19 @@ def saved_output(client, base_id, outline=None, written=None, *, approach=None, 
     provenance = {"conversation_id": payload.conversation_id,
                   "conversation_title": payload.conversation_title, "request": payload.brief}
     if approach:
+        if deck:
+            for row, plan in zip(outline["sections"], version.outline, strict=True):
+                if layout := plan.get("layout"):
+                    plan["design"] = {
+                        "intent": plan.get("goal") or plan["heading"],
+                        "visual": "Use the assigned content in a clear visual hierarchy.",
+                        "composition": "standard",
+                        "emphasis": "", "notes": "", "layout": layout,
+                    }
+                if row.get("link"):
+                    plan["link"] = row["link"]
         provenance.update(generator="gunther.output-skills.v1", approach=approach,
-                          skill={"name": payload.kind, "version": skill_for(payload.kind).version},
+                          skill={"name": payload.kind, "version": (11 if deck else 2)},
                           use=approach.get("use"))
     return service._save_output(
         workspace_id=workspace_id, base_id=base_id, client_request_id=payload.client_request_id,
@@ -475,41 +472,6 @@ def test_a_deck_keeps_each_slides_marker_with_it_and_the_hash_covers_it() -> Non
     assert title_of(content) == "Deck"
 
 
-def test_what_the_writer_returns_is_shaped_but_not_reworded() -> None:
-    report = Spec("report", "scientist")
-    fenced = "```markdown\n## T cells\n\ntext [1]\n\n## Extra\n\nmore\n```"
-    assert shape_section(fenced, report, "T cells", False) == (
-        "## T cells\n\ntext [1]\n\n### Extra\n\nmore"
-    )
-    assert shape_section("# T cells\n\ntext", report, "T cells", False) == "## T cells\n\ntext"
-    assert shape_section("just text", report, "T cells", False) == "## T cells\n\njust text"
-    deck = Spec("slides", "student")
-    assert shape_section("## Deck\n\n- a\n---\n- b", deck, "Deck", False) == "## Deck\n\n- a\n- b"
-    assert shape_section("## Deck\n\nsub", deck, "Deck", True) == "# Deck\n\nsub"
-
-
-def test_a_slide_gets_the_marker_of_its_planned_layout_and_never_the_writers() -> None:
-    deck = Spec("slides", "student")
-    planned = "<!-- layout: flow -->\n## Deck\n\n- a"
-    assert shape_section("## Deck\n\n- a", deck, "Deck", False, "flow") == planned
-    # A marker the writer wrote is dropped, and does not keep the real heading from being found.
-    written = "<!-- layout: cards -->\n## Deck\n\n- a\n\n## Stray"
-    assert shape_section(written, deck, "Deck", False, "flow") == planned + "\n\n### Stray"
-    fenced = "```\n<!-- layout: cards -->\n## Deck\n```"
-    assert shape_section(fenced, deck, "Deck", False, "flow") == "<!-- layout: flow -->\n## Deck"
-    # With no planned layout the slide has no marker at all.
-    assert shape_section("<!-- layout: cards -->\n## Deck\n\n- a", deck, "Deck", False) == (
-        "## Deck\n\n- a"
-    )
-    # A rewritten title slide keeps the accent it had.
-    assert shape_section("## Deck\n\nsub", deck, "Deck", True, "title", accent="blue") == (
-        "<!-- layout: title; accent: blue -->\n# Deck\n\nsub"
-    )
-    # A report's sections have none.
-    report = Spec("report", "scientist")
-    assert shape_section("## T\n\ntext", report, "T", False, "flow") == "## T\n\ntext"
-
-
 def test_the_sentences_that_cite_passages_are_found_with_their_numbers() -> None:
     text = "## Heading\n\nOne fact [1]. Two facts [2][3].\n- bullet [4]\nNo cite.\n"
     found = cited_sentences(text)
@@ -540,12 +502,11 @@ def test_the_checker_reads_a_slide_under_its_marker_and_gives_the_marker_back() 
     )
     pool = Pool(10)
     pool.adopt(Evidence("library", "Markers", "CD3D is a marker of T cells."))
-    tool = Tool("search_library", "the library", lambda query: [], "your library")
 
     quiet = FakeProvider(output_replies(OUTLINE, REPORT))
-    agents = OutputAgents(gateway(quiet))
+    agents = StudioWorkAgents(gateway(quiet), "slides")
     model = agents.gateway.models[0]
-    draft = agents.check_built(model, slide, tool, pool, lambda event: None, 0)
+    draft = agents.check_built(model, slide, pool, 0)
     assert draft.text == slide and draft.issues == []
     assert draft.coverage["status"] == "complete"
     assert draft.coverage["answerHash"] == section_hash(slide)
@@ -557,11 +518,10 @@ def test_the_checker_reads_a_slide_under_its_marker_and_gives_the_marker_back() 
     # Nothing the models were asked had the marker in it.
     assert quiet.requests and not any("<!--" in str(r["messages"]) for r in quiet.requests)
 
-    # A sentence that loses its number is edited where it is, and the marker stays first.
-    flagging = FakeProvider(output_replies(OUTLINE, REPORT, unsupported=[1]))
-    flagger = OutputAgents(gateway(flagging))
-    flagged = flagger.check_built(model, slide, tool, pool, lambda event: None, 0)
-    assert flagged.text.startswith("<!-- layout: text -->\n## T cells\n\n- CD3D marks T cells [?]")
+    flagging = FakeProvider('{"sentences":[{"n":1,"verdict":"not"},{"n":2,"verdict":"supported"}]}')
+    flagger = StudioWorkAgents(gateway(flagging), "slides")
+    flagged = flagger.check_built(model, slide, pool, 0)
+    assert flagged.text == slide
     assert "unsupported" in [issue.verdict for issue in flagged.issues]
     assert not any("<!--" in str(r["messages"]) for r in flagging.requests)
 
@@ -1190,7 +1150,7 @@ def test_a_revision_changes_one_section_and_keeps_the_checks_of_the_others(
         return REPORT[index]
 
     fake = FakeProvider(output_replies(OUTLINE, written))
-    with app_for(tmp_path, fake, skills=True) as client:
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         first = built(build(client, base_id, body())) if studio else saved_output(client, base_id)
         ref = next(c["ref"] for c in first["citations"] if c["sourceTitle"] == "Markers")

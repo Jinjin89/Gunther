@@ -17,17 +17,16 @@ SIDECAR = {"X-Gunther-Token": SIDECAR_TOKEN}
 KEY = "sk-test-0000000000001234"
 
 
-def test_saved_output_method_round_trips_with_other_developer_settings(tmp_path: Path) -> None:
+def test_saved_developer_settings_load_with_retired_output_preferences(tmp_path: Path) -> None:
     path = tmp_path / "service-settings.json"
     path.write_text(json.dumps({
         "developer": {"output_method": "skills", "output_skills": False, "traces": False},
     }))
     store = ServiceSettingsStore(path)
-    assert store.developer()["output_method"] == "skills"
+    assert store.developer() == {"traces": False}
     store.save_developer(traces=True)
-    assert ServiceSettingsStore(path).developer() == {
-        "output_method": "skills", "output_skills": False, "traces": True,
-    }
+    assert ServiceSettingsStore(path).developer() == {"traces": True}
+    assert json.loads(path.read_text())["developer"] == {"traces": True}
 
 
 def settings_for(tmp_path: Path, **overrides: object) -> Settings:
