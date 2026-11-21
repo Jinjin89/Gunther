@@ -745,24 +745,6 @@
 .source-original-card strong { overflow: hidden; color: var(--atlas-ink); font-size: calc(12px * var(--gx-fs, 1)); text-overflow: ellipsis; white-space: nowrap; }
 .source-original-card small { color: var(--atlas-muted); font-size: calc(10px * var(--gx-fs, 1)); }
 .source-original-card a { min-height: 33px; padding: 0 9px; display: inline-flex; align-items: center; gap: 5px; flex: none; border: 1px solid color-mix(in srgb, var(--atlas-blue) 28%, var(--atlas-line)); border-radius: 8px; background: var(--atlas-paper); color: var(--atlas-blue); font-size: calc(11px * var(--gx-fs, 1)); text-decoration: none; }
-.web-snapshot-card { margin-top: 16px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--atlas-green) 26%, var(--atlas-line)); border-radius: 12px; background: color-mix(in srgb, var(--atlas-green-soft) 46%, var(--atlas-paper)); }
-.web-snapshot-card > header { min-height: 59px; padding: 11px 12px; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 9px; border-bottom: 1px solid color-mix(in srgb, var(--atlas-green) 16%, var(--atlas-line)); }
-.web-snapshot-seal { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: var(--atlas-green); color: white; }
-.web-snapshot-card > header > span:nth-child(2) { min-width: 0; display: grid; gap: 2px; }
-.web-snapshot-card > header h3 { margin: 0; font-family: var(--atlas-sans); font-size: calc(12px * var(--gx-fs, 1)); font-weight: 700; }
-.web-snapshot-card > header small { color: var(--atlas-muted); font-size: calc(10px * var(--gx-fs, 1)); line-height: 1.35; }
-.web-snapshot-card > header i { padding: 4px 6px; border-radius: 6px; background: var(--atlas-paper); color: var(--atlas-green); font-size: calc(9px * var(--gx-fs, 1)); font-style: normal; font-weight: 720; letter-spacing: .04em; text-transform: uppercase; }
-.web-snapshot-card dl { margin: 0; padding: 6px 12px; background: color-mix(in srgb, var(--atlas-paper) 72%, transparent); }
-.web-snapshot-card dl > div { min-height: 31px; display: grid; grid-template-columns: 79px minmax(0, 1fr); align-items: center; gap: 9px; border-bottom: 1px solid color-mix(in srgb, var(--atlas-line) 76%, transparent); }
-.web-snapshot-card dl > div:last-child { border-bottom: 0; }
-.web-snapshot-card dt { color: var(--atlas-faint); font-size: calc(9px * var(--gx-fs, 1)); font-weight: 720; letter-spacing: .06em; text-transform: uppercase; }
-.web-snapshot-card dd { min-width: 0; margin: 0; overflow: hidden; color: var(--atlas-muted); font-size: calc(10px * var(--gx-fs, 1)); text-overflow: ellipsis; white-space: nowrap; }
-.web-snapshot-card dd a { color: var(--atlas-green); text-decoration: none; }
-.web-snapshot-card dd a:hover { text-decoration: underline; }
-.web-snapshot-hash code { color: var(--atlas-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: calc(9px * var(--gx-fs, 1)); }
-.web-snapshot-card > footer { padding: 9px 12px; display: flex; flex-wrap: wrap; gap: 7px; border-top: 1px solid color-mix(in srgb, var(--atlas-green) 16%, var(--atlas-line)); }
-.web-snapshot-card > footer a { min-height: 29px; padding: 0 8px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid color-mix(in srgb, var(--atlas-green) 22%, var(--atlas-line)); border-radius: 7px; background: var(--atlas-paper); color: var(--atlas-green); font-size: calc(10px * var(--gx-fs, 1)); text-decoration: none; }
-.web-snapshot-card a:focus-visible { outline: 2px solid color-mix(in srgb, var(--atlas-green) 58%, transparent); outline-offset: 2px; }
 .source-recording-player { margin-top: 16px; padding: 12px; display: grid; gap: 10px; border: 1px solid var(--atlas-line); border-radius: 12px; background: var(--atlas-paper-soft); }
 .source-recording-player > span { display: flex; align-items: center; gap: 7px; color: var(--atlas-green); }
 .source-recording-player strong { color: var(--atlas-ink); font-size: calc(12px * var(--gx-fs, 1)); }

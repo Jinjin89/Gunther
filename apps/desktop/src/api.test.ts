@@ -239,12 +239,6 @@ describe("desktop knowledge API contract", () => {
       expect(new Headers(init.headers).get("X-Gunther-Workspace-Id")).toBe("wsp_primary");
     });
 
-    it("revises a version by its own address", async () => {
-      fetchMock.mockResolvedValueOnce(stream(events(["done", { id: "art_2" }])));
-      await knowledgeApi.reviseOutputStream("biology", "art/1", { clientRequestId: "revise_request_1", instruction: "Shorter", sectionIndex: 1 }, "wsp_primary", () => undefined);
-      expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/knowledge-bases/biology/artifacts/art%2F1/revise/stream");
-    });
-
     it("sends a message to the Artifacts agent and hands over its events, then how the turn ended", async () => {
       fetchMock.mockResolvedValueOnce(stream(events(
         ["turn", { type: "turn", conversationId: "talk", messageId: "acm_1" }],

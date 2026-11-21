@@ -73,7 +73,6 @@ import { ModelPicker } from "../models/ModelPicker";
 import { BrandMark } from "../design/BrandMark";
 import { LibraryGlyph } from "../design/LibraryGlyph";
 import { EvidencePanel } from "../components/evidence/EvidencePanel";
-import "../knowledge.css";
 import "../session.css";
 
 interface SessionWorkspaceProps {

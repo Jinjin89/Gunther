@@ -24,12 +24,6 @@ export function describeScope({ sources, units, sessions }: ScopeCounts): string
   return parts.join(" · ") || "Nothing chosen";
 }
 
-export const scopeCounts = (scope: OutputScope): ScopeCounts => ({
-  sources: scope.sourceIds.length,
-  units: scope.unitIds.length,
-  sessions: scope.sessionIds.length,
-});
-
 interface Row {
   id: string;
   title: string;

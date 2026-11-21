@@ -26,7 +26,6 @@
 .outputs-setup-note { color: var(--gx-muted); font-size: var(--gx-text-xs); }
 .outputs-setup-note p { margin: 0 0 8px; }
 .outputs-field { display: grid; gap: 7px; min-width: 0; }
-.outputs-label { color: var(--gx-faint); font-size: var(--gx-text-xs); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
 .outputs-hint { color: var(--gx-muted); font-size: var(--gx-text-xs); }
 .outputs-field textarea {
   width: 100%; padding: 9px 11px; resize: vertical;
@@ -75,39 +74,6 @@
 .artifacts-other-materials > summary { color: var(--gx-muted); font-size: var(--gx-text-xs); cursor: pointer; }
 .artifacts-other-materials > fieldset { margin-top: 14px; }
 
-/* History */
-.outputs-history { min-width: 0; min-height: 0; padding: 18px 12px; border-right: 1px solid var(--gx-line); background: var(--gx-surface-2); display: flex; flex-direction: column; gap: 12px; }
-.outputs-history > header { display: flex; align-items: center; justify-content: space-between; }
-.outputs-history > header > span { display: inline-flex; align-items: center; gap: 6px; }
-.outputs-history > header strong { font-size: var(--gx-text-sm); }
-.outputs-history > header > small { color: var(--gx-faint); font-size: var(--gx-text-2xs); }
-.outputs-history > p { margin: 0; color: var(--gx-faint); font-size: var(--gx-text-xs); }
-.outputs-history ul { flex: 1; min-height: 0; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
-.outputs-history li button {
-  width: 100%; padding: 8px; display: flex; align-items: center; gap: 8px; text-align: left;
-  border: 1px solid transparent; border-radius: var(--gx-radius-sm); background: transparent;
-}
-.outputs-history li button:hover:not(:disabled), .outputs-history li button.is-active { background: var(--gx-hover); }
-.outputs-history li button.is-active { border-color: var(--gx-line-2); }
-.outputs-history li button > svg { flex: none; color: var(--gx-faint); }
-.outputs-history li span { min-width: 0; flex: 1; display: grid; gap: 2px; }
-.outputs-history li strong, .outputs-history li small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.outputs-history li strong { color: var(--gx-ink); font-size: var(--gx-text-xs); font-weight: 600; }
-.outputs-history li small { color: var(--gx-faint); font-size: var(--gx-text-2xs); }
-.outputs-history li em { color: var(--gx-muted); font-size: var(--gx-text-2xs); font-style: normal; font-weight: 600; font-variant-numeric: tabular-nums; }
-.artifacts-studio { border-right: 0; border-left: 1px solid var(--gx-line); background: var(--gx-canvas); }
-.artifacts-studio-types { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
-.artifacts-studio-types button { display: flex; align-items: center; gap: 8px; min-height: 58px; padding: 12px 10px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-md); background: var(--gx-surface); color: var(--gx-ink); font-size: var(--gx-text-sm); }
-.artifacts-studio-types button:hover:not(:disabled) { background: var(--gx-hover); }
-.artifacts-studio-types svg { flex: none; color: var(--gx-faint); }
-.artifacts-studio ul { overflow: visible; flex: none; }
-.artifacts-studio { overflow-y: auto; }
-.artifacts-studio li { display: flex; align-items: center; gap: 3px; padding: 3px; border-radius: var(--gx-radius-sm); }
-.artifacts-studio li.is-active { background: var(--gx-hover); }
-.artifacts-studio li > .artifact-open { flex: 1; min-width: 0; padding: 9px 5px; border: 0; }
-.artifacts-studio li > .contents-menu > button { width: 26px; height: 26px; padding: 0; display: grid; place-items: center; }
-.artifacts-studio .contents-menu-list { min-width: 190px; }
-.artifacts-studio .contents-menu-list button { font-size: var(--gx-text-xs); white-space: nowrap; }
 .artifacts-version-list { margin-bottom: 20px; padding: 12px; display: grid; gap: 5px; background: var(--gx-surface-2); border: 1px solid var(--gx-line); border-radius: var(--gx-radius-sm); }
 .artifacts-version-list > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-size: var(--gx-text-sm); }
 .artifacts-version-list > button { justify-content: flex-start; white-space: normal; text-align: left; }
@@ -304,12 +270,6 @@
 
 .outputs-legacy-note { margin: -8px 0 14px; }
 
-/* Changing it: by asking, and by typing */
-.outputs-revise { margin: 0 0 20px; padding: 14px; display: grid; gap: 12px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-md); background: var(--gx-surface-2); }
-.outputs-revise label { display: grid; gap: 6px; }
-.outputs-revise select, .outputs-revise textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-sm); background: var(--gx-surface); color: var(--gx-ink); font: inherit; font-size: var(--gx-text-sm); line-height: 1.5; }
-.outputs-revise select:focus, .outputs-revise textarea:focus { outline: none; border-color: var(--gx-line-3); box-shadow: var(--gx-ring); }
-.outputs-revise > div { display: flex; justify-content: flex-end; gap: 8px; }
 .outputs-edit { display: grid; gap: 12px; }
 .outputs-edit-bar { padding-bottom: 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--gx-line); color: var(--gx-muted); font-size: var(--gx-text-xs); }
 .outputs-edit-bar > div { display: flex; gap: 8px; }
@@ -398,12 +358,7 @@
 
 @media (max-width: 860px) {
   .outputs-workspace { grid-template-columns: 190px minmax(0, 1fr); }
-  .artifacts-studio { grid-column: 1 / -1; grid-row: 2; max-height: 186px; border-left: 0; border-top: 1px solid var(--gx-line); }
   .outputs-workspace { grid-template-rows: minmax(0, 1fr) auto; }
-  .artifacts-studio-types { grid-template-columns: repeat(2, 110px); }
-  .artifacts-studio-types button { min-height: 38px; padding-block: 8px; }
-  .artifacts-studio ul { flex-direction: row; overflow-x: auto; }
-  .artifacts-studio li { flex: 0 0 220px; }
   .outputs-document { padding-inline: 20px; }
 }
 @media (max-width: 640px) {
@@ -413,7 +368,6 @@
   .artifacts-materials > footer { grid-template-columns: 1fr auto; align-items: center; }
   .artifacts-materials > footer > span { display: none; }
   .artifacts-materials > footer > button { margin: 0; }
-  .artifacts-studio { grid-row: 3; padding: 12px; gap: 8px; }
   .outputs-doc-actions { margin-left: 0; justify-content: flex-start; }
   .outputs-document { padding-inline: 16px; }
   .outputs-controls { padding-inline: 18px; }

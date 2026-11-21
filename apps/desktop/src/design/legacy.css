@@ -365,8 +365,7 @@
 .notebook-error,
 .source-detail-error small,
 .capture-window-bootstrap.is-error,
-.note-save-state.is-error,
-.structured-evidence [role="alert"] { color: var(--gx-danger) !important; }
+.note-save-state.is-error { color: var(--gx-danger) !important; }
 .conversation-error,
 .create-base-error,
 .mobile-connection-error,
@@ -376,7 +375,6 @@
 .send-button.is-stop:hover,
 .claim-status.is-disputed { color: var(--gx-danger) !important; }
 .lecture-notice,
-.evidence-warning,
 .transcription-state.is-local-only,
 .recording-persistence.is-recovering { color: var(--gx-warning) !important; }
 .lecture-notice { background: var(--gx-warning-wash) !important; }

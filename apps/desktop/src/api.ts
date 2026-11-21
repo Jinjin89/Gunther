@@ -23,7 +23,6 @@ import type {
   StudioMemo,
   StudioReview,
   DeckUse,
-  ReviseOutputRequest,
   Assertion,
   AssetCaptureResult,
   ConversationTurn,
@@ -645,7 +644,6 @@ export const knowledgeApi = {
   sourceDocument: (id: string, offset = 0, revisionId?: string | null, limit = 500) =>
     request<SourceDocument>(`/sources/${encodeURIComponent(id)}/document?offset=${offset}&limit=${limit}&reading=true${revisionId ? `&revision_id=${encodeURIComponent(revisionId)}` : ""}`),
   reprocessSource: (id: string) => request<SourceProcessing>(`/sources/${encodeURIComponent(id)}/reprocess`, { method: "POST" }),
-  cancelSourceProcessing: (id: string) => request<SourceProcessing>(`/sources/${encodeURIComponent(id)}/processing/cancel`, { method: "POST" }),
   topics: (baseId: string) => request<KnowledgeTopic[]>(`/knowledge-bases/${encodeURIComponent(baseId)}/topics`),
   saveTopic: (baseId: string, payload: TopicInput, id?: string) => request<KnowledgeTopic>(
     `/knowledge-bases/${encodeURIComponent(baseId)}/topics${id ? `/${encodeURIComponent(id)}` : ""}`,
@@ -664,10 +662,6 @@ export const knowledgeApi = {
     `/knowledge-bases/${encodeURIComponent(baseId)}/topics/${encodeURIComponent(sectionId)}`,
     { method: "DELETE" },
   ),
-  fileTopicSources: (baseId: string, topicId: string, sourceIds: string[]) => request<KnowledgeTopic>(
-    `/knowledge-bases/${encodeURIComponent(baseId)}/topics/${encodeURIComponent(topicId)}/sources`,
-    { method: "POST", body: JSON.stringify({ sourceIds }) },
-  ),
   topicSuggestions: (baseId: string) => request<TopicSuggestions>(`/knowledge-bases/${encodeURIComponent(baseId)}/topic-suggestions`),
   topicOverview: (baseId: string, topicId: string) => request<TopicOverview>(`/knowledge-bases/${encodeURIComponent(baseId)}/topics/${encodeURIComponent(topicId)}/overview`),
   writeTopicOverview: (baseId: string, topicId: string) => request<TopicOverview>(
@@ -677,10 +671,6 @@ export const knowledgeApi = {
   sourcePaper: (id: string) => request<SourcePaper>(`/sources/${encodeURIComponent(id)}/paper`),
   sourceDigest: (id: string) => request<SourceDigestState>(`/sources/${encodeURIComponent(id)}/digest`),
   writeSourceDigest: (id: string) => request<SourceDigestState>(`/sources/${encodeURIComponent(id)}/digest`, { method: "POST" }),
-  linkTopicEvidence: (baseId: string, topicId: string, blockId: string) => request<KnowledgeTopic>(
-    `/knowledge-bases/${encodeURIComponent(baseId)}/topics/${encodeURIComponent(topicId)}/evidence`,
-    { method: "POST", body: JSON.stringify({ blockId }) },
-  ),
   captureWeb: (payload: WebCaptureInput, expectedWorkspaceId?: string) =>
     request<WebCaptureResult>("/captures/web", {
       method: "POST",
@@ -966,9 +956,6 @@ export const knowledgeApi = {
   /** Build a report or slides and hear the agents at work; resolves with the saved version. */
   buildOutputStream: async (baseId: string, payload: BuildOutputRequest, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal): Promise<Artifact> =>
     (await streamOutput(`${outputsPath(baseId)}/outputs/build/stream`, { method: "POST", body: JSON.stringify(payload) }, workspaceId, (event) => onEvent(event as OutputEvent), signal)) as Artifact,
-  /** Change one section (or all) of the latest version as instructed: the next version. */
-  reviseOutputStream: async (baseId: string, artifactId: string, payload: ReviseOutputRequest, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal): Promise<Artifact> =>
-    (await streamOutput(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/revise/stream`, { method: "POST", body: JSON.stringify(payload) }, workspaceId, (event) => onEvent(event as OutputEvent), signal)) as Artifact,
   /** Send a message to the Artifacts agent and hear it work; resolves with how the turn ended (a question, an answer, a saved version, a reply or a pause). */
   artifactTurnStream: (baseId: string, conversationId: string, payload: ArtifactTurnInput, workspaceId: string, onEvent: (event: ArtifactTurnEvent) => void, signal?: AbortSignal): Promise<ArtifactTurnOut> =>
     streamTurn(`${outputsPath(baseId)}/artifact-conversations/${encodeURIComponent(conversationId)}/messages/stream`, payload, workspaceId, onEvent, signal),

@@ -185,13 +185,6 @@ export function validateScene(root: unknown, blocks: SlideBlock[], scene?: Scene
   if (missing.length) return `Missing content blocks: ${missing.join(", ")}.`;
   return null;
 }
-const hashes = new Map<string, Promise<string>>();
-export function verifyScene(scene: SceneEnvelopeV1, body: string): Promise<boolean> {
-  const key = `${scene.sourceHash}\n${visibleMarkdown(body)}`;
-  let pending = hashes.get(key);
-  if (!pending) { pending = sourceHash(body); hashes.set(key, pending); if (hashes.size > 128) hashes.delete(hashes.keys().next().value as string); }
-  return pending.then((actual) => actual === scene.sourceHash);
-}
 const verifications = new Map<string, Promise<{ sourceValid: boolean; graphicsValid: boolean }>>();
 export function verifySceneEnvelope(scene: SceneEnvelope, body: string): Promise<{ sourceValid: boolean; graphicsValid: boolean }> {
   const key = `${scene.version}\n${scene.sourceHash}\n${scene.version === 2 ? scene.graphicsHash : ""}\n${visibleMarkdown(body, true)}`;

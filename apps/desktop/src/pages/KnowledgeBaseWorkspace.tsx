@@ -8,7 +8,6 @@ import { LibraryContents } from "../contents/LibraryContents";
 import { PopMenu } from "../contents/SectionMenu";
 import { LibraryGlyph } from "../design/LibraryGlyph";
 import { LibraryWorkspaceNavigation } from "../components/LibraryWorkspaceNavigation";
-import "../knowledge.css";
 import { OutputsPage } from "../outputs/OutputsPage";
 import { SessionWorkspace } from "./SessionWorkspace";
 

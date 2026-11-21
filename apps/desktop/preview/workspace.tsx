@@ -99,10 +99,6 @@ Object.assign(knowledgeApi, {
     return next;
   },
   editOutput: async (_base: string, id: string, request: { content: string }) => saveVersion(findArtifact(id), { content: request.content, origin: "edit" }),
-  reviseOutputStream: async (_base: string, id: string, request: { instruction: string; conversationId?: string; conversationTitle?: string; clientRequestId: string }) => {
-    const original = findArtifact(id);
-    return saveVersion(original, { content: `${original.content}\n\n> 示例修订：${request.instruction}`, origin: "revise", conversationId: request.conversationId ?? original.conversationId ?? null, conversationTitle: request.conversationTitle ?? original.conversationTitle ?? null, clientRequestId: request.clientRequestId, request: request.instruction });
-  },
   checkOutput: async (_base: string, id: string) => findArtifact(id),
   createSession: async (_base: string, request: { focusChapterId?: string | null; selectedSourceIds: string[] }) => {
     const session: KnowledgeSession = { id: crypto.randomUUID(), knowledgeBaseId: base.id, title: "New conversation", summary: "", focusChapterId: request.focusChapterId ?? null, selectedSourceIds: request.selectedSourceIds, pinned: false, archived: false, parentSessionId: null, branchedFromMessageId: null, messageCount: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), messages: [] };

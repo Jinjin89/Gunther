@@ -24,7 +24,6 @@ const TRAY_ID: &str = "gunther-status";
 const MENU_STATUS: &str = "capture-status";
 pub const MENU_OPEN_CAPTURE: &str = "open-capture";
 pub const MENU_NEW_RECORDING: &str = "new-recording";
-const MENU_QUICK_NOTE: &str = "quick-note";
 const MENU_PAUSE_RESUME: &str = "pause-resume-recording";
 const MENU_MARK: &str = "mark-recording";
 const MENU_FINISH: &str = "finish-recording";
@@ -207,7 +206,6 @@ enum MenuEntry {
 enum MenuAction {
     OpenCapture,
     NewRecording,
-    QuickNote,
     ShowCapture,
     Pause,
     Resume,
@@ -465,7 +463,6 @@ fn menu_action(id: &str, status: &CaptureStatus) -> MenuAction {
     match id {
         MENU_OPEN_CAPTURE => MenuAction::OpenCapture,
         MENU_NEW_RECORDING => MenuAction::NewRecording,
-        MENU_QUICK_NOTE => MenuAction::QuickNote,
         MENU_SHOW_CAPTURE => MenuAction::ShowCapture,
         MENU_PAUSE_RESUME if phase == "paused" => MenuAction::Resume,
         MENU_PAUSE_RESUME if phase == "recording" => MenuAction::Pause,
@@ -642,14 +639,6 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
                 kind: Some(CaptureKind::Recording),
                 recording_context: Some(RecordingContext::Lecture),
                 source: Some("menu-new-recording".into()),
-                ..Default::default()
-            },
-        ),
-        MenuAction::QuickNote => open_from_tray(
-            app,
-            CaptureLaunchRequest {
-                kind: Some(CaptureKind::Note),
-                source: Some("menu-quick-note".into()),
                 ..Default::default()
             },
         ),
