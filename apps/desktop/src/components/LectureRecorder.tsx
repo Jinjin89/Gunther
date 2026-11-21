@@ -502,10 +502,8 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   const sentPcmRef = useRef<PendingAudio[]>([]);
   const segmentsRef = useRef<TranscriptState>(emptyTranscript());
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  // The recording clock: milliseconds of microphone audio captured since the recording began
-  // (pauses excluded), counted at the microphone's own rate so it keeps step with the saved
-  // file, plus where an earlier part of a resumed recording ended.
-  const capturedMsRef = useRef(0);
+  // Count emitted PCM samples for the live clock, with pauses excluded.
+  const capturedPcmSamplesRef = useRef(0);
   // Source samples captured since the recording began: the 16 kHz length of each block follows
   // from it, so the bytes sent always add up to the recording clock (no drift from rounding).
   const capturedSamplesRef = useRef(0);
@@ -693,7 +691,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     setTranscript(text);
   }, []);
 
-  const currentClockMs = () => clockBaseMsRef.current + Math.round(capturedMsRef.current);
+  const currentClockMs = () => clockBaseMsRef.current + Math.floor(capturedPcmSamplesRef.current * 1_000 / LIVE_RATE);
 
   // Timer callbacks can be throttled while the window is hidden. Sample time is
   // also the transcript clock, so delayed UI ticks must read it rather than count ticks.
@@ -1259,7 +1257,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     clockBaseMsRef.current = resumableSession
       ? Math.max(seconds, resumableSession.durationSeconds) * 1_000
       : 0;
-    capturedMsRef.current = 0;
+    capturedPcmSamplesRef.current = 0;
     capturedSamplesRef.current = 0;
     transcriptWorkRef.current.abort();
     transcriptWorkRef.current = new AbortController();
@@ -1488,7 +1486,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
         const startSample = capturedSamplesRef.current;
         const length = pcm16Length(channel.length, audioContext.sampleRate, LIVE_RATE, startSample);
         capturedSamplesRef.current += channel.length;
-        capturedMsRef.current += (channel.length * 1_000) / audioContext.sampleRate;
+        capturedPcmSamplesRef.current += length;
         if (!transcriptionEnabledRef.current) return;
         const item: PendingAudio = {
           audio: encodePcm16(channel, audioContext.sampleRate, LIVE_RATE, startSample),

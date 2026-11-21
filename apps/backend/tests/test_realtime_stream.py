@@ -319,14 +319,15 @@ def test_24_khz_stream_matches_the_mobile_v2_event_fixture(
     ready = mobile_live_v2["ready"]
     chunks = mobile_live_v2["chunks"]
     rate = mobile_live_v2["sample_rate"]
-    url = f"/api/recordings/live?protocol=2&sample_rate={rate}&offset_ms={chunks[0]['offset_ms']}"
+    first_offset = chunks[0]["offset_ms"]
+    url = f"/api/recordings/live?protocol=2&sample_rate={rate}&offset_ms={first_offset - 100}"
     with (
         make_app(tmp_path, server, ready["model"]) as client,
         client.websocket_connect(url, headers=SIDECAR) as socket,
     ):
         assert socket.receive_json() == ready
         ids: dict[str, str] = {}
-        for chunk in chunks:
+        for index, chunk in enumerate(chunks):
             socket.send_json(
                 {
                     "type": "input_audio_buffer.append",
@@ -334,6 +335,11 @@ def test_24_khz_stream_matches_the_mobile_v2_event_fixture(
                     "offset_ms": chunk["offset_ms"],
                 }
             )
+            if index == 0:
+                assert socket.receive_json() == {
+                    "type": "transcript.gap", "reason": "missing",
+                    "start_ms": first_offset - 100, "end_ms": first_offset,
+                }
             for expected in chunk["events"]:
                 actual = socket.receive_json()
                 if "id" in actual:
@@ -342,33 +348,27 @@ def test_24_khz_stream_matches_the_mobile_v2_event_fixture(
         socket.send_json({"type": "input_audio_buffer.commit"})
         assert socket.receive_json() == mobile_live_v2["commit"]
     assert len(server.real_tasks()) == 2
+    for task, chunk in zip(server.real_tasks(), chunks, strict=True):
+        # Mobile sends 24 kHz and the provider hears 16 kHz, within the resampler tail.
+        assert abs(task["bytes"] - chunk["duration_ms"] * BYTES_PER_MS) <= BYTES_PER_MS
 
 
-def test_a_commit_with_nothing_to_finish_is_flushed_at_once_and_v1_hears_nothing(
-    tmp_path: Path, fake
-) -> None:
+def test_a_commit_with_nothing_to_finish_is_flushed_at_once(tmp_path: Path, fake) -> None:
     server = fake()
     app = make_app(tmp_path, server, "qwen-audio-3.1-asr-flash")
-    with app as client:
-        with client.websocket_connect(V2.format(offset=5_000), headers=SIDECAR) as socket:
-            socket.receive_json()
-            socket.send_json({"type": "input_audio_buffer.commit"})
-            assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": 5_000}
-        with client.websocket_connect("/api/recordings/live", headers=SIDECAR) as socket:
-            socket.receive_json()
-            socket.send_json({"type": "input_audio_buffer.commit"})
-            socket.send_json({"type": "input_audio_buffer.append", "audio": audio(600, 24_000)})
-            socket.send_json({"type": "input_audio_buffer.commit"})
-            # Only the final sentence comes back: v1 never sees ``transcript.flushed``.
-            assert socket.receive_json()["type"] == (
-                "conversation.item.input_audio_transcription.completed"
-            )
+    with (
+        app as client,
+        client.websocket_connect(V2.format(offset=5_000), headers=SIDECAR) as socket,
+    ):
+        socket.receive_json()
+        socket.send_json({"type": "input_audio_buffer.commit"})
+        assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": 5_000}
 
 
 def test_flushed_waits_for_the_task_to_end_even_when_it_has_to_be_given_up(
     tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(realtime, "TASK_END_TIMEOUT", 0.3)
+    monkeypatch.setattr(realtime, "TASK_END_TIMEOUT", 0.6)
     server = fake(finals=False, never_finish=True)
     app = make_app(tmp_path, server, "qwen-audio-3.1-asr-flash")
     with (
@@ -380,9 +380,18 @@ def test_flushed_waits_for_the_task_to_end_even_when_it_has_to_be_given_up(
         socket.receive_json()  # the draft after the 2nd frame
         started = time.monotonic()
         socket.send_json({"type": "input_audio_buffer.commit"})
+        wait_for(lambda: server.real_tasks()[0]["finished"])
+        # Resume and stop while the prior pause is still awaiting the upstream reply.
+        socket.send_json(
+            {"type": "input_audio_buffer.append", "audio": audio(600), "offset_ms": 400}
+        )
+        socket.send_json({"type": "input_audio_buffer.commit"})
         flushed = socket.receive_json()
         assert flushed == {"type": "transcript.flushed", "until_ms": 400}
         assert time.monotonic() - started >= 0.25
+        draft = socket.receive_json()
+        assert draft["type"] == "transcript.piece" and draft["start_ms"] == 400
+        assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": 1_000}
 
 
 def test_the_fallback_sends_v2_clients_final_pieces_on_the_recording_clock(
@@ -529,27 +538,6 @@ def test_audio_dropped_from_the_kept_copy_is_a_gap_when_a_task_has_to_start_agai
     ]
 
 
-def test_v1_clients_get_one_completed_event_per_final_sentence(tmp_path: Path, fake) -> None:
-    server = fake()
-    app = make_app(tmp_path, server, "qwen-audio-3.1-asr-flash")
-    with app as client, client.websocket_connect("/api/recordings/live", headers=SIDECAR) as socket:
-        assert socket.receive_json()["type"] == "service.ready"
-        # One second at the old 24 kHz.
-        socket.send_json({"type": "input_audio_buffer.append", "audio": audio(1_000, 24_000)})
-        socket.send_json({"type": "input_audio_buffer.commit"})
-        event = socket.receive_json()
-        assert event == {
-            "type": "conversation.item.input_audio_transcription.completed",
-            "item_id": "qwen-1",
-            "transcript": "We'll use it.",
-            "provider": "qwen",
-            "start_seconds": 0.0,
-        }
-        wait_for(lambda: server.real_tasks()[0]["finished"])
-    # 24 kHz in, 16 kHz out: two thirds of the bytes, give or take one frame.
-    assert abs(server.real_tasks()[0]["bytes"] - 32_000) <= FRAME
-
-
 def test_run_task_carries_the_title_and_what_was_said_before_each_within_400_chars(
     tmp_path: Path, fake
 ) -> None:
@@ -599,7 +587,7 @@ def test_a_model_with_no_live_version_falls_back_to_uploaded_pieces(
         socket.send_json({"type": "input_audio_buffer.append", "audio": audio(1_000, 24_000)})
         socket.send_json({"type": "input_audio_buffer.commit"})
         event = socket.receive_json()
-    assert event["transcript"] == "piece"
+    assert event["type"] == "transcript.piece" and event["text"] == "piece"
     assert uploads[0]["model"] == "qwen-audio-3.1-asr-flash"
 
 
@@ -627,7 +615,7 @@ def test_a_saved_streaming_id_uploads_without_the_suffix(
             assert socket.receive_json()["stream"] is False
             socket.send_json({"type": "input_audio_buffer.append", "audio": audio(500, 24_000)})
             socket.send_json({"type": "input_audio_buffer.commit"})
-            assert socket.receive_json()["transcript"] == "hello"
+            assert socket.receive_json()["text"] == "hello"
         # Recording still goes live, on the same id.
         with client.websocket_connect("/api/recordings/live", headers=SIDECAR) as socket:
             assert socket.receive_json()["live"] == "stream"
@@ -762,7 +750,8 @@ def test_silence_answered_with_an_empty_400_is_empty_text_but_other_400s_are_err
             socket.receive_json()
             socket.send_json({"type": "input_audio_buffer.append", "audio": silence})
             socket.send_json({"type": "input_audio_buffer.commit"})
-            # Empty text sends nothing; a real error is told to the client.
+            # An empty result emits no piece. A provider error is still reported.
+            assert socket.receive_json()["type"] == "transcript.flushed"
             body["text"] = '{"message": "boom"}'
             socket.send_json({"type": "input_audio_buffer.append", "audio": silence})
             socket.send_json({"type": "input_audio_buffer.commit"})

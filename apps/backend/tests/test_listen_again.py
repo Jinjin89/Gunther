@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from gunther import listen_copy, realtime
 from gunther.config import Settings
@@ -198,7 +199,7 @@ def test_the_segmented_path_keeps_a_copy_at_the_right_offsets_and_says_it_can_ch
         assert audio[1000 * 32 : 4000 * 32] == bytes(3000 * 32)
 
 
-def test_reconnecting_24_khz_client_keeps_16_khz_audio_on_the_recording_clock(
+def test_reconnect_with_a_stale_url_preserves_the_stamped_audio_and_flush_clock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mobile_live_v2: dict[str, Any]
 ) -> None:
     answer_text(monkeypatch)
@@ -210,17 +211,27 @@ def test_reconnecting_24_khz_client_keeps_16_khz_audio_on_the_recording_clock(
         for chunk in mobile_live_v2["chunks"]:
             start, duration = chunk["offset_ms"], chunk["duration_ms"]
             samples = struct.pack("<h", 500) * (rate * duration // 1000)
+            # The retained buffer advanced while the connection was opening.
+            url_offset = start - 100
             with client.websocket_connect(
-                live_url(recording_id, rate, offset=start), headers=SIDECAR
+                live_url(recording_id, rate, offset=url_offset), headers=SIDECAR
             ) as socket:
                 assert socket.receive_json()["check_again"] is True
-                socket.send_json({"type": "input_audio_buffer.append", "audio": pcm_b64(samples)})
+                socket.send_json({
+                    "type": "input_audio_buffer.append",
+                    "audio": pcm_b64(samples),
+                    "offset_ms": start,
+                })
                 socket.send_json({"type": "input_audio_buffer.commit"})
+                assert socket.receive_json() == {
+                    "type": "transcript.gap", "start_ms": url_offset,
+                    "end_ms": start, "reason": "missing",
+                }
                 piece, flushed = socket.receive_json(), socket.receive_json()
                 assert piece["type"] == "transcript.piece" and piece["start_ms"] == start
                 assert flushed["type"] == "transcript.flushed"
                 end = start + duration
-                assert flushed["until_ms"] in (end - 1, end)
+                assert flushed["until_ms"] == end
                 covered.append((start, end))
     directory = tmp_path / "recordings"
     (_, first_end), (second_start, _) = covered
@@ -231,6 +242,57 @@ def test_reconnecting_24_khz_client_keeps_16_khz_audio_on_the_recording_clock(
         pcm, _ = listen_copy.read_range(directory, recording_id, start, end)
         # Compare away from filter startup and the sub-millisecond tail.
         assert pcm[100 * BYTES_PER_MS : -BYTES_PER_MS] == tone(end - start - 101, 500)
+
+
+def test_fractional_desktop_reconnect_keeps_contiguous_samples_and_a_real_gap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answer_text(monkeypatch)
+    first, last = 4, 22
+
+    def emitted(block: int) -> int:
+        return round(block * 4096 * 16_000 / 44_100)
+
+    frames = [
+        struct.pack("<h", block) * (emitted(block + 1) - emitted(block))
+        for block in range(first, last)
+    ]
+    contiguous = b"".join(frames)
+    url_offset = emitted(first) // 16
+    start = round(first * 4096 * 1000 / 44_100)
+    end = start + len(contiguous) // BYTES_PER_MS
+    after_gap = end + 100
+    with TestClient(create_app(settings_for(tmp_path))) as client:
+        with_provider(client)
+        recording_id = start_recording(client)
+        with client.websocket_connect(live_url(recording_id), headers=SIDECAR) as socket:
+            socket.receive_json()
+            prior = pcm_b64(bytes(2 * emitted(first)))
+            socket.send_json({"type": "input_audio_buffer.append", "audio": prior})
+            socket.send_json({"type": "input_audio_buffer.commit"})
+            while socket.receive_json()["type"] != "transcript.flushed":
+                pass
+        with client.websocket_connect(
+            live_url(recording_id, offset=url_offset), headers=SIDECAR
+        ) as socket:
+            socket.receive_json()
+            # Rounded microphone timestamps can differ from the emitted sample clock.
+            stamps = [round(block * 4096 * 1000 / 44_100) for block in range(first, last)]
+            for stamp, pcm in zip([*stamps, after_gap], [*frames, tone(90)], strict=True):
+                socket.send_json(
+                    {"type": "input_audio_buffer.append", "offset_ms": stamp, "audio": pcm_b64(pcm)}
+                )
+            socket.send_json({"type": "input_audio_buffer.commit"})
+            gaps = []
+            while (event := socket.receive_json())["type"] != "transcript.flushed":
+                if event["type"] == "transcript.gap":
+                    gaps.append((event["start_ms"], event["end_ms"]))
+    assert gaps == [(url_offset, start), (end, after_gap)]
+    assert event["until_ms"] == after_gap + 90
+    path, _ = listen_copy.copy_paths(tmp_path / "recordings", recording_id)
+    assert path.read_bytes()[start * BYTES_PER_MS : after_gap * BYTES_PER_MS] == (
+        contiguous + bytes((after_gap - start) * BYTES_PER_MS - len(contiguous))
+    )
 
 
 def test_no_copy_and_no_checking_without_a_capturing_recording_or_with_the_switch_off(
@@ -292,13 +354,19 @@ def test_no_copy_and_no_checking_without_a_capturing_recording_or_with_the_switc
         )
 
 
-def test_a_v1_client_gets_the_same_ready_as_before(tmp_path: Path, monkeypatch) -> None:
+def test_the_socket_defaults_to_v2_and_rejects_v1(tmp_path: Path, monkeypatch) -> None:
     answer_text(monkeypatch)
     with TestClient(create_app(settings_for(tmp_path))) as client:
         with_provider(client)
         with client.websocket_connect("/api/recordings/live", headers=SIDECAR) as socket:
             ready = socket.receive_json()
-        assert "check_again" not in ready and "protocol" not in ready
+        assert ready["protocol"] == 2 and ready["check_again"] is False
+        with (
+            pytest.raises(WebSocketDisconnect) as rejected,
+            client.websocket_connect("/api/recordings/live?protocol=1", headers=SIDECAR),
+        ):
+            pass
+        assert rejected.value.code == 1008
 
 
 def test_the_live_stream_keeps_a_copy_too(tmp_path: Path, fake) -> None:  # noqa: F811

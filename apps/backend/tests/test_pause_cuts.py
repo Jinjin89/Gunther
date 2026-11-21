@@ -119,9 +119,8 @@ def until(socket: Any, kind: str) -> list[dict[str, Any]]:
             return seen
 
 
-def url(offset: int = 0, protocol: int = 2, rate: int = 16_000, extra: str = "") -> str:
-    protocol_part = f"&protocol={protocol}&offset_ms={offset}" if protocol >= 2 else ""
-    return f"/api/recordings/live?sample_rate={rate}{protocol_part}{extra}"
+def url(offset: int = 0, rate: int = 16_000, extra: str = "") -> str:
+    return f"/api/recordings/live?sample_rate={rate}&protocol=2&offset_ms={offset}{extra}"
 
 
 def test_v2_finals_are_cut_at_pauses_on_the_recording_clock(
@@ -172,25 +171,19 @@ def test_the_commit_sends_what_is_still_being_heard_before_flushed(
     assert events[0]["start_ms"] == 0 and events[0]["end_ms"] == 2000
 
 
-def test_v1_gets_the_same_events_as_before(
+def test_final_piece_keeps_its_position_after_leading_silence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pauses: None
 ) -> None:
     Provider(monkeypatch)
     with TestClient(create_app(settings_for(tmp_path))) as client:
         use(client, "compatible")
-        with client.websocket_connect(url(protocol=1), headers=SIDECAR) as socket:
-            ready = socket.receive_json()
-            assert "protocol" not in ready and "check_again" not in ready
+        with client.websocket_connect(url(), headers=SIDECAR) as socket:
+            socket.receive_json()
             talk(socket, silence(500), tone(2000), silence(800))
             event = socket.receive_json()
-    assert event == {
-        "type": "conversation.item.input_audio_transcription.completed",
-        "item_id": "compatible-1",
-        "transcript": "text 1",
-        "provider": "compatible",
-        "start_seconds": event["start_seconds"],
-    }
-    assert abs(event["start_seconds"] - 0.3) < 0.05
+    assert event["type"] == "transcript.piece" and event["final"] is True
+    assert event["text"] == "text 1"
+    assert abs(event["start_ms"] - 300) < 50
 
 
 def test_audio_goes_up_as_16_khz_whatever_the_client_sends(
@@ -215,11 +208,11 @@ def test_audio_goes_up_as_16_khz_whatever_the_client_sends(
     assert piece["start_ms"] == start
     # The resampling filter can keep a sub-millisecond tail.
     assert piece["end_ms"] in (start + duration - 1, start + duration)
-    assert flushed == {"type": "transcript.flushed", "until_ms": piece["end_ms"]}
+    assert flushed == {"type": "transcript.flushed", "until_ms": start + duration}
     assert Provider.wav_rate(provider.uploads()[0]) == 16_000
 
 
-def test_only_sensevoice_gets_drafts_and_only_a_v2_client(
+def test_only_sensevoice_gets_drafts_in_segmented_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pauses: None
 ) -> None:
     provider = Provider(monkeypatch)
@@ -240,12 +233,6 @@ def test_only_sensevoice_gets_drafts_and_only_a_v2_client(
         assert all(e["final"] or e["id"] == draft["id"] for e in events if "final" in e)
         # SenseVoice cannot use what was said before: no prompt, drafts or finals.
         assert all(b'name="prompt"' not in r.read() for r in provider.uploads())
-
-        with client.websocket_connect(url(protocol=1), headers=SIDECAR) as socket:
-            socket.receive_json()
-            talk(socket, tone(6000), silence(800))
-            seen = [socket.receive_json()]
-        assert seen[0]["type"] == "conversation.item.input_audio_transcription.completed"
 
         use(client, "compatible")
         with client.websocket_connect(url(), headers=SIDECAR) as socket:

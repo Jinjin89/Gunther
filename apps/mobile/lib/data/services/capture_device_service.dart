@@ -52,6 +52,9 @@ class PluginCaptureAudioRecorder implements CaptureAudioRecorder {
     : _recorder = recorder ?? AudioRecorder();
 
   final AudioRecorder _recorder;
+  StreamSubscription<RecordState>? _states;
+  bool _pauseAcknowledged = false;
+  Completer<void>? _pendingPause;
 
   @override
   Future<bool> hasPermission() => _recorder.hasPermission();
@@ -61,20 +64,57 @@ class PluginCaptureAudioRecorder implements CaptureAudioRecorder {
       _recorder.isEncoderSupported(encoder);
 
   @override
-  Future<Stream<Uint8List>> startStream(RecordConfig config) =>
-      _recorder.startStream(config);
+  Future<Stream<Uint8List>> startStream(RecordConfig config) {
+    _pauseAcknowledged = false;
+    _states ??= _recorder.onStateChanged().listen(
+      (state) {
+        _pauseAcknowledged = state == RecordState.pause;
+        final pending = _pendingPause;
+        if (_pauseAcknowledged && pending != null && !pending.isCompleted) {
+          pending.complete();
+        }
+      },
+      onError: (Object error, StackTrace stack) {
+        final pending = _pendingPause;
+        if (pending != null && !pending.isCompleted) {
+          pending.completeError(error, stack);
+        }
+      },
+    );
+    return _recorder.startStream(config);
+  }
 
   @override
   Future<String?> stop() => _recorder.stop();
 
   @override
-  Future<void> pause() => _recorder.pause();
+  Future<void> pause() async {
+    if (_pauseAcknowledged) return;
+    // The native flag can be set by an interruption before the last frame is sent.
+    final paused = _pendingPause = Completer<void>();
+    try {
+      await Future.wait([
+        _recorder.isPaused().then((requested) async {
+          if (!requested && !_pauseAcknowledged) await _recorder.pause();
+        }),
+        paused.future.timeout(const Duration(seconds: 5)),
+      ], eagerError: true);
+    } finally {
+      _pendingPause = null;
+    }
+  }
 
   @override
-  Future<void> resume() => _recorder.resume();
+  Future<void> resume() {
+    _pauseAcknowledged = false;
+    return _recorder.resume();
+  }
 
   @override
-  Future<void> dispose() => _recorder.dispose();
+  Future<void> dispose() async {
+    await _states?.cancel();
+    await _recorder.dispose();
+  }
 }
 
 class CaptureDeviceException implements Exception {
@@ -107,6 +147,7 @@ class FlutterCaptureDevice implements CaptureDevice, LivePcmCaptureDevice {
   StreamController<Uint8List>? _persistedPcmController;
   StreamSubscription<Uint8List>? _sourceSubscription;
   Completer<void>? _streamDone;
+  Future<void> _pcmWrites = Future<void>.value();
   Object? _streamError;
   StackTrace? _streamErrorStack;
 
@@ -194,7 +235,7 @@ class FlutterCaptureDevice implements CaptureDevice, LivePcmCaptureDevice {
           streamBufferSize: 4800,
         ),
       );
-      final controller = StreamController<Uint8List>.broadcast();
+      final controller = StreamController<Uint8List>.broadcast(sync: true);
       final done = Completer<void>();
       _recordingPath = writer.path;
       _wavWriter = writer;
@@ -202,29 +243,43 @@ class FlutterCaptureDevice implements CaptureDevice, LivePcmCaptureDevice {
       _streamDone = done;
       _streamError = null;
       _streamErrorStack = null;
-      _sourceSubscription = source
-          .asyncMap(writer.append)
-          .listen(
-            (accepted) {
-              if (accepted.isNotEmpty && !controller.isClosed) {
-                // These bytes are emitted only after their local file append has
-                // completed. A slow or absent network can never block the writer.
-                controller.add(accepted);
-              }
-            },
-            onError: (Object exception, StackTrace stackTrace) {
-              _streamError = exception;
-              _streamErrorStack = stackTrace;
-              if (!controller.isClosed) {
-                controller.addError(exception, stackTrace);
-              }
+      _pcmWrites = Future<void>.value();
+      void fail(Object exception, StackTrace stack) {
+        if (_streamError != null) return;
+        _streamError = exception;
+        _streamErrorStack = stack;
+        unawaited(_sourceSubscription?.cancel());
+        if (!controller.isClosed) controller.addError(exception, stack);
+        if (!done.isCompleted) done.complete();
+      }
+
+      // Read PCM into the write queue immediately. Pausing the subscription during a
+      // write would leave already captured chunks outside the Pause boundary.
+      _sourceSubscription = source.listen(
+        (chunk) {
+          _pcmWrites = _pcmWrites
+              .then((_) async {
+                if (_streamError == null) {
+                  final accepted = await writer.append(chunk);
+                  if (accepted.isNotEmpty && !controller.isClosed) {
+                    controller.add(accepted);
+                  }
+                }
+              })
+              .catchError(fail);
+        },
+        onError: (Object exception, StackTrace stack) {
+          _pcmWrites = _pcmWrites.then((_) => fail(exception, stack));
+        },
+        onDone: () {
+          unawaited(
+            _pcmWrites.then((_) {
               if (!done.isCompleted) done.complete();
-            },
-            onDone: () {
-              if (!done.isCompleted) done.complete();
-            },
-            cancelOnError: true,
+            }),
           );
+        },
+        cancelOnError: true,
+      );
       return writer.path;
     } on Object {
       await writer.finish();
@@ -238,7 +293,12 @@ class FlutterCaptureDevice implements CaptureDevice, LivePcmCaptureDevice {
   }
 
   @override
-  Future<void> pauseRecording() => _recorder.pause();
+  Future<void> pauseRecording() async {
+    await _recorder.pause();
+    // Let the PCM stream deliver events queued before the platform pause.
+    await Future<void>.delayed(Duration.zero);
+    await _pcmWrites;
+  }
 
   @override
   Future<void> resumeRecording() => _recorder.resume();
@@ -262,6 +322,7 @@ class FlutterCaptureDevice implements CaptureDevice, LivePcmCaptureDevice {
       stopError = exception;
       stopStack = stackTrace;
       await _sourceSubscription?.cancel();
+      await _pcmWrites;
     }
     final streamError = _streamError;
     final streamErrorStack = _streamErrorStack;

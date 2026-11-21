@@ -242,6 +242,32 @@ describe("saving a recording independently of transcript processing", () => {
     expect(onCaptured.mock.calls[0]?.[2]).toContain("My pasted transcript.");
   });
 
+  it("stamps 44.1 kHz audio from the emitted samples across reconnect", async () => {
+    const { socket } = await startCapture(false, false);
+    const audio = RecordingAudioContext.latest;
+    audio.sampleRate = 44_100;
+    const captureBlock = () => audio.capture(4096 / audio.sampleRate);
+    act(captureBlock);
+    piece(socket, "heard", 0, 92, "First block.");
+    act(() => {
+      socket.close();
+      captureBlock();
+      vi.advanceTimersByTime(750);
+    });
+    const resumed = RecordingSocket.latest;
+    expect(resumed).not.toBe(socket);
+    act(() => {
+      resumed.onopen?.();
+      captureBlock();
+      captureBlock();
+    });
+    expect(resumed.send.mock.calls.map(([frame]) => JSON.parse(frame).offset_ms)).toEqual([92, 185, 278]);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+      resumed.receive({ type: "transcript.flushed", until_ms: 370 });
+    });
+  });
+
   it("uses audio time after delayed timer ticks and snapshots the last samples on Pause, Mark and Finish", async () => {
     vi.spyOn(pcm, "encodePcm16").mockReturnValue("audio");
     const { onCaptured } = await startCapture(false, false);

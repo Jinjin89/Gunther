@@ -46,6 +46,47 @@ void main() {
   });
 
   test(
+    'Pause waits for an interruption acknowledgement and drains the last frame',
+    () async {
+      final root = await Directory.systemTemp.createTemp('gunther-capture-');
+      addTearDown(() => root.delete(recursive: true));
+      final recorder = FakeCaptureAudioRecorder();
+      final device = FlutterCaptureDevice(
+        recorder: PluginCaptureAudioRecorder(recorder),
+        documentsDirectoryProvider: () async => root,
+      );
+      addTearDown(device.dispose);
+      final path = await device.startRecording('Pause boundary');
+      expect(recorder.states.hasListener, isTrue);
+      final first = List<int>.filled(4800, 1);
+      final queued = List<int>.filled(4800, 2);
+      final published = <int>[];
+      final stream = device.livePcmStream!;
+      final subscription = stream.listen(published.addAll);
+      addTearDown(subscription.cancel);
+      final firstPublished = stream.first;
+      recorder.add(first);
+      expect(await firstPublished, first);
+      recorder.pauseRequested = true;
+      var paused = false;
+      final pause = device.pauseRecording().then((_) => paused = true);
+      await recorder.waitForEvents();
+      expect(paused, isFalse);
+
+      recorder.add(queued);
+      recorder.states.add(RecordState.pause);
+      await pause;
+      await device.pauseRecording();
+      expect(recorder.pauseCalls, 0);
+      expect(published, [...first, ...queued]);
+      expect(
+        (await File(path).readAsBytes()).sublist(PcmWavFile.headerBytes),
+        published,
+      );
+    },
+  );
+
+  test(
     'a transcription listener is optional and never gates local audio',
     () async {
       final root = await Directory.systemTemp.createTemp('gunther-capture-');
@@ -76,6 +117,7 @@ void main() {
     );
     final transcription = LiveTranscriptionService(
       baseUri: Uri.parse('https://offline.example/api/'),
+      maxBufferedBytes: 4,
       reconnectDelay: (_) => const Duration(hours: 1),
       connector: (_, _) async => throw const SocketException('STT offline'),
     );
@@ -88,13 +130,25 @@ void main() {
     await expectLater(transcription.connect(), completes);
     recorder.add([11, 12, 13, 14]);
     await recorder.waitForEvents();
+    recorder.add([15, 16, 17, 18]);
+    await recorder.waitForEvents();
 
     final asset = await device.stopRecording();
     final bytes = await File(path).readAsBytes();
     expect(asset.path, path);
-    expect(bytes.sublist(PcmWavFile.headerBytes), [11, 12, 13, 14]);
-    expect(ByteData.sublistView(bytes).getUint32(40, Endian.little), 4);
+    expect(bytes.sublist(PcmWavFile.headerBytes), [
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+    ]);
+    expect(ByteData.sublistView(bytes).getUint32(40, Endian.little), 8);
     expect(transcription.bufferedBytes, 4);
+    expect(transcription.droppedBytes, 4);
   });
 
   test(
@@ -149,13 +203,17 @@ void main() {
   });
 }
 
-class FakeCaptureAudioRecorder implements CaptureAudioRecorder {
+class FakeCaptureAudioRecorder extends Fake
+    implements CaptureAudioRecorder, AudioRecorder {
   final StreamController<Uint8List> _controller =
       StreamController<Uint8List>.broadcast();
+  final states = StreamController<RecordState>.broadcast();
   bool permissionGranted = true;
   bool encoderSupported = true;
   bool disposed = false;
   RecordConfig? config;
+  bool pauseRequested = false;
+  int pauseCalls = 0;
 
   void add(List<int> bytes) => _controller.add(Uint8List.fromList(bytes));
 
@@ -167,7 +225,7 @@ class FakeCaptureAudioRecorder implements CaptureAudioRecorder {
   }
 
   @override
-  Future<bool> hasPermission() async => permissionGranted;
+  Future<bool> hasPermission({bool request = true}) async => permissionGranted;
 
   @override
   Future<bool> isEncoderSupported(AudioEncoder encoder) async =>
@@ -186,7 +244,16 @@ class FakeCaptureAudioRecorder implements CaptureAudioRecorder {
   }
 
   @override
-  Future<void> pause() async {}
+  Future<void> pause() async {
+    pauseCalls += 1;
+    pauseRequested = true;
+  }
+
+  @override
+  Future<bool> isPaused() async => pauseRequested;
+
+  @override
+  Stream<RecordState> onStateChanged() => states.stream;
 
   @override
   Future<void> resume() async {}
@@ -195,5 +262,6 @@ class FakeCaptureAudioRecorder implements CaptureAudioRecorder {
   Future<void> dispose() async {
     disposed = true;
     if (!_controller.isClosed) await _controller.close();
+    if (!states.isClosed) await states.close();
   }
 }

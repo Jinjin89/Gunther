@@ -217,7 +217,7 @@ def test_ask_dictation_sends_the_whole_take_at_the_end(
             assert posted == []
             socket.send_json({"type": "input_audio_buffer.commit"})
             event = socket.receive_json()
-        assert event["transcript"] == "hello there"
+        assert event["type"] == "transcript.piece" and event["text"] == "hello there"
         assert len(posted) == 1
         assert str(posted[0].url) == "https://asr.example/v1/audio/transcriptions"
 

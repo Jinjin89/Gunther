@@ -8,6 +8,14 @@ import 'package:gunther_mobile/data/services/live_transcription_service.dart';
 
 import 'support/mobile_live_fixture.dart';
 
+const _bytesPerMs =
+    liveTranscriptionSampleRate * liveTranscriptionBytesPerSample ~/ 1000;
+const _ready = {
+  'type': 'service.ready',
+  'provider': 'sensevoice',
+  'model': 'local',
+};
+
 void main() {
   group('live transcription endpoint policy', () {
     test('maps secure and exact-loopback API bases without query tokens', () {
@@ -28,12 +36,12 @@ void main() {
 
       expect(
         secure.webSocketUri.toString(),
-        'wss://knowledge.example/api/recordings/live?context=Bioinformatics+lecture',
+        'wss://knowledge.example/api/recordings/live?context=Bioinformatics+lecture&protocol=2&sample_rate=24000&offset_ms=0',
       );
       expect(secure.webSocketUri.queryParameters, isNot(contains('token')));
       expect(
         ipv4.webSocketUri.toString(),
-        'ws://127.0.0.1:8787/api/recordings/live',
+        'ws://127.0.0.1:8787/api/recordings/live?protocol=2&sample_rate=24000&offset_ms=0',
       );
       expect(localhost.webSocketUri.scheme, 'ws');
       expect(ipv6.webSocketUri.scheme, 'ws');
@@ -84,31 +92,13 @@ void main() {
           clientMessages.add(decoded);
           if (decoded['type'] == 'input_audio_buffer.append') {
             if (!appendSeen.isCompleted) appendSeen.complete();
-            socket
-              ..add(
-                jsonEncode(<String, Object>{
-                  'type': 'conversation.item.input_audio_transcription.delta',
-                  'item_id': 'speech-1',
-                  'delta': 'Hello',
-                }),
-              )
-              ..add(
-                jsonEncode(<String, Object>{
-                  'type':
-                      'conversation.item.input_audio_transcription.completed',
-                  'item_id': 'speech-1',
-                  'transcript': 'Hello Gunther',
-                  'provider': 'sensevoice',
-                  'start_seconds': 1.25,
-                }),
-              )
-              ..add(
-                jsonEncode(<String, Object>{
-                  'type': 'service.error',
-                  'code': 'sensevoice_segment_failed',
-                  'message': 'One segment was missed.',
-                }),
-              );
+            socket.add(
+              jsonEncode({
+                'type': 'service.error',
+                'code': 'sensevoice_segment_failed',
+                'message': 'One segment was missed.',
+              }),
+            );
           } else if (decoded['type'] == 'input_audio_buffer.commit') {
             if (!commitSeen.isCompleted) commitSeen.complete();
           }
@@ -138,6 +128,9 @@ void main() {
         expect(request.uri.path, '/api/recordings/live');
         expect(request.uri.queryParameters, <String, String>{
           'context': 'Course recording',
+          'protocol': '2',
+          'sample_rate': '24000',
+          'offset_ms': '0',
         });
         expect(request.headers.value('X-Gunther-Token'), 'header-only-token');
         expect(request.uri.queryParameters, isNot(contains('token')));
@@ -147,15 +140,6 @@ void main() {
           3,
           4,
         ]);
-        expect(
-          events.whereType<LiveTranscriptionDeltaEvent>().single.delta,
-          'Hello',
-        );
-        final completed = events
-            .whereType<LiveTranscriptionCompletedEvent>()
-            .single;
-        expect(completed.transcript, 'Hello Gunther');
-        expect(completed.startSeconds, 1.25);
         expect(
           events.whereType<LiveTranscriptionErrorEvent>().single.code,
           'sensevoice_segment_failed',
@@ -169,7 +153,7 @@ void main() {
     },
   );
 
-  test('v2 wire frames keep 24 kHz audio and commit flowing', () async {
+  test('sends 24 kHz PCM and decodes the full v2 event trace', () async {
     final fixture = await loadMobileLiveV2();
     final socket = _FakeLiveTranscriptionSocket();
     final service = LiveTranscriptionService(
@@ -222,77 +206,219 @@ void main() {
       sent.take(2).map((message) => base64Decode(message['audio'] as String)),
       sentAudio,
     );
+    expect(sent.take(2).map((message) => message['offset_ms']), [0, 600]);
+    expect(
+      events
+          .map(
+            (event) => switch (event) {
+              LiveTranscriptionPieceEvent() => [
+                event.id,
+                event.text,
+                event.startMs,
+                event.endMs,
+                event.isFinal,
+              ],
+              LiveTranscriptionGapEvent() => [event.startMs, event.endMs],
+              LiveTranscriptionFlushedEvent() => [event.untilMs],
+              _ => null,
+            },
+          )
+          .nonNulls,
+      [
+        ['piece-1', "We'll use", 60000, null, false],
+        ['piece-1', "We'll use it.", 60000, 60300, true],
+        [60600, 75000],
+        [60600],
+        ['piece-2', "We'll use", 75000, null, false],
+        ['piece-2', "We'll use it.", 75000, 75300, true],
+        [75600],
+      ],
+    );
     expect(events.whereType<LiveTranscriptionErrorEvent>(), isEmpty);
   });
 
   test(
-    'bounds offline PCM and flushes it before commit after reconnect',
+    'Stop flush uses retained frame timestamps when the handshake outlives eviction',
     () async {
+      final initial = _FakeLiveTranscriptionSocket();
       final socket = _FakeLiveTranscriptionSocket();
+      final reconnect = Completer<LiveTranscriptionSocket>();
       var connections = 0;
       final requestedUris = <Uri>[];
       final requestedHeaders = <Map<String, Object>>[];
       final service = LiveTranscriptionService(
         baseUri: Uri.parse('https://knowledge.example/api/'),
         bearerToken: 'device-token',
-        maxBufferedBytes: 8,
+        maxBufferedBytes: 200 * _bytesPerMs,
         reconnectDelay: (_) => Duration.zero,
         connector: (uri, headers) async {
           requestedUris.add(uri);
           requestedHeaders.add(headers);
           connections += 1;
-          if (connections == 1) throw const SocketException('offline');
-          return socket;
+          return connections == 1 ? initial : reconnect.future;
         },
       );
       final events = <LiveTranscriptionEvent>[];
       final subscription = service.events.listen(events.add);
 
       try {
-        service.appendPcm(Uint8List.fromList(List<int>.generate(12, (i) => i)));
-        service.commit();
-        await expectLater(service.connect(), completes);
+        await service.connect();
+        initial.receive(_ready);
+        await _waitUntil(
+          () => service.state == LiveTranscriptionConnectionState.ready,
+        );
+        service.appendPcm(Uint8List(500 * _bytesPerMs));
+        final firstFlush = service.commit();
+        initial.flush(500);
+        expect(await firstFlush, isTrue);
+        await initial.dispose();
+        service.appendPcm(Uint8List(100 * _bytesPerMs));
         await _waitUntil(() => connections == 2);
-        socket.receive(<String, Object>{
-          'type': 'service.ready',
-          'provider': 'sensevoice',
-          'model': 'local',
-        });
-        await _waitUntil(() => socket.sent.length == 2);
+
+        final pausedAudio = Uint8List.fromList(
+          List.generate(100 * _bytesPerMs, (index) => index % 256),
+        );
+        final resumedAudio = Uint8List(100 * _bytesPerMs);
+        service.appendPcm(pausedAudio);
+        final pauseFlush = service.commit();
+        service.appendPcm(resumedAudio);
+        expect(await pauseFlush, isFalse);
+        final stopFlush = service.commit();
+        bool? stopped;
+        unawaited(stopFlush.then((value) => stopped = value));
+        reconnect.complete(socket);
+        await _waitUntil(
+          () => service.state == LiveTranscriptionConnectionState.connected,
+        );
+        socket.receive(_ready);
+        await _waitUntil(() => socket.sent.length == 4);
 
         expect(service.bufferedBytes, 0);
-        expect(service.droppedBytes, 4);
-        expect(requestedUris, everyElement(service.webSocketUri));
+        expect(service.droppedBytes, 100 * _bytesPerMs);
+        expect(requestedUris.map((uri) => uri.queryParameters['offset_ms']), [
+          '0',
+          '500',
+        ]);
         expect(
           requestedHeaders,
           everyElement(<String, Object>{
             HttpHeaders.authorizationHeader: 'Bearer device-token',
           }),
         );
-        final append = jsonDecode(socket.sent[0]) as Map<String, Object?>;
-        final commit = jsonDecode(socket.sent[1]) as Map<String, Object?>;
-        expect(base64Decode(append['audio']! as String), <int>[
-          4,
-          5,
-          6,
-          7,
-          8,
-          9,
-          10,
-          11,
+        final sent = socket.sent
+            .map((message) => jsonDecode(message) as Map)
+            .toList();
+        expect(sent.map((message) => message['type']), [
+          'input_audio_buffer.append',
+          'input_audio_buffer.commit',
+          'input_audio_buffer.append',
+          'input_audio_buffer.commit',
         ]);
-        expect(commit['type'], 'input_audio_buffer.commit');
+        expect(sent.map((message) => message['offset_ms']), [
+          600,
+          null,
+          700,
+          null,
+        ]);
+        expect(base64Decode(sent[0]['audio'] as String), pausedAudio);
+        expect(base64Decode(sent[2]['audio'] as String), resumedAudio);
         expect(
           events.whereType<LiveTranscriptionStatusEvent>().map(
             (event) => event.state,
           ),
           contains(LiveTranscriptionConnectionState.reconnecting),
         );
+        socket.flush(700);
+        await _waitUntil(
+          () =>
+              events.whereType<LiveTranscriptionFlushedEvent>().last.untilMs ==
+              700,
+        );
+        expect(stopped, isNull);
+        socket.flush(800);
+        expect(await stopFlush, isTrue);
       } finally {
         await service.dispose();
         await subscription.cancel();
+        await initial.dispose();
         await socket.dispose();
       }
+    },
+  );
+
+  test('replays unheard audio and a commit sent before a disconnect', () async {
+    final initial = _FakeLiveTranscriptionSocket();
+    final resumed = _FakeLiveTranscriptionSocket();
+    final offsets = <String?>[];
+    final service = LiveTranscriptionService(
+      baseUri: Uri.parse('https://knowledge.example/api/'),
+      reconnectDelay: (_) => Duration.zero,
+      connector: (uri, _) async {
+        offsets.add(uri.queryParameters['offset_ms']);
+        return offsets.length == 1 ? initial : resumed;
+      },
+    );
+    addTearDown(resumed.dispose);
+    addTearDown(initial.dispose);
+    addTearDown(service.dispose);
+    await service.connect();
+    initial.receive(_ready);
+    await _waitUntil(
+      () => service.state == LiveTranscriptionConnectionState.ready,
+    );
+    service.appendPcm(
+      Uint8List(100 * _bytesPerMs + liveTranscriptionBytesPerSample),
+    );
+    final pause = service.commit();
+    initial.flush(100);
+    expect(await pause, isTrue);
+    const tailBytes = 100 * _bytesPerMs - liveTranscriptionBytesPerSample;
+    final tail = Uint8List(tailBytes)..fillRange(0, tailBytes, 7);
+    service.appendPcm(tail);
+    final stop = service.commit();
+    expect(initial.sent.length, 4);
+    bool? result;
+    unawaited(stop.then((value) => result = value));
+    await initial.dispose();
+    await _waitUntil(
+      () => service.state == LiveTranscriptionConnectionState.connected,
+    );
+    expect(offsets, ['0', '100']);
+    expect(result, isNull);
+    resumed.receive(_ready);
+    await _waitUntil(() => resumed.sent.length == 2);
+    expect(resumed.sent, initial.sent.skip(2).toList());
+    resumed.flush(198);
+    await Future<void>.delayed(Duration.zero);
+    expect(result, isNull);
+    // The first retained sample was stamped at 100 ms, rounding its fractional origin down.
+    resumed.flush(199);
+    expect(await stop, isTrue);
+  });
+
+  test(
+    'interrupts a sent commit when its unheard prefix can no longer replay',
+    () async {
+      final socket = _FakeLiveTranscriptionSocket();
+      final service = LiveTranscriptionService(
+        baseUri: Uri.parse('https://knowledge.example/api/'),
+        maxBufferedBytes: 100 * _bytesPerMs,
+        reconnectDelay: (_) => const Duration(hours: 1),
+        connector: (_, _) async => socket,
+      );
+      addTearDown(socket.dispose);
+      addTearDown(service.dispose);
+      await service.connect();
+      socket.receive(_ready);
+      await _waitUntil(
+        () => service.state == LiveTranscriptionConnectionState.ready,
+      );
+      service.appendPcm(Uint8List(200 * _bytesPerMs));
+      final stop = service.commit();
+      expect(socket.sent.length, 2);
+      await socket.dispose();
+      expect(await stop.timeout(const Duration(seconds: 1)), isFalse);
+      expect(service.droppedBytes, 100 * _bytesPerMs);
     },
   );
 
@@ -379,6 +505,9 @@ class _FakeLiveTranscriptionSocket implements LiveTranscriptionSocket {
   void receive(Map<String, Object?> message) {
     _messages.add(jsonEncode(message));
   }
+
+  void flush(int untilMs) =>
+      receive({'type': 'transcript.flushed', 'until_ms': untilMs});
 
   @override
   Future<void> close([int? code, String? reason]) async {}

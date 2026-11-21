@@ -790,19 +790,18 @@ async def live_recording(
     websocket: WebSocket,
     context: str = "",
     purpose: Literal["recording", "dictation"] = "recording",
-    protocol: Annotated[int, Query(ge=1, le=2)] = 1,
+    protocol: Annotated[int, Query(ge=2, le=2)] = 2,
     stream: bool = False,
     sample_rate: Annotated[int, Query(ge=8_000, le=48_000)] = 24_000,
     offset_ms: Annotated[int, Query(ge=0)] = 0,
     recording_id: Annotated[str | None, Query(max_length=64, pattern="^[A-Za-z0-9_-]+$")] = None,
 ) -> None:
-    """The live transcript socket. v1 remains the default for existing clients.
+    """The live transcript socket emits sentence pieces on the recording clock.
 
-    ``protocol=2`` asks for sentence pieces on the recording clock; ``offset_ms`` is where
-    this connection's audio starts on that clock. ``recording_id``, when it names a
+    ``offset_ms`` is where this connection's audio starts. ``recording_id``, when it names a
     recording still being captured, makes the backend keep a 16 kHz copy of the audio so
     it can be listened to again (``POST /recordings/{id}/relisten``).
-    Desktop dictation requests v2 and ``stream=true`` without changing saved jobs.
+    Desktop dictation requests ``stream=true`` without changing saved jobs.
     """
 
     if not await _authorize_websocket(websocket):
@@ -810,12 +809,11 @@ async def live_recording(
     state = websocket.app.state
     role = "dictation" if purpose == "dictation" else "recording"
     choice, problem = speech_registry.resolve(state.speech_registry, role)
-    # Desktop text fields request live dictation explicitly. Keep saved model choices,
-    # legacy whole-take clients and the Recording job unchanged.
-    if purpose == "dictation" and protocol >= 2 and stream and choice is not None:
+    # Desktop text fields request live dictation explicitly for this socket.
+    if purpose == "dictation" and stream and choice is not None:
         choice = replace(choice, stream=True)
     listen = None
-    if recording_id and purpose == "recording" and protocol >= 2:
+    if recording_id and purpose == "recording":
         # Only a recording still being captured gets an audio copy.
         with session_scope(state.knowledge_service.sessions) as session:
             capturing = listen_copy.recording_state(session, recording_id) == "capturing"
@@ -827,7 +825,6 @@ async def live_recording(
         problem=problem or "",
         segment_seconds=state.settings.sensevoice_segment_seconds,
         context=context,
-        protocol=protocol,
         sample_rate=sample_rate,
         offset_ms=offset_ms,
         listen=listen,

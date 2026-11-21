@@ -9,6 +9,7 @@ import logging
 import secrets
 import uuid
 import wave
+from collections import deque
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -330,8 +331,45 @@ def _qwen_transcriber(
     return transcribe
 
 
-# A client's offset_ms further than this from the audio received starts a new stretch.
-CLOCK_JUMP_MS = 250
+class _V2InputClock:
+    # The recording clock counts captured PCM, with pauses excluded. Clients send all
+    # PCM preceding a Pause or Stop before committing, and keep the boundary until
+    # its flush or a known loss of the needed audio. On reconnect they replay retained
+    # PCM at its original offsets. The first stamp sets the clock on each socket.
+    # Later frames advance by sample count, absorbing differences under one append frame.
+    def __init__(self, offset_ms: int, sample_rate: int) -> None:
+        self.sample_rate = sample_rate
+        self._byte_rate = sample_rate * 2
+        self._position = max(0, offset_ms) * self._byte_rate
+        self._started = False
+
+    @property
+    def until_ms(self) -> int:
+        return self._position // self._byte_rate
+
+    def append(self, pcm: bytes, offset: object) -> tuple[bytes, int | None]:
+        """Return new PCM and, on a discontinuity, its new recording-clock origin."""
+        frame = len(pcm) * 1000
+        jump = None
+        if isinstance(offset, int | float) and not isinstance(offset, bool):
+            start = max(0, int(offset))
+            position = start * self._byte_rate
+            difference = position - self._position
+            if not self._started or difference >= frame:
+                if difference:
+                    jump = start
+                self._position = position
+            elif difference <= -frame:
+                return b"", None  # The whole frame precedes the next sample.
+        self._started = True
+        self._position += frame
+        return pcm, jump
+
+
+def _gap_event(start_ms: int, end_ms: int, reason: str) -> dict[str, object]:
+    return {"type": "transcript.gap", "start_ms": start_ms, "end_ms": end_ms, "reason": reason}
+
+
 _warned_no_pause_model = False
 
 
@@ -356,7 +394,6 @@ async def _proxy_segmented_transcription(
     reset_url: str | None = None,
     sample_rate: int = 24_000,
     pause_cuts: bool = True,
-    protocol: int = 1,
     offset_ms: int = 0,
     listen: listen_copy.ListenCopy | None = None,
     check_again: bool = False,
@@ -368,10 +405,9 @@ async def _proxy_segmented_transcription(
     one piece at a time, in order, while the socket goes on being read. Audio is turned
     into 16 kHz once. With ``pause_cuts`` a piece ends at a pause (Silero VAD, ``vad.py``);
     without the model file, or for a take that goes up whole, pieces are fixed blocks.
-    A v2 client gets each piece as a final ``transcript.piece`` on the recording clock
-    (``offset_ms`` plus the audio received), SenseVoice also a draft of the piece still
-    growing, and ``transcript.flushed`` once a ``commit`` has been written out; a v1
-    client gets the old ``…completed`` events, unchanged.
+    Final pieces use the recording clock (``offset_ms`` plus the audio received).
+    SenseVoice can also send a draft of the open piece. A ``commit`` flushes the
+    current piece and acknowledges its boundary after transcription.
     """
 
     await _accept(websocket)
@@ -384,13 +420,14 @@ async def _proxy_segmented_transcription(
         segmenter = vad.Segmenter(detector)
     else:
         segmenter = vad.FixedBlocks(int(LIVE_RATE * 2 * max(1.0, segment_seconds)))
-    drafts = protocol >= 2 and provider == "sensevoice" and detector is not None
+    drafts = provider == "sensevoice" and detector is not None
     audio = bytearray()  # 16 kHz audio from ``audio_base`` on that a piece may still need
     audio_base = 0
     odd = b""  # a half sample when the client's chunk ends inside one
     # The recording clock: ``clock_ms`` at byte ``clock_byte`` of the 16 kHz stream.
     clock_byte = 0
     clock_ms = max(0, offset_ms)
+    input_clock = _V2InputClock(offset_ms, sample_rate)
 
     def at_ms(byte: int) -> int:
         return clock_ms + (byte - clock_byte) // BYTES_PER_MS
@@ -403,7 +440,6 @@ async def _proxy_segmented_transcription(
     pieces_closed = 0  # pieces handed to the worker; the next one is number pieces_closed + 1
     draft_marks: dict[int, int] = {}  # piece number -> its end byte when the last draft went
     drafted: set[int] = set()  # pieces whose draft put text on screen
-    sequence = 0
     recent = ""  # the tail of what was written, the context for the next piece
 
     def enqueue(job: tuple[Any, ...]) -> None:
@@ -425,42 +461,33 @@ async def _proxy_segmented_transcription(
             if reset_url:
                 with suppress(httpx.HTTPError):
                     await client.post(reset_url)
-            announced = {"type": "service.ready", "provider": provider, **ready}
-            if protocol >= 2:
-                announced["protocol"] = protocol
-                announced["check_again"] = check_again
-                announced["group_paragraphs"] = group_paragraphs
-            await websocket.send_json(announced)
+            await websocket.send_json(
+                {
+                    "type": "service.ready",
+                    "provider": provider,
+                    **ready,
+                    "protocol": 2,
+                    "check_again": check_again,
+                    "group_paragraphs": group_paragraphs,
+                }
+            )
 
             async def send_piece(
                 number: int, start_ms: int, end_ms: int, text: str, final: bool
             ) -> None:
-                nonlocal sequence
-                if protocol >= 2:
-                    event: dict[str, Any] = {
-                        "type": "transcript.piece",
-                        "id": f"{tag}-{number}",
-                        "start_ms": start_ms,
-                        "end_ms": end_ms if final else None,
-                        "text": text,
-                        "final": final,
-                    }
-                    if final:
-                        event["sentences"] = (
-                            [{"start_ms": start_ms, "end_ms": end_ms, "text": text}] if text else []
-                        )
-                    await websocket.send_json(event)
-                    return
-                sequence += 1
-                await websocket.send_json(
-                    {
-                        "type": "conversation.item.input_audio_transcription.completed",
-                        "item_id": f"{provider}-{sequence}",
-                        "transcript": text,
-                        "provider": provider,
-                        "start_seconds": round(start_ms / 1000, 2),
-                    }
-                )
+                event: dict[str, Any] = {
+                    "type": "transcript.piece",
+                    "id": f"{tag}-{number}",
+                    "start_ms": start_ms,
+                    "end_ms": end_ms if final else None,
+                    "text": text,
+                    "final": final,
+                }
+                if final:
+                    event["sentences"] = (
+                        [{"start_ms": start_ms, "end_ms": end_ms, "text": text}] if text else []
+                    )
+                await websocket.send_json(event)
 
             async def write_piece(number: int, chunk: bytes, start_ms: int, end_ms: int) -> None:
                 nonlocal recent
@@ -479,7 +506,7 @@ async def _proxy_segmented_transcription(
                         text = ""
                 if not text:
                     # Empty speech clears a draft that was on screen; otherwise nothing is said.
-                    if protocol >= 2 and number in drafted:
+                    if number in drafted:
                         await send_piece(number, start_ms, end_ms, "", True)
                     return
                 recent = f"{recent} {text}".strip()[-CONTEXT_CHARS:]
@@ -508,9 +535,7 @@ async def _proxy_segmented_transcription(
                             elif job[0] == "draft":
                                 await write_draft(*job[1:])
                             else:
-                                await websocket.send_json(
-                                    {"type": "transcript.flushed", "until_ms": job[1]}
-                                )
+                                await websocket.send_json(job[1])
                         finally:
                             outstanding -= 1
                 except (WebSocketDisconnect, RuntimeError):
@@ -554,24 +579,24 @@ async def _proxy_segmented_transcription(
                             raw = base64.b64decode(encoded, validate=True)
                         if not raw:
                             continue
-                        at = payload.get("offset_ms")
-                        stamped = (
-                            protocol >= 2
-                            and isinstance(at, int | float)
-                            and not isinstance(at, bool)
-                        )
-                        if stamped and abs(int(at) - at_ms(segmenter.total)) > CLOCK_JUMP_MS:
-                            # The client says this audio starts elsewhere: end what is open
-                            # and count from the new time.
+                        until_ms = input_clock.until_ms
+                        raw, start = input_clock.append(raw, payload.get("offset_ms"))
+                        if start is not None:
                             enqueue_pieces(segmenter.flush())
-                            clock_byte, clock_ms = segmenter.total, max(0, int(at))
+                            if start > until_ms:
+                                enqueue(("event", _gap_event(until_ms, start, "missing")))
+                            clock_byte, clock_ms = segmenter.total, start
+                            copy_cursor = start * BYTES_PER_MS
+                            odd = b""
+                            if resampler is not None:
+                                resampler = Pcm16Resampler(sample_rate, LIVE_RATE)
+                        if not raw:
+                            continue
                         kept = resampler.feed(raw) if resampler else odd + raw
                         if resampler is None:
                             odd = kept[-1:] if len(kept) % 2 else b""
                             kept = kept[: len(kept) - len(odd)]
                         if listen is not None and kept:
-                            if stamped:
-                                copy_cursor = max(0, int(at)) * BYTES_PER_MS
                             listen.write(copy_cursor, kept)
                             copy_cursor += len(kept) - len(kept) % 2
                         audio.extend(kept)
@@ -583,8 +608,9 @@ async def _proxy_segmented_transcription(
                             audio_base = keep
                     elif message_type == "input_audio_buffer.commit":
                         enqueue_pieces(segmenter.flush())
-                        if protocol >= 2:
-                            enqueue(("flushed", at_ms(segmenter.total)))
+                        enqueue(("event", {
+                            "type": "transcript.flushed", "until_ms": input_clock.until_ms
+                        }))
                     elif message_type == "input_audio_buffer.clear":
                         segmenter.discard()
             finally:
@@ -666,7 +692,6 @@ class _LiveStream:
         upstream: ClientConnection,
         choice: Choice,
         *,
-        protocol: int,
         sample_rate: int,
         offset_ms: int,
         context: str,
@@ -681,25 +706,21 @@ class _LiveStream:
         self.up: ClientConnection | None = upstream
         self.choice = choice
         self.model = qwen_live_id(choice.model)
-        self.protocol = protocol
-        self.sample_rate = sample_rate
         self.context = context
         self.tag = secrets.token_hex(2)
         self.resampler = (
             Pcm16Resampler(sample_rate, LIVE_RATE) if sample_rate != LIVE_RATE else None
         )
         self.cursor = max(0, offset_ms) * BYTES_PER_MS  # where the next audio should start
+        self.input_clock = _V2InputClock(offset_ms, sample_rate)
         self.chunks: list[_Chunk] = []  # audio no final sentence has covered yet
         self.sent = 0  # how many of ``chunks`` went to the current task
-        self.finish_at: int | None = None  # finish the task after this many chunks
-        self.commit_later = False
         self.task: _Task | None = None
         self.task_count = 0
         self.failures = 0
-        self.item_count = 0
         self.recent = ""
-        # Recording-clock ms covered by each commit that has not been answered yet.
-        self.flush_marks: list[int] = []
+        # Finish each task at the next pending commit's recording-clock byte offset.
+        self.flush_marks: deque[tuple[int, int]] = deque()
         self.wake = asyncio.Event()
         self.send_lock = asyncio.Lock()
         self.reader: asyncio.Task[None] | None = None
@@ -718,15 +739,9 @@ class _LiveStream:
             self.gone = True
 
     async def gap(self, start_byte: int, end_byte: int, reason: str) -> None:
-        if self.protocol >= 2 and end_byte > start_byte:
-            await self.send(
-                {
-                    "type": "transcript.gap",
-                    "start_ms": start_byte // BYTES_PER_MS,
-                    "end_ms": end_byte // BYTES_PER_MS,
-                    "reason": reason,
-                }
-            )
+        if end_byte > start_byte:
+            start_ms, end_ms = start_byte // BYTES_PER_MS, end_byte // BYTES_PER_MS
+            await self.send(_gap_event(start_ms, end_ms, reason))
 
     async def run(self) -> None:
         await _accept(self.websocket)
@@ -738,11 +753,10 @@ class _LiveStream:
             "local": False,
             "diarize": False,
             "live": "stream",
+            "protocol": 2,
+            "check_again": self.check_again,
+            "group_paragraphs": self.group_paragraphs,
         }
-        if self.protocol >= 2:
-            ready["protocol"] = self.protocol
-            ready["check_again"] = self.check_again
-            ready["group_paragraphs"] = self.group_paragraphs
         await self.send(ready)
         self._attach(self.up)
         self.worker = asyncio.create_task(self._work())
@@ -772,7 +786,7 @@ class _LiveStream:
         if kind == "input_audio_buffer.append":
             await self._append(payload)
         elif kind == "input_audio_buffer.commit":
-            self._commit()
+            self._commit(self.input_clock.until_ms)
         elif kind == "input_audio_buffer.clear":
             del self.chunks[self.sent :]
 
@@ -784,23 +798,26 @@ class _LiveStream:
             pcm = base64.b64decode(encoded, validate=True)
         except (binascii.Error, ValueError):
             return
+        if not pcm:
+            return
+        until_ms = self.input_clock.until_ms
+        pcm, start_ms = self.input_clock.append(pcm, payload.get("offset_ms"))
+        if start_ms is not None:
+            if start_ms > until_ms:
+                await self.send(_gap_event(until_ms, start_ms, "missing"))
+                if self.task is not None or self.chunks:
+                    mark = (self.cursor, until_ms)
+                    if not self.flush_marks or self.flush_marks[-1] != mark:
+                        self._commit(until_ms)
+            self.cursor = start_ms * BYTES_PER_MS
+            if self.resampler is not None:
+                self.resampler = Pcm16Resampler(self.input_clock.sample_rate, LIVE_RATE)
+        if not pcm:
+            return
         if self.resampler is not None:
             pcm = self.resampler.feed(pcm)
         pcm = pcm[: len(pcm) - len(pcm) % 2]
-        offset = payload.get("offset_ms")
         start = self.cursor
-        if self.protocol >= 2 and isinstance(offset, int | float) and not isinstance(offset, bool):
-            start = max(0, int(offset)) * BYTES_PER_MS
-            if self.cursor - start > 20 * BYTES_PER_MS:
-                # Audio the backend already has (a replay after reconnecting): skip it.
-                skip = min(len(pcm), (self.cursor - start) & ~1)
-                pcm, start = pcm[skip:], start + skip
-            elif start - self.cursor > 100 * BYTES_PER_MS:
-                # Missing audio: the current stretch ends there and a new task starts after.
-                await self.gap(self.cursor, start, "missing")
-                self._commit()
-            else:
-                start = self.cursor
         if not pcm:
             return
         if self.listen is not None:
@@ -812,29 +829,22 @@ class _LiveStream:
         await self._trim_queue()
         self.wake.set()
 
-    def _commit(self) -> None:
+    def _commit(self, until_ms: int) -> None:
         """The client paused or stopped: finish the task once everything so far is sent."""
 
-        if self.protocol >= 2:
-            self.flush_marks.append(self.cursor // BYTES_PER_MS)
-        if self.task is not None and self.task.finish_sent:
-            self.commit_later = True
-        elif self.task is not None or self.chunks:
-            self.finish_at = len(self.chunks)
+        self.flush_marks.append((self.cursor, until_ms))
         self.wake.set()
 
     async def _flush(self) -> None:
-        """Tell a v2 client that every commit so far has been heard to its end."""
-
-        marks, self.flush_marks = self.flush_marks, []
-        for until_ms in marks:
+        while self.flush_marks and (
+            not self.chunks or self.chunks[0].start >= self.flush_marks[0][0]
+        ):
+            _, until_ms = self.flush_marks.popleft()
             await self.send({"type": "transcript.flushed", "until_ms": until_ms})
 
     def _remove_front(self, count: int) -> None:
         del self.chunks[:count]
         self.sent = max(0, self.sent - count)
-        if self.finish_at is not None:
-            self.finish_at = max(0, self.finish_at - count)
 
     async def _trim_queue(self) -> None:
         limit = int(RETAIN_SECONDS * 1000) * BYTES_PER_MS
@@ -846,8 +856,6 @@ class _LiveStream:
         lost_end = 0
         while sum(len(c.data) for c in self.chunks[self.sent :]) > limit:
             chunk = self.chunks.pop(self.sent)
-            if self.finish_at is not None and self.finish_at > self.sent:
-                self.finish_at -= 1
             lost_start = chunk.start if lost_start is None else lost_start
             lost_end = chunk.end
         if lost_start is not None:
@@ -917,8 +925,7 @@ class _LiveStream:
         begin = sentence.get("begin_time")
         start_ms = task.start_ms + int(begin if begin is not None else 0)
         if not sentence.get("sentence_end"):
-            # A draft: shown, rewritten, never kept. v1 clients only hear final sentences.
-            if self.protocol >= 2 and text.strip():
+            if text.strip():
                 await self.send(
                     {
                         "type": "transcript.piece",
@@ -942,30 +949,17 @@ class _LiveStream:
             return  # noise taken for speech: not a sentence
         spoken = " ".join(item["text"] for item in sentences)
         self.recent = f"{self.recent} {spoken}".strip()[-2 * 400 :]
-        if self.protocol >= 2:
-            await self.send(
-                {
-                    "type": "transcript.piece",
-                    "id": f"{self.tag}-{task.number}-{sentence.get('sentence_id', 0)}",
-                    "start_ms": sentences[0]["start_ms"],
-                    "end_ms": sentences[-1]["end_ms"],
-                    "text": spoken,
-                    "final": True,
-                    "sentences": sentences,
-                }
-            )
-            return
-        for item in sentences:
-            self.item_count += 1
-            await self.send(
-                {
-                    "type": "conversation.item.input_audio_transcription.completed",
-                    "item_id": f"{self.choice.kind}-{self.item_count}",
-                    "transcript": item["text"],
-                    "provider": self.choice.kind,
-                    "start_seconds": round(item["start_ms"] / 1000, 2),
-                }
-            )
+        await self.send(
+            {
+                "type": "transcript.piece",
+                "id": f"{self.tag}-{task.number}-{sentence.get('sentence_id', 0)}",
+                "start_ms": sentences[0]["start_ms"],
+                "end_ms": sentences[-1]["end_ms"],
+                "text": spoken,
+                "final": True,
+                "sentences": sentences,
+            }
+        )
 
     # Keeping a task going -----------------------------------------------------
 
@@ -988,25 +982,21 @@ class _LiveStream:
                 await self._settle(task)
                 continue
             if task is None:
-                if self.sent >= len(self.chunks):
-                    self.finish_at = None
-                    await self._flush()  # a commit with nothing left to finish
+                await self._flush()
+                if not self.chunks:
                     return
                 await self._start_task()
                 continue
             if self.up is None:
                 return
             try:
-                while True:
-                    if task.finish_sent:
-                        break
-                    limit = len(self.chunks) if self.finish_at is None else self.finish_at
-                    if self.sent >= limit:
-                        break
+                while not task.finish_sent and self.sent < len(self.chunks):
                     chunk = self.chunks[self.sent]
+                    if self.flush_marks and chunk.start >= self.flush_marks[0][0]:
+                        break
                     self.sent += 1
                     await asyncio.wait_for(self.up.send(chunk.data), SEND_TIMEOUT)
-                if self.finish_at is not None and not task.finish_sent:
+                if self.flush_marks and not task.finish_sent:
                     task.finish_sent = True
                     await asyncio.wait_for(self.up.send(finish_task_message(task.id)), SEND_TIMEOUT)
             except ConnectionClosed as error:
@@ -1030,14 +1020,9 @@ class _LiveStream:
     async def _settle(self, task: _Task) -> None:
         self.task = None
         if task.outcome == "finished":
-            self._remove_front(self.finish_at or 0)
-            self.sent = 0
-            self.finish_at = None
             if task.finish_sent:
-                await self._flush()
-            if self.commit_later:
-                self.commit_later = False
-                self.finish_at = len(self.chunks) if self.chunks else None
+                self._remove_front(self.sent)
+            self.sent = 0
             return
         logger.warning("Live transcription task failed: %s", task.error)
         await self._recover(f"the task failed ({task.error})", task)
@@ -1061,8 +1046,6 @@ class _LiveStream:
                 self.chunks[0] = _Chunk(first.start + cut, first.data[cut:])
             if self.chunks and self.chunks[0].start > resume:
                 await self.gap(resume, self.chunks[0].start, "connection")
-            if self.finish_at is None and task.finish_sent:
-                self.finish_at = len(self.chunks)
         if self.up is not None and self.up.state != State.OPEN:
             self.up = None
         await asyncio.sleep(RECONNECT_BACKOFF[self.failures - 1])
@@ -1110,7 +1093,6 @@ async def _proxy_live_stream(
     upstream: ClientConnection,
     choice: Choice,
     *,
-    protocol: int,
     sample_rate: int,
     offset_ms: int,
     context: str,
@@ -1122,7 +1104,6 @@ async def _proxy_live_stream(
         websocket,
         upstream,
         choice,
-        protocol=protocol,
         sample_rate=sample_rate,
         offset_ms=offset_ms,
         context=context,
@@ -1154,7 +1135,6 @@ async def proxy_realtime_transcription(
     problem: str = "",
     segment_seconds: float = 3.2,
     context: str = "",
-    protocol: int = 1,
     sample_rate: int = 24_000,
     offset_ms: int = 0,
     listen: listen_copy.ListenCopy | None = None,
@@ -1212,7 +1192,6 @@ async def proxy_realtime_transcription(
                     websocket,
                     upstream,
                     choice,
-                    protocol=protocol,
                     sample_rate=sample_rate,
                     offset_ms=offset_ms,
                     context=context,
@@ -1251,7 +1230,6 @@ async def proxy_realtime_transcription(
         reset_url=reset_url,
         sample_rate=sample_rate,
         pause_cuts=choice.stream,
-        protocol=protocol,
         offset_ms=offset_ms,
         listen=listen,
         check_again=check_again,

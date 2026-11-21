@@ -274,16 +274,16 @@ function withQueryToken(url: string): string {
 export const recordingSocketUrl = (
   context: string,
   purpose: "recording" | "dictation" = "recording",
-  /** Protocol 2: sentence pieces on the recording clock. Absent = the original events. */
-  live?: { offsetMs: number; recordingId?: string | undefined },
+  live: { offsetMs: number; recordingId?: string | undefined } = { offsetMs: 0 },
 ) => {
   const origin = configuredBase
     ? configuredBase.replace(/^http/, "ws").replace(/\/$/, "")
     : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
-  const v2 = live
-    ? `&protocol=2&sample_rate=16000&offset_ms=${Math.max(0, Math.round(live.offsetMs))}${purpose === "dictation" ? "&stream=true" : ""}${live.recordingId ? `&recording_id=${encodeURIComponent(live.recordingId)}` : ""}`
-    : "";
-  return withQueryToken(`${origin}/api/recordings/live?context=${encodeURIComponent(context)}${purpose === "dictation" ? "&purpose=dictation" : ""}${v2}`);
+  const clock = `&protocol=2&sample_rate=16000&offset_ms=${Math.max(0, Math.round(live.offsetMs))}`;
+  const mode = purpose === "dictation" ? "&purpose=dictation" : "";
+  const stream = purpose === "dictation" ? "&stream=true" : "";
+  const recording = live.recordingId ? `&recording_id=${encodeURIComponent(live.recordingId)}` : "";
+  return withQueryToken(`${origin}/api/recordings/live?context=${encodeURIComponent(context)}${mode}${clock}${stream}${recording}`);
 };
 
 export const recordingAssetUrl = (id: string) =>

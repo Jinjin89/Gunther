@@ -219,3 +219,11 @@ order, prefixes) to recover an identity. A retried capture reuses an old inline
 capture only through an exact stored id (client capture / request id) or an exact
 fingerprint recomputed from the submitted fields alone. Otherwise it is a new capture:
 a rare duplicate is acceptable, attaching notes to the wrong source is not.
+
+# Round 11 — batch 08h (live audio)
+
+One simple clock rule for both clients: the client's stamp sets the session clock at
+each (re)connect; within a connection, frames advance by their sample count and a
+difference smaller than one frame is jitter, not a gap or an overlap. Replace the
+stricter rule from the previous 08h round with this. After this round, new live-audio
+edge cases go to follow-ups unless they lose saved audio or hide a failure.

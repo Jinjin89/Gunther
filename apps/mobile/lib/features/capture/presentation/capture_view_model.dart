@@ -76,15 +76,17 @@ class CaptureViewModel extends ChangeNotifier {
   double recordingUploadProgress = 0;
   String recordingNotice =
       'Audio is saved to an app file first. Live transcription needs a verified compatible PCM stream.';
-  String recordingTranscriptionStatus =
+  String _recordingTranscriptionStatus =
       'Live transcription is not connected. The audio file remains authoritative.';
+  String get recordingTranscriptionStatus => _liveAudioSkipped
+      ? '$_recordingTranscriptionStatus Some audio is missing from live transcription. The complete WAV is safe.'
+      : _recordingTranscriptionStatus;
   String liveTranscriptPreview = '';
   bool recordingMinimized = false;
   bool recordingFiledToInbox = false;
 
   Timer? _recordingClock;
   Timer? _checkpointDebounce;
-  Timer? _liveCleanupTimer;
   Future<void> _checkpointChain = Future<void>.value();
   Future<void> _draftWriteChain = Future<void>.value();
   Future<void> _outboxFlushBarrier = Future<void>.value();
@@ -99,7 +101,10 @@ class CaptureViewModel extends ChangeNotifier {
   ({String encoding, int sampleRate, int channels})? _recordingPcmFormat;
   CaptureTarget? _recordingTarget;
   CaptureTargetLease? _recordingTargetLease;
-  final Set<String> _completedLiveItemIds = <String>{};
+  final Set<String> _completedLivePieceIds = <String>{};
+  String? _liveDraftId;
+  bool _liveAudioSkipped = false;
+  bool _pausingRecording = false;
   int _recordingGeneration = 0;
   bool _disposed = false;
 
@@ -1019,14 +1024,23 @@ class CaptureViewModel extends ChangeNotifier {
       recordingNotice =
           'Recording to a recoverable app file in the foreground.';
       _startClock();
-      // Persist the path before attempting any network request. The local
-      // recording stays recoverable even if the backend is offline.
-      await _queueDraftPersist();
-      _startLiveTranscription(
+      // Attach before saving metadata so the live clock includes the first PCM.
+      _attachLiveTranscription(
         generation,
         liveDevice,
         preparedSession: preparedTranscription,
       );
+      await _queueDraftPersist();
+      if (!_disposed && generation == _recordingGeneration) {
+        unawaited(
+          _liveTranscription?.connect().catchError((Object _) {
+            if (!_disposed && generation == _recordingGeneration) {
+              _recordingTranscriptionStatus = 'Live transcription is offline.';
+              _safeNotify();
+            }
+          }),
+        );
+      }
       _safeNotify();
     } on Object catch (exception) {
       unawaited(preparedTranscription?.dispose());
@@ -1062,7 +1076,7 @@ class CaptureViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
-  void _startLiveTranscription(
+  void _attachLiveTranscription(
     int generation,
     LivePcmCaptureDevice? liveDevice, {
     LiveTranscriptionSession? preparedSession,
@@ -1070,37 +1084,37 @@ class CaptureViewModel extends ChangeNotifier {
     final stream = liveDevice?.livePcmStream;
     if (liveDevice == null || stream == null) {
       unawaited(preparedSession?.dispose());
-      recordingTranscriptionStatus =
+      _recordingTranscriptionStatus =
           'This recorder does not expose a compatible live PCM stream. The audio file is still safe.';
       return;
     }
     if (liveDevice.livePcmSampleRate != liveTranscriptionSampleRate ||
         liveDevice.livePcmChannels != 1) {
       unawaited(preparedSession?.dispose());
-      recordingTranscriptionStatus =
+      _recordingTranscriptionStatus =
           'Live transcription needs 24 kHz mono PCM. This recording remains local and complete.';
       return;
     }
     if (_liveTranscriptionFactory == null) {
       unawaited(preparedSession?.dispose());
-      recordingTranscriptionStatus =
+      _recordingTranscriptionStatus =
           'No verified live transcription connection is configured. The WAV recording continues locally.';
       return;
     }
 
     final session = preparedSession;
     if (session == null) {
-      recordingTranscriptionStatus =
+      _recordingTranscriptionStatus =
           'The current server URL is not safe for live transcription. The WAV recording continues locally.';
       return;
     }
     _liveTranscription = session;
-    recordingTranscriptionStatus = 'Connecting live transcription…';
+    _recordingTranscriptionStatus = 'Connecting live transcription…';
     _liveEventSubscription = session.events.listen(
       (event) => _handleLiveTranscriptionEvent(generation, session, event),
       onError: (Object _) {
         if (_disposed || generation != _recordingGeneration) return;
-        recordingTranscriptionStatus =
+        _recordingTranscriptionStatus =
             'Live transcription stopped responding. The WAV recording continues locally.';
         _safeNotify();
       },
@@ -1109,19 +1123,10 @@ class CaptureViewModel extends ChangeNotifier {
       session.appendPcm,
       onError: (Object _) {
         if (_disposed || generation != _recordingGeneration) return;
-        recordingTranscriptionStatus =
+        _recordingTranscriptionStatus =
             'The microphone stream ended unexpectedly; the recoverable WAV is being finalized.';
         _safeNotify();
       },
-    );
-    unawaited(
-      session.connect().catchError((Object _) {
-        if (!_disposed && generation == _recordingGeneration) {
-          recordingTranscriptionStatus =
-              'Live transcription is offline. The WAV recording continues locally.';
-          _safeNotify();
-        }
-      }),
     );
   }
 
@@ -1148,9 +1153,14 @@ class CaptureViewModel extends ChangeNotifier {
         !identical(session, _liveTranscription)) {
       return;
     }
+    if (session.droppedBytes > 0) _liveAudioSkipped = true;
     switch (event) {
       case LiveTranscriptionStatusEvent():
-        recordingTranscriptionStatus = switch (event.state) {
+        if (event.state == LiveTranscriptionConnectionState.reconnecting) {
+          _liveDraftId = null;
+          liveTranscriptPreview = '';
+        }
+        _recordingTranscriptionStatus = switch (event.state) {
           LiveTranscriptionConnectionState.idle =>
             'Live transcription is waiting to connect.',
           LiveTranscriptionConnectionState.connecting =>
@@ -1168,69 +1178,73 @@ class CaptureViewModel extends ChangeNotifier {
         };
       case LiveTranscriptionReadyEvent():
         final local = event.local || event.provider == 'sensevoice';
-        recordingTranscriptionStatus = local
+        _recordingTranscriptionStatus = local
             ? 'Local ${event.provider} live transcription is listening.'
             : '${event.provider} live transcription is listening.';
-      case LiveTranscriptionDeltaEvent():
-        liveTranscriptPreview = '$liveTranscriptPreview${event.delta}';
-        if (liveTranscriptPreview.length > 2000) {
-          liveTranscriptPreview = liveTranscriptPreview.substring(
-            liveTranscriptPreview.length - 2000,
-          );
+      case LiveTranscriptionPieceEvent():
+        if (_completedLivePieceIds.contains(event.id)) return;
+        if (!event.isFinal) {
+          _liveDraftId = event.id;
+          liveTranscriptPreview = event.text.length > 2000
+              ? event.text.substring(event.text.length - 2000)
+              : event.text;
+          break;
         }
-      case LiveTranscriptionCompletedEvent():
-        final itemId = event.itemId;
-        if (itemId != null && !_completedLiveItemIds.add(itemId)) return;
-        final completed = event.transcript.trim();
-        if (completed.isEmpty) return;
+        _completedLivePieceIds.add(event.id);
+        if (_liveDraftId == event.id) {
+          _liveDraftId = null;
+          liveTranscriptPreview = '';
+        }
+        final completed = event.text.trim();
+        if (completed.isEmpty) break;
         final existing = transcript.trimRight();
         transcript = existing.isEmpty ? completed : '$existing\n$completed';
-        liveTranscriptPreview = '';
         unawaited(_queueDraftPersist());
         _checkpointDebounce?.cancel();
         _checkpointDebounce = Timer(
           const Duration(milliseconds: 300),
           () => unawaited(_queueCheckpoint()),
         );
-        if (!recordingIsCapturing) {
-          _scheduleLiveCleanup(const Duration(seconds: 2));
-        }
+      case LiveTranscriptionGapEvent():
+        _liveAudioSkipped = true;
+      case LiveTranscriptionFlushedEvent():
+        break;
       case LiveTranscriptionErrorEvent():
-        recordingTranscriptionStatus =
+        if (event.code == 'segment_failed' ||
+            event.code == 'sensevoice_segment_failed') {
+          _liveAudioSkipped = true;
+        }
+        _recordingTranscriptionStatus =
             'Live transcript notice: ${event.message} The WAV recording is unaffected.';
-    }
-    if (session.droppedBytes > 0) {
-      recordingTranscriptionStatus =
-          '$recordingTranscriptionStatus Some live audio was skipped during reconnection; the complete WAV is safe.';
     }
     _safeNotify();
   }
 
-  void _commitLiveTranscription() {
+  Future<void> _finishLiveTranscription() async {
     final session = _liveTranscription;
     if (session == null) return;
     unawaited(_livePcmSubscription?.cancel());
     _livePcmSubscription = null;
-    session.commit();
-    recordingTranscriptionStatus =
+    _recordingTranscriptionStatus =
         'Finalizing the last live transcript segments; the WAV is already safe.';
-    _scheduleLiveCleanup(const Duration(seconds: 12));
-  }
-
-  void _scheduleLiveCleanup(Duration delay) {
-    final session = _liveTranscription;
-    if (session == null) return;
-    _liveCleanupTimer?.cancel();
-    _liveCleanupTimer = Timer(delay, () {
-      if (identical(session, _liveTranscription)) {
-        unawaited(_disposeLiveTranscription());
-      }
-    });
+    _safeNotify();
+    final flushed = await session.commit().timeout(
+      const Duration(seconds: 12),
+      onTimeout: () => false,
+    );
+    // Deliver final pieces the socket queued before the flush before closing.
+    await Future<void>.delayed(Duration.zero);
+    if (!identical(session, _liveTranscription)) return;
+    _liveAudioSkipped |= !flushed;
+    _recordingTranscriptionStatus = flushed
+        ? 'Live transcription stopped.'
+        : 'Live transcription was interrupted before the final flush.';
+    unawaited(_disposeLiveTranscription());
   }
 
   Future<void> _disposeLiveTranscription() async {
-    _liveCleanupTimer?.cancel();
-    _liveCleanupTimer = null;
+    _liveDraftId = null;
+    liveTranscriptPreview = '';
     final pcmSubscription = _livePcmSubscription;
     final eventSubscription = _liveEventSubscription;
     final session = _liveTranscription;
@@ -1255,18 +1269,32 @@ class CaptureViewModel extends ChangeNotifier {
   }
 
   Future<void> pauseRecording() async {
-    if (recordingPhase != RecordingCapturePhase.recording) return;
+    if (recordingPhase != RecordingCapturePhase.recording || _pausingRecording)
+      return;
+    final generation = _recordingGeneration;
+    _pausingRecording = true;
     try {
       await _captureDevice.pauseRecording();
+      if (_disposed ||
+          generation != _recordingGeneration ||
+          recordingPhase != RecordingCapturePhase.recording)
+        return;
       _recordingClock?.cancel();
       recordingPhase = RecordingCapturePhase.paused;
+      unawaited(_liveTranscription?.commit());
       recordingNotice =
           'Paused. The audio already written on this device remains intact.';
       _safeNotify();
       await _queueCheckpoint();
     } on Object catch (exception) {
+      if (_disposed ||
+          generation != _recordingGeneration ||
+          !recordingIsCapturing)
+        return;
       error = exception.toString();
       _safeNotify();
+    } finally {
+      if (generation == _recordingGeneration) _pausingRecording = false;
     }
   }
 
@@ -1347,7 +1375,7 @@ class CaptureViewModel extends ChangeNotifier {
           'This recording is larger than the 2 GB session limit.',
         );
       }
-      _commitLiveTranscription();
+      await _finishLiveTranscription();
       await _queueDraftPersist();
       await _syncRecordingFile();
     } on Object catch (exception) {
@@ -1365,7 +1393,7 @@ class CaptureViewModel extends ChangeNotifier {
         } on Object {
           // Keep the original draft pointer; startup recovery will verify it.
         }
-        _commitLiveTranscription();
+        await _finishLiveTranscription();
       }
       recordingPhase = localRecording == null
           ? RecordingCapturePhase.failed
@@ -1757,7 +1785,9 @@ class CaptureViewModel extends ChangeNotifier {
     _importedAudioOutboxEntryId = null;
     _recordingPcmFormat = null;
     _recordingTarget = _captureTargetProvider?.call();
-    _completedLiveItemIds.clear();
+    _completedLivePieceIds.clear();
+    _liveAudioSkipped = false;
+    _pausingRecording = false;
     localRecording = null;
     recordingTitle = title.trim().isEmpty ? 'Voice memo' : title.trim();
     recordingContext = 'memo';
@@ -1766,7 +1796,7 @@ class CaptureViewModel extends ChangeNotifier {
     recordingSeconds = 0;
     moments = const [];
     recordingUploadProgress = 0;
-    recordingTranscriptionStatus =
+    _recordingTranscriptionStatus =
         'Live transcription is not connected. The audio file remains authoritative.';
     liveTranscriptPreview = '';
     recordingMinimized = false;
@@ -1850,7 +1880,6 @@ class CaptureViewModel extends ChangeNotifier {
   void dispose() {
     _recordingClock?.cancel();
     _checkpointDebounce?.cancel();
-    _liveCleanupTimer?.cancel();
     unawaited(_queueDraftPersist());
     _disposed = true;
     _closeRecordingTargetLease();

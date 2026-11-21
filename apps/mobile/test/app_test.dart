@@ -39,8 +39,73 @@ void main() {
     },
   );
 
+  test(
+    'Stop saves audio promptly when the live commit is interrupted',
+    () async {
+      final repository = FakeKnowledgeRepository();
+      final transcription = FakeLiveTranscriptionSession();
+      final device = FakeLivePcmCaptureDevice();
+      final viewModel = CaptureViewModel(
+        repository,
+        device,
+        recordingDraftStore: MemoryRecordingDraftStore(),
+        captureOutboxStore: MemoryCaptureOutboxStore(),
+        liveTranscriptionFactory: (_) => transcription,
+      );
+      addTearDown(viewModel.dispose);
+      await viewModel.startRecording('Interrupted live session');
+      device.emitPcm(List<int>.filled(4800, 1));
+      final stopping = viewModel.stopRecording();
+      await transcription.firstCommit.future;
+      await transcription.stop();
+      await stopping.timeout(const Duration(seconds: 1));
+
+      expect(repository.recordingUploads, 1);
+      expect(
+        viewModel.recordingTranscriptionStatus,
+        contains('interrupted before the final flush'),
+      );
+    },
+  );
+
+  test(
+    'a saved WAV still shows the failed segment after Stop flushes',
+    () async {
+      final repository = FakeKnowledgeRepository();
+      final transcription = FakeLiveTranscriptionSession();
+      final device = FakeLivePcmCaptureDevice();
+      final viewModel = CaptureViewModel(
+        repository,
+        device,
+        recordingDraftStore: MemoryRecordingDraftStore(),
+        captureOutboxStore: MemoryCaptureOutboxStore(),
+        liveTranscriptionFactory: (_) => transcription,
+      );
+      addTearDown(viewModel.dispose);
+      await viewModel.startRecording('Recording with a failed segment');
+      device.emitPcm(List<int>.filled(4800, 1));
+      final stopping = viewModel.stopRecording();
+      await transcription.firstCommit.future;
+      transcription.emit(
+        const LiveTranscriptionErrorEvent(
+          code: 'segment_failed',
+          message: 'One segment was missed.',
+          recoverable: true,
+        ),
+      );
+      transcription.emit(const LiveTranscriptionFlushedEvent(100));
+      await stopping;
+
+      expect(repository.recordingUploads, 1);
+      expect(
+        viewModel.recordingTranscriptionStatus,
+        contains('Some audio is missing from live transcription'),
+      );
+    },
+  );
+
   testWidgets(
-    'durable PCM recording feeds live transcription and persists its format',
+    'live recording replaces drafts and saves final text after the stop flush',
     (tester) async {
       final repository = FakeKnowledgeRepository();
       final device = FakeLivePcmCaptureDevice();
@@ -65,33 +130,82 @@ void main() {
         find.byKey(const Key('recording-transcription-status')),
         findsOneWidget,
       );
-      device.emitPcm([1, 2, 3, 4]);
+      final pcm = List<int>.filled(4800, 1);
+      device.emitPcm(pcm);
       await tester.pump();
-      expect(transcription.pcmBytes, [1, 2, 3, 4]);
+      expect(transcription.pcmBytes, pcm);
 
-      transcription.emit(
-        const LiveTranscriptionDeltaEvent(delta: '实时', itemId: 'segment-1'),
+      for (final text in ['Draft', 'Rewritten draft']) {
+        transcription.emit(
+          LiveTranscriptionPieceEvent(
+            id: 'piece-1',
+            text: text,
+            startMs: 0,
+            endMs: null,
+            isFinal: false,
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Listening: $text'), findsOneWidget);
+      }
+      const finalPiece = LiveTranscriptionPieceEvent(
+        id: 'piece-1',
+        text: 'First final',
+        startMs: 0,
+        endMs: 100,
+        isFinal: true,
       );
-      await tester.pumpAndSettle();
-      expect(find.text('Listening: 实时'), findsOneWidget);
-      transcription.emit(
-        const LiveTranscriptionCompletedEvent(
-          transcript: '实时转写已经进入知识采集。',
-          itemId: 'segment-1',
-          provider: 'sensevoice',
-        ),
-      );
+      transcription.emit(finalPiece);
+      transcription.emit(finalPiece);
+      transcription.emit(const LiveTranscriptionGapEvent(70, 80));
       await tester.pumpAndSettle();
       final transcriptField = tester.widget<TextField>(
         find.byKey(const Key('recording-transcript')),
       );
-      expect(transcriptField.controller?.text, contains('实时转写'));
+      expect(transcriptField.controller?.text, 'First final');
+      expect(find.byKey(const Key('recording-live-preview')), findsNothing);
+      expect(
+        find.textContaining('Some audio is missing from live transcription'),
+        findsOneWidget,
+      );
+
+      await tester.ensureVisible(find.byKey(const Key('pause-recording')));
+      await tester.tap(find.byKey(const Key('pause-recording')));
+      await tester.pumpAndSettle();
+      expect(transcription.commitCalls, 1);
+      await tester.ensureVisible(find.byKey(const Key('resume-recording')));
+      await tester.tap(find.byKey(const Key('resume-recording')));
+      await tester.pumpAndSettle();
+      device.emitPcm(pcm);
+      await tester.pump();
+      expect(transcription.pcmBytes.length, 2 * pcm.length);
 
       await tester.ensureVisible(find.byKey(const Key('stop-recording')));
       await tester.tap(find.byKey(const Key('stop-recording')));
       await tester.pumpAndSettle();
 
-      expect(transcription.commitCalls, 1);
+      expect(transcription.commitCalls, 2);
+      transcription.emit(const LiveTranscriptionFlushedEvent(100));
+      await tester.pumpAndSettle();
+      expect(repository.recordingUploads, 0);
+      expect(transcription.state, LiveTranscriptionConnectionState.ready);
+      transcription.emit(
+        const LiveTranscriptionPieceEvent(
+          id: 'piece-2',
+          text: 'Last final',
+          startMs: 100,
+          endMs: 199,
+          isFinal: true,
+        ),
+      );
+      transcription.emit(const LiveTranscriptionFlushedEvent(200));
+      await tester.pumpAndSettle();
+      expect(repository.recordingUploads, 1);
+      expect(draftStore.draft?.transcript, 'First final\nLast final');
+      expect(
+        repository.recordingCheckpoints.last.transcript,
+        'First final\nLast final',
+      );
       expect(
         draftStore.draft?.encoding,
         RecordingDraft.guntherPcm16WavEncoding,
@@ -1541,12 +1655,21 @@ class FakeLiveTranscriptionSession implements LiveTranscriptionSession {
   final StreamController<LiveTranscriptionEvent> _events =
       StreamController<LiveTranscriptionEvent>.broadcast();
   final List<int> pcmBytes = [];
+  final firstCommit = Completer<void>();
+  final _commits = <({int untilMs, Completer<bool> done})>[];
   int connectCalls = 0;
   int commitCalls = 0;
   LiveTranscriptionConnectionState _state =
       LiveTranscriptionConnectionState.idle;
 
-  void emit(LiveTranscriptionEvent event) => _events.add(event);
+  void emit(LiveTranscriptionEvent event) {
+    if (event is LiveTranscriptionFlushedEvent &&
+        _commits.isNotEmpty &&
+        event.untilMs == _commits.first.untilMs) {
+      _commits.removeAt(0).done.complete(true);
+    }
+    _events.add(event);
+  }
 
   @override
   Stream<LiveTranscriptionEvent> get events => _events.stream;
@@ -1578,13 +1701,25 @@ class FakeLiveTranscriptionSession implements LiveTranscriptionSession {
   void appendPcm(Uint8List pcm) => pcmBytes.addAll(pcm);
 
   @override
-  void commit() {
+  Future<bool> commit() {
     commitCalls += 1;
+    final untilMs =
+        pcmBytes.length *
+        1000 ~/
+        (liveTranscriptionSampleRate * liveTranscriptionBytesPerSample);
+    final done = Completer<bool>();
+    _commits.add((untilMs: untilMs, done: done));
+    if (!firstCommit.isCompleted) firstCommit.complete();
+    return done.future;
   }
 
   @override
   Future<void> stop() async {
     _state = LiveTranscriptionConnectionState.stopped;
+    for (final commit in _commits) {
+      commit.done.complete(false);
+    }
+    _commits.clear();
   }
 
   @override

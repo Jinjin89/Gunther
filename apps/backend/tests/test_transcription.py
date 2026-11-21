@@ -57,7 +57,7 @@ def test_audio_is_sent_to_the_configured_server_in_segments(tmp_path: Path, monk
             socket.send_json({"type": "input_audio_buffer.append", "audio": silence})
             socket.send_json({"type": "input_audio_buffer.commit"})
             event = socket.receive_json()
-    assert event["transcript"] == "hello there" and event["provider"] == "compatible"
+    assert event["type"] == "transcript.piece" and event["text"] == "hello there"
     request = seen[0]
     assert str(request.url) == "https://asr.example/v1/audio/transcriptions"
     assert request.headers["authorization"] == "Bearer key-123"

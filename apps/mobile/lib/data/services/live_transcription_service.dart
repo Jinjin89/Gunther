@@ -7,6 +7,8 @@ import 'dart:typed_data';
 
 const int liveTranscriptionSampleRate = 24000;
 const int liveTranscriptionBytesPerSample = 2;
+const int _bytesPerMs =
+    liveTranscriptionSampleRate * liveTranscriptionBytesPerSample ~/ 1000;
 const int liveTranscriptionBufferSeconds = 30;
 const int defaultLiveTranscriptionBufferBytes =
     liveTranscriptionSampleRate *
@@ -55,25 +57,33 @@ class LiveTranscriptionReadyEvent extends LiveTranscriptionEvent {
   final bool diarize;
 }
 
-class LiveTranscriptionDeltaEvent extends LiveTranscriptionEvent {
-  const LiveTranscriptionDeltaEvent({required this.delta, this.itemId});
-
-  final String delta;
-  final String? itemId;
-}
-
-class LiveTranscriptionCompletedEvent extends LiveTranscriptionEvent {
-  const LiveTranscriptionCompletedEvent({
-    required this.transcript,
-    this.itemId,
-    this.provider,
-    this.startSeconds,
+class LiveTranscriptionPieceEvent extends LiveTranscriptionEvent {
+  const LiveTranscriptionPieceEvent({
+    required this.id,
+    required this.text,
+    required this.startMs,
+    required this.endMs,
+    required this.isFinal,
   });
 
-  final String transcript;
-  final String? itemId;
-  final String? provider;
-  final double? startSeconds;
+  final String id;
+  final String text;
+  final int startMs;
+  final int? endMs;
+  final bool isFinal;
+}
+
+class LiveTranscriptionGapEvent extends LiveTranscriptionEvent {
+  const LiveTranscriptionGapEvent(this.startMs, this.endMs);
+
+  final int startMs;
+  final int endMs;
+}
+
+class LiveTranscriptionFlushedEvent extends LiveTranscriptionEvent {
+  const LiveTranscriptionFlushedEvent(this.untilMs);
+
+  final int untilMs;
 }
 
 class LiveTranscriptionErrorEvent extends LiveTranscriptionEvent {
@@ -110,7 +120,7 @@ abstract interface class LiveTranscriptionSession {
   int get droppedBytes;
   Future<void> connect();
   void appendPcm(Uint8List pcm);
-  void commit();
+  Future<bool> commit();
   Future<void> stop();
   Future<void> dispose();
 }
@@ -165,7 +175,8 @@ class LiveTranscriptionService implements LiveTranscriptionSession {
   final LiveTranscriptionSocketConnector _connector;
   final LiveTranscriptionReconnectDelay _reconnectDelay;
   final int maxBufferedBytes;
-  final ListQueue<Uint8List> _offlineAudio = ListQueue<Uint8List>();
+  final ListQueue<({int offset, Uint8List pcm})> _retainedPcm = ListQueue();
+  final ListQueue<_LiveCommit> _commits = ListQueue<_LiveCommit>();
   final StreamController<LiveTranscriptionEvent> _events =
       StreamController<LiveTranscriptionEvent>.broadcast();
 
@@ -175,15 +186,26 @@ class LiveTranscriptionService implements LiveTranscriptionSession {
   Timer? _reconnectTimer;
   LiveTranscriptionConnectionState _state =
       LiveTranscriptionConnectionState.idle;
-  int _bufferedBytes = 0;
   int _droppedBytes = 0;
+  int _offeredBytes = 0;
+  int _nextSend = 0;
+  int _heardThrough = 0;
+  int _reportedLostThrough = 0;
+  int _socketStartMs = 0;
+  int? _firstSentByte;
   int _reconnectAttempt = 0;
   bool _active = false;
   bool _ready = false;
-  bool _commitPending = false;
   bool _disposed = false;
 
-  Uri get webSocketUri => _webSocketUri;
+  int get _retainedStart => _retainedPcm.firstOrNull?.offset ?? _offeredBytes;
+
+  Uri get webSocketUri => _webSocketUri.replace(
+    queryParameters: {
+      ..._webSocketUri.queryParameters,
+      'offset_ms': '${_nextSend ~/ _bytesPerMs}',
+    },
+  );
   @override
   Stream<LiveTranscriptionEvent> get events => _events.stream;
 
@@ -191,7 +213,7 @@ class LiveTranscriptionService implements LiveTranscriptionSession {
   LiveTranscriptionConnectionState get state => _state;
 
   @override
-  int get bufferedBytes => _bufferedBytes;
+  int get bufferedBytes => _offeredBytes - _nextSend;
 
   @override
   int get droppedBytes => _droppedBytes;
@@ -211,20 +233,31 @@ class LiveTranscriptionService implements LiveTranscriptionSession {
   void appendPcm(Uint8List pcm) {
     if (_disposed || pcm.length < liveTranscriptionBytesPerSample) return;
     final alignedLength = pcm.length - (pcm.length % 2);
-    if (alignedLength == 0) return;
     final aligned = Uint8List.fromList(pcm.sublist(0, alignedLength));
-    if (_ready && _sendAppend(aligned)) return;
-    _bufferAudio(aligned);
-    _emitStatus();
+    final offset = _offeredBytes;
+    _offeredBytes += alignedLength;
+    _retainedPcm.addLast((offset: offset, pcm: aligned));
+    _flushPending();
+    _discardBefore(_offeredBytes - maxBufferedBytes);
+    if (_nextSend < _retainedStart) _nextSend = _retainedStart;
+    if (!_ready) {
+      _reportLostAudio();
+      _emitStatus();
+    }
   }
 
-  /// Commits all audio offered so far. If offline, the commit follows the
-  /// bounded buffer after a successful reconnect.
+  /// Returns true when the offered audio is flushed, or false if interrupted.
   @override
-  void commit() {
-    if (_disposed) return;
-    _commitPending = true;
+  Future<bool> commit() {
+    if (_disposed) return Future<bool>.value(false);
+    final commit = _LiveCommit(
+      _offeredBytes,
+      math.max(_heardThrough, _reportedLostThrough),
+    );
+    _commits.addLast(commit);
+    if (!_ready) _reportLostAudio();
     _flushPending();
+    return commit.done.future;
   }
 
   @override
@@ -234,6 +267,10 @@ class LiveTranscriptionService implements LiveTranscriptionSession {
     }
     _active = false;
     _ready = false;
+    while (_commits.isNotEmpty) {
+      final commit = _commits.removeFirst();
+      if (!commit.done.isCompleted) commit.done.complete(false);
+    }
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     final subscription = _socketSubscription;
@@ -289,7 +326,8 @@ class LiveTranscriptionService implements LiveTranscriptionSession {
         if (_bearerToken.isNotEmpty)
           HttpHeaders.authorizationHeader: 'Bearer $_bearerToken',
       };
-      final socket = await _connector(_webSocketUri, headers);
+      final startMs = _nextSend ~/ _bytesPerMs;
+      final socket = await _connector(webSocketUri, headers);
       if (!_active || _disposed) {
         try {
           await socket.close(WebSocketStatus.normalClosure, 'inactive');
@@ -299,6 +337,8 @@ class LiveTranscriptionService implements LiveTranscriptionSession {
         return;
       }
       _socket = socket;
+      _socketStartMs = startMs;
+      _firstSentByte = null;
       _ready = false;
       _setState(LiveTranscriptionConnectionState.connected);
       _socketSubscription = socket.messages.listen(
@@ -348,8 +388,8 @@ class LiveTranscriptionService implements LiveTranscriptionSession {
       return;
     }
 
-    switch (payload['type']) {
-      case 'service.ready':
+    switch (payload) {
+      case {'type': 'service.ready'}:
         _ready = true;
         _reconnectAttempt = 0;
         _emit(
@@ -362,30 +402,36 @@ class LiveTranscriptionService implements LiveTranscriptionSession {
         );
         _setState(LiveTranscriptionConnectionState.ready);
         _flushPending();
-      case 'conversation.item.input_audio_transcription.delta':
-        final delta = _string(payload['delta']);
-        if (delta != null && delta.isNotEmpty) {
-          _emit(
-            LiveTranscriptionDeltaEvent(
-              delta: delta,
-              itemId: _string(payload['item_id']),
-            ),
-          );
-        }
-      case 'conversation.item.input_audio_transcription.completed':
-        final transcript = _string(payload['transcript']);
-        if (transcript != null && transcript.isNotEmpty) {
-          _emit(
-            LiveTranscriptionCompletedEvent(
-              transcript: transcript,
-              itemId: _string(payload['item_id']),
-              provider: _string(payload['provider']),
-              startSeconds: _number(payload['start_seconds']),
-            ),
-          );
-        }
-      case 'service.error':
-      case 'error':
+        _emitStatus();
+      case {
+        'type': 'transcript.piece',
+        'id': String id,
+        'text': String text,
+        'start_ms': int startMs,
+        'end_ms': int? endMs,
+        'final': bool isFinal,
+      }:
+        if (isFinal && endMs != null) _confirmThrough(endMs * _bytesPerMs);
+        _emit(
+          LiveTranscriptionPieceEvent(
+            id: id,
+            text: text,
+            startMs: startMs,
+            endMs: endMs,
+            isFinal: isFinal,
+          ),
+        );
+      case {
+            'type': 'transcript.gap',
+            'start_ms': int startMs,
+            'end_ms': int endMs,
+          }
+          when endMs > startMs:
+        _emit(LiveTranscriptionGapEvent(startMs, endMs));
+      case {'type': 'transcript.flushed', 'until_ms': int untilMs}:
+        _acknowledgeFlush(untilMs);
+        _emit(LiveTranscriptionFlushedEvent(untilMs));
+      case {'type': 'service.error'}:
         _emitError(
           code: _string(payload['code']) ?? 'transcription_error',
           message:
@@ -417,6 +463,11 @@ class LiveTranscriptionService implements LiveTranscriptionSession {
     _socket = null;
     _socketSubscription = null;
     _ready = false;
+    _nextSend = _retainedStart;
+    for (final commit in _commits) {
+      commit.flushMs = null;
+    }
+    _reportLostAudio();
     if (_active && !_disposed) {
       _setState(LiveTranscriptionConnectionState.offline);
       _scheduleReconnect();
@@ -439,28 +490,75 @@ class LiveTranscriptionService implements LiveTranscriptionSession {
   }
 
   void _flushPending() {
-    if (!_ready || _socket == null) return;
-    while (_offlineAudio.isNotEmpty && _ready) {
-      final chunk = _offlineAudio.removeFirst();
-      _bufferedBytes -= chunk.length;
-      if (!_sendAppend(chunk)) {
-        _offlineAudio.addFirst(chunk);
-        _bufferedBytes += chunk.length;
-        _emitStatus();
-        return;
-      }
+    if (!_ready) return;
+    for (final frame in _retainedPcm) {
+      final end = frame.offset + frame.pcm.length;
+      if (end <= _nextSend) continue;
+      if (!_sendCommits() || !_sendAppend(frame.pcm, frame.offset)) return;
+      _firstSentByte ??= frame.offset;
+      _nextSend = end;
     }
-    if (_commitPending &&
-        _ready &&
-        _sendJson(<String, Object>{'type': 'input_audio_buffer.commit'})) {
-      _commitPending = false;
-    }
-    _emitStatus();
+    _sendCommits();
   }
 
-  bool _sendAppend(Uint8List pcm) => _sendJson(<String, Object>{
+  bool _sendCommits() {
+    for (final commit in _commits) {
+      if (commit.offset > _nextSend) break;
+      if (commit.flushMs != null) continue;
+      if (!_sendJson({'type': 'input_audio_buffer.commit'})) return false;
+      final first = _firstSentByte;
+      commit.flushMs = first == null
+          ? _socketStartMs
+          : first ~/ _bytesPerMs + (_nextSend - first) ~/ _bytesPerMs;
+    }
+    return true;
+  }
+
+  void _acknowledgeFlush(int untilMs) {
+    final commit = _commits.firstOrNull;
+    if (commit != null && commit.flushMs == untilMs) {
+      _commits.removeFirst();
+      _confirmThrough(commit.offset);
+      if (!commit.done.isCompleted) commit.done.complete(true);
+    } else {
+      _confirmThrough(untilMs * _bytesPerMs);
+    }
+  }
+
+  void _confirmThrough(int offset) {
+    _heardThrough = math.max(_heardThrough, math.min(offset, _nextSend));
+    _discardBefore(_heardThrough);
+  }
+
+  void _reportLostAudio() {
+    final start = _retainedStart;
+    if (start <= _heardThrough) return;
+    _droppedBytes += math.max(
+      0,
+      start - math.max(_heardThrough, _reportedLostThrough),
+    );
+    _reportedLostThrough = start;
+    for (final commit in _commits) {
+      final neededFrom = math.max(_heardThrough, commit.replayFrom);
+      if (commit.flushMs == null &&
+          start > neededFrom &&
+          commit.offset > neededFrom &&
+          !commit.done.isCompleted) {
+        commit.done.complete(false);
+      }
+    }
+    _commits.removeWhere(
+      (commit) =>
+          commit.flushMs == null &&
+          commit.done.isCompleted &&
+          commit.offset <= start,
+    );
+  }
+
+  bool _sendAppend(Uint8List pcm, int offset) => _sendJson(<String, Object>{
     'type': 'input_audio_buffer.append',
     'audio': base64Encode(pcm),
+    'offset_ms': offset ~/ _bytesPerMs,
   });
 
   bool _sendJson(Map<String, Object> payload) {
@@ -475,30 +573,18 @@ class LiveTranscriptionService implements LiveTranscriptionSession {
     }
   }
 
-  void _bufferAudio(Uint8List pcm) {
-    var retained = pcm;
-    if (retained.length > maxBufferedBytes) {
-      final dropped = retained.length - maxBufferedBytes;
-      _droppedBytes += dropped;
-      retained = Uint8List.fromList(retained.sublist(dropped));
-    }
-
-    var overflow = _bufferedBytes + retained.length - maxBufferedBytes;
-    while (overflow > 0 && _offlineAudio.isNotEmpty) {
-      final oldest = _offlineAudio.removeFirst();
-      if (oldest.length <= overflow) {
-        overflow -= oldest.length;
-        _bufferedBytes -= oldest.length;
-        _droppedBytes += oldest.length;
-      } else {
-        _offlineAudio.addFirst(Uint8List.fromList(oldest.sublist(overflow)));
-        _bufferedBytes -= overflow;
-        _droppedBytes += overflow;
-        overflow = 0;
+  void _discardBefore(int offset) {
+    while (_retainedPcm.isNotEmpty && _retainedPcm.first.offset < offset) {
+      final frame = _retainedPcm.removeFirst();
+      final dropped = offset - frame.offset;
+      if (dropped < frame.pcm.length) {
+        _retainedPcm.addFirst((
+          offset: offset,
+          pcm: Uint8List.fromList(Uint8List.sublistView(frame.pcm, dropped)),
+        ));
+        break;
       }
     }
-    _offlineAudio.addLast(retained);
-    _bufferedBytes += retained.length;
   }
 
   void _setState(
@@ -510,7 +596,7 @@ class LiveTranscriptionService implements LiveTranscriptionSession {
     _emit(
       LiveTranscriptionStatusEvent(
         state: state,
-        bufferedBytes: _bufferedBytes,
+        bufferedBytes: bufferedBytes,
         reconnectAttempt: reconnectAttempt,
         retryAfter: retryAfter,
       ),
@@ -534,6 +620,15 @@ class LiveTranscriptionService implements LiveTranscriptionSession {
   void _emit(LiveTranscriptionEvent event) {
     if (!_events.isClosed) _events.add(event);
   }
+}
+
+class _LiveCommit {
+  _LiveCommit(this.offset, this.replayFrom);
+
+  final int offset;
+  final int replayFrom;
+  final done = Completer<bool>();
+  int? flushMs;
 }
 
 class _DartIoLiveTranscriptionSocket implements LiveTranscriptionSocket {
@@ -616,9 +711,11 @@ Uri _liveTranscriptionUri(Uri baseUri, String context) {
       .resolve('recordings/live');
   final normalizedContext = context.trim();
   return endpoint.replace(
-    queryParameters: normalizedContext.isEmpty
-        ? null
-        : <String, String>{'context': normalizedContext},
+    queryParameters: {
+      if (normalizedContext.isNotEmpty) 'context': normalizedContext,
+      'protocol': '2',
+      'sample_rate': '$liveTranscriptionSampleRate',
+    },
   );
 }
 
@@ -630,5 +727,3 @@ bool _isExactLoopback(String host) {
 }
 
 String? _string(Object? value) => value is String ? value : null;
-
-double? _number(Object? value) => value is num ? value.toDouble() : null;
