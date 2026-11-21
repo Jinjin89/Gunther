@@ -78,17 +78,17 @@ export function ModelPicker({ menu, choice, onChange, disabled = false, placemen
     </div>;
   }
 
-  const current = menu.models.find((model) => model.ref === choice.model) ?? menu.models[0]!;
-  const applied = resolveEffort(choice.effort, current.levels);
+  const current = menu.models.find((model) => model.ref === choice.model);
+  const applied = current && resolveEffort(choice.effort, current.levels);
   const adjusted = applied && applied.id !== choice.effort;
   const close = (focus?: "model" | "effort") => {
     setOpen(null);
     if (focus) root.current?.querySelector<HTMLButtonElement>(`[data-chip=${focus}]`)?.focus();
   };
   const effortTitle = !applied
-    ? `${current.label} has no effort setting; it thinks as it always does.`
+    ? current ? `${current.label} has no effort setting.` : "Choose a model first."
     : adjusted
-      ? `${current.label} has no ${EFFORT_NAMES[choice.effort]} setting; it uses ${applied.label}.`
+      ? `${current?.label} has no ${EFFORT_NAMES[choice.effort]} setting; it uses ${applied.label}.`
       : `Thinking effort: ${applied.label}`;
 
   return <div className="gx-model-picker" ref={root}>
@@ -100,11 +100,11 @@ export function ModelPicker({ menu, choice, onChange, disabled = false, placemen
       aria-haspopup="menu"
       aria-expanded={open === "model"}
       aria-controls={open === "model" ? modelMenuId : undefined}
-      aria-label={`Model: ${current.display}`}
-      title={current.display}
+      aria-label={current ? `Model: ${current.display}` : "Choose model"}
+      title={current?.display}
       onClick={() => setOpen(open === "model" ? null : "model")}
     >
-      <Sparkles size={13} /><span className="gx-model-chip-provider">{current.provider}</span><span>{current.label}</span><ChevronDown size={11} />
+      <Sparkles size={13} />{current && <span className="gx-model-chip-provider">{current.provider}</span>}<span>{current?.label ?? "Choose model"}</span><ChevronDown size={11} />
     </button>
     <button
       type="button"
@@ -128,19 +128,19 @@ export function ModelPicker({ menu, choice, onChange, disabled = false, placemen
           key={model.ref}
           type="button"
           role="menuitemradio"
-          aria-checked={model.ref === current.ref}
+          aria-checked={model.ref === current?.ref}
           className="gx-model-option"
           onClick={() => { onChange({ ...choice, model: model.ref }); close("model"); }}
         >
           <span>{model.label}</span>
           {model.vision && <Eye size={12} aria-label="Sees images" />}
           {!model.levels.length && <small>no effort setting</small>}
-          {model.ref === current.ref && <Check size={13} className="gx-model-check" />}
+          {model.ref === current?.ref && <Check size={13} className="gx-model-check" />}
         </button>)}
       </div>)}
     </Popover>}
 
-    {open === "effort" && applied && <Popover id={effortMenuId} label="Thinking effort" placement={placement} onClose={() => close("effort")}>
+    {open === "effort" && current && applied && <Popover id={effortMenuId} label="Thinking effort" placement={placement} onClose={() => close("effort")}>
       <div className="gx-menu-label" aria-hidden="true">Thinking effort · {current.label}</div>
       {EFFORTS.map((effort: Effort) => {
         const used = resolveEffort(effort, current.levels);

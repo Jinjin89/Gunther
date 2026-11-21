@@ -5,7 +5,7 @@ from pathlib import Path
 import httpx
 import openai
 import pytest
-from fake_models import FakeProvider, api_error, gateway, model
+from fake_models import FakeProvider, api_error, ask_from_search, gateway, model
 from fastapi.testclient import TestClient
 from legacy_artifacts import insert_legacy_version
 
@@ -14,7 +14,7 @@ from gunther.config import Settings
 from gunther.database import create_database_engine
 from gunther.extraction import ModelExtractor
 from gunther.main import create_app
-from gunther.models import Artifact
+from gunther.models import Artifact, SessionMessage
 from gunther.realtime import (
     _pcm16_wav,
     qwen_endpoint,
@@ -114,7 +114,7 @@ def answered_session(client: TestClient, title: str) -> tuple[str, str, str]:
         },
     )
     session_id = client.post(f"/api/knowledge-bases/{base_id}/sessions", json={}).json()["id"]
-    turn = ask_turn(client, session_id, {"content": "What improves retention?"})
+    turn = ask_from_search(client, session_id, {"content": "What improves retention?"})
     return base_id, session_id, turn["assistantMessage"]["id"]
 
 
@@ -750,6 +750,23 @@ def test_deepseek_extraction_failure_preserves_source_with_local_rules() -> None
     assert result.assertions[0].subject_label == "CD3D"
 
 
+@pytest.mark.parametrize("home", [True, False])
+def test_ask_keeps_the_question_when_it_needs_a_model(home: bool) -> None:
+    fake = FakeProvider("unused")
+    with make_client() as client:
+        base_id = "@home" if home else create_base(client, "Test library")
+        if not home:
+            client.app.state.knowledge_service.models = gateway(fake, roles={})
+        session_id = client.post(f"/api/knowledge-bases/{base_id}/sessions", json={}).json()["id"]
+        with pytest.raises(AnswerStreamError, match="needs a language model") as err:
+            ask_turn(client, session_id, {"content": "What is supported?"})
+        assert err.value.status == 412
+        [question] = client.get(f"/api/sessions/{session_id}").json()["messages"]
+    assert question["role"] == "user" and question["content"] == "What is supported?"
+    assert question["context"]["interrupted"] == "failed"
+    assert question["context"]["askFailure"]["needsModel"] and not fake.requests
+
+
 def test_session_keeps_messages_context_and_citations() -> None:
     with make_client() as client:
         base_id = create_base(client, "Single Cell")
@@ -770,39 +787,24 @@ def test_session_keeps_messages_context_and_citations() -> None:
         assert created.status_code == 201
         session_id = created.json()["id"]
 
-        body = ask_turn(client, session_id, {"content": "What supports T-cell identity?"})
+        body = ask_from_search(client, session_id, {"content": "What supports T-cell identity?"})
         assert body["session"]["title"] == "What supports T-cell identity?"
         assert body["assistantMessage"]["citations"][0]["sourceId"] == source_id
-        assert body["assistantMessage"]["context"] == {
-            "sourcesConsidered": 1,
-            "assertionsConsidered": 1,
-            "verifiedAssertions": 0,
-            "retrievalMode": "selected",
-            "responderMode": "local",
-            "model": None,
-            "modelLabel": None,
-            "effort": None,
-            "effortLabel": None,
-            "notes": [],
-            "reasoning": None,
-            "modelError": "Ask needs a language model. Set one up under Settings → Models.",
-            "intent": None,
-            "style": "balanced",
-            "steps": [],
-            "webSearched": False,
-            "checked": False,
-            "supportNotes": [],
-            "coverage": None,
-            "budgetUsage": None,
-            "work": None,
-            "skill": None,
-            "research": None,
-            "interrupted": None,
-        }
+        context = body["assistantMessage"]["context"]
+        assert context["retrievalMode"] == "selected" and context["responderMode"] == "model"
+        assert context["sourcesConsidered"] == context["assertionsConsidered"] == 1
 
         loaded = client.get(f"/api/sessions/{session_id}").json()
         assert [message["role"] for message in loaded["messages"]] == ["user", "assistant"]
         assert loaded["messageCount"] == 2
+        assert loaded["messages"][1] == body["assistantMessage"]
+        with client.app.state.knowledge_service.sessions.begin() as session:
+            old = session.get(SessionMessage, body["assistantMessage"]["id"])
+            old.context_json = '{"responder_mode":"local","model_error":"Archived model error"}'
+        restored = client.get(f"/api/sessions/{session_id}").json()["messages"][1]
+        assert restored["context"]["responderMode"] == "local"
+        assert restored["context"]["modelError"] == "Archived model error"
+        assert restored["citations"] == body["assistantMessage"]["citations"]
 
 
 def test_sessions_can_be_pinned_and_archived_without_deleting_history() -> None:
@@ -920,7 +922,9 @@ def test_assistant_answer_can_be_saved_as_knowledge() -> None:
             "/api/knowledge-bases/learning/sessions",
             json={"focusChapterId": "practice"},
         ).json()
-        turn = ask_turn(client, knowledge_session['id'], {"content": "What improves retention?"})
+        turn = ask_from_search(
+            client, knowledge_session["id"], {"content": "What improves retention?"}
+        )
         assistant_id = turn["assistantMessage"]["id"]
 
         created = client.post(
@@ -1001,7 +1005,7 @@ def test_a_version_from_the_old_builder_stays_readable_sealed_and_bound_to_its_l
             f"/api/knowledge-bases/{base_id}/sessions",
             json={},
         ).json()
-        turn = ask_turn(
+        turn = ask_from_search(
             client, knowledge_session['id'], {"content": "Which marker identifies T cells?"},
         )
         proposal = client.post(
@@ -1150,7 +1154,7 @@ def test_session_retrieval_excludes_unrelated_claims_from_citations() -> None:
             "/api/knowledge-bases/biology/sessions",
             json={"selectedSourceIds": [imported["source"]["id"]]},
         ).json()
-        turn = ask_turn(
+        turn = ask_from_search(
             client, knowledge_session['id'], {"content": "What supports T-cell identity?"},
         )
 
@@ -1189,7 +1193,7 @@ def test_knowledge_base_source_membership_bounds_default_retrieval() -> None:
         assert client.get("/api/knowledge-bases/software/sources").json()[0]["id"] == software["id"]
 
         knowledge_session = client.post("/api/knowledge-bases/biology/sessions", json={}).json()
-        turn = ask_turn(client, knowledge_session['id'], {"content": "What does CD3D mark?"})
+        turn = ask_from_search(client, knowledge_session['id'], {"content": "What does CD3D mark?"})
         cited_source_ids = {
             citation["sourceId"] for citation in turn["assistantMessage"]["citations"]
         }
@@ -1210,13 +1214,11 @@ def test_unrelated_question_returns_an_evidence_gap_without_padding_citations() 
             },
         )
         knowledge_session = client.post("/api/knowledge-bases/biology/sessions", json={}).json()
-        turn = ask_turn(
+        turn = ask_from_search(
             client, knowledge_session['id'], {"content": "How do black holes evaporate?"},
         )
 
         assert turn["assistantMessage"]["citations"] == []
-        assert "needs a language model" in turn["assistantMessage"]["content"]
-        assert turn["assistantMessage"]["context"]["responderMode"] == "local"
         proposal = client.post(
             f"/api/sessions/{knowledge_session['id']}/messages/"
             f"{turn['assistantMessage']['id']}/proposal",
@@ -1240,14 +1242,13 @@ def test_session_does_not_answer_from_one_generic_word_overlap() -> None:
         )
         knowledge_session = client.post("/api/knowledge-bases/biology/sessions", json={}).json()
 
-        turn = ask_turn(
+        turn = ask_from_search(
             client, knowledge_session['id'], {
                 "content": ("What evidence supports checking doublets before cell-type annotation?")
             },
         )
 
         assert turn["assistantMessage"]["citations"] == []
-        assert "needs a language model" in turn["assistantMessage"]["content"]
 
 
 def test_session_grounds_an_answer_in_raw_source_text_without_extracted_claims() -> None:
@@ -1273,7 +1274,7 @@ def test_session_grounds_an_answer_in_raw_source_text_without_extracted_claims()
             "/api/knowledge-bases/lecture-notes/sessions", json={}
         ).json()
 
-        turn = ask_turn(
+        turn = ask_from_search(
             client, knowledge_session["id"],
             {"content": "Do RNA counts need quality control before clustering?"},
         )
@@ -1289,33 +1290,8 @@ def test_session_grounds_an_answer_in_raw_source_text_without_extracted_claims()
             "Doublets and low quality cells can distort downstream annotation."
         )
         assert citations[0]["status"] == "provisional"
-        assert turn["assistantMessage"]["context"] == {
-            "sourcesConsidered": 1,
-            "assertionsConsidered": 0,
-            "verifiedAssertions": 0,
-            "retrievalMode": "all",
-            "responderMode": "local",
-            "model": None,
-            "modelLabel": None,
-            "effort": None,
-            "effortLabel": None,
-            "notes": [],
-            "reasoning": None,
-            "modelError": "Ask needs a language model. Set one up under Settings → Models.",
-            "intent": None,
-            "style": "balanced",
-            "steps": [],
-            "webSearched": False,
-            "checked": False,
-            "supportNotes": [],
-            "coverage": None,
-            "budgetUsage": None,
-            "work": None,
-            "skill": None,
-            "research": None,
-            "interrupted": None,
-        }
-        assert "Clustering lecture" in turn["assistantMessage"]["content"]
+        context = turn["assistantMessage"]["context"]
+        assert context["sourcesConsidered"] == 1 and context["assertionsConsidered"] == 0
 
         proposal = client.post(
             f"/api/sessions/{knowledge_session['id']}/messages/"
@@ -1337,11 +1313,10 @@ def test_empty_knowledge_base_does_not_leak_global_sources() -> None:
             },
         )
         empty_session = client.post("/api/knowledge-bases/unrelated/sessions", json={}).json()
-        turn = ask_turn(client, empty_session['id'], {"content": "What improves leverage?"})
+        turn = ask_from_search(client, empty_session['id'], {"content": "What improves leverage?"})
 
         assert turn["assistantMessage"]["citations"] == []
         assert turn["assistantMessage"]["context"]["sourcesConsidered"] == 0
-        assert "needs a language model" in turn["assistantMessage"]["content"]
 
 
 def test_session_rejects_unknown_source_scope() -> None:
@@ -1428,8 +1403,8 @@ def test_session_can_branch_from_an_earlier_answer_without_mutating_parent() -> 
         parent = client.post(
             "/api/knowledge-bases/learning/sessions", json={"title": "Study design"}
         ).json()
-        first_turn = ask_turn(client, parent['id'], {"content": "What improves recall?"})
-        ask_turn(client, parent["id"], {"content": "What remains uncertain?"})
+        first_turn = ask_from_search(client, parent['id'], {"content": "What improves recall?"})
+        ask_from_search(client, parent["id"], {"content": "What remains uncertain?"})
 
         branch = client.post(
             f"/api/sessions/{parent['id']}/messages/{first_turn['assistantMessage']['id']}/branch"

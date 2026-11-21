@@ -1,5 +1,5 @@
 import { persistentStorage } from "../persistentStorage";
-import type { KnowledgeSearchResult, SourceSummary } from "@gunther/contracts";
+import type { AskRetryOptions, KnowledgeSearchResult, SourceSummary } from "@gunther/contracts";
 import {
   ArrowRight,
   Camera,
@@ -203,17 +203,19 @@ export function HomePage({
     return Boolean(first);
   };
 
-  const askNow = (question = query) => {
+  const askNow = (question = query, retry?: AskRetryOptions) => {
     const text = question.trim();
     if (!text) return;
     const choice = usableChoice(modelMenu, deviceChoice);
     void homeAsk.ask(text, {
       ...(choice.model && modelMenu?.models.length ? { model: choice.model, effort: choice.effort } : {}),
-      web,
-      style: readAnswerStyle(),
-      libraryIds: mentionIds,
-      ...(skill ? { skill } : {}),
-      ...(skill && (askSkills.find((item) => item.command === skill)?.budgets.length ?? 0) > 1 ? { budget } : {}),
+      ...(retry ?? {
+        ...(web ? { web: true } : {}),
+        style: readAnswerStyle(),
+        ...(mentionIds.length ? { knowledgeBaseIds: mentionIds } : {}),
+        ...(skill ? { skill } : {}),
+        ...(skill && (askSkills.find((item) => item.command === skill)?.budgets.length ?? 0) > 1 ? { budget } : {}),
+      }),
     });
     setSkill(null);
     setBudget("standard");

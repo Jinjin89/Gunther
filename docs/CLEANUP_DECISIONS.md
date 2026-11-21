@@ -201,3 +201,8 @@ An eval that only measured the retired Skills planner (`evals/slides/plan.py`,
 (`artifacts/validation/presentation-batches-0-2/…`), not ported. Git keeps them. Evals
 that measure current behaviour stay and must be able to fail. This overrides the
 plan's "repoint the slide evals" for those three.
+
+# Round 9 — batch 08c
+
+NM-06's grading policy (required grading failure → Retry, optional → raw hits marked
+ungraded) lands in 08c with Ask's failure handling; A43c no longer carries that part.

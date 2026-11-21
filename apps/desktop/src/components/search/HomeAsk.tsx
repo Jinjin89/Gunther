@@ -1,4 +1,4 @@
-import type { ConversationCitation, KnowledgeSessionSummary, SessionMessage } from "@gunther/contracts";
+import type { AskRetryOptions, ConversationCitation, KnowledgeSessionSummary, SessionMessage } from "@gunther/contracts";
 import { ArrowUp, FolderInput, Globe2, MessageSquareText, Plus, Search, Sparkles, Square, X } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { KnowledgeBase } from "../../atlas";
@@ -34,7 +34,7 @@ interface HomeAskProps {
   error: string | null;
   /** A conversation is on screen (or being started). */
   active: boolean;
-  onAsk: (question: string) => void;
+  onAsk: (question: string, retry?: AskRetryOptions) => void;
   onCancel: () => void;
   onClose: () => void;
   onNew: () => void;
@@ -117,7 +117,7 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
       {messages.map((message) => message.role === "user"
         ? <article key={message.id} className={`gx-home-question ${isInterrupted(message) ? "is-interrupted" : ""}`}>
             <p>{message.content}</p>
-            {message.context.interrupted && <InterruptedNote reason={message.context.interrupted} disabled={busy} onRetry={() => onAsk(message.content)} onEdit={() => { setFollowUp(message.content); field.current?.focus(); }} />}
+            {message.context.interrupted && <InterruptedNote message={message} disabled={busy} onRetry={() => onAsk(message.content, message.context.askFailure?.options)} onEdit={() => { setFollowUp(message.content); field.current?.focus(); }} />}
           </article>
         : <article key={message.id} className="gx-home-answer">
             <ResearchPlan context={message.context} />

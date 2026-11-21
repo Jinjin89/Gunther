@@ -1,9 +1,10 @@
 import { persistentStorage } from "../persistentStorage";
-import type { Effort, KnowledgeSession, KnowledgeSessionSummary, SessionMessage } from "@gunther/contracts";
+import type { CreateSessionMessageInput, KnowledgeSession, KnowledgeSessionSummary, SessionMessage } from "@gunther/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { readAloud } from "../speech/readAloud";
 import { AnswerStoppedError, knowledgeApi } from "../api";
 import { useLiveAnswer } from "./liveAnswer";
+import { hasSavedQuestion } from "./interrupted";
 
 /** Home's conversations belong to no library; the service files them under this id. */
 const HOME_SCOPE = "@home";
@@ -11,19 +12,7 @@ const HOME_SESSION_KEY = "gunther:home-session";
 /** Set (and announced as a window event of the same name) when Activity asks Home to show a conversation. */
 export const OPEN_HOME_SESSION_KEY = "gunther:open-home-session";
 
-export interface AskOptions {
-  model?: string | null;
-  effort?: Effort;
-  web?: boolean;
-  /** How the answer is worded; the balanced style when left out. */
-  style?: string;
-  /** The libraries pointed at with @; none means all of them. */
-  libraryIds?: string[];
-  /** A skill's command, chosen with `/`. */
-  skill?: string;
-  /** The depth of a skill that has budgets (research). */
-  budget?: string;
-}
+type AskOptions = Omit<CreateSessionMessageInput, "content">;
 
 const remembered = () => {
   try {
@@ -88,9 +77,12 @@ export function useHomeAsk() {
       if (turn) void readAloud.auto(turn.assistantMessage);
     }).catch(async (reason: unknown) => {
       if (!following || abort.signal.aborted) return;
-      controller.current = null;
-      if (!(reason instanceof AnswerStoppedError)) setError(reason instanceof Error ? reason.message : "The answer could not be written.");
-      await knowledgeApi.session(id).then(setSession).catch(() => undefined);
+      const fresh = await knowledgeApi.session(id).catch(() => null);
+      if (abort.signal.aborted) return;
+      if (fresh) { setSession(fresh); reloadRecent(); }
+      if (!(reason instanceof AnswerStoppedError) && !hasSavedQuestion(fresh?.messages, reason)) {
+        setError(reason instanceof Error ? reason.message : "The answer could not be written.");
+      }
     }).finally(() => {
       if (!following || abort.signal.aborted) return;
       if (controller.current === abort) controller.current = null;
@@ -127,10 +119,12 @@ export function useHomeAsk() {
     let current = session;
     /** The saved conversation, where the service kept a question it did not answer. */
     const reload = async () => {
-      if (!current || controller.current) return null;
+      if (!current) return null;
       try {
         const fresh = await knowledgeApi.session(current.id);
+        if (abort.signal.aborted) return null;
         setSession(fresh);
+        reloadRecent();
         return fresh;
       } catch {
         return null;
@@ -142,25 +136,17 @@ export function useHomeAsk() {
         remember(current.id);
       }
       answeringId.current = current.id;
-      const turn = await knowledgeApi.sendMessageStream(current.id, {
-        content,
-        ...(options.model ? { model: options.model, ...(options.effort ? { effort: options.effort } : {}) } : {}),
-        ...(options.web ? { web: true } : {}),
-        ...(options.style ? { style: options.style } : {}),
-        ...(options.libraryIds?.length ? { knowledgeBaseIds: options.libraryIds } : {}),
-        ...(options.skill ? { skill: options.skill } : {}),
-        ...(options.skill && options.budget ? { budget: options.budget as "standard" | "deep" } : {}),
-      }, hear, abort.signal);
+      const turn = await knowledgeApi.sendMessageStream(current.id, { content, ...options }, hear, abort.signal);
       setSession({ ...current, ...turn.session, messages: [...current.messages, turn.userMessage, turn.assistantMessage] });
       reloadRecent();
       void readAloud.auto(turn.assistantMessage);
     } catch (reason) {
       // Closed or started afresh: only the listening stopped. The answer is still saved.
       if (abort.signal.aborted) return;
-      if (controller.current === abort) controller.current = null;
-      // Stopped: the service kept the question, marked; show its copy.
-      if (!(reason instanceof AnswerStoppedError)) setError(reason instanceof Error ? reason.message : "The answer could not be written.");
-      void reload();
+      const fresh = await reload();
+      if (!abort.signal.aborted && !(reason instanceof AnswerStoppedError) && !hasSavedQuestion(fresh?.messages, reason)) {
+        setError(reason instanceof Error ? reason.message : "The answer could not be written.");
+      }
     } finally {
       if (controller.current === abort) controller.current = null;
       if (!abort.signal.aborted) {

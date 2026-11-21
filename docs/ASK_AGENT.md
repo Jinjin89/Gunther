@@ -225,11 +225,11 @@ the conversation chosen as material.
 
 ## Failure is visible
 
-No model set up → the reply says Ask needs a model (Settings → Models) and any
-library quotes found stand in. A model that fails → its error is shown and the
-library quotes stand in; nothing invents an answer. A failed tool is a failed step,
-and the writer is told. If the planner's JSON cannot be read, the first tool is
-searched with the question as asked.
+Ask keeps the question when no model or provider key is set up and opens Models
+from the Settings action. A failed model attempt shows its error and offers Retry.
+If planning fails, Ask records it in the trace and searches the first tool with the
+original question. The model writes the answer. Failed optional grading leaves raw
+hits marked ungraded. Research offers Retry when it cannot grade search results.
 
 ## Why JSON plans, not provider function-calling
 

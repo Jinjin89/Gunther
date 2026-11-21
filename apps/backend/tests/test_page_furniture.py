@@ -7,7 +7,6 @@ from sqlalchemy import create_engine, literal, select, text
 
 from gunther import digest, vector_index
 from gunther.content import ParsedBlock
-from gunther.conversation import LocalKnowledgeResponder
 from gunther.database import Base, create_database_engine, create_session_factory, session_scope
 from gunther.document_parser import docling_document
 from gunther.document_structure import evidence_eligible
@@ -120,7 +119,7 @@ def service(tmp_path):
     run_migrations(engine, Base.metadata)
     sessions = create_session_factory(engine)
     try:
-        yield KnowledgeService(sessions, LocalExtractor(), LocalKnowledgeResponder())
+        yield KnowledgeService(sessions, LocalExtractor())
     finally:
         engine.dispose()
 

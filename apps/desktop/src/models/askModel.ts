@@ -57,7 +57,7 @@ function writeDeviceChoice(choice: AskChoice) {
 
 /** A choice the menu can honour: a model that is still set up, else the Ask default. */
 export function usableChoice(menu: ModelMenu | null, ...candidates: (AskChoice | null | undefined)[]): AskChoice {
-  const fallback: AskChoice = menu?.default ?? { model: menu?.models[0]?.ref ?? null, effort: "high" };
+  const fallback: AskChoice = menu?.default ?? { model: null, effort: "high" };
   for (const candidate of candidates) {
     if (candidate?.model && menu?.models.some((model) => model.ref === candidate.model)) return candidate;
   }

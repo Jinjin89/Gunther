@@ -27,7 +27,6 @@ from gunther.answer_runs import AnswerRuns
 from gunther.api import router
 from gunther.asset_service import AssetService
 from gunther.config import PROJECT_ROOT, Settings, get_settings
-from gunther.conversation import LocalKnowledgeResponder
 from gunther.database import (
     Base,
     create_database_engine,
@@ -249,7 +248,7 @@ def create_app(
     service_store = service_settings or ServiceSettingsStore(active_settings.service_settings_file)
     active_settings = service_store.apply(base_settings)
     # The models are connected below, once the worker exists (see _connect_models).
-    knowledge_service = KnowledgeService(sessions, LocalExtractor(), LocalKnowledgeResponder())
+    knowledge_service = KnowledgeService(sessions, LocalExtractor())
     embedder, off_reason = _semantic_search(active_settings, sessions)
     knowledge_service.index.embedder = embedder
     knowledge_service.index.semantic_off_reason = off_reason

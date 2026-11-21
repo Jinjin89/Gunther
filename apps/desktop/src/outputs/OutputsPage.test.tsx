@@ -218,6 +218,14 @@ describe("artifact conversations", () => {
     expect(turn.mock.calls[0]?.[2].model).toBe("other/model");
   });
 
+  it("sends the first ready model and effort when there is no Ask default", async () => {
+    const context = await setup({ menu: { ...menu, default: null } });
+    const turn = vi.spyOn(knowledgeApi, "artifactTurnStream").mockImplementation(saves(context, (id) => version(1, { conversationId: id })));
+    await send(userEvent.setup(), "Create a report");
+    await waitFor(() => expect(turn).toHaveBeenCalled());
+    expect(turn.mock.calls[0]?.[2]).toMatchObject({ model: menu.models[0]!.ref, effort: "high" });
+  });
+
   it("offers the web only when it is set up, and sends it with the message when it is on", async () => {
     const user = userEvent.setup(); const context = await setup({ web: true });
     const turn = vi.spyOn(knowledgeApi, "artifactTurnStream").mockImplementation(saves(context, (id) => version(1, { conversationId: id })));

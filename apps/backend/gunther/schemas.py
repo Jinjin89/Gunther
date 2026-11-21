@@ -592,8 +592,7 @@ class ConversationContextOut(ApiModel):
     assertions_considered: int = 0
     verified_assertions: int = 0
     retrieval_mode: Literal["selected", "all"] = "all"
-    # "model": a language model wrote the answer; "local": the quotes themselves.
-    # Messages from before model choice say "deepseek".
+    # "local" and "deepseek" also occur on historical messages.
     responder_mode: Literal["local", "model", "deepseek"] = "local"
     # The model asked (a ref like "deepseek/deepseek-flash") and its name, even when
     # it failed and the quotes stand in; the effort asked for and the one it used.
@@ -627,6 +626,7 @@ class ConversationContextOut(ApiModel):
     research: dict[str, object] | None = None
     # On a question that got no answer: "stopped" by the reader, or "failed".
     interrupted: Literal["stopped", "failed"] | None = None
+    ask_failure: dict[str, object] | None = None
 
 
 class SessionMessageOut(ApiModel):

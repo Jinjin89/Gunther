@@ -100,7 +100,8 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
   const focusPreview = useCallback((value: boolean) => { if (value) setControlsExpanded(false); if (onFocus) onFocus(value); else setLocalFocused(value); }, [onFocus, setControlsExpanded]);
   const { menu, unavailable: menuUnavailable } = useModelMenu();
   const [deviceChoice, setDeviceChoice] = useDeviceChoice();
-  const choice = usableChoice(menu, active.choice, deviceChoice);
+  const firstReady = menu?.default ? undefined : menu?.models[0];
+  const choice = usableChoice(menu, active.choice, deviceChoice, firstReady ? { model: firstReady.ref, effort: "high" } : undefined);
   const web = useWebSearch();
   const live = useLiveOutput();
   const building = live.live !== null;

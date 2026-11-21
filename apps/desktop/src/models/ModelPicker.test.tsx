@@ -32,6 +32,7 @@ describe("resolveEffort", () => {
   it("keeps a choice only while its model is set up", () => {
     expect(usableChoice(menu, { model: "gone/model", effort: "max" }, { model: "glm/glm-5.3", effort: "low" })).toEqual({ model: "glm/glm-5.3", effort: "low" });
     expect(usableChoice(menu, null)).toEqual({ model: "deepseek/deepseek-flash", effort: "high" });
+    expect(usableChoice({ ...menu, default: null })).toEqual({ model: null, effort: "high" });
   });
 });
 

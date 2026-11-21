@@ -1,5 +1,6 @@
 import { persistentStorage } from "../persistentStorage";
 import type {
+  AskRetryOptions,
   ConversationBrief,
   ConversationBriefInput,
   ConversationCitation,
@@ -52,7 +53,7 @@ import { useAutosize } from "../services/useAutosize";
 import { BriefPanel } from "./ConversationBrief";
 import { SkillChip, useAskSkills, useSkillMenu, type SkillBudget } from "../components/search/skills";
 import { withoutTrigger } from "../components/search/TriggerMenu";
-import { InterruptedNote, endsWithInterrupted, isInterrupted } from "./interrupted";
+import { InterruptedNote, hasSavedQuestion, isInterrupted } from "./interrupted";
 import { DictationStatus, MicGlyph } from "../components/Dictation";
 import { useDragWidth } from "../hooks/useDragWidth";
 import { useDictatedField } from "../services/useDictatedField";
@@ -286,7 +287,7 @@ export function ConversationMessage({ message, retryDisabled, onRetry, onEdit, o
       {isAssistant && <ResearchPlan context={message.context} />}
       {isAssistant && <AgentSteps steps={message.context.steps ?? []} />}
       <div className="message-body">{isAssistant ? <AnswerBody content={message.content} numbers={citationNumbers(message.citations)} onCitation={(index) => { onSelect(); const citation = message.citations[index]; if (citation) onCite(citation, index); }} supportNotes={message.context.supportNotes} /> : <MessageContent content={message.content} />}</div>
-      {message.context.interrupted && <InterruptedNote reason={message.context.interrupted} disabled={retryDisabled} onRetry={onRetry} onEdit={onEdit} />}
+      {message.context.interrupted && <InterruptedNote message={message} disabled={retryDisabled} onRetry={onRetry} onEdit={onEdit} />}
       {isAssistant && message.context.modelError && <p className="message-model-error" role="note"><CircleAlert size={13} /><span>{message.context.modelError}{message.citations.length > 0 && " The quotes stand in for its answer."}</span></p>}
       {isAssistant && message.context.reasoning && <details className="message-thinking" onClick={(event) => event.stopPropagation()}><summary><ChevronRight size={12} />Thinking</summary><pre>{message.context.reasoning}</pre></details>}
       {isAssistant && <footer className="message-footer">
@@ -905,9 +906,13 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
         return;
       }
       // The service keeps a question it could not answer in the history; only one it refused goes back to the composer.
+      const asked = question || pendingQuestion.current;
       const fresh = await reloadSession(sessionId);
-      if (!fresh || !endsWithInterrupted(fresh.messages, question)) setDraft(question);
-      setError(reason instanceof Error ? reason.message : "The answer could not be generated");
+      if (controller.signal.aborted || shownId.current !== sessionId) return;
+      if (!hasSavedQuestion(fresh?.messages, reason)) {
+        setDraft(asked);
+        setError(reason instanceof Error ? reason.message : "The answer could not be generated");
+      }
     } finally {
       // A conversation left behind cleared these already; another may be answering on screen now.
       if (!controller.signal.aborted && (responseController.current === controller || responseController.current === null)) {
@@ -919,10 +924,10 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
     }
   };
 
-  const send = async (again?: string) => {
+  const send = async (again?: string, retry?: AskRetryOptions) => {
     const question = (again ?? draft).trim();
     if (!question || !activeSession || sending) return;
-    const skillUsed = again === undefined ? skill : null;
+    const skillUsed = again === undefined ? skill : retry?.skill ?? null;
     const budgeted = skillUsed !== null && (askSkills.find((item) => item.command === skillUsed)?.budgets.length ?? 0) > 1;
     if (again === undefined) { setDraft(""); setSkill(null); setBudget("standard"); }
     setAnsweringSkill(skillUsed);
@@ -951,7 +956,8 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
     const session = activeSession;
     const chosen = askChoice.model && modelMenu?.models.length ? { model: askChoice.model, effort: askChoice.effort } : {};
     liveAnswer.start();
-    await watchAnswer(session.id, question, controller, () => knowledgeApi.sendMessageStream(session.id, { content: question, selectedSourceIds: session.selectedSourceIds, focusChapterId: session.focusChapterId, ...chosen, style: readAnswerStyle(), ...(webSearch.enabled ? { web: true } : {}), ...(skillUsed ? { skill: skillUsed } : {}), ...(budgeted ? { budget } : {}) }, liveAnswer.hear, controller.signal));
+    const options = retry ?? { style: readAnswerStyle(), ...(webSearch.enabled ? { web: true } : {}), ...(skillUsed ? { skill: skillUsed } : {}), ...(budgeted ? { budget } : {}) };
+    await watchAnswer(session.id, question, controller, () => knowledgeApi.sendMessageStream(session.id, { content: question, selectedSourceIds: session.selectedSourceIds, focusChapterId: session.focusChapterId, ...chosen, ...options }, liveAnswer.hear, controller.signal));
   };
 
   // Reading aloud goes on while its conversation is open, and stops when another one is.
@@ -1191,7 +1197,7 @@ export function SessionWorkspace({ base, selectedChapterId, onAdd, onNotify, onO
         <div className="conversation-scroll" ref={scrollPane} onScroll={(event) => { const pane = event.currentTarget; followTail.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 80; }}>
           {error && <div className="conversation-error" role="alert"><CircleAlert size={14} /><span>{error}</span><button onClick={() => setError(null)}><X size={12} /></button></div>}
           {!loading && activeSession?.messages.length === 0 ? <WelcomePanel base={base} onPrompt={setDraft} /> : <h1 className="gx-sr-only">Ask {base.title}</h1>}
-          {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} retryDisabled={sending || Boolean(activeSession?.archived)} onRetry={() => void send(message.content)} onEdit={() => setDraft(message.content)} onCite={(citation, index) => setEvidence({ citation, index })} selected={selectedMessageId === message.id} promoting={answers.busyId === message.id} promoted={answers.isSaved(message.id)} branching={branchingMessageId === message.id} onSelect={() => { setSelectedMessageId(message.id); setInspectorTab((current) => current === "trace" ? "trace" : "context"); setInspectorCollapsed(false); }} onCopy={() => void copyMessage(message)} onPromote={() => void answers.save(activeSession, message)} onRemove={() => void answers.remove(message)} onBranch={() => void branchFromMessage(message)} onMakeReport={onMakeReport ? () => onMakeReport(activeSession.id) : undefined} />)}
+          {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} retryDisabled={sending || Boolean(activeSession?.archived)} onRetry={() => void send(message.content, message.context.askFailure?.options)} onEdit={() => setDraft(message.content)} onCite={(citation, index) => setEvidence({ citation, index })} selected={selectedMessageId === message.id} promoting={answers.busyId === message.id} promoted={answers.isSaved(message.id)} branching={branchingMessageId === message.id} onSelect={() => { setSelectedMessageId(message.id); setInspectorTab((current) => current === "trace" ? "trace" : "context"); setInspectorCollapsed(false); }} onCopy={() => void copyMessage(message)} onPromote={() => void answers.save(activeSession, message)} onRemove={() => void answers.remove(message)} onBranch={() => void branchFromMessage(message)} onMakeReport={onMakeReport ? () => onMakeReport(activeSession.id) : undefined} />)}
           {sending && asking && <article className="conversation-message role-user"><div className="message-author"><span className="user-mark"><UserRound size={13} /></span><span>You</span></div><div className="message-body"><MessageContent content={asking} /></div></article>}
           {sending && (liveAnswer.live ? <LiveAnswer state={liveAnswer.live} /> : <div className="thinking-row"><span className="assistant-mark"><BrandMark size={14} busy /></span><span><i /><i /><i /></span><small>Working out what to look up…</small></div>)}
         </div>

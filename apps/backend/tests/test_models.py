@@ -9,7 +9,7 @@ import pytest
 from fake_models import FakeProvider, agent_replies, api_error, gateway, model
 from fastapi.testclient import TestClient
 
-from evals.sse import AnswerStreamError, ask_turn
+from evals.sse import AnswerStreamError, ask_turn, read_events
 from gunther import service_settings
 from gunther.config import Settings
 from gunther.llm import ModelError, Turn
@@ -550,7 +550,7 @@ def test_a_conversation_can_switch_model_and_effort_at_any_turn(tmp_path: Path) 
         assert gone.value.status == 400
 
 
-def test_a_failing_model_says_so_and_the_quotes_stand_in(tmp_path: Path) -> None:
+def test_a_failing_model_keeps_the_question_and_trace_for_retry(tmp_path: Path) -> None:
     fake = FakeProvider(api_error(openai.RateLimitError, 429, "Insufficient Balance"))
     app = create_app(
         settings_for(tmp_path, deepseek_api_key=KEY), model_client_factory=fake.factory
@@ -578,14 +578,27 @@ def test_a_failing_model_says_so_and_the_quotes_stand_in(tmp_path: Path) -> None
         session_id = client.post(
             f"/api/knowledge-bases/{base_id}/sessions", headers=SIDECAR, json={}
         ).json()["id"]
-        reply = ask_turn(
-            client, session_id, {"content": "Which marker identifies T cells?"}, headers=SIDECAR,
-        )["assistantMessage"]
-    assert reply["context"]["responderMode"] == "local"
-    assert reply["context"]["modelLabel"] == "DeepSeek · Flash"
-    assert reply["context"]["modelError"] == (
-        "DeepSeek is busy or out of credit (Insufficient Balance). Try again shortly."
-    )
+        client.put("/api/settings/developer", headers=SIDECAR, json={"traces": True})
+        payload = {"content": "Which marker identifies T cells?", "style": "concise"}
+        session_path = f"/api/sessions/{session_id}"
+        response = client.post(f"{session_path}/messages/stream", json=payload, headers=SIDECAR)
+        event, failure = read_events(response)[-1]
+        assert event == "error" and failure["status"] == 502
+        assert "Insufficient Balance" in failure["detail"]
+        [question] = client.get(session_path, headers=SIDECAR).json()["messages"]
+        assert failure["questionId"] == question["id"]
+        assert question["role"] == "user" and question["content"] == payload["content"]
+        assert question["context"]["interrupted"] == "failed"
+        assert question["context"]["modelError"] == failure["detail"]
+        assert question["context"]["askFailure"] == {
+            "needsModel": False, "hasTrace": True, "options": {"style": "concise"},
+        }
+        trace = client.get(f"{session_path}/messages/{question['id']}/trace", headers=SIDECAR)
+        assert trace.status_code == 200 and trace.json()["steps"][-1]["error"] == failure["detail"]
+        fake.replies = [agent_replies("CD3D marks T cells [1].")]
+        turn = ask_turn(client, session_id, payload, headers=SIDECAR)
+        assert turn["assistantMessage"]["citations"]
+        assert client.get(session_path, headers=SIDECAR).json()["messages"][0] == question
 
 
 def test_provider_test_uses_unsaved_model_ids_without_changing_the_configuration(

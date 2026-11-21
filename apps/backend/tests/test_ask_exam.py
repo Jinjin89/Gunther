@@ -346,7 +346,7 @@ def test_agent_efforts_reach_the_agent(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(service_module, "AskAgent", Spy)
     fake = FakeProvider(agent_replies("Hello.", {"action": "answer"}))
     chosen = gateway(fake)
-    knowledge = KnowledgeService(None, None, None)  # type: ignore[arg-type]
+    knowledge = KnowledgeService(None, None)  # type: ignore[arg-type]
     knowledge.models = chosen
     knowledge._answer("hi", [], Toolbox(()), None, None)
     # The defaults Phase 6 chose: thinking a little while planning, not while checking.

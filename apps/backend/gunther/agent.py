@@ -1052,14 +1052,23 @@ class AskAgent:
             """Grade what a round found, in one call, and add what is kept to the pool."""
             nonlocal calls, added
             kept: dict[int, tuple[str, str]] = {}
+            ungraded = False
             if any(found for _, _, found in results):
-                if halted():
-                    # Stopped: no call to grade with, so, as with a grader that cannot answer,
-                    # the round's results are all kept.
-                    kept = {id(item): ("", "") for _, _, found in results for item in found}
-                else:
+                if not halted():
                     calls += 1
-                    kept = self.grade_round(model, question, results, work)
+                    try:
+                        kept = self.grade_round(model, question, results, work)
+                    except ModelError as error:
+                        # Research uses graded coverage to decide which questions to search next.
+                        if work.sub_questions and not halted():
+                            detail = f"Research could not grade the search results. {error}"
+                            raise ModelError(detail) from error
+                        ungraded = True
+                        step = Step("grade", "Search results are ungraded", error=str(error))
+                        steps.append(step)
+                        emit({"type": "step", "state": "done", **step.out()})
+                if stopped or ungraded:
+                    kept = {id(item): ("", "") for _, _, found in results for item in found}
             for tool, query, found in results:
                 fresh = repeated = 0
                 for item in found:
@@ -1082,7 +1091,8 @@ class AskAgent:
                 label = f"Searched {tool.where} for “{query}”"
                 steps.append(Step(tool.name, label, query, fresh + repeated))
                 emit({"type": "step", "state": "done", **steps[-1].out()})
-                outcome = f"found {fresh} new relevant results"
+                result_kind = "ungraded" if ungraded or stopped else "relevant"
+                outcome = f"found {fresh} new {result_kind} results"
                 if repeated:
                     outcome += f", {repeated} already in the pool"
                 done.append(
@@ -1550,7 +1560,7 @@ class AskAgent:
         """Keep the results of a round that are about the question, in one call.
 
         Returns the kept results by ``id()``, each with what it says and the sub-question
-        it serves. A grader that cannot answer keeps them all, with nothing said.
+        it serves. Callers decide whether they can work from ungraded results.
         """
 
         every = [item for _, _, found in results for item in found]
@@ -1581,7 +1591,7 @@ class AskAgent:
                 )
         except ModelError as error:
             logger.info("The grading step failed: %s", error)
-            return {id(item): ("", "") for item in every}
+            raise
         ids = {sub.id for sub in work.sub_questions}
         kept: dict[int, tuple[str, str]] = {}
         for keep in graded.keep:

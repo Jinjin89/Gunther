@@ -36,7 +36,6 @@ from gunther.agent import (
 from gunther.agent import Notes as Work
 from gunther.answer_runs import Stopped
 from gunther.artifact_workspace import evidence_from_citation
-from gunther.conversation import GroundingClaim, KnowledgeResponder
 from gunther.database import session_scope
 from gunther.document_structure import evidence_eligible
 from gunther.extraction import CandidateAssertion, ExtractionResult, Extractor
@@ -336,12 +335,20 @@ class _OwnedVersion:
     request: str | None
 
 
+class AskFailure(RuntimeError):
+    def __init__(self, detail: str, status: int = 502, *, needs_model: bool = False) -> None:
+        super().__init__(detail)
+        self.status = status
+        self.needs_model = needs_model
+        self.kept_trace = trace.current()
+        trace.note("failure", "Ask could not answer", error=detail)
+
+
 @dataclass
 class _Answer:
     """What Ask answered with, and how."""
 
     content: str
-    mode: str
     evidence: list[Evidence]
     model_ref: str | None = None
     model_label: str | None = None
@@ -349,7 +356,6 @@ class _Answer:
     effort_label: str | None = None
     notes: tuple[str, ...] = ()
     reasoning: str | None = None
-    error: str | None = None
     steps: list = field(default_factory=list)
     checked: bool = False
     support_notes: tuple[str, ...] = ()
@@ -464,11 +470,9 @@ class KnowledgeService:
         self,
         sessions: sessionmaker[Session],
         extractor: Extractor,
-        responder: KnowledgeResponder,
     ) -> None:
         self.sessions = sessions
         self.extractor = extractor
-        self.responder = responder
         # Every model that is set up (see llm); a conversation may pick any of them.
         self.models: ModelGateway | None = None
         self.web_search: OnlineSearchProvider = DisabledOnlineSearch()
@@ -2103,7 +2107,7 @@ class KnowledgeService:
         question: str,
         history: list[Turn],
         toolbox: Toolbox,
-        model: ModelInfo | None,
+        model_ref: str | None,
         effort: Effort | None,
         events: Callable[[dict], None] | None = None,
         pool: list[Evidence] | None = None,
@@ -2116,76 +2120,50 @@ class KnowledgeService:
     ) -> _Answer:
         """Run the agent with the chosen model (or the Ask default) and describe the outcome."""
 
-        if model is None and self.models is not None:
+        model = None
+        if model_ref:
+            model = self.models.get(model_ref) if self.models else None
+            if model is None:
+                raise AskFailure(
+                    "That model is not set up, or its provider needs a key.",
+                    400,
+                    needs_model=True,
+                )
+        elif self.models is not None:
             chosen = self.models.for_role("ask")
             if chosen is not None:
                 model, default_effort = chosen
                 effort = effort or default_effort
         if model is None or self.models is None:
-            library_tool = toolbox.get("search_library")
-            found = library_tool.run(question) if library_tool else []
-            claims = [item.payload[1] for item in found]
-            content = (
-                self.responder.respond(question, claims, history).content
-                if claims
-                else "Ask needs a language model to answer. Set one up under Settings → Models."
-            )
-            return _Answer(
-                content=content,
-                mode="local",
-                evidence=found,
-                error="Ask needs a language model. Set one up under Settings → Models.",
-            )
+            raise AskFailure("Ask needs a language model or provider key.", 412, needs_model=True)
         plan_effort, check_effort = self.agent_efforts or ASK_EFFORTS
         agent = AskAgent(self.models, plan_effort=plan_effort, check_effort=check_effort)
-        result = agent.run(
-            question,
-            history,
-            toolbox,
-            model,
-            effort,
-            events,
-            pool or (),
-            style,
-            numbered,
-            brief=brief,
-            skill=skill,
-            budget_name=budget,
-            stopping=stopping,
-        )
-        about = {
-            "model_ref": model.ref,
-            "model_label": model.display,
-            "effort": effort,
-            "steps": result.steps,
-            "notes": result.notes,
-            "skill": result.skill,
-            "research": result.research,
-        }
+        try:
+            result = agent.run(
+                question, history, toolbox, model, effort, events, pool or (), style, numbered,
+                brief=brief, skill=skill, budget_name=budget, stopping=stopping,
+            )
+        except ModelError as error:
+            raise AskFailure(str(error)) from error
         if result.error is not None:
-            # The chosen model could not write the answer: say so; gathered quotes stand in.
-            library = [item for item in result.evidence if item.kind == "library"]
-            claims = [item.payload[1] for item in library]
-            content = (
-                self.responder.respond(question, claims, history).content
-                if claims
-                else f"I couldn't get an answer from {model.display}. Try again, or pick "
-                "another model."
-            )
-            return _Answer(
-                content=content, mode="local", evidence=library, error=result.error, **about
-            )
+            raise AskFailure(result.error)
         completion = result.completion
         return _Answer(
             content=result.content,
-            mode="model",
             evidence=result.evidence,
+            model_ref=model.ref,
+            model_label=model.display,
+            effort=effort,
+            steps=result.steps,
+            notes=result.notes,
+            skill=result.skill,
+            research=result.research,
             checked=result.checked,
             support_notes=result.support_notes,
             coverage=result.coverage,
             budget_usage=result.budget_usage,
             work=result.work,
-            **{**about, "effort_label": completion.effort_label if completion else None},
+            effort_label=completion.effort_label if completion else None,
             reasoning=completion.reasoning if completion else None,
         )
 
@@ -2258,7 +2236,6 @@ class KnowledgeService:
             found: list[Evidence] = []
             ranked_assertions = self._rank_assertions(scope.assertions, query)
             citations: list[ConversationCitationOut] = []
-            claims: list[GroundingClaim] = []
             for assertion in ranked_assertions:
                 evidence = next(
                     (
@@ -2304,18 +2281,6 @@ class KnowledgeService:
                     anchor=json.loads(evidence_block.anchor_json) if evidence_block else {},
                 )
                 citations.append(citation)
-                claims.append(
-                    GroundingClaim(
-                        subject=assertion.subject.label,
-                        predicate=assertion.predicate,
-                        object=assertion.object.label,
-                        source_title=assertion.source.title,
-                        quote=evidence.fragment.content,
-                        locator=evidence.fragment.locator,
-                        status=assertion.status,
-                        confidence=assertion.confidence,
-                    )
-                )
 
             # Original passages participate even when an extracted claim matched.
             # Competing evidence must not disappear behind an assertion-only fallback.
@@ -2341,18 +2306,6 @@ class KnowledgeService:
                         source_revision_id=hit.block.revision_id,
                         block_id=hit.block.id,
                         anchor=json.loads(hit.block.anchor_json),
-                    )
-                )
-                claims.append(
-                    GroundingClaim(
-                        subject=hit.source.title,
-                        predicate="states",
-                        object=hit.block.content,
-                        source_title=hit.source.title,
-                        quote=hit.block.content,
-                        locator=hit.block.locator,
-                        status="provisional",
-                        confidence=0.0,
                     )
                 )
 
@@ -2381,20 +2334,8 @@ class KnowledgeService:
                             anchor=json.loads(block.anchor_json) if block else {},
                         )
                     )
-                    claims.append(
-                        GroundingClaim(
-                            subject=paper.title,
-                            predicate="is summarized as",
-                            object=paper.abstract[:900],
-                            source_title=source.title,
-                            quote=paper.abstract[:900],
-                            locator="Abstract",
-                            status="provisional",
-                            confidence=0.0,
-                        )
-                    )
 
-            for citation, claim in zip(citations, claims, strict=True):
+            for citation in citations:
                 paper = session.get(SourcePaper, citation.source_id)
                 if paper and (paper.doi or paper.arxiv_id):
                     citation.work_identifier = (
@@ -2409,7 +2350,7 @@ class KnowledgeService:
                         locator=citation.locator,
                         status=citation.status,
                         confidence=citation.confidence,
-                        payload=(citation, claim),
+                        payload=(citation, None),
                     )
                 )
             return found
@@ -2514,16 +2455,6 @@ class KnowledgeService:
                 raise LookupError(f"Session {session_id} was not found")
             if knowledge_session.archived:
                 raise ValueError("Restore the archived session before adding another message")
-            # A conversation may pick any model that is set up, and switch at any turn.
-            model = None
-            if payload.model:
-                model = self.models.get(payload.model) if self.models else None
-                if model is None:
-                    raise ValueError(
-                        "That model is not set up, or its provider needs a key. "
-                        "Choose another in the model menu."
-                    )
-
             if payload.selected_source_ids is not None:
                 knowledge_session.selected_source_ids_json = json.dumps(payload.selected_source_ids)
                 self._validate_source_scope(
@@ -2638,7 +2569,7 @@ class KnowledgeService:
                     question,
                     history,
                     toolbox,
-                    model,
+                    payload.model,
                     payload.effort,
                     events,
                     pool,
@@ -2657,14 +2588,13 @@ class KnowledgeService:
                 assertions_considered=len(available_assertions),
                 verified_assertions=sum(item.status == "verified" for item in available_assertions),
                 retrieval_mode="selected" if selected_source_ids else "all",
-                responder_mode=response.mode,
+                responder_mode="model",
                 model=response.model_ref,
                 model_label=response.model_label,
                 effort=response.effort,
                 effort_label=response.effort_label,
                 notes=list(response.notes),
                 reasoning=(response.reasoning or "")[:MAX_KEPT_REASONING] or None,
-                model_error=response.error,
                 style=payload.style if payload.style in STYLES else DEFAULT_STYLE,
                 steps=[step.out() for step in response.steps],
                 web_searched=any(step.tool == "search_web" for step in response.steps),
@@ -2750,34 +2680,48 @@ class KnowledgeService:
             return json.loads(row.trace_json) if row else None
 
     def record_interrupted_question(
-        self, session_id: str, content: str, reason: Literal["stopped", "failed"]
-    ) -> None:
-        """Keep a question that got no answer in the history, marked as such."""
+        self,
+        session_id: str,
+        payload: CreateSessionMessageInput,
+        reason: Literal["stopped", "failed"],
+        failure: AskFailure | None = None,
+    ) -> str | None:
+        """Keep an interrupted question in the history and return its saved ID."""
 
-        text = content.strip()
+        text = payload.content.strip()
         if not text:
-            return
+            return None
         with session_scope(self.sessions) as session:
             knowledge_session = session.scalar(
                 self._session_query().where(KnowledgeSession.id == session_id)
             )
             if knowledge_session is None or knowledge_session.archived:
-                return
+                return None
             now = utc_now()
-            knowledge_session.messages.append(
-                SessionMessage(
-                    id=_id("msg"),
-                    session_id=knowledge_session.id,
-                    role="user",
-                    content=text,
-                    context_json=ConversationContextOut(interrupted=reason).model_dump_json(),
-                    created_at=now,
-                )
+            context = ConversationContextOut(interrupted=reason)
+            if failure is not None:
+                context.model_error = str(failure)
+                context.ask_failure = {
+                    "needsModel": failure.needs_model,
+                    "hasTrace": failure.kept_trace is not None,
+                    "options": payload.model_dump(
+                        mode="json", by_alias=True, exclude_unset=True,
+                        exclude={"content", "model", "effort"},
+                    ),
+                }
+            message = SessionMessage(
+                id=_id("msg"), session_id=knowledge_session.id, role="user",
+                content=text, context_json=context.model_dump_json(), created_at=now,
             )
+            knowledge_session.messages.append(message)
             if knowledge_session.title == "New session":
                 title = re.sub(r"\s+", " ", text)
                 knowledge_session.title = title[:62] + ("…" if len(title) > 62 else "")
             knowledge_session.updated_at = now
+            if failure is not None and failure.kept_trace is not None:
+                session.flush()
+                self._keep_trace(session, message.id, failure.kept_trace)
+            return message.id
 
     def _proposal_out(
         self,

@@ -127,6 +127,7 @@ from gunther.schemas import (
 from gunther.service import (
     ArtifactConflictError,
     ArtifactIntegrityError,
+    AskFailure,
     KnowledgeService,
 )
 from gunther.skillbook import ask_skills
@@ -1357,8 +1358,11 @@ async def stream_session_message(
             else None
         )
 
-        def fail(status: int, detail: str) -> None:
-            run.publish("error", {"status": status, "detail": detail})
+        def fail(status: int, detail: str, question_id: str | None = None) -> None:
+            data: dict[str, int | str] = {"status": status, "detail": detail}
+            if question_id is not None:
+                data["questionId"] = question_id
+            run.publish("error", data)
             if tracked is not None:
                 tracked.failed("Couldn't write the answer", detail)
 
@@ -1401,18 +1405,22 @@ async def stream_session_message(
             if tracked is not None:
                 tracked.done("Answer ready")
         except Stopped:
-            service.record_interrupted_question(session_id, payload.content, "stopped")
+            service.record_interrupted_question(session_id, payload, "stopped")
             run.publish("stopped", {"type": "stopped"})
             if tracked is not None:
                 tracked.stopped()
+        except AskFailure as error:
+            question_id = service.record_interrupted_question(session_id, payload, "failed", error)
+            fail(error.status, str(error), question_id)
         except LookupError as error:
             fail(404, str(error))
         except ValueError as error:
             fail(400, str(error))
         except Exception:
             logger.exception("Answering a question failed")
-            service.record_interrupted_question(session_id, payload.content, "failed")
-            fail(500, "The answer could not be written.")
+            error = AskFailure("The answer could not be written.", 500)
+            question_id = service.record_interrupted_question(session_id, payload, "failed", error)
+            fail(error.status, str(error), question_id)
         finally:
             # Whatever happened above, no entry is left running.
             if tracked is not None:

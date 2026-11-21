@@ -30,7 +30,7 @@ from fake_models import (
 from fastapi.testclient import TestClient
 
 from evals.sse import AnswerStreamError, ask_turn, read_events
-from gunther import online_search
+from gunther import online_search, trace
 from gunther.agent import (
     AskAgent,
     Budget,
@@ -52,6 +52,7 @@ from gunther.database import session_scope
 from gunther.llm import Turn
 from gunther.main import create_app
 from gunther.models import SessionMessage
+from gunther.schemas import CreateSessionMessageInput
 from gunther.service import conversation_history
 from gunther.skillbook import ask_skills
 from gunther.web_capture import (
@@ -733,12 +734,12 @@ def test_without_a_model_the_reply_says_a_model_is_needed(tmp_path: Path) -> Non
     )
     with TestClient(create_app(settings, model_client_factory=fake.factory)) as client:
         session_id = ready_session(client)
-        reply = ask_turn(
-            client, session_id, {"content": "CD3D?"}, headers=SIDECAR,
-        )["assistantMessage"]
-    assert "Settings → Models" in reply["context"]["modelError"]
+        with pytest.raises(AnswerStreamError, match="needs a language model") as failed:
+            ask_turn(client, session_id, {"content": "CD3D?"}, headers=SIDECAR)
+        [message] = client.get(f"/api/sessions/{session_id}", headers=SIDECAR).json()["messages"]
+    assert failed.value.status == 412
+    assert message["role"] == "user" and not message["citations"]
     assert fake.requests == []
-    assert json.dumps(reply)  # serialisable
 
 
 # Streaming and Home --------------------------------------------------------------------
@@ -1066,7 +1067,8 @@ def test_a_stopped_question_stays_in_the_history_but_not_in_what_the_model_reads
     with app_for(tmp_path, fake) as client:
         session_id = ready_session(client)
         service = client.app.state.knowledge_service
-        service.record_interrupted_question(session_id, "  Why did I stop?  ", "stopped")
+        message = CreateSessionMessageInput(content="  Why did I stop?  ")
+        service.record_interrupted_question(session_id, message, "stopped")
         saved = client.get(f"/api/sessions/{session_id}", headers=SIDECAR).json()
         stored = SimpleNamespace(
             role="user", content="q", context_json='{"interrupted": "stopped"}'
@@ -1166,17 +1168,22 @@ def test_library_hits_about_something_else_are_dropped_before_the_answer() -> No
     assert "Lung note" in prompt and "T cell note" not in prompt
 
 
-def test_a_grader_that_cannot_answer_keeps_what_the_search_found() -> None:
+def test_unreadable_plan_falls_back_and_ungraded_hits_reach_the_writer() -> None:
     def replies(request):
-        if is_planning(request):
-            return json.dumps({"action": "search_library", "query": "cd3d"})
-        return "not json at all" if is_grading_notes(request) else "CD3D marks T cells [1]."
+        if is_planning(request) or is_grading_notes(request):
+            return "not json"
+        return "CD3D marks T cells [1]."
 
-    result = run(
-        FakeProvider(replies),
-        box(lib(lambda q: [passage("Cell note", "CD3D marks T cells.")])),
-    )
+    kept, events = trace.Trace(), []
+    with trace.tracing(kept):
+        result = run(FakeProvider(replies), box(lib(lambda q: [passage("Cell note", "CD3D")])),
+                     events=events.append)
+    assert result.content == "CD3D marks T cells [1]."
     assert [item.title for item in result.evidence] == ["Cell note"]
+    assert result.work is None and result.steps[-1].query == "What marks T cells?"
+    assert any(step["kind"] == "plan" and step.get("failed") for step in kept.steps)
+    assert any(step["kind"] == "grade" and step.get("error") for step in kept.steps)
+    assert any(event.get("tool") == "grade" and event.get("error") for event in events)
 
 
 def test_another_tool_can_be_tried_when_the_first_finds_nothing_relevant() -> None:
@@ -2216,6 +2223,20 @@ def test_stop_during_research_writes_from_what_was_found(tmp_path: Path) -> None
     assert research["state"] == "stopped_early" and research["budget"] == "deep"
     assert research["used"] == {"searches": 0, "reads": 0}
     assert "Stopped early: written from what was found so far." in answer["context"]["notes"]
+
+
+def test_research_grading_failure_keeps_the_original_request_for_retry(tmp_path: Path) -> None:
+    framed = {"sub_questions": [{"text": "What marks T cells?", "query": "CD3D"}]}
+    fake = FakeProvider(agent_replies("unused", framed=framed, kept=lambda _: "not json"))
+    with app_for(tmp_path, fake) as client:
+        session_id = ready_session(client)
+        with pytest.raises(AnswerStreamError, match="Research could not grade") as failed:
+            ask(client, session_id, skill="research", budget="deep")
+        assert failed.value.status == 502
+        [question] = client.get(f"/api/sessions/{session_id}", headers=SIDECAR).json()["messages"]
+    assert question["context"]["askFailure"]["options"] == {"skill": "research", "budget": "deep"}
+    assert not any(system_of(request).startswith("You are Gunther, a research partner")
+                   for request in fake.requests)
 
 
 def test_the_research_state_is_kept_with_the_saved_answer(tmp_path: Path) -> None:

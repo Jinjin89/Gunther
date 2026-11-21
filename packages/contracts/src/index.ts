@@ -999,7 +999,7 @@ export interface ConversationContext {
   /** What the answer admits to, e.g. a level the model does not have. */
   notes?: string[];
   reasoning?: string | null;
-  /** Why the chosen model's answer is not shown; the quotes stand in. */
+  /** Why the model could not answer, on a failed question or a historical local reply. */
   modelError?: string | null;
   /** How the answer was worded (a style preset). */
   style?: string | null;
@@ -1036,6 +1036,7 @@ export interface ConversationContext {
   research?: ResearchRun | null;
   /** On a question that got no answer: stopped by the reader, or failed. */
   interrupted?: "stopped" | "failed" | null;
+  askFailure?: { needsModel: boolean; hasTrace: boolean; options: AskRetryOptions } | null;
 }
 
 /** How much of a research budget a step has used so far: [used, allowed]. */
@@ -1158,6 +1159,7 @@ export const createSessionMessageSchema = z.object({
   budget: z.enum(["standard", "deep"]).optional(),
 });
 export type CreateSessionMessageInput = z.infer<typeof createSessionMessageSchema>;
+export type AskRetryOptions = Omit<CreateSessionMessageInput, "content" | "model" | "effort">;
 
 export interface ConversationTurn {
   session: KnowledgeSessionSummary;

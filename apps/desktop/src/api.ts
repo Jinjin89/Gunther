@@ -467,13 +467,23 @@ export class AnswerStoppedError extends Error {
   }
 }
 
+export class AnswerStreamError extends Error {
+  constructor(message: string, readonly questionId?: string) {
+    super(message);
+    this.name = "AnswerStreamError";
+  }
+}
+
 /** The events of an answer until it is saved, fails or is stopped. */
 async function readAnswer(body: ReadableStream<Uint8Array>, onEvent: (event: AnswerEvent) => void): Promise<ConversationTurn> {
   for await (const message of readServerEvents(body)) {
     const data = JSON.parse(message.data) as Record<string, unknown>;
     if (message.event === "done") return data as unknown as ConversationTurn;
     if (message.event === "stopped") throw new AnswerStoppedError();
-    if (message.event === "error") throw new Error(typeof data.detail === "string" ? data.detail : "The answer could not be written.");
+    if (message.event === "error") throw new AnswerStreamError(
+      typeof data.detail === "string" ? data.detail : "The answer could not be written.",
+      typeof data.questionId === "string" ? data.questionId : undefined,
+    );
     onEvent(data as unknown as AnswerEvent);
   }
   throw new Error("The connection closed before the answer was finished.");

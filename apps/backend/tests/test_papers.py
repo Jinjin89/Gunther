@@ -3,10 +3,10 @@
 import json
 from pathlib import Path
 
+from fake_models import ask_from_search
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from evals.sse import ask_turn
 from gunther.config import Settings
 from gunther.content import parse_content
 from gunther.database import session_scope
@@ -404,7 +404,7 @@ def test_topics_are_suggested_accepted_asked_and_written_up(tmp_path):
         session = client.post(
             f"/api/knowledge-bases/{base}/sessions", json={"focusChapterId": topic["id"]}
         ).json()
-        answer = ask_turn(
+        answer = ask_from_search(
             client, session['id'], {"content": "marker genes rocket fuel"},
         )["assistantMessage"]
         assert answer["citations"]
@@ -467,7 +467,7 @@ def test_broad_questions_in_a_large_library_also_cite_whole_papers(tmp_path):
         assert {len(s["sourceIds"]) for s in result["suggestions"]} == {12, 6}
 
         session = client.post(f"/api/knowledge-bases/{base}/sessions", json={}).json()
-        answer = ask_turn(
+        answer = ask_from_search(
             client, session['id'], {"content": "What do we know about getting to orbit?"},
         )["assistantMessage"]
         overviews = [c for c in answer["citations"] if c["locator"] == "Abstract"]

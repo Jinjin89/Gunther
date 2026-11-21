@@ -8,10 +8,10 @@ import sys
 from pathlib import Path
 
 import pytest
+from fake_models import ask_from_search
 from fastapi.testclient import TestClient
 from legacy_artifacts import insert_legacy_version
 
-from evals.sse import ask_turn
 from gunther.config import Settings
 from gunther.main import create_app
 from gunther.migrations import LATEST_SCHEMA_VERSION
@@ -367,7 +367,7 @@ def test_nonempty_asset_and_completed_recording_survive_full_restore(
             f"/api/knowledge-bases/{knowledge_base_id}/sessions",
             json={"title": "Restore evidence review"},
         ).json()
-        turn = ask_turn(
+        turn = ask_from_search(
             client, knowledge_session["id"],
             {"content": "What evidence supports a conserved domain?"},
         )

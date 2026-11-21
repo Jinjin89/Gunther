@@ -1,10 +1,13 @@
-import type { KnowledgeProposal, KnowledgeUnit, SessionMessage } from "@gunther/contracts";
+import type { KnowledgeProposal, KnowledgeSession, KnowledgeUnit, SessionMessage } from "@gunther/contracts";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { knowledgeApi } from "../api";
-import { Composer, ConversationMessage } from "./SessionWorkspace";
+import { makeBase } from "../test/fixtures";
+import { Composer, ConversationMessage, SessionWorkspace } from "./SessionWorkspace";
 import { useSavedAnswers } from "./savedAnswers";
+
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 const renderComposer = (ready: boolean) => {
   const onChange = vi.fn();
@@ -72,6 +75,47 @@ const answer: SessionMessage = {
   createdAt: "2026-10-01T08:00:00.000Z",
 };
 
+it("opens Models settings and offers Retry on the saved question that needs a key", async () => {
+  const user = userEvent.setup();
+  const retry = vi.fn();
+  const message: SessionMessage = { ...answer, role: "user", content: "What is supported?", citations: [], context: {
+    ...answer.context, interrupted: "failed", modelError: "Ask needs a language model or provider key.",
+    askFailure: { needsModel: true, hasTrace: false, options: {} },
+  } };
+  render(<ConversationMessage message={message} retryDisabled={false} onRetry={retry} onEdit={vi.fn()} onCite={vi.fn()} selected={false} promoting={false} promoted={false} branching={false} onSelect={vi.fn()} onCopy={vi.fn()} onPromote={vi.fn()} onRemove={vi.fn()} onBranch={vi.fn()} />);
+  expect(screen.getByText("Ask needs a language model or provider key.")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Open Settings" }));
+  expect(window.localStorage.getItem("gunther:settings-pane")).toBe("models");
+  await user.click(screen.getByRole("button", { name: "Retry" }));
+  expect(retry).toHaveBeenCalledOnce();
+});
+
+it("shows a same-question retry's HTTP 409 and restores the composer draft", async () => {
+  const base = makeBase();
+  const question = "What does this source support?";
+  const detail = "Gunther is still answering the last question here. Wait, or stop it first.";
+  const session: KnowledgeSession = {
+    id: answer.sessionId, knowledgeBaseId: base.id, title: "Markers", summary: "", focusChapterId: null,
+    selectedSourceIds: [], pinned: false, archived: false, parentSessionId: null, branchedFromMessageId: null,
+    messageCount: 1, createdAt: answer.createdAt, updatedAt: answer.createdAt,
+    brief: { goal: "", constraints: [], settled: [], open: [], edited: [], error: null },
+    messages: [{ ...answer, role: "user", content: question, citations: [], context: {
+      ...answer.context, interrupted: "failed", modelError: "Earlier failure",
+    } }],
+  };
+  vi.spyOn(knowledgeApi, "sessions").mockResolvedValue([session]);
+  vi.spyOn(knowledgeApi, "session").mockResolvedValue(session);
+  vi.spyOn(knowledgeApi, "followAnswer").mockResolvedValue(null);
+  vi.spyOn(knowledgeApi, "modelMenu").mockResolvedValue({ models: [], default: null, efforts: [] });
+  vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+  vi.stubGlobal("fetch", vi.fn(async (path: string) => path.endsWith("/messages/stream")
+    ? Response.json({ detail }, { status: 409 }) : Response.json([])));
+  render(<SessionWorkspace base={base} selectedChapterId="" onAdd={vi.fn()} onNotify={vi.fn()} />);
+  await userEvent.setup().click(await screen.findByRole("button", { name: "Retry" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(detail);
+  expect(screen.getByRole("textbox", { name: "Message Gunther" })).toHaveValue(question);
+});
+
 const proposal = (status: KnowledgeProposal["status"]): KnowledgeProposal => ({
   id: "prp_1",
   knowledgeBaseId: "biology",
@@ -129,8 +173,6 @@ function SavableAnswer({ onNotify, onUnits }: { onNotify: (message: string) => v
 }
 
 describe("Saving an answer as knowledge", () => {
-  afterEach(() => vi.restoreAllMocks());
-
   it("saves with one click, shows it saved, and takes it back out with Remove", async () => {
     const user = userEvent.setup();
     const onNotify = vi.fn();

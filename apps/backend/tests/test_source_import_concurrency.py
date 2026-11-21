@@ -3,7 +3,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier, Event, Lock
 
-from gunther.conversation import LocalKnowledgeResponder
 from gunther.database import Base, create_database_engine, create_session_factory
 from gunther.extraction import ExtractionResult, LocalExtractor
 from gunther.migrations import run_migrations
@@ -39,7 +38,7 @@ def make_service(tmp_path: Path, extractor: LocalExtractor):
     engine = create_database_engine(f"sqlite+pysqlite:///{tmp_path / 'gunther.sqlite'}")
     run_migrations(engine, Base.metadata)
     sessions = create_session_factory(engine)
-    return engine, sessions, KnowledgeService(sessions, extractor, LocalKnowledgeResponder())
+    return engine, sessions, KnowledgeService(sessions, extractor)
 
 
 def test_one_service_extracts_identical_concurrent_import_only_once(tmp_path: Path) -> None:
@@ -85,11 +84,7 @@ def test_database_race_falls_back_to_existing_source_and_files_both_memberships(
 ) -> None:
     barrier = Barrier(2)
     engine, sessions, first_service = make_service(tmp_path, BarrierExtractor(barrier))
-    second_service = KnowledgeService(
-        sessions,
-        BarrierExtractor(barrier),
-        LocalKnowledgeResponder(),
-    )
+    second_service = KnowledgeService(sessions, BarrierExtractor(barrier))
     first_base = first_service.create_knowledge_base(
         CreateKnowledgeBaseInput(
             title="First library",

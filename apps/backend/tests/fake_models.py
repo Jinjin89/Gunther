@@ -7,13 +7,16 @@ request, and can enforce a provider's rules, e.g. GLM refusing ``medium``.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterator
 from typing import Any
+from unittest.mock import patch
 
 import httpx
 import openai
 from openai.types.chat import ChatCompletionChunk
 
+from evals.sse import ask_turn
 from gunther.llm import ModelGateway, ModelInfo
 from gunther.model_profiles import profile_for
 from gunther.model_registry import PRESETS
@@ -271,6 +274,20 @@ def agent_replies(
         return answer(request) if callable(answer) else answer
 
     return reply
+
+
+def ask_from_search(client, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Use a test model to cite the pool when a route fixture is testing retrieval."""
+
+    def answer(request: dict[str, Any]) -> str:
+        pool = str(request["messages"][-1]["content"]).partition("\nThe pool:\n")[2]
+        refs = re.findall(r"^\[(\d+)\] \(", pool, flags=re.M)
+        citations = "".join(f"[{ref}]" for ref in refs)
+        return f"Retrieved evidence {citations}." if refs else "No evidence found."
+
+    service = client.app.state.knowledge_service
+    with patch.object(service, "models", gateway(FakeProvider(agent_replies(answer)))):
+        return ask_turn(client, session_id, payload)
 
 
 def studio_task(request: dict[str, Any]) -> str:

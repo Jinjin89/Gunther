@@ -1,6 +1,6 @@
 import type { KnowledgeSession } from "@gunther/contracts";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AnswerEvent } from "../api";
 import { useHomeAsk } from "./useHomeAsk";
 
@@ -45,6 +45,7 @@ describe("asking from Home", () => {
     api.followAnswer.mockResolvedValue(null);
     api.stopAnswer.mockResolvedValue(undefined);
   });
+  afterEach(() => vi.unstubAllGlobals());
 
   it("closing the conversation only stops listening; nothing is marked stopped", async () => {
     const stream = held();
@@ -91,6 +92,30 @@ describe("asking from Home", () => {
     await act(async () => { finish({ assistantMessage: { id: "a1" } }); });
     await waitFor(() => expect(result.current.pending).toBeNull());
     expect(result.current.session?.messageCount).toBe(2);
+  });
+
+  it("shows the saved failed question and retries its request in the same conversation", async () => {
+    const options = { skill: "research", budget: "deep" } as const;
+    const failed = { id: "m1", role: "user", content: "Research it", context: { interrupted: "failed", modelError: "Provider failed", askFailure: { needsModel: false, hasTrace: false, options } } } as KnowledgeSession["messages"][number];
+    const { knowledgeApi } = await vi.importActual<typeof import("../api")>("../api");
+    const detail = "Gunther is still answering the last question here.";
+    const event = JSON.stringify({ status: 502, detail: "Provider failed", questionId: failed.id });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(`event: error\ndata: ${event}\n\n`))
+      .mockResolvedValueOnce(Response.json({ detail }, { status: 409 })));
+    api.session.mockResolvedValue(home({ messages: [failed] }));
+    api.sendMessageStream.mockImplementationOnce(knowledgeApi.sendMessageStream)
+      .mockImplementationOnce(knowledgeApi.sendMessageStream)
+      .mockResolvedValueOnce({ session: home(), userMessage: failed, assistantMessage: { id: "a1" } });
+    const { result } = renderHook(() => useHomeAsk());
+    await act(async () => { await result.current.ask(failed.content, options); });
+    expect(result.current.messages).toEqual([failed]);
+    expect(result.current.error).toBeNull();
+    await act(async () => { await result.current.ask(failed.content, failed.context.askFailure?.options); });
+    expect(result.current.error).toBe(detail);
+    expect(result.current.messages).toEqual([failed]);
+    await act(async () => { await result.current.ask(failed.content, failed.context.askFailure?.options); });
+    expect(api.createSession).toHaveBeenCalledOnce();
+    expect(api.sendMessageStream).toHaveBeenLastCalledWith("ses_home", { content: failed.content, ...options }, expect.any(Function), expect.any(AbortSignal));
   });
 
   it("stops reading another conversation's answer when one is opened, not when it is only remembered", async () => {

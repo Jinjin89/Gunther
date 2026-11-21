@@ -3,10 +3,10 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from fake_models import ask_from_search
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select, text
 
-from evals.sse import ask_turn
 from gunther.asset_service import AssetTextExtraction
 from gunther.config import PROJECT_ROOT, Settings
 from gunther.content import ParsedBlock, parse_content
@@ -80,7 +80,7 @@ def ask(client: TestClient, base_id: str, question: str, topic: str | None = Non
             "focusChapterId": topic,
         },
     ).json()
-    return ask_turn(client, conversation["id"], {"content": question})["assistantMessage"]
+    return ask_from_search(client, conversation["id"], {"content": question})["assistantMessage"]
 
 
 def capture(client: TestClient, base_id: str):

@@ -3,10 +3,10 @@
 from pathlib import Path
 
 import pytest
+from fake_models import ask_from_search
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from evals.sse import ask_turn
 from gunther.config import Settings
 from gunther.database import session_scope
 from gunther.main import create_app
@@ -346,7 +346,7 @@ def test_delete_removes_the_subtree_and_keeps_every_source(client):
     # Asking a session that still points at a vanished section does not break.
     with session_scope(client.app.state.knowledge_service.sessions) as session:
         session.get(KnowledgeSession, asked["id"]).focus_chapter_id = sub
-    reply = ask_turn(client, asked["id"], {"content": "anything?"})
+    reply = ask_from_search(client, asked["id"], {"content": "anything?"})
     assert reply["assistantMessage"]["role"] == "assistant"
     assert client.delete(f"/api/knowledge-bases/{base}/topics/{part}").status_code == 404
     assert client.delete(f"/api/knowledge-bases/{other}/topics/{keep}").status_code == 404
