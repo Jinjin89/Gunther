@@ -242,6 +242,17 @@ describe("saving a recording independently of transcript processing", () => {
     expect(onCaptured.mock.calls[0]?.[2]).toContain("My pasted transcript.");
   });
 
+  it("labels heard text as time windows when Analysis is unavailable", async () => {
+    const { socket } = await startCapture(false, false);
+    piece(socket, "heard", 0, 5_000, "Already heard text.");
+    expect(screen.getByText(/New transcript text is shown by time window/)).toBeVisible();
+    expect(screen.getByText("Already heard text.")).toBeVisible();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+      socket.receive({ type: "transcript.flushed", until_ms: 5_000 });
+    });
+  });
+
   it("stamps 44.1 kHz audio from the emitted samples across reconnect", async () => {
     const { socket } = await startCapture(false, false);
     const audio = RecordingAudioContext.latest;

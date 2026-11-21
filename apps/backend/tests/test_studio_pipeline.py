@@ -268,6 +268,104 @@ def test_direct_build_draws_a_chart_only_when_each_cited_row_is_supported(tmp_pa
         assert any(item["label"].endswith("drawn as a table") for item in skipped)
 
 
+def test_direct_build_records_optional_failures_and_keeps_the_checked_draft(tmp_path):
+    from test_outputs import app_for, body, build, built, library, route, workspace
+
+    def reply(request):
+        task = request_text(request)
+        if "A fact-checker compared" in task:
+            raise ModelError("Claim repair disconnected.")
+        if "A deck's subtitle is its core message" in task:
+            raise ModelError("Subtitle alignment disconnected.")
+        return router(request, UNSUPPORTED_DECK.replace("[2]", "[1]"))
+
+    with app_for(tmp_path, FakeProvider(reply)) as client:
+        base, _ = library(client, notes={"Field trial": " ".join(PASSAGES)})
+        version = built(build(client, base, body(kind="slides", use="talk")))
+        reopened = client.get(route(base, version["id"]), headers=workspace(client)).json()
+
+    first, _, last = fmt.split_slides(reopened["content"])
+    assert "The 18% saving is 9% after weather adjustment [1]" in first
+    assert fmt.parse_slide(last).layout == "table" and "| **Adjusted** | 7 [1] |" in last
+    assert any(issue["verdict"] == "unsupported" for issue in reopened["sections"][2]["issues"])
+    status = {item["label"]: item["reason"] for item in reopened["provenance"]["skill"]["skipped"]}
+    assert status["Claim repair unavailable"] == "Claim repair disconnected."
+    assert status["Subtitle alignment unavailable"] == "Subtitle alignment disconnected."
+
+
+@pytest.mark.parametrize("recovers", [True, False])
+def test_direct_build_reports_format_failures_after_both_repair_rounds(tmp_path, recovers):
+    from test_outputs import app_for, body, build, built, library, route, workspace
+
+    complete = DECK.replace("[2]", "[1]")
+    written = re.sub(r"^Note: .*\n?", "", complete, flags=re.M)
+    repaired = fmt.split_slides(complete)
+    attempts = {2: 0, 3: 0}
+
+    def reply(request):
+        task = request_text(request)
+        target = re.search(r"^Slide (\d+) as written:$", task, re.M)
+        if target:
+            slide = int(target[1])
+            attempts[slide] += 1
+            if slide == 2 and (attempts[slide] == 1 or not recovers):
+                raise ModelError(f"Format repair disconnected on attempt {attempts[slide]}.")
+            return repaired[slide - 1]
+        return router(request, written)
+
+    with app_for(tmp_path, FakeProvider(reply)) as client:
+        base, _ = library(client, notes={"Field trial": " ".join(PASSAGES)})
+        version = built(build(client, base, body(kind="slides", use="talk")))
+        reopened = client.get(route(base, version["id"]), headers=workspace(client)).json()
+
+    assert attempts == {2: 2, 3: 1}
+    left = fmt.check_deck(reopened["content"])
+    skipped = [
+        item for item in reopened["provenance"]["skill"]["skipped"] if item["step"] == "format"
+    ]
+    if recovers:
+        assert left == [] and skipped == []
+    else:
+        assert [slide for slide, _ in left] == [2]
+        [failure] = skipped
+        assert failure["label"] == "Slide 2 format repair unavailable"
+        assert failure["reason"] == f"Format repair disconnected on attempt 2. {left[0][1][0]}"
+
+
+def test_styled_deck_reopens_with_the_cover_format_repair_error(tmp_path):
+    from test_outputs import app_for, body, build, built, library, route, workspace
+
+    written = DECK.replace("# Cool roofs work, but at half the headline saving", "# Roofs")
+    written = written.replace("[2]", "[1]")
+    attempts = 0
+
+    def reply(request):
+        nonlocal attempts
+        if "Slide 1 as written:" in request_text(request):
+            attempts += 1
+            raise ModelError(f"Cover repair disconnected on attempt {attempts}.")
+        return router(request, written)
+
+    with app_for(tmp_path, FakeProvider(reply)) as client:
+        base, _ = library(client, notes={"Field trial": " ".join(PASSAGES)})
+        version = built(build(client, base, body(kind="slides", use="talk")))
+        response = client.get(route(base, version["id"]), headers=workspace(client))
+        assert response.status_code == 200
+        reopened = response.json()
+
+    assert attempts == 2
+    cover = fmt.parse_slide(fmt.split_slides(reopened["content"])[0])
+    assert cover.attrs["style"] == "light"
+    assert fmt.check_deck(reopened["content"]) == [(1, ["title is missing or too short."])]
+    [failure] = [
+        item for item in reopened["provenance"]["skill"]["skipped"] if item["step"] == "format"
+    ]
+    assert failure["label"] == "Slide 1 format repair unavailable"
+    assert failure["reason"] == (
+        "Cover repair disconnected on attempt 2. title is missing or too short."
+    )
+
+
 def test_direct_report_keeps_the_supported_exhibit_when_its_rows_are_repeated(tmp_path):
     from test_outputs import app_for, body, build, built, library
 
@@ -826,6 +924,29 @@ def test_with_no_model_that_sees_the_step_says_why_and_the_deck_is_unchanged(tmp
     assert fmt.parse_slide(fmt.split_slides(built.content)[1]).layout == "stats"
     reasons = [s["reason"] for s in agents.skipped if s["step"] == "look"]
     assert reasons and "can see" in reasons[0]
+
+
+def test_partial_image_review_keeps_measurements_and_successful_findings(tmp_path, monkeypatch):
+    from gunther.studio import look
+
+    monkeypatch.setattr(look, "IMAGES_PER_CALL", 1)
+    successful = looking_router(findings=[{"slide": 1, "problem": "Crowded cover"}])
+
+    def reply(request):
+        task = request_text(request)
+        if "demanding presentation designer" in task and "Image 1 = slide 2" in task:
+            raise ModelError("Image review disconnected.")
+        return successful(request)
+
+    renderer = FakeRenderer(tmp_path, crowded=())
+    _, built = make_with_look(FakeProvider(reply), renderer)
+    record = built.skill["look"]
+    assert record["status"] == "measured" and record["reviewFailures"] == 1
+    assert len(record["before"]["measured"]) == 3
+    assert [finding["slide"] for finding in record["findings"]] == [1]
+    assert built.skill["renderCheck"]["id"] == "snap1"
+    assert any("1 of 3" in note["reason"] for note in built.skill["skipped"])
+    assert fmt.parse_slide(fmt.split_slides(built.content)[1]).layout == "stats"
 
 
 def test_when_the_slides_cannot_be_drawn_the_deck_is_still_saved(tmp_path):

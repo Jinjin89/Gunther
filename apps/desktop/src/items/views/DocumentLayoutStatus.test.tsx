@@ -107,11 +107,12 @@ describe("document layout status", () => {
     expect(screen.getByText("Native readable paragraph.")).toBeVisible();
   });
 
-  it("explains a failed structure check and tries again with the same Read again action", async () => {
-    api.sourceDocument.mockResolvedValue(structured({ state: "failed", by: "rules", error: "The model did not answer in the expected form." }));
+  it.each(["The model did not answer in the expected form.", "The structure review did not finish."])("keeps the reading and existing actions after a structure failure (%s)", async (error) => {
+    api.sourceDocument.mockResolvedValue(structured({ state: "failed", by: "rules", error }));
     render(<Reader />);
-    expect(await screen.findByText("Structure check failed: The model did not answer in the expected form.")).toBeVisible();
+    expect(await screen.findByText(`Structure check failed: ${error}`)).toBeVisible();
     expect(screen.getByText("Read and indexed")).toBeVisible();
+    expect(screen.getByText("Layout readable paragraph.")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(api.reprocessSource).toHaveBeenCalledWith(source.id));
     await waitFor(() => expect(api.sourceDocument).toHaveBeenCalledTimes(2));

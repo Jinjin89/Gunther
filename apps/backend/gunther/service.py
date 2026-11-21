@@ -3097,7 +3097,12 @@ class KnowledgeService:
                     f"Artifact {artifact.id} pinned revision failed its integrity check"
                 )
 
-        manifest_hash = manifest_hash_of(artifact)
+        try:
+            manifest_hash = manifest_hash_of(artifact)
+        except (TypeError, ValueError) as error:
+            raise ArtifactIntegrityError(
+                f"Artifact {artifact.id} manifest contains invalid JSON"
+            ) from error
         if not secrets.compare_digest(manifest_hash, artifact.manifest_hash):
             raise ArtifactIntegrityError(
                 f"Artifact {artifact.id} manifest failed its integrity check"

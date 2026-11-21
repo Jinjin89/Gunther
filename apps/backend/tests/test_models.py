@@ -103,7 +103,7 @@ def test_levels_are_named_for_the_model() -> None:
 def test_reasoning_is_kept_apart_and_json_is_checked() -> None:
     fake = FakeProvider(
         {"content": "not json at all", "reasoning": "Hmm."},
-        {"content": 'Sure: ```json\n{"answer": "42"}\n```', "reasoning": "Better."},
+        {"content": 'Sure:\n```json\n{"answer": "42"}\n```', "reasoning": "Better."},
     )
     chosen = model()
 
@@ -126,6 +126,27 @@ def test_reasoning_is_kept_apart_and_json_is_checked() -> None:
     fake = FakeProvider("still not json")
     with pytest.raises(ModelError, match="shape Gunther could not read"):
         gateway(fake, chosen).complete_json(chosen, Answer, system="Answer.", prompt="?")
+    assert len(fake.requests) == 2
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        'Here it is.\r\n```JSON\r\n{"answer": "Use ```inline``` backticks."}\r\n```\r\nDone.',
+        '{"answer": "Use ```inline``` backticks."}',
+    ],
+)
+def test_json_reply_can_contain_inline_backticks(reply: str) -> None:
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        answer: str
+
+    fake = FakeProvider(reply)
+    chosen = model()
+    parsed, _ = gateway(fake, chosen).complete_json(chosen, Answer, system="", prompt="?")
+    assert parsed.answer == "Use ```inline``` backticks."
+    assert len(fake.requests) == 1
 
 
 def test_a_setting_a_server_refuses_is_dropped_once_and_admitted() -> None:

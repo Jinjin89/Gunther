@@ -7,15 +7,29 @@ from test_outputs import app_for, built, library, read_events, workspace
 from test_slide_review import Renderer
 
 
-@pytest.mark.parametrize("failure", [False, True])
-def test_review_current_renders_save_reopen_idempotency_freshness_and_access(tmp_path, failure):
+@pytest.mark.parametrize(
+    "failure, expected_status, calls",
+    [(None, "clean", 1), ("render", "unavailable", 0), ("image", "needs_review", 2)],
+)
+def test_review_current_renders_save_reopen_idempotency_freshness_and_access(
+    tmp_path, failure, expected_status, calls
+):
+    class OverflowingSlide(Renderer):
+        def capture(self, candidate, use="talk"):
+            snapshot = super().capture(candidate, use)
+            snapshot["slides"][0]["overflow"] = True
+            return snapshot
+
     fake = FakeProvider()
     with app_for(tmp_path, fake) as client:
         base, _ = library(client)
         original = saved_skill_output(client, base, kind="slides")
-        renderer = Renderer(tmp_path, failure=failure)
+        renderer = (
+            OverflowingSlide(tmp_path) if failure == "image"
+            else Renderer(tmp_path, failure=failure == "render")
+        )
         client.app.state.knowledge_service.slide_renderer = renderer
-        fake.replies[:] = ['{"findings":[]}']
+        fake.replies[:] = ["unreadable" if failure == "image" else '{"findings":[]}']
         before_calls = len(fake.requests)
         path = f"/api/knowledge-bases/{base}/artifacts/{original['id']}/visual-review/stream"
         payload = {"clientRequestId": "visual-review-once"}
@@ -28,10 +42,10 @@ def test_review_current_renders_save_reopen_idempotency_freshness_and_access(tmp
         assert reviewed["outline"] == original["outline"]
         assert reviewed["sections"] == original["sections"]
         visual = reviewed["provenance"]["skill"]["visualReview"]
-        assert visual["status"] == ("unavailable" if failure else "clean")
+        assert visual["status"] == expected_status
         again = built(read_events(client.post(path, json=payload, headers=headers)))
         assert again["id"] == reviewed["id"]
-        assert len(fake.requests) == before_calls + (not failure)
+        assert len(fake.requests) - before_calls == calls
         assert len(renderer.candidates) == 1
         saved_path = f"/api/knowledge-bases/{base}/artifacts/{reviewed['id']}"
         reopened = client.get(saved_path, headers=headers).json()
@@ -39,8 +53,16 @@ def test_review_current_renders_save_reopen_idempotency_freshness_and_access(tmp
             reopened["provenance"]["skill"]["renderCheck"]["candidateHash"]
             == reviewed["provenance"]["skill"]["visualReview"]["candidateHash"]
         )
-        if failure:
+        if failure == "render":
             assert visual["reason"] == "Browser unavailable"
+            return
+        if failure == "image":
+            skill = reopened["provenance"]["skill"]
+            assert skill["renderCheck"]["status"] == "captured"
+            assert skill["visualReview"] == visual
+            assert visual["imageReview"] == "unavailable"
+            assert "shape Gunther could not read" in visual["reason"]
+            assert any("overflows" in finding["problem"] for finding in visual["findings"])
             return
         workspace_id = headers["X-Gunther-Workspace-Id"]
         image = saved_path + f"/renders/capture1/contact.png?workspace_id={workspace_id}"

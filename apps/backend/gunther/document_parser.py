@@ -398,6 +398,9 @@ def structured_document(
             status = StructureStatus("too-long")
         except StructureError as error:
             status = StructureStatus("failed", error=str(error))
+        except Exception:
+            logger.exception("Document structure review failed; keeping the layout draft")
+            status = StructureStatus("failed", error="The structure review did not finish.")
     if plan is draft:
         status.violations = [v for v in check(draft, evidence) if v.severity == "warning"]
     parsed = assemble(plan, evidence, status)

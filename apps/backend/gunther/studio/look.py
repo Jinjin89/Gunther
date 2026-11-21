@@ -123,13 +123,14 @@ def look(
     agents._stage(emit, step, label, "running")
     snapshot: list[dict[str, Any] | None] = [None]
 
+    def note_incomplete(reason: str) -> None:
+        record["reason"] = " ".join(filter(None, (record.get("reason"), reason)))
+        agents.skipped.append({"step": step, "label": "Slide review incomplete", "reason": reason})
+
     def finish(reason: str, detail: str = ""):
         if reason:
-            record["reason"] = reason
-            agents.skipped.append(
-                {"step": step, "label": "Slides were not looked at", "reason": reason}
-            )
-        agents._stage(emit, step, label, "done", detail or reason)
+            note_incomplete(reason)
+        agents._stage(emit, step, label, "done", detail or record.get("reason", ""))
         return built, record, snapshot[0]
 
     renderer = getattr(agents, "renderer", None)
@@ -199,20 +200,21 @@ def look(
         for i in range(1, len(slides) + 1, IMAGES_PER_CALL)
     ]
     findings: list[LookFinding] = []
-    failed = 0
     from gunther.studio.pipeline import warm_map
 
-    def safe(numbers: list[int]) -> list[LookFinding]:
-        nonlocal failed
+    def safe(numbers: list[int]) -> list[LookFinding] | None:
         try:
             return review(numbers)
-        except (ModelError, LookupError, OSError) as error:
-            logger.info("Looking at slides %s failed: %s", numbers, error)
-            failed += 1
-            return []
+        except Exception:  # noqa: BLE001 - image review is optional; keep the measurements
+            logger.info("Looking at slides %s failed", numbers, exc_info=True)
+            return None
 
+    failed = 0
     for part in warm_map(safe, batches, 3):
-        findings += part
+        if part is None:
+            failed += 1
+        else:
+            findings += part
     for finding in findings:
         if finding.action == "layout" and (
             finding.layout not in TARGET_LAYOUTS
@@ -224,6 +226,8 @@ def look(
     record["reviewFailures"] = failed
     if failed and failed == len(batches):
         return finish("The model could not look at the slides.")
+    if failed:
+        note_incomplete(f"Image review failed for {failed} of {len(batches)} slide batches.")
 
     # 2. Choose: what was measured wrong, then what the eye found; at most four slides.
     wanted: dict[int, list[str]] = {}
@@ -286,6 +290,8 @@ def look(
     targets.sort()
     record["targets"] = targets
     if not targets:
+        if failed:
+            return finish("")
         record["status"] = "clean"
         return finish("", "no slide needed a fix")
 
@@ -420,6 +426,7 @@ def look(
             agents.skipped += notes
         except Exception as error:  # noqa: BLE001 - never fail the build
             logger.info("Redesigning the slides failed: %s", error)
+            note_incomplete(f"Slide redesign failed: {error}"[:300])
             redrawn = held
         for n in designed_targets:
             if redrawn[n - 1] != held[n - 1]:
@@ -428,14 +435,17 @@ def look(
     stopped: str | tuple[str, str] | None = None
     if plain_targets:
         fixed_plain, stopped = fix_plain(plain_targets)
+        if isinstance(stopped, str):
+            note_incomplete(stopped)
+            stopped = None
         for n, draft in fixed_plain.items():
             revised[n - 1] = draft
             changed.append(n)
     if not changed:
         if stopped:
-            return finish(*stopped) if isinstance(stopped, tuple) else finish(stopped)
+            return finish(*stopped)
         record["status"] = "fix_dropped"
-        return finish("", "the new designs changed nothing usable")
+        return finish("", record.get("reason", "the new designs changed nothing usable"))
     changed.sort()
 
     # 4. Look again: the same measurements; a slide that got worse keeps its old self.

@@ -660,6 +660,8 @@ def test_without_an_analysis_model_each_window_is_one_paragraph(
         state = state_of(client)
         assert state["grouping"] == {"state": "off"}
         assert len(state["paragraphs"]) == len(state["windows"]) == 1
+        [activity] = client.get("/api/activity", headers=SIDECAR).json()["items"]
+        assert activity["state"] == "done" and "time window" in activity["detail"]
 
 
 def test_when_grouping_fails_what_was_heard_is_kept_one_paragraph_per_window(
@@ -674,6 +676,13 @@ def test_when_grouping_fails_what_was_heard_is_kept_one_paragraph_per_window(
         assert gateway.requests == 3  # tried three times
         state = state_of(client)
         assert state["grouping"] == {"state": "off"} and len(state["sentences"]) == 9
+        assert state["sentences"][0]["startMs"] == 5_000
+        assert [sentence["text"] for sentence in state["sentences"]] == [
+            f"Sentence {i}." for i in range(9)
+        ]
+        [activity] = client.get("/api/activity", headers=SIDECAR).json()["items"]
+        assert activity["state"] == "done"
+        assert "Paragraph grouping was unavailable" in activity["detail"]
 
 
 def test_a_provider_without_word_times_gives_one_paragraph_per_window(

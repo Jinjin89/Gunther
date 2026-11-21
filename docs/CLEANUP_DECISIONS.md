@@ -285,3 +285,4 @@ of its callers. Facts in a capture come only from Analysis, which reads tables a
 itself. With no Analysis model, the capture shows needs-a-key or an error with Retry.
 Saved user-entered assertions keep opening and keep their review state. Round 16's
 Retry paragraph stands.
+A45 = A45 + A47a + A47b

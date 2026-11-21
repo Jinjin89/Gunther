@@ -542,12 +542,27 @@ def _usage(counted: Any) -> dict[str, int | None]:
     }
 
 
+_CODE_FENCE = re.compile(
+    r"^[ \t]*```(?P<language>[a-zA-Z]*)[ \t]*\r?\n"
+    r"(?P<body>.*?)(?:\r?\n)?^[ \t]*```[ \t]*(?=\r?$)",
+    re.MULTILINE | re.DOTALL,
+)
+
+
+def unfence(text: str) -> str:
+    """Unwrap a reply enclosed in a code fence."""
+    text = text.strip()
+    fenced = _CODE_FENCE.fullmatch(text)
+    return fenced.group("body") if fenced else text
+
+
 def _json_text(text: str) -> str:
     """The JSON object inside a reply that may wrap it in a code fence or a sentence."""
 
-    fenced = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
-    if fenced:
-        text = fenced.group(1)
+    for fenced in _CODE_FENCE.finditer(text):
+        if fenced.group("language").lower() in ("", "json"):
+            text = fenced.group("body")
+            break
     start, end = text.find("{"), text.rfind("}")
     return text[start : end + 1] if start != -1 and end > start else text
 

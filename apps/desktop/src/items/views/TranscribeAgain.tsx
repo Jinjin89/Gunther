@@ -85,7 +85,7 @@ export function TranscribeAgainLine({ again }: { again: TranscribeAgain }) {
   if (status?.state === "stopped") return <p className="gx-again-line" role="status">Stopped.</p>;
   if (status?.state === "waiting") return <p className="gx-again-line" role="status">Waiting for another recording to finish transcribing…</p>;
   if (status?.state !== "running") return null;
-  if (status.totalMs > 0 && status.heardMs >= status.totalMs) return <p className="gx-again-line" role="status">Making paragraphs…</p>;
+  if (status.totalMs > 0 && status.heardMs >= status.totalMs) return <p className="gx-again-line" role="status">Preparing transcript…</p>;
   const total = Math.max(1, Math.round(status.totalMs / 60000));
   const heard = Math.min(Math.round(status.heardMs / 60000), total);
   return <p className="gx-again-line" role="status">{status.totalMs > 0 ? `Transcribing again… ${heard} of ${total} min heard` : "Transcribing again…"}</p>;

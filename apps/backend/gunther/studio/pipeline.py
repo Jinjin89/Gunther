@@ -17,7 +17,7 @@ import time
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from copy import copy
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from threading import Lock
 from typing import Any
 
@@ -27,6 +27,7 @@ from gunther import usage
 from gunther.agent import CITATION_GROUP, MARKDOWN_TABLE, Evidence, collapse_citations
 from gunther.checks import Verdicts, finding, read_verdicts, verdicts_of
 from gunther.llm import Image, ModelError, ModelInfo
+from gunther.llm import unfence as _unfence
 from gunther.model_profiles import Effort
 from gunther.outputs import (
     STYLES,
@@ -210,6 +211,8 @@ class Run:
     # The notes made when the material was too long to give whole and was read part by part.
     read_digest: str = ""
     plan: tuple[Planned, ...] = ()
+    # Latest request errors by one-based slide position in the accepted deck.
+    format_repair_errors: dict[int, str] = field(default_factory=dict)
 
 
 def _no_events(_event: dict[str, Any]) -> None:
@@ -941,8 +944,10 @@ class StudioAgents(OutputAgents):
         if structural:
             if len(pieces) < 2:
                 return rejected(f"revision returned {len(pieces)} slides")
+            prior_errors = run.format_repair_errors
             candidate = self.fix_format(model, effort, run, revised, _no_events)
             if not source_images_kept(deck, candidate):
+                run.format_repair_errors = prior_errors
                 return rejected("the revision dropped a source image")
             return candidate
 
@@ -1040,12 +1045,14 @@ class StudioAgents(OutputAgents):
             self._progress(
                 emit, step, label, f"fixing {count} problem{'' if count == 1 else 's'}"
             )
+            prior_errors = run.format_repair_errors
             revised = self._revise_science(
                 model, effort, run, deck, pool, material, [*found, *code]
             )
             revised = S.apply_source_cover(revised, pool.items, title=cover)
             if not _matches_plan(run, fmt.split_slides(revised)):
                 revised = deck
+                run.format_repair_errors = prior_errors
             if found and revised != deck:
                 self._progress(emit, step, label, "checking that the fixes worked")
                 still_open = self._recheck_science(model, run, revised, material, found)
@@ -1269,6 +1276,10 @@ class StudioAgents(OutputAgents):
                 )
             except ModelError as error:
                 logger.info("Revising the storyline failed: %s", error)
+                self.skipped.append({
+                    "step": "story", "label": "Storyline revision unavailable",
+                    "reason": str(error),
+                })
                 break
         if isinstance(story, DeckStory):
             story = self._tidy_deck_story(story)
@@ -1423,15 +1434,14 @@ class StudioAgents(OutputAgents):
         return slides
 
     def fix_format(self, model, effort, run: Run, deck: str, emit: Events) -> str:
-        """Each slide that breaks the format is written again on its own, all such slides at
-        once, for at most three rounds; a slide that still breaks it keeps its words and is
-        drawn by the renderer's fallback."""
+        """Repair slides in parallel for up to two rounds and keep the renderer's fallback."""
 
         read = run.use == "read"
         notes = run.use == "talk"
         guide = (STUDY_DECK_FORMAT if run.study else DECK_FORMAT) + (
             "\n\n" + READ_NOTE if read else ""
         )
+        errors: dict[int, str] = {}
         for _ in range(2):
             found = fmt.check_deck(
                 deck, read=read, notes_required=notes, scientific=bool(run.study)
@@ -1440,7 +1450,9 @@ class StudioAgents(OutputAgents):
                 break
             slides = fmt.split_slides(deck)
 
-            def fix(item: tuple[int, list[str]], slides: list[str] = slides) -> str | None:
+            def fix(
+                item: tuple[int, list[str]], slides: list[str] = slides
+            ) -> tuple[str | None, str | None]:
                 n, problems = item
                 system = P.FIX_SLIDES.format(format=guide, problems="")
                 if run.study:
@@ -1459,21 +1471,25 @@ class StudioAgents(OutputAgents):
                     )
                 except ModelError as error:
                     logger.info("Fixing slide %d failed: %s", n, error)
-                    return None
+                    return None, str(error) or "The format repair did not finish."
                 if not again or not _keeps_heading(run, slides[n - 1], again):
-                    return None
+                    return None, None
                 text = fmt.strip_labels(again[0])
                 if not source_images_kept(slides[n - 1], text):
-                    return None
+                    return None, None
                 if n == 1:
                     text = self._title_marker(
                         [text], fmt.parse_slide(slides[0]).attrs.get("theme", "paper")
                     )[0]
-                return text
+                return text, None
 
             fixed = warm_map(fix, found, WORKERS)
             changed = False
-            for (n, _), text in zip(found, fixed, strict=True):
+            for (n, _), (text, request_error) in zip(found, fixed, strict=True):
+                if request_error is None:
+                    errors.pop(n, None)
+                else:
+                    errors[n] = request_error
                 if text is not None and text != slides[n - 1]:
                     slides[n - 1], changed = text, True
             deck = "\n\n---\n\n".join(slides)
@@ -1488,18 +1504,26 @@ class StudioAgents(OutputAgents):
                 if any("units long" in p for p in problems):
                     slides[n - 1] = fmt.trim_to_notes(slides[n - 1], first=n == 1, read=read)
             deck = "\n\n---\n\n".join(slides)
-            left = fmt.check_deck(
-                deck, read=read, notes_required=run.use == "talk", scientific=bool(run.study)
-            )
-        if left:
-            self.skipped.append(
-                {
-                    "step": "format",
-                    "label": f"{len(left)} slide(s) still break the format",
-                    "reason": "; ".join(f"slide {n}: {p[0]}" for n, p in left)[:600],
-                }
-            )
+        run.format_repair_errors = errors
         return deck
+
+    def _record_slide_format(self, run: Run, built: BuiltOutput) -> None:
+        """Report the format of the deck being saved, after all repairs and fallbacks."""
+        remaining = fmt.check_deck(
+            built.content,
+            read=run.use == "read",
+            notes_required=run.use == "talk",
+            scientific=bool(run.study),
+        )
+        if not remaining:
+            return
+        notes = []
+        for n, problems in remaining:
+            label, reason = f"Slide {n} still breaks the format", problems[0]
+            if error := run.format_repair_errors.get(n):
+                label, reason = f"Slide {n} format repair unavailable", f"{error} {reason}"
+            notes.append({"step": "format", "label": label, "reason": reason[:600]})
+        self.skipped.extend(notes)
 
     def write_report(self, model, effort, run: Run, pool: Pool, material: str, emit: Events) -> str:
         spec = run.spec
@@ -1560,6 +1584,10 @@ class StudioAgents(OutputAgents):
                     text = fixed
             except ModelError as error:
                 logger.info("Fixing the report's form failed: %s", error)
+                self.skipped.append({
+                    "step": "format", "label": "Report format repair unavailable",
+                    "reason": str(error),
+                })
             left = fmt.check_report(text)
             if left:
                 self.skipped.append(
@@ -1745,6 +1773,9 @@ class StudioAgents(OutputAgents):
             line = _unfence(self._text(model, system, prompt, "low", 2000)).strip()
         except ModelError as error:
             logger.info("Aligning the subtitle failed: %s", error)
+            self.skipped.append(
+                {"step": "verify", "label": "Subtitle alignment unavailable", "reason": str(error)}
+            )
             return drafts
         line = line.splitlines()[0].strip() if line else ""
         line = re.sub(r"^(Subtitle|副标题)\s*[:：]\s*", "", line)
@@ -1776,8 +1807,10 @@ class StudioAgents(OutputAgents):
             joined, read=run.use == "read", notes_required=False, scientific=bool(run.study)
         ):
             return drafts
+        prior_errors = run.format_repair_errors
         fitted = fmt.split_slides(self.fix_format(model, effort, run, joined, _no_events))
         if len(fitted) != len(drafts):
+            run.format_repair_errors = prior_errors
             return drafts
         changed = [i for i, (d, t) in enumerate(zip(drafts, fitted, strict=True)) if d.text != t]
         by_ref = pool.by_ref()
@@ -1871,11 +1904,18 @@ class StudioAgents(OutputAgents):
             text = _unfence(self._text(model, system, prompt, "low", 16_000))
         except ModelError as error:
             logger.info("Fixing unsupported claims failed: %s", error)
+            self.skipped.append(
+                {"step": "verify", "label": "Claim repair unavailable", "reason": str(error)}
+            )
             return None
         pieces = [p.strip() for p in re.split(r"\n-{3,}\n", "\n" + text + "\n") if p.strip()]
         if len(pieces) != len(drafts):
             logger.info("Claim fix returned %d parts for %d", len(pieces), len(drafts))
             if len(drafts) == 1:
+                self.skipped.append({
+                    "step": "verify", "label": "Claim repair unavailable",
+                    "reason": "The repair did not return a single revised part.",
+                })
                 return None
 
             # Asked again one part at a time; a part whose fix fails keeps its text.
@@ -2298,8 +2338,14 @@ class StudioAgents(OutputAgents):
                     self, built, drafts, model=model, effort=effort, use=run.use, pool=pool,
                     assemble=assemble_deck, emit=emit, unfence=_unfence, material=material,
                 )  # fmt: skip
-            except Exception as error:  # noqa: BLE001 - looking never fails a build
-                logger.warning("The look at the slides failed: %s", error)
+            except Exception:  # noqa: BLE001 - looking never fails a build
+                logger.exception("The look at the slides failed")
+                reason = "The slide review did not finish."
+                self.skipped.append(
+                    {"step": "look", "label": "Slide review unavailable", "reason": reason}
+                )
+                self._stage(emit, "look", "Looking at the slides", "failed", reason)
+            self._record_slide_format(run, built)
         else:
             text = self.write_report(model, effort, run, pool, material, emit)
             preamble, sections = split_document(text, "report")
@@ -2442,12 +2488,6 @@ def _lend_refs(line: str, rest: str, most: int = 6) -> str:
     own = re.findall(r"\[(\d+)\]", line)
     extra = [n for n in dict.fromkeys(lent) if n not in own][:most]
     return line.rstrip() + "".join(f" [{n}]" for n in extra) if extra else line
-
-
-def _unfence(text: str) -> str:
-    text = text.strip()
-    fenced = re.match(r"\A```[a-z]*\n(?P<body>.*)\n```\s*\Z", text, re.S)
-    return fenced.group("body") if fenced else text
 
 
 __all__ = ["StudioAgents", "tokens"]

@@ -47,7 +47,7 @@ describe("Transcribe again", () => {
     expect(screen.getByRole("button", { name: "Transcribing…" })).toBeDisabled();
     await act(async () => { vi.advanceTimersByTime(2_000); });
     await flush();
-    expect(screen.getByRole("status")).toHaveTextContent("Making paragraphs…");
+    expect(screen.getByRole("status")).toHaveTextContent("Preparing transcript…");
     await act(async () => { vi.advanceTimersByTime(2_000); });
     await flush();
     expect(onDone).toHaveBeenCalledTimes(1);

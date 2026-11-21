@@ -825,18 +825,20 @@ def test_outputs_built_by_agents_are_verified_in_a_backup(tmp_path: Path) -> Non
     assert _run("verify", str(backup)).returncode == 0
 
     # Each of these keeps the outer manifest consistent and changes only the output.
-    for field, damaged in (
+    changes = (
         ("content", "X"),
         ("citations_json", "[]"),
         ("scope_json", '{"mode":"library"}'),
         ("inputs_json", "{}"),
         ("outline_json", "[]"),
+        ("outline_json", "["),
         ("brief", "changed"),
         ("style", "decision_brief"),
         ("origin", "edit"),
         ("kind", "slides"),
-    ):
-        copy = tmp_path / f"tampered-{field}"
+    )
+    for index, (field, damaged) in enumerate(changes):
+        copy = tmp_path / f"tampered-{index}-{field}"
         shutil.copytree(backup, copy)
         connection = sqlite3.connect(copy / "gunther.sqlite")
         try:
@@ -857,3 +859,5 @@ def test_outputs_built_by_agents_are_verified_in_a_backup(tmp_path: Path) -> Non
         rejected = _run("verify", str(copy))
         assert rejected.returncode == 2, field
         assert "Artifact" in rejected.stderr, (field, rejected.stderr)
+        if damaged == "[":
+            assert f"Artifact {artifact_id} contains invalid JSON" in rejected.stderr

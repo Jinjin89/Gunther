@@ -99,17 +99,20 @@ def test_a_checked_plan_comes_from_the_model_with_the_source_named():
 
 
 @pytest.mark.parametrize(
-    "error,state",
-    [(StructureError("The model's plan still left b3 unplaced."), "failed"),
-     (StructureTooLong("Too long"), "too-long")],
+    "error,state,message",
+    [
+        (StructureError("The model's plan still left b3 unplaced."), "failed",
+         "The model's plan still left b3 unplaced."),
+        (StructureTooLong("Too long"), "too-long", None),
+        (RuntimeError("Review disconnected"), "failed", "The structure review did not finish."),
+    ],
 )
-def test_a_failed_or_impossible_check_keeps_the_draft_and_says_why(error, state):
+def test_a_failed_or_impossible_check_keeps_the_draft_and_says_why(error, state, message):
     document = structured_document(paper(), {}, Reviser(error))
     structure = document.manifest["structure"]
     assert structure["state"] == state and structure["by"] == "rules"
-    if state == "failed":
-        assert structure["error"] == "The model's plan still left b3 unplaced."
-    assert not any("Journal of Examples" in value for value in texts_of(document))
+    assert structure["error"] == message
+    assert document.elements == structured_document(paper(), {}).elements
 
 
 def test_an_empty_document_never_asks_the_model():

@@ -1333,12 +1333,16 @@ def test_a_version_made_by_agents_is_sealed_and_tampering_is_caught(tmp_path: Pa
             ("scope_json", '{"mode":"library"}'),
             ("brief", "changed"),
             ("outline_json", "[]"),
+            ("outline_json", "["),
             ("kind", "slides"),
             ("style", "decision_brief"),
             ("origin", "edit"),
         ):
             original = set_field(field, damaged)
             assert status() == (409, 409), field
+            if damaged == "[":
+                response = client.get(route(base_id, first["id"]), headers=headers)
+                assert "manifest contains invalid JSON" in response.json()["detail"]
             set_field(field, original)
             assert status() == (200, 200), field
 

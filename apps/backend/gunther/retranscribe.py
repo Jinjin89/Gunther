@@ -813,7 +813,7 @@ class Retranscriber:
         logger.info("Transcribing %s again with %s", job.recording_id, plan["choice"].model)
         try:
             sentences, windows = await self._listen(job, plan)
-            job.note(progress=None, detail="Finding paragraphs")
+            job.note(progress=None, detail="Preparing the transcript")
             paragraphs, grouped = await self._paragraphs(job, sentences)
             state = transcript_state(
                 sentences,
@@ -837,17 +837,21 @@ class Retranscriber:
         else:
             job.state = "done"
             logger.info(
-                "Transcribed %s again: %d sentences, %d paragraphs in %.0f s",
+                "Transcribed %s again: %d sentences, %d %s in %.0f s",
                 job.recording_id,
                 len(sentences),
                 len(paragraphs),
+                "paragraphs" if grouped else "time windows",
                 time.monotonic() - began,
             )
         finally:
             listen_copy.remove_copy(self.recordings_dir, job.recording_id)
         if job.tracked is not None:
             if job.state == "done":
-                job.tracked.done("Transcript updated")
+                detail = (
+                    "" if grouped else "Shown by time window. Paragraph grouping was unavailable."
+                )
+                job.tracked.done("Transcript updated", detail)
             else:
                 job.tracked.failed("Transcribing again failed", job.error or "")
 
@@ -937,8 +941,7 @@ class Retranscriber:
         return merged.sentences, merged.windows
 
     async def _paragraphs(self, job: Job, sentences: list[Heard]) -> tuple[list[list[int]], bool]:
-        """Paragraphs by the Analysis model; without one, or when it fails after its
-        retries, one paragraph per window, so what was heard is never thrown away."""
+        """Group with Analysis when available, or keep the heard text in its time windows."""
 
         chosen = self.state.models.for_role("analysis")
         if chosen is None:

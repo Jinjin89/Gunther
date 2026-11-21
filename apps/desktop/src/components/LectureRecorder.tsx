@@ -1993,7 +1993,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     <div className="lecture-transcript">
       <header><span><strong>Live transcript</strong><small>Editable before it becomes knowledge</small></span><em>{transcriptWords ? `${transcriptWords} words` : "Waiting for speech"}</em></header>
       {liveNote && <p className="lecture-live-note">Live text comes in short pieces for this model.</p>}
-      {groupHint && hasTranscriptContent(segments) && <p className="lecture-live-note">Add an Analysis model in Settings → Models to group paragraphs by topic.</p>}
+      {groupHint && hasTranscriptContent(segments) && <p className="lecture-live-note">New transcript text is shown by time window. Add an Analysis model in Settings → Models to group it into paragraphs.</p>}
       {finalizing && <p className="lecture-live-note" role="status">{persistence === "saved" ? "Audio saved. You can save now with the current transcript, or wait for it to finish." : "Finishing the transcript in the background…"} <button type="button" className="lp-retry" onClick={skipChecks}>Keep current text</button></p>}
       {hasTranscriptContent(segments)
         ? <TranscriptParagraphs
