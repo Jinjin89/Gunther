@@ -4,12 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gunther_mobile/app.dart';
-import 'package:gunther_mobile/data/models/assertion.dart';
 import 'package:gunther_mobile/data/models/capture.dart';
 import 'package:gunther_mobile/data/models/capture_outbox.dart';
 import 'package:gunther_mobile/data/models/inbox_item.dart';
 import 'package:gunther_mobile/data/models/knowledge_base.dart';
-import 'package:gunther_mobile/data/models/knowledge_graph.dart';
 import 'package:gunther_mobile/data/models/overview.dart';
 import 'package:gunther_mobile/data/models/source.dart';
 import 'package:gunther_mobile/data/models/web_search.dart';
@@ -1777,10 +1775,6 @@ class FakeKnowledgeRepository
   );
 
   @override
-  Future<KnowledgeGraph> getGraph() async =>
-      const KnowledgeGraph(nodes: [], edges: []);
-
-  @override
   Future<List<KnowledgeBaseSummary>> getKnowledgeBases() async => [
     KnowledgeBaseSummary(
       id: 'kb-1',
@@ -1824,12 +1818,6 @@ class FakeKnowledgeRepository
   Future<List<InboxItem>> getInbox({String? state}) async => state == null
       ? List.unmodifiable(inboxItems)
       : inboxItems.where((item) => item.state == state).toList(growable: false);
-
-  @override
-  Future<List<Assertion>> getProvisionalAssertions() async => [];
-
-  @override
-  Future<List<SourceSummary>> getSources() async => [];
 
   @override
   Future<void> importSource(SourceDraft draft) async {
@@ -1954,9 +1942,6 @@ class FakeKnowledgeRepository
     sources: const [],
     mode: 'openai',
   );
-
-  @override
-  Future<void> updateAssertionStatus(String id, String status) async {}
 }
 
 class _SwitchingCaptureRepository extends FakeKnowledgeRepository {

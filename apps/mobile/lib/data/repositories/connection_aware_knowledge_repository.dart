@@ -1,8 +1,6 @@
-import 'package:gunther_mobile/data/models/assertion.dart';
 import 'package:gunther_mobile/data/models/capture.dart';
 import 'package:gunther_mobile/data/models/inbox_item.dart';
 import 'package:gunther_mobile/data/models/knowledge_base.dart';
-import 'package:gunther_mobile/data/models/knowledge_graph.dart';
 import 'package:gunther_mobile/data/models/overview.dart';
 import 'package:gunther_mobile/data/models/source.dart';
 import 'package:gunther_mobile/data/models/web_search.dart';
@@ -117,9 +115,6 @@ class ConnectionAwareKnowledgeRepository
   Future<Overview> getOverview() => _delegate.getOverview();
 
   @override
-  Future<KnowledgeGraph> getGraph() => _delegate.getGraph();
-
-  @override
   Future<List<KnowledgeBaseSummary>> getKnowledgeBases() =>
       _delegate.getKnowledgeBases();
 
@@ -130,13 +125,6 @@ class ConnectionAwareKnowledgeRepository
   @override
   Future<List<InboxItem>> getInbox({String? state}) =>
       _delegate.getInbox(state: state);
-
-  @override
-  Future<List<SourceSummary>> getSources() => _delegate.getSources();
-
-  @override
-  Future<List<Assertion>> getProvisionalAssertions() =>
-      _delegate.getProvisionalAssertions();
 
   @override
   Future<void> importSource(SourceDraft draft) => _delegate.importSource(draft);
@@ -201,10 +189,6 @@ class ConnectionAwareKnowledgeRepository
 
   @override
   Future<WebSearchResult> searchWeb(String query) => _delegate.searchWeb(query);
-
-  @override
-  Future<void> updateAssertionStatus(String id, String status) =>
-      _delegate.updateAssertionStatus(id, status);
 }
 
 class _PinnedCaptureTargetLease implements CaptureTargetLease {

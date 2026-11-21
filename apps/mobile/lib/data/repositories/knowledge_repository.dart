@@ -2,10 +2,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
-import 'package:gunther_mobile/data/models/assertion.dart';
 import 'package:gunther_mobile/data/models/capture.dart';
 import 'package:gunther_mobile/data/models/inbox_item.dart';
-import 'package:gunther_mobile/data/models/knowledge_graph.dart';
 import 'package:gunther_mobile/data/models/knowledge_base.dart';
 import 'package:gunther_mobile/data/models/overview.dart';
 import 'package:gunther_mobile/data/models/source.dart';
@@ -14,12 +12,9 @@ import 'package:gunther_mobile/data/services/knowledge_api_service.dart';
 
 abstract interface class KnowledgeRepository {
   Future<Overview> getOverview();
-  Future<KnowledgeGraph> getGraph();
   Future<List<KnowledgeBaseSummary>> getKnowledgeBases();
   Future<KnowledgeBaseSummary> createKnowledgeBase(KnowledgeBaseDraft draft);
   Future<List<InboxItem>> getInbox({String? state});
-  Future<List<SourceSummary>> getSources();
-  Future<List<Assertion>> getProvisionalAssertions();
   Future<void> importSource(SourceDraft draft);
   Future<void> createQuickNote(QuickNoteDraft draft);
   Future<WebSnapshotReceipt> captureWebSnapshot(WebSnapshotDraft draft);
@@ -48,7 +43,6 @@ abstract interface class KnowledgeRepository {
   Future<void> fileSource(String sourceId, String knowledgeBaseId);
   Future<void> fileQuickNote(String noteId, String knowledgeBaseId);
   Future<WebSearchResult> searchWeb(String query);
-  Future<void> updateAssertionStatus(String id, String status);
 }
 
 /// One connection lease pinned to the workspace/profile that owns a durable
@@ -82,12 +76,6 @@ class RemoteKnowledgeRepository implements KnowledgeRepository {
   }
 
   @override
-  Future<KnowledgeGraph> getGraph() async {
-    final json = await _apiService.get('graph') as Map<String, Object?>;
-    return KnowledgeGraph.fromJson(json);
-  }
-
-  @override
   Future<List<KnowledgeBaseSummary>> getKnowledgeBases() async {
     final json = await _apiService.get('knowledge-bases') as List<Object?>;
     return json
@@ -116,23 +104,6 @@ class RemoteKnowledgeRepository implements KnowledgeRepository {
     final json = await _apiService.get(path) as List<Object?>;
     return json
         .map((item) => InboxItem.fromJson(item! as Map<String, Object?>))
-        .toList(growable: false);
-  }
-
-  @override
-  Future<List<SourceSummary>> getSources() async {
-    final json = await _apiService.get('sources') as List<Object?>;
-    return json
-        .map((item) => SourceSummary.fromJson(item! as Map<String, Object?>))
-        .toList(growable: false);
-  }
-
-  @override
-  Future<List<Assertion>> getProvisionalAssertions() async {
-    final json =
-        await _apiService.get('assertions?status=provisional') as List<Object?>;
-    return json
-        .map((item) => Assertion.fromJson(item! as Map<String, Object?>))
         .toList(growable: false);
   }
 
@@ -310,13 +281,5 @@ class RemoteKnowledgeRepository implements KnowledgeRepository {
     final json =
         await _apiService.get('search/web?q=$encoded') as Map<String, Object?>;
     return WebSearchResult.fromJson(json);
-  }
-
-  @override
-  Future<void> updateAssertionStatus(String id, String status) async {
-    await _apiService.patch('assertions/$id/status', {
-      'status': status,
-      'reason': 'Reviewed in Gunther mobile',
-    });
   }
 }
