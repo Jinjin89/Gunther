@@ -21,11 +21,10 @@ from gunther.schemas import (
     RecordingRecoveryOut,
     RecordingSessionOut,
 )
-from gunther.storage_budget import StorageBudget, StorageReservation
+from gunther.storage_budget import StorageBudget
 
 MAX_CHUNK_BYTES = 16 * 1024 * 1024
 MAX_RECORDING_BYTES = 2 * 1024 * 1024 * 1024
-MAX_DIRECT_UPLOAD_BYTES = 200 * 1024 * 1024
 
 
 class RecordingError(Exception):
@@ -362,85 +361,6 @@ class RecordingService:
                 part_path.unlink(missing_ok=True)
                 raise
 
-    def save(
-        self,
-        title: str,
-        content_type: str,
-        data: bytes,
-        *,
-        reservation: StorageReservation | None = None,
-    ) -> RecordingSessionOut:
-        if not data:
-            raise RecordingValidationError("The recording is empty.")
-        if len(data) > MAX_DIRECT_UPLOAD_BYTES:
-            raise RecordingTooLargeError("Recordings are limited to 200 MB.")
-
-        if reservation is None:
-            with self.storage_budget.reserve(
-                self.recordings_dir,
-                expected_bytes=len(data),
-            ) as owned_reservation:
-                return self._save_reserved(title, content_type, data, owned_reservation)
-        return self._save_reserved(title, content_type, data, reservation)
-
-    def _save_reserved(
-        self,
-        title: str,
-        content_type: str,
-        data: bytes,
-        reservation: StorageReservation,
-    ) -> RecordingSessionOut:
-
-        media_type = content_type.lower().split(";", 1)[0].strip() or "audio/webm"
-        recording_id = f"rec_{uuid4().hex[:24]}"
-        safe_title = re.sub(r"[^a-zA-Z0-9_-]+", "-", title).strip("-")[:80] or "lecture"
-        file_name = f"{recording_id}.{safe_title}.{recording_extension(media_type)}"
-        self.recordings_dir.mkdir(parents=True, exist_ok=True)
-        final_path = self.recordings_dir / file_name
-        part_path = final_path.with_name(f"{file_name}.part")
-        self.storage_budget.assert_safe_path(final_path)
-        self.storage_budget.assert_safe_path(part_path)
-        checksum = hashlib.sha256(data).hexdigest()
-        try:
-            reservation.prepare_write(len(data))
-            with part_path.open("xb") as recording_file:
-                recording_file.write(data)
-                recording_file.flush()
-                os.fsync(recording_file.fileno())
-            reservation.consume(len(data))
-            os.replace(part_path, final_path)
-            with session_scope(self.sessions) as session:
-                now = utc_now()
-                recording = RecordingSession(
-                    id=recording_id,
-                    title=title,
-                    status="completed",
-                    content_type=media_type,
-                    file_name=file_name,
-                    byte_size=len(data),
-                    next_sequence=1,
-                    created_at=now,
-                    updated_at=now,
-                    completed_at=now,
-                )
-                recording.chunks.append(
-                    RecordingChunk(
-                        id=f"rch_{uuid4().hex}",
-                        recording_id=recording_id,
-                        sequence=0,
-                        checksum=checksum,
-                        size_bytes=len(data),
-                    )
-                )
-                session.add(recording)
-                session.flush()
-                result = self._out(recording)
-            return result
-        except Exception:
-            part_path.unlink(missing_ok=True)
-            final_path.unlink(missing_ok=True)
-            raise
-
     def list(self) -> list[RecordingSessionOut]:
         with session_scope(self.sessions) as session:
             recordings = list(
@@ -529,8 +449,8 @@ class RecordingService:
         recording_id: str,
         data: bytes,
         *,
-        sequence: int | None,
-        checksum: str | None,
+        sequence: int,
+        checksum: str,
     ) -> RecordingSessionOut:
         if not data:
             raise RecordingValidationError("The recording chunk is empty.")
@@ -538,16 +458,11 @@ class RecordingService:
             raise RecordingTooLargeError("Recording chunks are limited to 16 MB.")
 
         digest = hashlib.sha256(data).hexdigest()
-        if sequence is not None:
-            if checksum is None:
-                raise RecordingValidationError(
-                    "X-Chunk-SHA256 is required when sequence is provided."
-                )
-            normalized_checksum = checksum.strip().lower()
-            if not re.fullmatch(r"[a-f0-9]{64}", normalized_checksum):
-                raise RecordingValidationError("X-Chunk-SHA256 must be a SHA-256 hex digest.")
-            if normalized_checksum != digest:
-                raise RecordingValidationError("The chunk checksum does not match its bytes.")
+        normalized_checksum = checksum.strip().lower()
+        if not re.fullmatch(r"[a-f0-9]{64}", normalized_checksum):
+            raise RecordingValidationError("X-Chunk-SHA256 must be a SHA-256 hex digest.")
+        if normalized_checksum != digest:
+            raise RecordingValidationError("The chunk checksum does not match its bytes.")
 
         lock = _recording_lock(recording_id)
         previous_size: int | None = None
@@ -560,14 +475,11 @@ class RecordingService:
                     if recording.status != "capturing" or active_path is None:
                         raise RecordingConflictError("The recording is no longer accepting chunks.")
 
-                    requested_sequence = (
-                        recording.next_sequence if sequence is None else sequence
-                    )
-                    if requested_sequence < recording.next_sequence:
+                    if sequence < recording.next_sequence:
                         existing = session.scalar(
                             select(RecordingChunk).where(
                                 RecordingChunk.recording_id == recording.id,
-                                RecordingChunk.sequence == requested_sequence,
+                                RecordingChunk.sequence == sequence,
                             )
                         )
                         if (
@@ -579,7 +491,7 @@ class RecordingService:
                         raise RecordingConflictError(
                             "That sequence was already committed with different content."
                         )
-                    if requested_sequence > recording.next_sequence:
+                    if sequence > recording.next_sequence:
                         raise RecordingConflictError(
                             f"Out-of-order chunk; expected sequence {recording.next_sequence}."
                         )
@@ -603,7 +515,7 @@ class RecordingService:
                             RecordingChunk(
                                 id=f"rch_{uuid4().hex}",
                                 recording_id=recording.id,
-                                sequence=requested_sequence,
+                                sequence=sequence,
                                 checksum=digest,
                                 size_bytes=len(data),
                             )

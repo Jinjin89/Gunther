@@ -5,6 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
+from recording_fixtures import completed_recording
 from sqlalchemy import func, select
 
 from gunther import processing
@@ -35,14 +36,15 @@ def client_for(path: Path) -> TestClient:
 
 
 def saved_source(client: TestClient, data: bytes | None = None) -> tuple[str, str, str]:
-    recording = client.post(
-        "/api/recordings?title=Recording", content=data or audio_bytes(),
-        headers={"Content-Type": "audio/wav"},
+    recording = completed_recording(
+        client, data or audio_bytes(), title="Recording", content_type="audio/wav"
     ).json()
     recording_id = recording["id"]
-    client.patch(f"/api/recordings/{recording_id}/checkpoint", json={
+    checkpointed = client.patch(f"/api/recordings/{recording_id}/checkpoint", json={
         "expectedRevision": 0, "durationSeconds": 1,
-    }).raise_for_status()
+    }).raise_for_status().json()
+    assert checkpointed["knowledgeBaseId"] is None
+    assert checkpointed["transcriptSegments"] is None
     base = client.post("/api/knowledge-bases", json={
         "title": "Course", "question": "Course", "description": "Course",
     }).json()["id"]

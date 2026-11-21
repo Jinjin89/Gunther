@@ -47,7 +47,6 @@ from gunther.realtime import (
 )
 from gunther.recording_service import (
     MAX_CHUNK_BYTES,
-    MAX_DIRECT_UPLOAD_BYTES,
     RecordingConflictError,
     RecordingNotFoundError,
     RecordingService,
@@ -131,7 +130,7 @@ from gunther.service import (
     KnowledgeService,
 )
 from gunther.skillbook import ask_skills
-from gunther.storage_budget import StorageBudgetError, StorageReservation
+from gunther.storage_budget import StorageBudgetError
 from gunther.web_capture import (
     WebCaptureConflictError,
     WebCaptureFetchError,
@@ -148,33 +147,17 @@ PAIRING_EXCHANGE_MAX_BYTES = 16 * 1024
 PAIRING_EXCHANGE_READ_TIMEOUT_SECONDS = 5.0
 
 
-async def _read_limited_body(
-    request: Request,
-    max_bytes: int,
-    *,
-    reservation: StorageReservation | None = None,
-) -> bytes:
+async def _read_limited_body(request: Request, max_bytes: int) -> bytes:
     """Read a request without allowing an unbounded in-memory allocation."""
 
-    content_length = request.headers.get("content-length")
-    if content_length is not None:
-        try:
-            declared_size = int(content_length)
-        except ValueError as error:
-            raise RecordingValidationError("Content-Length must be an integer.") from error
-        if declared_size < 0:
-            raise RecordingValidationError("Content-Length cannot be negative.")
-        if declared_size > max_bytes:
-            raise RecordingTooLargeError(f"The upload exceeds the {max_bytes}-byte request limit.")
+    declared_size = _declared_body_size(request)
+    if declared_size is not None and declared_size > max_bytes:
+        raise RecordingTooLargeError(f"The upload exceeds the {max_bytes}-byte request limit.")
 
     body = bytearray()
     async for chunk in request.stream():
         if len(body) + len(chunk) > max_bytes:
             raise RecordingTooLargeError(f"The upload exceeds the {max_bytes}-byte request limit.")
-        if reservation is not None and chunk:
-            # Hold the full received body until the service materializes it on
-            # disk. Unknown-length streams therefore remain concurrency-safe.
-            reservation.prepare_write(len(body) + len(chunk))
         body.extend(chunk)
     return bytes(body)
 
@@ -722,22 +705,12 @@ def start_recording_session(
 async def append_recording_chunk(
     recording_id: str,
     request: Request,
-    response: Response,
-    sequence: Annotated[int | None, Query(ge=0)] = None,
-    checksum: Annotated[str | None, Header(alias="X-Chunk-SHA256")] = None,
+    sequence: Annotated[int, Query(ge=0)],
+    checksum: Annotated[str, Header(alias="X-Chunk-SHA256")],
 ) -> RecordingSessionOut:
-    """Append one chunk.
-
-    New clients provide ``sequence`` and ``X-Chunk-SHA256`` for safe retries. The
-    legacy request without either value remains supported for the current desktop.
-    """
+    """Append one sequenced, checksummed chunk for safe retries."""
     try:
         data = await _read_limited_body(request, MAX_CHUNK_BYTES)
-        if sequence is None:
-            response.headers["Deprecation"] = "true"
-            response.headers["Link"] = (
-                '</api/recordings/{id}/chunks?sequence={n}>; rel="successor-version"'
-            )
         return _recordings(request).append(
             recording_id,
             data,
@@ -769,43 +742,6 @@ def complete_recording_session(
 ) -> RecordingSessionOut:
     try:
         return _recordings(request).complete(recording_id)
-    except Exception as error:
-        _raise_recording_error(error)
-        raise AssertionError("unreachable") from error
-
-
-@router.post(
-    "/recordings",
-    response_model=RecordingSessionOut,
-    status_code=status.HTTP_201_CREATED,
-)
-async def save_recording(
-    request: Request,
-    title: Annotated[str, Query(min_length=1, max_length=160)],
-    content_type: Annotated[str | None, Header()] = None,
-) -> RecordingSessionOut:
-    try:
-        expected_size = _declared_body_size(request)
-        if expected_size is not None and expected_size > MAX_DIRECT_UPLOAD_BYTES:
-            raise RecordingTooLargeError(
-                f"The upload exceeds the {MAX_DIRECT_UPLOAD_BYTES}-byte request limit."
-            )
-        recordings = _recordings(request)
-        with request.app.state.storage_budget.reserve(
-            request.app.state.settings.recordings_dir,
-            expected_bytes=expected_size or 0,
-        ) as reservation:
-            data = await _read_limited_body(
-                request,
-                MAX_DIRECT_UPLOAD_BYTES,
-                reservation=reservation,
-            )
-            return recordings.save(
-                title,
-                content_type or "audio/webm",
-                data,
-                reservation=reservation,
-            )
     except Exception as error:
         _raise_recording_error(error)
         raise AssertionError("unreachable") from error

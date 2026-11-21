@@ -293,23 +293,6 @@ export const sourceAssetUrl = (id: string) =>
 export const artifactRenderUrl = (baseId: string, artifactId: string, workspaceId: string, snapshot: string, name: string) =>
   withQueryToken(`${apiBase}/knowledge-bases/${encodeURIComponent(baseId)}/artifacts/${encodeURIComponent(artifactId)}/renders/${encodeURIComponent(snapshot)}/${encodeURIComponent(name)}?workspace_id=${encodeURIComponent(workspaceId)}`);
 
-async function uploadRecording(blob: Blob, title: string, expectedWorkspaceId?: string): Promise<RecordingSession> {
-  await waitForDesktopBackend();
-  const response = await backendFetch(`${apiBase}/recordings?title=${encodeURIComponent(title)}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": blob.type || "audio/webm",
-      ...(expectedWorkspaceId ? { "X-Gunther-Workspace-Id": expectedWorkspaceId } : {}),
-    },
-    body: blob,
-  });
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { detail?: string } | null;
-    throw new Error(body?.detail ?? `Recording upload failed with status ${response.status}`);
-  }
-  return response.json() as Promise<RecordingSession>;
-}
-
 async function uploadAsset(
   file: File,
   title: string,
@@ -657,7 +640,6 @@ export const knowledgeApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  saveRecording: uploadRecording,
   captureAsset: uploadAsset,
   sourceStructure: (id: string, offset = 0, revisionId?: string | null, blockId?: string | null, limit?: number) =>
     request<SourceStructure>(`/sources/${encodeURIComponent(id)}/structure?offset=${offset}${revisionId ? `&revision_id=${encodeURIComponent(revisionId)}` : ""}${blockId ? `&block_id=${encodeURIComponent(blockId)}` : ""}${limit ? `&limit=${limit}` : ""}`),

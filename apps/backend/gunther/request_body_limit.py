@@ -8,7 +8,6 @@ from starlette.types import Message, Receive, Scope, Send
 
 DEFAULT_REQUEST_BODY_BYTES = 8 * 1024 * 1024
 ASSET_REQUEST_BODY_BYTES = 512 * 1024 * 1024
-DIRECT_RECORDING_BODY_BYTES = 200 * 1024 * 1024
 RECORDING_CHUNK_BODY_BYTES = 16 * 1024 * 1024
 PAIRING_EXCHANGE_BODY_BYTES = 16 * 1024
 
@@ -26,8 +25,6 @@ def request_body_limit(path: str, method: str) -> int:
         return ASSET_REQUEST_BODY_BYTES
     if method == "POST" and path.endswith("/pairing/exchange"):
         return PAIRING_EXCHANGE_BODY_BYTES
-    if method == "POST" and path.endswith("/recordings"):
-        return DIRECT_RECORDING_BODY_BYTES
     if method == "PUT" and _RECORDING_CHUNK_PATH.search(path):
         return RECORDING_CHUNK_BODY_BYTES
     return DEFAULT_REQUEST_BODY_BYTES

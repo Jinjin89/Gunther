@@ -8,6 +8,7 @@ import pytest
 from fake_models import FakeProvider, api_error, ask_from_search, gateway, model
 from fastapi.testclient import TestClient
 from legacy_artifacts import insert_legacy_version
+from recording_fixtures import append_recording_chunk, completed_recording
 
 from evals.sse import AnswerStreamError, ask_turn
 from gunther.config import Settings
@@ -677,12 +678,9 @@ def test_recording_audio_is_preserved_and_retrievable(tmp_path) -> None:
         )
     )
     with TestClient(app) as client:
-        saved = client.post(
-            "/api/recordings?title=Live%20lecture",
-            content=b"example-audio-bytes",
-            headers={"Content-Type": "audio/webm"},
+        saved = completed_recording(
+            client, b"example-audio-bytes", title="Live lecture", content_type="audio/webm"
         )
-        assert saved.status_code == 201
         asset = saved.json()
         assert asset["id"].startswith("rec_")
         assert asset["sizeBytes"] == len(b"example-audio-bytes")
@@ -706,7 +704,7 @@ def test_long_recording_is_saved_incrementally(tmp_path) -> None:
             headers={
                 "Origin": "http://localhost:5173",
                 "Access-Control-Request-Method": "PUT",
-                "Access-Control-Request-Headers": "content-type",
+                "Access-Control-Request-Headers": "content-type,x-chunk-sha256",
             },
         )
         assert preflight.status_code == 200
@@ -716,16 +714,8 @@ def test_long_recording_is_saved_incrementally(tmp_path) -> None:
         )
         assert started.status_code == 201
         asset = started.json()
-        first = client.put(
-            f"/api/recordings/{asset['id']}/chunks",
-            content=b"first-audio-chunk",
-            headers={"Content-Type": "audio/webm"},
-        )
-        second = client.put(
-            f"/api/recordings/{asset['id']}/chunks",
-            content=b"second-audio-chunk",
-            headers={"Content-Type": "audio/webm"},
-        )
+        first = append_recording_chunk(client, asset["id"], 0, b"first-audio-chunk")
+        second = append_recording_chunk(client, asset["id"], 1, b"second-audio-chunk")
         assert first.status_code == 200
         assert second.json()["sizeBytes"] == len(b"first-audio-chunksecond-audio-chunk")
         completed = client.post(f"/api/recordings/{asset['id']}/complete")

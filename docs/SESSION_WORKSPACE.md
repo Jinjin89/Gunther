@@ -64,7 +64,9 @@ Knowledge Base
 | `POST` | `/api/notes` | Create a lightweight note without requiring knowledge attribution |
 | `PATCH` | `/api/notes/{noteId}` | Auto-save content, pin a note, archive it, or restore it |
 | `POST` | `/api/notes/{noteId}/file` | Snapshot a note as a source, attach it to one base, and run reviewable extraction |
-| `POST` | `/api/recordings` | Preserve original lecture audio in the local recordings directory |
+| `POST` | `/api/recordings/sessions` | Start an audio upload session for a capture or import |
+| `PUT` | `/api/recordings/{recordingId}/chunks` | Append audio bytes with a `sequence` query parameter and `X-Chunk-SHA256` header for safe retries |
+| `POST` | `/api/recordings/{recordingId}/complete` | Finalize the recording after all audio chunks are committed |
 | `GET` | `/api/recordings/{recordingId}` | Retrieve a locally preserved original recording |
 | `WS` | `/api/recordings/live` | Proxy 24 kHz PCM audio, in short segments, to SenseVoice or an OpenAI-compatible transcription server without exposing the key |
 | `POST` | `/api/lectures/summarize` | Produce overview, key points, actions, questions, and terms from a transcript |

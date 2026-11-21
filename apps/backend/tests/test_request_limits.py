@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 from fastapi.testclient import TestClient
+from recording_fixtures import append_recording_chunk
 from starlette.requests import Request
 
 import gunther.api as api_module
@@ -12,7 +13,6 @@ from gunther.recording_service import RecordingTooLargeError
 from gunther.request_body_limit import (
     ASSET_REQUEST_BODY_BYTES,
     DEFAULT_REQUEST_BODY_BYTES,
-    DIRECT_RECORDING_BODY_BYTES,
     RECORDING_CHUNK_BODY_BYTES,
     RequestBodyLimitMiddleware,
     request_body_limit,
@@ -57,9 +57,8 @@ def test_bounded_reader_rejects_stream_without_content_length() -> None:
         asyncio.run(_read_limited_body(request, 5))
 
 
-def test_recording_endpoints_reject_oversized_bodies_before_storage(tmp_path, monkeypatch) -> None:
+def test_recording_chunk_rejects_oversized_body_before_storage(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(api_module, "MAX_CHUNK_BYTES", 5)
-    monkeypatch.setattr(api_module, "MAX_DIRECT_UPLOAD_BYTES", 5)
     app = create_app(
         Settings(
             database_url="sqlite+pysqlite:///:memory:",
@@ -76,20 +75,9 @@ def test_recording_endpoints_reject_oversized_bodies_before_storage(tmp_path, mo
         )
         recording_id = started.json()["id"]
 
-        chunk = client.put(
-            f"/api/recordings/{recording_id}/chunks?sequence=0",
-            content=b"123456",
-            headers={"Content-Type": "audio/webm"},
-        )
+        chunk = append_recording_chunk(client, recording_id, 0, b"123456")
         assert chunk.status_code == 413
         assert client.get(f"/api/recordings/{recording_id}/metadata").json()["sizeBytes"] == 0
-
-        direct = client.post(
-            "/api/recordings?title=Bounded",
-            content=b"123456",
-            headers={"Content-Type": "audio/webm"},
-        )
-        assert direct.status_code == 413
 
 
 def test_global_transport_limit_rejects_declared_json_before_schema_parsing(
@@ -165,7 +153,7 @@ def test_chunked_transport_body_is_bounded_without_content_length(monkeypatch) -
 
 def test_streaming_routes_keep_their_narrow_explicit_transport_budgets() -> None:
     assert request_body_limit("/api/captures/assets", "POST") == ASSET_REQUEST_BODY_BYTES
-    assert request_body_limit("/api/recordings", "POST") == DIRECT_RECORDING_BODY_BYTES
+    assert request_body_limit("/api/recordings", "POST") == DEFAULT_REQUEST_BODY_BYTES
     assert (
         request_body_limit(
             "/api/recordings/rec_0123456789abcdef01234567/chunks",

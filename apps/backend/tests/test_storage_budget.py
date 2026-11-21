@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from recording_fixtures import append_recording_chunk
 from sqlalchemy import func, select
 
 import gunther.asset_service as asset_module
@@ -153,7 +154,7 @@ def test_asset_quota_rejection_leaves_no_file_or_database_row(tmp_path: Path) ->
         assert session.scalar(select(func.count()).select_from(Asset)) == 0
 
 
-def test_low_disk_rejection_is_507_and_does_not_create_recording(
+def test_low_disk_rejection_is_507_and_does_not_commit_chunk(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -166,20 +167,23 @@ def test_low_disk_rejection_is_507_and_does_not_create_recording(
     )
 
     with TestClient(app) as client:
-        response = client.post(
-            "/api/recordings?title=No%20space",
-            content=b"123",
-            headers={"Content-Type": "audio/webm"},
-        )
+        started = client.post("/api/recordings/sessions?title=No%20space").raise_for_status()
+        recording_id = started.json()["id"]
+        response = append_recording_chunk(client, recording_id, 0, b"123")
 
         assert response.status_code == 507
         assert "STORAGE_MIN_FREE_BYTES" in response.json()["detail"]
-        assert client.get("/api/recordings").json() == []
+        metadata = client.get(f"/api/recordings/{recording_id}/metadata").json()
+        assert metadata["sizeBytes"] == 0
+        assert metadata["nextExpectedSequence"] == 0
 
-    assert _managed_files(tmp_path) == []
+    [part_path] = _managed_files(tmp_path)
+    assert part_path.read_bytes() == b""
+    with session_scope(app.state.knowledge_service.sessions) as session:
+        assert session.scalar(select(func.count()).select_from(RecordingChunk)) == 0
 
 
-def test_unknown_length_recording_stream_is_rejected_mid_receive_and_released(
+def test_unknown_length_recording_chunk_over_quota_can_be_retried(
     tmp_path: Path,
 ) -> None:
     app = create_app(_settings(tmp_path, quota=5))
@@ -189,22 +193,21 @@ def test_unknown_length_recording_stream_is_rejected_mid_receive_and_released(
         yield b"456"
 
     with TestClient(app) as client:
-        response = client.post(
-            "/api/recordings?title=Streaming",
+        started = client.post("/api/recordings/sessions?title=Streaming").raise_for_status()
+        recording_id = started.json()["id"]
+        response = client.put(
+            f"/api/recordings/{recording_id}/chunks?sequence=0",
             content=body(),
-            headers={"Content-Type": "audio/webm"},
+            headers={"X-Chunk-SHA256": hashlib.sha256(b"123456").hexdigest()},
         )
 
         assert response.status_code == 507
-        assert client.get("/api/recordings").json() == []
 
         # The rejected stream must not leak its reservation into the next request.
-        accepted = client.post(
-            "/api/recordings?title=Fits",
-            content=b"12345",
-            headers={"Content-Type": "audio/webm"},
-        )
-        assert accepted.status_code == 201
+        accepted = append_recording_chunk(client, recording_id, 0, b"12345")
+        assert accepted.status_code == 200
+        assert accepted.json()["nextExpectedSequence"] == 1
+        assert client.post(f"/api/recordings/{recording_id}/complete").status_code == 200
 
     files = _managed_files(tmp_path)
     assert len(files) == 1
