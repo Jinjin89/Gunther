@@ -16,6 +16,7 @@ stays off. Keyword search does not depend on it.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable, Sequence
 from typing import Any
@@ -253,14 +254,16 @@ def nearest_papers(
     table = _paper_table(len(query))
     if table not in _tables(session, PAPER_TABLE) or not source_ids:
         return []
+    # Keep a set constraint for sqlite-vec even when the scope has a single ID.
     statement = text(
         f"SELECT source_id, distance FROM {table} WHERE embedding MATCH :query AND k = :k "
-        "AND model = :model AND source_id IN :sources"
-    ).bindparams(bindparam("sources", expanding=True))
+        "AND model = :model AND source_id IN (SELECT value FROM json_each(:sources))"
+    )
     found: list[tuple[str, float]] = []
     for sources in _chunks(source_ids):
         rows = session.execute(
-            statement, {"query": _blob(query), "k": k, "model": model, "sources": sources}
+            statement,
+            {"query": _blob(query), "k": k, "model": model, "sources": json.dumps(sources)},
         )
         found.extend((source_id, 1.0 - distance) for source_id, distance in rows)
     return sorted(found, key=lambda item: item[1], reverse=True)[:k]

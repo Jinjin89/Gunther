@@ -161,6 +161,44 @@ def test_output_with_omitted_claim_verdicts_is_saved_as_unchecked(tmp_path):
     assert all(section["coverage"]["unchecked"] > 0 for section in version["sections"])
 
 
+@pytest.mark.parametrize("checker_fails", [False, True])
+def test_report_keeps_authored_citations_without_borrowing_for_uncited_figures(
+    tmp_path, checker_fails
+):
+    outline = {
+        "title": "Response measurements",
+        "sections": [
+            {"heading": "Summary"},
+            {"heading": "The measurements bound the comparison"},
+        ],
+    }
+    measured = "The response took 37.5 ms."
+    other_unit = "The sample completion rate was 37.5%."
+    cited = "The response took 37.5 ms [1]."
+    written = [
+        f"## Summary\n\n{cited}",
+        f"## The measurements bound the comparison\n\n{measured}\n\n{other_unit}",
+    ]
+    replies = output_replies(outline, written)
+
+    def reply(request):
+        if checker_fails and is_sentence_checking(request):
+            raise ModelError("Checker unavailable")
+        return replies(request)
+
+    fake = FakeProvider(reply)
+    with app_for(tmp_path, fake) as client:
+        base_id, _ = library(client, title="Response", notes={"Timing": measured})
+        version = built(build(client, base_id, body()))
+
+    assert any(is_sentence_checking(request) for request in fake.requests)
+    assert version["sections"][0]["checked"] is not checker_fails
+    _, (summary, comparison) = split_document(version["content"], "report")
+    assert cited in summary.splitlines()
+    assert measured in comparison.splitlines()
+    assert other_unit in comparison.splitlines()
+
+
 def test_revision_appends_used_sources_and_keeps_parent_numbers(tmp_path, monkeypatch):
     revised = "## Results\n\nThe trial includes a follow-up [4]."
     with app_for(tmp_path, FakeProvider(output_replies(OUTLINE, [revised]))) as client:

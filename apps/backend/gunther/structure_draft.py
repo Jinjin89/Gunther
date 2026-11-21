@@ -1435,20 +1435,6 @@ class _Draft:
                 self.take(block.id, "front")
                 blocks = [block.id] + self._front_blocks(block, same=block)
                 self.front.append(Part(part="abstract", blocks=blocks))
-        if not self._front_has("abstract") and self.title and self.type == "paper":
-            last = doc.by_id[self.title[-1]]
-            for block in doc.blocks[doc.blocks.index(last) + 1:]:
-                if block.page != last.page:
-                    break
-                if not self.free(block):
-                    continue
-                if block.label in HEADING_LABELS:
-                    break
-                if block.label == "text" and len(block.text) >= 300 and not doc.small(block):
-                    self.take(block.id, "front")
-                    blocks = [block.id] + self._rest_of_item(block)
-                    self.front.append(Part(part="abstract", blocks=blocks))
-                    break
         self.front.sort(key=lambda part: doc.position[part.heading or part.blocks[0]])
 
     def _front_has(self, name: str) -> bool:

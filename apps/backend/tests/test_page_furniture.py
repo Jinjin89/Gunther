@@ -15,7 +15,7 @@ from gunther.knowledge_index import embeddable
 from gunther.migrations import run_migrations
 from gunther.models import ContentBlock, DocumentElement, Source, SourcePaper
 from gunther.outputs import Pool
-from gunther.papers import _abstract, _gist
+from gunther.papers import _abstract, read_paper
 from gunther.service import KnowledgeService
 
 FURNITURE = ["footnote", "page_header", "page_footer", "page_number", "sidebar", "margin_note"]
@@ -102,15 +102,16 @@ def test_abstract_skips_furniture_even_when_it_looks_like_a_boundary_or_abstract
     assert abstract == BODY + " A second complete sentence belongs to this same abstract."
 
 
-def test_gist_skips_furniture_and_references_but_keeps_short_body_after_opening():
+def test_abstract_like_furniture_cannot_label_opening_prose_as_abstract():
     blocks = [
         *(block(kind, "Abstract. " + BODY, kind) for kind in EXCLUDED),
         block("flagged", BODY, payload={"reference": True}),
         block("body", BODY),
         block("short", "Short body evidence.", payload={"noEmbed": True}),
     ]
-    assert _abstract(blocks) == ("", [])
-    assert _gist(blocks) == (BODY + " Short body evidence.", ["body", "short"])
+    facts = read_paper("Synthetic source", blocks)
+    assert facts.abstract == ""
+    assert facts.abstract_block_ids == []
 
 
 @pytest.fixture

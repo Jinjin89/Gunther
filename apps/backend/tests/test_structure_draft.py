@@ -125,7 +125,7 @@ def drop_reason(plan: Plan, evidence: Evidence, block_id: str) -> str | None:
     )
 
 
-def two_page_paper():
+def two_page_paper(*, marked_abstract=True):
     doc = Doc(pages=2)
     head1 = doc.text("text", "Journal of Examples", 8, (100, 20, 300, 10))
     title = doc.text("section_header", "A study of synthetic documents", 20, (100, 80, 800, 30))
@@ -136,7 +136,10 @@ def two_page_paper():
         "text", "1 Department of Computing, University of Somewhere, Exampletown", 8,
         (100, 140, 800, 10),
     )
-    abstract = doc.text("text", LONG * 2, 10, (100, 170, 800, 100))
+    opening = "The opening describes the purpose of the experiment. " + LONG * 2
+    abstract = doc.text(
+        "text", f"Abstract. {opening}" if marked_abstract else opening, 10, (100, 170, 800, 100)
+    )
     intro = doc.text("section_header", "Introduction", 12, (100, 290, 400, 15))
     first = doc.text("text", LONG * 2, 10, (100, 310, 800, 150))
     picture = doc.picture((100, 480, 800, 300))
@@ -262,6 +265,26 @@ def test_paper_draft_places_every_block_once():
     assert drop_reason(plan, evidence, block["competing"]) == "back matter: competing interests"
     assert drop_reason(plan, evidence, block["declared"]) == "back matter: competing interests"
     assert [v.code for v in check(plan, evidence)] == []
+
+
+def test_paper_without_an_abstract_keeps_opening_prose_once_in_the_body():
+    doc, items = two_page_paper(marked_abstract=False)
+    evidence = doc.evidence()
+    opening = block_of(evidence, items["abstract"])
+    plan = draft_plan(evidence)
+
+    assert plan.type == "paper" and plan.front == []
+    first, introduction = plan.body
+    assert first.heading is None and placed(plan, evidence, first.blocks) == [opening.id]
+    assert introduction.heading == block_of(evidence, items["intro"]).id
+    assert [v.code for v in check(plan, evidence)] == ["no-abstract"]
+
+    parsed = assemble(plan, evidence, StructureStatus("needs-key"))
+    [paragraph] = [
+        item for item in parsed.elements if opening.id in item.payload.get("blockIds", [])
+    ]
+    assert paragraph.text == opening.text
+    assert paragraph.payload["part"] == "body"
 
 
 def test_unknown_type_keeps_uncaptioned_pictures_notes_and_numbered_levels():

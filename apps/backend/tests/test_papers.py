@@ -3,16 +3,18 @@
 import json
 from pathlib import Path
 
+import pytest
 from fake_models import ask_from_search
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
+from gunther import vector_index
 from gunther.config import Settings
 from gunther.content import parse_content
 from gunther.database import session_scope
 from gunther.main import create_app
-from gunther.models import ContentBlock, Work
-from gunther.papers import read_paper
+from gunther.models import ContentBlock, Source, SourcePaper, Work
+from gunther.papers import publish, read_paper
 from gunther.pdf_text import reflow
 
 
@@ -105,13 +107,17 @@ def upload(client: TestClient, base_id: str, file_name: str, data: bytes) -> str
     return response.json()["importResult"]["source"]["id"]
 
 
-def note(client: TestClient, base_id: str, title: str, content: str) -> str:
+def reading_note(client: TestClient, base_id: str, title: str, content: str) -> str:
     response = client.post(
         "/api/sources",
         json={"title": title, "kind": "note", "content": content, "knowledgeBaseId": base_id},
     )
     assert response.status_code == 201, response.text
     return response.json()["source"]["id"]
+
+
+def abstract_note(client: TestClient, base_id: str, title: str, abstract: str) -> str:
+    return reading_note(client, base_id, title, f"## Abstract\n\n{abstract}")
 
 
 def drain(client: TestClient) -> None:
@@ -241,19 +247,44 @@ def test_an_abstract_announced_inside_the_front_matter_is_found():
     assert facts.abstract_block_ids == ["front", "rest"]
 
 
-def test_a_note_without_an_abstract_is_summarised_by_its_opening():
-    blocks = [
-        ContentBlock(id="h", kind="heading", content="Lecture 3", anchor_json="{}"),
-        ContentBlock(
-            id="p",
-            kind="paragraph",
-            content="Doublets inflate cluster counts, so we remove them before annotation.",
-            anchor_json="{}",
-        ),
-    ]
-    facts = read_paper("Lecture 3", blocks)
-    assert facts.title == "Lecture 3" and not facts.title_from_document
-    assert facts.abstract_block_ids == ["p"] and facts.year is None
+def test_paper_without_an_abstract_keeps_its_opening_readable_and_citable(tmp_path):
+    opening = "The staggered shutter redirected the airflow across the test chamber."
+    with client_for(tmp_path) as client:
+        base = library(client, "Airflow")
+        source = upload(client, base, "airflow.pdf", make_pdf([
+            (20, "Airflow in a test chamber"),
+            (10, opening),
+        ]))
+        drain(client)
+
+        paper = client.get(f"/api/sources/{source}/paper").json()
+        assert paper["abstract"] == ""
+        assert paper["abstractBlockIds"] == []
+        assert "## Abstract" not in paper["summaryMarkdown"]
+
+        document = client.get(f"/api/sources/{source}/document?reading=true").json()
+        assert sum(row["content"].count(opening) for row in document["elements"]) == 1
+        found = client.get("/api/search", params={"q": "staggered shutter"}).json()
+        assert any(row["id"] == source and opening in row["snippet"] for row in found)
+
+        run = client.post(f"/api/knowledge-bases/{base}/sessions", json={}).json()
+        answer = ask_from_search(
+            client, run["id"], {"content": "What did the staggered shutter do?"},
+        )["assistantMessage"]
+        [citation] = [c for c in answer["citations"] if c["sourceId"] == source]
+        assert opening in citation["quote"]
+        assert citation["locator"] != "Abstract" and citation["blockId"]
+
+        # A previously saved paper could already have this opening stored as its abstract.
+        with session_scope(client.app.state.knowledge_service.sessions) as session:
+            saved = session.get(SourcePaper, source)
+            saved.abstract = opening
+            saved.abstract_block_ids_json = json.dumps([citation["blockId"]])
+
+    with client_for(tmp_path) as reopened:
+        legacy = reopened.get(f"/api/sources/{source}/paper").json()
+        assert legacy["abstract"] == opening
+        assert legacy["abstractBlockIds"] == [citation["blockId"]]
 
 
 def test_a_planned_document_is_read_from_its_marks_not_guessed_again():
@@ -367,8 +398,10 @@ def test_topics_are_suggested_accepted_asked_and_written_up(tmp_path):
     root = tmp_path / "Gunther"
     with client_for(tmp_path, library_root=root) as client:
         base = library(client, "Mixed reading")
-        cells = [note(client, base, f"Cells {i}", text) for i, text in enumerate(CELLS)]
-        rockets = [note(client, base, f"Rockets {i}", text) for i, text in enumerate(ROCKETS)]
+        cells = [abstract_note(client, base, f"Cells {i}", text) for i, text in enumerate(CELLS)]
+        rockets = [
+            abstract_note(client, base, f"Rockets {i}", text) for i, text in enumerate(ROCKETS)
+        ]
         drain(client)
 
         result = client.get(f"/api/knowledge-bases/{base}/topic-suggestions").json()
@@ -391,7 +424,9 @@ def test_topics_are_suggested_accepted_asked_and_written_up(tmp_path):
         assert client.get(f"/api/knowledge-bases/{base}/topic-suggestions").json()["unfiled"] == 6
 
         # A source outside the library cannot be filed.
-        stranger = note(client, library(client, "Elsewhere"), "Stranger", "Unrelated text here.")
+        stranger = abstract_note(
+            client, library(client, "Elsewhere"), "Stranger", "Unrelated text here."
+        )
         refused = client.post(
             f"/api/knowledge-bases/{base}/topics/{topic['id']}/sources",
             json={"sourceIds": [stranger]},
@@ -453,11 +488,11 @@ def test_broad_questions_in_a_large_library_also_cite_whole_papers(tmp_path):
         # More rocket papers than a question's passages, so some are only reached
         # through their abstracts.
         rockets = [
-            note(client, base, f"Rockets {i}", f"{text} Report {i // 6 + 1}.")
+            abstract_note(client, base, f"Rockets {i}", f"{text} Report {i // 6 + 1}.")
             for i, text in enumerate(ROCKETS * 2)
         ]
         for i, text in enumerate(CELLS):
-            note(client, base, f"Cells {i}", text)
+            abstract_note(client, base, f"Cells {i}", text)
         drain(client)
 
         result = client.get(f"/api/knowledge-bases/{base}/topic-suggestions").json()
@@ -471,6 +506,105 @@ def test_broad_questions_in_a_large_library_also_cite_whole_papers(tmp_path):
         overviews = [c for c in answer["citations"] if c["locator"] == "Abstract"]
         assert overviews and {c["sourceId"] for c in overviews} <= set(rockets)
         assert all(c["blockId"] for c in overviews)
+
+
+@pytest.mark.parametrize("legacy_furniture", [False, True], ids=["title-only", "legacy-furniture"])
+def test_broad_ask_ranks_only_eligible_paper_abstracts(tmp_path, legacy_furniture):
+    abstract = "The workshop compared a manual approach with a reference measurement."
+    with client_for(tmp_path) as client:
+        service = client.app.state.knowledge_service
+        service.index.embedder = TopicAxes()
+        base = library(client, "Mixed reading")
+        # These titles rank above the marked reading for an orbit query. Their body
+        # text does not match, so ordinary passage citations cannot exclude them first.
+        closer = [
+            reading_note(
+                client, base, f"Rocket briefing {n}", "The archive records a date and location."
+            )
+            for n in range(12)
+        ]
+        marked = abstract_note(client, base, "Rocket guidance with markers", abstract)
+        drain(client)
+
+        with session_scope(service.sessions) as db:
+            papers = db.scalars(select(SourcePaper).where(SourcePaper.source_id.in_(closer))).all()
+            assert len(papers) == len(closer)
+            assert all(p.vector_model == TopicAxes.model_id and not p.abstract for p in papers)
+            if legacy_furniture:
+                for paper in papers:
+                    block = db.scalar(
+                        select(ContentBlock).where(ContentBlock.revision_id == paper.revision_id)
+                    )
+                    block.kind = "page_footer"
+                    paper.abstract = block.content
+                    paper.abstract_block_ids_json = json.dumps([block.id])
+        reading = client.post(f"/api/knowledge-bases/{base}/sessions", json={}).json()
+        answer = ask_from_search(
+            client, reading["id"], {"content": "What do we know about getting to orbit?"},
+        )["assistantMessage"]
+        [overview] = [c for c in answer["citations"] if c["locator"] == "Abstract"]
+        assert overview["sourceId"] == marked
+        assert overview["quote"] == abstract and overview["blockId"]
+
+
+@pytest.mark.parametrize("has_footer", [False, True], ids=["empty-abstract", "ineligible-block"])
+def test_paper_eligibility_is_rechecked_after_same_revision_republication(
+    tmp_path, monkeypatch, has_footer
+):
+    with client_for(tmp_path) as client:
+        service = client.app.state.knowledge_service
+        service.index.embedder = TopicAxes()
+        source_id = reading_note(
+            client, library(client), "Rocket calibration",
+            "The workshop compared a manual approach with a reference measurement.",
+        )
+        drain(client)
+
+        with session_scope(service.sessions) as db:
+            paper = db.get(SourcePaper, source_id)
+            revision_id = paper.revision_id
+            opening = db.scalars(
+                select(ContentBlock).where(ContentBlock.revision_id == revision_id)
+            ).one()
+            # Seed the abstract that an older summary could have inferred from the opener.
+            paper.abstract = opening.content
+            paper.abstract_block_ids_json = json.dumps([opening.id])
+
+        rank = vector_index.nearest_papers
+        ranked = []
+        footer_ids = [opening.id, "retained-footer"]
+
+        def rank_then_republish(db, **kwargs):
+            hits = rank(db, **kwargs)
+            ranked.extend(hits)
+            with session_scope(service.sessions) as writer:
+                source = writer.get(Source, source_id)
+                facts = read_paper(source.title, [opening])
+                if has_footer:
+                    writer.add(ContentBlock(
+                        id=footer_ids[1], revision_id=revision_id, ordinal=opening.ordinal + 1,
+                        kind="page_footer", content="A page footer.", locator="Page 1",
+                    ))
+                    facts.abstract = opening.content
+                    facts.abstract_block_ids = footer_ids
+                publish(writer, source, revision_id, facts)
+            return hits
+
+        monkeypatch.setattr(vector_index, "nearest_papers", rank_then_republish)
+        with session_scope(service.sessions) as reader:
+            cached = reader.get(SourcePaper, source_id)
+            assert cached.abstract == opening.content
+            results = service.index.nearest_papers(reader, [source_id], "Orbit", limit=4)
+
+        assert [source for source, _ in ranked] == [source_id]
+        with session_scope(service.sessions) as db:
+            republished = db.get(SourcePaper, source_id)
+            assert republished.revision_id == revision_id
+            assert republished.abstract == (opening.content if has_footer else "")
+            assert json.loads(republished.abstract_block_ids_json) == (
+                footer_ids if has_footer else []
+            )
+        assert results == []
 
 
 def test_paper_is_unread_until_processed(tmp_path):

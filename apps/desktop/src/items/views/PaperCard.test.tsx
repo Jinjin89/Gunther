@@ -29,4 +29,17 @@ describe("PaperCard", () => {
     await vi.waitFor(() => expect(read).toHaveBeenCalled());
     expect(container).toBeEmptyDOMElement();
   });
+
+  it("shows paper details when the source has no abstract", async () => {
+    vi.spyOn(knowledgeApi, "sourcePaper").mockResolvedValue({
+      sourceId: "s1", revisionId: "r1", title: "Airflow measurements", authors: "Robin Hale",
+      year: 2025, doi: null, arxivId: null, abstract: "", abstractBlockIds: [],
+      outline: ["1 Measurements", "2 Results"], summaryMarkdown: "# Airflow measurements", copies: [],
+    });
+    render(<PaperCard sourceId="s1" revisionId="r1" />);
+    expect(await screen.findByText("Robin Hale · 2025")).toBeVisible();
+    expect(screen.getByText("2 sections")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Abstract" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show the whole abstract" })).not.toBeInTheDocument();
+  });
 });

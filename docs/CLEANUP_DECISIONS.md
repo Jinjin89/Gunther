@@ -247,3 +247,9 @@ model runs and changes output quality. Prompts change only where they reference 
 code. SC-02's prompt part is dropped (prompts.py and reference.py stay as they were);
 the smoke-input and seed moves stand. Batches 32 and 33 are merged as batch 32, and the
 batch 11 CSS follow-up rides along (supervisor's instruction).
+
+# Round 14 — merged batches
+
+The supervisor merges small plan batches; the merged scope is whatever the cleaner was
+told and lists at the top of NN.md. Don't FIX a batch for being merged. So far:
+32 = 32+33 (+11 CSS); A42 = A42c+A43d.

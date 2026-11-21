@@ -480,18 +480,43 @@ class KnowledgeIndex:
     ) -> list[tuple[SourcePaper, ContentBlock | None]]:
         """Papers whose title and abstract are closest to the question (semantic only).
 
-        ``exclude``: sources already cited, which are skipped rather than counted.
+        The vector query ranks citable abstracts from the requested scope.
+        ``exclude`` contains sources already cited.
         """
 
         if not self.embedder or not source_ids:
             return []
         try:
+            abstract_ids = func.json_each(
+                func.coalesce(func.nullif(SourcePaper.abstract_block_ids_json, ""), "[]")
+            ).table_valued("value")
+            invalid_block = (
+                select(1)
+                .select_from(abstract_ids)
+                .outerjoin(ContentBlock, ContentBlock.id == abstract_ids.c.value)
+                .where(
+                    ContentBlock.id.is_(None)
+                    | ~evidence_eligible(ContentBlock.kind, ContentBlock.payload_json)
+                )
+                .correlate(SourcePaper)
+                .exists()
+            )
+            scope = set(source_ids).difference(exclude or ())
+            scoped_ids = func.json_each(json.dumps(list(scope))).table_valued("value")
+            candidates = select(SourcePaper.source_id, SourcePaper.revision_id).where(
+                SourcePaper.source_id.in_(select(scoped_ids.c.value)),
+                SourcePaper.abstract != "",
+                ~invalid_block,
+            )
+            eligible = dict(session.execute(candidates).all())
+            if not eligible:
+                return []
             query = self.embedder.encode([question], query=True)[0]
             found = vector_index.nearest_papers(
                 session,
                 model=self.embedder.model_id,
                 query=query,
-                source_ids=[item for item in source_ids if item not in (exclude or set())],
+                source_ids=list(eligible),
                 k=limit * 3,
             )
         except Exception as error:
@@ -501,20 +526,26 @@ class KnowledgeIndex:
         results: list[tuple[SourcePaper, ContentBlock | None]] = []
         works: set[str] = set()
         for source_id, similarity in found:
-            paper = session.get(SourcePaper, source_id)
-            if similarity < floor or paper is None or not paper.abstract:
+            if similarity < floor:
+                continue
+            # A summary job can replace the abstract on the same revision during ranking.
+            paper = session.get(SourcePaper, source_id, populate_existing=True)
+            if paper is None or not paper.abstract or paper.revision_id != eligible.get(source_id):
                 continue
             if paper.work_id and paper.work_id in works:
                 continue  # one copy of a paper is enough
             block_ids = json.loads(paper.abstract_block_ids_json or "[]")
-            abstract_blocks = [session.get(ContentBlock, block_id) for block_id in block_ids]
+            blocks = [
+                session.get(ContentBlock, block_id, populate_existing=True)
+                for block_id in block_ids
+            ]
             if any(
                 block is None or not evidence_eligible(block.kind, block.payload_json)
-                for block in abstract_blocks
+                for block in blocks
             ):
-                continue  # A cached abstract from an older revision may include furniture.
+                continue
             works.add(paper.work_id or source_id)
-            results.append((paper, abstract_blocks[0] if abstract_blocks else None))
+            results.append((paper, blocks[0] if blocks else None))
             if len(results) >= limit:
                 break
         return results

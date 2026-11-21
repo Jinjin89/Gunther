@@ -68,7 +68,6 @@ ORGANIZATION = re.compile(
     re.IGNORECASE,
 )
 MAX_ABSTRACT = 2400
-GIST = 800
 # Titles shorter than this are too generic ("Introduction") to match copies by.
 MIN_TITLE_KEY = 20
 
@@ -320,24 +319,6 @@ def _abstract(blocks: Sequence[ContentBlock]) -> tuple[str, list[str]]:
     return " ".join(part for _, part in parts)[:MAX_ABSTRACT], [block for block, _ in parts]
 
 
-def _gist(blocks: Sequence[ContentBlock]) -> tuple[str, list[str]]:
-    """The opening of a source without an abstract: its first real paragraphs."""
-
-    parts: list[tuple[str, str]] = []
-    for block in blocks:
-        if not evidence_eligible(block.kind, block.payload_json):
-            continue
-        text = block.content.strip()
-        if block.kind in {"heading", "table", "figure"} or looks_like_heading(text):
-            continue
-        if len(text) < 60 and not parts:
-            continue  # front matter: names, affiliations, dates
-        parts.append((block.id, text))
-        if sum(len(part) for _, part in parts) >= GIST:
-            break
-    return " ".join(part for _, part in parts)[: GIST * 2], [block for block, _ in parts]
-
-
 def _outline(
     blocks: Sequence[ContentBlock], *, planned: bool = False, manifest: dict | None = None
 ) -> list[str]:
@@ -517,8 +498,6 @@ def read_paper(
     facts.abstract, facts.abstract_block_ids = _marked_abstract(blocks)
     if not facts.abstract:
         facts.abstract, facts.abstract_block_ids = _abstract(blocks)
-    if not facts.abstract:
-        facts.abstract, facts.abstract_block_ids = _gist(blocks)
     planned = any("part" in json.loads(block.payload_json or "{}") for block in blocks)
     facts.outline = _outline(blocks, planned=planned, manifest=manifest)
     return facts

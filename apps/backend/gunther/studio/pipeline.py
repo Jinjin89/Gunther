@@ -2318,17 +2318,6 @@ class StudioAgents(OutputAgents):
                 raise ModelError("The report came back without sections.")
             drafts = self.verify(model, run, sections, pool, emit, material)
             drafts = [self._chart_fallback(d, i) for i, d in enumerate(drafts)]
-            # A sentence repeating a figure cited elsewhere in the report cites it too.
-            # (Sections hold blank lines themselves: they are joined on a line of their own.)
-            cut = "\n\n<!-- section break -->\n\n"
-            whole = cut.join(d.text for d in drafts)
-            fixed = fmt.cite_repeated_numbers(whole).split(cut)
-            if len(fixed) == len(drafts):
-                drafts = [replace(d, text=t) for d, t in zip(drafts, fixed, strict=True)]
-            # What is still uncited cites the passages that state its figures, preferring
-            # those its own section cites.
-            stated = {r: (e.context or e.text) for r, e in pool.by_ref().items() if r is not None}
-            drafts = [replace(d, text=fmt.cite_stated_numbers(d.text, stated)) for d in drafts]
             outline = list(plan) or [
                 Planned(re.sub(r"^##\s*", "", d.text.splitlines()[0]).strip()[:160]) for d in drafts
             ]
