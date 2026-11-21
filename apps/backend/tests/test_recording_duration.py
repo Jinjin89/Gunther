@@ -14,6 +14,7 @@ from gunther.config import Settings
 from gunther.database import session_scope
 from gunther.main import create_app
 from gunther.models import ProcessingJob, RecordingSession, SourceIndexHead
+from gunther.recording_metadata import source_recording_id
 
 
 def audio_bytes(seconds: int = 4, channels: int = 2) -> bytes:
@@ -35,7 +36,9 @@ def client_for(path: Path) -> TestClient:
     )))
 
 
-def saved_source(client: TestClient, data: bytes | None = None) -> tuple[str, str, str]:
+def saved_source(
+    client: TestClient, data: bytes | None = None, *, legacy: bool = False, kind: str = "recording"
+) -> tuple[str, str, str]:
     recording = completed_recording(
         client, data or audio_bytes(), title="Recording", content_type="audio/wav"
     ).json()
@@ -52,8 +55,15 @@ def saved_source(client: TestClient, data: bytes | None = None) -> tuple[str, st
         f"# Recording\n\nDuration: 00:01 · Captured: today · Local recording: {recording_id}"
         "\n\n## Transcript\n\n[00:00] Original words."
     )
+    if legacy:
+        words = (
+            "[00:00] Original words.\n\n"
+            "These words mention Local recording: rec_000000000000000000000000 in a sentence.\n\n"
+            + "More words. " * 210
+        )
+        content = f"{words.rstrip()}\n\nLocal recording: {recording_id}"
     source = client.post("/api/sources?deferAnalysis=true", json={
-        "title": "Recording", "kind": "recording", "content": content, "knowledgeBaseId": base,
+        "title": "Recording", "kind": kind, "content": content, "knowledgeBaseId": base,
     })
     source.raise_for_status()
     return recording_id, source.json()["source"]["id"], base
@@ -82,15 +92,18 @@ def test_duration_counts_samples_per_channel_without_writing_a_copy(tmp_path):
     assert list(tmp_path.iterdir()) == [path]
 
 
+@pytest.mark.parametrize("legacy", [False, True])
 def test_duration_job_survives_restart_and_corrects_all_views_without_rewriting_evidence(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, legacy
 ):
     probe = Mock(wraps=audio_duration_ms)
     monkeypatch.setattr(processing, "audio_duration_ms", probe)
     with client_for(tmp_path) as client:
-        rid, sid, base = saved_source(client)
+        rid, sid, base = saved_source(client, legacy=legacy)
         probe.assert_not_called()
         original = client.get(f"/api/sources/{sid}").json()
+        assert original["recordingId"] == rid
+        assert original["recordingReferenceAtEnd"] is legacy
         assert original["recordingDurationSeconds"] == 1
         assert original["recordingDurationPending"]
         with session_scope(client.app.state.knowledge_service.sessions) as session:
@@ -108,6 +121,7 @@ def test_duration_job_survives_restart_and_corrects_all_views_without_rewriting_
         assert client.get(f"/api/recordings/{rid}/metadata").json()["durationSeconds"] == 4
         source = client.get(f"/api/sources/{sid}").json()
         assert source["content"] == original["content"]
+        assert source["recordingId"] == rid
         assert source["recordingDurationSeconds"] == 4
         assert not source["recordingDurationPending"]
         row = client.get(f"/api/knowledge-bases/{base}/contents").json()["sources"][0]
@@ -126,6 +140,74 @@ def test_duration_job_survives_restart_and_corrects_all_views_without_rewriting_
             assert session.scalar(select(func.count()).select_from(ProcessingJob).where(
                 ProcessingJob.kind == "measure_recording"
             )) == 1
+
+
+@pytest.mark.parametrize("current_header", [False, True])
+def test_source_keeps_the_audio_reference_above_the_heading(tmp_path, current_header):
+    with client_for(tmp_path) as client:
+        recording = completed_recording(
+            client, audio_bytes(), title="Lecture", content_type="audio/wav"
+        )
+        rid = recording.json()["id"]
+        decoy = "rec_" + "0" * 24
+        head = f"# Lecture\n\nLocal recording: {decoy if current_header else rid}\n\n"
+        if current_header:
+            head += f"Duration: 00:01 · Captured: today · Local recording: {rid}\n\n"
+        tail = f"[00:00] Words.\n\nLocal recording: {decoy}"
+        content = f"{head}Preamble.\n\n## Transcript\n\n{tail}"
+        saved = client.post("/api/sources?deferAnalysis=true", json={
+            "title": "Lecture", "kind": "recording", "content": content,
+        }).raise_for_status().json()["source"]
+        assert saved["recordingId"] == rid
+        measure(client)
+
+        source = client.get(f"/api/sources/{saved['id']}").raise_for_status().json()
+        assert source["recordingId"] == rid
+        assert source["recordingDurationSeconds"] == 4
+        assert not source["recordingReferenceAtEnd"]
+        assert source["content"] == content
+
+
+def test_unheaded_legacy_reference_must_be_the_last_nonempty_line():
+    rid = "rec_" + "a" * 24
+    content = f"Old capture\r\n\r\nLocal recording: {rid}"
+    assert source_recording_id(content + "\r\n \r\n") == rid
+    assert source_recording_id(content + "\r\nDuration: 00:35") is None
+
+
+def test_transcript_only_recording_keeps_a_reference_like_last_line(tmp_path):
+    with client_for(tmp_path) as client:
+        recording = completed_recording(
+            client, audio_bytes(), title="Other recording", content_type="audio/wav"
+        ).json()
+        content = (
+            "# Lecture\n\nDuration: 00:12 · Captured: today\n\n## Transcript\n\n"
+            f"[00:00] Words.\n\nLocal recording: {recording['id']}"
+        )
+        saved = client.post("/api/sources?deferAnalysis=true", json={
+            "title": "Lecture", "kind": "recording", "content": content,
+        }).raise_for_status().json()["source"]
+        opened = client.get(f"/api/sources/{saved['id']}").raise_for_status().json()
+        assert opened["recordingId"] is None
+        assert not opened["recordingReferenceAtEnd"]
+        assert opened["recordingDurationSeconds"] == 12
+        assert not opened["recordingDurationPending"]
+        assert opened["content"] == content
+
+
+def test_audio_linked_note_does_not_wait_for_a_measurement_job(tmp_path):
+    with client_for(tmp_path) as client:
+        rid, sid, _ = saved_source(client, kind="note")
+        service = client.app.state.knowledge_service
+        service.index.backfill(10)
+        with session_scope(service.sessions) as session:
+            assert session.scalar(select(ProcessingJob.id).where(
+                ProcessingJob.kind == "measure_recording"
+            )) is None
+        opened = client.get(f"/api/sources/{sid}").raise_for_status().json()
+        assert opened["recordingId"] == rid
+        assert opened["recordingDurationSeconds"] == 1
+        assert not opened["recordingDurationPending"]
 
 
 def test_unreadable_audio_preserves_the_estimate_and_reports_failure(tmp_path):
@@ -149,7 +231,8 @@ def test_an_unset_legacy_timer_keeps_the_source_estimate_until_audio_is_measured
         with session_scope(client.app.state.knowledge_service.sessions) as session:
             session.get(RecordingSession, rid).duration_seconds = 0
         source = client.get(f"/api/sources/{sid}").json()
-        assert source["recordingDurationSeconds"] is None
+        assert source["recordingDurationSeconds"] == 1
+        assert source["recordingDurationPending"]
         row = client.get(f"/api/knowledge-bases/{base}/contents").json()["sources"][0]
         assert row["durationSeconds"] == 1 and row["durationPending"]
         measure(client)

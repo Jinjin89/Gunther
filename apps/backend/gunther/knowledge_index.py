@@ -12,6 +12,7 @@ import json
 import math
 from collections import Counter
 from dataclasses import asdict, dataclass
+from itertools import islice
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -33,7 +34,7 @@ from gunther.models import (
     SourcePaper,
     SourceRevision,
 )
-from gunther.recording_metadata import recording_ids
+from gunther.recording_metadata import recording_measurement_eligible, source_recording_id
 
 # Parser versions are part of a revision's fingerprint. v2 reflows PDF lines into
 # paragraphs and makes passage-sized blocks; v1 revisions are parsed again.
@@ -260,20 +261,20 @@ class KnowledgeIndex:
 
     @staticmethod
     def queue_recording_duration(session: Session, source: Source) -> None:
-        if source.kind not in {"recording", "course"}:
+        recording_id = source_recording_id(source.content)
+        if recording_id is None:
             return
-        ids = recording_ids(source.content[:2_000])
-        for recording_id in ids:
-            recording = session.get(RecordingSession, recording_id)
-            if (
-                recording is not None
-                and recording.status == "completed"
-                and recording.audio_duration_ms is None
-            ):
-                enqueue(
-                    session, source.id, "measure_recording",
-                    f"measure_recording:{recording.id}:v1",
-                )
+        eligible = session.scalar(
+            select(recording_measurement_eligible())
+            .select_from(Source)
+            .join(RecordingSession, RecordingSession.id == recording_id)
+            .where(Source.id == source.id)
+        )
+        if eligible:
+            enqueue(
+                session, source.id, "measure_recording",
+                f"measure_recording:{recording_id}:v1",
+            )
 
     def backfill(self, limit: int = 50) -> int:
         """Bounded startup batches; every commit is independently restartable."""
@@ -293,22 +294,24 @@ class KnowledgeIndex:
                 self.add_source(session, source)
             # Previously saved timer estimates can be wrong. Measure existing audio
             # once, through the same durable jobs as newly filed recordings.
-            recordings = session.scalars(
-                select(Source)
-                .join(RecordingSession, func.substr(Source.content, 1, 2_000).contains(
-                    "Local recording: " + RecordingSession.id
-                ))
+            recordings = session.execute(
+                select(Source, RecordingSession.id)
+                .join(RecordingSession, func.instr(Source.content, RecordingSession.id) > 0)
                 .where(
-                    Source.kind.in_(("recording", "course")), Source.trashed_at.is_(None),
-                    RecordingSession.status == "completed",
-                    RecordingSession.audio_duration_ms.is_(None),
+                    recording_measurement_eligible(),
                     ("measure_recording:" + RecordingSession.id + ":v1").not_in(
                         select(ProcessingJob.dedupe_key)
                     ),
                 )
-                .limit(limit)
-            ).all()
-            for source in recordings:
+                .execution_options(yield_per=limit)
+            )
+            matching = (
+                source for source, recording_id in recordings
+                if source_recording_id(source.content) == recording_id
+            )
+            pending = list(islice(matching, limit))
+            recordings.close()
+            for source in pending:
                 self.queue_recording_duration(session, source)
             # Files parsed before passages existed are parsed again, once.
             for source_id in session.scalars(

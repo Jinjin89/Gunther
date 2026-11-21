@@ -126,6 +126,8 @@ class SourceSummaryOut(ApiModel):
     entity_count: int
     asset: AssetOut | None = None
     processing: dict[str, object] = Field(default_factory=dict)
+    recording_id: str | None = None
+    recording_reference_at_end: bool = False
     recording_duration_seconds: int | None = None
     recording_duration_pending: bool = False
 

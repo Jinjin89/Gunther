@@ -192,7 +192,7 @@ describe("recording drafts with sentences and paragraphs", () => {
     const [good, damaged] = loadRecordingDrafts();
     expect(good).toMatchObject({ formatVersion: 3, transcript: "[00:00] Welcome." });
     expect(good!.segments).toEqual(state);
-    expect(damaged!.segments).toBeNull();
+    expect(damaged).toMatchObject({ transcript: "x", segments: null, recording: { id: "rec_damaged" } });
   });
 });
 

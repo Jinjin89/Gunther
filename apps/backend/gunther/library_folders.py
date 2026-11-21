@@ -67,7 +67,7 @@ from gunther.models import (
     WebSnapshot,
     utc_now,
 )
-from gunther.trash import recording_ids
+from gunther.recording_metadata import source_recording_id
 
 logger = logging.getLogger(__name__)
 
@@ -442,10 +442,8 @@ class LibraryFolders:
                         "sha256": asset.content_hash,
                     }
                 recording = None
-                for recording_id in sorted(recording_ids(source.content)):
-                    session_row = recordings.get(recording_id)
-                    if session_row is None:
-                        continue
+                recording_id = source_recording_id(source.content)
+                if recording_id and (session_row := recordings.get(recording_id)):
                     file_name = f"recording{_extension(session_row.file_name)}"
                     stored = self.recordings_dir / session_row.file_name
                     if stored.is_file():
@@ -455,7 +453,6 @@ class LibraryFolders:
                         "file": file_name,
                         "durationSeconds": session_row.effective_duration_seconds,
                     }
-                    break
                 snapshot = snapshots.get(source.id)
                 membership_ids = memberships.get(source.id, [])
                 plan.file(folder / "source.json", _json({

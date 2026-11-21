@@ -117,17 +117,50 @@ export function hasTranscriptContent(state: TranscriptState): boolean {
   return state.paragraphs.length > 0 || state.live.length > 0 || state.draft !== null;
 }
 
-/** Loose check for a state read back from storage or the server. */
-export function isTranscriptState(value: unknown): value is TranscriptState {
+function hasTimes(value: unknown): value is { startMs: number; endMs: number } {
   if (!value || typeof value !== "object") return false;
+  const { startMs, endMs } = value as Partial<LiveSentence>;
+  return Number.isFinite(startMs) && Number.isFinite(endMs);
+}
+
+function readableSentence(sentence: LiveSentence): boolean {
+  return hasTimes(sentence) && typeof sentence.id === "string" && typeof sentence.text === "string";
+}
+
+function readableConfirmedSentence(sentence: Sentence): boolean {
+  if (!readableSentence(sentence) || typeof sentence.windowId !== "string") return false;
+  const ranges = sentence.changed;
+  return ranges === undefined || (Array.isArray(ranges) && ranges.every(
+    (range) => Array.isArray(range) && range.length === 2 && range.every(Number.isFinite),
+  ));
+}
+
+/** Read saved segments, including older states that predate the grouping status. */
+export function decodeTranscriptState(value: unknown): TranscriptState | null {
+  if (!value || typeof value !== "object") return null;
   const state = value as Partial<TranscriptState>;
-  return state.version === 1
-    && Array.isArray(state.sentences)
-    && Array.isArray(state.windows)
-    && Array.isArray(state.paragraphs)
-    && Array.isArray(state.live)
-    && Array.isArray(state.gaps)
-    && typeof state.confirmedUntilMs === "number";
+  const { sentences, windows, paragraphs, live, gaps, confirmedUntilMs,
+    draft = null, checking = null, grouping = { state: "idle" as const } } = state;
+  if (state.version !== 1 || typeof confirmedUntilMs !== "number" || !Number.isFinite(confirmedUntilMs)
+      || !Array.isArray(sentences) || !Array.isArray(windows) || !Array.isArray(paragraphs)
+      || !Array.isArray(live) || !Array.isArray(gaps)) return null;
+  if (!sentences.every(readableConfirmedSentence)) return null;
+  if (!windows.every((window) => hasTimes(window) && typeof window.id === "string"
+      && ["checked", "checking", "failed", "off"].includes(window.state)
+      && ["minute", "retry"].includes(window.pass)
+      && (window.error === undefined || typeof window.error === "string")
+      && Array.isArray(window.live) && window.live.every(readableSentence))) return null;
+  if (!paragraphs.every((paragraph) => paragraph && typeof paragraph.id === "string"
+      && typeof paragraph.frozen === "boolean" && Array.isArray(paragraph.sentenceIds)
+      && paragraph.sentenceIds.every((id) => typeof id === "string")
+      && (paragraph.edited === undefined || typeof paragraph.edited === "string"))) return null;
+  if (!live.every(readableSentence) || !gaps.every((gap) => hasTimes(gap) && typeof gap.reason === "string")) return null;
+  if (!grouping || !["idle", "running", "failed", "off"].includes(grouping.state)
+      || (grouping.error !== undefined && typeof grouping.error !== "string")) return null;
+  if (draft !== null && (typeof draft.pieceId !== "string" || typeof draft.text !== "string" || !Number.isFinite(draft.startMs))) return null;
+  if (checking !== null && !hasTimes(checking)) return null;
+  if (state.heldEndMs !== undefined && !Number.isFinite(state.heldEndMs)) return null;
+  return { ...state, version: 1, sentences, windows, paragraphs, live, gaps, confirmedUntilMs, draft, checking, grouping };
 }
 
 /** A state as it is stored: no draft, and nothing "in flight" that a restart cannot finish. */

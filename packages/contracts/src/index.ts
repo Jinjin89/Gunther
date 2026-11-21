@@ -105,7 +105,10 @@ export interface SourceSummary {
   entityCount: number;
   asset?: Asset | null;
   processing?: SourceProcessing;
-  /** Saved audio's duration, when available; overrides the original capture's timer estimate. */
+  recordingId?: string | null;
+  /** The selected audio reference is the last nonempty line of a raw transcript. */
+  recordingReferenceAtEnd?: boolean;
+  /** The measured audio duration, with the capture's estimate as a fallback. */
   recordingDurationSeconds?: number | null;
   recordingDurationPending?: boolean;
 }

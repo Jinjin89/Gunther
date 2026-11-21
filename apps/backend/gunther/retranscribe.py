@@ -38,6 +38,12 @@ from gunther.models import RecordingSession, Source, utc_now
 from gunther.paragraphs import ParagraphsError, group_paragraphs
 from gunther.qwen_stream import BYTES_PER_MS
 from gunther.realtime import RELISTEN_PAD_MS, ListenError, relisten_audio
+from gunther.recording_metadata import (
+    TRANSCRIPT_HEADING,
+    RecordingReference,
+    source_recording_reference,
+    with_recording_header,
+)
 from gunther.source_identity import source_fingerprint
 
 logger = logging.getLogger(__name__)
@@ -65,9 +71,6 @@ RETRY_WAITS = (0, 5, 20)
 # A slow answer is waited for, unlike the live check's minute: Qwen takes about 25 s for
 # two minutes of audio even from a fast link, and three stretches are heard at once.
 HEAR_TIMEOUT = httpx.Timeout(300.0, connect=20.0)
-
-TRANSCRIPT_HEADING = re.compile(r"^##[ \t]+(?:Full transcript|Transcript)[ \t]*$", re.MULTILINE)
-
 
 # The transcript in a source ----------------------------------------------------------------
 
@@ -659,19 +662,21 @@ def _joined(heard: list[Stretch]) -> Stretch:
     return joined
 
 
-def _sources(session: Session, recording_id: str) -> list[Source]:
+def _sources(session: Session, recording_id: str) -> list[tuple[Source, RecordingReference]]:
     """The library sources made from this recording (not those in Trash)."""
 
-    return list(
-        session.scalars(
+    return [
+        (source, reference) for source in session.scalars(
             select(Source)
             .where(
                 Source.trashed_at.is_(None),
-                Source.content.contains(f"Local recording: {recording_id}"),
+                Source.content.contains(recording_id, autoescape=True),
             )
             .order_by(Source.created_at, Source.id)
         )
-    )
+        if (reference := source_recording_reference(source.content))
+        and reference.id == recording_id
+    ]
 
 
 class Retranscriber:
@@ -778,10 +783,14 @@ class Retranscriber:
                 raise RetranscribeError("This recording hasn't finished yet.")
             path = self.recordings_dir / recording.file_name
             sources = _sources(session, recording_id)
-            section = transcript_section(sources[0].content) if sources else None
-            terms = recording_terms(section[0]) if section else []
+            terms = []
+            source_id = None
+            if sources:
+                source, reference = sources[0]
+                source_id = source.id
+                if not reference.at_end and (section := transcript_section(source.content)):
+                    terms = recording_terms(section[0])
             title = recording.title
-            source_id = sources[0].id if sources else None
         if not path.is_file() or path.stat().st_size == 0:
             raise RetranscribeError("The audio of this recording isn't saved.")
         return {
@@ -825,7 +834,7 @@ class Retranscriber:
             )
             job.saving = True
             job.note(detail="Saving the transcript")
-            await asyncio.to_thread(self._write, job.recording_id, state)
+            await asyncio.to_thread(self._write, job.recording_id, state, job.total_ms)
         except asyncio.CancelledError:
             raise
         except (ListenError, AudioUnreadable, RetranscribeError) as error:
@@ -968,7 +977,7 @@ class Retranscriber:
             )
             return paragraphs_by_window(sentences), False
 
-    def _write(self, recording_id: str, state: dict[str, Any]) -> None:
+    def _write(self, recording_id: str, state: dict[str, Any], total_ms: int) -> None:
         """The recording and every source made from it, in one transaction."""
 
         text = render(state)
@@ -977,11 +986,15 @@ class Retranscriber:
             if recording is None:
                 raise RetranscribeError("The recording was deleted while it was being heard.")
             index: KnowledgeIndex = self.state.knowledge_service.index
-            for source in _sources(session, recording_id):
-                head, heading, _old = transcript_section(source.content) or (
-                    source.content.rstrip() + "\n\n",
-                    "## Transcript",
-                    "",
+            for source, reference in _sources(session, recording_id):
+                if reference.at_end:
+                    head, heading = f"# {source.title}\n\n", "## Transcript"
+                elif section := transcript_section(source.content):
+                    head, heading, _old = section
+                else:
+                    head, heading = source.content.rstrip() + "\n\n", "## Transcript"
+                head = with_recording_header(
+                    head, reference.id, clock_label(total_ms), _iso(recording.created_at)
                 )
                 source.content = f"{head}{heading}\n\n{text}"
                 source.content_hash = source_fingerprint(source.title, source.kind, source.content)

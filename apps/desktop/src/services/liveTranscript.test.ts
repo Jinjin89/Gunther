@@ -14,7 +14,7 @@ import {
   editParagraph,
   emptyTranscript,
   heardLive,
-  isTranscriptState,
+  decodeTranscriptState,
   joinSentences,
   nextWindow,
   paragraphCheck,
@@ -355,9 +355,19 @@ describe("text", () => {
     const stored = storableTranscript(state);
     expect(stored.draft).toBeNull();
     expect(stored.checking).toBeNull();
-    expect(isTranscriptState(JSON.parse(JSON.stringify(stored)))).toBe(true);
-    expect(isTranscriptState({ version: 2 })).toBe(false);
-    expect(isTranscriptState(null)).toBe(false);
+    expect(decodeTranscriptState(JSON.parse(JSON.stringify(stored)))).toEqual(stored);
+    expect(decodeTranscriptState({ version: 2 })).toBeNull();
+    expect(decodeTranscriptState(null)).toBeNull();
+  });
+
+  it("recovers an older transcript without grouping, and rejects malformed segments", () => {
+    const state = transcriptFromText(parseTranscript("[00:03] A saved sentence."))!;
+    const older = JSON.parse(JSON.stringify({ ...state, grouping: undefined }));
+    const decoded = decodeTranscriptState(older)!;
+    expect(renderTranscript(decoded)).toBe("[00:03] A saved sentence.");
+    expect(storableTranscript(decoded).grouping).toEqual({ state: "idle" });
+    expect(decodeTranscriptState({ ...older, grouping: { state: "unexpected" } })).toBeNull();
+    expect(decodeTranscriptState({ ...older, paragraphs: [null] })).toBeNull();
   });
 });
 

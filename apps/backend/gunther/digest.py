@@ -41,6 +41,7 @@ from gunther.models import (
     SourceDigest,
     utc_now,
 )
+from gunther.recording_metadata import source_recording_id
 
 Profile = Literal[
     "lecture", "meeting", "memo", "image", "table", "paper", "document", "web", "note"
@@ -246,9 +247,8 @@ def prepare(
         )
     asset = session.get(Asset, source.asset_id) if source.asset_id else None
     recording_context = None
-    reference = re.search(r"Local recording:\s*(rec_[a-f0-9]{24})", source.content)
-    if reference:
-        recording = session.get(RecordingSession, reference[1])
+    if recording_id := source_recording_id(source.content):
+        recording = session.get(RecordingSession, recording_id)
         recording_context = recording.recording_context if recording else "lecture"
     profile = profile_for(source, asset, recording_context)
     request = DigestRequest(

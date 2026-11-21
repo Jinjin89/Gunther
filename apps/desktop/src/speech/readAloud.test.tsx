@@ -194,8 +194,10 @@ describe("TtsSettings", () => {
   beforeEach(() => {
     Object.values(api).forEach((mock) => mock.mockReset());
     api.ttsOverview.mockResolvedValue(overview());
+    players.length = 0;
     vi.stubGlobal("Audio", FakeAudio);
     URL.createObjectURL = vi.fn(() => "blob:sample");
+    URL.revokeObjectURL = vi.fn();
   });
 
   it("chooses the voice on the Answers job and hears it", async () => {
@@ -207,6 +209,56 @@ describe("TtsSettings", () => {
     expect(api.saveTtsRoles).toHaveBeenCalledWith({ answers: { options: { voice: "Ethan" } } });
     await user.click(screen.getByRole("button", { name: "Hear" }));
     expect(api.ttsSample).toHaveBeenCalledWith({ options: { voice: "Ethan" } });
+  });
+
+  it("releases the replaced sample and the current sample when Settings closes", async () => {
+    const user = userEvent.setup();
+    const revoke = vi.mocked(URL.revokeObjectURL);
+    vi.mocked(URL.createObjectURL).mockReturnValueOnce("blob:first").mockReturnValueOnce("blob:second");
+    api.ttsSample.mockResolvedValue(new Blob());
+    const { unmount } = render(<TtsSettings onNotify={() => undefined} />);
+    const hear = await screen.findByRole("button", { name: "Hear" });
+    await user.click(hear);
+    await waitFor(() => expect(hear).toBeEnabled());
+    const previousEnded = players[0]?.onended;
+    await user.click(hear);
+    await waitFor(() => expect(players[1]?.play).toHaveBeenCalledOnce());
+    expect(players[0]?.pause).toHaveBeenCalledOnce();
+    expect(revoke.mock.calls).toEqual([["blob:first"]]);
+    previousEnded?.();
+    unmount();
+    expect(players[1]?.pause).toHaveBeenCalledOnce();
+    expect(revoke.mock.calls).toEqual([["blob:first"], ["blob:second"]]);
+  });
+
+  it("releases a sample when playback rejects and reports the problem", async () => {
+    class FailingAudio extends FakeAudio {
+      override play = vi.fn().mockRejectedValue(new Error("Playback refused"));
+    }
+    vi.stubGlobal("Audio", FailingAudio);
+    api.ttsSample.mockResolvedValue(new Blob());
+    const notify = vi.fn();
+    render(<TtsSettings onNotify={notify} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Hear" }));
+    await waitFor(() => expect(notify).toHaveBeenCalledWith("Playback refused"));
+    expect(URL.revokeObjectURL).toHaveBeenCalledExactlyOnceWith("blob:sample");
+  });
+
+  it("releases finished samples and discards a pending sample on unmount", async () => {
+    let finish!: (blob: Blob) => void;
+    api.ttsSample.mockResolvedValueOnce(new Blob()).mockReturnValueOnce(new Promise<Blob>((resolve) => { finish = resolve; }));
+    const user = userEvent.setup();
+    const { unmount } = render(<TtsSettings onNotify={() => undefined} />);
+    const hear = await screen.findByRole("button", { name: "Hear" });
+    await user.click(hear);
+    await waitFor(() => expect(players[0]?.play).toHaveBeenCalledOnce());
+    players[0]?.onended?.();
+    expect(URL.revokeObjectURL).toHaveBeenCalledExactlyOnceWith("blob:sample");
+    await user.click(hear);
+    expect(api.ttsSample).toHaveBeenCalledTimes(2);
+    unmount();
+    await act(async () => { finish(new Blob()); });
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
   });
 
   it("turns reading off by choosing Off, and automatic reading on", async () => {

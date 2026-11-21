@@ -9,10 +9,17 @@ export async function* readServerEvents(body: ReadableStream<Uint8Array>): Async
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let endsWithCR = false;
   try {
     for (;;) {
       const { value, done } = await reader.read();
-      buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, "\n");
+      const chunk = decoder.decode(value, { stream: !done });
+      if (chunk) {
+        // A CR ends its line immediately. The next chunk may start with its paired LF.
+        const text = endsWithCR && chunk.startsWith("\n") ? chunk.slice(1) : chunk;
+        endsWithCR = chunk.endsWith("\r");
+        buffer += text.replace(/\r\n?/g, "\n");
+      }
       let end = buffer.indexOf("\n\n");
       while (end !== -1) {
         const block = buffer.slice(0, end);

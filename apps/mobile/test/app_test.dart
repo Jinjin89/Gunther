@@ -404,10 +404,14 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('recording-workspace')), findsOneWidget);
 
+      final transcript = List.filled(
+        60,
+        'Needleman–Wunsch aligns complete sequences.',
+      ).join(' ');
       await tester.ensureVisible(find.byKey(const Key('recording-transcript')));
       await tester.enterText(
         find.byKey(const Key('recording-transcript')),
-        'Needleman–Wunsch aligns complete sequences.',
+        transcript,
       );
       await tester.ensureVisible(find.byKey(const Key('stop-recording')));
       await tester.tap(find.byKey(const Key('stop-recording')));
@@ -430,17 +434,21 @@ void main() {
       expect(draftStore.draft, isNotNull);
 
       final saveRecording = find.byKey(const Key('save-recording-inbox'));
-      await tester.scrollUntilVisible(
-        saveRecording,
-        300,
-        scrollable: find.byType(Scrollable).last,
-      );
+      await tester.ensureVisible(saveRecording);
+      await tester.pumpAndSettle();
       await tester.tap(saveRecording);
       await tester.pumpAndSettle();
 
       expect(repository.importedSources, hasLength(1));
       expect(repository.importedSources.single.kind, 'recording');
-      expect(repository.importedSources.single.content, contains('Needleman'));
+      final parts = repository.importedSources.single.content.split(
+        '\n\n## Transcript\n\n',
+      );
+      expect(parts, hasLength(2));
+      expect(parts.first, startsWith('# Algorithms lecture\n\nDuration: '));
+      expect(parts.first, contains(' · Captured: '));
+      expect(parts.first, endsWith(' · Local recording: recording-1'));
+      expect(parts.last, transcript);
       expect(repository.recordingCheckpoints, isNotEmpty);
       expect(draftStore.draft, isNull);
       expect(draftStore.clearCount, 1);
@@ -706,6 +714,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(repository.importedSources.single.kind, 'recording');
+      expect(
+        repository.importedSources.single.content,
+        endsWith(' · Local recording: recording-1\n\n## Transcript\n\n'),
+      );
       expect(draftStore.draft, isNull);
       expect(outbox.entries, isEmpty);
       expect(outbox.confirmedIds, hasLength(1));

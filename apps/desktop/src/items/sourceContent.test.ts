@@ -50,9 +50,12 @@ No timestamp here.`;
 
 describe("source content envelopes", () => {
   it("reads a recording into its parts", () => {
-    const parsed = parseRecordingContent(recording);
+    const parsed = parseRecordingContent(recording, {
+      recordingId: "rec_0123456789abcdef01234567", recordingDurationSeconds: 2530,
+    });
     expect(parsed.title).toBe("Cell biology lecture");
     expect(parsed.durationSeconds).toBe(2530);
+    expect(parsed.capturedLabel).toBe("9/27/2026, 10:00:00 AM");
     expect(parsed.recordingId).toBe("rec_0123456789abcdef01234567");
     expect(parsed.moments).toEqual([{ seconds: 185, label: "Definition of a marker gene" }, { seconds: 1200, label: "Exam hint" }]);
     expect(parsed.summary).toBe("Markers identify **cell types**.");
@@ -73,6 +76,28 @@ describe("source content envelopes", () => {
     expect(parsed.recordingId).toBeNull();
     expect(parsed.summary).toBeNull();
     expect(parsed.transcript.map((segment) => segment.text)).toEqual(["First thought. Second line.", "New paragraph."]);
+  });
+
+  it("keeps pasted headings in a raw transcript when the API selected its footer", () => {
+    const recordingId = "rec_0123456789abcdef01234567";
+    const transcript = `[00:12] Opening words.\n\n## Transcript\n\n${"Still heard. ".repeat(225).trimEnd()}`;
+    const legacy = `${transcript}\n\nLocal recording: ${recordingId}\n\n`;
+    const parsed = parseRecordingContent(legacy, { recordingId, recordingReferenceAtEnd: true });
+    expect(parsed).toMatchObject({
+      recordingId, transcriptText: transcript,
+    });
+    expect(parsed.transcript[0]).toEqual({ startSeconds: 12, text: "Opening words." });
+  });
+
+  it("leaves a reference in the transcript when the API returns no audio", () => {
+    const text = "Audio recording preserved by Gunther.\nLocal recording: rec_0123456789abcdef01234567\nDuration: 00:00:35";
+    expect(parseRecordingContent(text)).toMatchObject({
+      recordingId: null, durationSeconds: null, transcriptText: text,
+    });
+    const content = `# Memo\n\nDuration: 00:12 · Captured: today · Local recording: rec_0123456789abcdef01234567\n\n## Transcript\n\n${text}`;
+    expect(parseRecordingContent(content)).toMatchObject({
+      recordingId: null, durationSeconds: null, transcriptText: text,
+    });
   });
 
   it("reads a recording whose transcript is paragraphs, one timed segment each", () => {

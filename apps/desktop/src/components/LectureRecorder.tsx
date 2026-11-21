@@ -40,7 +40,7 @@ import {
   emptyTranscript,
   hasTranscriptContent,
   groupingRequest,
-  isTranscriptState,
+  decodeTranscriptState,
   nextRegroupChunk,
   nextWindow,
   renderTranscript,
@@ -323,7 +323,7 @@ export function loadRecordingDrafts(): RecordingDraft[] {
       .map((draft) => ({
         ...draft,
         formatVersion: draft.formatVersion === 3 ? (3 as const) : (2 as const),
-        segments: isTranscriptState(draft.segments) ? draft.segments : null,
+        segments: decodeTranscriptState(draft.segments),
         workspaceId: typeof draft.workspaceId === "string" ? draft.workspaceId : null,
         importedAudio: normalizeImportedAudioDraft(draft.importedAudio),
       }))
@@ -1669,7 +1669,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
    * times, pasted or typed, stays plain text. Whatever was still live is now final.
    */
   const adoptTranscript = (text: string, candidates: (unknown)[], parseOlderText: boolean) => {
-    const saved = candidates.filter(isTranscriptState).find((candidate) => renderTranscript(candidate) === text);
+    const saved = candidates.map(decodeTranscriptState).find((candidate) => candidate && renderTranscript(candidate) === text);
     const state = saved ?? (parseOlderText ? transcriptFromText(parseTranscript(text)) : null);
     if (state) {
       commitTranscript(confirmLive({ ...state, draft: null, checking: null }, { closing: true }));

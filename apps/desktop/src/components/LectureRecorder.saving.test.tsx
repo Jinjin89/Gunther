@@ -1,7 +1,8 @@
 import type { RecordingSession } from "@gunther/contracts";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { knowledgeApi } from "../api";
+import { knowledgeApi, recordingAssetUrl } from "../api";
+import { renderTranscript, transcriptFromText } from "../services/liveTranscript";
 import type { RecordingSpoolChunk } from "../services/recordingSpool";
 import * as pcm from "../services/pcm";
 import { CaptureSheet } from "./AtlasUtilities";
@@ -197,6 +198,32 @@ describe("saving a recording independently of transcript processing", () => {
     expect(screen.getByText(/could not finish yet: storage unavailable/)).toBeVisible();
     expect(loadRecordingDrafts()).toHaveLength(1);
     expect(onCaptured).not.toHaveBeenCalled();
+  });
+
+  it("recovers audio and saves the transcript of a draft without a grouping field", async () => {
+    const state = transcriptFromText([{ startSeconds: 9, text: "Saved lecture words." }])!;
+    const transcript = renderTranscript(state);
+    const segments = { ...state, grouping: undefined };
+    server = {
+      ...server, status: "completed", durationSeconds: 15, sizeBytes: 128, transcript,
+      transcriptSegments: segments,
+      recovery: { ...server.recovery, canResume: false, audioAvailable: true },
+    };
+    window.localStorage.setItem("gunther:recording-drafts", JSON.stringify([{
+      id: server.id, formatVersion: 3, title: "Preserved lecture", transcript, segments,
+      summary: null, seconds: 15, recording: server, moments: [], recordingContext: "lecture",
+      knowledgeBaseId: "", workspaceId: "wsp_primary", updatedAt: server.updatedAt,
+    }]));
+    const onCaptured = vi.fn().mockResolvedValue(undefined);
+    const { container } = render(<CaptureSheet open surface="window" bases={[]} workspaceId="wsp_primary" initialKind="recording"
+      onClose={vi.fn()} onCaptured={onCaptured} onAssetCaptured={vi.fn()}
+    />);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Preserved lecture/ })); });
+    expect(container.querySelector("audio")).toHaveAttribute("src", recordingAssetUrl(server.id));
+    expect(screen.getByRole("button", { name: "Play from 00:09" })).toBeEnabled();
+    expect(loadRecordingDrafts()[0]?.segments?.grouping).toEqual({ state: "idle" });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Save recording/ })); });
+    expect(onCaptured.mock.calls[0]?.[2]).toContain(transcript);
   });
 
   it("freezes the latest live text and ignores late checks and grouping answers after saving", async () => {

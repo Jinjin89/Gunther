@@ -49,7 +49,7 @@ from gunther.models import (
     WebSnapshot,
     utc_now,
 )
-from gunther.recording_metadata import recording_ids
+from gunther.recording_metadata import source_recording_id
 from gunther.schemas import TrashItemKind, TrashItemOut
 
 logger = logging.getLogger(__name__)
@@ -254,7 +254,7 @@ class TrashService:
 
     @staticmethod
     def _refuse_live_recordings(session: Session, sources: Iterable[Source]) -> None:
-        referenced = {rec for source in sources for rec in recording_ids(source.content)}
+        referenced = {rec for source in sources if (rec := source_recording_id(source.content))}
         if referenced and session.scalar(
             select(RecordingSession.id)
             .where(RecordingSession.id.in_(referenced), RecordingSession.status == "capturing")
@@ -395,7 +395,7 @@ class TrashService:
             )
         )
         referenced_recordings = {
-            recording for source in sources for recording in recording_ids(source.content)
+            recording for source in sources if (recording := source_recording_id(source.content))
         }
 
         session.execute(delete(NotebookNote).where(NotebookNote.trash_batch_id == batch))
@@ -440,9 +440,10 @@ class TrashService:
                 files.append(self.assets_dir / asset.relative_path)
                 session.delete(asset)
         for recording_id in referenced_recordings:
+            # Retain audio when surviving text may still refer to it, including old formats.
             still_used = session.scalar(
                 select(Source.id)
-                .where(Source.content.contains(f"Local recording: {recording_id}"))
+                .where(Source.content.contains(recording_id, autoescape=True))
                 .limit(1)
             )
             recording = None if still_used else session.get(RecordingSession, recording_id)

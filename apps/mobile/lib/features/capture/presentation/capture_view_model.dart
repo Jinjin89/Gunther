@@ -1484,12 +1484,12 @@ class CaptureViewModel extends ChangeNotifier {
       _safeNotify();
       return false;
     }
-    final cleanTranscript = transcript.trim();
-    final content = cleanTranscript.isNotEmpty
-        ? '$cleanTranscript\n\nLocal recording: ${session.id}'
-        : 'Audio recording preserved by Gunther.\n'
-              'Local recording: ${session.id}\n'
-              'Duration: ${_formatDuration(recordingSeconds)}';
+    final captured = session.createdAt.toLocal().toIso8601String();
+    final content =
+        '# $recordingTitle\n\n'
+        'Duration: ${_formatDuration(recordingSeconds)} · Captured: $captured'
+        ' · Local recording: ${session.id}\n\n'
+        '## Transcript\n\n${transcript.trim()}';
     final saved = await _save(
       () => repository.importSource(
         SourceDraft(title: recordingTitle, kind: 'recording', content: content),

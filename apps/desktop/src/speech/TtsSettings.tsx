@@ -11,19 +11,45 @@ const megabytes = (bytes: number) => bytes < 1024 * 1024 ? `${Math.max(1, Math.r
 const validUrl = (value: string) => { try { return /^https?:$/.test(new URL(value.trim()).protocol); } catch { return false; } };
 
 /** One sample at a time, across the page: a new one stops the last. */
-let preview: HTMLAudioElement | null = null;
+type VoicePreview = { url: string | null; player: HTMLAudioElement | null };
+let preview: VoicePreview | null = null;
+
+function releaseSample(sample: VoicePreview) {
+  const { player, url } = sample;
+  sample.player = null;
+  sample.url = null;
+  if (player) {
+    player.onended = player.onerror = null;
+    player.pause();
+  }
+  if (url) URL.revokeObjectURL(url);
+}
+
+function stopSample() {
+  const sample = preview;
+  preview = null;
+  if (sample) releaseSample(sample);
+}
+
 async function playSample(payload: TtsSampleInput) {
+  stopSample();
+  const sample: VoicePreview = { url: null, player: null };
+  preview = sample;
   readAloud.stop();
   // On a Mac, ask for what the built-in speakers need while the sample is made.
-  const access = allowSpeakerSound();
-  const blob = await knowledgeApi.ttsSample(payload);
-  await access;
-  preview?.pause();
-  const url = URL.createObjectURL(blob);
-  const player = new Audio(url);
-  player.onended = () => URL.revokeObjectURL(url);
-  preview = player;
-  await player.play();
+  try {
+    const [, blob] = await Promise.all([allowSpeakerSound(), knowledgeApi.ttsSample(payload)]);
+    if (preview !== sample) return;
+    sample.url = URL.createObjectURL(blob);
+    const player = new Audio(sample.url);
+    sample.player = player;
+    player.onended = player.onerror = () => releaseSample(sample);
+    await player.play();
+  } catch (reason) {
+    if (preview !== sample) return;
+    stopSample();
+    throw reason;
+  }
 }
 
 function OptionField({ option, value, onChange }: { option: TtsOption; value: string; onChange: (value: string) => void }) {
@@ -142,6 +168,7 @@ function ProviderEditor({ provider, onOverview, onRemoved, onNotify, onChecked }
     setHearing(model);
     setError(null);
     await pending.current;
+    if (!mounted.current) return;
     const saved = current.current;
     try {
       await playSample({ providerId: provider.id, baseUrl: saved.baseUrl.trim(), ...(saved.apiKey ? { apiKey: saved.apiKey } : {}), model });
@@ -235,7 +262,7 @@ export function TtsSettings({ onNotify }: { onNotify: (message: string) => void 
     void knowledgeApi.ttsOverview().then((next) => { if (active) setOverview(next); }).catch((reason) => {
       if (active) setProblem(message(reason, "Reading aloud could not be loaded."));
     });
-    return () => { active = false; preview?.pause(); };
+    return () => { active = false; stopSample(); };
   }, []);
 
   const saveRole = async (role: TtsRole["id"], change: TtsRoleInput) => {

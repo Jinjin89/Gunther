@@ -7,7 +7,6 @@ yet"). Sections and sources share one order inside their parent.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from typing import Literal
 from urllib.parse import urlparse
@@ -33,7 +32,7 @@ from gunther.models import (
     TopicSourceLink,
     WebSnapshot,
 )
-from gunther.recording_metadata import recording_timing
+from gunther.recording_metadata import recording_timing, source_recording_reference
 
 
 class TopicConflict(ValueError):
@@ -446,18 +445,16 @@ class TopicService:
             .order_by(Source.created_at.desc(), Source.id)
         ).all()
 
-        # Only the head of a recording's text holds its "Duration:" line.
         durations: dict[str, int] = {}
         duration_pending: dict[str, bool] = {}
-        for source_id, head in session.execute(
-            select(Source.id, func.substr(Source.content, 1, 2000))
+        for source_id, content in session.execute(
+            select(Source.id, Source.content)
             .join(KnowledgeBaseSource, KnowledgeBaseSource.source_id == Source.id)
             .where(member, Source.trashed_at.is_(None), Source.kind.in_(("recording", "course")))
         ):
-            seconds, pending = recording_timing(session, head or "")
+            reference = source_recording_reference(content)
+            seconds, pending = recording_timing(session, source_id, content, reference)
             duration_pending[source_id] = pending
-            if seconds is None:
-                seconds = _duration_seconds(head or "")
             if seconds is not None:
                 durations[source_id] = seconds
 
@@ -721,23 +718,6 @@ class TopicService:
             session.expire_all()
             self._renumber(session, base_id, parent_id)
             return self._contents(session, base_id)
-
-
-_DURATION = re.compile(r"^Duration:[ \t]*(?:(\d+(?::\d+){1,2})|(\d+)[ \t]*seconds?)", re.MULTILINE)
-
-
-def _duration_seconds(head: str) -> int | None:
-    """Seconds from a recording's "Duration: 1:02:03" (or "Duration: 90 seconds") line."""
-
-    found = _DURATION.search(head)
-    if not found:
-        return None
-    if found.group(2):
-        return int(found.group(2))
-    total = 0
-    for part in found.group(1).split(":"):
-        total = total * 60 + int(part)
-    return total
 
 
 def _short_authors(authors: str | None) -> str | None:

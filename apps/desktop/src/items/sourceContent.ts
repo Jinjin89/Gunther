@@ -1,4 +1,4 @@
-import type { InboxItem, SourceKind } from "@gunther/contracts";
+import type { InboxItem, SourceKind, SourceSummary } from "@gunther/contracts";
 import { markdownToPlainText } from "../components/markdown/markdownEditing";
 
 /**
@@ -59,7 +59,7 @@ export interface ResearchContent {
   references: Array<{ title: string; url: string | null; snippet: string | null }>;
 }
 
-const RECORDING_META = /^Duration:\s*([\d:]+)\s*·\s*Captured:\s*(.+?)(?:\s*·\s*Local recording:\s*(rec_[a-f0-9]{24}))?\s*$/m;
+const RECORDING_CAPTURE = /^Duration:[ \t]*[\d:]+[ \t]*·[ \t]*Captured:[ \t]*([^\r\n]+?)[ \t]*(?:·[^\r\n]*)?\r?$/m;
 
 /** "01:02:03" or "12:34" → seconds. */
 function clockToSeconds(value: string): number | null {
@@ -190,10 +190,6 @@ const listItems = (body: string | undefined) => (body ?? "")
   .map((line) => line.match(/^\s*(?:[-*+]|\d+[.)])\s+(.+)$/)?.[1]?.trim())
   .filter((item): item is string => Boolean(item));
 
-function isRecordingContent(content: string): boolean {
-  return RECORDING_META.test(content.slice(0, 2_000));
-}
-
 export function parseTranscript(text: string): TranscriptSegment[] {
   const segments: TranscriptSegment[] = [];
   let paragraph: string[] = [];
@@ -219,10 +215,16 @@ export function parseTranscript(text: string): TranscriptSegment[] {
   return segments.filter((segment) => segment.text);
 }
 
-export function parseRecordingContent(content: string): RecordingContent {
-  const { head, tail } = tailAfter(content, ["Full transcript", "Transcript"]);
+export function parseRecordingContent(
+  content: string,
+  audio: Pick<SourceSummary, "recordingId" | "recordingReferenceAtEnd" | "recordingDurationSeconds"> = {},
+): RecordingContent {
+  const trimmed = content.trimEnd();
+  const { head, tail } = audio.recordingReferenceAtEnd
+    ? { head: "", tail: trimmed.slice(0, Math.max(0, trimmed.lastIndexOf("\n"))) }
+    : tailAfter(content, ["Full transcript", "Transcript"]);
   const { title, preamble, sections } = splitSections(head);
-  const meta = RECORDING_META.exec(preamble) ?? RECORDING_META.exec(head);
+  const capture = RECORDING_CAPTURE.exec(preamble) ?? RECORDING_CAPTURE.exec(head);
   const section = (name: string) => sections.find((item) => item.heading.toLowerCase() === name.toLowerCase())?.body;
   const terms: string[] = [];
   const stripTerms = (body: string | undefined) => (body ?? "").split("\n").filter((line) => {
@@ -239,12 +241,12 @@ export function parseRecordingContent(content: string): RecordingContent {
     const seconds = match ? clockToSeconds(match[1]!) : null;
     return seconds === null ? null : { seconds, label: match![2]!.trim() || "Marked moment" };
   }).filter((moment): moment is { seconds: number; label: string } => moment !== null);
-  const transcriptText = (tail ?? "").trim();
+  const transcriptText = (tail ?? (capture ? preamble.replace(RECORDING_CAPTURE, "") : content)).trim();
   return {
     title,
-    durationSeconds: meta ? clockToSeconds(meta[1]!) : null,
-    capturedLabel: meta?.[2]?.trim() ?? null,
-    recordingId: meta?.[3] ?? null,
+    durationSeconds: audio.recordingDurationSeconds ?? null,
+    capturedLabel: capture?.[1]?.trim() ?? null,
+    recordingId: audio.recordingId ?? null,
     moments,
     summary: summary || null,
     keyPoints,
@@ -321,8 +323,8 @@ export function parseResearchContent(content: string): ResearchContent {
 }
 
 /** Choose how a source is presented. Pasted text stays text, whatever its kind. */
-export function sourceView(kind: SourceKind, content: string, mediaType?: string | null, hasFile = false): SourceView {
-  if (kind === "recording" || kind === "course" || isRecordingContent(content)) return "recording";
+export function sourceView(kind: SourceKind, content: string, mediaType?: string | null, hasFile = false, recordingId?: string | null): SourceView {
+  if (recordingId || kind === "recording" || kind === "course" || RECORDING_CAPTURE.test(content.slice(0, 2_000))) return "recording";
   if (isWebSnapshotContent(content)) return "web";
   if (isResearchContent(content)) return "research";
   const uploaded = hasFile || isFileContent(content);
@@ -404,7 +406,7 @@ export function inboxPreview(item: Pick<InboxItem, "preview" | "sourceKind" | "i
   if (recording || item.sourceKind === "recording" || item.sourceKind === "course") {
     const seconds = recording ? clockToSeconds(recording[1]!) : null;
     const summary = between(preview, "## Summary", [" ## "]) ?? between(preview, "## Full transcript", []) ?? between(preview, "## Transcript", []);
-    const fallback = preview.replace(/^#\s+[^#]*?(?=Duration:)/, "").replace(/Duration:.*?(rec_[a-f0-9]{24}|$)/, "").replace(/##\s+Marked moments/, "");
+    const fallback = recording ? between(preview, "## Marked moments", []) ?? "" : preview;
     return {
       detail: seconds ? formatDuration(seconds) : null,
       text: markdownToPlainText(summary ?? fallback).replace(/^\[?\d{1,2}:\d{2}(?::\d{2})?\]?\s*/, ""),

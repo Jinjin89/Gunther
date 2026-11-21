@@ -102,7 +102,7 @@ from gunther.outputs import (
     split_document,
     title_of,
 )
-from gunther.recording_metadata import recording_timing
+from gunther.recording_metadata import recording_timing, source_recording_reference
 from gunther.run_budget import BudgetedGateway, RunBudget
 from gunther.schemas import (
     ArtifactBriefOut,
@@ -649,9 +649,10 @@ class KnowledgeService:
             for entity_id in (assertion.subject_entity_id, assertion.object_entity_id)
         }
         asset = session.get(Asset, source.asset_id) if source.asset_id else None
+        reference = source_recording_reference(source.content)
         duration, duration_pending = (
-            recording_timing(session, source.content)
-            if source.kind in {"recording", "course"} else (None, False)
+            recording_timing(session, source.id, source.content, reference)
+            if reference or source.kind in {"recording", "course"} else (None, False)
         )
         return SourceSummaryOut(
             id=source.id,
@@ -661,6 +662,8 @@ class KnowledgeService:
             assertion_count=len(assertions),
             entity_count=len(entity_ids),
             processing=self.index.processing(session, source.id),
+            recording_id=reference.id if reference else None,
+            recording_reference_at_end=reference.at_end if reference else False,
             recording_duration_seconds=duration,
             recording_duration_pending=duration_pending,
             asset=(

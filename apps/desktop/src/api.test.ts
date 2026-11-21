@@ -239,6 +239,20 @@ describe("desktop knowledge API contract", () => {
       expect(new Headers(init.headers).get("X-Gunther-Workspace-Id")).toBe("wsp_primary");
     });
 
+    it("accepts a saved version when the terminal CRLF crosses chunks", async () => {
+      fetchMock.mockResolvedValueOnce(stream(new ReadableStream({
+        start(controller) {
+          const encoder = new TextEncoder();
+          controller.enqueue(encoder.encode('event: done\r\ndata: {"id":"art_1"}\r\n\r'));
+          controller.enqueue(encoder.encode("\n"));
+          controller.close();
+        },
+      })));
+
+      await expect(knowledgeApi.buildOutputStream("biology", request, "wsp_primary", () => undefined))
+        .resolves.toEqual({ id: "art_1" });
+    });
+
     it("sends a message to the Artifacts agent and hands over its events, then how the turn ended", async () => {
       fetchMock.mockResolvedValueOnce(stream(events(
         ["turn", { type: "turn", conversationId: "talk", messageId: "acm_1" }],

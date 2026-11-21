@@ -204,6 +204,8 @@ describe("source pages", () => {
     api.source.mockResolvedValue(source({
       kind: "recording",
       title: "Cell biology lecture",
+      recordingId: "rec_0123456789abcdef01234567",
+      recordingDurationSeconds: 2530,
       content: "# Cell biology lecture\n\nDuration: 00:42:10 · Captured: today · Local recording: rec_0123456789abcdef01234567\n\n## Marked moments\n\n- 00:03:05 · Definition\n\n## Summary\n\nMarkers identify **cell types**.\n\n## Key points\n\n- Context matters\n\n## Full transcript\n\n[00:00:01] Welcome back.\n[00:00:09] Today: markers.",
     }));
     const user = userEvent.setup();
@@ -220,18 +222,39 @@ describe("source pages", () => {
     expect(screen.queryByText("Welcome back.")).not.toBeInTheDocument();
   });
 
-  it("refreshes a recording's measured duration and uses it instead of the saved timer estimate", async () => {
+  it("plays the audio resolved by the source API and keeps a trailing reference as transcript text", async () => {
+    const recordingId = "rec_0123456789abcdef01234567";
+    const trailing = "Local recording: rec_fedcba9876543210fedcba98";
+    api.source.mockResolvedValue(source({
+      kind: "recording",
+      recordingId,
+      recordingReferenceAtEnd: false,
+      recordingDurationSeconds: 42,
+      content: `# Lecture\n\nLocal recording: ${recordingId}\n\nPreamble.\n\n## Transcript\n\n[00:00] Words.\n\n${trailing}`,
+    }));
+    const { container } = renderPage();
+    expect(await screen.findByText(trailing)).toBeVisible();
+    expect(container.querySelector("audio")).toHaveAttribute("src", `/api/recordings/${recordingId}`);
+    expect(screen.getByRole("slider", { name: "Position" })).toHaveAttribute("max", "42");
+  });
+
+  it.each([false, true])("refreshes measured recording duration (legacy %s)", async (legacy) => {
     vi.useFakeTimers();
     try {
       const recording = source({
-        kind: "recording", recordingDurationSeconds: 60, recordingDurationPending: true,
-        content: "# Lecture\n\nDuration: 01:00 · Captured: today · Local recording: rec_0123456789abcdef01234567\n\n## Transcript\n\n[00:00] Words.",
+        kind: "recording", recordingId: "rec_0123456789abcdef01234567", recordingReferenceAtEnd: legacy,
+        recordingDurationSeconds: 60, recordingDurationPending: true,
+        content: legacy
+          ? `[00:00] Words.\n\n${"More words. ".repeat(210).trimEnd()}\n\nLocal recording: rec_0123456789abcdef01234567`
+          : "# Lecture\n\nDuration: 01:00 · Captured: today · Local recording: rec_0123456789abcdef01234567\n\n## Transcript\n\n[00:00] Words.",
       });
       api.source.mockResolvedValueOnce(recording).mockResolvedValue({
         ...recording, recordingDurationSeconds: 120, recordingDurationPending: false,
       });
-      renderPage();
+      const { container } = renderPage();
       await act(async () => { await Promise.resolve(); });
+      expect(container.querySelector("audio")).toHaveAttribute("src", "/api/recordings/rec_0123456789abcdef01234567");
+      expect(screen.getByText("Words.")).toBeVisible();
       expect(screen.getByRole("slider", { name: "Position" })).toHaveAttribute("max", "60");
       await act(async () => { vi.advanceTimersByTime(2500); });
       expect(screen.getByRole("slider", { name: "Position" })).toHaveAttribute("max", "120");

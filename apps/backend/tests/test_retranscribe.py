@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from recording_fixtures import completed_recording
 from sqlalchemy import func, select
 
 from gunther import retranscribe
@@ -721,6 +722,44 @@ def test_a_source_without_a_transcript_heading_gets_one(
         assert content.startswith(bare + "\n\n## Transcript\n\n[00:05] Sentence 0.")
 
 
+def test_reopening_a_retranscribed_footer_source_keeps_its_saved_audio(
+    tmp_path: Path, heard: FakeRecording
+) -> None:
+    path = tmp_path / "original.wav"
+    encode(path, "wav", "pcm_s16le", 100.0, 8_000)
+    audio = path.read_bytes()
+    with make_app(tmp_path) as client:
+        client.headers.update(SIDECAR)
+        recording_id = completed_recording(
+            client, audio, title="Lecture", content_type="audio/wav"
+        ).raise_for_status().json()["id"]
+        content = (
+            "Old opening words.\n\n## Transcript\n\nOld notes after the pasted heading.\n\n"
+            f"Local recording: {recording_id}"
+        )
+        saved = client.post("/api/sources?deferAnalysis=true", json={
+            "title": "Lecture", "kind": "recording", "content": content,
+        }).raise_for_status().json()["source"]
+        assert saved["recordingId"] == recording_id and saved["recordingReferenceAtEnd"]
+        ready(client)
+        assert press(client, recording_id).status_code == 202
+        done = finished(client, recording_id)
+        assert done["state"] == "done"
+
+    with make_app(tmp_path) as client:
+        client.headers.update(SIDECAR)
+        reopened = client.get(f"/api/sources/{saved['id']}").raise_for_status().json()
+        assert reopened["recordingId"] == recording_id
+        assert not reopened["recordingReferenceAtEnd"]
+        assert reopened["recordingDurationSeconds"] == done["totalMs"] // 1_000
+        head, _heading, body = transcript_section(reopened["content"])
+        assert head.startswith("# Lecture\n\nDuration:")
+        assert head.rstrip().endswith(f" · Local recording: {recording_id}")
+        assert body.startswith("[00:05] Sentence 0.") and "Old notes" not in body
+        downloaded = client.get(f"/api/recordings/{reopened['recordingId']}")
+        assert downloaded.raise_for_status().content == audio
+
+
 # When it can't ----------------------------------------------------------------------------
 
 
@@ -986,10 +1025,10 @@ def test_a_job_that_is_saving_its_transcript_can_no_longer_be_stopped(
         retranscriber = client.app.state.retranscriber
         write, writing, release = retranscriber._write, threading.Event(), threading.Event()
 
-        def slow_write(recording_id: str, state: dict[str, Any]) -> None:
+        def slow_write(recording_id: str, state: dict[str, Any], total_ms: int) -> None:
             writing.set()
             release.wait(5)
-            write(recording_id, state)
+            write(recording_id, state, total_ms)
 
         retranscriber._write = slow_write
 

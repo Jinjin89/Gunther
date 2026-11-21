@@ -24,4 +24,15 @@ describe("readServerEvents", () => {
     for await (const event of readServerEvents(streamOf('event: text\ndata: {"a":1}\n\nevent: text\ndata: {"b"'))) events.push(event);
     expect(events).toHaveLength(1);
   });
+
+  it("reads CRLF split across chunks and accepts bare CR and LF", async () => {
+    const events = [];
+    const body = streamOf('event: text\r', '\ndata: first\u2028second\rdata: third\n\r',
+      '\nevent: done\r\ndata: {"ok":true}\r\n\r', '', '\n');
+    for await (const event of readServerEvents(body)) events.push(event);
+    expect(events).toEqual([
+      { event: "text", data: "first\u2028second\nthird" },
+      { event: "done", data: '{"ok":true}' },
+    ]);
+  });
 });

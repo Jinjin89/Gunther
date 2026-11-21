@@ -74,16 +74,15 @@ export function SourceItem({ source: initial, bases, nav, onResolved, onOpenBase
     return () => { alive = false; window.clearTimeout(timer); };
   }, [source]);
 
-  const view = sourceView(source.kind, source.content, source.asset?.mediaType, Boolean(source.asset));
+  const view = sourceView(source.kind, source.content, source.asset?.mediaType, Boolean(source.asset), source.recordingId);
   // Pasted text keeps the identity of the kind it was captured as.
   const identity = view === "text" && source.kind !== "note"
     ? { ...VIEW_IDENTITY[source.kind === "link" ? "web" : source.kind === "image" ? "image" : source.kind === "table" ? "table" : "document"], label: SOURCE_KIND_LABEL[source.kind] }
     : VIEW_IDENTITY[view];
-  const recording = useMemo(() => {
-    if (view !== "recording") return null;
-    const parsed = parseRecordingContent(source.content);
-    return { ...parsed, durationSeconds: source.recordingDurationSeconds ?? parsed.durationSeconds };
-  }, [source.content, source.recordingDurationSeconds, view]);
+  const recording = useMemo(
+    () => view === "recording" ? parseRecordingContent(source.content, source) : null,
+    [source, view],
+  );
   const web = useMemo(() => (view === "web" ? parseWebContent(source.content) : null), [source.content, view]);
   const research = useMemo(() => (view === "research" ? parseResearchContent(source.content) : null), [source.content, view]);
   const isFile = view === "document" || view === "image";

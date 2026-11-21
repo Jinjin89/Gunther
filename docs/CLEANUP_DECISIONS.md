@@ -286,3 +286,16 @@ itself. With no Analysis model, the capture shows needs-a-key or an error with R
 Saved user-entered assertions keep opening and keep their review state. Round 16's
 Retry paragraph stands.
 A45 = A45 + A47a + A47b
+A48 = A48a + A48b + A48c + A49a + A49b
+
+# Round 18 — one reader for a source's recording (batch A48)
+
+The backend owns the recording reference. `source_recording_id` is the only reader, and
+the source API returns its result (and the measured duration). The desktop uses those
+fields and stops parsing recording ids from text. Precedence is one rule. Before the
+transcript heading, the current header line comes first, then a standalone
+`Local recording:` line. With nothing there, a standalone reference on the last
+non-empty line counts. Everything else is transcript text. Whenever the app rewrites a
+recording source (Transcribe again), it writes the resolved id into the current header
+line, so the source moves to the current shape. Old shapes outside this rule lose their
+audio link. That rare miss is acceptable.
