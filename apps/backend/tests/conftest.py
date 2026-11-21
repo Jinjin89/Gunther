@@ -1,6 +1,16 @@
+import json
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from gunther.config import Settings
+
+
+@pytest.fixture
+def mobile_live_v2() -> dict[str, Any]:
+    path = Path(__file__).resolve().parents[2] / "mobile/test/fixtures/mobile_live_v2.json"
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 @pytest.fixture(autouse=True)

@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gunther_mobile/data/models/capture.dart';
 import 'package:gunther_mobile/data/services/recording_draft_store.dart';
 
+import 'support/mobile_live_fixture.dart';
+
 void main() {
   test(
     'v2 store atomically round-trips and never deletes original audio',
@@ -58,6 +60,7 @@ void main() {
   );
 
   test('v1 remains readable and its destination stays unassigned', () async {
+    final fixture = await loadMobileLiveV2();
     final root = await _temporaryDirectory();
     final audio = File('${root.path}/legacy.m4a');
     await audio.writeAsBytes(List<int>.filled(18, 7), flush: true);
@@ -70,6 +73,7 @@ void main() {
       mediaType: 'audio/mp4',
       sizeBytes: 18,
       extra: {
+        'transcript': fixture['saved_transcript'],
         'knowledgeBaseId': 'legacy-library',
         // Unknown v2 fields injected into v1 must never silently bind it.
         'targetWorkspaceId': 'must-not-bind',
@@ -84,6 +88,7 @@ void main() {
     final restored = await store.load();
 
     expect(restored, isNotNull);
+    expect(restored?.transcript, fixture['saved_transcript']);
     expect(restored?.knowledgeBaseId, 'legacy-library');
     expect(restored?.encoding, isNull);
     expect(restored?.sampleRate, isNull);
@@ -93,18 +98,26 @@ void main() {
     expect((await store.resolveLocalAsset(restored!))?.sizeBytes, 18);
   });
 
-  test('v2 repairs only an explicitly marked Gunther PCM16 WAV', () async {
+  test('v2 draft recovers text and PCM across a gap', () async {
+    final fixture = await loadMobileLiveV2();
+    final rate = fixture['sample_rate']! as int;
+    final transcript = fixture['saved_transcript']! as String;
+    final commit = fixture['commit']! as Map<String, Object?>;
+    final until = commit['until_ms']! as int;
     final root = await _temporaryDirectory();
     final audio = File('${root.path}/interrupted.wav');
-    final interrupted = _interruptedPcm16Wav(dataBytes: 12);
+    final interrupted = _interruptedPcm16Wav(
+      sampleRate: rate,
+      dataBytes: rate * 2 * until ~/ 1000,
+    );
     await audio.writeAsBytes(interrupted, flush: true);
     final recoveryDirectory = Directory('${root.path}/recovery');
     final store = _store(recoveryDirectory);
     final draft = RecordingDraft(
       title: 'Interrupted lecture',
       context: 'lecture',
-      transcript: '',
-      durationSeconds: 1,
+      transcript: transcript,
+      durationSeconds: until ~/ 1000,
       moments: const [],
       localPath: audio.path,
       fileName: 'interrupted.wav',
@@ -115,7 +128,7 @@ void main() {
       checkpointRevision: 1,
       updatedAt: DateTime.utc(2026, 8, 30),
       encoding: RecordingDraft.guntherPcm16WavEncoding,
-      sampleRate: 24000,
+      sampleRate: rate,
       channels: 1,
       targetWorkspaceId: 'workspace-local',
       connectionProfileId: 'profile-local',
@@ -126,7 +139,9 @@ void main() {
 
     expect(restored, isNotNull);
     expect(restored?.isGuntherPcm16Wav, isTrue);
-    expect(restored?.sampleRate, 24000);
+    expect(restored?.sampleRate, rate);
+    expect(restored?.transcript, transcript);
+    expect(restored?.durationSeconds, until ~/ 1000);
     expect(restored?.channels, 1);
     expect(restored?.targetWorkspaceId, 'workspace-local');
     expect(restored?.connectionProfileId, 'profile-local');
@@ -135,6 +150,10 @@ void main() {
     expect(repaired.length, interrupted.length);
     expect(header.getUint32(4, Endian.little), repaired.length - 8);
     expect(header.getUint32(40, Endian.little), repaired.length - 44);
+    expect(
+      Uint8List.sublistView(repaired, 44),
+      Uint8List.sublistView(interrupted, 44),
+    );
   });
 
   test('an imported WAV without Gunther metadata is never rewritten', () async {

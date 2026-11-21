@@ -1,0 +1,43 @@
+{
+  "sample_rate": 24000,
+  "ready": {
+    "type": "service.ready",
+    "provider": "qwen",
+    "model": "qwen-audio-3.1-asr-flash",
+    "stream": true,
+    "local": false,
+    "diarize": false,
+    "live": "stream",
+    "protocol": 2,
+    "check_again": false,
+    "group_paragraphs": false
+  },
+  "chunks": [
+    {
+      "offset_ms": 60000,
+      "duration_ms": 600,
+      "events": [
+        {"type": "transcript.piece", "id": "piece-1", "start_ms": 60000, "end_ms": null, "text": "We'll use", "final": false},
+        {
+          "type": "transcript.piece", "id": "piece-1", "start_ms": 60000, "end_ms": 60300, "text": "We'll use it.", "final": true,
+          "sentences": [{"start_ms": 60000, "end_ms": 60300, "text": "We'll use it."}]
+        }
+      ]
+    },
+    {
+      "offset_ms": 75000,
+      "duration_ms": 600,
+      "events": [
+        {"type": "transcript.gap", "start_ms": 60599, "end_ms": 75000, "reason": "missing"},
+        {"type": "transcript.flushed", "until_ms": 60599},
+        {"type": "transcript.piece", "id": "piece-2", "start_ms": 75000, "end_ms": null, "text": "We'll use", "final": false},
+        {
+          "type": "transcript.piece", "id": "piece-2", "start_ms": 75000, "end_ms": 75300, "text": "We'll use it.", "final": true,
+          "sentences": [{"start_ms": 75000, "end_ms": 75300, "text": "We'll use it."}]
+        }
+      ]
+    }
+  ],
+  "commit": {"type": "transcript.flushed", "until_ms": 75600},
+  "saved_transcript": "[01:00] We'll use it.\n\n[01:15] We'll use it."
+}

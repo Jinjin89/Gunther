@@ -6,7 +6,6 @@ transport.
 """
 
 import asyncio
-import base64
 import logging
 import struct
 from pathlib import Path
@@ -195,20 +194,28 @@ def test_v1_gets_the_same_events_as_before(
 
 
 def test_audio_goes_up_as_16_khz_whatever_the_client_sends(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pauses: None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pauses: None, mobile_live_v2: dict[str, Any]
 ) -> None:
     provider = Provider(monkeypatch)
+    rate = mobile_live_v2["sample_rate"]
+    start = mobile_live_v2["chunks"][0]["offset_ms"]
+    duration = 2000
     with TestClient(create_app(settings_for(tmp_path))) as client:
         use(client, "compatible")
-        with client.websocket_connect(url(rate=24_000), headers=SIDECAR) as socket:
-            socket.receive_json()
-            samples = struct.pack("<h", 1000) * 24_000 * 2  # two seconds at 24 kHz
+        with client.websocket_connect(url(offset=start, rate=rate), headers=SIDECAR) as socket:
+            assert socket.receive_json()["protocol"] == 2
+            samples = struct.pack("<h", 1000) * (rate * duration // 1000)
             socket.send_json(
-                {"type": "input_audio_buffer.append", "audio": base64.b64encode(samples).decode()}
+                {"type": "input_audio_buffer.append", "audio": pcm_b64(samples), "offset_ms": start}
             )
             socket.send_json({"type": "input_audio_buffer.commit"})
             events = until(socket, "transcript.flushed")
-    assert events[0]["end_ms"] in range(1990, 2010)  # 2 s on the recording clock, not 3 s
+    piece, flushed = events
+    assert piece["type"] == "transcript.piece" and piece["final"] is True
+    assert piece["start_ms"] == start
+    # The resampling filter can keep a sub-millisecond tail.
+    assert piece["end_ms"] in (start + duration - 1, start + duration)
+    assert flushed == {"type": "transcript.flushed", "until_ms": piece["end_ms"]}
     assert Provider.wav_rate(provider.uploads()[0]) == 16_000
 
 

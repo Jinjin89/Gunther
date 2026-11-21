@@ -312,6 +312,38 @@ def test_drafts_and_a_final_share_an_id_and_times_follow_the_recording_clock(
     }
 
 
+def test_24_khz_stream_matches_the_mobile_v2_event_fixture(
+    tmp_path: Path, fake, mobile_live_v2: dict[str, Any]
+) -> None:
+    server = fake()
+    ready = mobile_live_v2["ready"]
+    chunks = mobile_live_v2["chunks"]
+    rate = mobile_live_v2["sample_rate"]
+    url = f"/api/recordings/live?protocol=2&sample_rate={rate}&offset_ms={chunks[0]['offset_ms']}"
+    with (
+        make_app(tmp_path, server, ready["model"]) as client,
+        client.websocket_connect(url, headers=SIDECAR) as socket,
+    ):
+        assert socket.receive_json() == ready
+        ids: dict[str, str] = {}
+        for chunk in chunks:
+            socket.send_json(
+                {
+                    "type": "input_audio_buffer.append",
+                    "audio": audio(chunk["duration_ms"], rate),
+                    "offset_ms": chunk["offset_ms"],
+                }
+            )
+            for expected in chunk["events"]:
+                actual = socket.receive_json()
+                if "id" in actual:
+                    actual["id"] = ids.setdefault(actual["id"], f"piece-{len(ids) + 1}")
+                assert actual == expected
+        socket.send_json({"type": "input_audio_buffer.commit"})
+        assert socket.receive_json() == mobile_live_v2["commit"]
+    assert len(server.real_tasks()) == 2
+
+
 def test_a_commit_with_nothing_to_finish_is_flushed_at_once_and_v1_hears_nothing(
     tmp_path: Path, fake
 ) -> None:

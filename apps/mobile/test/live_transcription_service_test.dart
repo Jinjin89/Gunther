@@ -6,6 +6,8 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gunther_mobile/data/services/live_transcription_service.dart';
 
+import 'support/mobile_live_fixture.dart';
+
 void main() {
   group('live transcription endpoint policy', () {
     test('maps secure and exact-loopback API bases without query tokens', () {
@@ -167,6 +169,62 @@ void main() {
     },
   );
 
+  test('v2 wire frames keep 24 kHz audio and commit flowing', () async {
+    final fixture = await loadMobileLiveV2();
+    final socket = _FakeLiveTranscriptionSocket();
+    final service = LiveTranscriptionService(
+      baseUri: Uri.parse('https://knowledge.example/api/'),
+      connector: (_, _) async => socket,
+    );
+    final events = <LiveTranscriptionEvent>[];
+    final subscription = service.events.listen(events.add);
+    addTearDown(() async {
+      await service.dispose();
+      await subscription.cancel();
+      await socket.dispose();
+    });
+
+    await service.connect();
+    socket.receive(fixture['ready']! as Map<String, Object?>);
+    await _waitUntil(
+      () => events.whereType<LiveTranscriptionReadyEvent>().isNotEmpty,
+    );
+    final rate = fixture['sample_rate']! as int;
+    expect(rate, liveTranscriptionSampleRate);
+    final sentAudio = <Uint8List>[];
+    final chunks = (fixture['chunks']! as List).cast<Map<String, Object?>>();
+    for (final chunk in chunks) {
+      final duration = chunk['duration_ms']! as int;
+      final byteCount = rate * 2 * duration ~/ 1000;
+      final pcm = Uint8List(byteCount)
+        ..fillRange(0, byteCount, sentAudio.length + 1);
+      service.appendPcm(pcm);
+      sentAudio.add(pcm);
+      for (final frame
+          in (chunk['events']! as List).cast<Map<String, Object?>>()) {
+        socket.receive(frame);
+      }
+      await Future<void>.delayed(Duration.zero);
+    }
+    service.commit();
+    socket.receive(fixture['commit']! as Map<String, Object?>);
+    await Future<void>.delayed(Duration.zero);
+
+    final sent = socket.sent.map(
+      (message) => jsonDecode(message) as Map<String, Object?>,
+    );
+    expect(sent.map((message) => message['type']), [
+      'input_audio_buffer.append',
+      'input_audio_buffer.append',
+      'input_audio_buffer.commit',
+    ]);
+    expect(
+      sent.take(2).map((message) => base64Decode(message['audio'] as String)),
+      sentAudio,
+    );
+    expect(events.whereType<LiveTranscriptionErrorEvent>(), isEmpty);
+  });
+
   test(
     'bounds offline PCM and flushes it before commit after reconnect',
     () async {
@@ -318,7 +376,7 @@ class _FakeLiveTranscriptionSocket implements LiveTranscriptionSocket {
     sent.add(message);
   }
 
-  void receive(Map<String, Object> message) {
+  void receive(Map<String, Object?> message) {
     _messages.add(jsonEncode(message));
   }
 

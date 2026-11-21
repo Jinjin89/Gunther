@@ -165,9 +165,9 @@ def answer_text(monkeypatch: pytest.MonkeyPatch, text: str = "hello") -> list[ht
     return seen
 
 
-def live_url(recording_id: str | None, rate: int = 16_000) -> str:
+def live_url(recording_id: str | None, rate: int = 16_000, *, offset: int = 0) -> str:
     extra = f"&recording_id={recording_id}" if recording_id else ""
-    return f"/api/recordings/live?protocol=2&sample_rate={rate}&offset_ms=0{extra}"
+    return f"/api/recordings/live?protocol=2&sample_rate={rate}&offset_ms={offset}{extra}"
 
 
 def test_the_segmented_path_keeps_a_copy_at_the_right_offsets_and_says_it_can_check(
@@ -198,25 +198,39 @@ def test_the_segmented_path_keeps_a_copy_at_the_right_offsets_and_says_it_can_ch
         assert audio[1000 * 32 : 4000 * 32] == bytes(3000 * 32)
 
 
-def test_a_24_khz_client_is_kept_as_16_khz(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reconnecting_24_khz_client_keeps_16_khz_audio_on_the_recording_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mobile_live_v2: dict[str, Any]
+) -> None:
     answer_text(monkeypatch)
+    rate = mobile_live_v2["sample_rate"]
+    covered = []
     with TestClient(create_app(settings_for(tmp_path))) as client:
         with_provider(client)
         recording_id = start_recording(client)
-        with client.websocket_connect(live_url(recording_id, 24_000), headers=SIDECAR) as socket:
-            socket.receive_json()
-            socket.send_json(
-                {
-                    "type": "input_audio_buffer.append",
-                    "audio": pcm_b64(struct.pack("<h", 500) * 24_000),
-                    "offset_ms": 0,
-                }
-            )
-            socket.send_json({"type": "input_audio_buffer.commit"})
-            while socket.receive_json()["type"] != "transcript.flushed":
-                pass
-        pcm = listen_copy.copy_paths(tmp_path / "recordings", recording_id)[0]
-        assert abs(pcm.stat().st_size - 32_000) <= 128
+        for chunk in mobile_live_v2["chunks"]:
+            start, duration = chunk["offset_ms"], chunk["duration_ms"]
+            samples = struct.pack("<h", 500) * (rate * duration // 1000)
+            with client.websocket_connect(
+                live_url(recording_id, rate, offset=start), headers=SIDECAR
+            ) as socket:
+                assert socket.receive_json()["check_again"] is True
+                socket.send_json({"type": "input_audio_buffer.append", "audio": pcm_b64(samples)})
+                socket.send_json({"type": "input_audio_buffer.commit"})
+                piece, flushed = socket.receive_json(), socket.receive_json()
+                assert piece["type"] == "transcript.piece" and piece["start_ms"] == start
+                assert flushed["type"] == "transcript.flushed"
+                end = start + duration
+                assert flushed["until_ms"] in (end - 1, end)
+                covered.append((start, end))
+    directory = tmp_path / "recordings"
+    (_, first_end), (second_start, _) = covered
+    gap, held = listen_copy.read_range(directory, recording_id, first_end, second_start)
+    assert held == covered
+    assert gap == bytes((second_start - first_end) * BYTES_PER_MS)
+    for start, end in covered:
+        pcm, _ = listen_copy.read_range(directory, recording_id, start, end)
+        # Compare away from filter startup and the sub-millisecond tail.
+        assert pcm[100 * BYTES_PER_MS : -BYTES_PER_MS] == tone(end - start - 101, 500)
 
 
 def test_no_copy_and_no_checking_without_a_capturing_recording_or_with_the_switch_off(
