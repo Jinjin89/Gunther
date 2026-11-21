@@ -299,6 +299,29 @@ describe("desktop knowledge API contract", () => {
     await expect(knowledgeApi.sources()).rejects.toThrow("Request failed with status 503");
   });
 
+  it("starts readings and fetches their parts, scripts, and kept audio", async () => {
+    const job = { clip: null, jobId: "job/one", parts: 2 };
+    const audio = () => new Response("audio", { headers: { "Content-Type": "audio/wav" } });
+    fetchMock.mockResolvedValueOnce(response(job))
+      .mockResolvedValueOnce(audio())
+      .mockResolvedValueOnce(response({ script: "Job script" }))
+      .mockResolvedValueOnce(response({ script: "Kept script" }))
+      .mockResolvedValueOnce(audio());
+    await expect(knowledgeApi.beginSpeech("ses/one", "msg/one", true)).resolves.toEqual(job);
+    await expect(knowledgeApi.speechPart("job/one", 0)).resolves.toMatchObject({ type: "audio/wav" });
+    await expect(knowledgeApi.speechScript({ jobId: "job/one" })).resolves.toEqual({ script: "Job script" });
+    await expect(knowledgeApi.speechScript({ clipId: "clip/one" })).resolves.toEqual({ script: "Kept script" });
+    await expect(knowledgeApi.speechAudio("clip/one")).resolves.toMatchObject({ type: "audio/wav" });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/sessions/ses%2Fone/messages/msg%2Fone/speech/begin?fresh=true",
+      "/api/speech/jobs/job%2Fone/parts/0",
+      "/api/speech/jobs/job%2Fone/script",
+      "/api/speech/clips/clip%2Fone/script",
+      "/api/speech/clips/clip%2Fone/audio",
+    ]);
+    expect(fetchMock.mock.calls[0]?.[1].method).toBe("POST");
+  });
+
   it("builds encoded web asset and live recording routes without touching port 8787", () => {
     expect(recordingSocketUrl("lecture & lab")).toBe("ws://localhost:3000/api/recordings/live?context=lecture%20%26%20lab");
     // Protocol 2 asks for sentences on the recording clock; dictation keeps the original form.

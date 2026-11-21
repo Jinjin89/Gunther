@@ -116,6 +116,24 @@ describe("reading an answer aloud", () => {
     expect(api.speechPart).toHaveBeenNthCalledWith(2, "j1", 1);
   });
 
+  it("stays stopped when the next part arrives after playback was interrupted", async () => {
+    let finishPart!: (part: Blob) => void;
+    const latePart = new Promise<Blob>((resolve) => { finishPart = resolve; });
+    api.beginSpeech.mockResolvedValue({ clip: null, jobId: "j1", parts: 2 });
+    api.speechPart.mockResolvedValueOnce(new Blob(["first"])).mockReturnValueOnce(latePart);
+    const user = userEvent.setup();
+    render(<SpeakerButton message={message} />);
+    await user.click(screen.getByRole("button", { name: "Read aloud" }));
+    await screen.findByRole("button", { name: "Pause" });
+    act(() => players[0]?.onended?.());
+    await waitFor(() => expect(readAloud.state).toMatchObject({ status: "making", part: 1 }));
+    await user.click(screen.getByRole("button", { name: "Stop" }));
+    await act(async () => { finishPart(new Blob(["late"])); });
+    expect(screen.getByRole("button", { name: "Read aloud" })).toBeVisible();
+    expect(players).toHaveLength(1);
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2);
+  });
+
   it("asks for what a Mac's speakers need, and says why they may stay silent when told no", async () => {
     const user = userEvent.setup();
     render(<SpeakerButton message={message} />);

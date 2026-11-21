@@ -67,4 +67,6 @@ provider starts in that key's region.
 `GET /settings/tts` · `POST|PUT|DELETE /settings/tts/providers[/{id}]` · `PUT /settings/tts/roles`
 · `POST /settings/tts/sample` (a provider being edited, or the Answers job)
 · `DELETE /settings/tts/cache`
-· `POST /sessions/{sid}/messages/{mid}/speech` → clip · `GET /speech/clips/{id}/audio|script`
+· `POST /sessions/{sid}/messages/{mid}/speech/begin` → clip or job
+· `GET /speech/jobs/{id}/parts/{n}` · `GET /speech/jobs/{id}/script`
+· `GET /speech/clips/{id}/audio|script`

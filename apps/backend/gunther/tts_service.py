@@ -359,14 +359,14 @@ class Clip:
     voice: str | None
 
 
-def _clip_of(row: SpeechClip, cached: bool) -> Clip:
+def _cached_clip(row: SpeechClip) -> Clip:
     options = json.loads(row.options_json or "{}")
     return Clip(
         row.id,
         row.message_id,
         row.duration_seconds,
         row.audio_bytes,
-        cached,
+        True,
         row.described_by,
         row.provider,
         options.get("voice"),
@@ -454,7 +454,6 @@ class TtsService:
     def __init__(self, sessions: sessionmaker[Session], directory: Path) -> None:
         self.sessions = sessions
         self.directory = directory
-        self._locks: dict[str, asyncio.Lock] = {}
         self._running: dict[str, Job] = {}
         self._jobs: dict[str, Job] = {}
         self._tasks: set[asyncio.Task[None]] = set()
@@ -473,39 +472,6 @@ class TtsService:
 
     async def sample(self, resolved: Resolved) -> bytes:
         return await self.synthesize(resolved, SAMPLE_TEXT)
-
-    async def speak(
-        self, session_id: str, message_id: str, resolved: Resolved, gateway: ModelGateway | None
-    ) -> Clip:
-        """The clip for an assistant message, made now or found."""
-
-        with session_scope(self.sessions) as session:
-            message = session.scalar(
-                select(SessionMessage).where(
-                    SessionMessage.id == message_id, SessionMessage.session_id == session_id
-                )
-            )
-            if message is None:
-                raise SpeechNotFound("There is no such message")
-            if message.role != "assistant":
-                raise TtsError("Only answers are read aloud.")
-            content = message.content
-        key = cache_key(content, resolved)
-        # One at a time per clip: a second click while it is being made waits, then plays it.
-        lock = self._locks.setdefault(key, asyncio.Lock())
-        async with lock:
-            found = self._find(key)
-            if found is not None:
-                return found
-            script = await narrate(
-                content,
-                gateway,
-                understands_structure=resolved.provider.reads_structure,
-            )
-            audio = await self.synthesize(resolved, script.text)
-            return await asyncio.to_thread(
-                self._store, message_id, key, resolved, script.text, script.model, audio
-            )
 
     async def begin(
         self,
@@ -635,7 +601,7 @@ class TtsService:
                 # The audio was deleted from disk: forget the clip and make it again.
                 session.delete(row)
                 return None
-            return _clip_of(row, cached=True)
+            return _cached_clip(row)
 
     def _store(
         self,
@@ -645,7 +611,7 @@ class TtsService:
         script: str,
         described_by: str | None,
         audio: bytes,
-    ) -> Clip:
+    ) -> None:
         self.directory.mkdir(parents=True, exist_ok=True)
         name = f"{key[:32]}.wav"
         temporary = self.directory / f".{secrets.token_hex(4)}.tmp"
@@ -666,8 +632,6 @@ class TtsService:
                 duration_seconds=round(wav_seconds(audio), 2),
             )
             session.add(row)
-            session.flush()
-            return _clip_of(row, cached=False)
 
     # Finding and clearing --------------------------------------------------------
 

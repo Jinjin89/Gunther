@@ -1,6 +1,7 @@
 import dataclasses
 import io
 import json
+import time
 import wave
 from pathlib import Path
 
@@ -269,11 +270,30 @@ def test_paired_phones_cannot_read_or_change_it(tmp_path: Path) -> None:
 # Reading an answer -----------------------------------------------------------------------
 
 
+def finish_reading(client: TestClient, url: str, begun: dict) -> dict:
+    """Fetch playable parts, then wait for the whole clip to finish saving."""
+    job_id = begun["jobId"]
+    assert begun["clip"] is None and job_id and begun["parts"] > 0
+    for index in range(begun["parts"]):
+        part = client.get(f"/api/speech/jobs/{job_id}/parts/{index}", headers=SIDECAR)
+        assert part.status_code == 200 and part.headers["content-type"] == "audio/wav"
+    # The final part may be ready to play while the background job is saving the clip.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        replay = client.post(url, headers=SIDECAR).json()
+        if replay["clip"] is not None:
+            assert replay["clip"]["cached"] and replay["parts"] == 1
+            return replay["clip"]
+        assert replay["jobId"] == job_id
+        time.sleep(0.01)
+    pytest.fail("The speech job did not save its clip")
+
+
 def test_reading_needs_a_voice_first(tmp_path: Path, spoken) -> None:
     with app_for(tmp_path) as client:
         session_id, message_id = answer(client, "Hello.")
         response = client.post(
-            f"/api/sessions/{session_id}/messages/{message_id}/speech", headers=SIDECAR
+            f"/api/sessions/{session_id}/messages/{message_id}/speech/begin", headers=SIDECAR
         )
     assert response.status_code == 409 and "Choose a voice" in response.json()["detail"]
     assert spoken == []
@@ -283,37 +303,40 @@ def test_the_second_listen_is_played_from_disk_not_made_again(tmp_path: Path, sp
     with app_for(tmp_path) as client:
         setup(client)
         session_id, message_id = answer(client, "## Result\n\nCD3D marks **T cells** [1].")
-        url = f"/api/sessions/{session_id}/messages/{message_id}/speech"
-        first = client.post(url, headers=SIDECAR).json()
-        second = client.post(url, headers=SIDECAR).json()
-        assert first["cached"] is False and second["cached"] is True
-        assert first["id"] == second["id"] and len(spoken) == 1
-        assert spoken[0][1] == "Result.\n\nCD3D marks T cells."
-        audio = client.get(f"/api/speech/clips/{first['id']}/audio", headers=SIDECAR)
+        url = f"/api/sessions/{session_id}/messages/{message_id}/speech/begin"
+        begun = client.post(url, headers=SIDECAR).json()
+        clip = finish_reading(client, url, begun)
+    with app_for(tmp_path) as client:
+        assert client.post(url, headers=SIDECAR).json()["clip"] == clip
+        assert len(spoken) == 1 and spoken[0][1] == "Result.\nCD3D marks T cells."
+        audio = client.get(f"/api/speech/clips/{clip['id']}/audio", headers=SIDECAR)
         assert audio.status_code == 200 and audio.headers["content-type"] == "audio/wav"
         assert wav_seconds(audio.content) == pytest.approx(0.1, abs=0.01)
         # A different voice is a different clip.
         choose(client, voice="Ethan")
-        third = client.post(url, headers=SIDECAR).json()
-        assert third["id"] != first["id"] and third["voice"] == "Ethan" and len(spoken) == 2
+        other_voice = finish_reading(client, url, client.post(url, headers=SIDECAR).json())
+        assert other_voice["id"] != clip["id"] and other_voice["voice"] == "Ethan"
+        assert len(spoken) == 2
         stats = client.get("/api/settings/tts", headers=SIDECAR).json()["cache"]
         assert stats["clips"] == 2 and stats["bytes"] > 0
         cleared = client.delete("/api/settings/tts/cache", headers=SIDECAR).json()
         assert cleared["cache"]["clips"] == 0
         assert list((tmp_path / "speech").glob("*.wav")) == []
         # After clearing, reading makes it again.
-        assert client.post(url, headers=SIDECAR).json()["cached"] is False
+        finish_reading(client, url, client.post(url, headers=SIDECAR).json())
+        assert len(spoken) == 3
 
 
 def test_a_clip_whose_file_was_deleted_is_made_again(tmp_path: Path, spoken) -> None:
     with app_for(tmp_path) as client:
         setup(client)
         session_id, message_id = answer(client, "One sentence.")
-        url = f"/api/sessions/{session_id}/messages/{message_id}/speech"
-        client.post(url, headers=SIDECAR)
+        url = f"/api/sessions/{session_id}/messages/{message_id}/speech/begin"
+        first = finish_reading(client, url, client.post(url, headers=SIDECAR).json())
         for file in (tmp_path / "speech").glob("*.wav"):
             file.unlink()
-        assert client.post(url, headers=SIDECAR).json()["cached"] is False
+        again = finish_reading(client, url, client.post(url, headers=SIDECAR).json())
+        assert again["id"] != first["id"]
         assert len(spoken) == 2
 
 
@@ -322,15 +345,17 @@ def test_a_table_is_described_by_a_model_before_it_is_spoken(tmp_path: Path, spo
     with app_for(tmp_path, fake) as client:
         setup(client)
         session_id, message_id = answer(client, TABLE_ANSWER)
-        clip = client.post(
-            f"/api/sessions/{session_id}/messages/{message_id}/speech", headers=SIDECAR
-        ).json()
+        url = f"/api/sessions/{session_id}/messages/{message_id}/speech/begin"
+        begun = client.post(url, headers=SIDECAR).json()
+        job_script = client.get(f"/api/speech/jobs/{begun['jobId']}/script", headers=SIDECAR).json()
+        clip = finish_reading(client, url, begun)
         script = client.get(f"/api/speech/clips/{clip['id']}/script", headers=SIDECAR).json()
     said = spoken[0][1]
     assert "|" not in said and "5 mg" not in said
     assert said.startswith("Two drugs were compared.")
     assert "sixty-five percent" in said and said.endswith("B works better.")
-    assert script["script"] == said and clip["describedBy"] == "DeepSeek:deepseek-flash"
+    assert job_script["script"] == said and script["script"].split() == said.split()
+    assert clip["describedBy"] == "DeepSeek:deepseek-flash"
     [request] = fake.requests
     assert "| B | 10 mg | 65% |" in str(request["messages"][-1]["content"])
 
@@ -340,7 +365,7 @@ def test_a_table_without_a_model_is_an_error_not_a_guess(tmp_path: Path, spoken)
         setup(client)
         session_id, message_id = answer(client, TABLE_ANSWER)
         response = client.post(
-            f"/api/sessions/{session_id}/messages/{message_id}/speech", headers=SIDECAR
+            f"/api/sessions/{session_id}/messages/{message_id}/speech/begin", headers=SIDECAR
         )
     assert response.status_code == 502 and "language model" in response.json()["detail"]
     assert spoken == []
@@ -351,9 +376,8 @@ def test_a_long_answer_is_cut_at_sentences_and_joined(tmp_path: Path, spoken) ->
     with app_for(tmp_path) as client:
         setup(client)
         session_id, message_id = answer(client, sentence * 40)
-        clip = client.post(
-            f"/api/sessions/{session_id}/messages/{message_id}/speech", headers=SIDECAR
-        ).json()
+        url = f"/api/sessions/{session_id}/messages/{message_id}/speech/begin"
+        clip = finish_reading(client, url, client.post(url, headers=SIDECAR).json())
     assert len(spoken) >= 3 and all(len(text) <= 500 for _, text in spoken)
     assert clip["durationSeconds"] == pytest.approx(0.1 * len(spoken), abs=0.05)
 
@@ -370,9 +394,11 @@ def test_a_supplier_failure_is_shown_and_nothing_is_kept(tmp_path: Path, monkeyp
     with app_for(tmp_path) as client:
         setup(client)
         session_id, message_id = answer(client, "Hello there.")
-        response = client.post(
-            f"/api/sessions/{session_id}/messages/{message_id}/speech", headers=SIDECAR
+        begun = client.post(
+            f"/api/sessions/{session_id}/messages/{message_id}/speech/begin", headers=SIDECAR
         )
+        assert begun.status_code == 200
+        response = client.get(f"/api/speech/jobs/{begun.json()['jobId']}/parts/0", headers=SIDECAR)
         sample = client.post("/api/settings/tts/sample", headers=SIDECAR, json={})
         assert client.get("/api/settings/tts", headers=SIDECAR).json()["cache"]["clips"] == 0
     assert response.status_code == 502 and "API key" in response.json()["detail"]
@@ -403,9 +429,11 @@ def test_only_answers_of_this_session_can_be_read(tmp_path: Path, spoken) -> Non
         setup(client)
         session_id, message_id = answer(client, "Hello.")
         missing = client.post(
-            f"/api/sessions/{session_id}/messages/nope/speech", headers=SIDECAR
+            f"/api/sessions/{session_id}/messages/nope/speech/begin", headers=SIDECAR
         )
-        wrong = client.post(f"/api/sessions/other/messages/{message_id}/speech", headers=SIDECAR)
+        wrong = client.post(
+            f"/api/sessions/other/messages/{message_id}/speech/begin", headers=SIDECAR
+        )
     assert missing.status_code == 404 and wrong.status_code == 404
 
 
@@ -506,21 +534,18 @@ def test_a_long_answer_is_handed_over_in_parts_and_kept_whole(tmp_path: Path, sp
         url = f"/api/sessions/{session_id}/messages/{message_id}/speech/begin"
         begun = client.post(url, headers=SIDECAR).json()
         assert begun["clip"] is None and begun["parts"] >= 3
-        for index in range(begun["parts"]):
-            part = client.get(f"/api/speech/jobs/{begun['jobId']}/parts/{index}", headers=SIDECAR)
-            assert part.status_code == 200 and part.headers["content-type"] == "audio/wav"
+        clip = finish_reading(client, url, begun)
         count = len(spoken)
         assert count == begun["parts"]
         missing = client.get(f"/api/speech/jobs/{begun['jobId']}/parts/99", headers=SIDECAR)
         assert missing.status_code == 404
         # Afterwards the whole answer is on disk and later listens just play it.
         again = client.post(url, headers=SIDECAR).json()
-        assert again["clip"]["cached"] is True and again["parts"] == 1 and len(spoken) == count
+        assert again["clip"] == clip and len(spoken) == count
         # Read again: the kept recording is dropped and made anew.
         redo = client.post(f"{url}?fresh=true", headers=SIDECAR).json()
         assert redo["clip"] is None and redo["jobId"] != begun["jobId"]
-        for index in range(redo["parts"]):
-            client.get(f"/api/speech/jobs/{redo['jobId']}/parts/{index}", headers=SIDECAR)
+        assert finish_reading(client, url, redo)["id"] != clip["id"]
         assert len(spoken) == 2 * count
         assert client.get("/api/settings/tts", headers=SIDECAR).json()["cache"]["clips"] == 1
 

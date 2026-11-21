@@ -407,30 +407,11 @@ def clear_cache(request: Request) -> dict[str, Any]:
     return overview(request)
 
 
-@router.post("/sessions/{session_id}/messages/{message_id}/speech")
-async def speak_message(session_id: str, message_id: str, request: Request) -> dict[str, Any]:
-    """The audio of an answer: made the first time, found after that."""
-
-    _owner_only(request)
-    resolved, problem = resolve(_config(request), *_registries(request))
-    if resolved is None:
-        raise HTTPException(409, problem)
-    try:
-        clip = await _service(request).speak(
-            session_id, message_id, resolved, request.app.state.models
-        )
-    except SpeechNotFound as error:
-        raise HTTPException(404, str(error)) from error
-    except TtsError as error:
-        raise HTTPException(502, str(error)) from error
-    return _clip_out(clip)
-
-
 @router.post("/sessions/{session_id}/messages/{message_id}/speech/begin")
 async def begin_speech(
     session_id: str, message_id: str, request: Request, fresh: bool = False
 ) -> dict[str, Any]:
-    """Like speak_message, but a first reading is handed over in parts to play as they arrive."""
+    """Find the kept clip or start a reading whose parts play as they arrive."""
 
     _owner_only(request)
     resolved, problem = resolve(_config(request), *_registries(request))

@@ -92,7 +92,6 @@ import type {
   SpeechProviderInput,
   SpeechRole,
   SpeechTestResult,
-  SpeechClip,
   SpeechStart,
   TtsProviderInput,
   TtsRoleInput,
@@ -829,9 +828,6 @@ export const knowledgeApi = {
   developerJobs: () => request<{ jobs: BackgroundJob[] }>("/developer/jobs").then((body) => body.jobs),
   /** A short line spoken with the settings on screen, saved or not. */
   ttsSample: (payload: TtsSampleInput) => requestBlob("/settings/tts/sample", { method: "POST", body: JSON.stringify(payload) }),
-  /** Make (or find) the audio of an answer. */
-  speakMessage: (sessionId: string, messageId: string) =>
-    request<SpeechClip>(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/speech`, { method: "POST" }),
   /** Find the audio of an answer, or start making it in parts that can play as they arrive. */
   beginSpeech: (sessionId: string, messageId: string, fresh = false) =>
     request<SpeechStart>(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/speech/begin${fresh ? "?fresh=true" : ""}`, { method: "POST" }),
