@@ -298,17 +298,21 @@ def agent_replies(
     return reply
 
 
+def cite_search_pool(request: dict[str, Any]) -> str:
+    """Give retrieval fixtures an answer with citations to their actual passages."""
+
+    pool = str(request["messages"][-1]["content"]).partition("\nThe pool:\n")[2]
+    refs = re.findall(r"^\[(\d+)\] \(", pool, flags=re.M)
+    citations = "".join(f"[{ref}]" for ref in refs)
+    return f"Retrieved evidence {citations}." if refs else "No evidence found."
+
+
 def ask_from_search(client, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Use a test model to cite the pool when a route fixture is testing retrieval."""
 
-    def answer(request: dict[str, Any]) -> str:
-        pool = str(request["messages"][-1]["content"]).partition("\nThe pool:\n")[2]
-        refs = re.findall(r"^\[(\d+)\] \(", pool, flags=re.M)
-        citations = "".join(f"[{ref}]" for ref in refs)
-        return f"Retrieved evidence {citations}." if refs else "No evidence found."
-
     service = client.app.state.knowledge_service
-    with patch.object(service, "models", gateway(FakeProvider(agent_replies(answer)))):
+    fake = FakeProvider(agent_replies(cite_search_pool))
+    with patch.object(service, "models", gateway(fake)):
         return ask_turn(client, session_id, payload)
 
 

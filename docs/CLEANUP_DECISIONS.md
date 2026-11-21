@@ -194,6 +194,11 @@ broke it and the focused suites missed it. From batch 04 on, before stopping, ru
 vitest when desktop files changed, and report pass/fail totals in NN.md. The Skills
 planner's private brief parser stays until batch 07 deletes the planner.
 
+When a batch touches the smoke's journey through Home, Capture, Inbox, Libraries,
+source details, Ask, Artifacts, Settings or Trash, also run
+`npm run smoke:desktop-ui` with headless Chromium and isolated loopback. Record the
+result in NN.md.
+
 # Round 8 — evals of retired code (batch 06)
 
 An eval that only measured the retired Skills planner (`evals/slides/plan.py`,

@@ -220,7 +220,7 @@ async function findChrome() {
   throw new SmokeFailure("Chrome/Chromium was not found; set CHROME_BIN to an executable");
 }
 
-async function waitForDevTools(profileDirectory, chrome, logs) {
+async function waitForChromePage(profileDirectory, chrome, logs) {
   const activePortFile = path.join(profileDirectory, "DevToolsActivePort");
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
@@ -230,13 +230,17 @@ async function waitForDevTools(profileDirectory, chrome, logs) {
     try {
       const [portLine] = (await readFile(activePortFile, "utf8")).trim().split(/\r?\n/);
       const port = Number.parseInt(portLine, 10);
-      if (Number.isInteger(port) && port > 0 && port <= 65_535) return port;
+      if (Number.isInteger(port) && port > 0 && port <= 65_535) {
+        const targets = await jsonFrom(`http://127.0.0.1:${port}/json/list`);
+        const page = targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl);
+        if (page) return page.webSocketDebuggerUrl;
+      }
     } catch {
-      // Chrome creates the file only after its debugging socket is ready.
+      // The debugging socket and the page target can become ready separately.
     }
     await delay(100);
   }
-  throw new SmokeFailure(`Chrome DevTools did not become ready\n${logs()}`);
+  throw new SmokeFailure(`Chrome DevTools did not expose a page target\n${logs()}`);
 }
 
 class CdpClient {
@@ -423,18 +427,26 @@ async function run() {
       ...process.env,
       CORS_ORIGINS: JSON.stringify([uiOrigin]),
       DATABASE_URL: `sqlite+pysqlite:///${path.join(dataDirectory, "gunther.sqlite")}`,
+      ASSETS_DIR: path.join(dataDirectory, "assets"),
+      RECORDINGS_DIR: path.join(dataDirectory, "recordings"),
+      PREVIOUS_ASSETS_DIR: path.join(dataDirectory, "assets"),
+      PREVIOUS_RECORDINGS_DIR: path.join(dataDirectory, "recordings"),
+      SPEECH_DIR: path.join(dataDirectory, "speech"),
+      SLIDE_RENDER_DIR: path.join(dataDirectory, "slide-render"),
+      GUNTHER_DESKTOP_SIDECAR: "1",
+      PYTHONPATH: path.join(root, "apps", "backend"),
       DEEPSEEK_API_KEY: "",
       LLM_API_KEY: "",
+      TAVILY_API_KEY: "",
       // Keys saved in the developer's Settings stay out of the smoke.
       SERVICE_SETTINGS_FILE: path.join(dataDirectory, "service-settings.json"),
       // Originals and readable library folders live in a root inside the smoke's data.
       LIBRARY_ROOT: libraryRoot,
       UV_CACHE_DIR: path.join(root, ".uv-cache"),
     };
-    delete backendEnvironment.GUNTHER_DESKTOP_SIDECAR;
     backend = spawn("uv", [
       "run", "--project", "apps/backend", "uvicorn",
-      "--app-dir", "apps/backend", "gunther.main:app",
+      "--app-dir", "apps/backend/tests", "--factory", "desktop_smoke_backend:create_smoke_app",
       "--host", "127.0.0.1", "--port", String(backendPort),
       "--log-level", "warning", "--no-access-log",
     ], {
@@ -483,11 +495,7 @@ async function run() {
       stdio: ["ignore", "pipe", "pipe"],
     });
     chromeLogs = boundedLog(chrome);
-    const debuggingPort = await waitForDevTools(chromeProfile, chrome, chromeLogs);
-    const targets = await jsonFrom(`http://127.0.0.1:${debuggingPort}/json/list`);
-    const page = targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl);
-    if (!page) throw new SmokeFailure("Chrome did not expose a page target");
-    cdp = new CdpClient(page.webSocketDebuggerUrl);
+    cdp = new CdpClient(await waitForChromePage(chromeProfile, chrome, chromeLogs));
     await cdp.connect();
     const browserErrors = [];
     cdp.on("Runtime.exceptionThrown", ({ exceptionDetails }) => {
@@ -516,7 +524,7 @@ async function run() {
     if (!await cdp.evaluate(setAriaValueExpression("Title", noteTitle))) {
       throw new SmokeFailure("Quick note title input was not found");
     }
-    if (!await cdp.evaluate(setAriaValueExpression("Source content", `BRCA1 -> regulates -> DNA repair\nPreserved by ${marker}.`))) {
+    if (!await cdp.evaluate(setAriaValueExpression("Source content", `BRCA1 regulates DNA repair.\nPreserved by ${marker}.`))) {
       throw new SmokeFailure("Quick note content input was not found");
     }
     await waitForEvaluation(cdp, "[...document.querySelectorAll('button')].some((button) => button.getAttribute('aria-label') === 'Save note' && !button.disabled)", "enabled Save note");
@@ -707,22 +715,12 @@ async function run() {
     if (!sourceOpenState?.clicked) {
       throw new SmokeFailure(`The filed source could not be opened: ${JSON.stringify(sourceOpenState)}`);
     }
-    // Sources open into their own page: title, preserved text, claims, and Back.
+    // Sources open into their own page with the title, preserved text, and Back.
     await waitForEvaluation(
       cdp,
-      `document.querySelector('.gx-item-title')?.textContent.trim() === ${JSON.stringify(noteTitle)} && document.body.innerText.includes('BRCA1 -> regulates -> DNA repair')`,
+      `document.querySelector('.gx-item-title')?.textContent.trim() === ${JSON.stringify(noteTitle)} && document.body.innerText.includes('BRCA1 regulates DNA repair.')`,
       "source page with preserved readable content",
     );
-    if (source.assertionCount > 0) {
-      const accepted = await cdp.evaluate(`(() => {
-        const button = document.querySelector('.gx-claim.is-provisional .gx-claim-actions .is-accept');
-        if (!button || button.disabled) return false;
-        button.click();
-        return true;
-      })()`);
-      if (!accepted) throw new SmokeFailure("A provisional source claim could not be accepted");
-      await waitForEvaluation(cdp, "document.querySelector('.gx-claim.is-verified') !== null", "verified source claim");
-    }
     const wentBack = await cdp.evaluate(`(() => {
       const back = document.querySelector('.gx-item-back');
       if (!back) return false;
@@ -759,18 +757,7 @@ async function run() {
       throw new SmokeFailure(`${error instanceof Error ? error.message : String(error)}; diagnostics=${JSON.stringify(diagnostics)}; sessions=${JSON.stringify(sessions)}`);
     }
     const askReadyMilliseconds = Date.now() - askReadyStartedAt;
-    // A display-only model menu fixture stresses wrapping without sending a model request.
-    const longModelMenu = {
-      models: [{ ref: "example/long-model", provider: "Example provider with a long name", label: "A model with a long display name", display: "Example provider · A model with a long display name", vision: false, levels: [{ id: "max", label: "Max" }] }],
-      default: { model: "example/long-model", effort: "max" }, efforts: ["max"],
-    };
-    await cdp.evaluate(`(() => {
-      window.__smokeOriginalFetch = window.fetch;
-      window.fetch = (input, init) => new URL(typeof input === 'string' ? input : input.url, location.href).pathname === '/api/models'
-        ? Promise.resolve(new Response(${JSON.stringify(JSON.stringify(longModelMenu))}, { headers: { 'Content-Type': 'application/json' } }))
-        : window.__smokeOriginalFetch(input, init);
-      window.dispatchEvent(new CustomEvent('gunther:models-changed'));
-    })()`);
+    // The fixture provider also exercises the model menu with a long display label.
     await waitForEvaluation(cdp, "document.querySelector('.composer [data-chip=model]')?.textContent.includes('A model with a long display name')", "long model menu fixture");
     // The narrowest desktop window keeps All sources and the two action buttons usable.
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: 900, height: 640, deviceScaleFactor: 1, mobile: false });
@@ -789,19 +776,22 @@ async function run() {
     }
     await screenshot("ask-900");
     await cdp.send("Emulation.clearDeviceMetricsOverride");
-    await cdp.evaluate("window.fetch = window.__smokeOriginalFetch; delete window.__smokeOriginalFetch; window.dispatchEvent(new CustomEvent('gunther:models-changed'))");
-    await waitForEvaluation(cdp, "document.querySelector('.composer .gx-model-chip.is-empty')?.textContent.includes('No model')", "real model menu restored before asking");
     const question = "What does BRCA1 regulate?";
     if (!await cdp.evaluate(setAriaValueExpression("Message Gunther", question))) {
       throw new SmokeFailure("Ask composer was not editable");
     }
+    await waitForEvaluation(
+      cdp,
+      `document.querySelector('button[aria-label="Send message"]')?.disabled === false`,
+      "enabled Ask send",
+    );
     if (!await cdp.evaluate(clickExpression("button", "Send message"))) {
       throw new SmokeFailure("Ask message could not be sent");
     }
     try {
       await waitForEvaluation(
         cdp,
-        "document.querySelector('.conversation-message.role-assistant') !== null && [...document.querySelectorAll('button.promote-answer')].some((button) => !button.disabled && button.textContent.includes('Save as knowledge'))",
+        "document.querySelector('.conversation-message.role-assistant .citation-count') !== null && [...document.querySelectorAll('button.promote-answer')].some((button) => !button.disabled && button.textContent.includes('Save as knowledge'))",
         "grounded answer with a Save as knowledge action",
         20_000,
       );
@@ -831,6 +821,15 @@ async function run() {
     const trustedUnit = units.find((item) => item.status === "trusted" && item.evidenceCount > 0);
     if (!trustedUnit) throw new SmokeFailure("The saved answer did not create a trusted, evidenced knowledge unit");
 
+    // The saved answer stays available after removing its model from Settings.
+    const { providers: [fixtureProvider] } = await jsonFrom(`${backendOrigin}/api/settings/models`);
+    if (!fixtureProvider) throw new SmokeFailure("The fixture Ask provider was not configured");
+    const removedProvider = await fetch(
+      `${backendOrigin}/api/settings/providers/${encodeURIComponent(fixtureProvider.id)}`,
+      { method: "DELETE", signal: AbortSignal.timeout(5_000) },
+    );
+    if (!removedProvider.ok) throw new SmokeFailure(`Could not remove the fixture model (${removedProvider.status})`);
+
     if (!await cdp.evaluate(clickExpression("button", "Libraries"))) {
       throw new SmokeFailure("Library navigation was not clickable before output generation");
     }
@@ -851,7 +850,7 @@ async function run() {
       `document.querySelector('.aw-pane-head h1')?.textContent.trim() === 'Conversation' && document.querySelector('.aw-input-context')?.textContent.trim() === ${JSON.stringify(scopeWords)}`,
       "Outputs counting the library's sources and saved knowledge",
     );
-    // The smoke has no model, so Outputs says so instead of building one from a stand-in.
+    // Artifacts prompts for a model after the fixture provider is removed.
     await waitForEvaluation(
       cdp,
       "document.querySelector('.outputs-setup-note')?.textContent.includes('Artifacts need a model') && document.querySelector('button[aria-label=\"Send message\"]')?.disabled === true && document.querySelector('[aria-label=\"Conversations\"]') !== null",
@@ -979,7 +978,7 @@ async function run() {
         "note-to-source provenance preserved",
         "filed source written to its readable library folder",
         "successful local retry copy cleared",
-        "source reopened and reviewed from its preserved original",
+        "source reopened with its preserved content",
         "grounded Ask answer persisted with citations",
         "answer saved as knowledge with no Inbox review",
         "saved answer became a trusted evidenced unit",

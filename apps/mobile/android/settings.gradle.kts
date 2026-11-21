@@ -8,6 +8,9 @@ pluginManagement {
             flutterSdkPath
         }
 
+    // Gradle forwards init scripts to included builds, which use their own plugin repositories.
+    val flutterPluginRepositories = settingsDir.resolve("flutter-plugin-repositories.init.gradle.kts")
+    gradle.startParameter.initScripts = gradle.startParameter.initScripts + flutterPluginRepositories
     includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
     repositories {
