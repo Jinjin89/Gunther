@@ -260,7 +260,7 @@ def test_the_stored_document_reads_the_same_everywhere(tmp_path, monkeypatch):
         response = client.post(
             "/api/captures/assets",
             params={"title": "Paper", "fileName": "paper.pdf", "kind": "paper",
-                    "knowledgeBaseId": base(client), "deferProcessing": "true"},
+                    "knowledgeBaseId": base(client)},
             content=pdf.read_bytes(), headers={"content-type": "application/pdf"},
         )
         assert response.status_code == 201, response.text
@@ -423,7 +423,7 @@ def test_a_reprocessed_paper_keeps_its_old_revision_whole(tmp_path, monkeypatch)
         saved = client.post(
             "/api/captures/assets",
             params={"title": "Paper", "fileName": "paper.pdf", "kind": "paper",
-                    "knowledgeBaseId": base(client), "deferProcessing": "true"},
+                    "knowledgeBaseId": base(client)},
             content=pdf.read_bytes(), headers={"content-type": "application/pdf"},
         ).json()["importResult"]["source"]["id"]
         worker = client.app.state.processing_worker

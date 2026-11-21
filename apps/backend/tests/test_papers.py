@@ -98,7 +98,6 @@ def upload(client: TestClient, base_id: str, file_name: str, data: bytes) -> str
             "fileName": file_name,
             "kind": "paper",
             "knowledgeBaseId": base_id,
-            "deferProcessing": "true",
         },
         content=data,
         headers={"Content-Type": "application/pdf"},

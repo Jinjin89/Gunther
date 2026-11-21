@@ -30,6 +30,22 @@ def capture(client: TestClient, kind: str = "recording") -> dict:
     return response.json()
 
 
+def test_deferred_text_import_keeps_an_explicit_structured_assertion(tmp_path: Path) -> None:
+    statement = "CD3D -> marker_of -> T cell"
+    with client_for(tmp_path) as client:
+        receipt = client.post("/api/sources?deferAnalysis=true", json={
+            "title": "Entered relationship", "kind": "note", "content": statement,
+        }).raise_for_status().json()
+        assert receipt["created"]["assertions"] == 0
+        assert client.app.state.processing_worker.run_once(ai=True)
+        source = client.get(f"/api/sources/{receipt['source']['id']}").raise_for_status().json()
+        [claim] = source["assertions"]
+        assert claim["subject"]["label"] == "CD3D"
+        assert claim["predicate"] == "marker_of"
+        assert claim["object"]["label"] == "T cell"
+        assert claim["evidence"][0]["quote"] == statement
+
+
 @pytest.mark.parametrize("kind", ["recording", "note"])
 def test_capture_is_readable_without_a_model_and_analysis_survives_restart(tmp_path, kind):
     with client_for(tmp_path) as client:

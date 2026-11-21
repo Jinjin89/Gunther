@@ -22,7 +22,7 @@ import {
   type SourceView,
 } from "./sourceContent";
 import { DigestCard } from "./views/DigestCard";
-import { DocumentBody } from "./views/DocumentView";
+import { DocumentBody, useStructure } from "./views/DocumentView";
 import { ImageBody } from "./views/ImageView";
 import { ResearchBody, TextBody, WebBody } from "./views/ReaderViews";
 import { RecordingBody } from "./views/RecordingView";
@@ -81,7 +81,10 @@ export function SourceItem({ source: initial, bases, nav, onResolved, onOpenBase
   }, [source.content, source.recordingDurationSeconds, view]);
   const web = useMemo(() => (view === "web" ? parseWebContent(source.content) : null), [source.content, view]);
   const research = useMemo(() => (view === "research" ? parseResearchContent(source.content) : null), [source.content, view]);
-  const file = useMemo(() => (view === "document" || view === "image" ? parseFileContent(source.content) : null), [source.content, view]);
+  const isFile = view === "document" || view === "image";
+  const structure = useStructure(source.id, isFile);
+  const manifest = structure.data?.document?.manifest;
+  const file = useMemo(() => isFile ? parseFileContent(source.content, manifest) : null, [isFile, source.content, manifest]);
   const table = useMemo(() => (view === "table" ? parseDelimitedTable(source.content) : null), [source.content, view]);
 
   const libraries = source.knowledgeBases ?? [];
@@ -178,9 +181,12 @@ export function SourceItem({ source: initial, bases, nav, onResolved, onOpenBase
       { label: "Type", value: type },
       size ? { label: "Size", value: formatBytes(size) } : null,
       file.ocrStatus ? { label: "Text recognition", value: `${file.ocrStatus}${file.ocrProvider ? ` · ${file.ocrProvider}` : ""}` } : null,
+      file.processingNote ? { label: "Reading warning", value: file.processingNote } : null,
       (asset?.contentHash ?? file.sha256) ? { label: "Fingerprint", value: <code>{shortHash(asset?.contentHash ?? file.sha256!)}</code>, copy: asset?.contentHash ?? file.sha256!, title: "SHA-256 of the original file" } : null,
     ];
-    body = view === "image" ? <ImageBody source={source} file={file} /> : <DocumentBody source={source} file={file} />;
+    body = view === "image"
+      ? <ImageBody source={source} file={file} structure={structure} />
+      : <DocumentBody source={source} file={file} structure={structure} />;
   } else if (view === "table") {
     meta = [created, table ? `${table.rows.length.toLocaleString()} rows · ${table.header.length} columns` : null];
     details = [

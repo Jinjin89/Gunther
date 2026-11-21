@@ -524,7 +524,6 @@ async def capture_asset(
     kind: Annotated[SourceKind, Query()] = "file",
     knowledge_base_id: Annotated[str | None, Query(alias="knowledgeBaseId", max_length=160)] = None,
     notes: Annotated[str, Query(max_length=5_000)] = "",
-    defer_processing: Annotated[bool, Query(alias="deferProcessing")] = False,
 ) -> AssetCaptureOut:
     try:
         return await _assets(request).capture(
@@ -536,7 +535,6 @@ async def capture_asset(
             knowledge_base_id=knowledge_base_id,
             notes=notes,
             expected_size=_declared_body_size(request),
-            defer_processing=defer_processing,
         )
     except AssetTooLargeError as error:
         raise HTTPException(status_code=413, detail=str(error)) from error

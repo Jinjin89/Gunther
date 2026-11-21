@@ -186,8 +186,9 @@ for commands, measurements and remaining boundaries.
 
 ## API guide
 
-- `POST /api/captures/assets?...&deferProcessing=true`: preserve original, create source,
-  assign library and queue parsing. Inspect `importResult.source.processing`.
+- `POST /api/captures/assets` preserves the original, creates or reuses the source,
+  assigns the library and queues parsing for new captures. The receipt includes the
+  asset and source IDs. Read the processing state at `importResult.source.processing`.
 - `GET /api/sources/{id}/structure?offset=0&limit=100`: current structured representation;
   `nextOffset` paginates up to 500 blocks per response.
 - Add `revision_id` and `block_id` to resolve a historical citation exactly.

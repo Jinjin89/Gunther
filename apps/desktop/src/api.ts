@@ -306,7 +306,6 @@ async function uploadAsset(
     title,
     fileName: file.name,
     kind,
-    deferProcessing: "true",
   });
   if (knowledgeBaseId) params.set("knowledgeBaseId", knowledgeBaseId);
   if (notes.trim()) params.set("notes", notes.trim().slice(0, 5_000));

@@ -2,7 +2,7 @@ import type { SourceDetail, SourceDocument } from "@gunther/contracts";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseFileContent } from "../sourceContent";
-import { DocumentBody } from "./DocumentView";
+import { DocumentBody, useStructure } from "./DocumentView";
 
 const api = vi.hoisted(() => ({ sourceDocument: vi.fn(), sourceStructure: vi.fn(), reprocessSource: vi.fn(), sourcePaper: vi.fn() }));
 vi.mock("../../api", () => ({ knowledgeApi: api, sourceAssetUrl: (id: string) => `/api/assets/${id}` }));
@@ -14,6 +14,12 @@ const source: SourceDetail = {
   asset: { id: "ast_pdf", contentHash: "abc", originalName: "report.pdf", mediaType: "application/pdf", sizeBytes: 100, downloadUrl: "", createdAt: "" },
 };
 const file = parseFileContent(source.content);
+
+function Reader() {
+  const structure = useStructure(source.id);
+  return <DocumentBody source={source} file={file} structure={structure} />;
+}
+
 function document(state: SourceDocument["processing"]["state"], revisionId = "native"): SourceDocument {
   return {
     sourceId: source.id, revisionId, parser: "fixture", nextOffset: null, manifest: {}, references: [],
@@ -38,7 +44,7 @@ describe("document layout status", () => {
   it("keeps native content visible while reading layout and polls for the replacement", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     api.sourceDocument.mockResolvedValueOnce(document("running")).mockResolvedValue(document("ready", "layout"));
-    render(<DocumentBody source={source} file={file} />);
+    render(<Reader />);
     expect(await screen.findByText("Reading layout…")).toBeVisible();
     expect(screen.getByText("Native readable paragraph.")).toBeVisible();
     await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
@@ -49,7 +55,7 @@ describe("document layout status", () => {
 
   it("explains failure and retries without clearing the readable revision", async () => {
     api.sourceDocument.mockResolvedValue(document("failed"));
-    render(<DocumentBody source={source} file={file} />);
+    render(<Reader />);
     expect(await screen.findByText("Layout parsing failed")).toBeVisible();
     expect(screen.getByText(/the time budget was exceeded/)).toBeVisible();
     expect(screen.getByText("Native readable paragraph.")).toBeVisible();
@@ -65,7 +71,7 @@ describe("document layout status", () => {
 
   it("shows cancellation with retry and preserves the existing text", async () => {
     api.sourceDocument.mockResolvedValue(document("cancelled"));
-    render(<DocumentBody source={source} file={file} />);
+    render(<Reader />);
     expect(await screen.findByText("Layout reading was cancelled")).toBeVisible();
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
     expect(screen.getByText("Native readable paragraph.")).toBeVisible();
@@ -76,7 +82,7 @@ describe("document layout status", () => {
     first.nextOffset = 500;
     first.references = [{ id: "ref", elementId: "reference", label: "1", raw: "A source reference.", metadata: {} }];
     api.sourceDocument.mockResolvedValueOnce(first).mockRejectedValueOnce(new Error("Could not load the next page."));
-    render(<DocumentBody source={source} file={file} />);
+    render(<Reader />);
     const button = await screen.findByRole("button", { name: "Continue reading" });
     expect(button.compareDocumentPosition(screen.getByRole("heading", { name: "References" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(button);
@@ -95,7 +101,7 @@ describe("document layout status", () => {
 
   it("can refresh an already completed extraction without removing the current text", async () => {
     api.sourceDocument.mockResolvedValue(document("ready"));
-    render(<DocumentBody source={source} file={file} />);
+    render(<Reader />);
     fireEvent.click(await screen.findByRole("button", { name: "Read again" }));
     await waitFor(() => expect(api.reprocessSource).toHaveBeenCalledWith(source.id));
     expect(screen.getByText("Native readable paragraph.")).toBeVisible();
@@ -103,7 +109,7 @@ describe("document layout status", () => {
 
   it("explains a failed structure check and tries again with the same Read again action", async () => {
     api.sourceDocument.mockResolvedValue(structured({ state: "failed", by: "rules", error: "The model did not answer in the expected form." }));
-    render(<DocumentBody source={source} file={file} />);
+    render(<Reader />);
     expect(await screen.findByText("Structure check failed: The model did not answer in the expected form.")).toBeVisible();
     expect(screen.getByText("Read and indexed")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
@@ -115,7 +121,7 @@ describe("document layout status", () => {
   it("names the model that checked the structure and waits while the document is read again", async () => {
     const checked = { state: "checked", by: "deepseek:deepseek-flash", error: null };
     api.sourceDocument.mockResolvedValueOnce(structured(checked)).mockResolvedValue(structured(checked, "running"));
-    render(<DocumentBody source={source} file={file} />);
+    render(<Reader />);
     expect(await screen.findByText("Structure checked by deepseek-flash")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Read again" }));
     expect(await screen.findByText("Reading layout…")).toBeVisible();
@@ -124,11 +130,11 @@ describe("document layout status", () => {
 
   it("asks for a model when the structure was only drafted, and shows nothing for an older document", async () => {
     api.sourceDocument.mockResolvedValueOnce(structured({ state: "needs-key", by: "rules", error: null }));
-    const drafted = render(<DocumentBody source={source} file={file} />);
+    const drafted = render(<Reader />);
     expect(await screen.findByText("Structure not checked by a model. Add one in Settings → Models, then Read again.")).toBeVisible();
     drafted.unmount();
     api.sourceDocument.mockResolvedValueOnce(document("ready", "layout"));
-    const older = render(<DocumentBody source={source} file={file} />);
+    const older = render(<Reader />);
     expect(await screen.findByText("Layout readable paragraph.")).toBeVisible();
     expect(older.container.querySelector(".gx-structure-status")).toBeNull();
   });

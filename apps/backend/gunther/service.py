@@ -894,11 +894,13 @@ class KnowledgeService:
         payload: CreateSourceInput,
         *,
         initialize_source: Callable[[Session, Source], None] | None = None,
+        fingerprint: str | None = None,
+        find_existing_capture: Callable[[Session], Source | None] | None = None,
         defer_processing: bool = False,
         defer_analysis: bool = False,
     ) -> ImportResultOut:
         content = payload.content.strip()
-        content_hash = source_fingerprint(payload.title, payload.kind, content)
+        content_hash = fingerprint or source_fingerprint(payload.title, payload.kind, content)
 
         with self._serialize_source_import(content_hash):
             return self._import_source(
@@ -906,6 +908,7 @@ class KnowledgeService:
                 content,
                 content_hash,
                 initialize_source=initialize_source,
+                find_existing_capture=find_existing_capture,
                 defer_processing=defer_processing,
                 defer_analysis=defer_analysis,
             )
@@ -917,6 +920,7 @@ class KnowledgeService:
         content_hash: str,
         *,
         initialize_source: Callable[[Session, Source], None] | None = None,
+        find_existing_capture: Callable[[Session], Source | None] | None = None,
         defer_processing: bool = False,
         defer_analysis: bool = False,
     ) -> ImportResultOut:
@@ -928,6 +932,8 @@ class KnowledgeService:
             ):
                 raise LookupError(f"Knowledge Base {payload.knowledge_base_id} was not found")
             existing = session.scalar(select(Source).where(Source.content_hash == content_hash))
+            if existing is None and find_existing_capture is not None:
+                existing = find_existing_capture(session)
             if existing:
                 return self._duplicate_import_result(
                     session,

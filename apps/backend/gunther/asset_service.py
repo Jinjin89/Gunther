@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import os
 import re
@@ -22,7 +21,7 @@ from pypdf import PageObject, PdfReader
 from pypdf import filters as pdf_filters
 from pypdf.errors import PdfReadError
 from pypdf.generic import ArrayObject
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -34,6 +33,7 @@ from gunther.models import (
     ProcessingAsset,
     ProcessingJob,
     Source,
+    SourceRevision,
     WebSnapshot,
 )
 from gunther.ocr import OcrError, OcrPage, OcrProvider, UnavailableOcrProvider
@@ -41,13 +41,11 @@ from gunther.pdf_text import reflow, vocabulary_of
 from gunther.schemas import (
     AssetCaptureOut,
     AssetOut,
-    AssetProcessingOut,
     CreateSourceInput,
-    ImportResultOut,
     SourceKind,
-    SourceSummaryOut,
 )
 from gunther.service import KnowledgeService
+from gunther.source_identity import asset_capture_fingerprint, source_fingerprint
 from gunther.storage_budget import StorageBudget
 
 MAX_ASSET_BYTES = 512 * 1024 * 1024
@@ -157,10 +155,10 @@ def _character_limited(
     )
 
 
-def _read_prefix(path: Path, limit: int) -> tuple[bytes, bool]:
+def _read_text_prefix(path: Path) -> tuple[bytes, bool]:
     size = path.stat().st_size
     with path.open("rb") as source:
-        return source.read(limit), size > limit
+        return source.read(MAX_TEXT_INPUT_BYTES), size > MAX_TEXT_INPUT_BYTES
 
 
 def _preflight_archive(path: Path) -> None:
@@ -555,7 +553,7 @@ def extract_asset_content(
             text, limitation = _epub_text(path)
             return AssetTextExtraction(text, limitation)
         if suffix in {".html", ".htm"} or media_type.startswith("text/html"):
-            data, truncated = _read_prefix(path, MAX_TEXT_INPUT_BYTES)
+            data, truncated = _read_text_prefix(path)
             text, limitation = _character_limited(
                 _html_text(data),
                 (
@@ -571,7 +569,7 @@ def extract_asset_content(
             suffix in {".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".xml"}
             or media_type.startswith("text/")
         ):
-            data, truncated = _read_prefix(path, MAX_TEXT_INPUT_BYTES)
+            data, truncated = _read_text_prefix(path)
             text, limitation = _character_limited(
                 _decode_text(data),
                 (
@@ -881,14 +879,7 @@ class AssetService:
             temporary.unlink(missing_ok=True)
 
     @staticmethod
-    def _source_content(
-        asset: Asset,
-        extracted: str,
-        limitation: str | None,
-        notes: str,
-        ocr_status: str = "not_needed",
-        ocr_provider: str | None = None,
-    ) -> str:
+    def _source_content(asset: Asset, notes: str) -> str:
         metadata = (
             "# Original file\n\n"
             f"File: {asset.original_name}\n"
@@ -896,19 +887,7 @@ class AssetService:
             f"Size: {asset.size_bytes} bytes\n"
             f"SHA-256: {asset.content_hash}"
         )
-        sections = [metadata]
-        if notes.strip():
-            sections.append(f"## Your context\n\n{notes.strip()}")
-        if ocr_status != "not_needed":
-            ocr_lines = [f"OCR status: {ocr_status}"]
-            if ocr_provider:
-                ocr_lines.append(f"OCR provider: {ocr_provider}")
-            sections.append("## OCR provenance\n\n" + "\n".join(ocr_lines))
-        if limitation:
-            sections.append(f"## Processing note\n\n{limitation}")
-        if extracted.strip():
-            sections.append(f"## Extracted content\n\n{extracted.strip()}")
-        return "\n\n".join(sections)[:1_000_000]
+        return f"{metadata}\n\n## Your context\n\n{notes.strip()}" if notes.strip() else metadata
 
     async def capture(
         self,
@@ -921,7 +900,6 @@ class AssetService:
         knowledge_base_id: str | None,
         notes: str,
         expected_size: int | None = None,
-        defer_processing: bool = False,
     ) -> AssetCaptureOut:
         temporary, content_hash, size = await self._receive(
             stream,
@@ -938,76 +916,55 @@ class AssetService:
         finally:
             temporary.unlink(missing_ok=True)
 
-        stored_path = self.assets_dir / asset.relative_path
-        if defer_processing:
-            from gunther.knowledge_index import enqueue
+        from gunther.knowledge_index import LEGACY_ASSET_PARSER, enqueue
 
-            def initialize(session: Session, source: Source) -> None:
-                source.asset_id = asset.id
-                enqueue(session, source.id, "parse_asset", f"parse_asset:{source.id}:v1")
+        content = self._source_content(asset, notes)
+        upload_name = _safe_name(file_name)
+        upload_type = media_type[:160] or "application/octet-stream"
 
-            imported = self.knowledge_service.import_source(
-                CreateSourceInput(
-                    title=title, kind=kind, knowledge_base_id=knowledge_base_id,
-                    content=self._source_content(asset, "", None, notes),
-                ),
-                initialize_source=initialize, defer_processing=True,
-            )
-            return AssetCaptureOut(
-                asset=self._out(asset), import_result=imported,
-                processing=AssetProcessingOut(note="Original saved. Background processing queued."),
-            )
-        extraction = await asyncio.to_thread(
-            extract_asset_content,
-            stored_path,
-            asset.original_name,
-            asset.media_type,
-            self.ocr_provider,
-        )
-        source_content = self._source_content(
-            asset,
-            extraction.text[:MAX_EXTRACTED_CHARACTERS],
-            extraction.limitation,
-            notes,
-            extraction.ocr_status,
-            extraction.ocr_provider,
-        )
+        def initialize(session: Session, source: Source) -> None:
+            source.asset_id = asset.id
+            enqueue(session, source.id, "parse_asset", f"parse_asset:{source.id}:v1")
+
+        def find_earlier_queued_source(session: Session) -> Source | None:
+            # The earlier queued writer hashed the submitted metadata as source text.
+            # Inline captures have an initial text revision, so their hash is ambiguous.
+            if (upload_name, upload_type, size) != (
+                asset.original_name, asset.media_type, asset.size_bytes,
+            ):
+                return None
+            queued = select(ProcessingJob.id).where(
+                ProcessingJob.source_id == Source.id,
+                ProcessingJob.dedupe_key == "parse_asset:" + Source.id + ":v1",
+            ).exists()
+            inline = select(SourceRevision.id).where(
+                SourceRevision.source_id == Source.id,
+                or_(SourceRevision.parser.startswith("gunther-text-"),
+                    SourceRevision.parser == LEGACY_ASSET_PARSER),
+            ).exists()
+            return session.scalar(select(Source).where(
+                Source.asset_id == asset.id,
+                Source.content_hash == source_fingerprint(title, kind, content),
+                queued,
+                ~inline,
+            ))
+
         imported = self.knowledge_service.import_source(
             CreateSourceInput(
                 title=title,
                 kind=kind,
-                content=source_content,
+                content=content,
                 knowledge_base_id=knowledge_base_id,
-            )
-        )
-        with session_scope(self.sessions) as session:
-            source = session.get(Source, imported.source.id)
-            if source is None:
-                raise RuntimeError("The captured source disappeared before its asset was linked.")
-            source.asset_id = asset.id
-            if (
-                asset.media_type == "application/pdf"
-                or Path(asset.original_name).suffix.lower() == ".pdf"
-            ):
-                from gunther.knowledge_index import enqueue
-
-                enqueue(session, source.id, "parse_asset", f"parse_asset:{source.id}:v1")
-        detail = self.knowledge_service.get_source(imported.source.id)
-        summary = SourceSummaryOut.model_validate(detail.model_dump())
-        return AssetCaptureOut(
-            asset=self._out(asset),
-            processing=AssetProcessingOut(
-                ocr_status=extraction.ocr_status,
-                ocr_provider=extraction.ocr_provider,
-                note=extraction.limitation,
             ),
-            import_result=ImportResultOut(
-                source=summary,
-                created=imported.created,
-                extraction_mode=imported.extraction_mode,
-                duplicate=imported.duplicate,
+            initialize_source=initialize,
+            fingerprint=asset_capture_fingerprint(
+                title, kind, notes, file_name=upload_name, media_type=upload_type,
+                content_hash=content_hash,
             ),
+            find_existing_capture=find_earlier_queued_source,
+            defer_processing=True,
         )
+        return AssetCaptureOut(asset=self._out(asset), import_result=imported)
 
     def download(self, asset_id: str) -> tuple[Path, str, str]:
         if not re.fullmatch(r"ast_[a-f0-9]{32}", asset_id):

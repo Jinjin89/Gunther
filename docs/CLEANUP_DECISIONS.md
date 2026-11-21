@@ -206,3 +206,16 @@ plan's "repoint the slide evals" for those three.
 
 NM-06's grading policy (required grading failure → Retry, optional → raw hits marked
 ungraded) lands in 08c with Ask's failure handling; A43c no longer carries that part.
+
+# Round 10 — batch 08f
+
+File and photo captures from both clients follow the desktop queued path, which has
+never run assertion analysis on files. The old mobile inline path's file assertions
+retire (no new model call per import). Text imports keep their deferred assertion
+analysis; explicit structured assertions keep their parser and its test.
+
+**Round 10b — legacy capture identity.** No parsing of user notes (headings, section
+order, prefixes) to recover an identity. A retried capture reuses an old inline
+capture only through an exact stored id (client capture / request id) or an exact
+fingerprint recomputed from the submitted fields alone. Otherwise it is a new capture:
+a rare duplicate is acceptable, attaching notes to the wrong source is not.

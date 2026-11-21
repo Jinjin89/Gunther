@@ -171,10 +171,19 @@ class RemoteKnowledgeRepository implements KnowledgeRepository {
         if (notes.trim().isNotEmpty) 'notes': notes.trim(),
       },
     ).query;
-    await _apiService.uploadFile(
+    final receipt = await _apiService.uploadFile(
       'captures/assets?$query',
       File(asset.path),
       contentType: asset.mediaType,
+    );
+    if (receipt case {
+      'asset': {'id': final String assetId},
+      'importResult': {'source': {'id': final String sourceId}},
+    } when assetId.trim().isNotEmpty && sourceId.trim().isNotEmpty) {
+      return;
+    }
+    throw const FormatException(
+      'The server did not confirm the saved file and source.',
     );
   }
 

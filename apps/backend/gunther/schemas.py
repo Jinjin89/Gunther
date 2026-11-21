@@ -117,12 +117,6 @@ class AssetOut(ApiModel):
     created_at: str
 
 
-class AssetProcessingOut(ApiModel):
-    ocr_status: Literal["not_needed", "completed", "degraded"] = "not_needed"
-    ocr_provider: str | None = None
-    note: str | None = None
-
-
 class SourceSummaryOut(ApiModel):
     id: str
     title: str
@@ -312,7 +306,6 @@ class ImportResultOut(ApiModel):
 
 class AssetCaptureOut(ApiModel):
     asset: AssetOut
-    processing: AssetProcessingOut = Field(default_factory=AssetProcessingOut)
     import_result: ImportResultOut
 
 

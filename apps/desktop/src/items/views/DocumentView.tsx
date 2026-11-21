@@ -34,7 +34,7 @@ export function useStructure(sourceId: string, enabled = true) {
     const load = async () => {
       try {
         const document = await knowledgeApi.sourceDocument?.(sourceId).catch(() => null);
-        const result = document?.elements.length
+        const result = document && (document.elements.length || Object.keys(document.manifest).length)
           ? { ...document, blocks: document.elements, document }
           : await knowledgeApi.sourceStructure(sourceId, 0, null, null, STRUCTURE_PAGE);
         if (generation.current !== run) return;
@@ -84,7 +84,7 @@ export function useStructure(sourceId: string, enabled = true) {
       setError(reason instanceof Error ? reason.message : "The document could not be read again.");
     }
   }, [sourceId]);
-  return { data, error, loadingMore, loadMore, reprocess };
+  return { data: enabled && data?.sourceId === sourceId ? data : null, error, loadingMore, loadMore, reprocess };
 }
 
 export type ReaderBlock =
@@ -300,10 +300,15 @@ function FileCard({ source, file, pages, state, hasRevision, onReprocess }: { so
   );
 }
 
-export function DocumentBody({ source, file }: { source: SourceDetail; file: FileContent }) {
+export interface FileReadingProps {
+  source: SourceDetail;
+  file: FileContent;
+  structure: ReturnType<typeof useStructure>;
+}
+
+export function DocumentBody({ source, file, structure }: FileReadingProps) {
   const asset = source.asset;
   const original = asset && asset.sizeBytes <= ORIGINAL_TEXT_LIMIT ? readableOriginal(asset.mediaType, asset.originalName) : null;
-  const structure = useStructure(source.id);
   const [originalPage, setOriginalPage] = useState<number | null>(null);
   const blocks = useMemo(() => readerBlocks(structure.data?.blocks ?? []), [structure.data]);
   const pages = useMemo(() => {
@@ -315,27 +320,29 @@ export function DocumentBody({ source, file }: { source: SourceDetail; file: Fil
   }, [structure.data]);
   const state = structure.data?.processing.state ?? source.processing?.state;
   const working = state ? WORKING.includes(state) : false;
-  const continuation = (!original || structure.data?.document) && structure.data?.nextOffset != null ? (
+  const document = structure.data?.document?.elements.length ? structure.data.document : null;
+  const warning = structure.data?.processing.warning ?? file.processingNote;
+  const continuation = (!original || document) && structure.data?.nextOffset != null ? (
     <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm gx-continue" disabled={structure.loadingMore} onClick={() => void structure.loadMore()}>
       {structure.loadingMore ? <LoaderCircle className="spin" size={13} /> : null}Continue reading
     </button>
   ) : null;
   let content;
-  if (structure.data?.document) content = <CanonicalReader document={structure.data.document} continuation={continuation} onOpenPage={asset ? setOriginalPage : undefined} onReprocess={structure.reprocess} />;
+  if (document) content = <CanonicalReader document={document} continuation={continuation} onOpenPage={asset ? setOriginalPage : undefined} onReprocess={structure.reprocess} />;
   else if (original && asset) content = <OriginalText assetId={asset.id} mode={original} title={source.title} />;
   else if (blocks.length) content = <DocumentReader blocks={blocks} />;
   else if (file.extracted.trim()) content = <PlainText text={file.extracted} />;
   else if (working || !structure.data) content = <div className="gx-reading-skeleton is-working" aria-label="Reading the document">{[0, 1, 2, 3, 4].map((index) => <b key={index} />)}<p><LoaderCircle className="spin" size={13} />Gunther is reading this document. The original is already safe.</p></div>;
-  else content = <p className="gx-item-empty-line">{structure.data.processing.warning ?? "No readable text was found. The original file is preserved and can be downloaded."}</p>;
+  else content = <p className="gx-item-empty-line">{warning ?? "No readable text was found. The original file is preserved and can be downloaded."}</p>;
   return (
     <div className="gx-reader">
       <FileCard source={source} file={file} pages={pages} state={state} hasRevision={Boolean(structure.data?.revisionId ?? source.processing?.revisionId)} onReprocess={structure.reprocess} />
       {state === "ready" || state === "partial" ? <PaperCard sourceId={source.id} revisionId={structure.data?.revisionId} /> : null}
       <ContextNote text={file.context} />
-      {structure.data?.processing.warning && blocks.length > 0 && <p className="gx-reader-warning"><CircleAlert size={13} />{structure.data.processing.warning}</p>}
+      {warning && blocks.length > 0 && <p className="gx-reader-warning"><CircleAlert size={13} />{warning}</p>}
       {structure.error && <p className="gx-reader-warning" role="alert">{structure.error}</p>}
       {content}
-      {!structure.data?.document && continuation}
+      {!document && continuation}
       {originalPage !== null && <EvidencePanel citation={{ id: `page-${source.id}-${originalPage}`, kind: "library", sourceId: source.id, sourceTitle: source.title, assertionId: null, quote: "", locator: `Page ${originalPage}`, status: "verified", confidence: 1, anchor: { page: originalPage } }} onClose={() => setOriginalPage(null)} />}
     </div>
   );

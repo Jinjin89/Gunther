@@ -1,11 +1,10 @@
-import type { SourceDetail } from "@gunther/contracts";
-import { Check, Copy, Download, Maximize2, Minimize2, ScanText, X, ZoomIn } from "lucide-react";
+import { Check, CircleAlert, Copy, Download, Maximize2, Minimize2, ScanText, X, ZoomIn } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { sourceAssetUrl } from "../../api";
 import { useEscape } from "../../shortcuts/shortcuts";
-import { formatBytes, mediaTypeLabel, type FileContent } from "../sourceContent";
-import { useStructure } from "./DocumentView";
+import { formatBytes, mediaTypeLabel } from "../sourceContent";
+import type { FileReadingProps } from "./DocumentView";
 import { ContextNote, PlainText } from "./ReaderViews";
 
 interface Region {
@@ -38,16 +37,15 @@ function Lightbox({ url, title, onClose }: { url: string; title: string; onClose
   );
 }
 
-export function ImageBody({ source, file }: { source: SourceDetail; file: FileContent }) {
+export function ImageBody({ source, file, structure }: FileReadingProps) {
   const asset = source.asset;
   const url = asset ? sourceAssetUrl(asset.id) : null;
-  const structure = useStructure(source.id);
   const [active, setActive] = useState<number | null>(null);
   const [open, setOpen] = useState(false);
   const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(null);
   const [copied, setCopied] = useState(false);
   const regions = useMemo<Region[]>(() => (structure.data?.blocks ?? [])
-    .filter((block) => block.kind !== "heading" && block.headings[0] !== "Your context")
+    .filter((block) => block.kind !== "heading" && block.headings[0] !== "Your context" && block.content.trim())
     .map((block) => {
       const box = (block.anchor as { bboxPpm?: number[] }).bboxPpm;
       return { text: block.content, box: box?.length === 4 ? box as [number, number, number, number] : null };
@@ -63,7 +61,7 @@ export function ImageBody({ source, file }: { source: SourceDetail; file: FileCo
       // The text stays selectable.
     }
   };
-  const ocrUnavailable = file.ocrStatus && !["complete", "completed", "ok", "succeeded"].includes(file.ocrStatus);
+  const recognition = [file.ocrStatus, file.ocrProvider].filter(Boolean).join(" · ");
   return (
     <div className="gx-reader">
       {url ? (
@@ -105,6 +103,8 @@ export function ImageBody({ source, file }: { source: SourceDetail; file: FileCo
           <h2 className="gx-section-title"><ScanText size={14} />Text in this image</h2>
           {allText.trim() && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => void copy()}>{copied ? <Check size={13} /> : <Copy size={13} />}{copied ? "Copied" : "Copy text"}</button>}
         </header>
+        {recognition && <p className="gx-item-empty-line">Text recognition · {recognition}</p>}
+        {file.processingNote && <p className="gx-reader-warning"><CircleAlert size={13} />{file.processingNote}</p>}
         {regions.length > 0 ? (
           <ol className="gx-ocr-lines">
             {regions.map((region, index) => (
@@ -113,9 +113,9 @@ export function ImageBody({ source, file }: { source: SourceDetail; file: FileCo
           </ol>
         ) : file.extracted.trim() ? (
           <PlainText text={file.extracted} />
-        ) : (
+        ) : !file.processingNote && (
           <p className="gx-item-empty-line">{structure.data && !["pending", "queued", "running"].includes(structure.data.processing.state)
-            ? ocrUnavailable ? `No text was recognised (${file.ocrStatus}).` : "No text was recognised in this image."
+            ? "No text was recognised in this image."
             : "Looking for text in this image…"}</p>
         )}
       </section>

@@ -1,12 +1,18 @@
 from pathlib import Path
 
 import pytest
+from fake_models import FakeProvider
+from fake_models import gateway as model_gateway
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from starlette.websockets import WebSocketDisconnect
 
 from gunther.config import Settings
+from gunther.database import session_scope
+from gunther.extraction import ModelExtractor
 from gunther.main import create_app
 from gunther.mobile_gateway_runtime import MobileGatewayRuntime
+from gunther.models import ProcessingJob
 from gunther.pairing_exchange_guard import PairingExchangeGuard, PairingExchangeRejected
 
 SIDECAR_TOKEN = "sidecar-token-with-at-least-256-bits-000000000000000000000000"
@@ -73,13 +79,16 @@ def test_gateway_status_is_sidecar_admin_only_and_contains_no_secret(
 def test_gateway_surface_accepts_pairing_and_bearer_but_never_sidecar_token(
     tmp_path: Path,
 ) -> None:
-    settings = settings_for(tmp_path)
+    settings = settings_for(tmp_path).model_copy(update={"processing_worker_enabled": False})
     sidecar_app = create_app(settings, mobile_gateway=running_gateway())
     gateway_app = create_app(
         settings,
         allow_sidecar_auth=False,
         mobile_gateway=running_gateway(),
     )
+    provider = FakeProvider()
+    for app in (sidecar_app, gateway_app):
+        app.state.knowledge_service.extractor = ModelExtractor(model_gateway(provider))
 
     with TestClient(sidecar_app) as sidecar, TestClient(gateway_app) as gateway:
         pairing = sidecar.post(
@@ -122,6 +131,28 @@ def test_gateway_surface_accepts_pairing_and_bearer_but_never_sidecar_token(
         ):
             pass
         assert rejected.value.code == 1008
+
+        sources = []
+        for client, auth, title in ((sidecar, SIDECAR_HEADERS, "Desktop"),
+                                    (gateway, bearer, "Mobile")):
+            receipt = client.post(
+                "/api/captures/assets", params={"title": title, "fileName": "sample.txt"},
+                headers={**auth, "Content-Type": "text/plain"},
+                content=b"Exercise improves memory.",
+            ).raise_for_status().json()
+            assert receipt["importResult"]["source"]["processing"]["state"] == "queued"
+            sources.append(receipt["importResult"]["source"]["id"])
+
+        worker = sidecar_app.state.processing_worker
+        while worker.run_once():
+            pass
+        with session_scope(worker.sessions) as session:
+            for source_id in sources:
+                jobs = session.execute(select(ProcessingJob.kind, ProcessingJob.state).where(
+                    ProcessingJob.source_id == source_id,
+                )).all()
+                assert sorted(jobs) == [("parse_asset", "completed"), ("summarize", "completed")]
+        assert provider.requests == []
 
 
 def test_gateway_failure_remains_visible_without_publishable_address(

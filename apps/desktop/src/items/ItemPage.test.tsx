@@ -7,6 +7,7 @@ import { ItemPage, type ItemPageProps } from "./ItemPage";
 
 const api = vi.hoisted(() => ({
   source: vi.fn(),
+  sourceDocument: vi.fn(),
   sourceStructure: vi.fn(),
   notes: vi.fn(),
   updateNote: vi.fn(),
@@ -67,6 +68,19 @@ const structure = (blocks: SourceStructure["blocks"], state: SourceStructure["pr
   blocks,
 });
 
+const olderPhoto = () => source({
+  kind: "image",
+  title: "Whiteboard",
+  content: [
+    "# Original file\n\nFile: board.png\nMedia type: image/png",
+    "## OCR provenance\n\nOCR status: complete\nOCR provider: vision",
+    "## Processing note\n\nSome lines were not recognised.",
+    "## Extracted content\n\n<!-- gunther:page=1 -->\n"
+      + "<!-- gunther:ocr-region=1,2,3,4 unit=ppm provider=vision -->\nText from the saved photo.",
+  ].join("\n\n"),
+  asset: { id: "ast_photo", contentHash: "abc", originalName: "board.png", mediaType: "image/png", sizeBytes: 100, downloadUrl: "", createdAt: "" },
+});
+
 const renderPage = (overrides: Partial<ItemPageProps> = {}) => {
   const props: ItemPageProps = {
     item: { type: "source", id: "src_1" },
@@ -89,6 +103,7 @@ const renderPage = (overrides: Partial<ItemPageProps> = {}) => {
 
 beforeEach(() => {
   Object.values(api).forEach((mock) => mock.mockReset());
+  api.sourceDocument.mockResolvedValue(null);
   api.sourceStructure.mockResolvedValue(structure([]));
   api.sourcePaper.mockRejectedValue(new Error("This source has not been read yet"));
   api.fileSource.mockResolvedValue({});
@@ -251,6 +266,53 @@ describe("source pages", () => {
     const table = screen.getByRole("region", { name: "Table" });
     expect(within(table).getByRole("columnheader", { name: "gene" })).toBeVisible();
     expect(within(table).getByText("CD3E")).toBeVisible();
+  });
+
+  it.each([null, "tesseract"])("shows saved text and the current OCR warning with provider %s", async (ocrProvider) => {
+    api.source.mockResolvedValue(olderPhoto());
+    const warning = "The OCR engine could not recognise any lines.";
+    api.sourceDocument.mockResolvedValue({
+      ...structure([], "partial"),
+      elements: [],
+      references: [],
+      manifest: { ocrStatus: "degraded", ocrProvider, warning },
+    });
+    renderPage();
+    const status = ocrProvider ? `degraded · ${ocrProvider}` : "degraded";
+    expect(await screen.findByText(warning, { selector: ".gx-ocr p" })).toBeVisible();
+    expect(screen.getByText(`Text recognition · ${status}`, { selector: ".gx-ocr p" })).toBeVisible();
+    expect(screen.getByText(status, { selector: ".gx-details span" })).toBeVisible();
+    expect(screen.getByText(warning, { selector: ".gx-details span" })).toBeVisible();
+    expect(screen.getByText("Text from the saved photo.", { selector: ".gx-ocr p" })).toBeVisible();
+    expect(screen.queryByText(/gunther:(?:page|ocr-region)/)).toBeNull();
+    expect(screen.queryByText(/vision|Some lines were not recognised/)).toBeNull();
+    expect(api.sourceStructure).not.toHaveBeenCalled();
+  });
+
+  it("shows the saved OCR provenance and text when an older photo has no manifest", async () => {
+    api.source.mockResolvedValue(olderPhoto());
+    api.sourceDocument.mockResolvedValue({ ...structure([]), elements: [], references: [], manifest: {} });
+    renderPage();
+    expect(await screen.findByText("Text recognition · complete · vision")).toBeVisible();
+    expect(screen.getByText("complete · vision", { selector: ".gx-details span" })).toBeVisible();
+    expect(screen.getByText("Some lines were not recognised.", { selector: ".gx-ocr p" })).toBeVisible();
+    expect(screen.getByText("Text from the saved photo.")).toBeVisible();
+  });
+
+  it("shows the current OCR text when the reading has readable lines", async () => {
+    api.source.mockResolvedValue(olderPhoto());
+    api.sourceDocument.mockResolvedValue({
+      ...structure([]),
+      references: [],
+      manifest: { ocrStatus: "completed", ocrProvider: "tesseract", warning: null },
+      elements: [{
+        id: "line", parentId: null, kind: "paragraph", content: "Newly recognised text.",
+        locator: "Page 1", headings: [], anchor: {}, mentions: [],
+      }],
+    });
+    renderPage();
+    expect(await screen.findByText("Newly recognised text.")).toBeVisible();
+    expect(screen.queryByText("Text from the saved photo.")).toBeNull();
   });
 
   it("shows pasted rows as a data grid", async () => {

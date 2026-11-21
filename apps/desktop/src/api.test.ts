@@ -129,10 +129,14 @@ describe("desktop knowledge API contract", () => {
   });
 
   it("binds original file uploads to the workspace captured by the UI", async () => {
-    fetchMock.mockResolvedValueOnce(response({ asset: {}, importResult: {} }, 201));
+    const receipt = {
+      asset: { id: "ast_file" },
+      importResult: { source: { id: "src_file", processing: { state: "queued" } }, duplicate: false },
+    };
+    fetchMock.mockResolvedValueOnce(response(receipt, 201));
     const file = new File(["preserved bytes"], "paper.txt", { type: "text/plain" });
 
-    await knowledgeApi.captureAsset(
+    const saved = await knowledgeApi.captureAsset(
       file,
       "Primary paper",
       "file",
@@ -143,8 +147,10 @@ describe("desktop knowledge API contract", () => {
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/api/captures/assets?");
+    expect(new URL(url, "http://localhost").searchParams.has("deferProcessing")).toBe(false);
     expect(new Headers(init.headers).get("X-Gunther-Workspace-Id")).toBe("wsp_primary");
     expect(init.body).toBe(file);
+    expect(saved).toEqual(receipt);
   });
 
   it("binds durable recording session creation to its originating workspace", async () => {

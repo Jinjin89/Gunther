@@ -289,7 +289,6 @@ def capture_pdf(client, library):
             "fileName": "paper.pdf",
             "kind": "paper",
             "knowledgeBaseId": library,
-            "deferProcessing": "true",
         },
         content=b"%PDF-fixture",
         headers={"content-type": "application/pdf"},

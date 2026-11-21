@@ -322,7 +322,9 @@ def test_nonempty_asset_and_completed_recording_survive_full_restore(
     original_data = tmp_path / "original-data"
     restored_data = tmp_path / "restored-data"
     original_data.mkdir(mode=0o700)
-    original_settings = _real_settings(original_data)
+    original_settings = _real_settings(original_data).model_copy(
+        update={"processing_worker_enabled": False}
+    )
     asset_bytes = (
         b"FASTA alignment evidence -> supports -> conserved domain\n"
         b"This is the immutable source original used by the restore drill.\n"
@@ -362,6 +364,7 @@ def test_nonempty_asset_and_completed_recording_survive_full_restore(
         asset_id = capture["asset"]["id"]
         asset_hash = hashlib.sha256(asset_bytes).hexdigest()
         assert capture["asset"]["contentHash"] == asset_hash
+        assert client.app.state.processing_worker.run_once(ai=False)
 
         knowledge_session = client.post(
             f"/api/knowledge-bases/{knowledge_base_id}/sessions",

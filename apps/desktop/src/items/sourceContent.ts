@@ -279,22 +279,26 @@ function isFileContent(content: string): boolean {
   return content.startsWith("# Original file\n");
 }
 
-export function parseFileContent(content: string): FileContent {
+export function parseFileContent(content: string, manifest?: Record<string, unknown>): FileContent {
   const { head, tail } = tailAfter(content, ["Extracted content"]);
   const { preamble, sections } = splitSections(head);
   const section = (name: string) => sections.find((item) => item.heading === name)?.body ?? null;
   const ocr = section("OCR provenance") ?? "";
   const size = metadataValue(preamble, "Size")?.match(/^(\d+)/)?.[1];
+  const { ocrStatus, ocrProvider, warning } = manifest ?? {};
+  const hasOcrReading = typeof ocrStatus === "string";
   return {
     fileName: metadataValue(preamble, "File"),
     mediaType: metadataValue(preamble, "Media type"),
     sizeBytes: size ? Number.parseInt(size, 10) : null,
     sha256: metadataValue(preamble, "SHA-256"),
     context: section("Your context") || null,
-    ocrStatus: metadataValue(ocr, "OCR status"),
-    ocrProvider: metadataValue(ocr, "OCR provider"),
-    processingNote: section("Processing note") || null,
-    extracted: tail ?? "",
+    ocrStatus: hasOcrReading ? ocrStatus : metadataValue(ocr, "OCR status"),
+    ocrProvider: hasOcrReading ? (typeof ocrProvider === "string" ? ocrProvider : null) : metadataValue(ocr, "OCR provider"),
+    processingNote: hasOcrReading || warning !== undefined
+      ? (typeof warning === "string" ? warning : null)
+      : section("Processing note") || null,
+    extracted: tail?.replace(/^<!-- gunther:(?:page|ocr-region)=[^\r\n]* -->\r?\n?/gm, "").trim() ?? "",
   };
 }
 

@@ -4,10 +4,139 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gunther_mobile/data/models/capture.dart';
+import 'package:gunther_mobile/data/models/capture_outbox.dart';
 import 'package:gunther_mobile/data/repositories/knowledge_repository.dart';
+import 'package:gunther_mobile/data/services/capture_outbox_service.dart';
 import 'package:gunther_mobile/data/services/knowledge_api_service.dart';
+import 'package:gunther_mobile/features/capture/presentation/capture_view_model.dart';
+
+import 'app_test.dart' show FakeCaptureDevice, MemoryRecordingDraftStore;
 
 void main() {
+  test('a reopened file outbox waits for a complete queued receipt', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'queued-upload-test',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    CaptureOutboxService openOutbox() => CaptureOutboxService(
+      directoryProvider: () async => Directory('${directory.path}/outbox'),
+    );
+    final outbox = openOutbox();
+    const content = 'Original evidence from a shared file.';
+    final original = await File(
+      '${directory.path}/paper.txt',
+    ).writeAsString(content);
+    final entry = await outbox.enqueueAsset(
+      kind: CaptureOutboxKind.document,
+      asset: CapturedAsset(
+        path: original.path,
+        fileName: 'paper.txt',
+        mediaType: 'text/plain',
+        sizeBytes: content.length,
+      ),
+      payload: const {
+        'title': 'Shared paper',
+        'serverKind': 'file',
+        'systemShareId': 'share-file-001',
+      },
+    );
+    final staged = File((await outbox.resolveStagedAsset(entry.id)).path);
+
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests =
+        <({String method, Uri uri, String? mediaType, String body})>[];
+    final receipt = {
+      'asset': {'id': 'ast-saved'},
+      'importResult': {
+        'source': {
+          'id': 'src-saved',
+          'processing': {'state': 'queued'},
+        },
+        'duplicate': true,
+      },
+    };
+    final subscription = server.listen((request) async {
+      requests.add((
+        method: request.method,
+        uri: request.uri,
+        mediaType: request.headers.contentType?.mimeType,
+        body: await utf8.decoder.bind(request).join(),
+      ));
+      request.response.statusCode = HttpStatus.created;
+      request.response.headers.contentType = ContentType.json;
+      if (requests.length == 1) {
+        request.response.contentLength = utf8
+            .encode(jsonEncode(receipt))
+            .length;
+        final socket = await request.response.detachSocket(writeHeaders: true);
+        socket.write('{');
+        await socket.flush();
+        socket.destroy();
+        return;
+      }
+      request.response.write(
+        jsonEncode(
+          requests.length == 2
+              ? {
+                  'asset': {'id': 'ast-saved'},
+                }
+              : receipt,
+        ),
+      );
+      await request.response.close();
+    });
+    final api = KnowledgeApiService(
+      baseUrl: 'http://127.0.0.1:${server.port}/api/',
+    );
+    addTearDown(() async {
+      api.close();
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+    final repository = RemoteKnowledgeRepository(apiService: api);
+    CaptureViewModel openCapture(CaptureOutboxService store) =>
+        CaptureViewModel(
+          repository,
+          FakeCaptureDevice(),
+          recordingDraftStore: MemoryRecordingDraftStore(),
+          captureOutboxStore: store,
+        );
+
+    final first = openCapture(outbox);
+    await first.restoreCaptureOutbox();
+    first.dispose();
+    expect(
+      (await outbox.listEntries()).single.state,
+      CaptureOutboxState.retryable,
+    );
+    expect(await staged.readAsString(), content);
+
+    final reopenedOutbox = openOutbox();
+    final reopened = openCapture(reopenedOutbox);
+    addTearDown(reopened.dispose);
+    await reopened.restoreCaptureOutbox();
+    expect(reopened.outboxEntries.single.id, entry.id);
+    expect(reopened.outboxEntries.single.state, CaptureOutboxState.retryable);
+    expect(await staged.readAsString(), content);
+
+    expect(await reopened.retryCapture(entry.id), isTrue);
+    expect(await reopenedOutbox.listEntries(), isEmpty);
+    expect(await staged.exists(), isFalse);
+    expect(await original.readAsString(), content);
+    expect(requests, hasLength(3));
+    for (final request in requests) {
+      expect(request.method, 'POST');
+      expect(request.uri.path, '/api/captures/assets');
+      expect(request.uri.queryParameters, {
+        'title': 'Shared paper',
+        'fileName': 'paper.txt',
+        'kind': 'file',
+      });
+      expect(request.mediaType, 'text/plain');
+      expect(request.body, content);
+    }
+  });
+
   test(
     'web snapshots use the dedicated JSON endpoint and stable capture id',
     () async {

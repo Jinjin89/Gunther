@@ -251,7 +251,11 @@ def epub_order(archive: ZipFile) -> list[str]:
 
 
 def archive_document(path: Path, suffix: str) -> ParsedDocument:
-    from gunther.asset_service import _preflight_archive, _read_archive_member
+    from gunther.asset_service import (
+        MAX_ARCHIVE_TOTAL_EXTRACTED_BYTES,
+        _preflight_archive,
+        _read_archive_member,
+    )
 
     _preflight_archive(path)
     document = ParsedDocument(
@@ -262,7 +266,7 @@ def archive_document(path: Path, suffix: str) -> ParsedDocument:
 
         def member(name: str) -> bytes:
             nonlocal used
-            data = _read_archive_member(archive, name, IMAGE_TOTAL - used)
+            data = _read_archive_member(archive, name, MAX_ARCHIVE_TOTAL_EXTRACTED_BYTES - used)
             used += len(data)
             return data
 

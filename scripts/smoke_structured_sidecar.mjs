@@ -82,7 +82,7 @@ try {
   assert.equal((await request("/storage")).foldersEnabled, true);
   assert.equal((await fetch(origin + "/retrieval/status")).status, 401);
   const library = await post("/knowledge-bases", { title: "Packaged smoke", question: "What supports this claim?", description: "Disposable verification data" });
-  const captured = await request(`/captures/assets?title=Methods&fileName=methods.md&kind=file&knowledgeBaseId=${library.id}&deferProcessing=true`, {
+  const captured = await request(`/captures/assets?title=Methods&fileName=methods.md&kind=file&knowledgeBaseId=${library.id}`, {
     method: "POST", headers: { "Content-Type": "text/markdown" },
     body: "# Methods\nGenome quality requires careful controls.\n猫咪需要均衡饮食。",
   });

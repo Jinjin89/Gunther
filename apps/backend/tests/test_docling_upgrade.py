@@ -192,11 +192,7 @@ def test_layout_subprocess_is_terminated_on_timeout_or_cancellation(
     assert terminated == [True]
 
 
-def test_synchronous_pdf_capture_queues_layout_upgrade(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "gunther.asset_service.extract_asset_content",
-        lambda *args: AssetTextExtraction("Native capture."),
-    )
+def test_pdf_upload_acknowledges_the_original_before_reading(tmp_path):
     with client_for(tmp_path) as client:
         response = client.post(
             "/api/captures/assets",
@@ -204,10 +200,14 @@ def test_synchronous_pdf_capture_queues_layout_upgrade(tmp_path, monkeypatch):
             content=b"%PDF-fixture", headers={"content-type": "application/pdf"},
         )
         assert response.status_code == 201, response.text
-        saved = response.json()["importResult"]["source"]["id"]
+        receipt = response.json()
+        source = receipt["importResult"]["source"]
+        assert source["processing"]["state"] == "queued"
+        assert source["processing"]["revisionId"] is None
+        assert client.get(receipt["asset"]["downloadUrl"]).content == b"%PDF-fixture"
         with session_scope(client.app.state.processing_worker.sessions) as session:
             job = session.scalar(select(ProcessingJob).where(
-                ProcessingJob.source_id == saved, ProcessingJob.kind == "parse_asset",
+                ProcessingJob.source_id == source["id"], ProcessingJob.kind == "parse_asset",
             ))
             assert job is not None and job.state == "queued"
 

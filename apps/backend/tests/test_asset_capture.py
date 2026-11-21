@@ -1,3 +1,4 @@
+import asyncio
 import io
 import zlib
 from pathlib import Path
@@ -6,11 +7,15 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
+from sqlalchemy import select
 
 from gunther import asset_service
 from gunther.config import Settings
+from gunther.database import session_scope
 from gunther.main import create_app
+from gunther.models import ProcessingJob, Source
 from gunther.ocr import OcrError, OcrPage, OcrProvider, OcrRegion, UnavailableOcrProvider
+from gunther.schemas import CreateSourceInput
 
 
 class FakeOcrProvider(OcrProvider):
@@ -75,6 +80,7 @@ def make_client(tmp_path: Path, ocr_provider: OcrProvider | None = None) -> Test
                 seed_demo=False,
                 deepseek_api_key=None,
                 stt_provider="compatible",
+                processing_worker_enabled=False,
             ),
             ocr_provider=ocr_provider,
         )
@@ -92,6 +98,18 @@ def create_base(client: TestClient, title: str) -> str:
     )
     assert response.status_code == 201
     return response.json()["id"]
+
+
+def read_capture(client: TestClient, receipt: dict) -> dict:
+    source_id = receipt["importResult"]["source"]["id"]
+    assert client.app.state.processing_worker.run_once(ai=False)
+    return client.get(f"/api/sources/{source_id}/document").raise_for_status().json()
+
+
+def assert_queued_reading_creates_no_assertions(client: TestClient, source_id: str) -> None:
+    while client.app.state.processing_worker.run_once():
+        pass
+    assert client.get(f"/api/sources/{source_id}").raise_for_status().json()["assertions"] == []
 
 
 def docx_bytes(text: str) -> bytes:
@@ -202,7 +220,9 @@ def test_original_file_is_preserved_downloadable_and_visible_in_inbox(tmp_path: 
         assert asset["originalName"] == "markers.txt"
         assert asset["sizeBytes"] == len(original)
         assert source["asset"]["id"] == asset["id"]
-        assert source["assertionCount"] == 1
+        assert source["processing"]["state"] == "queued"
+        assert source["processing"]["jobId"]
+        assert source["processing"]["revisionId"] is None
 
         downloaded = client.get(asset["downloadUrl"])
         assert downloaded.status_code == 200
@@ -211,6 +231,9 @@ def test_original_file_is_preserved_downloadable_and_visible_in_inbox(tmp_path: 
         assert any(
             item["sourceId"] == source["id"] and item["state"] == "unfiled" for item in inbox
         )
+        document = read_capture(client, captured)
+        assert original.decode().strip() in [e["content"] for e in document["elements"]]
+        assert_queued_reading_creates_no_assertions(client, source["id"])
 
     stored = [path for path in (tmp_path / "assets").rglob("*") if path.is_file()]
     assert len(stored) == 1
@@ -277,18 +300,26 @@ def test_same_asset_is_deduplicated_but_can_be_filed_to_two_libraries(tmp_path: 
         assert len(client.get(f"/api/knowledge-bases/{second_base}/sources").json()) == 1
 
 
-def test_one_asset_can_back_two_distinct_source_contexts(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("field", "value"), [
+    ("title", "Meeting attachment"),
+    ("kind", "paper"),
+    ("notes", "Read the results"),
+    ("fileName", "attachment.txt"),
+])
+def test_one_asset_can_back_two_distinct_source_contexts(tmp_path: Path, field, value) -> None:
     original = b"Identical original bytes with two user-visible meanings."
+    params = {"title": "Course handout", "fileName": "shared.txt", "kind": "file",
+              "notes": "Read the methods"}
     with make_client(tmp_path) as client:
         first = client.post(
             "/api/captures/assets",
-            params={"title": "Course handout", "fileName": "shared.txt", "kind": "file"},
+            params=params,
             headers={"Content-Type": "text/plain"},
             content=original,
         ).json()
         second = client.post(
             "/api/captures/assets",
-            params={"title": "Meeting attachment", "fileName": "shared.txt", "kind": "paper"},
+            params={**params, field: value},
             headers={"Content-Type": "text/plain"},
             content=original,
         ).json()
@@ -297,6 +328,87 @@ def test_one_asset_can_back_two_distinct_source_contexts(tmp_path: Path) -> None
         assert first["importResult"]["source"]["id"] != second["importResult"]["source"]["id"]
         assert first["importResult"]["duplicate"] is False
         assert second["importResult"]["duplicate"] is False
+
+
+def test_a_receipt_lost_before_restart_reuses_the_source_asset_and_job(tmp_path: Path) -> None:
+    request = {
+        "params": {"title": "Reading", "fileName": "reading.txt", "notes": "For review"},
+        "headers": {"Content-Type": "text/plain"},
+        "content": b"An original paragraph with stable upload identity.",
+    }
+    with make_client(tmp_path) as client:
+        first = client.post("/api/captures/assets", **request).raise_for_status().json()
+    source = first["importResult"]["source"]
+
+    with make_client(tmp_path) as client:
+        replay = client.post("/api/captures/assets", **request).raise_for_status().json()
+        assert replay["asset"]["id"] == first["asset"]["id"]
+        assert replay["importResult"]["duplicate"] is True
+        assert replay["importResult"]["source"] == source
+        document = read_capture(client, replay)
+        assert document["processing"]["state"] == "ready"
+        assert document["processing"]["jobId"] == source["processing"]["jobId"]
+        with session_scope(client.app.state.processing_worker.sessions) as session:
+            jobs = session.scalars(select(ProcessingJob.id).where(
+                ProcessingJob.source_id == source["id"], ProcessingJob.kind == "parse_asset",
+            )).all()
+        assert jobs == [source["processing"]["jobId"]]
+
+
+@pytest.mark.parametrize("earlier_queued", [True, False], ids=["queued", "inline"])
+def test_v1_capture_replay_requires_a_stored_request_identity(tmp_path: Path, earlier_queued: bool):
+    original = b" \n"
+    notes = "Keep the original for reference."
+    with make_client(tmp_path) as client:
+        state = client.app.state
+        asset = asyncio.run(state.processing_worker.assets.preserve_bytes(
+            original, file_name="reading.txt", media_type="text/plain",
+        ))
+        original_base = create_base(client, "Original library")
+        target_base = create_base(client, "New library")
+        content = (
+            "# Original file\n\nFile: reading.txt\nMedia type: text/plain\n"
+            f"Size: {len(original)} bytes\nSHA-256: {asset.content_hash}\n\n"
+            f"## Your context\n\n{notes}"
+        )
+        service = state.knowledge_service
+        earlier = service.import_source(
+            CreateSourceInput(title="Reading", kind="file", content=content,
+                              knowledge_base_id=original_base),
+            defer_processing=earlier_queued,
+        ).source
+        with session_scope(service.sessions) as session:
+            session.get(Source, earlier.id).asset_id = asset.id
+        # Both a queued upload and a later re-read of an inline upload can have a parse job.
+        client.post(f"/api/sources/{earlier.id}/reprocess").raise_for_status()
+        existing = client.get(f"/api/sources/{earlier.id}").raise_for_status().json()
+        if not earlier_queued:
+            assert existing["processing"]["revisionId"]
+
+    request = {
+        "params": {"title": "Reading", "fileName": "reading.txt", "kind": "file",
+                   "notes": notes, "knowledgeBaseId": target_base},
+        "headers": {"Content-Type": "text/plain"},
+        "content": original,
+    }
+    with make_client(tmp_path) as client:
+        receipt = client.post("/api/captures/assets", **request).raise_for_status().json()
+        source = receipt["importResult"]["source"]
+        assert receipt["asset"]["id"] == asset.id
+        assert receipt["importResult"]["duplicate"] is earlier_queued
+        if earlier_queued:
+            assert source["id"] == earlier.id
+            assert source["processing"]["jobId"] == existing["processing"]["jobId"]
+        else:
+            assert source["id"] != earlier.id
+            assert client.get(f"/api/sources/{earlier.id}").json() == existing
+            assert source["processing"]["jobId"] != existing["processing"]["jobId"]
+        replay = client.post("/api/captures/assets", **request).raise_for_status().json()
+        assert replay["importResult"]["duplicate"] is True
+        assert replay["importResult"]["source"] == source
+        assert client.get(replay["asset"]["downloadUrl"]).content == original
+        library_sources = client.get(f"/api/knowledge-bases/{target_base}/sources").json()
+        assert [item["id"] for item in library_sources] == [source["id"]]
 
 
 def test_pdf_extraction_preserves_page_locator_for_evidence(tmp_path: Path) -> None:
@@ -309,10 +421,29 @@ def test_pdf_extraction_preserves_page_locator_for_evidence(tmp_path: Path) -> N
             content=original,
         )
         assert response.status_code == 201
-        source_id = response.json()["importResult"]["source"]["id"]
-        source = client.get(f"/api/sources/{source_id}").json()
-        assert "<!-- gunther:page=1 -->" in source["content"]
-        assert source["assertions"][0]["evidence"][0]["locator"].startswith("page 1")
+        document = read_capture(client, response.json())
+        [evidence] = [e for e in document["elements"] if "Genome -> contains" in e["content"]]
+        assert evidence["anchor"]["page"] == 1
+        assert evidence["locator"].startswith("Page 1")
+
+
+@pytest.mark.parametrize(("file_name", "media_type", "encode"), [
+    ("notes.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+     docx_bytes),
+    ("notes.epub", "application/epub+zip", epub_bytes),
+])
+def test_queued_archives_keep_text_and_the_original(tmp_path, file_name, media_type, encode):
+    text = "An original paragraph from a portable document."
+    original = encode(text)
+    with make_client(tmp_path) as client:
+        receipt = client.post(
+            "/api/captures/assets",
+            params={"title": "Notes", "fileName": file_name},
+            headers={"Content-Type": media_type}, content=original,
+        ).raise_for_status().json()
+        document = read_capture(client, receipt)
+        assert text in [element["content"] for element in document["elements"]]
+        assert client.get(receipt["asset"]["downloadUrl"]).content == original
 
 
 def test_image_ocr_creates_traceable_text_and_region_evidence(tmp_path: Path) -> None:
@@ -328,25 +459,22 @@ def test_image_ocr_creates_traceable_text_and_region_evidence(tmp_path: Path) ->
 
         assert response.status_code == 201
         captured = response.json()
-        assert captured["processing"] == {
-            "ocrStatus": "completed",
-            "ocrProvider": "fake_local",
-            "note": None,
-        }
-        source_id = captured["importResult"]["source"]["id"]
-        source = client.get(f"/api/sources/{source_id}").json()
-        assert "OCR status: completed" in source["content"]
-        assert "OCR provider: fake_local" in source["content"]
-        assert "<!-- gunther:page=1 -->" in source["content"]
-        assert (
-            "<!-- gunther:ocr-region=100000,200000,500000,50000 "
-            "unit=ppm provider=fake_local confidence=0.980 -->"
-        ) in source["content"]
-        evidence = source["assertions"][0]["evidence"][0]
-        assert evidence["quote"] == "Genome -> contains -> genes"
-        assert evidence["locator"].startswith("page 1 · region 100000,200000,500000,50000 ppm")
+        assert captured["importResult"]["source"]["processing"]["state"] == "queued"
+        assert provider.image_calls == []
+        document = read_capture(client, captured)
+        assert document["manifest"]["ocrStatus"] == "completed"
+        assert document["manifest"]["ocrProvider"] == "fake_local"
+        [evidence] = document["elements"]
+        assert evidence["content"] == "Genome -> contains -> genes"
+        assert evidence["anchor"]["page"] == 1
+        assert evidence["anchor"]["bboxPpm"] == [100_000, 200_000, 500_000, 50_000]
+        assert evidence["anchor"]["provider"] == "fake_local"
+        assert evidence["anchor"]["confidence"] == 0.98
         assert client.get(captured["asset"]["downloadUrl"]).content == original
         assert provider.image_calls and provider.image_calls[0][1] == 1
+        assert_queued_reading_creates_no_assertions(
+            client, captured["importResult"]["source"]["id"],
+        )
 
 
 def test_scanned_pdf_uses_ocr_and_preserves_pdf_page_region(tmp_path: Path) -> None:
@@ -361,14 +489,13 @@ def test_scanned_pdf_uses_ocr_and_preserves_pdf_page_region(tmp_path: Path) -> N
         )
 
         assert response.status_code == 201
-        captured = response.json()
-        assert captured["processing"]["ocrStatus"] == "completed"
-        assert captured["processing"]["ocrProvider"] == "fake_local"
-        source = client.get(f"/api/sources/{captured['importResult']['source']['id']}").json()
-        assert "Genome -> contains -> genes" in source["content"]
-        assert source["assertions"][0]["evidence"][0]["locator"].startswith(
-            "page 1 · region 100000,200000,500000,50000 ppm"
-        )
+        document = read_capture(client, response.json())
+        assert document["manifest"]["ocrStatus"] == "completed"
+        assert document["manifest"]["ocrProvider"] == "fake_local"
+        [evidence] = document["elements"]
+        assert evidence["content"] == "Genome -> contains -> genes"
+        assert evidence["anchor"]["page"] == 1
+        assert evidence["anchor"]["bboxPpm"] == [100_000, 200_000, 500_000, 50_000]
         assert provider.pdf_calls and provider.pdf_calls[0][1] == 1
 
 
@@ -396,12 +523,11 @@ def test_scanned_pdf_keeps_partial_ocr_when_one_page_fails(tmp_path: Path) -> No
         )
 
         assert response.status_code == 201
-        captured = response.json()
-        assert captured["processing"]["ocrStatus"] == "degraded"
-        assert "page 1" in captured["processing"]["note"]
-        source = client.get(f"/api/sources/{captured['importResult']['source']['id']}").json()
-        assert "<!-- gunther:page=2 -->" in source["content"]
-        assert source["assertions"][0]["evidence"][0]["locator"].startswith("page 2")
+        document = read_capture(client, response.json())
+        assert document["manifest"]["ocrStatus"] == "degraded"
+        assert "page 1" in document["manifest"]["warning"]
+        [evidence] = document["elements"]
+        assert evidence["anchor"]["page"] == 2
         assert [page for _, page in provider.pdf_calls] == [1, 2]
 
 
@@ -442,12 +568,14 @@ def test_unavailable_ocr_is_explicitly_degraded_and_keeps_original(tmp_path: Pat
 
         assert response.status_code == 201
         captured = response.json()
-        assert captured["processing"]["ocrStatus"] == "degraded"
-        assert captured["processing"]["ocrProvider"] is None
-        assert "deliberately absent" in captured["processing"]["note"]
-        source = client.get(f"/api/sources/{captured['importResult']['source']['id']}").json()
-        assert "OCR status: degraded" in source["content"]
-        assert "complete original remains available" in source["content"]
+        document = read_capture(client, captured)
+        assert document["elements"] == []
+        assert document["manifest"]["ocrStatus"] == "degraded"
+        assert document["manifest"]["ocrProvider"] is None
+        warning = document["manifest"]["warning"]
+        assert "deliberately absent" in warning
+        assert "complete original remains available" in warning
+        assert document["processing"]["warning"] == warning
         assert client.get(captured["asset"]["downloadUrl"]).content == original
         health = client.get("/api/health").json()
         assert health["ocrMode"] == "not_configured"
@@ -492,11 +620,11 @@ def test_text_and_html_only_read_a_bounded_prefix_but_keep_the_original(
         )
         assert captured.status_code == 201
         body = captured.json()
-        source = client.get(f"/api/sources/{body['importResult']['source']['id']}").json()
-
-        assert visible in source["content"]
-        assert hidden not in source["content"]
-        assert "limited to the first 64 bytes" in source["content"]
+        document = read_capture(client, body)
+        content = "\n".join(e["content"] for e in document["elements"])
+        assert visible in content
+        assert hidden not in content
+        assert "limited to the first 64 bytes" in document["processing"]["warning"]
         downloaded = client.get(body["asset"]["downloadUrl"])
         assert downloaded.content == original
 
@@ -535,11 +663,10 @@ def test_docx_compression_bomb_limit_degrades_to_downloadable_original(
         )
         assert captured.status_code == 201
         body = captured.json()
-        source = client.get(f"/api/sources/{body['importResult']['source']['id']}").json()
-
-        assert "skipped to protect device resources" in source["content"]
-        assert "archive member exceeds" in source["content"]
-        assert "A" * 200 not in source["content"]
+        document = read_capture(client, body)
+        assert "skipped to protect device resources" in document["processing"]["warning"]
+        assert "archive member exceeds" in document["processing"]["warning"]
+        assert not document["elements"]
         assert client.get(body["asset"]["downloadUrl"]).content == original
 
 
@@ -558,10 +685,9 @@ def test_epub_cumulative_decompression_limit_preserves_original(
         )
         assert captured.status_code == 201
         body = captured.json()
-        source = client.get(f"/api/sources/{body['importResult']['source']['id']}").json()
-
-        assert "skipped to protect device resources" in source["content"]
-        assert "cumulative decompression budget" in source["content"]
+        document = read_capture(client, body)
+        assert "skipped to protect device resources" in document["processing"]["warning"]
+        assert "cumulative decompression budget" in document["processing"]["warning"]
         assert client.get(body["asset"]["downloadUrl"]).content == original
 
 
@@ -580,10 +706,9 @@ def test_pdf_input_limit_skips_extraction_without_rejecting_capture(
         )
         assert captured.status_code == 201
         body = captured.json()
-        source = client.get(f"/api/sources/{body['importResult']['source']['id']}").json()
-
-        assert "PDF exceeds" in source["content"]
-        assert "complete original remains available" in source["content"]
+        document = read_capture(client, body)
+        assert "PDF exceeds" in document["manifest"]["warning"]
+        assert "complete original remains available" in document["manifest"]["warning"]
         assert client.get(body["asset"]["downloadUrl"]).content == original
 
 
@@ -602,9 +727,8 @@ def test_pdf_decompression_limit_skips_suspicious_page_and_keeps_original(
         )
         assert captured.status_code == 201
         body = captured.json()
-        source = client.get(f"/api/sources/{body['importResult']['source']['id']}").json()
-
-        assert "could not be safely extracted from 1 PDF page" in source["content"]
+        document = read_capture(client, body)
+        assert "could not be safely extracted from 1 PDF page" in document["manifest"]["warning"]
         assert client.get(body["asset"]["downloadUrl"]).content == original
 
 
@@ -623,7 +747,6 @@ def test_corrupt_archive_fails_closed_for_extraction_but_not_capture(tmp_path: P
         )
         assert captured.status_code == 201
         body = captured.json()
-        source = client.get(f"/api/sources/{body['importResult']['source']['id']}").json()
-
-        assert "Text extraction failed safely" in source["content"]
+        document = read_capture(client, body)
+        assert "Text extraction failed safely" in document["processing"]["warning"]
         assert client.get(body["asset"]["downloadUrl"]).content == original

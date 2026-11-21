@@ -20,7 +20,12 @@ from typing import TYPE_CHECKING
 from sqlalchemy import and_, or_, select, update
 
 from gunther import digest, papers, vector_index
-from gunther.asset_service import AssetService, _decode_text, _read_prefix, extract_asset_content
+from gunther.asset_service import (
+    AssetService,
+    _decode_text,
+    _read_text_prefix,
+    extract_asset_content,
+)
 from gunther.audio_decode import audio_duration_ms
 from gunther.database import session_scope
 from gunther.document_parser import DoclingError, DoclingParser
@@ -348,6 +353,10 @@ class ProcessingWorker:
                 )
                 # Metadata and user context are retained, but not indexed as file evidence.
                 document = text_document(extracted.text)
+                if extracted.ocr_status != "not_needed":
+                    document.manifest.update(
+                        ocrStatus=extracted.ocr_status, ocrProvider=extracted.ocr_provider
+                    )
                 warning = extracted.limitation
                 parser = ASSET_PARSER
                 if suffix in {".docx", ".epub", ".html", ".htm"}:
@@ -355,7 +364,7 @@ class ProcessingWorker:
                         document = (
                             archive_document(path, suffix)
                             if suffix in {".docx", ".epub"}
-                            else html_document(_decode_text(_read_prefix(path, 8 * 1024 * 1024)[0]))
+                            else html_document(_decode_text(_read_text_prefix(path)[0]))
                         )
                     except Exception as error:
                         warning = (
