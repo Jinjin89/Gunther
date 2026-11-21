@@ -23,8 +23,24 @@ from gunther.agent import (
     Tool,
     ToolFailure,
     check_citations,
+    check_claims,
+    check_evidence_hash,
     leads_in,
     renumber_citations,
+)
+from gunther.checks import (
+    PENDING,
+    Verdicts,
+    audit_verdict,
+    complete,
+    coverage_of,
+    finding,
+    has_stage,
+    issue_view,
+    map_refs,
+    merge_verdicts,
+    verdict,
+    verdicts_of,
 )
 from gunther.llm import ModelError, ModelGateway, ModelInfo
 from gunther.model_profiles import Effort
@@ -293,6 +309,22 @@ def section_hash(text: str) -> str:
     return hashlib.sha256(normal.encode("utf-8")).hexdigest()
 
 
+def check_heading_refs(
+    body: str, lines: list[str], by_ref: Mapping[int, Evidence] | None = None
+) -> str:
+    """Check a heading's conclusion against the passages used by its section."""
+    refs = "".join(
+        f"[{n}]" for n in dict.fromkeys(re.findall(r"\[(\d+)\]", body))
+        if by_ref is None or int(n) in by_ref
+    )
+    for index, line in enumerate(lines):
+        if re.match(r"^#{1,2}\s", line):
+            if refs and not re.search(r"\[\d+\]", line):
+                lines[index] = line.rstrip() + " " + refs
+            break
+    return "\n".join(lines)
+
+
 class Marked(NamedTuple):
     """A slide split at its layout marker."""
 
@@ -522,7 +554,7 @@ class BuiltOutput:
     outline: list[dict[str, str]]
     # The passages the text cites, with ``ref`` set to their number in the text.
     citations: list[ConversationCitationOut]
-    # One entry per checked section of the final text: {"hash", "issues"}.
+    # One entry per checked section of the final text: {"hash", "verdicts"}.
     checks: list[dict[str, Any]]
     model: ModelInfo
     effort: Effort | None
@@ -647,6 +679,19 @@ def cited_sentences(text: str) -> list[tuple[int, int, str, list[int]]]:
     return found
 
 
+def support_inventory(text: str, by_ref: dict[int, Evidence]) -> Verdicts:
+    rows = {claim["line"]: claim for claim in check_claims(text, by_ref) if "tableRow" in claim}
+    items = []
+    for start, _, chunk, refs in cited_sentences(text):
+        line = text.count("\n", 0, start + len(chunk) - len(chunk.lstrip()))
+        table = rows.get(line, {})
+        items.append(verdict("support", {
+            "text": chunk.strip(), "refs": refs, "evidenceHash": check_evidence_hash(refs, by_ref),
+            **{key: table[key] for key in ("tableRow", "tableHeader") if key in table},
+        }))
+    return verdicts_of(*items)
+
+
 def unsource(chunk: str) -> str:
     """A sentence with its numbers taken off and the marker put in their place."""
 
@@ -666,26 +711,24 @@ class Draft:
 
     text: str
     # None until a check has looked at it.
-    issues: list[Issue] | None = None
-    coverage: dict[str, Any] | None = None
+    verdicts: Verdicts | None = None
+
+    @property
+    def issues(self) -> list[Issue] | None:
+        if self.verdicts is None:
+            return None
+        return [Issue(**row) for row in issue_view(self.verdicts)]
+
+    @property
+    def coverage(self) -> dict[str, Any] | None:
+        if self.verdicts is None:
+            return None
+        return coverage_of(self.verdicts, section_hash(self.text))
 
 
 def numbered_check(draft: Draft, text: str, numbers: Mapping[int, int]) -> dict[str, Any]:
-    digest = section_hash(text)
-    record: dict[str, Any] = {
-        "hash": digest, "issues": [issue.out() for issue in draft.issues or []],
-    }
-    if draft.coverage:
-        record["coverage"] = {
-            **draft.coverage,
-            "answerHash": digest,
-            "claims": [
-                {**claim, "text": renumber_citations(claim["text"], numbers),
-                 "refs": [numbers[ref] for ref in claim["refs"] if ref in numbers]}
-                for claim in draft.coverage.get("claims", [])
-            ],
-        }
-    return record
+    state = map_refs(draft.verdicts or {}, numbers, lambda t: renumber_citations(t, numbers))
+    return {"hash": section_hash(text), "verdicts": state}
 
 
 def diagram_fallback_reason(draft: Draft) -> str | None:
@@ -729,8 +772,7 @@ def diagram_as_text(draft: Draft) -> Draft:
         return draft
     return Draft(
         with_layout(draft.text, "text"),
-        draft.issues,
-        draft.coverage,
+        draft.verdicts,
     )
 
 
@@ -822,51 +864,46 @@ class OutputAgents:
 
     # Checker ------------------------------------------------------------------------------
 
-    def _unsupported(
-        self,
-        model: ModelInfo,
-        text: str,
-        by_ref: dict[int, Evidence],
-        coverage: dict[str, Any] | None = None,
-        *,
-        diagram: bool = False,
-    ) -> list[tuple[int, int, str, list[int]]]:
-        """The cited sentences whose passages do not state them. A model that cannot
-        answer finds none. A number with no passage behind it counts as unsupported."""
-
-        sentences = cited_sentences(text)
-        bad = [item for item in sentences if any(n not in by_ref for n in item[3])]
-        asked = [item for item in sentences[:600] if item not in bad]
-        checked = list(bad)
-        batches: list[list[tuple[tuple[int, int, str, list[int]], str]]] = [[]]
+    def _check_support(
+        self, model: ModelInfo, body: str, by_ref: dict[int, Evidence], prior: Verdicts,
+        *, diagram: bool,
+    ) -> Verdicts:
+        active = support_inventory(body, by_ref)
+        pending = merge_verdicts(active, prior)
+        batches: list[list[tuple[str, str]]] = [[]]
+        updates = {}
         size = 0
-        for item in asked:
-            _, _, chunk, refs = item
-            passage = "\n".join(
-                [
-                    _plain(chunk),
-                    *(
-                        f"    cites {ref}: {by_ref[ref].context[:6000] or by_ref[ref].text[:900]}"
-                        for ref in refs
-                    ),
-                ]
-            )
+        for position, (key, row) in enumerate(pending.items()):
+            if row["verdict"] not in PENDING:
+                continue
+            refs = row["refs"]
+            if any(ref not in by_ref for ref in refs):
+                updates[key] = {
+                    **row, "verdict": "unsupported",
+                    "issue": Issue(_plain(row["text"])[:300], "unsupported",
+                                   "Its number has no source in the list.").out(),
+                }
+                continue
+            if position >= 600:
+                continue
+            passage = "\n".join([
+                _plain(row["text"]),
+                *(f"    cites {ref}: {by_ref[ref].context[:6000] or by_ref[ref].text[:900]}"
+                  for ref in refs),
+            ])
             if len(passage) > 23_500:
-                continue  # Explicitly unchecked rather than silently truncating its sources.
+                continue
             if size + len(passage) + 8 > 24_000 or len(batches[-1]) >= max(
                 1, min(40, self.limits.sentences)
             ):
                 batches.append([])
                 size = 0
-            batches[-1].append((item, passage))
+            batches[-1].append((key, passage))
             size += len(passage) + 8
-        for group in batches:
-            if not group:
-                continue
-            batch = [item for item, _ in group]
-            lines = [f"[{number}] {passage}" for number, (_, passage) in enumerate(group, 1)]
+        for batch in filter(None, batches):
+            lines = [f"[{n}] {passage}" for n, (_, passage) in enumerate(batch, 1)]
             try:
-                verdict, _ = self.gateway.complete_json(
+                found, _ = self.gateway.complete_json(
                     model,
                     Unsupported,
                     system=(
@@ -885,121 +922,69 @@ class OutputAgents:
                 )
             except ModelError as error:
                 logger.info("The support check failed: %s", error)
-            else:
-                flagged = {n for n in verdict.unsupported if 1 <= n <= len(batch)}
-                accepted = {n for n in verdict.supported if 1 <= n <= len(batch)} - flagged
-                bad += [item for number, item in enumerate(batch, start=1) if number in flagged]
-                checked += [
-                    item
-                    for number, item in enumerate(batch, start=1)
-                    if number in flagged | accepted
-                ]
-        if coverage is not None:
-            coverage.update(
-                status="complete"
-                if len(checked) == len(sentences)
-                else "partial"
-                if checked
-                else "failed",
-                considered=len(sentences),
-                checked=len(checked),
-                unchecked=len(sentences) - len(checked),
-                claims=[
-                    {
-                        "text": _plain(chunk),
-                        "refs": refs,
-                        "verdict": "not"
-                        if item in bad
-                        else "supported"
-                        if item in checked
-                        else "unchecked",
+                for key, _ in batch:
+                    updates[key] = {**pending[key], "verdict": "unavailable"}
+                continue
+            for n, (key, _) in enumerate(batch, 1):
+                row = pending[key]
+                if n in found.unsupported:
+                    updates[key] = {
+                        **row, "verdict": "unsupported", "issue": Issue(
+                            _plain(row["text"])[:300], "unsupported",
+                            "The sources it cites do not state this.",
+                        ).out(),
                     }
-                    for item in sentences
-                    for _, _, chunk, refs in [item]
-                ],
-            )
-        return sorted(bad)
+                elif n in found.supported:
+                    updates[key] = {**row, "verdict": "supported"}
+        return merge_verdicts(active, prior, updates)
 
-    def _full_coverage(
-        self, model: ModelInfo, text: str, by_ref: dict[int, Evidence], issues: list[Issue]
-    ) -> dict[str, Any]:
-        """Use Ask's claim contract for headings, body, tables and speaker notes too. A slide's
-        marker is no claim; the hash is that of the whole slide, marker included."""
-        _, check, _, _ = self.ask.check_sentences(
+    def check_unbuilt(
+        self, model: ModelInfo, text: str, by_ref: dict[int, Evidence],
+        prior: Verdicts | None = None,
+    ) -> Verdicts:
+        """Check a saved section and resume the unresolved verdicts for the same text."""
+        marked = _marked(text)
+        body = marked.body
+        previous = prior or {}
+        stages = {k: row for k, row in previous.items() if row["stage"] == "finding"}
+        if prior is None or has_stage(previous, "audit", "legacy"):
+            audit = verdicts_of(audit_verdict(body, "unchecked"))
+            if not complete(merge_verdicts(audit, previous)):
+                found = self.ask.unsourced_claims(model, body)
+                audit = verdicts_of(audit_verdict(
+                    body, "unavailable" if found is None else "supported", found
+                ))
+            stages |= merge_verdicts(audit, previous)
+        if prior is None or has_stage(previous, "support", "audit", "legacy"):
+            stages |= self._check_support(
+                model, body, by_ref, previous, diagram=marked.layout == "diagram"
+            )
+        stages |= verdicts_of(*(finding(Issue(
+            claim, "unverified", "From the model's own knowledge; no source was found."
+        ).out()) for _, _, claim in leads_in(body, 40)))
+        checked = self.ask.check_artifact_claims(
             model,
             (
                 "Verify this output section. For a diagram, interpret each row as a directed "
                 "From → Relationship/condition → To assertion. The source need not use the same "
                 "literal node labels or mention a drawn arrow, but it must support the concepts, "
                 "direction, and relation. Do not accept a relation inferred from ordering alone."
-                if _marked(text).layout == "diagram"
+                if marked.layout == "diagram"
                 else "Verify this output section"
             ),
-            layout_of(text)[1],
-            by_ref,
-            limit=self.limits.sentences,
+            check_heading_refs(body, body.split("\n"), by_ref),
+            by_ref, limit=self.limits.sentences, prior=previous,
         )
-        coverage = (
-            check._coverage
-            if check is not None
-            else {"status": "failed", "considered": 0, "checked": 0, "unchecked": 0, "claims": []}
-        )
-        coverage["answerHash"] = section_hash(text)
-        held = {_plain(issue.claim) for issue in issues}
-        for claim in coverage.get("claims", []):
-            verdict = claim["verdict"]
-            if verdict in {"supported", "nonfactual"} or _plain(claim["text"]) in held:
-                continue
-            label = (
-                "unchecked"
-                if verdict == "unchecked"
-                else "unsourced"
-                if verdict == "unsourced"
-                else "unsupported"
-            )
-            issues.append(
-                Issue(
-                    _plain(claim["text"])[:300],
-                    label,
-                    claim.get("reason") or "The claim was not fully supported.",
-                )
-            )
-        return coverage
-
-    def check_unbuilt(
-        self,
-        model: ModelInfo,
-        text: str,
-        by_ref: dict[int, Evidence],
-        coverage: dict[str, Any] | None = None,
-    ) -> list[Issue]:
-        """Check a section without changing it: what has no source, what is marked as the
-        model's own, and what its cited passages do not state. A slide's marker is not looked
-        at."""
-
-        whole, text = text, _marked(text).body
-        issues = [
-            Issue(claim, "unsourced", "No source is cited for this.")
-            for claim in self.ask.unsourced_claims(model, text)
-        ]
-        issues += [
-            Issue(claim, "unverified", "From the model's own knowledge; no source was found.")
-            for _, _, claim in leads_in(text, 40)
-        ]
-        for _, _, chunk, refs in self._unsupported(
-            model, text, by_ref, diagram=_marked(whole).layout == "diagram"
-        ):
-            missing = [ref for ref in refs if ref not in by_ref]
-            note = (
-                "Its number has no source in the list."
-                if missing
-                else "The sources it cites do not state this."
-            )
-            issues.append(Issue(_plain(chunk)[:300], "unsupported", note))
-        full = self._full_coverage(model, whole, by_ref, issues)
-        if coverage is not None:
-            coverage.update(full)
-        return issues
+        for row in checked.values():
+            label = row.get("label", row["verdict"])
+            if label not in {"supported", "nonfactual"} and "issue" not in row:
+                outcome = ("unchecked" if row["verdict"] in PENDING else
+                           "unsourced" if label == "unsourced" else "unsupported")
+                row["issue"] = Issue(
+                    _plain(row["text"])[:300], outcome,
+                    row.get("reason") or "The claim was not fully supported.",
+                ).out()
+        return stages | checked
 
     # Assembling -----------------------------------------------------------------------------
 
@@ -1078,32 +1063,14 @@ class OutputAgents:
 
     @usage.job("outputs")
     def check(
-        self,
-        model: ModelInfo,
-        sections: Sequence[str],
-        known: dict[str, list[Issue]],
-        by_ref: dict[int, Evidence],
-        *,
-        title_slide: bool = False,
-        known_coverage: dict[str, dict[str, Any]] | None = None,
+        self, model: ModelInfo, sections: Sequence[str],
+        known: Mapping[str, Verdicts], by_ref: dict[int, Evidence],
     ) -> list[dict[str, Any]]:
-        """Checks for these sections, keeping what is known for a text that is unchanged
-        (``known``, by section hash). Nothing is rewritten. With ``title_slide`` the first
-        section is a deck's title slide, which has no claims to check."""
-
         checks = []
         for text in sections:
             digest = section_hash(text)
-            coverage = (known_coverage or {}).get(digest, {}).copy()
-            if digest in known:
-                issues = known[digest]
-            else:
-                issues = self.check_unbuilt(model, text, by_ref, coverage)
-            checks.append(
-                {
-                    "hash": digest,
-                    "issues": [issue.out() for issue in issues],
-                    **({"coverage": coverage} if coverage else {}),
-                }
-            )
+            state = known.get(digest)
+            if state is None or not complete(state):
+                state = self.check_unbuilt(model, text, by_ref, state)
+            checks.append({"hash": digest, "verdicts": state})
         return checks

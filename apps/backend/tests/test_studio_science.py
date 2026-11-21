@@ -675,7 +675,7 @@ def test_scientific_eval_uses_completeness_not_business_conventions(tmp_path):
         source_figures=["ast_signal"],
         figure_readings=[READING],
     )
-    assert not any(d.rule == "topic_title" for d in defects)
+    assert not any(d.rule == "missing_title" for d in defects)
     missing = lint(
         "slides",
         NO_IMAGE,
@@ -1224,7 +1224,7 @@ def test_finished_edits_are_checked_and_fitting_keeps_the_checks(tmp_path):
     spec = Spec("slides", "Readers", brief="Explain the study")
     # The central figure removed by an edit is said with the version.
     without = [p for p in parts if "gunther-asset:" not in p]
-    notes = agents.final_notes(spec, [], [Draft(p, [], {}) for p in without], conversation)
+    notes = agents.final_notes(spec, [], [Draft(p, {}) for p in without], conversation)
     assert any(n["step"] == "science" and "ast_signal" in n["reason"] for n in notes)
     # Fitting a slide may not bring in a damaged value.
     broken = "<!-- layout: points -->\n## Too short"

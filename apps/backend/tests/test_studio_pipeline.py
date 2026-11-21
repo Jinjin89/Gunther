@@ -292,12 +292,17 @@ def test_direct_report_keeps_the_supported_exhibit_when_its_rows_are_repeated(tm
     assert all("| Raw | 18 [1] |" in block["body"] for block in exhibits)
 
 
-def test_a_direct_deck_rebuild_keeps_approved_headings_through_repairs(tmp_path):
+@pytest.mark.parametrize(("heading", "needs_format_repair"), [
+    ("Costs", True), ("熱損失が止まる", False),
+])
+def test_a_direct_deck_rebuild_keeps_approved_headings_through_repairs(
+    tmp_path, heading, needs_format_repair
+):
     from test_outputs import app_for, body, build, built, library
 
     base_slides = fmt.split_slides(DECK)
     draft = UNSUPPORTED_DECK.replace(
-        "## The trial was large enough to trust the direction", "## Costs"
+        "## The trial was large enough to trust the direction", f"## {heading}"
     )
     attempted = set()
 
@@ -318,25 +323,26 @@ def test_a_direct_deck_rebuild_keeps_approved_headings_through_repairs(tmp_path)
         base, _ = library(client, notes={f"Source {n}": text for n, text in enumerate(PASSAGES, 1)})
         first = built(build(client, base, body(kind="slides", use="talk")))
         approved = first["outline"]
-        approved[1]["heading"] = "Costs"
+        approved[1]["heading"] = heading
         fake.replies[:] = [repair]
         rebuilt = built(build(client, base, body(
             kind="slides", use="talk", outline=approved, supersedesArtifactId=first["id"],
         )))
         slides = [fmt.parse_slide(text) for text in fmt.split_slides(rebuilt["content"])]
-        assert attempted == {"format", "claim"}
+        assert attempted == ({"format", "claim"} if needs_format_repair else {"claim"})
         assert [slide.title for slide in slides] == [row["heading"] for row in approved]
         assert slides[2].layout == "table"
 
 
 def test_report_repair_cannot_add_a_section_or_displace_the_existing_work(monkeypatch):
     from gunther.artifact_workspace import ConversationBrief, Work, WorkSpec
+    from gunther.checks import finding, verdicts_of
     from gunther.llm import ModelError
     from gunther.studio.work import load_built
 
     agents = StudioAgents(gateway(FakeProvider(router)))
     monkeypatch.setattr(
-        agents, "_claims", lambda *a, **k: ([Issue("Trial", "unsupported", "")], None)
+        agents, "_claims", lambda *a, **k: verdicts_of(finding(Issue("Trial", "unsupported").out()))
     )
     monkeypatch.setattr(
         agents, "_fix_claims", lambda *a, **k: ["## Results\nA repair.\n\n## Added\nExtra."]
@@ -863,10 +869,10 @@ def test_the_subtitle_is_rewritten_to_state_what_the_slide_titles_say():
     ]
     agent = SimpleNamespace(
         _text=lambda *a, **k: "Cool roofs save 9% [2], half the plan's figure",
-        _claims=lambda model, text, by_ref, rest="", **kwargs: ([], {}),
+        _claims=lambda model, text, by_ref, rest="", **kwargs: {},
     )
     pool = SimpleNamespace(by_ref=lambda: {2: object()})
-    out = StudioAgents._cover(agent, None, [Draft(t, [], {}) for t in deck], pool, "material")
+    out = StudioAgents._cover(agent, None, [Draft(t, {}) for t in deck], pool, "material")
     assert "Cool roofs save 9% [2], half the plan's figure\nCommittee" in out[0].text
     assert out[1].text == deck[1]
 

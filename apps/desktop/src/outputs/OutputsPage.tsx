@@ -25,6 +25,7 @@ import { OutlineEditor } from "./OutlineEditor";
 import { PrintRoot } from "./PrintRoot";
 import { prepareForPrint } from "./printReady";
 import { SlideReviewPanel } from "./SlideReviewPanel";
+import { verificationNotice } from "../pages/AnswerBody";
 import { ReportView } from "./ReportView";
 import { describeScope, type ScopeCounts } from "./ScopePicker";
 import { type DeckStyle, type DeckTheme, parseSlides, withAccent, withTheme } from "./sections";
@@ -409,7 +410,21 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
       if (styleRun.current === run) { styleRun.current = null; setRestyling(false); setPendingStyle(null); }
     }
   };
-  const checkAgain = async () => { if (!open || !workspaceId) return; setChecking(true); try { setOpen(await knowledgeApi.checkOutput(base.id, open.id, workspaceId)); onNotify("Checked against the sources."); } catch (reason) { setGeneralError(messageOf(reason)); } finally { setChecking(false); } };
+  const checkAgain = async () => {
+    if (!open || !workspaceId) return;
+    setChecking(true);
+    try {
+      const checked = await knowledgeApi.checkOutput(base.id, open.id, workspaceId);
+      setOpen(checked);
+      const notice = checked.sections.map((section) => verificationNotice(section.coverage)).find(Boolean);
+      onNotify(notice ?? (checked.sections.every((section) => section.checked)
+        ? "Checked against the sources." : "The source check is incomplete."));
+    } catch (reason) {
+      setGeneralError(messageOf(reason));
+    } finally {
+      setChecking(false);
+    }
+  };
   const copy = async (artifact = open) => { if (!artifact) return; try { await navigator.clipboard.writeText(artifact.content); onNotify(`Version ${artifact.versionNumber} copied as Markdown.`); } catch { onNotify("Clipboard access was unavailable. Download the Markdown file instead."); } };
   const download = (artifact = open) => { if (!artifact) return; const url = URL.createObjectURL(new Blob([artifact.content], { type: "text/markdown;charset=utf-8" })); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${base.id}-${artifact.kind}-v${artifact.versionNumber}.md`; anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); onNotify(`Downloaded version ${artifact.versionNumber} as Markdown.`); };
   const exportFile = async (make: (artifact: NonNullable<typeof open>) => Promise<string>) => { if (!open) return; try { onNotify(`Downloaded ${await make(open)}.`); } catch (reason) { setGeneralError(`The file wasn’t made. ${messageOf(reason)}`); } };

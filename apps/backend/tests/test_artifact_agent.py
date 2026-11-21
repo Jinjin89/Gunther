@@ -15,6 +15,7 @@ from fake_models import (
     is_answering,
     is_orchestrating,
     is_sentence_checking,
+    is_support_checking,
     orchestrator_replies,
     output_replies,
     studio_task,
@@ -32,11 +33,13 @@ from test_outputs import (
     in_background,
     library,
     read_events,
+    route,
     saved_output,
     wait_for,
     workspace,
 )
 
+from gunther.agent import checker_inventory
 from gunther.artifact_agent import (
     Act,
     AgentLimits,
@@ -53,7 +56,9 @@ from gunther.artifact_workspace import (
     Line,
     Pending,
     Workspace,
+    evidence_from_citation,
 )
+from gunther.checks import claim_text
 from gunther.llm import ModelError
 from gunther.models import (
     Artifact,
@@ -63,7 +68,14 @@ from gunther.models import (
     SourceIndexHead,
     SourceRevision,
 )
-from gunther.outputs import Pool, section_hash, split_document
+from gunther.outputs import (
+    Pool,
+    check_heading_refs,
+    section_hash,
+    split_document,
+    support_inventory,
+)
+from gunther.schemas import ConversationCitationOut
 from gunther.service import KnowledgeService, manifest_hash_of
 
 _turns = itertools.count(1)
@@ -1630,6 +1642,7 @@ def test_studio_report_edit_checks_only_the_changed_paragraph(tmp_path: Path) ->
         with service.sessions() as session:
             row = session.scalar(select(ArtifactCheck).where(ArtifactCheck.artifact_id == saved["id"]))
             checks = json.loads(row.checks_json)
+            checks["sections"][0].pop("verdicts")
             checks["sections"][0]["issues"] = [issue]
             row.checks_json = json.dumps(checks)
             session.commit()
@@ -1644,6 +1657,81 @@ def test_studio_report_edit_checks_only_the_changed_paragraph(tmp_path: Path) ->
         prompts = [request["messages"][-1]["content"] for request in fake.requests
                    if is_sentence_checking(request)]
         assert len(prompts) == 1 and revised in prompts[0] and first not in prompts[0]
+
+
+@pytest.mark.parametrize("repeat", [False, True], ids=["different-paragraphs", "same-claim-other-evidence"])
+def test_studio_edit_keeps_whole_section_coverage_and_retries_untouched_unchecked_claim(
+    tmp_path, repeat,
+):
+    ref = 2 if repeat else 1
+    first = "The original estimate used three readings [1]."
+    second = f"Use the estimate as a planning input [{ref}]."
+    revised = first.replace("[1]", "[2]") if repeat else "Use the estimate for planning [1]."
+    heading = "Use the estimates"
+    text = f"## {heading}\n\n{first}\n\n{second}"
+    fake = FakeProvider(script([{"actions": [
+        {"do": "edit", "item": 1, "passage": second, "instruction": "Rephrase for clarity"},
+        {"do": "save", "text": "Edited the second paragraph."},
+    ]}], deck_replies(replacer=replacing({second: revised}))))
+    with app_for(tmp_path, fake) as client:
+        base, _ = library(client, notes={
+            "Planning": "The estimate guides planning.",
+            "Measurements": "The original estimate used three readings.",
+        })
+        headers = workspace(client)
+        saved = saved_output(client, base, {"title": "Plan", "sections": [{"heading": heading}]},
+                             [text], conversationId="paragraph-edit")
+        evidence = [evidence_from_citation(ConversationCitationOut.model_validate(c))
+                    for c in saved["citations"]]
+        by_ref = {item.ref: item for item in evidence}
+        checker = checker_inventory(check_heading_refs(text, text.split("\n")), by_ref)
+        support = support_inventory(text, by_ref)
+        issue = {"claim": claim_text(first), "verdict": "unsupported",
+                 "note": "The sources it cites do not state this."}
+        for row in checker.values():
+            if row["text"] != first:
+                row["verdict"] = "supported"
+        for row in support.values():
+            if row["text"] == first:
+                row.update(verdict="unsupported", issue=issue)
+            else:
+                row["verdict"] = "supported"
+        with client.app.state.knowledge_service.sessions() as session:
+            row = session.scalar(select(ArtifactCheck).where(ArtifactCheck.artifact_id == saved["id"]))
+            checks = json.loads(row.checks_json)
+            checks["sections"][0]["verdicts"] = checker | support
+            row.checks_json = json.dumps(checks)
+            session.commit()
+        client.get(conversations(base), headers=headers).raise_for_status()
+
+        result = done(turn(client, base, "paragraph-edit", "Rephrase the second paragraph."))
+        assert result["outcome"] == "saved"
+        version = result["artifact"]
+        [section] = version["sections"]
+        coverage = section["coverage"]
+        assert not section["checked"] and coverage["status"] == "partial"
+        assert section["issues"] == [issue]
+        assert [(c["text"], c["verdict"]) for c in coverage["claims"] if not c["text"].startswith("##")] == [
+            (first, "unchecked"), (revised, "supported"),
+        ]
+        assert (coverage["considered"], coverage["checked"], coverage["unchecked"]) == (3, 2, 1)
+        assert coverage["answerHash"] == section_hash(text.replace(second, revised))
+        [edit_prompt] = [r["messages"][-1]["content"] for r in fake.requests if is_sentence_checking(r)]
+        assert re.findall(r"^\(\d+\) (.*)$", edit_prompt, re.M) == [revised]
+
+        fake.replies[:] = [deck_replies()]
+        start = len(fake.requests)
+        retried = client.post(route(base, version["id"], "/check"), headers=headers).raise_for_status().json()
+        calls = fake.requests[start:]
+        [retry_prompt] = [r["messages"][-1]["content"] for r in calls if is_sentence_checking(r)]
+        assert re.findall(r"^\(\d+\) (.*)$", retry_prompt, re.M) == [first]
+        [support_prompt] = [r["messages"][-1]["content"] for r in calls if is_support_checking(r)]
+        assert re.findall(r"^\[\d+\] (.*)$", support_prompt, re.M) == [claim_text(revised)]
+        assert f"cites {ref}:" in support_prompt
+        [checked] = retried["sections"]
+        assert checked["checked"] and checked["coverage"]["checked"] == 3
+        assert checked["issues"] == [issue]
+        assert retried["content"] == version["content"]
 
 
 @pytest.mark.parametrize(
@@ -1668,10 +1756,10 @@ def test_a_legacy_chart_revision_keeps_the_renderer_format(
     ) if multi_series else table
     before, after = "Note: Read the table.", "Note: Compare both rows."
     span, replacement = before, after
-    if verdict == "not":
+    if verdict in {"not", "unchecked"}:
         span, replacement = "| Afternoon | 41 [1] |", "| Afternoon | 70 [1] |"
         revised_table = revised_table.replace(span, replacement)
-    revised_notes = before if operation == "edit" and verdict == "not" else after
+    revised_notes = before if operation == "edit" and verdict != "supported" else after
     revised = f"<!-- layout: chart; chart: bar -->\n{revised_table}\n\n{revised_notes}"
     reply = deck_replies(replacer=replacing({span: replacement}), rewrite=lambda _i, _p: revised)
 

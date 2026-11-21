@@ -361,8 +361,9 @@ def look(
         by_ref = pool.by_ref()
 
         def recheck(n: int) -> Draft:
-            issues, coverage = agents._claims(model, candidate[n - 1], by_ref, material=material)
-            return Draft(candidate[n - 1], issues, coverage)
+            return Draft(candidate[n - 1], agents._claims(
+                model, candidate[n - 1], by_ref, material=material
+            ))
 
         rechecked = dict(zip(changed, warm_map(recheck, changed, 4), strict=True))
         revised = list(drafts)

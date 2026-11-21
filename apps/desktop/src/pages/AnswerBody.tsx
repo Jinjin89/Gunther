@@ -1,4 +1,4 @@
-import type { AgentStep, ConversationContext, ResearchUsed } from "@gunther/contracts";
+import type { AgentStep, ConversationContext, OutputSection, ResearchUsed } from "@gunther/contracts";
 import { BookOpen, ChevronRight, CircleAlert, ClipboardCheck, Globe2, Library, ListChecks, LoaderCircle, PenLine } from "lucide-react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -57,8 +57,17 @@ export function withCitationLinks(text: string, numbers: number[]): string {
 const SAFE_WEB = /^https?:\/\//i;
 const RETAINED_IMAGE = /^gunther-asset:([A-Za-z0-9_-]{1,160})$/;
 
+export function verificationNotice(coverage: OutputSection["coverage"]): string | undefined {
+  if (coverage?.audit?.status === "unavailable") return "Source audit unavailable";
+  if (coverage?.status === "unavailable" || coverage?.status === "failed") return "Source check unavailable";
+  if (coverage?.status === "partial") {
+    const unchecked = Math.max(coverage.unchecked, coverage.support?.unchecked ?? 0);
+    return unchecked ? `Partially checked · ${unchecked} unchecked` : "Partially checked";
+  }
+}
+
 /** An answer, as Markdown, with its [n] citations as buttons that open the evidence. */
-export function AnswerBody({ content, numbers, onCitation, supportNotes }: { content: string; numbers: number[]; onCitation?: ((index: number) => void) | undefined; supportNotes?: string[] | undefined }) {
+export function AnswerBody({ content, numbers, onCitation, supportNotes, coverage }: { content: string; numbers: number[]; onCitation?: ((index: number) => void) | undefined; supportNotes?: string[] | undefined; coverage?: ConversationContext["coverage"] }) {
   const citation = (number: string, className?: string, title?: string) => {
     const label = `[${number}]`;
     return <sup key={number}>{onCitation ? <button type="button" className={className} title={title} onClick={(event) => { event.stopPropagation(); onCitation(numbers.indexOf(Number(number))); }} aria-label={`Inspect citation ${number}`}>{label}</button> : <span className={className} title={title}>{label}</span>}</sup>;
@@ -85,7 +94,11 @@ export function AnswerBody({ content, numbers, onCitation, supportNotes }: { con
       return retained ? <img src={sourceAssetUrl(retained[1]!)} alt={alt ?? ""} loading="lazy" style={{ maxWidth: "100%", height: "auto" }} /> : null;
     },
   };
-  return <div className="answer-markdown"><Markdown remarkPlugins={[remarkGfm]} components={components} urlTransform={(url, key) => ((key === "src" && RETAINED_IMAGE.test(url)) || CITE_LINK.test(url) || INFER_LINK.test(url) || DISPUTED_LINK.test(url) || PARTLY_LINK.test(url) || url === UNSOURCED_LINK || SAFE_WEB.test(url) ? url : "")}>{withCitationLinks(content, numbers)}</Markdown></div>;
+  const notice = verificationNotice(coverage);
+  return <div className="answer-markdown">
+    <Markdown remarkPlugins={[remarkGfm]} components={components} urlTransform={(url, key) => ((key === "src" && RETAINED_IMAGE.test(url)) || CITE_LINK.test(url) || INFER_LINK.test(url) || DISPUTED_LINK.test(url) || PARTLY_LINK.test(url) || url === UNSOURCED_LINK || SAFE_WEB.test(url) ? url : "")}>{withCitationLinks(content, numbers)}</Markdown>
+    {notice && <p role="status" className="outputs-flag">{notice}</p>}
+  </div>;
 }
 
 /** "Used: Compare sources": the skill an answer followed, beside the model line. */

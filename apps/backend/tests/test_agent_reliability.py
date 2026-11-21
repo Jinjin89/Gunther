@@ -72,6 +72,30 @@ def test_missing_verdict_is_unchecked_even_when_the_provider_returns_valid_json(
     assert check._coverage["claims"][1]["verdict"] == "unchecked"
 
 
+def test_retry_rechecks_a_claim_when_the_passage_context_changes():
+    fake = FakeProvider(agent_replies("unused", checked=accept_batch))
+    chosen = gateway(fake)
+    agent = AskAgent(chosen)
+    text = "First result [1]. Second result [2]."
+    evidence = {
+        1: Evidence("library", "Trial", "The first result."),
+        2: Evidence("library", "Trial", "The second result."),
+    }
+    first = agent.check_artifact_claims(
+        chosen.models[0], "Results?", text, evidence, limit=20, prior={}
+    )
+    evidence[2] = Evidence(
+        "library", "Trial", "The second result.", context="The earlier result was corrected."
+    )
+    retried = agent.check_artifact_claims(
+        chosen.models[0], "Results?", text, evidence, limit=20, prior=first
+    )
+    prompt = fake.requests[-1]["messages"][-1]["content"]
+    assert "First result" not in prompt and "Second result" in prompt
+    assert [row["verdict"] for row in retried.values()] == ["supported", "supported"]
+    assert len(fake.requests) == 2
+
+
 def test_source_budget_splits_batches_and_never_silently_drops_a_claim():
     fake = FakeProvider(agent_replies("unused", checked=accept_batch))
     chosen = gateway(fake)

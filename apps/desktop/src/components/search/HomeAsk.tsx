@@ -122,7 +122,7 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
         : <article key={message.id} className="gx-home-answer">
             <ResearchPlan context={message.context} />
             <AgentSteps steps={message.context.steps ?? []} />
-            <AnswerBody content={message.content} numbers={citationNumbers(message.citations)} onCitation={(index) => { const citation = message.citations[index]; if (citation) setEvidence({ citation, index }); }} supportNotes={message.context.supportNotes} />
+            <AnswerBody content={message.content} numbers={citationNumbers(message.citations)} onCitation={(index) => { const citation = message.citations[index]; if (citation) setEvidence({ citation, index }); }} supportNotes={message.context.supportNotes} coverage={message.context.coverage} />
             {message.context.modelError && <p className="message-model-error" role="note">{message.context.modelError}{message.citations.length > 0 && " The quotes stand in for its answer."}</p>}
             <Sources citations={message.citations} onOpen={(citation, index) => setEvidence({ citation, index })} />
             <footer><SpeakerButton message={message} /><small>{[message.context.modelLabel, message.context.effortLabel, message.context.skill ? usedSkill(message.context.skill) : null].filter(Boolean).join(" · ")}</small></footer>

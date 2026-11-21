@@ -27,10 +27,19 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from gunther.agent import ANY_CITATION, Evidence, sentence_spans
 from gunther.brief import _quoted
+from gunther.checks import (
+    Verdicts,
+    complete,
+    coverage_of,
+    issue_view,
+    map_refs,
+    merge_verdicts,
+    read_verdicts,
+)
 from gunther.outputs import (
     DECK_USES,
     OUTPUT_STRUCTURES,
@@ -131,8 +140,24 @@ class PartRec(BaseModel):
     text: str  # as written, citing pool numbers
     inputs: str  # the digest it was written from (``digest_part_inputs``)
     checked: str | None = None  # section_hash of the text its check is for
-    issues: list[dict] | None = None  # Issue.out() dicts
-    coverage: dict | None = None
+    verdicts: Verdicts | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _read_check(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "verdicts" not in value and value.get("issues") is not None:
+            return {**value, "verdicts": read_verdicts(value, _marked(value["text"]).body)}
+        return value
+
+    @property
+    def issues(self) -> list[dict] | None:
+        return None if self.verdicts is None else issue_view(self.verdicts)
+
+    @property
+    def coverage(self) -> dict | None:
+        if self.verdicts is None:
+            return None
+        return coverage_of(self.verdicts, section_hash(self.text))
 
 
 class Work(BaseModel):
@@ -634,7 +659,10 @@ def status(work: Work, brief: ConversationBrief) -> list[PartStatus]:
             now = digest_part_inputs(brief, work, item)
             if part.inputs != now:
                 state, why = "out_of_date", _what_changed(part.inputs, now, PART_FROM)
-            elif part.issues is None or part.checked != section_hash(part.text):
+            elif (
+                part.verdicts is None or part.checked != section_hash(part.text)
+                or not complete(part.verdicts)
+            ):
                 state = "not_checked"
         found.append(
             PartStatus(
@@ -1039,49 +1067,27 @@ def _layout_of(kind: str, position: int, section: str, planned: str | None = Non
     return "title" if position == 0 and body.lstrip().startswith("# ") else ""
 
 
-def _incomplete(coverage: Mapping[str, Any] | None) -> bool:
-    return coverage is not None and coverage.get("status") != "complete"
-
-
-def _coverage_in_pool(
-    coverage: Mapping[str, Any], text: str, version_map: Sequence[int]
-) -> dict[str, Any]:
-    """A check's coverage record with the version's numbers turned into the pool's."""
-
-    claims = []
-    for claim in coverage.get("claims", []):
-        mapped = dict(claim)
-        if "text" in claim:
-            mapped["text"] = pool_numbered(str(claim["text"]), version_map)
-        if "refs" in claim:
-            mapped["refs"] = [
-                version_map[ref - 1] for ref in claim["refs"] if 1 <= ref <= len(version_map)
-            ]
-        claims.append(mapped)
-    result = {**coverage, "answerHash": section_hash(text)}
-    if "claims" in coverage:
-        result["claims"] = claims
-    return result
-
-
 def _take_check(
     part: PartRec, section: str, record: Mapping[str, Any] | None, version_map: Sequence[int]
 ) -> bool:
-    """Give a part what the Checker found in the version's section that has its text.
-
-    ``record`` is the version's, keyed by the hash of the section in the version's numbers;
-    the part's own check stays unless it has none or a poorer one. True when the part changed.
-    """
-
+    """Merge verdicts for a version's unchanged section in the workspace's citation numbers."""
     if not record or record.get("hash") != section_hash(section):
         return False
-    held = part.issues is not None and part.checked == section_hash(part.text)
-    if held and not (_incomplete(part.coverage) and not _incomplete(record.get("coverage"))):
+    digest = section_hash(part.text)
+    numbers = dict(enumerate(version_map, 1))
+    saved = map_refs(read_verdicts(record, _marked(section).body), numbers,
+                     lambda text: pool_numbered(text, version_map))
+    prior = (part.verdicts or {}) if part.checked == digest else {}
+    active = prior | saved
+    if complete(saved):
+        # A pre-verdict row could only say that a check was unfinished. Once the saved
+        # version has completed its check, that historical placeholder is out of scope.
+        active = {key: row for key, row in active.items() if row["stage"] != "legacy"}
+    merged = merge_verdicts(active, prior, saved)
+    if part.checked == digest and part.verdicts == merged:
         return False
-    coverage = record.get("coverage")
-    part.checked = section_hash(part.text)
-    part.issues = [dict(issue) for issue in record.get("issues", [])]
-    part.coverage = _coverage_in_pool(coverage, part.text, version_map) if coverage else None
+    part.checked = digest
+    part.verdicts = merged
     return True
 
 

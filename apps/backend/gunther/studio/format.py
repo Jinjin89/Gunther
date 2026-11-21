@@ -11,8 +11,6 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
-from gunther.studio.titles import is_topic_title
-
 LAYOUTS = (
     "title",
     "section",
@@ -474,24 +472,11 @@ def check_deck(
     for index in range(len(slides)):
         slide = parsed[index]
         problems = check_slide(slide, first=index == 0, read=read)
-        meta = META.search(" ".join([slide.title, *slide.body]))
+        meta = META.search(" ".join(slide.body))
         if meta:
             problems.append(
                 f'"{meta.group(0)}": write about the world, not about the material — state the '
                 "finding or the decision itself."
-            )
-        latin_words = re.findall(r"[A-Za-z0-9'’%.-]+", CITE.sub("", slide.title))
-        cjk_chars = sum(1 for ch in slide.title if "\u4e00" <= ch <= "\u9fff")
-        short = (len(latin_words) < 5 and cjk_chars < 8) if not cjk_chars else cjk_chars < 8
-        if (
-            not scientific
-            and slide.layout not in ("title", "section")
-            and (short or is_topic_title(slide.title) or LABEL_TITLE.search(slide.title))
-        ):
-            problems.append(
-                "The title names a topic or announces content instead of stating the point. "
-                'Write the point itself as a full sentence (not "Early applications" but what '
-                "the early applications show)."
             )
         uncited = uncited_lines(slide.body if slide.layout != "title" else slide.body[:1])
         if uncited:
@@ -569,23 +554,20 @@ def check_report(text: str) -> list[str]:
     """What is wrong with a report as a whole, as instructions the writer can act on."""
 
     problems: list[str] = []
-    headings = re.findall(r"^## (.+)$", text, re.M)
+    headings = re.findall(r"^##[ \t]+(.*)$", text, re.M)
     if not headings:
         return ['The report has no "## " sections.']
     for number, heading in enumerate(headings, 1):
         size = units(heading)
-        if number > 1 and is_label_heading(heading):
-            # The first section is the executive summary; its heading may be a plain label.
-            problems.append(
-                f'Section {number} heading "{heading[:80]}" names a topic instead of stating '
-                "the point. Write the section's claim itself as a short sentence."
-            )
-        if size > REPORT_HEADING_UNITS:
+        if not size:
+            problems.append(f'Section {number} needs text after "## ".')
+        elif size > REPORT_HEADING_UNITS:
             problems.append(
                 f"Section {number} heading is {size} units; the limit is {REPORT_HEADING_UNITS}. "
                 f'Shorten it to one claim: "{heading[:80]}"'
             )
     body_text = re.sub(r"^:::exhibit.*?^:::\s*$", "", text, flags=re.M | re.S)
+    body_text = re.sub(r"^#{1,2}[ \t]+.*$", "", body_text, flags=re.M)
     for match in META.finditer(body_text):
         problems.append(
             f'"{match.group(0)}": write about the world, not about the material — state the '
@@ -713,29 +695,6 @@ def cite_exhibit_rows(text: str) -> str:
         return "\n".join(out)
 
     return EXHIBIT.sub(fix, text)
-
-
-def is_label_heading(heading: str) -> bool:
-    """A heading that names a topic ("Three asks", "Next steps") rather than stating a point."""
-
-    plain = CITE.sub("", heading).replace("**", "").strip()
-    latin_words = re.findall(r"[A-Za-z0-9'’%.-]+", plain)
-    cjk_chars = sum(1 for ch in plain if "\u4e00" <= ch <= "\u9fff")
-    short = cjk_chars < 8 if cjk_chars else len(latin_words) < 5
-    return short or is_topic_title(plain) or bool(LABEL_TITLE.search(plain))
-
-
-LABEL_TITLE = re.compile(
-    r"^(?:the )?(?:two|three|four|five|\d+) (?:key )?(?:findings|numbers|things|points|reasons|"
-    r"facts|takeaways|lessons|questions|risks|asks|steps|actions|recommendations|options)\b|"
-    r"\bin one (?:sentence|slide|line|breath)\b|"
-    r"\b(?:talk|deck|presentation|report|story) in "
-    r"(?:two|three|four|five|\d+) (?:parts|steps|acts)\b|"
-    r"^(?:agenda|outline|roadmap|contents|what (?:we|i) will cover)\s*$|"
-    r"^(?:key (?:findings|takeaways|points)|next steps|"
-    r"summary|overview|conclusions?)\s*$|^[三四五两]个(?:发现|数字|要点|原因)",
-    re.I,
-)
 
 
 def _overlap(one: str, two: str) -> float:

@@ -7,22 +7,199 @@ import pytest
 from fake_models import (
     FakeProvider,
     gateway,
+    is_auditing,
     is_sentence_checking,
+    is_support_checking,
+    model,
     output_replies,
 )
 from sqlalchemy import select
 from test_artifact_steps import drafted
 from test_documents import FigureParser, capture_pdf, png
 from test_output_skills import APPROACH, OUTLINE, REPORT
-from test_outputs import SIDECAR, app_for, body, build, built, library, revise, saved_output
+from test_outputs import (
+    SIDECAR,
+    app_for,
+    body,
+    build,
+    built,
+    library,
+    revise,
+    route,
+    saved_output,
+    workspace,
+)
 
 from gunther.agent import Evidence, Tool
+from gunther.artifact_workspace import ConversationBrief, Workspace, import_work, sync
 from gunther.asset_service import AssetTextExtraction
+from gunther.checks import coverage_of, read_verdicts
 from gunther.database import session_scope
 from gunther.llm import ModelError
 from gunther.models import ArtifactAsset, ArtifactCheck, Asset
 from gunther.outputs import Draft, OutputAgents, Planned, Pool, Spec, section_hash, split_document
-from gunther.schemas import ConversationCitationOut
+from gunther.schemas import ArtifactOut, ConversationCitationOut
+from gunther.studio.pipeline import StudioAgents
+
+
+def test_check_persists_an_unavailable_audit_and_retries_only_unchecked_claims(tmp_path):
+    first = "CD3D marks T cells [1]."
+    unchecked = "CD19 also marks B cells [1]."
+    original = "CD19 marks B cells [1]."
+    outline = {"title": "Markers", "sections": [{"heading": "Marker comparison"}]}
+    report = [f"## Marker comparison\n\n{first}\n\n{original}"]
+    normal_reply = output_replies(outline, report)
+
+    def incomplete_reply(request, audit_fails=True):
+        if audit_fails and is_auditing(request):
+            raise ModelError("The audit was unavailable")
+        reply = normal_reply(request)
+        if not is_sentence_checking(request):
+            return reply
+        prompt = request["messages"][-1]["content"]
+        skipped = next(
+            int(n) for n, text in re.findall(r"^\((\d+)\) (.+)$", prompt, re.M)
+            if text == unchecked
+        )
+        return json.dumps({
+            "sentences": [item for item in json.loads(reply)["sentences"] if item["n"] != skipped]
+        })
+
+    fake = FakeProvider(incomplete_reply)
+    with app_for(tmp_path, fake) as client:
+        base, _ = library(client)
+        headers = workspace(client)
+        initial = saved_output(client, base, outline, report)
+        edited = client.post(route(base, initial["id"], "/edits"), headers=headers, json={
+            "clientRequestId": "partial_check_edit_0001",
+            "content": initial["content"].replace(original, unchecked),
+        }).raise_for_status().json()
+        version = route(base, edited["id"])
+        partial = client.post(f"{version}/check", headers=headers).raise_for_status().json()
+        [section] = partial["sections"]
+        assert not section["checked"]
+        coverage = section["coverage"]
+        assert coverage["status"] == "unavailable"
+        assert coverage["audit"] == {"status": "unavailable", "claims": None}
+        assert coverage["support"]["status"] == "complete"
+        assert (coverage["checked"], coverage["unchecked"]) == (2, 1)
+        assert [c["text"] for c in coverage["claims"] if c["verdict"] == "unchecked"] == [
+            unchecked
+        ]
+        assert client.get(version, headers=headers).raise_for_status().json() == partial
+        service = client.app.state.knowledge_service
+        state, brief = Workspace(), ConversationBrief()
+        with service.sessions() as session:
+            prior = service._latest_check_records(session, edited["id"])
+            work = import_work(ArtifactOut.model_validate(partial), prior, state, brief)
+
+        fake.replies[:] = [lambda request: incomplete_reply(request, audit_fails=False)]
+        progressed = client.post(f"{version}/check", headers=headers).raise_for_status().json()
+        with service.sessions() as session:
+            records = service._latest_check_records(session, edited["id"])
+        [part] = work.parts.values()
+        assert part.coverage["audit"]["status"] == "unavailable"
+        assert sync(work, ArtifactOut.model_validate(progressed), records, state, brief)
+        assert part.coverage["checked"] == 2 and part.coverage["status"] == "partial"
+        assert part.coverage["audit"] == {"status": "complete", "claims": []}
+
+        fake.replies[:] = [normal_reply]
+        start = len(fake.requests)
+        result = client.post(f"{version}/check", headers=headers).raise_for_status().json()
+        calls = fake.requests[start:]
+        assert not any(is_auditing(request) for request in calls)
+        assert not any(is_support_checking(request) for request in calls)
+        [prompt] = [r["messages"][-1]["content"] for r in calls if is_sentence_checking(r)]
+        assert unchecked in prompt and first not in prompt and "Marker comparison" not in prompt
+        [checked] = result["sections"]
+        assert checked["checked"] and checked["issues"] == []
+        assert checked["coverage"]["status"] == "complete"
+        assert checked["coverage"]["audit"] == {"status": "complete", "claims": []}
+        assert checked["coverage"]["checked"] == 3
+        for key in ("content", "contentHash", "citations", "versionNumber"):
+            assert result[key] == edited[key]
+        start = len(fake.requests)
+        assert client.post(f"{version}/check", headers=headers).raise_for_status().json() == result
+        assert len(fake.requests) == start
+
+
+def test_retry_keeps_studios_cover_claims_and_leaves_audience_metadata_out():
+    subtitle = "CD3D marks T cells [1]."
+    cover = f"<!-- layout: title -->\n# Marker comparison\n\n{subtitle}\n\nTeam · 2025"
+    evidence = {1: Evidence("library", "Markers", "CD3D marks T cells.")}
+    normal_reply = output_replies(OUTLINE, REPORT)
+
+    def first_reply(request):
+        if is_sentence_checking(request):
+            return '{"sentences":[{"n":1,"verdict":"supported"}]}'
+        return normal_reply(request)
+
+    fake = FakeProvider(first_reply, normal_reply)
+    models = gateway(fake)
+    state = StudioAgents(models)._claims(model(), cover, evidence)
+    digest = section_hash(cover)
+    coverage = coverage_of(state, digest)
+    assert coverage["considered"] == 2 and coverage["status"] == "partial"
+
+    [checked] = OutputAgents(models).check(model(), [cover], {digest: state}, evidence)
+    prompt = fake.requests[-1]["messages"][-1]["content"]
+    assert re.findall(r"^\(\d+\) (.*)$", prompt, re.M) == [subtitle]
+    coverage = coverage_of(checked["verdicts"], digest)
+    assert coverage["status"] == "complete" and coverage["considered"] == 2
+
+
+def test_retry_and_sync_replace_historical_partial_claims_and_their_unchecked_issue(tmp_path):
+    heading = "Marker comparison"
+    first = "CD3D marks T cells [1]."
+    second = "CD19 marks B cells [1]."
+    section = f"## {heading}\n\n{first}\n\n{second}"
+    outline = {"title": "Markers", "sections": [{"heading": heading}]}
+    unchecked = {
+        "claim": "CD19 marks B cells.", "verdict": "unchecked", "note": "No verdict returned",
+    }
+    independent = {"claim": "CD3D marks T cells.", "verdict": "unverified", "note": "From memory."}
+    fake = FakeProvider(output_replies(outline, [section]))
+    with app_for(tmp_path, fake) as client:
+        base, _ = library(client)
+        headers = workspace(client)
+        saved = saved_output(client, base, outline, [section])
+        url = route(base, saved["id"])
+        service = client.app.state.knowledge_service
+        with session_scope(service.sessions) as session:
+            row = session.scalar(
+                select(ArtifactCheck).where(ArtifactCheck.artifact_id == saved["id"])
+            )
+            row.checks_json = json.dumps({"sections": [{
+                "hash": section_hash(section), "issues": [unchecked, independent], "coverage": {
+                    "status": "partial", "considered": 3, "checked": 2, "unchecked": 1,
+                    "claims": [
+                        {"text": f"## {heading} [1]", "refs": [1], "verdict": "supported"},
+                        {"text": first, "refs": [1], "verdict": "supported"},
+                        {"text": second, "refs": [1], "verdict": "unchecked"},
+                    ],
+                },
+            }]})
+        old = ArtifactOut.model_validate(client.get(url, headers=headers).raise_for_status().json())
+        state, brief = Workspace(), ConversationBrief()
+        with service.sessions() as session:
+            historical = service._latest_check_records(session, saved["id"])
+            work = import_work(old, historical, state, brief)
+        [part] = work.parts.values()
+        assert part.coverage["status"] == "partial" and part.coverage["considered"] == 3
+        assert unchecked in part.issues and independent in part.issues
+
+        updated = ArtifactOut.model_validate(
+            client.post(f"{url}/check", headers=headers).raise_for_status().json()
+        )
+        [checked] = updated.sections
+        assert checked.checked and checked.coverage["considered"] == 3
+        assert [issue.model_dump() for issue in checked.issues] == [independent]
+        with service.sessions() as session:
+            records = service._latest_check_records(session, saved["id"])
+        assert sync(work, updated, records, state, brief)
+        assert part.coverage == checked.coverage
+        assert part.issues == [independent]
+        assert not sync(work, old, historical, state, brief)
 
 
 @pytest.mark.parametrize(
@@ -127,7 +304,8 @@ def test_revising_another_slide_preserves_a_verified_chart(tmp_path, historical_
                 ):
                     records = json.loads(check.checks_json)
                     for record in records["sections"]:
-                        record.pop("coverage", None)
+                        record.pop("verdicts")
+                        record["issues"] = []
                     check.checks_json = json.dumps(records)
         before = len(fake.requests)
         second = built(
@@ -236,13 +414,14 @@ def test_chart_requires_complete_verification_even_when_its_values_are_cited(cov
     pool = Pool(10)
     pool.adopt(Evidence("library", "Cohort", "Cohort rate was 62%."))
     chart = "## Cohort rate\n\n| Cohort | Rate (%) |\n| --- | --- |\n| A | 62 [1] |"
+    state = read_verdicts({"coverage": coverage}, chart) if coverage is not None else None
 
     with pytest.raises(ModelError, match="verification is incomplete"):
         OutputAgents(chosen).assemble(
             Spec("slides", "scientist"),
             "Cohort rate",
             "",
-            [Draft(chart, [], coverage)],
+            [Draft(chart, state)],
             pool,
             [Planned("Cohort rate", layout="bar_chart")],
             chosen.models[0],

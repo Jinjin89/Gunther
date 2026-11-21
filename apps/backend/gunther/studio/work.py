@@ -10,7 +10,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from gunther.agent import Evidence, check_citations, renumber_citations
+from gunther.agent import (
+    Evidence,
+    check_citations,
+    checker_inventory,
+    renumber_citations,
+)
 from gunther.artifact_workspace import (
     CardRec,
     PartRec,
@@ -22,6 +27,16 @@ from gunther.artifact_workspace import (
     approach_in_pool,
     approach_refs,
     rebind_approach_refs,
+)
+from gunther.checks import (
+    Verdicts,
+    audit_verdict,
+    claim_text,
+    coverage_of,
+    has_stage,
+    issue_view,
+    merge_verdicts,
+    verdicts_of,
 )
 from gunther.llm import ModelError
 from gunther.outputs import (
@@ -43,6 +58,7 @@ from gunther.outputs import (
     numbered_check,
     section_hash,
     split_document,
+    support_inventory,
     title_of,
 )
 from gunther.schemas import OutlineItem
@@ -340,17 +356,40 @@ class StudioWorkAgents(StudioAgents):
 
     # What WorkSteps calls for edits and checks --------------------------------------------
 
-    def check_built(self, model, text, pool: Pool, section) -> Draft:
-        by_ref = pool.by_ref()
-        issues, coverage = self._claims(model, text, by_ref)
-        draft = self._chart_fallback(Draft(text, issues, coverage), section)
+    def _checked_layout(self, draft: Draft, section: int) -> Draft:
+        draft = self._chart_fallback(draft, section)
         return fallback_unverified_diagram(draft, section, self.skipped)
 
-    def check_unbuilt(self, model, text, by_ref, coverage=None) -> list[Issue]:
-        issues, found = self._claims(model, text, by_ref)
-        if coverage is not None:
-            coverage.update(found)
-        return issues
+    def check_built(self, model, text, pool: Pool, section) -> Draft:
+        return self._checked_layout(Draft(text, self._claims(model, text, pool.by_ref())), section)
+
+    def check_unbuilt(self, model, text, by_ref, prior=None) -> Verdicts:
+        if has_stage(prior or {}, "audit", "support"):
+            return super().check_unbuilt(model, text, by_ref, prior)
+        findings = {k: row for k, row in (prior or {}).items() if row["stage"] == "finding"}
+        return findings | self._claims(model, text, by_ref, prior=prior)
+
+    def check_edit(
+        self, model, text: str, pool: Pool, part: PartRec, section: int, lines: range | None,
+    ) -> Draft:
+        prior = part.verdicts or {}
+        by_ref, body = pool.by_ref(), _marked(text).body
+        active = checker_inventory(self._claim_text(text), by_ref)
+        if has_stage(prior, "audit"):
+            active |= verdicts_of(audit_verdict(body, "unchecked"))
+        if has_stage(prior, "support", "audit"):
+            active |= support_inventory(body, by_ref)
+        changed = {key: row for key, row in active.items()
+                   if row["stage"] == "checker" and (lines is None or row["line"] in lines)}
+        retained = {claim_text(line) for n, line in enumerate(body.splitlines())
+                    if lines is not None and n not in lines}
+        retained.update(claim_text(row["text"]) for key, row in active.items()
+                        if row["stage"] == "checker" and key not in changed)
+        active.update({key: row for key, row in prior.items()
+                       if row["stage"] == "finding" and claim_text(row["text"]) in retained})
+        checked = self._claims(model, text, by_ref, prior=prior, inventory=changed)
+        active.update(checked)
+        return self._checked_layout(Draft(text, merge_verdicts(active, prior, checked)), section)
 
     def validate_evidence(self, spec: Spec, text: str, pool: Pool) -> None:
         scientific = self._science_run(spec)
@@ -585,12 +624,12 @@ class StudioWorkAgents(StudioAgents):
                 continue
             record = records.get(section_hash(part))
             if deck and _marked(part).layout in CHARTS:
-                coverage = (record or {}).get("coverage")
-                if coverage:
-                    issues = [Issue(**issue) for issue in record["issues"]]
-                else:
-                    issues, coverage = self._claims(model, part, by_ref)
-                    record = numbered_check(Draft(part, issues, coverage), part, numbers)
+                state = (record or {}).get("verdicts") or {}
+                if not has_stage(state, "checker"):
+                    state = self._claims(model, part, by_ref)
+                    record = numbered_check(Draft(part, state), part, numbers)
+                issues = [Issue(**issue) for issue in issue_view(state)]
+                coverage = coverage_of(state, section_hash(part))
                 _, reason = chart_unverified(part, issues, coverage, by_ref, index)
                 if reason is not None:
                     raise ModelError("Chart values must be verified before saving. " + reason)

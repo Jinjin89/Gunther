@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from gunther import usage
 from gunther.agent import CITATION_GROUP, MARKDOWN_TABLE, Evidence, collapse_citations
+from gunther.checks import Verdicts, finding, read_verdicts, verdicts_of
 from gunther.llm import Image, ModelError, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.outputs import (
@@ -38,7 +39,9 @@ from gunther.outputs import (
     Planned,
     Pool,
     Spec,
+    _marked,
     check_citations,
+    check_heading_refs,
     figure_lines,
     heading_of,
     split_document,
@@ -1593,8 +1596,7 @@ class StudioAgents(OutputAgents):
             if run.spec.kind == "report":
                 text = fmt.cite_exhibit_rows(fmt.cite_captions(fmt.table_separators(text)))
             text, _ = check_citations(text, set(by_ref))
-            issues, coverage = self._claims(model, text, by_ref, rest, material=material)
-            return Draft(text, issues, coverage)
+            return Draft(text, self._claims(model, text, by_ref, rest, material=material))
 
         def check_and_fix(text: str) -> Draft:
             draft = check(text)
@@ -1635,24 +1637,7 @@ class StudioAgents(OutputAgents):
         )
         return drafts
 
-    def _claims(
-        self,
-        model,
-        text: str,
-        by_ref: dict[int, Evidence],
-        rest: str = "",
-        *,
-        material: str | None = None,
-    ):
-        """One claim check per part. A title is checked against the passages its own slide or
-        section cites (it states their conclusion). The title slide states the whole deck's
-        conclusion, so a figure on it is checked against the passages the other slides (``rest``)
-        cite for that same figure, not only its own. Interpretation and recommendation that
-        follow from cited facts are the author's judgement, not findings; what is flagged is a
-        cited claim its passages do not state, and a specific fact (a number) with no source."""
-
-        from gunther.outputs import Issue, _marked, section_hash
-
+    def _claim_text(self, text: str, rest: str = "") -> str:
         marked = _marked(text)
         body = marked.body
         lines = body.split("\n")
@@ -1662,16 +1647,32 @@ class StudioAgents(OutputAgents):
             if len(content) >= 3:
                 lines[content[2]] = ""
             lines = [_lend_refs(line, rest) for line in lines]
-        refs = "".join(f"[{n}]" for n in dict.fromkeys(re.findall(r"\[(\d+)\]", body)))
-        for at, line in enumerate(lines):
-            if re.match(r"^#{1,2}\s", line):
-                if refs and not re.search(r"\[\d+\]", line):
-                    lines[at] = line.rstrip() + " " + refs
-                break
-        checked = "\n".join(lines)
+        checked = check_heading_refs(body, lines)
         if self.scientific_context:
             # A numbered step's own number is not a claim to source.
             checked = re.sub(r"(?m)^([ \t]*)\d+[.)]\s+", r"\1", checked)
+        return checked
+
+    def _claims(
+        self,
+        model,
+        text: str,
+        by_ref: dict[int, Evidence],
+        rest: str = "",
+        *,
+        material: str | None = None,
+        prior: Verdicts | None = None,
+        inventory: Verdicts | None = None,
+    ) -> Verdicts:
+        """One claim check per part. A title is checked against the passages its own slide or
+        section cites (it states their conclusion). The title slide states the whole deck's
+        conclusion, so a figure on it is checked against the passages the other slides (``rest``)
+        cite for that same figure, not only its own. Interpretation and recommendation that
+        follow from cited facts are the author's judgement, not findings; what is flagged is a
+        cited claim its passages do not state, and a specific fact (a number) with no source."""
+
+        body = _marked(text).body
+        checked = self._claim_text(text, rest)
         checker = copy(self.ask)
         checker.gateway = _MaterialCheckerGateway(
             self,
@@ -1682,38 +1683,31 @@ class StudioAgents(OutputAgents):
                 "\nActual image readings (linked asset IDs identify the source figures above):\n"
                 + json.dumps(self.scientific_context.get("figure_readings", []), ensure_ascii=False)
             )
-        _, check, _, _ = checker.check_sentences(
+        checked = checker.check_artifact_claims(
             model,
             STUDIO_CHECK + ("\n" + P.SCIENCE_TRUTH if self.scientific_context else ""),
             checked,
-            by_ref,
-            limit=self.limits.sentences,
+            by_ref, limit=self.limits.sentences, prior=prior or {}, inventory=inventory,
         )
-        coverage = (
-            check._coverage
-            if check is not None
-            else {"status": "failed", "considered": 0, "checked": 0, "unchecked": 0, "claims": []}
-        )
-        coverage["answerHash"] = section_hash(text)
-        issues = []
-        for claim in coverage.get("claims", []):
-            verdict, sentence = claim["verdict"], claim["text"]
-            plain = re.sub(r"\s*\[(?:\?|\d+)\]", "", sentence).strip()
-            # An image reference is provenance, not a claim: its asset id and crop coordinates
-            # carry digits that would otherwise read as an uncited number. The caption stays.
+        for claim in checked.values():
+            label = claim.get("label", claim["verdict"])
+            plain = re.sub(r"\s*\[(?:\?|\d+)\]", "", claim["text"]).strip()
+            # An image reference is provenance, so its id and crop coordinates are not facts.
             said = re.sub(r"!\[([^\]]*)\]\(gunther-asset:[^)]*\)", r"\1", plain)
-            if verdict in ("not", "partly"):
-                issues.append(Issue(plain[:300], "unsupported", claim.get("reason") or ""))
-            elif verdict == "unsourced" and re.search(r"\d", said):
-                issues.append(Issue(plain[:300], "unsourced", "A specific fact with no source."))
-        # A number with no citation on its line (a recommendation repeating a figure, a table
-        # row): the claim fix cites the passage it comes from, or drops the number.
-        held = {issue.claim[:80] for issue in issues}
+            if label in {"not", "partly"}:
+                claim["issue"] = Issue(plain[:300], "unsupported", claim.get("reason") or "").out()
+            elif label == "unsourced" and re.search(r"\d", said):
+                issue = Issue(plain[:300], "unsourced", "A specific fact with no source.")
+                claim["issue"] = issue.out()
+        # Syntax findings come from the current section independently of its model verdicts.
+        held = {row["issue"]["claim"][:80] for row in checked.values() if "issue" in row}
+        findings = []
         for line in fmt.uncited_lines([ln for ln in body.split("\n") if not ln.startswith(":::")]):
             plain = re.sub(r"\s*\[(?:\?|\d+)\]", "", line).strip()
             if plain[:80] not in held and not re.match(r"^(Source|Sources|来源)\s*[:：]", plain):
-                issues.append(Issue(plain[:300], "unsourced", "A number with no citation."))
-        return issues, coverage
+                issue = Issue(plain[:300], "unsourced", "A number with no citation.")
+                findings.append(finding(issue.out()))
+        return checked | verdicts_of(*findings)
 
     def _cover(
         self, model, drafts: list[Draft], pool: Pool, material: str | None = None
@@ -1759,11 +1753,11 @@ class StudioAgents(OutputAgents):
         text = drafts[0].text.replace(body[0], line, 1)
         by_ref = pool.by_ref()
         text, _ = check_citations(text, set(by_ref))
-        issues, coverage = self._claims(model, text, by_ref, rest, material=material)
-        if any(i.verdict in ("unsupported", "contradicted") for i in issues):
+        draft = Draft(text, self._claims(model, text, by_ref, rest, material=material))
+        if any(i.verdict in ("unsupported", "contradicted") for i in draft.issues or []):
             logger.info("The aligned subtitle is not supported; keeping the old one")
             return drafts
-        return [Draft(text, issues, coverage), *drafts[1:]]
+        return [draft, *drafts[1:]]
 
     def _refit(
         self,
@@ -1791,8 +1785,7 @@ class StudioAgents(OutputAgents):
         rest = "\n".join(fitted[1:])
 
         def check(text: str) -> Draft:
-            issues, coverage = self._claims(model, text, by_ref, rest, material=material)
-            return Draft(text, issues, coverage)
+            return Draft(text, self._claims(model, text, by_ref, rest, material=material))
 
         again = warm_map(check, [fitted[i] for i in changed], WORKERS)
         for index, draft in zip(changed, again, strict=True):
@@ -2236,10 +2229,9 @@ class StudioAgents(OutputAgents):
                 drafts = [
                     Draft(
                         row["text"],
-                        None
-                        if row.get("issues") is None
-                        else [Issue(**issue) for issue in row["issues"]],
-                        row.get("coverage"),
+                        read_verdicts(row, _marked(row["text"]).body)
+                        if row.get("verdicts") is not None or row.get("issues") is not None
+                        else None,
                     )
                     for row in checked["slides"]
                 ]
@@ -2260,10 +2252,7 @@ class StudioAgents(OutputAgents):
                         "slides": [
                             {
                                 "text": d.text,
-                                "issues": None
-                                if d.issues is None
-                                else [issue.out() for issue in d.issues],
-                                "coverage": d.coverage,
+                                "verdicts": d.verdicts,
                             }
                             for d in drafts
                         ],

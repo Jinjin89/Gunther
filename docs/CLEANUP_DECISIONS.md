@@ -253,3 +253,12 @@ batch 11 CSS follow-up rides along (supervisor's instruction).
 The supervisor merges small plan batches; the merged scope is whatever the cleaner was
 told and lists at the top of NN.md. Don't FIX a batch for being merged. So far:
 32 = 32+33 (+11 CSS); A42 = A42c+A43d.
+A43 = A43b + A43c remainder (NM-07)
+
+# Round 15 — one shape for check state (batch A43)
+
+A check is a set of verdicts, one per (claim text hash, evidence hash, stage), each
+`supported | unsupported | unchecked | unavailable`. Edits, retries and sync only merge
+verdicts by key: a verdict survives while its key exists. Coverage, "partial" and
+"unavailable" are derived from the verdicts, never stored separately. Old check rows
+are read into this shape at the edge.

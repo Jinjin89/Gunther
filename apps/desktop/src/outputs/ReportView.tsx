@@ -2,7 +2,7 @@ import type { Artifact, ConversationCitation, OutputIssue, OutputSection } from 
 import { MessageSquarePlus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AnswerBody, citationNumbers } from "../pages/AnswerBody";
+import { AnswerBody, citationNumbers, verificationNotice } from "../pages/AnswerBody";
 import { splitDocument, withoutTitle } from "./sections";
 import { isReportV2 } from "./deck/detect";
 import { ReportV2Section } from "./deck/ReportV2";
@@ -18,8 +18,9 @@ const VERDICT: Record<OutputIssue["verdict"], string> = {
 /** What the Checker found in one section, and whether it has looked at the text as it is now. */
 export function SectionStatus({ info }: { info: OutputSection | undefined }) {
   if (!info || (info.checked && info.issues.length === 0)) return null;
+  const notice = verificationNotice(info.coverage);
   return <div className="outputs-status">
-    {!info.checked && <span className="outputs-flag" title="This text changed after it was last checked against the sources.">Not re-checked</span>}
+    {!info.checked && <span className="outputs-flag" role="status">{notice ?? "Not re-checked"}</span>}
     {info.issues.length > 0 && <ul className="outputs-issues" aria-label="Found when checking">
       {info.issues.map((issue, index) => <li key={index} className={`is-${issue.verdict}`}>
         <strong>{VERDICT[issue.verdict]}</strong>

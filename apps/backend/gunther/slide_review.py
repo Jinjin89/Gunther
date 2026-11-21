@@ -141,12 +141,8 @@ def apply_repairs(built: BuiltOutput, repairs: VisualRepairs, allowed: set[str])
     hashes = {
         section_hash(old): section_hash(new) for old, new in zip(old_pages, pages, strict=True)
     }
-    checks = []
-    for check in built.checks:
-        updated = {**check, "hash": hashes.get(check["hash"], check["hash"])}
-        if check.get("coverage"):
-            updated["coverage"] = {**check["coverage"], "answerHash": updated["hash"]}
-        checks.append(updated)
+    checks = [{**check, "hash": hashes.get(check["hash"], check["hash"])}
+              for check in built.checks]
     return replace(built, content=content, outline=outline, checks=checks)
 
 

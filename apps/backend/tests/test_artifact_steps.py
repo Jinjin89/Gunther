@@ -36,6 +36,7 @@ from gunther.artifact_workspace import (
     ready,
     status,
 )
+from gunther.checks import finding, verdicts_of
 from gunther.llm import ModelError
 from gunther.outputs import Notes, Pool, layout_of, section_hash, split_document, with_layout
 from gunther.schemas import ConversationCitationOut
@@ -522,7 +523,8 @@ def test_one_passage_is_replaced_and_the_rest_of_the_part_is_as_it_was() -> None
     assert part.checked == section_hash(part.text) and part.issues == []
     assert part.inputs == kept["p1"].inputs
     assert work.parts["p2"] == kept["p2"] and work.parts["p3"] == kept["p3"]
-    assert states(steps) == ["ok", "ok", "ok"]
+    assert part.coverage["status"] == "partial"
+    assert states(steps) == ["not_checked", "ok", "ok"]
 
 
 def test_a_passage_that_is_not_there_is_an_error_that_costs_nothing() -> None:
@@ -604,8 +606,10 @@ def test_a_changed_heading_becomes_the_items_and_a_part_out_of_date_stays_so() -
     steps.edit("p1", old, "Shorten the heading")
     assert steps.work.outline[0].heading == "Markers tell T and B cells apart"
     assert steps.work.parts["p1"].text.startswith(f"{new}\n\n")
-    # The part was up to date, and still is, for its item has the new heading.
-    assert states(steps) == ["ok", "ok", "ok"]
+    # The part's inputs are current. The new heading still needs verification.
+    part = steps.work.parts["p1"]
+    assert part.inputs == digest_part_inputs(steps.brief, steps.work, steps.work.outline[0])
+    assert states(steps) == ["not_checked", "ok", "ok"]
     steps.brief.audience = Line(text="first-year students", mark="you")
     steps.edit("p2", "CD3D is a marker of T cells [1]", "Say it for students")
     assert states(steps) == ["out_of_date"] * 3
@@ -961,7 +965,9 @@ def test_only_the_changed_paragraph_of_an_edited_part_goes_to_the_checker() -> N
     heading, rest = part.text.split("\n", 1)
     part.text = f"{heading}\n\n{first}\n\n{rest.strip()}"
     part.checked = section_hash(part.text)
-    part.issues = [{"claim": first, "verdict": "unsupported", "note": "Doubted."}]
+    part.verdicts = verdicts_of(finding({
+        "claim": first, "verdict": "unsupported", "note": "Doubted.",
+    }))
     before = len(fake.requests)
 
     assert steps.edit("p1", "CD3D marks T cells [1]", "Say where it is") is True

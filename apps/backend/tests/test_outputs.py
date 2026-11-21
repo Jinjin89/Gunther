@@ -29,7 +29,8 @@ from legacy_artifacts import insert_legacy_version
 from sqlalchemy import func, select, text
 
 from evals.sse import ask_turn, read_events
-from gunther.agent import Evidence
+from gunther.agent import Evidence, checker_inventory
+from gunther.checks import coverage_of, verdict, verdicts_of
 from gunther.config import Settings
 from gunther.main import create_app
 from gunther.models import Artifact, ArtifactCheck, ArtifactUnitBinding, Source
@@ -215,11 +216,9 @@ def saved_output(client, base_id, outline=None, written=None, *, approach=None, 
             part = with_layout(part, layout, theme=payload.theme, design_version=1)
         identity = row.get("id") or (f"p{index + 1}" if deck and approach else "")
         plans.append(Planned(row["heading"], row.get("goal", ""), layout=layout, id=identity))
-        claims = [
-            {"text": text, "refs": refs, "verdict": "supported"}
-            for _, _, text, refs in cited_sentences(part)
-        ]
-        drafts.append(Draft(part, [], {"status": "complete", "claims": claims}))
+        states = checker_inventory(_marked(part).body, pool.by_ref())
+        drafts.append(Draft(part, {key: {**row, "verdict": "supported"}
+                                   for key, row in states.items()}))
     preamble = "" if deck else f"# {title}"
     if preamble and payload.brief:
         preamble += f"\n\n_{payload.brief}_"
@@ -414,36 +413,18 @@ def test_a_diagram_draws_only_when_every_relationship_is_exactly_supported() -> 
         "<!-- layout: diagram -->\n## A leads to B\n"
         "| From | Relationship | To |\n| --- | --- | --- |\n| A | leads to [1] | B |"
     )
-    supported = Draft(
-        text,
-        [],
-        {
-            "status": "complete",
-            "claims": [{"text": "A | leads to | B", "refs": [1], "verdict": "supported"}],
-        },
-    )
+    def checked(claim: str, outcome: str) -> Draft:
+        return Draft(text, verdicts_of(verdict("checker", {
+            "text": claim, "refs": [1], "verdict": outcome,
+        })))
+
+    supported = checked("A | leads to | B", "supported")
     assert diagram_fallback_reason(supported) is None
-    unsupported = Draft(
-        text,
-        [],
-        {
-            "status": "complete",
-            "claims": [{"text": "A | leads to | B", "refs": [1], "verdict": "not"}],
-        },
-    )
+    unsupported = checked("A | leads to | B", "unsupported")
     assert diagram_fallback_reason(unsupported)
     assert "| A | leads to [1] | B |" in diagram_as_text(unsupported).text
-    unrelated = Draft(
-        text,
-        [],
-        {
-            "status": "complete",
-            "claims": [{"text": "Next process runs", "refs": [1], "verdict": "supported"}],
-        },
-    )
-    assert diagram_fallback_reason(unrelated)
-    incomplete = Draft(text, [], {"status": "partial", "claims": []})
-    assert diagram_fallback_reason(incomplete)
+    assert diagram_fallback_reason(checked("Next process runs", "supported"))
+    assert diagram_fallback_reason(checked("A | leads to | B", "unchecked"))
 
 
 def test_a_deck_keeps_each_slides_marker_with_it_and_the_hash_covers_it() -> None:
@@ -501,8 +482,9 @@ def test_the_checker_reads_a_slide_under_its_marker_and_gives_the_marker_back() 
     assert draft.coverage["status"] == "complete"
     assert draft.coverage["answerHash"] == section_hash(slide)
     assert all("layout" not in claim["text"] for claim in draft.coverage["claims"])
-    coverage: dict = {}
-    assert agents.check_unbuilt(model, slide, pool.by_ref(), coverage) == []
+    retried = Draft(slide, agents.check_unbuilt(model, slide, pool.by_ref()))
+    assert retried.issues == []
+    coverage = coverage_of(retried.verdicts, section_hash(slide))
     assert coverage["answerHash"] == section_hash(slide)
     assert all("layout" not in claim["text"] for claim in coverage["claims"])
     # Nothing the models were asked had the marker in it.

@@ -49,6 +49,7 @@ from gunther.artifact_workspace import (
     store_pool,
     sync,
 )
+from gunther.checks import audit_verdict, finding, verdict, verdicts_of
 from gunther.outputs import BuiltOutput, _marked, layout_of, section_hash, split_document
 from gunther.schemas import ConversationCitationOut
 from gunther.slide_review import VisualRepairs, apply_repairs
@@ -371,13 +372,15 @@ def test_a_check_is_out_of_date_when_the_text_changed_after_it() -> None:
 
 def test_a_part_with_no_check_is_not_checked() -> None:
     brief, work = made()
-    work.parts["p1"].issues = None
+    work.parts["p1"].verdicts = None
     assert states(work, brief)[0] == "not_checked"
 
 
 def test_a_check_that_found_something_is_still_a_check() -> None:
     brief, work = made()
-    work.parts["p2"].issues = [{"claim": "It is so", "verdict": "unsupported", "note": ""}]
+    work.parts["p2"].verdicts = verdicts_of(finding({
+        "claim": "It is so", "verdict": "unsupported", "note": "",
+    }))
     assert states(work, brief) == ["ok", "ok", "ok"]
     assert ready(work, brief) == []
 
@@ -703,7 +706,8 @@ def test_a_workspace_survives_a_trip_through_json() -> None:
         log=["Version 1 saved."],
         asked_in_a_row=1,
     )
-    work.parts["p2"].coverage = {"status": "complete", "claims": [{"text": "It is so [1]"}]}
+    work.parts["p2"].verdicts = verdicts_of(verdict("checker", {"text": "It is so [1]",
+                                                              "verdict": "supported"}))
     work.skipped.append({"step": "reader_test", "reason": "down"})
     raw = dump_workspace(state)
     assert load_workspace(raw) == state
@@ -783,7 +787,8 @@ def test_what_the_checker_found_is_given_to_the_part_in_the_pools_numbers() -> N
     assert part.coverage is not None
     assert part.coverage["answerHash"] == section_hash(part.text)
     assert part.coverage["claims"] == [
-        {"text": "It is so [7][5]", "refs": [7, 5], "verdict": "supported"}
+        {"text": "It is so [7][5]", "refs": [7, 5],
+         "verdict": "supported", "evidenceHash": "legacy"}
     ]
     # The version's own record is not touched.
     assert record["coverage"]["claims"][0]["refs"] == [1, 2, 9]
@@ -792,19 +797,37 @@ def test_what_the_checker_found_is_given_to_the_part_in_the_pools_numbers() -> N
     assert _take_check(other, "## B", record, [7, 5]) is False and other.issues is None
 
 
-def test_a_part_keeps_its_own_check_unless_the_versions_is_more_complete() -> None:
-    section = "## A\n\nIt is so [1]."
-    whole = {"hash": section_hash(section), "issues": [], "coverage": {"status": "complete"}}
-    partial = {"hash": section_hash(section), "issues": [], "coverage": {"status": "partial"}}
-    own = PartRec(
-        text=section, inputs="", checked=section_hash(section), issues=[{"claim": "mine"}]
+def test_sync_merges_completed_audit_with_unchanged_checker_coverage() -> None:
+    section = "## A\n\nIt is so [1]. Other claims may need review."
+    digest = section_hash(section)
+    checker = verdicts_of(
+        verdict("checker", {
+            "text": "It is so [1].", "evidenceHash": "source", "verdict": "supported",
+        }),
+        verdict("checker", {"text": "Other claims may need review.", "verdict": "unchecked"}),
     )
-    # Its own check, with no coverage record, stands against a version's.
-    assert _take_check(own, section, whole, [1]) is False and own.issues == [{"claim": "mine"}]
-    own.coverage = {"status": "partial"}
-    assert _take_check(own, section, partial, [1]) is False
-    assert _take_check(own, section, whole, [1]) is True
-    assert own.issues == [] and own.coverage is not None and own.coverage["status"] == "complete"
+    old = {"hash": digest, "verdicts": checker | verdicts_of(audit_verdict(section, "unavailable"))}
+    updated = {
+        "hash": digest, "verdicts": checker | verdicts_of(audit_verdict(section, "supported", [])),
+    }
+    part = PartRec(text=section, inputs="")
+    assert _take_check(part, section, old, [1])
+    assert part.coverage["status"] == "unavailable"
+
+    assert _take_check(part, section, updated, [1])
+    assert part.coverage["checked"] == 1 and part.coverage["status"] == "partial"
+    assert part.coverage["audit"] == {"status": "complete", "claims": []}
+    assert not _take_check(part, section, old, [1])
+
+    legacy = PartRec(
+        text=section, inputs="", checked=digest, issues=[], coverage={"status": "partial"},
+    )
+    assert legacy.coverage["status"] == "partial"
+    completed = {"hash": digest, "verdicts": {
+        key: {**row, "verdict": "supported"} for key, row in updated["verdicts"].items()
+    }}
+    assert _take_check(legacy, section, completed, [1])
+    assert legacy.coverage["status"] == "complete"
 
 
 def a_deck(tmp_path: Path, **overrides):

@@ -149,8 +149,7 @@ def test_assemble_citation_renumbering_keeps_the_scene_source_fingerprint() -> N
                 root=root,
             ),
         ),
-        [],
-        {"status": "complete", "claims": []},
+        {},
     )
 
     built = agents.assemble(

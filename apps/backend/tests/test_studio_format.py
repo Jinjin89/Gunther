@@ -143,10 +143,12 @@ def test_an_exhibit_caption_with_numbers_cites_its_table():
     assert "Exhibit 2 — Savings fall from 18% to 9% [1][2]" in fmt.cite_captions(text)
 
 
-def test_writing_about_the_material_is_a_format_problem():
+def test_phrase_checks_apply_to_body_text():
     deck = GOOD.replace(
         "## The pilot cut review time by 60%", "## What the evidence shows about review time"
     )
+    assert fmt.check_deck(deck) == []
+    deck = deck.replace("Median review time per case", "The evidence shows that review time fell")
     assert any("about the world" in p for p in dict(fmt.check_deck(deck))[2])
 
 
@@ -160,11 +162,13 @@ def test_uncited_exhibit_rows_cite_the_source_line():
     assert "| 指标 | 增速 |" in out
 
 
-def test_a_title_that_announces_content_is_sent_back():
+def test_short_japanese_slide_title_keeps_the_structural_citation_check():
     deck = GOOD.replace(
-        "## The pilot cut review time by 60%", "## Three findings change the decision"
+        "## The pilot cut review time by 60%", "## 熱損失が止まる"
     )
-    assert any("announces" in p for p in dict(fmt.check_deck(deck))[2])
+    assert fmt.check_deck(deck) == []
+    cited = deck.replace("## 熱損失が止まる", "## 熱損失が止まる [1]")
+    assert any("citation marks" in p for p in dict(fmt.check_deck(cited))[2])
 
 
 def test_a_slide_still_over_budget_moves_its_tail_clause_into_the_notes():
@@ -180,18 +184,14 @@ def test_a_slide_still_over_budget_moves_its_tail_clause_into_the_notes():
     assert "Most of the gain sat in a few buildings" in body.notes
 
 
-def test_a_report_heading_that_names_a_topic_is_sent_back():
-    from gunther.studio import format as fmt
-
+def test_short_japanese_report_heading_keeps_the_structural_length_check():
     report = (
-        "<!-- report: v2 -->\n# Plan for 2030\n\n## Summary\n<!-- block: summary -->\n"
-        "- **A**: b\n\n"
-        "## Charging must grow sixfold by 2035 [1]\nText [1].\n\n## Three asks\nText.\n"
+        "<!-- report: v2 -->\n# 断熱実験\n\n## 結論\n<!-- block: summary -->\n"
+        "断熱材を追加した。\n\n## 熱損失が止まる\n測定結果が安定した [1]。\n"
     )
-    problems = fmt.check_report(report)
-    assert any("Three asks" in p and "topic" in p for p in problems)
-    assert not any('"Summary"' in p for p in problems)
-    assert not any("Charging must grow" in p and "topic" in p for p in problems)
+    assert fmt.check_report(report) == []
+    long = report.replace("熱損失が止まる", "熱" * 46)
+    assert any("Section 2 heading" in p for p in fmt.check_report(long))
 
 
 def test_a_table_header_without_a_separator_gets_one():

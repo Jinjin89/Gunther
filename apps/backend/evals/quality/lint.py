@@ -9,10 +9,7 @@
   character counts 2, anything else 1; citation marks and ``**`` do not count. ``read`` decks
   get 1.5x on body fields (titles keep theirs). Layouts the format does not know (the older
   skills decks) are checked for their title only.
-- ``topic_title``: an action title (or a report heading) under 12 units, or without a
-  verb-like word. Latin: fewer than 4 words, or (under 6 words) none of an auxiliary/common verb, a word
-  ending in -ed/-ing/-ize/-ise/-ify, or a digit. CJK: under 8 characters, or none of a short list of
-  verb characters and no digit. Title and section slides are exempt.
+- ``missing_title``: a slide without a title.
 - ``meta_phrase``: disclaimer or meta words on a slide's visible text (not speaker notes).
 - ``uncited_number``: a number on a line (a table row counts as a line) with no ``[n]`` or
   ``[?]`` on it. Not counted: years, whole numbers up to 12 without a percent sign, headings,
@@ -28,13 +25,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from gunther.outputs import split_document
-from gunther.studio.titles import (  # noqa: F401  (one test for the app and the eval)
-    AUXILIARIES,
-    CJK_VERBS,
-    COMMON_VERBS,
-    VERB_SUFFIXES,
-    is_topic_title,
-)
 
 MARKER = re.compile(r"^\s*<!--\s*(.*?)\s*-->\s*$")
 CITE = re.compile(r"\[(?:\d+(?:\s*[,–-]\s*\d+)*|\?)\]")
@@ -89,7 +79,6 @@ class Slide:
     body: list[str]  # visible lines after the title, without blank lines
     notes: str
     has_notes: bool
-    visible: str  # all visible text, for phrase checks
 
 
 def parse_slide(number: int, text: str) -> Slide:
@@ -130,7 +119,7 @@ def parse_slide(number: int, text: str) -> Slide:
         subtitle = content[0].strip()
     return Slide(
         number, layout, options, title, subtitle, content, "\n".join(notes).strip(),
-        in_notes, "\n".join(visible),
+        in_notes,
     )  # fmt: skip
 
 
@@ -395,13 +384,9 @@ def lint(
             slide = parse_slide(number, text)
             where = f"slide {number}"
             defects += budget_defects(slide, use)
-            if (
-                purpose != "explain_study"
-                and slide.layout not in {"title", "section"}
-                and is_topic_title(slide.title)
-            ):
-                defects.append(Defect(where, "topic_title", f"“{slide.title[:80]}”"))
-            for phrase in meta_hits(slide.visible):
+            if not units(slide.title):
+                defects.append(Defect(where, "missing_title", "The slide needs a title."))
+            for phrase in meta_hits("\n".join(slide.body)):
                 defects.append(Defect(where, "meta_phrase", f"“{phrase}” on the slide"))
             # A title slide's last line is its meta line (audience, date): no claim.
             checked = slide.body[:1] if slide.layout == "title" else slide.body
@@ -417,16 +402,14 @@ def lint(
     preamble, sections = split_document(content, "report")
     for number, text in enumerate(sections, start=1):
         where = f"section {number}"
-        heading = text.splitlines()[0].removeprefix("## ").strip() if text else ""
-        summary = "block: summary" in text
-        if purpose != "explain_study" and is_topic_title(heading) and not summary:
-            defects.append(Defect(where, "topic_title", f"“{heading[:80]}”"))
-        for phrase in meta_hits(text):
+        lines = text.splitlines()[1:]
+        for phrase in meta_hits("\n".join(lines)):
             defects.append(Defect(where, "meta_phrase", f"“{phrase}”"))
-        body = [ln for ln in text.splitlines()[1:] if not ln.startswith(("Source:", ":::"))]
+        body = [ln for ln in lines if not ln.startswith(("Source:", ":::"))]
         for line in uncited_numbers(body):
             defects.append(Defect(where, "uncited_number", line))
-    for phrase in meta_hits(preamble):
+    body = "\n".join(line for line in preamble.splitlines() if not line.startswith("# "))
+    for phrase in meta_hits(body):
         defects.append(Defect("document", "meta_phrase", f"“{phrase}”"))
     return defects
 

@@ -87,7 +87,9 @@ def build_router(request):
         )
     if step == "report writer":
         # Exercise report repair without patching the format checker.
-        return REPORT.replace("Weather adjustment changes the estimate", "Background")
+        return REPORT.replace(
+            "Weather adjustment changes the estimate", "W" * (fmt.REPORT_HEADING_UNITS + 1)
+        )
     if step == "report repair":
         return REPORT
     if step == "look":

@@ -1013,7 +1013,7 @@ export interface ConversationContext {
   /** One note per `[p:n]` (partly supported) in the text, in order: what that source does not cover. */
   supportNotes?: string[];
   coverage?: {
-    status: "complete" | "partial" | "skipped" | "failed";
+    status: "complete" | "partial" | "skipped" | "unavailable" | "failed";
     considered: number;
     checked: number;
     unchecked: number;
@@ -1438,7 +1438,14 @@ export interface OutputSection {
   /** The Checker has looked at the section as it reads now. */
   checked: boolean;
   issues: OutputIssue[];
-  coverage?: { status: string; considered: number; checked: number; unchecked: number } | null;
+  coverage?: {
+    status: string;
+    considered: number;
+    checked: number;
+    unchecked: number;
+    audit?: { status: string };
+    support?: { status: string; unchecked: number };
+  } | null;
 }
 
 export interface ArtifactSummary {

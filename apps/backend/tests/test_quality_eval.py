@@ -9,15 +9,6 @@ def test_units_count_cjk_double_and_skip_marks() -> None:
     assert lint.units("**数据**") == 4
 
 
-def test_topic_titles_are_told_from_action_titles() -> None:
-    assert lint.is_topic_title("Results")
-    assert lint.is_topic_title("Methods and data")
-    assert not lint.is_topic_title("Savings halve once each summer's heat is counted")
-    assert not lint.is_topic_title("The pilot cut review time by 60%")
-    assert lint.is_topic_title("研究背景")
-    assert not lint.is_topic_title("2024年国内生产总值增长5.0%，经济总量突破130万亿元")
-
-
 DECK = """<!-- layout: title; design: v2 -->
 # Cool roofs cut cooling demand
 The saving is 9 percent after adjusting for weather [1]
@@ -43,12 +34,14 @@ Median review time before and after [1]
 def test_lint_finds_each_hard_defect() -> None:
     found = lint.lint("slides", DECK, "talk")
     rules = {(d.where, d.rule) for d in found}
-    assert ("slide 2", "topic_title") in rules
+    assert ("slide 2", "missing_title") not in rules
     assert ("slide 2", "uncited_number") in rules
     assert ("slide 2", "meta_phrase") in rules
     assert ("slide 3", "missing_notes") in rules
     assert ("slide 3", "uncited_number") not in rules  # the bold value takes the next line's mark
     assert ("slide 2", "missing_notes") not in rules
+    untitled = DECK.replace("## Results\n", "")
+    assert any(d.rule == "missing_title" for d in lint.lint("slides", untitled, "talk"))
 
 
 def test_meta_phrases_are_not_taken_from_speaker_notes() -> None:
@@ -68,7 +61,6 @@ def test_budgets_depend_on_the_use() -> None:
 def test_report_headings_and_numbers() -> None:
     text = "# Title\n\n## Overview\nSales rose 14.5% in 2023.\n\n## Prices rose faster than wages in 2023 [1]\nOK [1]"  # noqa: E501
     found = {(d.where, d.rule) for d in lint.lint("report", text)}
-    assert ("section 1", "topic_title") in found
     assert ("section 1", "uncited_number") in found
     assert not [d for d in found if d[0] == "section 2"]
 

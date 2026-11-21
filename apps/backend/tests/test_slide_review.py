@@ -53,8 +53,7 @@ def deck(pages=2, vision=True):
         [
             {
                 "hash": section_hash(t),
-                "issues": [],
-                "coverage": {"answerHash": section_hash(t), "claims": []},
+                "verdicts": {},
             }
             for t in text
         ],
@@ -153,8 +152,7 @@ def test_layout_repair_keeps_exact_words_notes_citations_and_check_coverage(chec
     assert result.citations == before.citations and result.pool_refs == (7,)
     if checked:
         assert result.checks[1]["hash"] == section_hash(new)
-        assert result.checks[1]["coverage"]["answerHash"] == section_hash(new)
-        assert result.checks[1]["coverage"]["claims"] == before.checks[1]["coverage"]["claims"]
+        assert result.checks[1]["verdicts"] == before.checks[1]["verdicts"]
     else:
         assert result.checks == before.checks
 

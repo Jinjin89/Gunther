@@ -45,14 +45,12 @@ from gunther.outputs import (
     BuiltOutput,
     Draft,
     Events,
-    Issue,
     Notes,
     Planned,
     Pool,
     Spec,
     _marked,
     _notes_block,
-    _plain,
     heading_of,
     section_hash,
     with_layout,
@@ -231,15 +229,7 @@ class WorkSteps:
         """A part and its check, when the check is of this text."""
 
         part = self.work.parts[item.id]
-        if part.issues is None or part.checked != section_hash(part.text):
-            return Draft(part.text)
-        issues = [
-            Issue(
-                str(i.get("claim", "")), str(i.get("verdict", "unchecked")), str(i.get("note", ""))
-            )
-            for i in part.issues
-        ]
-        return Draft(part.text, issues, part.coverage)
+        return Draft(part.text, part.verdicts if part.checked == section_hash(part.text) else None)
 
     def _written(self) -> list[Draft]:
         """Every part, in outline order. Raises ValueError when nothing is planned or one part
@@ -256,9 +246,8 @@ class WorkSteps:
         self.work.parts[item.id] = PartRec(
             text=draft.text,
             inputs=inputs,
-            checked=section_hash(draft.text) if draft.issues is not None else None,
-            issues=[issue.out() for issue in draft.issues] if draft.issues is not None else None,
-            coverage=draft.coverage,
+            checked=section_hash(draft.text) if draft.verdicts is not None else None,
+            verdicts=draft.verdicts,
         )
 
     def _announce(self) -> None:
@@ -706,10 +695,10 @@ class WorkSteps:
         self.emit({"type": "section", "index": at, "state": "done"})
 
     def _check_changed(self, part: PartRec, text: str, pool: Pool, at: int) -> Draft:
-        """Check an edited part where it changed. The Checker marks and trims what it checks,
-        so only the paragraphs that differ from the part's checked text go through it, and the
-        rest stays word for word with its findings. A part with no check of its own, or a
-        chart (whose values are checked as a whole), is checked whole."""
+        """Check changed paragraphs in their section's claim inventory.
+
+        When a layout depends on verification of the whole part, check every unresolved claim.
+        """
 
         # An edit drops the slide's design: it was drawn for the words as they were.
         text = without_design(text)
@@ -721,8 +710,10 @@ class WorkSteps:
             or any(studio_fmt.EXHIBIT_CHART.search(exhibit["attrs"])
                    for exhibit in studio_fmt.EXHIBIT.finditer(new.body))
         )
-        if whole or part.issues is None or part.checked != section_hash(part.text):
+        if part.verdicts is None or part.checked != section_hash(part.text):
             return self.agents.check_built(self.model, text, pool, at)
+        if whole:
+            return self.agents.check_edit(self.model, text, pool, part, at, None)
         was, now = _blocks(old.body), _blocks(new.body)
         first = 0
         while first < min(len(was), len(now)) and was[first][0] == now[first][0]:
@@ -734,28 +725,11 @@ class WorkSteps:
         ):
             last += 1
         changed = now[first : len(now) - last]
-        if changed and all(HEADING_LINE.fullmatch(block) for block, _ in changed):
-            # A heading is no claim the Checker looks at: a new one keeps the part's findings.
-            changed = []
-        kept = [block for block, _ in now[:first]] + [block for block, _ in now[len(now) - last :]]
-        kept_plain = _fold(_plain(" ".join(kept)))
-        issues = [
-            Issue(str(i.get("claim", "")), str(i.get("verdict", "")), str(i.get("note", "")))
-            for i in part.issues
-            if _fold(_plain(str(i.get("claim", ""))))[:80] in kept_plain
-        ]
-        if not changed:
-            return Draft(text, issues, part.coverage)
-        start, end = changed[0][1], changed[-1][1] + len(changed[-1][0])
-        checked = self.agents.check_built(
-            self.model, new.body[start:end], pool, at
-        )
-        body = new.body[:start] + checked.text.strip() + new.body[end:]
-        return Draft(
-            text[: len(text) - len(new.body)] + body,
-            issues + list(checked.issues or []),
-            checked.coverage or part.coverage,
-        )
+        lines = range(0)
+        if changed and not all(HEADING_LINE.fullmatch(block) for block, _ in changed):
+            start, end = changed[0][1], changed[-1][1] + len(changed[-1][0])
+            lines = range(new.body.count("\n", 0, start), new.body.count("\n", 0, end) + 1)
+        return self.agents.check_edit(self.model, text, pool, part, at, lines)
 
     # Designed slides -------------------------------------------------------------------------
 
@@ -814,8 +788,7 @@ class WorkSteps:
             return draft
         if text == draft.text:
             return draft
-        coverage = {**draft.coverage, "answerHash": section_hash(text)} if draft.coverage else None
-        return replace(draft, text=text, coverage=coverage)
+        return replace(draft, text=text)
 
     def redesign(self, item_ids: Sequence[str], request: str) -> list[str]:
         """Draw these slides again in the deck's style, as ``request`` asks of their look.
@@ -865,8 +838,6 @@ class WorkSteps:
             part.text = done[at]
             if was_checked:
                 part.checked = section_hash(part.text)
-            if part.coverage:
-                part.coverage = {**part.coverage, "answerHash": section_hash(part.text)}
             changed.append(item.id)
             self.emit({"type": "section", "index": at, "state": "done"})
         return changed
@@ -887,12 +858,10 @@ class WorkSteps:
             item = work.outline[at]
             part = work.parts[item.id]
             self.emit({"type": "section", "index": at, "state": "checking"})
-            coverage: dict[str, Any] = {}
+            prior = part.verdicts if part.checked == section_hash(part.text) else None
             by_ref = self._part_pool(_cited(part.text)).by_ref()
-            issues = self.agents.check_unbuilt(self.model, part.text, by_ref, coverage)
+            part.verdicts = self.agents.check_unbuilt(self.model, part.text, by_ref, prior)
             part.checked = section_hash(part.text)
-            part.issues = [issue.out() for issue in issues]
-            part.coverage = coverage or None
             done.append(item.id)
             self.emit({"type": "section", "index": at, "state": "done"})
         return done

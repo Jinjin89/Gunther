@@ -36,6 +36,7 @@ from gunther.agent import (
 from gunther.agent import Notes as Work
 from gunther.answer_runs import Stopped
 from gunther.artifact_workspace import evidence_from_citation
+from gunther.checks import complete, coverage_of, issue_view, merge_verdicts, read_verdicts
 from gunther.database import session_scope
 from gunther.document_structure import evidence_eligible
 from gunther.extraction import CandidateAssertion, ExtractionResult, Extractor
@@ -81,7 +82,6 @@ from gunther.models import (
 from gunther.online_search import DisabledOnlineSearch, OnlineSearchProvider
 from gunther.outputs import (
     BuiltOutput,
-    Issue,
     Notes,
     OutputAgents,
     OutputLimits,
@@ -3062,15 +3062,6 @@ class KnowledgeService:
         )
 
     @staticmethod
-    def _latest_checks(session: Session, artifact_id: str) -> dict[str, list[Issue]]:
-        """What the Checker found in each section of a version, by the section's hash."""
-
-        return {
-            digest: [Issue(**issue) for issue in item["issues"]]
-            for digest, item in KnowledgeService._latest_check_records(session, artifact_id).items()
-        }
-
-    @staticmethod
     def _latest_check_records(session: Session, artifact_id: str) -> dict[str, dict]:
         row = session.scalar(
             select(ArtifactCheck)
@@ -3080,7 +3071,17 @@ class KnowledgeService:
         )
         if row is None:
             return {}
-        return {item["hash"]: item for item in json.loads(row.checks_json).get("sections", [])}
+        records = json.loads(row.checks_json).get("sections", [])
+        texts = {}
+        if any("verdicts" not in record for record in records):
+            artifact = session.get(Artifact, artifact_id)
+            if artifact is not None:
+                texts = {section_hash(t): _marked(t).body
+                         for t in split_document(artifact.content, artifact.kind)[1]}
+        return {record["hash"]: {
+            "hash": record["hash"],
+            "verdicts": read_verdicts(record, texts.get(record["hash"], "")),
+        } for record in records}
 
     @classmethod
     def _output_sections(cls, session: Session, artifact: Artifact) -> list[OutputSectionOut]:
@@ -3088,20 +3089,18 @@ class KnowledgeService:
 
         if artifact.origin == "legacy":
             return []
-        known = cls._latest_checks(session, artifact.id)
         records = cls._latest_check_records(session, artifact.id)
         sections = []
         for index, text in enumerate(split_document(artifact.content, artifact.kind)[1]):
-            issues = known.get(section_hash(text))
-            coverage = records.get(section_hash(text), {}).get("coverage")
+            digest = section_hash(text)
+            state = records.get(digest, {}).get("verdicts")
             sections.append(
                 OutputSectionOut(
                     index=index,
                     heading=heading_of(text),
-                    checked=issues is not None
-                    and (coverage is None or coverage.get("status") == "complete"),
-                    issues=[OutputIssueOut(**issue.out()) for issue in issues or []],
-                    coverage=coverage,
+                    checked=state is not None and complete(state),
+                    issues=[OutputIssueOut(**issue) for issue in issue_view(state or {})],
+                    coverage=coverage_of(state, digest) if state is not None else None,
                 )
             )
         return sections
@@ -4603,10 +4602,7 @@ class KnowledgeService:
             record = records.get(section_hash(old))
             if record is None:
                 continue
-            moved = {**record, "hash": section_hash(new)}
-            if record.get("coverage"):
-                moved["coverage"] = {**record["coverage"], "answerHash": section_hash(new)}
-            checks.append(moved)
+            checks.append({**record, "hash": section_hash(new)})
         skill = dict(made_by.get("skill") or {})
         skill["skipped"] = [
             *[item for item in skill.get("skipped", []) if item.get("step") != "design"],
@@ -4668,12 +4664,11 @@ class KnowledgeService:
             self._output_library(session, workspace_id, base_id)
             parent = self._output_version(session, workspace_id, base_id, artifact_id, latest=True)
             self._require_agent_output(parent)
-            known = self._latest_checks(session, parent.id)
             records = self._latest_check_records(session, parent.id)
             hashes = dict.fromkeys(
                 section_hash(text) for text in split_document(payload.content, parent.kind)[1]
             )
-            checks = [records[digest] for digest in hashes if digest in known]
+            checks = [records[digest] for digest in hashes if digest in records]
             fields = {
                 "kind": parent.kind,
                 "style": parent.style,
@@ -4716,20 +4711,14 @@ class KnowledgeService:
                 session, workspace_id, base_id, artifact_id, latest=False
             )
             self._require_agent_output(artifact)
-            known = self._latest_checks(session, artifact.id)
-            records = self._latest_check_records(session, artifact.id)
+            known = {key: row["verdicts"] for key, row in
+                     self._latest_check_records(session, artifact.id).items()}
             artifact_kind = artifact.kind
             sections = split_document(artifact.content, artifact.kind)[1]
             if all(
-                records.get(section_hash(text), {}).get("coverage", {}).get("status") == "complete"
-                for text in sections
+                (key := section_hash(text)) in known and complete(known[key]) for text in sections
             ):
                 return self._artifact_out(session, artifact)
-            known = {
-                key: value
-                for key, value in known.items()
-                if records.get(key, {}).get("coverage", {}).get("status") == "complete"
-            }
             by_ref = {
                 citation.ref: evidence_from_citation(citation)
                 for citation in (
@@ -4739,21 +4728,16 @@ class KnowledgeService:
                 if citation.ref is not None
             }
         with usage.job("outputs", artifact_kind, ref=artifact_id):
-            checks = OutputAgents(self.models).check(
-                model,
-                sections,
-                known,
-                by_ref,
-                title_slide=artifact_kind == "slides",
-                known_coverage={
-                    key: value["coverage"]
-                    for key, value in records.items() if value.get("coverage")
-                },
-            )
+            checks = OutputAgents(self.models).check(model, sections, known, by_ref)
         with session_scope(self.sessions) as session:
             artifact = self._output_version(
                 session, workspace_id, base_id, artifact_id, latest=False
             )
+            latest = self._latest_check_records(session, artifact_id)
+            for check in checks:
+                saved = latest.get(check["hash"], {}).get("verdicts", {})
+                found = check["verdicts"]
+                check["verdicts"] = merge_verdicts(found, saved)
             session.add(
                 ArtifactCheck(
                     id=_id("chk"),

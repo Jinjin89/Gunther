@@ -814,6 +814,28 @@ describe("reading, versions and editing", () => {
     const user = userEvent.setup(); const check = vi.spyOn(knowledgeApi, "checkOutput").mockResolvedValue(version()); await setup({ history: [version(1, { sections: [{ index: 0, heading: "T cells", checked: false, issues: [] }] })] });
     await user.click(screen.getByRole("button", { name: "Check again" })); await waitFor(() => expect(screen.queryByText("Not re-checked")).not.toBeInTheDocument()); expect(check).toHaveBeenCalledWith("biology", "art_1", "wsp_primary");
   });
+  it("reports an unavailable audit or a partial check and keeps retry available", async () => {
+    const user = userEvent.setup();
+    const section = { index: 0, heading: "T cells", checked: false, issues: [] };
+    const partial = { status: "partial", considered: 2, checked: 1, unchecked: 1 };
+    const check = vi.spyOn(knowledgeApi, "checkOutput")
+      .mockResolvedValueOnce(version(1, { sections: [{
+        ...section, coverage: { ...partial, status: "unavailable", audit: { status: "unavailable" } },
+      }] }))
+      .mockResolvedValueOnce(version(1, { sections: [{ ...section, coverage: partial }] }))
+      .mockResolvedValueOnce(version());
+    const { onNotify } = await setup({ history: [version(1, { sections: [section] })] });
+    const page = within(screen.getByRole("article"));
+    await user.click(screen.getByRole("button", { name: "Check again" }));
+    expect(await page.findByText("Source audit unavailable")).toBeVisible();
+    expect(onNotify).toHaveBeenLastCalledWith("Source audit unavailable");
+    await user.click(screen.getByRole("button", { name: "Check again" }));
+    expect(await page.findByText("Partially checked · 1 unchecked")).toBeVisible();
+    expect(onNotify).not.toHaveBeenCalledWith("Checked against the sources.");
+    await user.click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(onNotify).toHaveBeenLastCalledWith("Checked against the sources."));
+    expect(check).toHaveBeenCalledTimes(3);
+  });
   it("keeps legacy versions readable and requires rebuilding to modify them", async () => {
     await setup({ history: [version(1, { origin: "legacy", citations: [], sections: [], scope: null, content: "# Legacy\n\nPinned text [1]." })] });
     expect(within(screen.getByRole("article")).getByText(/Pinned text \[1\]/)).toBeVisible(); expect(chat().getByText("This version came from the old builder. Rebuild it to edit it.")).toBeVisible(); expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();

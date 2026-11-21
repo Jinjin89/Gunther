@@ -38,6 +38,15 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 from gunther import trace, usage
+from gunther.checks import (
+    LEGACY_EVIDENCE,
+    Verdicts,
+    claim_view,
+    merge_verdicts,
+    stage_rows,
+    verdicts_of,
+)
+from gunther.checks import verdict as stored_verdict
 from gunther.llm import Completion, ModelError, ModelGateway, ModelInfo, Turn
 from gunther.model_profiles import Effort
 from gunther.run_budget import BudgetedGateway, RunBudget
@@ -225,7 +234,7 @@ class Verdict(BaseModel):
 
 class Unmarked(BaseModel):
     # Sentences, copied exactly, that state a fact with neither a source number nor [?].
-    claims: list[str] = Field(default_factory=list, max_length=12)
+    claims: list[str] = Field(max_length=12)
 
 
 class Action(BaseModel):
@@ -768,21 +777,6 @@ def renumber_citations(text: str, used: Sequence[int] | Mapping[int, int]) -> st
     return ANY_CITATION.sub(renumber, text)
 
 
-def place_marks(text: str, claims: Sequence[str]) -> str:
-    """Put ``[?]`` after each of these sentences (copied from the text), unless it has one."""
-
-    spots: list[int] = []
-    for claim in claims:
-        stripped = claim.strip().rstrip(".!?。！？")
-        at = text.find(stripped) if stripped else -1
-        end = at + len(stripped)
-        if at >= 0 and not text.startswith(UNSOURCED, end) and end not in spots:
-            spots.append(end)
-    for end in sorted(spots, reverse=True):
-        text = f"{text[:end]} {UNSOURCED}{text[end:]}"
-    return text
-
-
 def leads_in(text: str, limit: int) -> list[tuple[int, int, str]]:
     """The first ``limit`` claims marked as the model's own: (start, end, claim).
 
@@ -828,6 +822,74 @@ def sentence_spans(text: str) -> list[tuple[int, int]]:
     if start < len(text):
         add(len(text))
     return spans
+
+
+def check_evidence_hash(refs: Sequence[int], by_ref: Mapping[int | None, Evidence]) -> str | None:
+    if any(ref not in by_ref for ref in refs):
+        return None
+    sources = [(by_ref[ref].key, by_ref[ref].context or by_ref[ref].text) for ref in refs]
+    return hashlib.sha256(repr(sources).encode()).hexdigest()
+
+
+def check_claims(text: str, by_ref: Mapping[int | None, Evidence]) -> list[dict[str, Any]]:
+    """The claims a check covers, including the header of each table row."""
+    rows = {}
+    for index, table in enumerate(MARKDOWN_TABLE.finditer(text)):
+        header, *body = re.finditer(_MARKDOWN_ROW, table[0], re.M)
+        for row_index, row in enumerate(body, 1):
+            rows[table.start() + row.start()] = (index, row_index, header[0].strip())
+    claims = []
+    line, offset = 0, 0
+    for n, (start, end) in enumerate(sentence_spans(text), 1):
+        line += text.count("\n", offset, start)
+        offset = start
+        sentence = " ".join(text[start:end].split())
+        refs = list(dict.fromkeys(int(m.group(2)) for m in ANY_CITATION.finditer(sentence)))
+        claim = {
+            "id": hashlib.sha256(f"{n}:{sentence}".encode()).hexdigest()[:20],
+            "n": n, "start": start, "end": end, "line": line, "text": sentence, "refs": refs,
+            "verdict": "unchecked", "reason": "No verdict returned",
+            "evidence": [list(by_ref[r].key) for r in refs if r in by_ref],
+            "evidenceHash": check_evidence_hash(refs, by_ref),
+        }
+        if row := rows.get(start):
+            claim.update(tableRow=list(row[:2]), tableHeader=row[2])
+        claims.append(claim)
+    return claims
+
+
+def checker_inventory(
+    text: str, by_ref: Mapping[int | None, Evidence], prior: Verdicts | None = None,
+) -> Verdicts:
+    claims = stage_rows(prior or {}, "checker")
+    if not claims or any(
+        "evidenceHash" not in claim or claim["evidenceHash"] == LEGACY_EVIDENCE for claim in claims
+    ):
+        claims = check_claims(collapse_citations(text), by_ref)
+    return verdicts_of(*(
+        stored_verdict("checker", {
+            **{k: v for k, v in claim.items() if k not in {"label", "issue"}},
+            "verdict": "unchecked", "reason": "No verdict returned",
+            "evidenceHash": check_evidence_hash(claim["refs"], by_ref),
+            "evidence": [list(by_ref[r].key) for r in claim["refs"] if r in by_ref],
+        })
+        for claim in claims
+    ))
+
+
+def claim_coverage(claims: list[dict[str, Any]], *, unavailable: bool = False) -> dict[str, Any]:
+    unchecked = sum(claim["verdict"] == "unchecked" for claim in claims)
+    checked = len(claims) - unchecked
+    return {
+        "status": (
+            "skipped" if not claims else "complete" if not unchecked
+            else "unavailable" if unavailable and not checked else "partial"
+        ),
+        "considered": len(claims),
+        "checked": checked,
+        "unchecked": unchecked,
+        "claims": claims,
+    }
 
 
 def _marked_unsourced(span: str) -> str:
@@ -1666,11 +1728,8 @@ class AskAgent:
         done.append(f"- read_source({number}) read more of “{item.title}”")
         return True
 
-    def unsourced_claims(self, model: ModelInfo, text: str) -> list[str]:
-        """The sentences that state a fact with neither a source number nor the marker.
-
-        The model finds them (in any language). A model that cannot answer finds none.
-        """
+    def unsourced_claims(self, model: ModelInfo, text: str) -> list[str] | None:
+        """The audit's uncited factual sentences. None means the audit failed."""
 
         if len(text) < 40:
             return []
@@ -1686,45 +1745,42 @@ class AskAgent:
                 trace.update(auditing, claims=list(verdict.claims))
         except ModelError as error:
             logger.info("The audit step failed: %s", error)
-            return []
+            return None
         return list(verdict.claims)
 
-    def mark_unsourced(self, model: ModelInfo, text: str) -> str:
-        """Mark claims the writer left with no source and no marker, so they are checked
-        like the others. The model finds them; this only places the mark."""
+    def check_artifact_claims(
+        self, model: ModelInfo, question: str, text: str, by_ref: Mapping[int | None, Evidence],
+        *, limit: int, prior: Verdicts, inventory: Verdicts | None = None,
+    ) -> Verdicts:
+        active = checker_inventory(text, by_ref, prior) if inventory is None else inventory
+        claims = [claim_view(row) for row in merge_verdicts(active, prior).values()]
+        check = self.check_claim_records(model, question, text, by_ref, limit=limit, claims=claims)
+        checked = verdicts_of(*(
+            stored_verdict("checker", row) for row in check._coverage["claims"]
+        ))
+        return merge_verdicts(active, prior, checked)
 
-        return place_marks(text, self.unsourced_claims(model, text))
-
-    def check_sentences(
+    def check_claim_records(
         self,
         model: ModelInfo,
         question: str,
         text: str,
-        by_ref: dict[int | None, Evidence],
+        by_ref: Mapping[int | None, Evidence],
+        *,
         checklist: Sequence[str] = (),
         notes: list[str] | None = None,
         limit: int | None = None,
-    ) -> tuple[str, Check | None, list[str], list[str]]:
-        """Check bounded batches; retain explicit coverage for every submitted span."""
+        claims: list[dict[str, Any]] | None = None,
+    ) -> Check:
+        """Check an answer or resume the saved claim list for the same section."""
         text = collapse_citations(text)
-        spans = sentence_spans(text)
-        if not spans:
+        if claims is None:
+            claims = check_claims(text, by_ref)
+        if not claims:
             check = Check()
-            check._coverage = {
-                "status": "skipped",
-                "considered": 0,
-                "checked": 0,
-                "unchecked": 0,
-                "claims": [],
-            }
-            return text, check, [], []
+            check._coverage = claim_coverage(claims)
+            return check
         batch_size = max(1, min(60, self.limits.check_sentences if limit is None else limit))
-        claims: list[dict[str, Any]] = []
-        table_rows: dict[int, tuple[int, int, str]] = {}
-        for index, table in enumerate(MARKDOWN_TABLE.finditer(text)):
-            header, *rows = re.finditer(_MARKDOWN_ROW, table[0], re.M)
-            for row_index, row in enumerate(rows, 1):
-                table_rows[table.start() + row.start()] = (index, row_index, header[0].strip())
         lines: dict[int, str] = {}
         for ref, item in by_ref.items():
             if ref is None:
@@ -1735,30 +1791,14 @@ class AskAgent:
                 " (excerpt truncated)" if len(item.context or item.text) > len(read) else ""
             )
             lines[ref] = f"[{ref}] ({origin}){truncation} {read}"
-        for n, (start, end) in enumerate(spans, 1):
-            sentence = " ".join(text[start:end].split())
-            refs = list(dict.fromkeys(int(m.group(2)) for m in ANY_CITATION.finditer(sentence)))
-            claims.append(
-                {
-                    "id": hashlib.sha256(f"{n}:{sentence}".encode()).hexdigest()[:20],
-                    "n": n,
-                    "start": start,
-                    "end": end,
-                    "text": sentence,
-                    "refs": refs,
-                    "verdict": "unchecked",
-                    "reason": "No verdict returned",
-                    "evidence": [list(by_ref[r].key) for r in refs if r in by_ref],
-                }
-            )
-            if row := table_rows.get(start):
-                # Table and line indices survive changes to citation numbering.
-                claims[-1]["tableRow"] = list(row[:2])
         batches: list[list[dict[str, Any]]] = []
         batch: list[dict[str, Any]] = []
         batch_refs: set[int] = set()
         # Bounded work on pathological model replies, with visible overflow.
         for claim in claims:
+            if claim["verdict"] != "unchecked":
+                continue
+            claim["reason"] = "No verdict returned"
             refs = set(claim["refs"])
             if claim["n"] > 600:
                 claim["reason"] = "Claim limit exceeded"
@@ -1779,7 +1819,10 @@ class AskAgent:
             batch_refs |= refs
         if batch:
             batches.append(batch)
-        verdicts: dict[int, SentenceVerdict] = {}
+        verdicts = {
+            c["n"]: SentenceVerdict(n=c["n"], verdict=c["verdict"], missing=c.get("reason") or "")
+            for c in claims if c["verdict"] != "unchecked"
+        }
         checklist_results: list[ChecklistResult] = []
         failed_calls = 0
         for batch_number, batch in enumerate(batches):
@@ -1791,8 +1834,8 @@ class AskAgent:
                     "Answer, by sentence:",
                     *(
                         f"({n}) {claim['text']}"
-                        + (f" (Table header {row[2]})"
-                           if (row := table_rows.get(claim["start"])) else "")
+                        + (f" (Table header {header})"
+                           if (header := claim.get("tableHeader")) else "")
                         for n, claim in enumerate(batch, 1)
                     ),
                     "",
@@ -1834,30 +1877,37 @@ class AskAgent:
         check = Check.model_construct(
             sentences=list(verdicts.values()), checklist=checklist_results
         )
-        unchecked = len(claims) - len(verdicts)
-        status = (
-            "complete"
-            if not unchecked
-            else "failed"
-            if not verdicts and failed_calls
-            else "partial"
-        )
-        check._coverage = {
-            "status": status,
-            "considered": len(claims),
-            "checked": len(verdicts),
-            "unchecked": unchecked,
-            "claims": claims,
-        }
+        check._coverage = claim_coverage(claims, unavailable=bool(failed_calls))
+        unchecked = check._coverage["unchecked"]
         if unchecked and notes is not None:
             notes.append(
-                f"Verification is {status}: {unchecked} of {len(claims)} claims remain unchecked."
+                f"Verification is {check._coverage['status']}: "
+                f"{unchecked} of {len(claims)} claims remain unchecked."
             )
+        return check
+
+    def check_sentences(
+        self,
+        model: ModelInfo,
+        question: str,
+        text: str,
+        by_ref: Mapping[int | None, Evidence],
+        checklist: Sequence[str] = (),
+        notes: list[str] | None = None,
+        limit: int | None = None,
+    ) -> tuple[str, Check, list[str], list[str]]:
+        """Check the reply and apply the verdicts to its citation markers."""
+        text = collapse_citations(text)
+        check = self.check_claim_records(
+            model, question, text, by_ref, checklist=checklist, notes=notes, limit=limit
+        )
+        claims = check._coverage["claims"]
+        verdicts = {verdict.n: verdict for verdict in check.sentences}
         missing: dict[int, list[str]] = {}
         facts: list[str] = []
         # From the end, so the spans before an edit keep their places.
         for n in sorted(verdicts, reverse=True):
-            start, end = spans[n - 1]
+            start, end = claims[n - 1]["start"], claims[n - 1]["end"]
             span, verdict = text[start:end], verdicts[n]
             if verdict.verdict in {"supported", "nonfactual"}:
                 continue
