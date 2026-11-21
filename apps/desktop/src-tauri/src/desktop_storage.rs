@@ -23,7 +23,7 @@ fn read_map(path: &Path) -> Result<BTreeMap<String, String>, String> {
         .map_err(|error| format!("Gunther's saved preferences or drafts are unreadable: {error}"))
 }
 
-fn atomic_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
+pub(crate) fn atomic_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let parent = path.parent().ok_or("Invalid storage path")?;
     crate::create_private_dir(parent).map_err(|error| error.to_string())?;
     let staging = path.with_extension("json.tmp");

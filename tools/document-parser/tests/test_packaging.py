@@ -1,6 +1,12 @@
 """Verify offline packaging keeps model contents and native-library links."""
 
+import hashlib
 import importlib.util
+import json
+import os
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +20,62 @@ SPEC.loader.exec_module(builder)
 
 
 class ParserPackagingTests(unittest.TestCase):
+    def test_sidecar_preflight_rejects_a_parser_built_with_a_different_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "scripts/build-backend-sidecar.mjs"
+            script.parent.mkdir()
+            shutil.copyfile(ROOT / "scripts" / script.name, script)
+            # Exercise the release preflight with a cached helper and no external build.
+            script.with_name("build-slide-renderer.mjs").write_text("", encoding="utf-8")
+            lock = root / "tools/document-parser/uv.lock"
+            bundle = lock.parent / ".build/bundle"
+            bundle.mkdir(parents=True)
+            lock.write_text("version = 1\n", encoding="utf-8")
+            sources = (
+                "apps/backend/gunther/document_parser.py",
+                "apps/backend/gunther/document_structure.py",
+                "apps/backend/gunther/pdf_native.py",
+                "apps/backend/gunther/pdf_glyphs.py",
+                "tools/document-parser/helper.py",
+                "scripts/build-document-parser.py",
+            )
+            source_hashes = {}
+            for name in sources:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes((ROOT / name).read_bytes())
+                source_hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+            (bundle / "manifest.json").write_text(json.dumps({
+                "lockHash": hashlib.sha256(lock.read_bytes()).hexdigest(),
+                "sourceHashes": source_hashes,
+            }), encoding="utf-8")
+            build = root / "apps/backend/.pyinstaller"
+            output = "GuntherBackend.app" if sys.platform == "darwin" else "gunther-backend"
+            (build / "dist" / output).mkdir(parents=True)
+            (build / "build-variant.json").write_text(
+                '{"withParser":true,"withSlideBrowser":false}', encoding="utf-8"
+            )
+
+            def preflight():
+                return subprocess.run(
+                    ["node", str(script), "--without-slide-browser"],
+                    env={**os.environ, "APPLE_SIGNING_IDENTITY": ""},
+                    check=False, capture_output=True, text=True, timeout=15,
+                )
+
+            current = preflight()
+            self.assertEqual(current.returncode, 0, current.stderr)
+            self.assertIn("Gunther backend helper is current", current.stdout)
+
+            # Preserve the timestamp to exclude the later build-cache freshness check.
+            stat = lock.stat()
+            lock.write_text("version = 2\n", encoding="utf-8")
+            os.utime(lock, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+            stale = preflight()
+            self.assertEqual(stale.returncode, 1, stale.stderr)
+            self.assertIn("The parser runtime is stale", stale.stderr)
+
     def test_copy_retains_relative_library_links_and_replaces_stale_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -1,7 +1,19 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { CaptureSheet } from "./AtlasUtilities";
+import { CaptureSheet, SettingsPageV2 } from "./AtlasUtilities";
+
+const menuBar = vi.hoisted(() => ({
+  getMenuBarMode: vi.fn(),
+  setMenuBarMode: vi.fn(),
+  isTauriRuntime: vi.fn().mockReturnValue(false),
+}));
+
+vi.mock("../capture/captureBridge", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../capture/captureBridge")>(),
+  ...menuBar,
+}));
 
 vi.mock("../api", () => ({
   knowledgeApi: {
@@ -17,8 +29,53 @@ vi.mock("../api", () => ({
     }),
     search: vi.fn().mockResolvedValue([]),
     webSearch: vi.fn().mockResolvedValue({ query: "", answer: "", sources: [], mode: "not_configured" }),
+    pairedDevices: vi.fn().mockResolvedValue([]),
+    mobileGatewayStatus: vi.fn().mockResolvedValue(null),
+    modelsOverview: vi.fn().mockResolvedValue({ roles: [] }),
+    speechOverview: vi.fn().mockResolvedValue({ roles: [] }),
+    ttsOverview: vi.fn().mockResolvedValue({ roles: [] }),
   },
 }));
+
+describe("Menu bar preference", () => {
+  it("keeps the saved choice after a failed write and changes it after a successful retry", async () => {
+    window.localStorage.clear();
+    menuBar.isTauriRuntime.mockReturnValue(true);
+    let finishEarlierRead!: () => void;
+    menuBar.getMenuBarMode.mockImplementationOnce(() => new Promise((resolve) => {
+      finishEarlierRead = () => resolve("whileCapturing");
+    })).mockResolvedValue("whileCapturing");
+    let rejectSave!: (message: string) => void;
+    menuBar.setMenuBarMode.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+      rejectSave = reject;
+    })).mockResolvedValueOnce(undefined);
+    const onNotify = vi.fn();
+    const user = userEvent.setup();
+    try {
+      render(<StrictMode><SettingsPageV2 theme="light" onTheme={vi.fn()} onNotify={onNotify} /></StrictMode>);
+      const select = screen.getByRole("combobox", { name: "Menu bar" });
+      await waitFor(() => expect(select).toHaveValue("whileCapturing"));
+
+      await user.selectOptions(select, "always");
+      expect(menuBar.setMenuBarMode).toHaveBeenCalledWith("always");
+      expect(select).toHaveValue("whileCapturing");
+      expect(select).toBeDisabled();
+
+      await act(async () => rejectSave("The menu bar preference could not be saved."));
+      await waitFor(() => expect(select).toBeEnabled());
+      expect(select).toHaveValue("whileCapturing");
+      expect(onNotify).toHaveBeenCalledWith("The menu bar preference could not be saved.");
+
+      await user.selectOptions(select, "always");
+      await waitFor(() => expect(select).toHaveValue("always"));
+      expect(onNotify).toHaveBeenCalledWith("Gunther stays in the menu bar.");
+      await act(async () => finishEarlierRead());
+      expect(select).toHaveValue("always");
+    } finally {
+      menuBar.isTauriRuntime.mockReturnValue(false);
+    }
+  });
+});
 
 describe("CaptureSheet web snapshots", () => {
   beforeEach(() => {

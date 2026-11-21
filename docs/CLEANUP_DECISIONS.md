@@ -299,3 +299,4 @@ non-empty line counts. Everything else is transcript text. Whenever the app rewr
 recording source (Transcribe again), it writes the resolved id into the current header
 line, so the source moves to the current shape. Old shapes outside this rule lose their
 audio link. That rare miss is acceptable.
+A50 = A50a + A50b

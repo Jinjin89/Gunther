@@ -855,17 +855,31 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
   const [pairingWorking, setPairingWorking] = useState(false);
   const [revokingDeviceId, setRevokingDeviceId] = useState<string | null>(null);
   const [nowMilliseconds, setNowMilliseconds] = useState(() => Date.now());
-  const [menuBarMode, setMenuBarModeState] = useState<MenuBarMode>("always");
+  const [menuBarMode, setMenuBarModeState] = useState<MenuBarMode | null>(null);
+  const [savingMenuBarMode, setSavingMenuBarMode] = useState(false);
   const [pane, setPane] = useSettingsPane();
   const attention = useSettingsAttention(pane);
   useEffect(() => {
-    if (isTauriRuntime()) void getMenuBarMode().then(setMenuBarModeState).catch(() => undefined);
+    if (!isTauriRuntime()) return;
+    let active = true;
+    void getMenuBarMode().catch(() => "always" as const).then((mode) => {
+      if (active) setMenuBarModeState(mode);
+    });
+    return () => { active = false; };
   }, []);
-  const changeMenuBarMode = (mode: MenuBarMode) => {
-    setMenuBarModeState(mode);
-    void setMenuBarMode(mode)
-      .then(() => onNotify(mode === "always" ? "Gunther stays in the menu bar." : "Gunther appears in the menu bar only while something is being captured."))
-      .catch(() => onNotify("The menu bar preference could not be saved."));
+  const changeMenuBarMode = async (mode: MenuBarMode) => {
+    if (menuBarMode === null || savingMenuBarMode || mode === menuBarMode) return;
+    setSavingMenuBarMode(true);
+    try {
+      await setMenuBarMode(mode);
+      setMenuBarModeState(mode);
+      onNotify(mode === "always" ? "Gunther stays in the menu bar." : "Gunther appears in the menu bar only while something is being captured.");
+    } catch (error) {
+      onNotify(typeof error === "string" ? error : "The menu bar preference could not be saved.");
+      setMenuBarModeState(await getMenuBarMode().catch(() => menuBarMode));
+    } finally {
+      setSavingMenuBarMode(false);
+    }
   };
   const connection = useMemo(() => {
     const current = mobileConnectionFromGateway(gatewayStatus);
@@ -1021,7 +1035,18 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
       <section>
         <div className="setting-heading"><span><strong>Preferences</strong><small>How Ask answers, and how you reach Gunther.</small></span></div>
         <AnswerStyleSetting />
-        {isTauriRuntime() && <label className="setting-row"><span><strong>Menu bar</strong><small>Gunther’s mark stays in the menu bar for quick capture. Recordings always show there, with their timer, while they run.</small></span><select value={menuBarMode} aria-label="Menu bar" onChange={(event) => changeMenuBarMode(event.target.value as MenuBarMode)}><option value="always">Always show</option><option value="whileCapturing">Only while capturing</option></select></label>}
+        {isTauriRuntime() && <label className="setting-row">
+          <span><strong>Menu bar</strong><small>Gunther’s mark stays in the menu bar for quick capture. Recordings always show there, with their timer, while they run.</small></span>
+          <select
+            value={menuBarMode ?? "always"}
+            aria-label="Menu bar"
+            disabled={menuBarMode === null || savingMenuBarMode}
+            onChange={(event) => void changeMenuBarMode(event.target.value as MenuBarMode)}
+          >
+            <option value="always">Always show</option>
+            <option value="whileCapturing">Only while capturing</option>
+          </select>
+        </label>}
         <div className="setting-row"><span><strong>Keyboard shortcuts</strong><small>Capture, search and move through Inbox without the mouse. Press {formatCombo("mod+/")} any time.</small></span><button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => window.dispatchEvent(new CustomEvent("gunther:show-shortcuts"))}>Show all</button></div>
       </section>
     </>}

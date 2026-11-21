@@ -1,4 +1,7 @@
-use std::sync::Mutex;
+use std::{
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 
 use serde::{Deserialize, Serialize};
 use tauri::{
@@ -663,15 +666,15 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
     }
 }
 
-fn menu_bar_preference_path<R: Runtime>(app: &AppHandle<R>) -> Option<std::path::PathBuf> {
+fn menu_bar_preference_path<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<PathBuf> {
     app.path()
         .app_config_dir()
-        .ok()
         .map(|directory| directory.join(MENU_BAR_PREFERENCE_FILE))
 }
 
 fn load_menu_bar_mode<R: Runtime>(app: &AppHandle<R>) -> MenuBarMode {
     menu_bar_preference_path(app)
+        .ok()
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|contents| serde_json::from_str::<MenuBarPreference>(&contents).ok())
         .map(|preference| preference.mode)
@@ -681,6 +684,15 @@ fn load_menu_bar_mode<R: Runtime>(app: &AppHandle<R>) -> MenuBarMode {
 #[derive(Deserialize, Serialize)]
 struct MenuBarPreference {
     mode: MenuBarMode,
+}
+
+impl CaptureShellRuntime {
+    fn save_menu_bar_mode(&mut self, path: &Path, mode: MenuBarMode) -> Result<(), String> {
+        crate::desktop_storage::atomic_json(path, &MenuBarPreference { mode })
+            .map_err(|error| format!("The menu bar preference could not be saved: {error}"))?;
+        self.menu_bar_mode = mode;
+        Ok(())
+    }
 }
 
 pub fn setup_tray<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
@@ -864,20 +876,13 @@ pub fn menu_bar_mode(app: AppHandle) -> MenuBarMode {
 
 #[tauri::command]
 pub fn set_menu_bar_mode(app: AppHandle, mode: MenuBarMode) -> Result<(), String> {
+    let path = menu_bar_preference_path(&app)
+        .map_err(|error| format!("The menu bar preference could not be saved: {error}"))?;
     app.state::<CaptureShell>()
         .0
         .lock()
         .map_err(|_| "Gunther's capture state is unavailable".to_string())?
-        .menu_bar_mode = mode;
-    if let Some(path) = menu_bar_preference_path(&app) {
-        if let Some(directory) = path.parent() {
-            let _ = std::fs::create_dir_all(directory);
-        }
-        let contents = serde_json::to_string(&MenuBarPreference { mode })
-            .map_err(|error| format!("The menu bar preference could not be saved: {error}"))?;
-        std::fs::write(&path, contents)
-            .map_err(|error| format!("The menu bar preference could not be saved: {error}"))?;
-    }
+        .save_menu_bar_mode(&path, mode)?;
     apply_tray_presentation(&app)
         .map_err(|error| format!("Gunther could not update the menu bar: {error}"))
 }
@@ -886,10 +891,10 @@ pub fn set_menu_bar_mode(app: AppHandle, mode: MenuBarMode) -> Result<(), String
 mod tests {
     use super::{
         can_replace_capture, compact_elapsed, menu_action, menu_entries, presentation_for,
-        saved_capture_continues, tray_visible, CaptureStatus, GlyphVariant, MenuAction,
-        MenuBarMode, MenuEntry, MenuLayout, MENU_FINISH, MENU_MARK, MENU_NEW_NOTE,
-        MENU_NEW_RECORDING, MENU_OPEN_CAPTURE, MENU_PAUSE_RESUME, MENU_QUIT, MENU_SETTINGS,
-        MENU_SHOW_CAPTURE,
+        saved_capture_continues, tray_visible, CaptureShellRuntime, CaptureStatus, GlyphVariant,
+        MenuAction, MenuBarMode, MenuBarPreference, MenuEntry, MenuLayout,
+        MENU_BAR_PREFERENCE_FILE, MENU_FINISH, MENU_MARK, MENU_NEW_NOTE, MENU_NEW_RECORDING,
+        MENU_OPEN_CAPTURE, MENU_PAUSE_RESUME, MENU_QUIT, MENU_SETTINGS, MENU_SHOW_CAPTURE,
     };
 
     #[test]
@@ -1107,5 +1112,31 @@ mod tests {
             MenuLayout::Live { paused: false }
         ));
         assert!(tray_visible(MenuBarMode::WhileCapturing, MenuLayout::Draft));
+    }
+
+    #[test]
+    fn menu_bar_mode_keeps_its_previous_value_if_saving_fails() {
+        let mut nonce = [0; 8];
+        getrandom::getrandom(&mut nonce).unwrap();
+        let directory = std::env::temp_dir().join(format!(
+            "gunther-menu-bar-{:016x}",
+            u64::from_ne_bytes(nonce)
+        ));
+        let path = directory.join(MENU_BAR_PREFERENCE_FILE);
+        let mut runtime = CaptureShellRuntime::default();
+        runtime
+            .save_menu_bar_mode(&path, MenuBarMode::WhileCapturing)
+            .unwrap();
+        assert_eq!(runtime.menu_bar_mode, MenuBarMode::WhileCapturing);
+
+        std::fs::create_dir(path.with_extension("json.tmp")).unwrap();
+        assert!(runtime
+            .save_menu_bar_mode(&path, MenuBarMode::Always)
+            .is_err());
+        assert_eq!(runtime.menu_bar_mode, MenuBarMode::WhileCapturing);
+        let contents = std::fs::read_to_string(path).unwrap();
+        let preference: MenuBarPreference = serde_json::from_str(&contents).unwrap();
+        assert_eq!(preference.mode, MenuBarMode::WhileCapturing);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }
