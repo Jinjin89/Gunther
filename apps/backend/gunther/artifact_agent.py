@@ -1487,17 +1487,40 @@ class ArtifactAgent:
         )
 
     def _do_make(self, m: Mapped) -> Outcome:
-        c, work = self.ctx, active_work(self.workspace)
+        work = active_work(self.workspace)
         assert work is not None
+        self._make(work)
+        name = "deck" if work.spec.kind == "slides" else "report"
+        return Outcome(
+            f"Made the {name}",
+            f"Made the {name} as a whole: {len(work.outline)} {_unit(work)}s, each checked "
+            "against its sources.",
+        )
+
+    def rebuild(self, work: Work, outline: Sequence[Planned]) -> TurnResult:
+        """Build the approved outline on a copy until the version and turn can be saved."""
+        if work.spec.kind == "report" and len(outline) > 8:
+            raise ValueError("A report has at most 8 sections")
+        candidate = work.model_copy(deep=True)
+        candidate.cards = []
+        built = self._make(candidate, outline)
+        self._store()
+        return self._finish("saved", "", save=(candidate, built, candidate.version_map))
+
+    def _make(self, work: Work, approved: Sequence[Planned] | None = None) -> BuiltOutput:
+        c = self.ctx
         spec = spec_of(self.brief, work)
         made = Pool(1_000_000)
-        made.restore(list(self.pool.items))
-        use = _fold_use(work)
+        made.restore([
+            item for item in self.pool.items
+            if approved is None or c.evidence_allowed is None or c.evidence_allowed(item)
+        ])
         approach = work.approach or {}
+        use = _fold_use(work) or (approach.get("use") if approved is not None else None)
         current = approach_state(work, self.brief).state
-        outline = [
-            Planned(item.heading, item.goal, id=item.id) for item in work.outline
-        ] if current != "out_of_date" and outline_state(work).state == "ok" else None
+        outline = approved
+        if outline is None and current != "out_of_date" and outline_state(work).state == "ok":
+            outline = [Planned(item.heading, item.goal, id=item.id) for item in work.outline]
         if work.outline and spec.kind == "slides":
             cover = work.parts.get(work.outline[0].id)
             if cover:
@@ -1505,6 +1528,11 @@ class ArtifactAgent:
                 theme = attrs.get("theme")
                 spec = replace(spec, theme=theme if theme in studio_format.THEMES else spec.theme,
                                deck_style=attrs.get("style"))
+                if approved is not None:
+                    spec = replace(
+                        spec, theme=spec.theme or "classic",
+                        design_version=_marked(cover.text).design_version,
+                    )
         resume = approach.get("studio_progress")
         if resume is None and approach.get("purpose") == "explain_study":
             resume = {
@@ -1522,15 +1550,21 @@ class ArtifactAgent:
 
         built = c.studio(
             spec, made, use, resume, keep,
-            purpose=approach.get("purpose") if current == "ok" else None,
+            purpose=approach.get("purpose") if approved is not None or current == "ok" else None,
             fixed_outline=outline,
         )
+        if approved is not None and spec.kind == "slides":
+            work.spec.theme, work.spec.design_version = spec.theme, spec.design_version
+            used = (built.approach or {}).get("use")
+            if work.spec.use is None and used in ("talk", "read"):
+                work.spec.use = Line(text=used, mark="guessed")
         load_built(work, built, made, self.pool, self.brief)
-        name = "deck" if work.spec.kind == "slides" else "report"
-        return Outcome(
-            f"Made the {name}",
-            f"Made the {name} as a whole: {len(work.outline)} {_unit(work)}s, each checked "
-            "against its sources.",
+        return replace(
+            built,
+            outline=[
+                {**plan, "id": item.id}
+                for plan, item in zip(built.outline, work.outline, strict=True)
+            ],
         )
 
     def _do_understand(self, m: Mapped) -> Outcome:

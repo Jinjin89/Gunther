@@ -583,10 +583,15 @@ describe("reading, versions and editing", () => {
     await user.click(chat().getByRole("button", { name: "Open latest version 2" })); expect(await screen.findByRole("heading", { level: 2, name: "Immune markers v2" })).toBeVisible();
   });
   it("rebuilds from an edited outline and preserves the parent version", async () => {
-    const user = userEvent.setup(); const build = vi.spyOn(knowledgeApi, "buildOutputStream").mockResolvedValue(version(2)); await setup({ history: [version()] }); await showControls(user);
+    const user = userEvent.setup(); const context = await setup({ history: [version()] });
+    const turn = vi.spyOn(knowledgeApi, "artifactTurnStream").mockImplementation(saves(context, (id) => version(2, { conversationId: id })));
+    await showControls(user);
     await user.click(screen.getByRole("button", { name: /Outline/ })); await user.click(screen.getByRole("button", { name: "Edit outline" }));
     await user.clear(screen.getByRole("textbox", { name: "Heading 2" })); await user.type(screen.getByRole("textbox", { name: "Heading 2" }), "Plasma cells"); await user.click(screen.getByRole("button", { name: "Move 2 up" })); await user.click(screen.getByRole("button", { name: "Rebuild with this outline" }));
-    expect(build.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ supersedesArtifactId: "art_1", outline: [{ heading: "Plasma cells", goal: "" }, { heading: "T cells", goal: "How T cells are told apart" }] }));
+    expect(turn.mock.calls[0]?.[2]).toMatchObject({ kind: "rebuild", rebuild: {
+      artifactId: "art_1", outline: [{ heading: "Plasma cells", goal: "" }, { heading: "T cells", goal: "How T cells are told apart" }],
+    } });
+    expect(await screen.findByRole("heading", { level: 2, name: "Immune markers v2" })).toBeVisible();
   });
   it.each(["studio", "legacy"])("rebuilds a saved %s outline with headings, goals and order", async (method) => {
     const user = userEvent.setup();
@@ -600,8 +605,8 @@ describe("reading, versions and editing", () => {
         { id: "results", heading: "Results", goal: "" },
       ],
     });
-    const build = vi.spyOn(knowledgeApi, "buildOutputStream").mockResolvedValue(deck(2));
-    await setup({ history: [first], web: true });
+    const context = await setup({ history: [first], web: true });
+    const turn = vi.spyOn(knowledgeApi, "artifactTurnStream").mockImplementation(saves(context, (id) => deck(2, { conversationId: id })));
     await showControls(user);
     await user.click(screen.getByRole("button", { name: /Outline/ }));
     await user.click(screen.getByRole("button", { name: "Edit outline" }));
@@ -610,11 +615,9 @@ describe("reading, versions and editing", () => {
     await user.type(screen.getByRole("textbox", { name: "Goal 2" }), "Explain the costs");
     await user.click(screen.getByRole("button", { name: "Move 2 down" }));
     await user.click(screen.getByRole("button", { name: "Rebuild with this outline" }));
-    const request = build.mock.calls[0]?.[1];
-    expect(request).toMatchObject({
-      kind: "slides", theme: method === "studio" ? "ink" : "classic", supersedesArtifactId: first.id,
-    });
-    expect(request?.outline).toEqual([
+    const request = turn.mock.calls[0]?.[2];
+    expect(request).toMatchObject({ kind: "rebuild", rebuild: { artifactId: first.id } });
+    expect(request?.rebuild?.outline).toEqual([
       { id: "cover", heading: "Deck", goal: "" },
       { id: "results", heading: "Results", goal: "" },
       { id: "costs", heading: "Costs", goal: "Explain the costs" },

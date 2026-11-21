@@ -1,7 +1,7 @@
 /** Local UI preview: production components with in-memory sample data. */
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { Artifact, BuildOutputRequest, KnowledgeSession } from "@gunther/contracts";
+import type { Artifact, KnowledgeSession } from "@gunther/contracts";
 import { knowledgeApi } from "../src/api";
 import type { AtlasMode } from "../src/atlas";
 import { AtlasTitlebar, AtlasRail } from "../src/components/AtlasChrome";
@@ -84,20 +84,6 @@ Object.assign(knowledgeApi, {
   artifact: async (_base: string, id: string) => findArtifact(id),
   followOutputBuild: async () => null,
   health: async () => ({ webSearchMode: "off" }),
-  buildOutputStream: async (_base: string, request: BuildOutputRequest) => {
-    const original = request.supersedesArtifactId ? findArtifact(request.supersedesArtifactId) : request.kind === "slides" ? deck : report;
-    const changes = {
-      kind: request.kind, format: request.kind, audience: request.audience,
-      style: request.kind === "report" ? request.style ?? "overview" : null,
-      title: request.title || (request.kind === "slides" ? "课堂分享 · 示例" : "学习笔记 · 示例"),
-      brief: request.brief ?? "", scope: request.scope, conversationId: request.conversationId ?? null, conversationTitle: request.conversationTitle ?? null, clientRequestId: request.clientRequestId, request: request.brief ?? null, origin: "build" as const,
-      inputs: { sources: request.scope.mode === "library" ? sources.length : request.scope.sourceIds.length, units: 0, sessions: request.scope.sessionIds.length },
-    };
-    if (request.supersedesArtifactId) return saveVersion(original, changes);
-    const next = { ...original, ...changes, id: crypto.randomUUID(), lineageId: crypto.randomUUID(), versionNumber: 1, supersedesArtifactId: null, createdAt: new Date().toISOString() };
-    artifacts.unshift(next);
-    return next;
-  },
   editOutput: async (_base: string, id: string, request: { content: string }) => saveVersion(findArtifact(id), { content: request.content, origin: "edit" }),
   checkOutput: async (_base: string, id: string) => findArtifact(id),
   createSession: async (_base: string, request: { focusChapterId?: string | null; selectedSourceIds: string[] }) => {

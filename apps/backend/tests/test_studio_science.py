@@ -923,7 +923,7 @@ def test_explicit_business_purpose_uses_the_existing_general_prompts(tmp_path):
 def test_artifact_conversation_edit_keeps_the_study_workflow(tmp_path, restyle):
     from fake_models import orchestrator_replies
     from test_artifact_agent import done, kept, turn
-    from test_outputs import app_for, body, build, built, library, read_events, workspace
+    from test_outputs import app_for, built, library, read_events, workspace
     from test_outputs import route as output_route
 
     study = deepcopy(STUDY)
@@ -975,19 +975,33 @@ def test_artifact_conversation_edit_keeps_the_study_workflow(tmp_path, restyle):
         ids[1] = "mechanism"
         approved[1].update(goal=goal, id=ids[1])
         fake.replies[:] = [inner]
-        rebuilt = built(build(client, base_id, body(
-            kind="slides", use="read", conversationId="study", theme="editorial",
-            supersedesArtifactId=result["artifact"]["id"], outline=approved,
-        )))
+        action = {
+            "clientRequestId": "rebuild_study",
+            "rebuild": {"artifactId": result["artifact"]["id"], "outline": approved},
+        }
+        rebuilt = done(turn(client, base_id, "study", "", "rebuild", **action))["artifact"]
+        current, _ = kept(client, "study")
+        assert current.works[0].version_id == rebuilt["id"]
+        assert [item.id for item in current.works[0].outline] == ids
+        assert current.works[0].outline[1].goal == goal
+        calls = len(fake.requests)
+        replay = done(turn(client, base_id, "study", "", "rebuild", **action))
+        assert replay["artifact"]["id"] == rebuilt["id"]
+        approved[1]["goal"] = "Different outline"
+        conflict = turn(client, base_id, "study", "", "rebuild", **action)
+        assert conflict[-1][0] == "error" and conflict[-1][1]["status"] == 409
+        assert len(fake.requests) == calls
         assert rebuilt["origin"] == "rebuild"
+        theme = fmt.parse_slide(fmt.split_slides(rebuilt["content"])[0]).attrs["theme"]
         typed = rebuilt["content"].replace("## How the filter works", f"## {heading}").replace(
-            "theme: editorial", "theme: ink"
+            f"theme: {theme}", "theme: ink"
         )
         edit = client.post(
             output_route(base_id, rebuilt["id"], "/edits"), headers=workspace(client),
             json={"clientRequestId": "typed_study_edit", "content": typed},
         )
         assert edit.status_code == 201 and edit.json()["content"] == typed
+        head = edit.json()
         if restyle:
             head = built(read_events(client.post(
                 output_route(base_id, edit.json()["id"], "/restyle/stream"),
@@ -995,6 +1009,13 @@ def test_artifact_conversation_edit_keeps_the_study_workflow(tmp_path, restyle):
                 json={"clientRequestId": "restyle_study", "style": "bold"},
             )))
             assert head["origin"] == "revise"
+        detail = client.get(
+            f"/api/knowledge-bases/{base_id}/artifact-conversations/study",
+            headers=workspace(client),
+        ).raise_for_status().json()
+        assert detail["works"][0]["versionId"] == rebuilt["id"]
+        opened = client.get(output_route(base_id, head["id"]), headers=workspace(client))
+        assert opened.raise_for_status().json()["content"] == head["content"]
         before = len(fake.requests)
 
         def next_writer(request):

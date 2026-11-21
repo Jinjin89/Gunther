@@ -1619,7 +1619,7 @@ export interface ArtifactWork {
 export interface ArtifactConversationMessage {
   id: string;
   role: "user" | "assistant";
-  /** user: message | answer | start | continue. assistant: question | answer | result | reply | paused | stopped | failed. */
+  /** user: message | answer | start | continue | rebuild. assistant: question | answer | result | reply | paused | stopped | failed. */
   kind: string;
   text: string;
   /** The user's focus; the agent's options, changes, steps or error. "imported": the turn came from a device or an earlier version. */
@@ -1715,10 +1715,11 @@ export interface ArtifactFocus {
 /** One message to the Artifacts agent. "answer" replies to its question, "start" is "just start" (no more questions), "continue" picks up a paused turn. */
 export interface ArtifactTurnInput {
   clientRequestId: string;
-  kind?: "message" | "answer" | "start" | "continue";
+  kind?: "message" | "answer" | "start" | "continue" | "rebuild";
   /** Left out for "start" and "continue". */
   text?: string;
   focus?: ArtifactFocus;
+  rebuild?: { artifactId: string; outline: OutlineItem[] };
   model?: string;
   effort?: Effort;
   /** The web may be searched for this message (when it is set up). */
@@ -1747,8 +1748,8 @@ export interface ArtifactTurnOut {
   /** The version a turn saved. */
   artifact: Artifact | null;
   changes: ArtifactChange[];
-  /** The agent's message as it is stored. */
-  message: ArtifactConversationMessage;
+  /** The stored reply, if this version has one. */
+  message: ArtifactConversationMessage | null;
 }
 
 /** What the agent reports while it works on a message (besides the skill's own events: outline, section, text, step, stage and approach). */

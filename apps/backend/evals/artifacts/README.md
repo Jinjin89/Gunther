@@ -35,7 +35,7 @@ Each is built through the real build path (`/outputs/build/stream`) with a **fix
 
 **Why slide 8 is a table and not a chart.** The deck was first planned with a `bar_chart` on slide 8. The real build failed three times in a row, each time at its last step and after about ten minutes of work ("Chart claims and values must be verified before saving. Its verification is incomplete", then "Numbers with no source"): a chart slide is only saved when the Checker finds nothing at all in it, speaker notes included, and every other slide of the two fixtures has several findings. So slide 8 is a `compare` table, which built in one try. When chart slides can be built, put a `bar_chart` back in the outline and run with `--rebuild-fixtures`.
 
-**Each case starts fresh.** The fixture is saved again as version 1 of a new lineage (`KnowledgeService._save_output(parent_id=None, …)`, with its content, citations, outline, checks, scope, inputs and skill provenance), so no case sees another's changes. A case may first break a word of its copy (`setup`) or pick a sentence from it; that is how "fix the typo" and "change this sentence" get a real typo and a real sentence.
+**Each case starts fresh.** The fixture is saved again as version 1 of a new lineage (`artifact_versions.commit_version(parent_id=None, …)`, with its content, citations, outline, checks, scope, inputs and skill provenance), so no case sees another's changes. A case may first break a word of its copy (`setup`) or pick a sentence from it; that is how "fix the typo" and "change this sentence" get a real typo and a real sentence.
 
 ## The cases
 

@@ -38,6 +38,7 @@ from evals.ask.run import (
     write_settings_file,
 )
 from gunther.artifact_read import latest_check_records
+from gunther.artifact_versions import commit_version
 from gunther.llm import ClientFactory, ModelGateway
 from gunther.model_profiles import EFFORTS, Effort
 from gunther.models import Artifact
@@ -202,7 +203,8 @@ class Session:
         checks = [kept[h] for h in (section_hash(part) for part in parts) if h in kept]
         nonce = secrets.token_hex(8)
         model = saved.get("model")
-        artifact = self.service._save_output(
+        artifact = commit_version(
+            self.service.sessions,
             workspace_id=self.workspace_id,
             base_id=self.base_id,
             client_request_id=f"exam_clone_{nonce}",
@@ -299,7 +301,7 @@ def describe(name: str, data: dict[str, Any]) -> str:
 
 
 def export_version(service: KnowledgeService, artifact_id: str) -> dict[str, Any]:
-    """Everything ``_save_output`` needs to save a copy of a version, as plain data."""
+    """Everything ``commit_version`` needs to save a copy of a version, as plain data."""
 
     with service.sessions() as db:
         row = db.get(Artifact, artifact_id)

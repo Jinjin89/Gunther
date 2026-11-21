@@ -6,7 +6,7 @@ import logging
 import re
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -34,8 +34,15 @@ from gunther.agent import (
 )
 from gunther.agent import Notes as Work
 from gunther.answer_runs import Stopped
-from gunther.artifact_manifest import artifact_manifest_hash
 from gunther.artifact_read import artifact_detail, artifact_summary, latest_check_records
+from gunther.artifact_versions import (
+    MAX_OUTPUT_BYTES,
+    ArtifactConflictError,
+    commit_version,
+    earlier_output,
+    output_library,
+    output_version,
+)
 from gunther.artifact_workspace import evidence_from_citation
 from gunther.checks import complete, merge_verdicts
 from gunther.database import session_scope
@@ -52,17 +59,14 @@ from gunther.llm import AnalysisNeedsModel, ModelError, ModelGateway, ModelInfo,
 from gunther.model_profiles import Effort
 from gunther.models import (
     Artifact,
-    ArtifactAsset,
     ArtifactCheck,
     ArtifactConversation,
     ArtifactMessage,
-    ArtifactUnitBinding,
     Assertion,
     Asset,
     BlockElementMap,
     ContentBlock,
     DocumentElement,
-    ElementAsset,
     Entity,
     EvidenceLink,
     Fragment,
@@ -84,7 +88,6 @@ from gunther.models import (
     SourcePaper,
     SourceRevision,
     WebSnapshot,
-    WorkspaceIdentity,
     utc_now,
 )
 from gunther.online_search import DisabledOnlineSearch, OnlineSearchProvider
@@ -162,7 +165,6 @@ from gunther.schemas import (
     KnowledgeUnitOut,
     NotebookNoteOut,
     OutputModelOut,
-    OutputProvenanceOut,
     OutputScope,
     OverviewCountsOut,
     OverviewOut,
@@ -199,7 +201,6 @@ NOTHING_TO_BUILD_FROM = (
     "There is nothing to build from yet. Add sources, or save an answer as knowledge."
 )
 # The largest an output's text may be, in bytes.
-MAX_OUTPUT_BYTES = 2_500_000
 
 # Home's conversations belong to no library: this stands in for the library id.
 # Library ids come from slugs, which never contain "@".
@@ -262,10 +263,6 @@ def _device_time(value: str | None) -> datetime | None:
     except ValueError:
         return None
     return parsed.astimezone(UTC).replace(tzinfo=None) if parsed.tzinfo else parsed
-
-
-class ArtifactConflictError(ValueError):
-    """An idempotency key or immutable lineage head conflicts with current state."""
 
 
 @dataclass(frozen=True)
@@ -461,8 +458,7 @@ class KnowledgeService:
         self._source_import_locks: dict[str, tuple[Lock, int]] = {}
         # How far one turn of the Artifacts agent may go; the exam and tests may change it.
         self.artifact_limits = artifact_agent.AgentLimits()
-        # Rows of Artifacts conversations are made one request at a time (listing makes the
-        # missing ones), so two requests for the same conversation cannot both make it.
+        # Listing and importing serialize creation of missing conversation rows.
         self._artifact_conversations_lock = Lock()
 
     @property
@@ -3061,71 +3057,6 @@ class KnowledgeService:
             )
         ).hexdigest()
 
-    def _earlier_output(
-        self, workspace_id: str, client_request_id: str, fingerprint: str,
-        *, previous: Sequence[str] = (),
-    ) -> ArtifactOut | None:
-        """The version an earlier try of this same request already saved, if there is one."""
-
-        with session_scope(self.sessions) as session:
-            existing = session.scalar(
-                select(Artifact).where(
-                    Artifact.workspace_id == workspace_id,
-                    Artifact.client_request_id == client_request_id,
-                )
-            )
-            if existing is None:
-                return None
-            if existing.request_fingerprint not in (fingerprint, *previous):
-                raise ArtifactConflictError(
-                    "clientRequestId was already used for a different Artifact request"
-                )
-            return artifact_detail(session, existing)
-
-    def _output_library(
-        self, session: Session, workspace_id: str, base_id: str
-    ) -> KnowledgeBaseRecord:
-        workspace = session.get(WorkspaceIdentity, "primary")
-        if workspace is None or workspace.workspace_id != workspace_id:
-            raise LookupError("The verified workspace identity was not found")
-        library = self._live_knowledge_base(session, base_id)
-        if library is None:
-            raise LookupError(f"Knowledge Base {base_id} was not found")
-        return library
-
-    @staticmethod
-    def _output_version(
-        session: Session, workspace_id: str, base_id: str, artifact_id: str, *, latest: bool
-    ) -> Artifact:
-        """A version of an output. With ``latest``, only the newest of its lineage will do:
-        that is the one that can be built on."""
-
-        found = session.scalar(
-            select(Artifact).where(
-                Artifact.id == artifact_id,
-                Artifact.workspace_id == workspace_id,
-                Artifact.knowledge_base_id == base_id,
-            )
-        )
-        if found is None:
-            raise LookupError(f"Artifact {artifact_id} was not found in this Knowledge Base")
-        if latest:
-            head = session.scalar(
-                select(Artifact)
-                .where(
-                    Artifact.lineage_id == found.lineage_id,
-                    Artifact.workspace_id == workspace_id,
-                    Artifact.knowledge_base_id == base_id,
-                )
-                .order_by(Artifact.version_number.desc())
-                .limit(1)
-            )
-            if head is None or head.id != found.id:
-                raise ArtifactConflictError(
-                    "That is not the latest version of this output. Open the latest one."
-                )
-        return found
-
     @staticmethod
     def _require_agent_output(artifact: Artifact) -> None:
         if artifact.origin == "legacy":
@@ -3608,196 +3539,21 @@ class KnowledgeService:
             pool.adopt(item)
         return pool
 
-    def _save_output(
-        self,
-        *,
-        workspace_id: str,
-        base_id: str,
-        client_request_id: str,
-        fingerprint: str,
-        parent_id: str | None,
-        kind: str,
-        style: str | None,
-        audience: str,
-        title: str,
-        brief: str,
-        origin: str,
-        content: str,
-        scope: dict[str, object],
-        inputs: dict[str, object],
-        outline: list[dict[str, object]],
-        citations: list[dict[str, object]],
-        snapshots: list[ArtifactUnitSnapshotOut],
-        model: OutputModelOut | None,
-        checks: list[dict[str, object]],
-        made_by: dict[str, object] | None = None,
-    ) -> ArtifactOut:
-        """Write a new version of an output, sealed with its hashes, and what the Checker found.
-
-        ``made_by`` is for a version made by a skill: its generator, skill, approach and use.
-        """
-
-        try:
-            with session_scope(self.sessions) as session:
-                library = self._output_library(session, workspace_id, base_id)
-                if parent_id:
-                    parent = self._output_version(
-                        session, workspace_id, base_id, parent_id, latest=True
-                    )
-                    lineage_id, version_number = parent.lineage_id, parent.version_number + 1
-                else:
-                    parent, lineage_id, version_number = None, _id("arl"), 1
-                if len(content.encode("utf-8")) > MAX_OUTPUT_BYTES:
-                    raise ValueError(
-                        f"The output is larger than the {MAX_OUTPUT_BYTES:,}-byte limit"
-                    )
-                skilled = made_by or {}
-                if kind == "slides" and isinstance(skilled.get("skill"), dict):
-                    from gunther.slide_review import invalidate_reviews
-
-                    skilled = {**skilled, "skill": invalidate_reviews(
-                        skilled["skill"], content, outline, citations, skilled.get("use"))}
-                parent_provenance = json.loads(parent.provenance_json) if parent else {}
-                conversation_id = skilled.get("conversation_id") or parent_provenance.get(
-                    "conversation_id"
-                )
-                if (
-                    parent_provenance.get("conversation_id")
-                    and conversation_id != parent_provenance["conversation_id"]
-                ):
-                    raise ValueError("This artifact belongs to a different conversation.")
-                provenance = OutputProvenanceOut(
-                    schema_version=2,
-                    generator=str(skilled.get("generator") or "gunther.output-agents.v1"),
-                    workspace_id=workspace_id,
-                    knowledge_base_id=base_id,
-                    knowledge_base_question=library.question,
-                    accepted_only=False,
-                    accepted_unit_ids=[item.unit_id for item in snapshots],
-                    revision_ids=[item.revision_id for item in snapshots],
-                    kind=kind,
-                    style=style,
-                    audience=audience,
-                    brief=brief,
-                    origin=origin,
-                    model=model,
-                    skill=skilled.get("skill"),
-                    approach=skilled.get("approach"),
-                    use=skilled.get("use"),
-                    conversation_id=conversation_id,
-                    conversation_title=skilled.get("conversation_title")
-                    or parent_provenance.get("conversation_title"),
-                    request=skilled.get("request") if conversation_id else None,
-                    reply=skilled.get("reply") if conversation_id else None,
-                    changes=skilled.get("changes"),
-                )
-                sealed = provenance.model_dump()
-                if skilled.get("work") is not None:
-                    # The artifact's work as it was made: sealed with the version, not sent out.
-                    sealed["work"] = skilled["work"]
-                for key in (
-                    "skill",
-                    "approach",
-                    "use",
-                    "conversation_id",
-                    "conversation_title",
-                    "request",
-                    "reply",
-                    "changes",
-                ):
-                    # A version made without a skill keeps the provenance it always had.
-                    if sealed.get(key) is None:
-                        sealed.pop(key, None)
-                artifact = Artifact(
-                    id=_id("art"),
-                    workspace_id=workspace_id,
-                    knowledge_base_id=base_id,
-                    client_request_id=client_request_id,
-                    request_fingerprint=fingerprint,
-                    lineage_id=lineage_id,
-                    version_number=version_number,
-                    supersedes_artifact_id=parent.id if parent else None,
-                    format=kind,
-                    audience=audience,
-                    title=(title or library.title)[:160],
-                    content=content,
-                    content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
-                    manifest_hash="",
-                    accepted_unit_ids_json=json.dumps(
-                        [item.unit_id for item in snapshots],
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    ),
-                    revision_snapshot_json=json.dumps(
-                        [item.model_dump() for item in snapshots],
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ),
-                    provenance_json=json.dumps(
-                        sealed,
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ),
-                    kind=kind,
-                    style=style,
-                    brief=brief,
-                    origin=origin,
-                    scope_json=json.dumps(scope, ensure_ascii=False, separators=(",", ":")),
-                    inputs_json=json.dumps(inputs, ensure_ascii=False, separators=(",", ":")),
-                    outline_json=json.dumps(outline, ensure_ascii=False, separators=(",", ":")),
-                    citations_json=json.dumps(citations, ensure_ascii=False, separators=(",", ":")),
-                )
-                artifact.manifest_hash = artifact_manifest_hash(artifact.__getattribute__)
-                session.add(artifact)
-                session.flush()
-                cited_revisions = [
-                    c.get("source_revision_id") or c.get("sourceRevisionId") for c in citations
-                ]
-                retained_images = set(
-                    session.scalars(
-                        select(ElementAsset.asset_id)
-                        .join(DocumentElement)
-                        .where(DocumentElement.revision_id.in_([r for r in cited_revisions if r]))
-                    )
-                )
-                requested_images = set(re.findall(r"gunther-asset:([A-Za-z0-9_-]+)", content))
-                if requested_images - retained_images:
-                    raise ValueError("An output figure must belong to its cited materials.")
-                for asset_id in retained_images:
-                    session.add(ArtifactAsset(artifact_id=artifact.id, asset_id=asset_id))
-                for position, item in enumerate(snapshots):
-                    session.add(
-                        ArtifactUnitBinding(
-                            id=_id("aub"),
-                            artifact_id=artifact.id,
-                            position=position,
-                            unit_id=item.unit_id,
-                            revision_id=item.revision_id,
-                            content_hash=item.content_hash,
-                        )
-                    )
-                if checks:
-                    session.add(
-                        ArtifactCheck(
-                            id=_id("chk"),
-                            artifact_id=artifact.id,
-                            content_hash=artifact.content_hash,
-                            checks_json=json.dumps({"sections": checks}, ensure_ascii=False),
-                        )
-                    )
-                session.flush()
-                return artifact_detail(session, artifact)
-        except (IntegrityError, ArtifactConflictError) as error:
-            earlier = self._earlier_output(workspace_id, client_request_id, fingerprint)
-            if earlier is not None:
-                return earlier
-            if isinstance(error, ArtifactConflictError):
-                raise
-            raise ArtifactConflictError(
-                "Artifact version creation conflicted with another writer; refresh and retry"
-            ) from error
+    @staticmethod
+    def _studio_web(
+        web: Tool | None, reason: str | None, query: str, pool: Pool, per_section: int,
+    ) -> dict[str, str] | None:
+        if web and query and len(pool) < pool.limit:
+            try:
+                for item in web.run(query)[:per_section]:
+                    if len(pool) >= pool.limit:
+                        break
+                    pool.adopt(item)
+            except ToolFailure as error:
+                reason = str(error)
+        if reason:
+            return {"step": "web", "label": "Web search unavailable", "reason": reason}
+        return None
 
     def build_output(
         self,
@@ -3824,7 +3580,8 @@ class KnowledgeService:
             previous.append(self._output_fingerprint(workspace_id, base_id, "build", fields))
         fields.pop("library_supplements")
         fingerprint = self._output_fingerprint(workspace_id, base_id, "build", fields)
-        earlier = self._earlier_output(
+        earlier = earlier_output(
+            self.sessions,
             workspace_id, payload.client_request_id, fingerprint, previous=previous
         )
         if earlier is not None:
@@ -3834,9 +3591,9 @@ class KnowledgeService:
             usage.job("outputs", payload.kind, ref=payload.conversation_id),
             session_scope(self.sessions) as session,
         ):
-            library = self._output_library(session, workspace_id, base_id)
+            library = output_library(session, workspace_id, base_id)
             parent = (
-                self._output_version(
+                output_version(
                     session, workspace_id, base_id, payload.supersedes_artifact_id, latest=True
                 )
                 if payload.supersedes_artifact_id
@@ -3909,20 +3666,12 @@ class KnowledgeService:
                         Planned(p["heading"], p.get("goal", ""), id=p.get("id", ""))
                         for p in json.loads(parent.outline_json)
                     ]
-            web, web_reason = self._web_tool(payload.web)
-            query = payload.brief or payload.title
-            if web and query and len(pool) < pool.limit:
-                try:
-                    for item in web.run(query)[: limits.per_section]:
-                        if len(pool) >= pool.limit:
-                            break
-                        pool.adopt(item)
-                except ToolFailure as error:
-                    web_reason = str(error)
-            if payload.web and web_reason:
-                studio.skipped.append(
-                    {"step": "web", "label": "Web search unavailable", "reason": web_reason}
-                )
+            if payload.web:
+                web, reason = self._web_tool(True)
+                warning = self._studio_web(web, reason, payload.brief or payload.title or "", pool,
+                                           limits.per_section)
+                if warning:
+                    studio.skipped.append(warning)
             built = studio.make(
                 model, effort, spec, pool, notes, events,
                 fallback_title=fallback_title,
@@ -3943,7 +3692,8 @@ class KnowledgeService:
             parent_id = parent.id if parent else None
         if events:
             events({"type": "saving"})  # a reader who pressed Stop by now gets nothing saved
-        return self._save_output(
+        return commit_version(
+            self.sessions,
             workspace_id=workspace_id,
             base_id=base_id,
             client_request_id=payload.client_request_id,
@@ -4209,18 +3959,22 @@ class KnowledgeService:
                 **self._output_request_fields(payload),
             },
         )
-        earlier = self._earlier_output(workspace_id, payload.client_request_id, fingerprint)
+        earlier = earlier_output(
+            self.sessions, workspace_id, payload.client_request_id, fingerprint,
+        )
         if earlier is not None:
             return earlier
         model, effort = self._output_model(payload.model, payload.effort)
         with usage.job("outputs", ref=artifact_id), session_scope(self.sessions) as session:
-            library = self._output_library(session, workspace_id, base_id)
+            library = output_library(session, workspace_id, base_id)
             try:
-                parent = self._output_version(
+                parent = output_version(
                     session, workspace_id, base_id, artifact_id, latest=True
                 )
             except ArtifactConflictError:
-                earlier = self._earlier_output(workspace_id, payload.client_request_id, fingerprint)
+                earlier = earlier_output(
+                    self.sessions, workspace_id, payload.client_request_id, fingerprint,
+                )
                 if earlier is not None:
                     return earlier
                 raise
@@ -4300,7 +4054,8 @@ class KnowledgeService:
             }
         if events:
             events({"type": "saving"})
-        return self._save_output(
+        return commit_version(
+            self.sessions,
             workspace_id=workspace_id,
             base_id=base_id,
             client_request_id=payload.client_request_id,
@@ -4326,13 +4081,15 @@ class KnowledgeService:
 
         fingerprint = self._output_fingerprint(workspace_id, base_id, "visual-review",
             {"artifactId": artifact_id, **self._output_request_fields(payload)})
-        earlier = self._earlier_output(workspace_id, payload.client_request_id, fingerprint)
+        earlier = earlier_output(
+            self.sessions, workspace_id, payload.client_request_id, fingerprint,
+        )
         if earlier is not None:
             return earlier
         model, effort = self._output_model(payload.model, payload.effort)
         with session_scope(self.sessions) as session:
-            self._output_library(session, workspace_id, base_id)
-            parent = self._output_version(session, workspace_id, base_id, artifact_id, latest=True)
+            output_library(session, workspace_id, base_id)
+            parent = output_version(session, workspace_id, base_id, artifact_id, latest=True)
             self._require_agent_output(parent)
             if parent.kind != "slides":
                 raise ValueError("Rendered-slide review is only available for decks.")
@@ -4357,7 +4114,7 @@ class KnowledgeService:
                                 brief=fields["brief"], use=use, emit=events or (lambda _: None))
         if events:
             events({"type": "saving"})
-        return self._save_output(workspace_id=workspace_id, base_id=base_id,
+        return commit_version(self.sessions, workspace_id=workspace_id, base_id=base_id,
             client_request_id=payload.client_request_id, fingerprint=fingerprint,
             parent_id=artifact_id, title=built.title, origin="revise", content=built.content,
             outline=built.outline, citations=[c.model_dump() for c in built.citations],
@@ -4391,13 +4148,15 @@ class KnowledgeService:
                 **self._output_request_fields(payload),
             },
         )
-        earlier = self._earlier_output(workspace_id, payload.client_request_id, fingerprint)
+        earlier = earlier_output(
+            self.sessions, workspace_id, payload.client_request_id, fingerprint,
+        )
         if earlier is not None:
             return earlier
         model, effort = self._output_model(payload.model, payload.effort)
         with session_scope(self.sessions) as session:
-            self._output_library(session, workspace_id, base_id)
-            parent = self._output_version(session, workspace_id, base_id, artifact_id, latest=True)
+            output_library(session, workspace_id, base_id)
+            parent = output_version(session, workspace_id, base_id, artifact_id, latest=True)
             self._require_agent_output(parent)
             if parent.kind != "slides":
                 raise ValueError("Only a deck has a style.")
@@ -4460,7 +4219,8 @@ class KnowledgeService:
         }
         if events:
             events({"type": "saving"})
-        return self._save_output(
+        return commit_version(
+            self.sessions,
             workspace_id=workspace_id,
             base_id=base_id,
             client_request_id=payload.client_request_id,
@@ -4497,14 +4257,16 @@ class KnowledgeService:
                 "contentHash": hashlib.sha256(payload.content.encode("utf-8")).hexdigest(),
             },
         )
-        earlier = self._earlier_output(workspace_id, payload.client_request_id, fingerprint)
+        earlier = earlier_output(
+            self.sessions, workspace_id, payload.client_request_id, fingerprint,
+        )
         if earlier is not None:
             return earlier
         if len(payload.content.encode("utf-8")) > MAX_OUTPUT_BYTES:
             raise ValueError(f"The output is larger than the {MAX_OUTPUT_BYTES:,}-byte limit")
         with session_scope(self.sessions) as session:
-            self._output_library(session, workspace_id, base_id)
-            parent = self._output_version(session, workspace_id, base_id, artifact_id, latest=True)
+            output_library(session, workspace_id, base_id)
+            parent = output_version(session, workspace_id, base_id, artifact_id, latest=True)
             self._require_agent_output(parent)
             records = latest_check_records(session, parent)
             hashes = dict.fromkeys(
@@ -4527,7 +4289,8 @@ class KnowledgeService:
                 "title": title_of(payload.content) or parent.title,
                 "made_by": self._made_by(parent),
             }
-        return self._save_output(
+        return commit_version(
+            self.sessions,
             workspace_id=workspace_id,
             base_id=base_id,
             client_request_id=payload.client_request_id,
@@ -4548,8 +4311,8 @@ class KnowledgeService:
 
         model, _ = self._output_model()
         with session_scope(self.sessions) as session:
-            self._output_library(session, workspace_id, base_id)
-            artifact = self._output_version(
+            output_library(session, workspace_id, base_id)
+            artifact = output_version(
                 session, workspace_id, base_id, artifact_id, latest=False
             )
             self._require_agent_output(artifact)
@@ -4572,7 +4335,7 @@ class KnowledgeService:
         with usage.job("outputs", artifact_kind, ref=artifact_id):
             checks = OutputAgents(self.models).check(model, sections, known, by_ref)
         with session_scope(self.sessions) as session:
-            artifact = self._output_version(
+            artifact = output_version(
                 session, workspace_id, base_id, artifact_id, latest=False
             )
             latest = latest_check_records(session, artifact)
@@ -4919,7 +4682,7 @@ class KnowledgeService:
         any conversation that versions name and that has none."""
 
         with self._artifact_conversations_lock, session_scope(self.sessions) as session:
-            self._output_library(session, workspace_id, base_id)
+            output_library(session, workspace_id, base_id)
             self._recover_artifact_conversations(session, workspace_id, base_id)
             rows = session.scalars(
                 select(ArtifactConversation)
@@ -4939,7 +4702,7 @@ class KnowledgeService:
         keeps its own). Asking again for an id that exists returns that conversation."""
 
         with self._artifact_conversations_lock, session_scope(self.sessions) as session:
-            self._output_library(session, workspace_id, base_id)
+            output_library(session, workspace_id, base_id)
             scope = payload.scope or OutputScope()
             self._resolve_output_scope(session, base_id, scope)
             conversation_id = payload.id or str(uuid4())
@@ -4975,7 +4738,7 @@ class KnowledgeService:
         """
 
         with self._artifact_conversations_lock, session_scope(self.sessions) as session:
-            self._output_library(session, workspace_id, base_id)
+            output_library(session, workspace_id, base_id)
             owned = self._owned_versions(session, workspace_id, base_id)
             made: list[ArtifactConversation] = []
             for imported in payload.conversations:
@@ -5059,7 +4822,7 @@ class KnowledgeService:
         self, base_id: str, workspace_id: str, conversation_id: str
     ) -> ArtifactConversationOut:
         with session_scope(self.sessions) as session:
-            self._output_library(session, workspace_id, base_id)
+            output_library(session, workspace_id, base_id)
             row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
             return self._artifact_conversation_out(session, row)
 
@@ -5073,7 +4836,7 @@ class KnowledgeService:
         """Rename a conversation, change what it reads from, or archive it."""
 
         with session_scope(self.sessions) as session:
-            self._output_library(session, workspace_id, base_id)
+            output_library(session, workspace_id, base_id)
             row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
             if payload.title is not None:
                 title = payload.title.strip()
@@ -5101,7 +4864,7 @@ class KnowledgeService:
         worked on."""
 
         with session_scope(self.sessions) as session:
-            self._output_library(session, workspace_id, base_id)
+            output_library(session, workspace_id, base_id)
             row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
             workspace, brief = self._load_workspace(row)
             work = workspaces.active_work(workspace)
@@ -5140,6 +4903,15 @@ class KnowledgeService:
                 return " ".join(text.split())[:60]
             return row.title
 
+    def _turn_fingerprint(
+        self, workspace_id: str, base_id: str, conversation_id: str, payload: ArtifactTurnInput,
+    ) -> str:
+        return self._output_fingerprint(
+            workspace_id, base_id, "artifact-turn",
+            {"conversationId": conversation_id, "kind": payload.kind, "text": payload.text,
+             **payload.rebuild_fields()},
+        )
+
     def _earlier_turn(
         self, session: Session, row: ArtifactConversation, payload: ArtifactTurnInput
     ) -> ArtifactTurnOut | None:
@@ -5153,8 +4925,7 @@ class KnowledgeService:
         )
         if user is None:
             return None
-        if user.text != payload.text or user.kind != payload.kind:
-            raise ArtifactConflictError("clientRequestId was already used for a different message")
+        linked: tuple[ArtifactMessage, dict] | None = None
         for reply in session.scalars(
             select(ArtifactMessage)
             .where(ArtifactMessage.conversation_id == row.id, ArtifactMessage.role == "assistant")
@@ -5162,8 +4933,19 @@ class KnowledgeService:
         ):
             found = json.loads(reply.payload_json or "{}")
             if found.get("to") == user.id:
-                return self._turn_out(session, reply, found)
-        return None
+                linked = reply, found
+                break
+        if linked is None:
+            return None
+        stored = json.loads(user.payload_json or "{}")
+        same = (
+            user.text == payload.text and user.kind == payload.kind and all(
+                stored.get(key) == value for key, value in payload.rebuild_fields().items()
+            )
+        )
+        if not same:
+            raise ArtifactConflictError("clientRequestId was already used for a different message")
+        return self._turn_out(session, *linked)
 
     def _turn_out(
         self, session: Session, reply: ArtifactMessage, found: dict | None = None
@@ -5191,6 +4973,19 @@ class KnowledgeService:
             message=self._artifact_message_out(reply),
         )
 
+    @staticmethod
+    def _published_turn_out(artifact: ArtifactOut) -> ArtifactTurnOut:
+        return ArtifactTurnOut(
+            outcome="saved",
+            reply=getattr(artifact.provenance, "reply", None) or "",
+            artifact=artifact,
+            changes=[
+                ArtifactChangeOut(**change)
+                for change in getattr(artifact.provenance, "changes", None) or ()
+            ],
+            message=None,
+        )
+
     def artifact_turn(
         self,
         base_id: str,
@@ -5213,18 +5008,32 @@ class KnowledgeService:
         limits = OutputLimits()
         agent_limits = self.artifact_limits
         with usage.job("outputs", ref=conversation_id), session_scope(self.sessions) as session:
-            self._output_library(session, workspace_id, base_id)
+            output_library(session, workspace_id, base_id)
             row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
             earlier = self._earlier_turn(session, row, payload)
             if earlier is not None:
                 return earlier
+        published = earlier_output(
+            self.sessions, workspace_id, payload.client_request_id,
+            self._turn_fingerprint(workspace_id, base_id, conversation_id, payload),
+        )
+        if published is not None:
+            if (
+                published.knowledge_base_id != base_id
+                or published.conversation_id != conversation_id
+            ):
+                raise ArtifactConflictError(
+                    "clientRequestId was already used for a different message"
+                )
+            return self._published_turn_out(published)
         model, effort = self._output_model(payload.model, payload.effort)
         user_id, reply_id = _id("acm"), _id("acm")
         emit({"type": "turn", "conversationId": conversation_id, "messageId": user_id})
         failure: BaseException | None = None
         result: artifact_agent.TurnResult | None = None
+        preserve_on_failure = payload.rebuild is not None
         with usage.job("outputs", ref=conversation_id), session_scope(self.sessions) as session:
-            library = self._output_library(session, workspace_id, base_id)
+            library = output_library(session, workspace_id, base_id)
             row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
             workspace, brief = self._load_workspace(row)
             began = (
@@ -5245,46 +5054,23 @@ class KnowledgeService:
             versions: dict[str, int] = {}
             saved: dict[str, str] = {}
             heads: dict[str, str] = {}
-            for work in list(workspace.works):
-                head = None
-                if not work.key.startswith("draft_"):
-                    lineage = (
-                        select(Artifact)
-                        .where(
-                            Artifact.lineage_id == work.key,
-                            Artifact.workspace_id == workspace_id,
-                            Artifact.knowledge_base_id == base_id,
-                        )
-                        .order_by(Artifact.version_number.desc())
-                    )
-                    head = session.scalar(lineage.limit(1))
+            for work in workspace.works:
+                if work.key.startswith("draft_"):
+                    continue
+                head = session.scalar(
+                    select(Artifact).where(
+                        Artifact.lineage_id == work.key,
+                        Artifact.workspace_id == workspace_id,
+                        Artifact.knowledge_base_id == base_id,
+                    ).order_by(Artifact.version_number.desc()).limit(1)
+                )
                 if head is None:
                     continue
-                if work.version_id != head.id:
-                    prior = session.get(Artifact, work.version_id) if work.version_id else None
-                    synced = prior.version_number if prior else 0
-                    rebuild = session.scalar(lineage.where(
-                        Artifact.origin == "rebuild",
-                        func.json_extract(
-                            Artifact.provenance_json, "$.approach.method"
-                        ) == "studio",
-                        Artifact.version_number.between(synced + 1, head.version_number),
-                    ).limit(1))
-                    if rebuild and rebuild.id != head.id:
-                        checks = latest_check_records(session, rebuild)
-                        workspaces.sync(
-                            work, artifact_detail(session, rebuild, check_records=checks),
-                            checks, workspace, brief,
-                        )
                 checks = latest_check_records(session, head)
                 shown = artifact_detail(session, head, check_records=checks)
-                workspaces.sync(
-                    work, shown, checks, workspace, brief
-                )
+                workspaces.sync(work, shown, checks, workspace, brief)
                 versions[work.key], saved[work.key], heads[work.key] = (
-                    shown.version_number,
-                    shown.content,
-                    head.id,
+                    shown.version_number, shown.content, head.id,
                 )
             history = self._turn_history(session, row.id, agent_limits.history)
             budget = RunBudget(
@@ -5328,14 +5114,21 @@ class KnowledgeService:
                 *, purpose=None, fixed_outline=None,
             ) -> BuiltOutput:
                 scoped_notes = studio_reading(made)
-                return StudioAgents(
+                agents = StudioAgents(
                     gateway,
                     limits,
                     use=use,
                     renderer=self.slide_renderer,
                     asset_reader=self.asset_reader,
                     reusable_figures=self._reusable_figure_readings(session, base_id),
-                ).make(  # type: ignore[arg-type]
+                )
+                if payload.rebuild and payload.web:
+                    warning = self._studio_web(
+                        web, web_reason, spec.brief, made, limits.per_section,
+                    )
+                    if warning:
+                        agents.skipped.append(warning)
+                return agents.make(  # type: ignore[arg-type]
                     model,
                     effort,
                     spec,
@@ -5382,32 +5175,54 @@ class KnowledgeService:
                 )
             )
             try:
-                result = agent.run()
+                if payload.rebuild is None:
+                    result = agent.run()
+                else:
+                    action = payload.rebuild
+                    parent = output_version(
+                        session, workspace_id, base_id, action.artifact_id, latest=True,
+                    )
+                    owner = json.loads(parent.provenance_json).get("conversation_id")
+                    work = next((w for w in workspace.works if w.key == parent.lineage_id), None)
+                    if work is None or (owner and owner != conversation_id):
+                        raise LookupError("This artifact was not found in this conversation.")
+                    result = agent.rebuild(
+                        work, [Planned(i.heading, i.goal, id=i.id) for i in action.outline],
+                    )
             except Exception as error:
                 failure = error
             brief = agent.brief
+
+        def keep(
+            session: Session | None, artifact: ArtifactOut | None, state: workspaces.Workspace,
+        ) -> ArtifactMessageOut:
+            assert result is not None
+            kind = {
+                "asked": "question", "answered": "answer", "saved": "result",
+                "replied": "reply", "paused": "paused",
+            }[result.outcome]
+            extra: dict[str, object] = {"steps": result.steps}
+            if result.question:
+                extra.update(question=result.question, options=result.question["options"])
+            if result.changes:
+                extra["changes"] = result.changes
+            return self._store_turn(
+                base_id, workspace_id, conversation_id, payload, user_id, reply_id, state, brief,
+                began, kind=kind, text=result.reply, extra=extra,
+                artifact_id=artifact.id if artifact else None, request_id=payload.client_request_id,
+                existing_session=session,
+            )  # fmt: skip
+
+        artifact = message = None
         if result is not None and result.save is not None:
             try:
-                artifact = self._save_turn_version(
-                    base_id,
-                    workspace_id,
-                    conversation_id,
-                    payload,
-                    model,
-                    effort,
-                    result,
-                    workspace,
-                    brief,
-                    scope,
-                    inputs,
-                    snapshots,
-                    heads,
-                    emit,
+                artifact, message = self._save_turn_version(
+                    base_id, workspace_id, conversation_id, payload, model, effort, result,
+                    workspace, brief, scope, inputs, snapshots, heads, emit, keep,
                 )
             except Exception as error:
+                preserve_on_failure = True
                 result, failure = None, error
-        else:
-            artifact = None
         if failure is not None:
             stopped = isinstance(failure, Stopped)
             error = (
@@ -5422,39 +5237,28 @@ class KnowledgeService:
             if not stopped and not isinstance(failure, (ModelError, ValueError, LookupError)):
                 logger.error("An Artifacts turn failed", exc_info=failure)
             self._store_turn(
-                base_id, workspace_id, conversation_id, payload, user_id, reply_id, workspace,
+                base_id, workspace_id, conversation_id, payload, user_id, reply_id,
+                None if preserve_on_failure else workspace,
                 brief, began, kind="stopped" if stopped else "failed", text=error,
                 extra={"error": error} if error else {}, artifact_id=None,
-                steps=[], request_id=None,
+                request_id=None,
             )  # fmt: skip
             raise failure
         assert result is not None
-        kind = {
-            "asked": "question",
-            "answered": "answer",
-            "saved": "result",
-            "replied": "reply",
-            "paused": "paused",
-        }[result.outcome]
-        extra: dict[str, object] = {"steps": result.steps}
-        if result.question:
-            extra["question"] = result.question
-            extra["options"] = result.question["options"]
-        if result.changes:
-            extra["changes"] = result.changes
-        message = self._store_turn(
-            base_id, workspace_id, conversation_id, payload, user_id, reply_id, workspace, brief,
-            began, kind=kind, text=result.reply, extra=extra,
-            artifact_id=artifact.id if artifact else None, steps=result.steps,
-            request_id=payload.client_request_id,
-        )  # fmt: skip
+        if artifact and (message is None or message.artifact_id != artifact.id):
+            with session_scope(self.sessions) as session:
+                row = self._artifact_conversation_row(
+                    session, workspace_id, base_id, conversation_id,
+                )
+                earlier = self._earlier_turn(session, row, payload)
+                return earlier if earlier is not None else self._published_turn_out(artifact)
         return ArtifactTurnOut(
             outcome=result.outcome,
             reply=result.reply,
             question=ArtifactQuestionOut(**result.question) if result.question else None,
             artifact=artifact,
             changes=[ArtifactChangeOut(**item) for item in result.changes],
-            message=message,
+            message=message or keep(None, artifact, workspace),
         )
 
     def _turn_history(
@@ -5494,7 +5298,8 @@ class KnowledgeService:
         snapshots: list[ArtifactUnitSnapshotOut],
         heads: dict[str, str],
         emit: Callable[[dict], None],
-    ) -> ArtifactOut:
+        keep: Callable[[Session, ArtifactOut, workspaces.Workspace], ArtifactMessageOut],
+    ) -> tuple[ArtifactOut, ArtifactMessageOut | None]:
         """Seal the artifact a turn finished as a version, and make its work match it."""
 
         request = result.save
@@ -5505,24 +5310,36 @@ class KnowledgeService:
         record = work.model_copy(deep=True)
         record.version_id, record.version_map, record.skipped = None, request.version_map, []
         parent = heads.get(work.key)
+        message = None
+
+        def publish(session: Session, artifact: ArtifactOut) -> None:
+            nonlocal message
+            saved = record.model_copy(update={
+                "key": artifact.lineage_id, "version_id": artifact.id, "title": artifact.title,
+            })
+            name = "deck" if kind == "slides" else "report"
+            selects = payload.rebuild is not None or workspace.active == work.key
+            state = workspace.model_copy(deep=True)
+            state.works = [saved if item.key == work.key else item for item in state.works]
+            if selects:
+                state.active = saved.key
+            state.log.append(f"v{artifact.version_number} ({name}): {request.log}")
+            message = keep(session, artifact, state)
+
         emit({"type": "saving"})  # a reader who pressed Stop by now gets nothing saved
-        artifact = self._save_output(
+        artifact = commit_version(
+            self.sessions,
             workspace_id=workspace_id,
             base_id=base_id,
             client_request_id=payload.client_request_id,
-            fingerprint=self._output_fingerprint(
-                workspace_id,
-                base_id,
-                "artifact-turn",
-                {"conversationId": conversation_id, "kind": payload.kind, "text": payload.text},
-            ),
+            fingerprint=self._turn_fingerprint(workspace_id, base_id, conversation_id, payload),
             parent_id=parent,
             kind=kind,
             style=(workspaces._style_of(work) or "auto") if kind == "report" else None,
             audience=artifact_agent.audience_of(brief),
             title=built.title,
             brief=workspaces.render_brief(brief, work),
-            origin="revise" if parent else "build",
+            origin="rebuild" if payload.rebuild else "revise" if parent else "build",
             content=built.content,
             scope=scope.model_dump(),
             inputs=inputs,
@@ -5547,17 +5364,9 @@ class KnowledgeService:
                 "changes": request.changes,
                 "work": record.model_dump(mode="json"),
             },
+            publish=publish,
         )
-        # The work is now the version: its numbers, its title, and the lineage as its key.
-        was = work.key
-        work.version_id, work.version_map = artifact.id, request.version_map
-        work.title, work.skipped = artifact.title, []
-        work.key = artifact.lineage_id
-        if workspace.active == was:
-            workspace.active = work.key
-        name = "deck" if kind == "slides" else "report"
-        workspace.log.append(f"v{artifact.version_number} ({name}): {request.log}")
-        return artifact
+        return artifact, message
 
     def _store_turn(
         self,
@@ -5567,7 +5376,7 @@ class KnowledgeService:
         payload: ArtifactTurnInput,
         user_id: str,
         reply_id: str,
-        workspace: workspaces.Workspace,
+        workspace: workspaces.Workspace | None,
         brief: workspaces.ConversationBrief,
         began: tuple[workspaces.ConversationBrief, dict[str, workspaces.WorkSpec]],
         *,
@@ -5575,25 +5384,31 @@ class KnowledgeService:
         text: str,
         extra: dict[str, object],
         artifact_id: str | None,
-        steps: list,
         request_id: str | None,
+        existing_session: Session | None = None,
     ) -> ArtifactMessageOut:
         """Keep the turn: both messages, the workspace and the brief. What the user typed in the
-        panel while it ran is kept over the turn's version of it. A turn that did not finish
-        keeps its messages without the request id, so that sending it again runs it again."""
+        panel while it ran is kept over the turn's version of it. A failed publication records
+        its messages without writing any staged workspace or brief."""
 
-        with session_scope(self.sessions) as session:
+        transaction = (
+            nullcontext(existing_session)
+            if existing_session is not None else session_scope(self.sessions)
+        )
+        with transaction as session:
             row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
-            stored, now = self._load_workspace(row)
-            brief = workspaces.keep_edits(began[0], brief, now)
-            theirs = {work.key: work.spec for work in stored.works}
-            for work in workspace.works:
-                before = began[1].get(work.key)
-                if before is not None and work.key in theirs:
-                    work.spec = workspaces.keep_spec_edits(before, work.spec, theirs[work.key])
             asked = utc_now()
-            if row.title == NEW_CONVERSATION:
-                row.title = " ".join(payload.text.split())[:160] or NEW_CONVERSATION
+            if workspace is not None:
+                stored, now = self._load_workspace(row)
+                brief = workspaces.keep_edits(began[0], brief, now)
+                theirs = {work.key: work.spec for work in stored.works}
+                for work in workspace.works:
+                    before = began[1].get(work.key)
+                    if before is not None and work.key in theirs:
+                        work.spec = workspaces.keep_spec_edits(before, work.spec, theirs[work.key])
+                if row.title == NEW_CONVERSATION:
+                    row.title = " ".join(payload.text.split())[:160] or NEW_CONVERSATION
+                self._store_workspace(row, workspace, brief, at=asked + timedelta(milliseconds=1))
             focus = payload.focus.model_dump() if payload.focus else None
             session.add(
                 ArtifactMessage(
@@ -5602,7 +5417,10 @@ class KnowledgeService:
                     role="user",
                     kind=payload.kind,
                     text=payload.text,
-                    payload_json=json.dumps({"focus": focus} if focus else {}, ensure_ascii=False),
+                    payload_json=json.dumps(
+                        {**payload.rebuild_fields(), **({"focus": focus} if focus else {})},
+                        ensure_ascii=False,
+                    ),
                     client_request_id=request_id,
                     created_at=asked,
                 )
@@ -5618,7 +5436,6 @@ class KnowledgeService:
                 created_at=asked + timedelta(milliseconds=1),
             )
             session.add(reply)
-            self._store_workspace(row, workspace, brief, at=asked + timedelta(milliseconds=1))
             session.flush()
             return self._artifact_message_out(reply)
 

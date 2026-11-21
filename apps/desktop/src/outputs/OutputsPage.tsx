@@ -1,5 +1,4 @@
-import type { Artifact, ArtifactBriefState, ArtifactConversationMessage, ArtifactSummary, ArtifactTurnInput, ArtifactTurnOut, BuildOutputRequest, ConversationCitation, EditArtifactBriefRequest, OutputKind, OutputScope, OutputStyle } from "@gunther/contracts";
-import { outputStyles } from "@gunther/contracts";
+import type { Artifact, ArtifactBriefState, ArtifactConversationMessage, ArtifactSummary, ArtifactTurnInput, ArtifactTurnOut, ConversationCitation, EditArtifactBriefRequest, OutlineItem, OutputKind, OutputScope, OutputStyle } from "@gunther/contracts";
 import { invoke } from "@tauri-apps/api/core";
 import { ArrowRight, ChevronDown, CircleAlert, Copy, Download, FileDown, History, ListChecks, LoaderCircle, Maximize2, MessageSquare, Minimize2, PanelsTopLeft, Pencil, Plus, Presentation, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -49,8 +48,8 @@ const messageOf = (reason: unknown) => reason instanceof Error ? reason.message 
 const USER_WORDS = { start: "Just start", continue: "Continue" } as const;
 const clip = (text: string, length: number) => text.length > length ? `${text.slice(0, length - 1)}…` : text;
 
-/** What is being worked on: a message to the agent, a rebuild through the old builder (from the Approach and Outline panels), or a run started before this page was open. */
-interface JobContext { conversationId: string; turnId: string; kind: "turn" | "rebuild" | "follow"; text: string }
+/** A conversation turn, a direct version action or a run started before this page opened. */
+interface JobContext { conversationId: string; turnId: string; kind: "turn" | "version" | "follow"; text: string }
 /** What the next message is about, because the person pointed at it. Counted from 0. */
 interface Pointing { section: number; quote?: string | undefined }
 
@@ -230,7 +229,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
     if (done.artifact && store.snapshot().activeId === conversationId) show(done.artifact);
     if (done.artifact) onNotify(`${kindLabel(done.artifact.kind)} version ${done.artifact.versionNumber} saved.`);
   };
-  /** A rebuild (from the Approach or Outline panel) saved a version. */
+  /** Open a saved version and refresh its conversation. */
   const finishBuild = async (artifact: Artifact, conversationId: string | null) => {
     await refreshArtifacts(artifact);
     const owner = artifact.conversationId || conversationId;
@@ -288,16 +287,16 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
     return undefined;
   };
   /** Send a message to the agent, and follow it until the turn ends. */
-  const sendTurn = async (turn: { kind: NonNullable<ArtifactTurnInput["kind"]>; text?: string; focus?: ArtifactTurnInput["focus"] }) => {
+  const sendTurn = async (turn: Pick<ArtifactTurnInput, "text" | "focus" | "rebuild"> & { kind: NonNullable<ArtifactTurnInput["kind"]> }) => {
     if (!workspaceId || building) return;
     const conversationId = active.id;
-    const asking = turn.kind === "start" || turn.kind === "continue" ? undefined : turn.focus ?? pointer();
-    const payload: ArtifactTurnInput = { clientRequestId: artifactRequestId(), kind: turn.kind, ...(turn.text ? { text: turn.text } : {}), ...(asking ? { focus: asking } : {}), ...(choice.model ? { model: choice.model, effort: choice.effort } : {}), ...(web.enabled ? { web: true } : {}) };
+    const asking = turn.kind === "start" || turn.kind === "continue" || turn.rebuild ? undefined : turn.focus ?? pointer();
+    const payload: ArtifactTurnInput = { clientRequestId: artifactRequestId(), kind: turn.kind, ...(turn.text ? { text: turn.text } : {}), ...(asking ? { focus: asking } : {}), ...(turn.rebuild ? { rebuild: turn.rebuild } : {}), ...(choice.model ? { model: choice.model, effort: choice.effort } : {}), ...(web.enabled ? { web: true } : {}) };
     followController.current?.abort();
     const abort = new AbortController(); controller.current = abort;
     const context: JobContext = { conversationId, turnId: payload.clientRequestId, kind: "turn", text: turn.text || (turn.kind === "start" || turn.kind === "continue" ? USER_WORDS[turn.kind] : "") };
     jobRef.current = context; setJob(context); setGeneralError(null); setStopping(false); setSettingsOpen(false); setPointing(null);
-    store.update(conversationId, { draft: "" });
+    if (!turn.rebuild) store.update(conversationId, { draft: "" });
     live.start();
     const hear = (event: ArtifactTurnEvent) => { if (event.type === "brief") store.setBrief(conversationId, { brief: event.brief, spec: event.spec }); live.hear(event); };
     try {
@@ -312,20 +311,19 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
       await store.sync(conversationId).catch(() => undefined);
       const kept = store.messages(conversationId).at(-1);
       if (!stopped && !(kept?.role === "assistant" && kept.kind === "failed")) setGeneralError(messageOf(reason));
-      if (!store.messages(conversationId).some((message) => message.clientRequestId === payload.clientRequestId) && turn.text && !store.get(conversationId)?.draft) store.update(conversationId, { draft: turn.text });
+      if (!turn.rebuild && !store.messages(conversationId).some((message) => message.clientRequestId === payload.clientRequestId) && turn.text && !store.get(conversationId)?.draft) store.update(conversationId, { draft: turn.text });
       onNotify(stopped ? "Stopped. Nothing was saved." : "The request wasn’t handled.");
     } finally { if (!abort.signal.aborted && jobRef.current === context) { live.stop(); jobRef.current = null; setJob(null); setStopping(false); } }
   };
-  /** The old builder, for the Approach and Outline panels: a new version from the words changed there. */
-  const rebuild = async (request: BuildOutputRequest, instruction: string, runner = knowledgeApi.buildOutputStream) => {
+  const runVersionAction = async (instruction: string, runner: (workspace: string, requestId: string, hear: typeof live.hear, signal: AbortSignal) => Promise<Artifact>) => {
     if (!workspaceId || building) return null;
     followController.current?.abort();
     const abort = new AbortController(); controller.current = abort;
-    const context: JobContext = { conversationId: active.id, turnId: request.clientRequestId, kind: "rebuild", text: instruction };
+    const context: JobContext = { conversationId: active.id, turnId: artifactRequestId(), kind: "version", text: instruction };
     jobRef.current = context; setJob(context); setGeneralError(null); setStopping(false); setSettingsOpen(false);
     live.start();
     try {
-      const artifact = await runner(base.id, request, workspaceId, live.hear, abort.signal);
+      const artifact = await runner(workspaceId, context.turnId, live.hear, abort.signal);
       if (abort.signal.aborted) return null;
       await finishBuild(artifact, context.conversationId);
       return artifact;
@@ -337,25 +335,19 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
       return null;
     } finally { if (!abort.signal.aborted && jobRef.current === context) { live.stop(); jobRef.current = null; setJob(null); setStopping(false); } }
   };
-  const requestFor = (extra: Partial<BuildOutputRequest> = {}): BuildOutputRequest => {
-    const kind = open?.kind ?? "report";
-    const style = open?.style && outputStyles.includes(open.style as OutputStyle) ? open.style as OutputStyle : null;
-    const cover = kind === "slides" && open ? parseSlides(open.content)[0] : undefined;
-    return { clientRequestId: artifactRequestId(), kind, audience: open?.audience ?? "scientist", ...(kind === "report" ? style ? { style } : {} : { ...(open?.provenance.use ? { use: open.provenance.use } : {}), theme: cover?.deckTheme ?? cover?.theme ?? "classic", ...(open ? { designVersion: cover?.designVersion === 1 ? 1 : 0 } : {}) }), scope: active.scope, conversationId: active.id, conversationTitle: active.title, ...(choice.model ? { model: choice.model, effort: choice.effort } : {}), ...(web.enabled ? { web: true } : {}), ...extra };
-  };
   const send = (text: string) => void sendTurn({ kind: pending ? "answer" : "message", text });
   const reviewSlides = () => {
     if (!open) return;
     const target = open.id;
-    const request = requestFor();
-    void rebuild(request, "Review rendered slides", (id, payload, workspace, hear, signal) =>
-      knowledgeApi.reviewSlidesStream(id, target, { clientRequestId: payload.clientRequestId, ...(choice.model ? { model: choice.model, effort: choice.effort } : {}) }, workspace, hear, signal));
+    void runVersionAction("Review rendered slides", (workspace, clientRequestId, hear, signal) =>
+      knowledgeApi.reviewSlidesStream(base.id, target, { clientRequestId, ...(choice.model ? { model: choice.model, effort: choice.effort } : {}) }, workspace, hear, signal));
   };
   const retry = (message: ArtifactConversationMessage) => {
     const asked = messages.slice(0, messages.findIndex((item) => item.id === message.id)).reverse().find((item) => item.role === "user");
     if (!asked) return;
     const focus = asked.payload.focus as ArtifactTurnInput["focus"] | undefined;
-    void sendTurn({ kind: asked.kind as NonNullable<ArtifactTurnInput["kind"]>, ...(asked.text ? { text: asked.text } : {}), ...(focus ? { focus } : {}) });
+    const rebuild = asked.payload.rebuild as ArtifactTurnInput["rebuild"];
+    void sendTurn({ kind: asked.kind as NonNullable<ArtifactTurnInput["kind"]>, ...(asked.text ? { text: asked.text } : {}), ...(focus ? { focus } : {}), ...(rebuild ? { rebuild } : {}) });
   };
   const stop = async () => { if (!workspaceId) return; setStopping(true); try { await knowledgeApi.stopOutputBuild(base.id, workspaceId); } catch (reason) { setStopping(false); setGeneralError(messageOf(reason)); } };
   const saveEdit = async (content: string, note = "What you typed has not been re-checked yet.", target = open) => {
@@ -400,8 +392,8 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
           target = saved;
         }
         const model = choice.model ? { model: choice.model, effort: choice.effort } : {};
-        const redesigned = await rebuild(requestFor(), `Redesign the slides in ${next}`, (id, payload, workspace, hear, signal) =>
-          knowledgeApi.restyleSlidesStream(id, target.id, { clientRequestId: payload.clientRequestId, style: run.running, ...model, conversationId: active.id, conversationTitle: active.title }, workspace, hear, signal));
+        const redesigned = await runVersionAction(`Redesign the slides in ${next}`, (workspace, clientRequestId, hear, signal) =>
+          knowledgeApi.restyleSlidesStream(base.id, target.id, { clientRequestId, style: run.running, ...model, conversationId: active.id, conversationTitle: active.title }, workspace, hear, signal));
         if (!redesigned) break;
         target = redesigned;
         next = run.pending === parseSlides(target.content)[0]?.style ? null : run.pending;
@@ -430,7 +422,11 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
   const exportFile = async (make: (artifact: NonNullable<typeof open>) => Promise<string>) => { if (!open) return; try { onNotify(`Downloaded ${await make(open)}.`); } catch (reason) { setGeneralError(`The file wasn’t made. ${messageOf(reason)}`); } };
   const exportPdf = async () => { if (!open) return; try { const finish = await prepareForPrint(); try { if ("__TAURI_INTERNALS__" in window && /Mac/i.test(navigator.userAgent)) await invoke("print_output"); else window.print(); } finally { finish(); } onNotify("In the print window, choose PDF to save it."); } catch (reason) { setGeneralError(messageOf(reason)); } };
   const cite = (citation: ConversationCitation, index: number) => setEvidence({ citation, index });
-  const runRebuild = (extra: Partial<BuildOutputRequest>, instruction: string) => { if (open && latest) void rebuild(requestFor({ brief: open.brief, supersedesArtifactId: open.id, ...extra }), instruction); };
+  const rebuildOutline = (outline: OutlineItem[]) => {
+    if (open && latest) void sendTurn({
+      kind: "rebuild", text: "Rebuild with the updated outline", rebuild: { artifactId: open.id, outline },
+    });
+  };
   /** A row of a change list: show that version and take the preview to the part. */
   const openPart = (artifactId: string | null, position: number | null) => {
     const item = artifactId ? history.find((entry) => entry.id === artifactId) : null;
@@ -471,7 +467,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
       <ArtifactMessageList messages={messages} pending={pending} history={history} citations={open?.citations ?? []} kind={work?.kind ?? open?.kind ?? null} busy={building} earlier={active.id === EARLIER_WORK}
         onOption={(text) => void sendTurn({ kind: "answer", text })} onStart={() => void sendTurn({ kind: "start" })} onContinue={() => void sendTurn({ kind: "continue" })} onRetry={retry}
         onOpenPart={openPart} onOpenVersion={(item) => void openVersion(item)} onCite={(index) => { const citation = open?.citations[index]; if (citation) cite(citation, index); }} />
-      {activeJob && job && job.kind !== "rebuild" && job.text && !stored && <div className="aw-message is-user"><div><small>You</small><p>{job.text}</p></div></div>}
+      {activeJob && job && job.kind !== "version" && job.text && !stored && <div className="aw-message is-user"><div><small>You</small><p>{job.text}</p></div></div>}
       {activeLive && <LiveTurn live={activeLive} kind={open?.kind ?? work?.kind ?? "report"} stopping={stopping} onStop={() => void stop()} />}
       {building && !activeJob && job && <p className="outputs-hint">Working in <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => { const conversation = store.get(job.conversationId); if (conversation) void chooseConversation(conversation); }}>{store.get(job.conversationId)?.title ?? "another conversation"}</button></p>}
       {generalError && <div className="gx-banner is-error outputs-error" role="alert"><CircleAlert size={16} /><span><strong>Could not complete the request</strong><small>{generalError}</small></span></div>}
@@ -491,7 +487,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
       <header className="aw-controls-heading"><strong>Artifacts</strong><span>{activeGroups.length} from this conversation</span><button type="button" className="gx-icon-button" aria-label="Collapse details area" onClick={() => setControlsExpanded(false)}><ChevronDown size={14} /></button></header>
       <aside className="artifact-saved-artifacts" aria-label="Saved artifacts"><ul className="aw-artifact-tray">{activeGroups.map((items) => { const item = items[0]!; return <li className="artifact-tray-entry" key={item.lineageId}><button type="button" className={`aw-artifact-card${open?.lineageId === item.lineageId ? " is-active" : ""}`} aria-current={open?.lineageId === item.lineageId ? "page" : undefined} aria-label={`Preview ${item.title}`} disabled={editing || saving || opening} onClick={() => void openVersion(item)}><span className="aw-file-icon">{item.kind === "slides" ? <Presentation size={19} /> : <FileDown size={19} />}</span><strong>{item.title}</strong><small>{kindLabel(item.kind)}<span>v{item.versionNumber}</span></small></button>{artifactMenu(item)}</li>; })}</ul>{activeGroups.length === 0 && <p className="outputs-hint">No artifacts yet.</p>}</aside>
       <div className="aw-controls-brief"><ArtifactBriefPanel state={briefState} disabled={building} error={briefError} onEdit={(change) => void editBrief(change)} /></div>
-      {open && <div ref={outlinePanel} className="aw-controls-outline"><ApproachPanel artifact={open} onCite={(index) => { const citation = open.citations[index]; if (citation) cite(citation, index); }} /><OutlineEditor key={open.id} review={open.provenance.skill?.outlineReview} outline={open.outline} label={open.kind === "slides" ? "slides" : "sections"} max={open.kind === "slides" ? 14 : 8} busy={busy || !latest || !changeable} onRebuild={(outline) => runRebuild({ outline }, "Rebuild with the updated outline")} /></div>}
+      {open && <div ref={outlinePanel} className="aw-controls-outline"><ApproachPanel artifact={open} onCite={(index) => { const citation = open.citations[index]; if (citation) cite(citation, index); }} /><OutlineEditor key={open.id} review={open.provenance.skill?.outlineReview} outline={open.outline} label={open.kind === "slides" ? "slides" : "sections"} max={open.kind === "slides" ? 14 : 8} busy={busy || !latest || !changeable} onRebuild={rebuildOutline} /></div>}
       {versionsOpen && <section className="artifacts-version-list" aria-label="Artifact version history">{versions.map((item) => <button type="button" key={item.id} disabled={item.id === open?.id} className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => void openVersion(item)}>v{item.versionNumber} · {item.title}</button>)}</section>}
     </div>
     {controlsExpanded && <PreviewHeightHandle value={controlsHeight} onChange={setControlsHeight} />}

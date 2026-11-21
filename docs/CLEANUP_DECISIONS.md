@@ -305,3 +305,14 @@ recording source (Transcribe again), it writes the resolved id into the current 
 line, so the source moves to the current shape. Old shapes outside this rule lose their
 audio link. That rare miss is acceptable.
 A50 = A50a + A50b
+
+# Round 19 — old in-flight conversation states are not migrated (batch 13)
+
+Rule A from the batch 13 review (rebuild conversation work from the latest version)
+grew into guessing which revisions are plans, so it is withdrawn. Saved, sealed versions
+keep opening and stay correct, and they stay in history. Conversation work left
+mid-flight by older builds (an outline rebuild that never synced, an interrupted save) is
+not reconstructed. The conversation reopens with what it stored, and the user can
+approve or make again. Replaying a turn whose version is already published returns that
+version and leaves the conversation unchanged (no draft key, no lineage switch). Rule B
+stands: one owner commits version, workspace and conversation together, only on success.

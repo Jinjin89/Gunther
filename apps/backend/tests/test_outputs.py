@@ -29,7 +29,9 @@ from legacy_artifacts import insert_legacy_version
 from sqlalchemy import event, func, select, text
 
 from evals.sse import ask_turn, read_events
+from gunther import service as service_module
 from gunther.agent import Evidence, checker_inventory
+from gunther.artifact_versions import commit_version
 from gunther.checks import coverage_of, verdict, verdicts_of
 from gunther.config import Settings
 from gunther.main import create_app
@@ -243,7 +245,8 @@ def saved_output(client, base_id, outline=None, written=None, *, approach=None, 
         provenance.update(generator="gunther.output-skills.v1", approach=approach,
                           skill={"name": payload.kind, "version": (11 if deck else 2)},
                           use=approach.get("use"))
-    return service._save_output(
+    return commit_version(
+        service.sessions,
         workspace_id=workspace_id, base_id=base_id, client_request_id=payload.client_request_id,
         fingerprint=payload.client_request_id, parent_id=None, kind=payload.kind, style=style,
         audience=payload.audience, title=title, brief=payload.brief, origin="build",
@@ -1293,16 +1296,16 @@ def test_revision_rechecks_the_parent_and_replays_a_racing_request(
     with built_output(tmp_path, fake) as (client, base_id, first):
         service = client.app.state.knowledge_service
         workspace_id = workspace(client)["X-Gunther-Workspace-Id"]
-        original = service._save_output
+        original = service_module.commit_version
         ready, release = threading.Event(), threading.Event()
 
-        def pause_first_save(**fields):
+        def pause_first_save(sessions, **fields):
             if not ready.is_set():
                 ready.set()
                 assert release.wait(15)
-            return original(**fields)
+            return original(sessions, **fields)
 
-        monkeypatch.setattr(service, "_save_output", pause_first_save)
+        monkeypatch.setattr(service_module, "commit_version", pause_first_save)
         options = {"clientRequestId": "revise_race_001", "sectionIndex": 0}
         instruction = "Clarify the finding"
         running, result = in_background(

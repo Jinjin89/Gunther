@@ -15,7 +15,6 @@ import type {
   EditArtifactBriefRequest,
   ImportArtifactConversationsRequest,
   UpdateArtifactConversationRequest,
-  BuildOutputRequest,
   EditOutputRequest,
   RestyleSlidesRequest,
   OutlineItem,
@@ -962,9 +961,6 @@ export const knowledgeApi = {
       expectedWorkspaceId,
     ),
   /** Build a report or slides and hear the agents at work; resolves with the saved version. */
-  buildOutputStream: async (baseId: string, payload: BuildOutputRequest, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal): Promise<Artifact> =>
-    (await streamOutput(`${outputsPath(baseId)}/outputs/build/stream`, { method: "POST", body: JSON.stringify(payload) }, workspaceId, (event) => onEvent(event as OutputEvent), signal)) as Artifact,
-  /** Send a message to the Artifacts agent and hear it work; resolves with how the turn ended (a question, an answer, a saved version, a reply or a pause). */
   artifactTurnStream: (baseId: string, conversationId: string, payload: ArtifactTurnInput, workspaceId: string, onEvent: (event: ArtifactTurnEvent) => void, signal?: AbortSignal): Promise<ArtifactTurnOut> =>
     streamTurn(`${outputsPath(baseId)}/artifact-conversations/${encodeURIComponent(conversationId)}/messages/stream`, payload, workspaceId, onEvent, signal),
   /** Follow a build, revision or turn of the Artifacts agent still running in this library; null when there is none. Aborting only stops listening. A turn ends with how it ended, anything else with the saved version. */

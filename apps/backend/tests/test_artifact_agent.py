@@ -23,6 +23,8 @@ from fake_models import (
 from sqlalchemy import select
 from test_artifact_steps import replacing
 from test_output_skills import (
+    OUTLINE,
+    REPORT,
     SLIDES,
     SLIDES_APPROACH,
     SLIDES_OUTLINE,
@@ -30,9 +32,11 @@ from test_output_skills import (
 )
 from test_outputs import (
     app_for,
+    built,
     in_background,
     library,
     read_events,
+    revise,
     route,
     saved_output,
     wait_for,
@@ -40,6 +44,7 @@ from test_outputs import (
 )
 
 from gunther.agent import checker_inventory
+from gunther.answer_runs import Stopped
 from gunther.artifact_agent import (
     Act,
     AgentLimits,
@@ -57,6 +62,7 @@ from gunther.artifact_workspace import (
     Line,
     Pending,
     Workspace,
+    dump_workspace,
     evidence_from_citation,
 )
 from gunther.checks import claim_text
@@ -143,6 +149,143 @@ def kept(client, cid: str) -> tuple[Workspace, ConversationBrief]:
 def versions_of(client) -> list[Artifact]:
     with client.app.state.knowledge_service.sessions() as session:
         return list(session.scalars(select(Artifact).order_by(Artifact.created_at)))
+
+
+@pytest.mark.parametrize("stopped", [False, True], ids=["failed", "stopped"])
+def test_rebuild_publishes_the_version_and_work_together(tmp_path, monkeypatch, stopped):
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
+        base_id, _ = library(client)
+        parent = a_deck(client, fake, base_id)
+        state, _ = kept(client, "talk")
+        before = state.works[0]
+        action = {
+            "clientRequestId": "rebuild_retry_1",
+            "rebuild": {
+                "artifactId": parent,
+                "outline": [
+                    {"id": item.id, "heading": item.heading, "goal": item.goal}
+                    for item in before.outline
+                ],
+            },
+        }
+        service = client.app.state.knowledge_service
+        with service.sessions.begin() as session:
+            row = session.get(ArtifactConversation, "talk")
+            state.pending = Pending(question="Who is the audience?", options=["Students"], message_id="question")
+            state.asked_in_a_row = 2
+            row.state_json = dump_workspace(state)
+            original = row.state_json, row.brief_json, row.title, row.updated_at
+        with monkeypatch.context() as during_save:
+            def fail_to_store(*args, **kwargs):
+                reply = store_turn(*args, **kwargs)
+                if kwargs.get("existing_session") is not None:
+                    if stopped:
+                        raise Stopped
+                    raise ValueError("The conversation could not be stored")
+                return reply
+
+            store_turn = service._store_turn
+            during_save.setattr(service, "_store_turn", fail_to_store)
+            failed = turn(client, base_id, "talk", "", "rebuild", **action)
+        if stopped:
+            assert failed[-1][0] == "stopped"
+        else:
+            assert failed[-1] == ("error", {"status": 400, "detail": "The conversation could not be stored"})
+        assert [version.id for version in versions_of(client)] == [parent]
+        with service.sessions() as session:
+            row = session.get(ArtifactConversation, "talk")
+            assert (row.state_json, row.brief_json, row.title, row.updated_at) == original
+            messages = session.scalars(
+                select(ArtifactMessage).where(ArtifactMessage.conversation_id == "talk")
+                .order_by(ArtifactMessage.created_at)
+            ).all()
+            assert messages[-1].kind == ("stopped" if stopped else "failed")
+            assert messages[-2].client_request_id is None
+        result = done(turn(client, base_id, "talk", "", "rebuild", **action))
+        assert result["artifact"]["versionNumber"] == 2
+        rebuilt = kept(client, "talk")[0].works[0]
+        assert rebuilt.version_id == result["artifact"]["id"]
+        assert rebuilt.spec.design_version == before.spec.design_version
+        assert rebuilt.spec.theme == (before.spec.theme or "classic")
+        assert kept(client, "talk")[0].pending is None
+
+
+@pytest.mark.parametrize("history", ["recorded", "interrupted", "unlinked"])
+def test_published_turn_replay_leaves_the_conversation_unchanged(tmp_path, history):
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
+        base_id, _ = library(client)
+        parent = a_deck(client, fake, base_id, "interrupted")
+        service = client.app.state.knowledge_service
+        with service.sessions() as session:
+            row = session.get(ArtifactConversation, "interrupted")
+            old = row.state_json, row.brief_json, row.updated_at
+        fake.replies[:] = [script([{"actions": [
+            {"do": "select", "artifact": "new:slides"},
+            {"do": "make"},
+            {"do": "save", "text": "Here is the deck."},
+        ]}])]
+        request = {"clientRequestId": "interrupted_turn_1"}
+        result = done(turn(client, base_id, "interrupted", "Make the deck", "start", **request))
+        version = result["artifact"]
+        # Older writers committed the version before the conversation and its messages.
+        if history != "recorded":
+            with service.sessions.begin() as session:
+                row = session.get(ArtifactConversation, "interrupted")
+                row.state_json, row.brief_json, row.updated_at = old
+                user = session.get(ArtifactMessage, result["message"]["payload"]["to"])
+                reply = session.get(ArtifactMessage, result["message"]["id"])
+                if history == "interrupted":
+                    session.delete(user)
+                    session.delete(reply)
+                else:
+                    user.kind = "message"
+                    reply.payload_json = '{"imported":true}'
+        calls = len(fake.requests)
+        path = conversations(base_id, "/interrupted")
+        detail = client.get(path, headers=workspace(client)).raise_for_status().json()
+        if history != "recorded":
+            assert [work["versionId"] for work in detail["works"]] == [parent]
+            assert detail["active"] == detail["works"][0]["key"]
+        reopened = client.get(route(base_id, version["id"]), headers=workspace(client))
+        assert reopened.raise_for_status().json() == version
+        replayed = done(turn(client, base_id, "interrupted", "Make the deck", "start", **request))
+        assert replayed["artifact"] == version
+        assert replayed["reply"] == result["reply"]
+        assert replayed["message"] == (result["message"] if history == "recorded" else None)
+        if history == "interrupted":
+            conflict = turn(client, base_id, "interrupted", "Make a report", "start", **request)
+            assert conflict[-1][0] == "error" and conflict[-1][1]["status"] == 409
+        assert client.get(path, headers=workspace(client)).raise_for_status().json() == detail
+        assert [row.id for row in versions_of(client)] == [parent, version["id"]]
+        assert len(fake.requests) == calls
+
+
+def test_ordinary_revision_keeps_the_existing_work_and_edited_length(tmp_path):
+    fake = FakeProvider(deck_replies())
+    with app_for(tmp_path, fake) as client:
+        base_id, _ = library(client)
+        headers = workspace(client)
+        parent = saved_skill_output(client, base_id, conversationId="report")
+        client.get(conversations(base_id), headers=headers).raise_for_status()
+        path = conversations(base_id, "/report")
+        client.patch(f"{path}/brief", headers=headers, json={"spec": {"length": "2 pages"}}).raise_for_status()
+        [before] = kept(client, "report")[0].works
+        heading = "CD3D identifies T cells"
+        fake.replies[:] = [output_replies(
+            OUTLINE, REPORT, rewrite=lambda index, prompt: f"## {heading}\n\nCD3D marks T cells [1].",
+        )]
+        revision = built(revise(client, base_id, parent["id"], "Rename section 2", sectionIndex=1))
+        reopened = client.get(path, headers=headers).raise_for_status().json()["works"][0]
+        assert reopened["versionId"] == parent["id"]
+        assert reopened["spec"]["length"]["text"] == "2 pages"
+        fake.replies[:] = [script([{"actions": [{"do": "reply", "text": "The report is ready."}]}])]
+        assert done(turn(client, base_id, "report", "Continue here"))["outcome"] == "replied"
+        [after] = kept(client, "report")[0].works
+        assert after.version_id == revision["id"]
+        assert after.spec == before.spec
+        assert (after.outline[1].id, after.outline[1].heading) == (before.outline[1].id, heading)
 
 
 def names(events: list[tuple[str, dict]], kind: str, state: str | None = None) -> list[str]:

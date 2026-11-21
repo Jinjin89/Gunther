@@ -1319,7 +1319,7 @@ def sync(
     brief: ConversationBrief,
 ) -> bool:
     """Bring a work in line with the newest version of its lineage when that was made outside
-    the agent (a hand edit; the old build and revise). True when anything changed.
+    the agent (a hand edit or a direct revision). True when anything changed.
 
     When the work already matches the head, only the head's checks can be new (Check again).
     Otherwise:
@@ -1334,23 +1334,16 @@ def sync(
     3. A section no item matches becomes a new item with the next id. An item no section
        matches is dropped, and its id is never used again.
 
-    A rebuilt head also supplies its approved approach, outline and explicit part identities.
     """
 
     if work.version_id == head.id:
         return _refresh_checks(work, head, checks)
-    approach = head.provenance.approach
-    rebuilt = head.origin == "rebuild" and approach and approach.method == "studio"
-    kind = head.kind if rebuilt else work.spec.kind
+    kind = work.spec.kind
     pool = pool_from(workspace)
     version_map = _adopt(pool, head.citations)
     store_pool(workspace, pool)
     sections = split_document(head.content, kind)[1]
-    plans = head.outline if rebuilt and len(head.outline) == len(sections) else []
-    explicit_ids = {plan.id for plan in plans if plan.id}
-    if len(explicit_ids) != sum(bool(plan.id) for plan in plans):
-        plans = []
-    reserved = explicit_ids | work.parts.keys()
+    reserved = work.parts.keys()
     translated = [_translate(section, version_map) for section in sections]
     texts = [text for text, _ in translated]
     matched = _match(work, sections, texts)
@@ -1360,23 +1353,18 @@ def sync(
     for position, (section, (text, dropped), old) in enumerate(
         zip(sections, translated, matched, strict=True)
     ):
-        if plans or old is None:
-            plan = plans[position] if plans else None
-            identity = (plan.id if plan else "") or (
-                old.id if old and old.id not in explicit_ids else ""
-            )
-            if not identity:
-                while f"p{work.next_item}" in reserved:
-                    work.next_item += 1
-                identity = f"p{work.next_item}"
+        if old is None:
+            while f"p{work.next_item}" in reserved:
                 work.next_item += 1
-            item = _section_item(kind, position, section, text, identity, plan)
+            identity = f"p{work.next_item}"
+            work.next_item += 1
+            item = _section_item(kind, position, section, text, identity, None)
             part = None
         else:
             item, part = old, work.parts.get(old.id)
         _note_dropped(work, "sync", position + 1, dropped)
         if part is None or part.text != text:
-            if not plans and old is not None:
+            if old is not None:
                 # What the user typed says what the slide is called and how it is drawn now.
                 item = item.model_copy(
                     update={
@@ -1391,12 +1379,6 @@ def sync(
         parts[item.id] = part
     work.outline, work.parts = items, parts
     work.title, work.version_map, work.version_id = head.title, version_map, head.id
-    if plans and approach:
-        work.spec = _spec_of_version(head)
-        work.approach = approach_in_pool(approach.model_dump(mode="json"), version_map)
-        work.cards = []
-        _stamp(work, brief)
-        return True
     for item in work.outline:
         if item.id in written:
             parts[item.id].inputs = digest_part_inputs(brief, work, item)

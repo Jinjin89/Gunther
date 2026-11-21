@@ -1,4 +1,3 @@
-import type { BuildOutputRequest } from "@gunther/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { knowledgeApi, OutputStoppedError, recordingAssetUrl, recordingSocketUrl, ServiceUnavailableError, sourceAssetUrl } from "./api";
 
@@ -215,7 +214,7 @@ describe("desktop knowledge API contract", () => {
       },
     });
     const stream = (body: ReadableStream<Uint8Array>, status = 200) => ({ ok: status < 300, status, body, json: vi.fn().mockResolvedValue({}) }) as unknown as Response;
-    const request: BuildOutputRequest = { clientRequestId: "build_request_1", kind: "report", audience: "scientist", scope: { mode: "library", sourceIds: [], unitIds: [], sessionIds: [] } };
+    const request = { clientRequestId: "review_request_1" };
 
     it("hands over each event, then the saved version, to a workspace-bound request", async () => {
       fetchMock.mockResolvedValueOnce(stream(events(
@@ -225,7 +224,7 @@ describe("desktop knowledge API contract", () => {
       )));
       const heard: unknown[] = [];
 
-      const saved = await knowledgeApi.buildOutputStream("biology/team", request, "wsp_primary", (event) => heard.push(event));
+      const saved = await knowledgeApi.reviewSlidesStream("biology/team", "deck/1", request, "wsp_primary", (event) => heard.push(event));
 
       expect(saved).toEqual({ id: "art_1", title: "Markers" });
       expect(heard).toEqual([
@@ -233,7 +232,7 @@ describe("desktop knowledge API contract", () => {
         { type: "text", section: 0, text: "Hello" },
       ]);
       const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-      expect(url).toBe("/api/knowledge-bases/biology%2Fteam/outputs/build/stream");
+      expect(url).toBe("/api/knowledge-bases/biology%2Fteam/artifacts/deck%2F1/visual-review/stream");
       expect(init.method).toBe("POST");
       expect(JSON.parse(init.body as string)).toEqual(request);
       expect(new Headers(init.headers).get("X-Gunther-Workspace-Id")).toBe("wsp_primary");
@@ -249,7 +248,7 @@ describe("desktop knowledge API contract", () => {
         },
       })));
 
-      await expect(knowledgeApi.buildOutputStream("biology", request, "wsp_primary", () => undefined))
+      await expect(knowledgeApi.reviewSlidesStream("biology", "deck", request, "wsp_primary", () => undefined))
         .resolves.toEqual({ id: "art_1" });
     });
 
@@ -281,16 +280,16 @@ describe("desktop knowledge API contract", () => {
 
     it("says why nothing was saved, and tells a stop from a failure", async () => {
       fetchMock.mockResolvedValueOnce(stream(events(["error", { status: 502, detail: "DeepSeek did not accept the API key." }])));
-      await expect(knowledgeApi.buildOutputStream("biology", request, "wsp_primary", () => undefined)).rejects.toThrow("DeepSeek did not accept the API key.");
+      await expect(knowledgeApi.reviewSlidesStream("biology", "deck", request, "wsp_primary", () => undefined)).rejects.toThrow("DeepSeek did not accept the API key.");
 
       fetchMock.mockResolvedValueOnce(stream(events(["stopped", { type: "stopped" }])));
-      await expect(knowledgeApi.buildOutputStream("biology", request, "wsp_primary", () => undefined)).rejects.toBeInstanceOf(OutputStoppedError);
+      await expect(knowledgeApi.reviewSlidesStream("biology", "deck", request, "wsp_primary", () => undefined)).rejects.toBeInstanceOf(OutputStoppedError);
 
       fetchMock.mockResolvedValueOnce(stream(events(["text", { type: "text", section: 0, text: "Half" }])));
-      await expect(knowledgeApi.buildOutputStream("biology", request, "wsp_primary", () => undefined)).rejects.toThrow("The connection closed before the output was finished.");
+      await expect(knowledgeApi.reviewSlidesStream("biology", "deck", request, "wsp_primary", () => undefined)).rejects.toThrow("The connection closed before the output was finished.");
 
       fetchMock.mockResolvedValueOnce({ ok: false, status: 409, body: null, json: vi.fn().mockResolvedValue({ detail: "Gunther is still building an output here." }) } as unknown as Response);
-      await expect(knowledgeApi.buildOutputStream("biology", request, "wsp_primary", () => undefined)).rejects.toThrow("Gunther is still building an output here.");
+      await expect(knowledgeApi.reviewSlidesStream("biology", "deck", request, "wsp_primary", () => undefined)).rejects.toThrow("Gunther is still building an output here.");
     });
 
     it("follows a build that is running, and gets nothing when none is", async () => {

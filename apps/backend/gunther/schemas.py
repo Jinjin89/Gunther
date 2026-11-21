@@ -1307,26 +1307,43 @@ class ArtifactFocusInput(ApiModel):
     selected: bool = True
 
 
+class OutlineRebuildInput(ApiModel):
+    artifact_id: str = Field(min_length=1, max_length=80)
+    outline: list[OutlineItem] = Field(min_length=1, max_length=14)
+
+
 class ArtifactTurnInput(ApiModel):
     """One message of the user to the agent. ``answer`` replies to its question, ``start`` is
     "just start" (no more questions), ``continue`` picks up a paused turn."""
 
     client_request_id: str = Field(min_length=8, max_length=120)
-    kind: Literal["message", "answer", "start", "continue"] = "message"
+    kind: Literal["message", "answer", "start", "continue", "rebuild"] = "message"
     text: str = Field(default="", max_length=20_000)
     focus: ArtifactFocusInput | None = None
     model: str | None = Field(default=None, max_length=200)
     effort: Effort | None = None
     web: bool = False
+    rebuild: OutlineRebuildInput | None = None
 
     @model_validator(mode="after")
     def needs_words(self) -> "ArtifactTurnInput":
         self.text = self.text.strip()
+        if (self.kind == "rebuild") != (self.rebuild is not None):
+            raise ValueError("An outline rebuild needs the current artifact and its outline")
+        if self.rebuild is not None:
+            self.text = self.text or "Rebuild with the updated outline"
         if not self.text:
             if self.kind in ("message", "answer"):
                 raise ValueError("Write a message")
             self.text = "Just start" if self.kind == "start" else "Continue"
         return self
+
+    def rebuild_fields(self) -> dict:
+        if self.rebuild is None:
+            return {}
+        return self.model_dump(
+            mode="json", by_alias=True, include={"rebuild", "model", "effort", "web"},
+        )
 
 
 class ArtifactChangeOut(ApiModel):
@@ -1353,7 +1370,7 @@ class ArtifactTurnOut(ApiModel):
     question: ArtifactQuestionOut | None = None
     artifact: ArtifactOut | None = None
     changes: list[ArtifactChangeOut] = Field(default_factory=list)
-    message: ArtifactMessageOut
+    message: ArtifactMessageOut | None
 
 
 class ImportedArtifactTurn(ApiModel):
