@@ -2,7 +2,7 @@
 
 The old builder is gone, but versions it made stay readable, so tests need some. This
 repeats how it sealed them. The hashing is deliberately an independent copy, not
-``manifest_hash_of``, so the code that reads these versions is not checked against itself.
+``artifact_manifest_hash``, so the code that reads these versions is not checked against itself.
 """
 
 import hashlib

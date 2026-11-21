@@ -14,6 +14,7 @@ from starlette.concurrency import run_in_threadpool
 
 from gunther import listen_copy, speech_registry, usage
 from gunther.answer_runs import AnswerRun, AnswerRuns, Stopped
+from gunther.artifact_read import ArtifactIntegrityError
 from gunther.asset_service import (
     AssetNotFoundError,
     AssetService,
@@ -124,12 +125,7 @@ from gunther.schemas import (
     WebSearchOut,
     WorkspaceBootstrapOut,
 )
-from gunther.service import (
-    ArtifactConflictError,
-    ArtifactIntegrityError,
-    AskFailure,
-    KnowledgeService,
-)
+from gunther.service import ArtifactConflictError, AskFailure, KnowledgeService
 from gunther.skillbook import ask_skills
 from gunther.storage_budget import StorageBudgetError
 from gunther.web_capture import (

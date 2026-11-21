@@ -31,12 +31,13 @@ from test_outputs import (
 )
 
 from gunther.agent import Evidence, Tool
+from gunther.artifact_read import latest_check_records
 from gunther.artifact_workspace import ConversationBrief, Workspace, import_work, sync
 from gunther.asset_service import AssetTextExtraction
 from gunther.checks import coverage_of, read_verdicts
 from gunther.database import session_scope
 from gunther.llm import ModelError
-from gunther.models import ArtifactAsset, ArtifactCheck, Asset
+from gunther.models import Artifact, ArtifactAsset, ArtifactCheck, Asset
 from gunther.outputs import Draft, OutputAgents, Planned, Pool, Spec, section_hash, split_document
 from gunther.schemas import ArtifactOut, ConversationCitationOut
 from gunther.studio.pipeline import StudioAgents
@@ -90,13 +91,13 @@ def test_check_persists_an_unavailable_audit_and_retries_only_unchecked_claims(t
         service = client.app.state.knowledge_service
         state, brief = Workspace(), ConversationBrief()
         with service.sessions() as session:
-            prior = service._latest_check_records(session, edited["id"])
+            prior = latest_check_records(session, session.get(Artifact, edited["id"]))
             work = import_work(ArtifactOut.model_validate(partial), prior, state, brief)
 
         fake.replies[:] = [lambda request: incomplete_reply(request, audit_fails=False)]
         progressed = client.post(f"{version}/check", headers=headers).raise_for_status().json()
         with service.sessions() as session:
-            records = service._latest_check_records(session, edited["id"])
+            records = latest_check_records(session, session.get(Artifact, edited["id"]))
         [part] = work.parts.values()
         assert part.coverage["audit"]["status"] == "unavailable"
         assert sync(work, ArtifactOut.model_validate(progressed), records, state, brief)
@@ -182,7 +183,7 @@ def test_retry_and_sync_replace_historical_partial_claims_and_their_unchecked_is
         old = ArtifactOut.model_validate(client.get(url, headers=headers).raise_for_status().json())
         state, brief = Workspace(), ConversationBrief()
         with service.sessions() as session:
-            historical = service._latest_check_records(session, saved["id"])
+            historical = latest_check_records(session, session.get(Artifact, saved["id"]))
             work = import_work(old, historical, state, brief)
         [part] = work.parts.values()
         assert part.coverage["status"] == "partial" and part.coverage["considered"] == 3
@@ -195,7 +196,7 @@ def test_retry_and_sync_replace_historical_partial_claims_and_their_unchecked_is
         assert checked.checked and checked.coverage["considered"] == 3
         assert [issue.model_dump() for issue in checked.issues] == [independent]
         with service.sessions() as session:
-            records = service._latest_check_records(session, saved["id"])
+            records = latest_check_records(session, session.get(Artifact, saved["id"]))
         assert sync(work, updated, records, state, brief)
         assert part.coverage == checked.coverage
         assert part.issues == [independent]

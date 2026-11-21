@@ -5,6 +5,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -72,7 +73,7 @@ def _create_data_directory(root: Path) -> tuple[Path, sqlite3.Connection]:
 
 def _run(*arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(BACKUP_SCRIPT), *arguments],
+        [sys.executable, "-I", "-S", "-B", str(BACKUP_SCRIPT), *arguments],
         cwd=PROJECT_ROOT,
         check=False,
         capture_output=True,
@@ -813,11 +814,35 @@ def test_outputs_built_by_agents_are_verified_in_a_backup(tmp_path: Path) -> Non
             "POST",
             f"/api/knowledge-bases/{base_id}/outputs/build/stream",
             headers={"X-Gunther-Workspace-Id": workspace_id},
-            json={"clientRequestId": "backup_output_0001", "kind": "report", "audience": "student"},
+            json={
+                "clientRequestId": "backup_output_0001", "kind": "report", "audience": "student",
+                "brief": "Résumé of the markers",
+            },
         ) as response:
             body = response.read().decode()
         assert "event: done" in body, body
         artifact_id = json.loads(body.rsplit("data: ", 1)[1])["id"]
+
+    # Verify the stored v2 seal independently of both production callers.
+    with closing(sqlite3.connect(data / "gunther.sqlite")) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute("SELECT * FROM artifacts WHERE id = ?", (artifact_id,)).fetchone()
+    assert row["brief"] == "Résumé of the markers"
+    sealed = {
+        field: row[field] for field in ("audience", "title", "kind", "style", "brief", "origin")
+    }
+    sealed.update(
+        contentHash=row["content_hash"],
+        acceptedUnitIds=json.loads(row["accepted_unit_ids_json"]),
+        revisionSnapshot=json.loads(row["revision_snapshot_json"]),
+        provenance=json.loads(row["provenance_json"]),
+        citations=json.loads(row["citations_json"]),
+        outline=json.loads(row["outline_json"]),
+        scope=json.loads(row["scope_json"]),
+        inputs=json.loads(row["inputs_json"]),
+    )
+    canonical = json.dumps(sealed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    assert row["manifest_hash"] == hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     created = _run("backup", "--data-dir", str(data), "--output-dir", str(tmp_path / "backups"))
     assert created.returncode == 0, created.stderr

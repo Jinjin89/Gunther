@@ -51,6 +51,7 @@ from gunther.artifact_agent import (
     ranges,
     validate,
 )
+from gunther.artifact_manifest import artifact_manifest_hash
 from gunther.artifact_workspace import (
     ConversationBrief,
     Line,
@@ -76,7 +77,7 @@ from gunther.outputs import (
     support_inventory,
 )
 from gunther.schemas import ConversationCitationOut
-from gunther.service import KnowledgeService, manifest_hash_of
+from gunther.service import KnowledgeService
 
 _turns = itertools.count(1)
 
@@ -346,7 +347,7 @@ def test_studio_replan_migrates_a_saved_plan_within_its_constraints(tmp_path: Pa
             outline = json.loads(row.outline_json)
             outline[1].update(message="Old planner message", layout_locked=True, design_locked=True)
             row.outline_json = json.dumps(outline)
-            row.manifest_hash = manifest_hash_of(row)
+            row.manifest_hash = artifact_manifest_hash(row.__getattribute__)
             session.commit()
         client.get(conversations(base_id), headers=headers).raise_for_status()
         url = conversations(base_id, "/replan")

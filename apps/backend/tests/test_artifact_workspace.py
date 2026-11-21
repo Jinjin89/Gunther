@@ -18,6 +18,7 @@ from test_output_skills import (
 from test_outputs import app_for, library, route, workspace
 
 from gunther.agent import Evidence
+from gunther.artifact_read import latest_check_records
 from gunther.artifact_workspace import (
     BriefUpdate,
     CardRec,
@@ -50,6 +51,7 @@ from gunther.artifact_workspace import (
     sync,
 )
 from gunther.checks import audit_verdict, finding, verdict, verdicts_of
+from gunther.models import Artifact
 from gunther.outputs import BuiltOutput, _marked, layout_of, section_hash, split_document
 from gunther.schemas import ConversationCitationOut
 from gunther.slide_review import VisualRepairs, apply_repairs
@@ -841,7 +843,7 @@ def version_of(client, base_id: str, artifact_id: str):
     service = client.app.state.knowledge_service
     found = service.get_artifact(base_id, artifact_id, workspace(client)["X-Gunther-Workspace-Id"])
     with service.sessions() as session:
-        return found, service._latest_check_records(session, artifact_id)
+        return found, latest_check_records(session, session.get(Artifact, artifact_id))
 
 
 def hand_edit(client, base_id: str, artifact_id: str, content: str) -> str:

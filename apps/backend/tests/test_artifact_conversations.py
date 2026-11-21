@@ -16,8 +16,9 @@ from test_output_skills import (
     SLIDES_OUTLINE,
     saved_skill_output,
 )
-from test_outputs import SIDECAR, app_for, built, library, revise, route, workspace
+from test_outputs import SIDECAR, app_for, built, check_reads, library, revise, route, workspace
 
+from gunther.artifact_manifest import artifact_manifest_hash
 from gunther.artifact_workspace import (
     Pending,
     Workspace,
@@ -32,7 +33,6 @@ from gunther.migrations import (
     run_migrations,
 )
 from gunther.models import Artifact, ArtifactConversation, ArtifactMessage, Base
-from gunther.service import manifest_hash_of
 
 
 def conversations(base_id: str, tail: str = "") -> str:
@@ -282,12 +282,14 @@ def test_a_device_conversation_becomes_messages_and_a_work_and_is_brought_in_onc
             conversationId="device-1", conversationTitle="Markers talk",
         )
 
-        imported = client.post(
-            conversations(base_id, "/import"),
-            headers=headers,
-            json={"conversations": [device_conversation(deck["id"])]},
-        )
+        with check_reads(client) as reads:
+            imported = client.post(
+                conversations(base_id, "/import"),
+                headers=headers,
+                json={"conversations": [device_conversation(deck["id"])]},
+            )
         assert imported.status_code == 200, imported.text
+        assert len(reads) == 1
         (summary,) = imported.json()
         assert (summary["id"], summary["title"], summary["artifactCount"]) == (
             "device-1",
@@ -590,7 +592,7 @@ def test_opening_a_saved_skills_plan_uses_the_legacy_reader(tmp_path: Path) -> N
             outline[1].update(id="p1", heading="Compare the markers", goal="Pair the findings",
                               message="Old planner message", layout_locked=True)
             row.outline_json = json.dumps(outline)
-            row.manifest_hash = manifest_hash_of(row)
+            row.manifest_hash = artifact_manifest_hash(row.__getattribute__)
             session.commit()
 
         before = len(fake.requests)

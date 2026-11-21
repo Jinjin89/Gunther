@@ -37,6 +37,7 @@ from evals.ask.run import (
     make_app,
     write_settings_file,
 )
+from gunther.artifact_read import latest_check_records
 from gunther.llm import ClientFactory, ModelGateway
 from gunther.model_profiles import EFFORTS, Effort
 from gunther.models import Artifact
@@ -315,7 +316,7 @@ def export_version(service: KnowledgeService, artifact_id: str) -> dict[str, Any
             "inputs": json.loads(row.inputs_json),
             "outline": json.loads(row.outline_json),
             "citations": json.loads(row.citations_json),
-            "checks": list(KnowledgeService._latest_check_records(db, row.id).values()),
+            "checks": list(latest_check_records(db, row).values()),
             "model": provenance.get("model"),
             "made_by": KnowledgeService._made_by(row),
         }

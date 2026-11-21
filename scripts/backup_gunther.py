@@ -30,6 +30,10 @@ MANIFEST_CHECKSUM_NAME = "manifest.sha256"
 COPY_BUFFER_SIZE = 1024 * 1024
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+# The checkout supplies the seal code. The backup command needs only the Python stdlib.
+sys.path.insert(0, str(PROJECT_ROOT / "apps" / "backend"))
+from gunther.artifact_manifest import artifact_manifest_hash
+
 
 class BackupError(RuntimeError):
     """A backup could not be proven complete and was not published."""
@@ -394,40 +398,12 @@ def _verify_database_payload_integrity(
                         raise BackupError(
                             f"Artifact {artifact['id']} pinned revision differs"
                         )
-                sealed = {
-                    "audience": artifact["audience"],
-                    "title": artifact["title"],
-                    "contentHash": artifact["content_hash"],
-                    "acceptedUnitIds": accepted_unit_ids,
-                    "revisionSnapshot": snapshots,
-                    "provenance": provenance,
-                }
-                if agents:
-                    try:
-                        sealed.update(
-                            kind=artifact["kind"],
-                            style=artifact["style"],
-                            brief=artifact["brief"],
-                            origin=artifact["origin"],
-                            citations=json.loads(artifact["citations_json"]),
-                            outline=json.loads(artifact["outline_json"]),
-                            scope=json.loads(artifact["scope_json"]),
-                            inputs=json.loads(artifact["inputs_json"]),
-                        )
-                    except (TypeError, json.JSONDecodeError) as error:
-                        raise BackupError(
-                            f"Artifact {artifact['id']} contains invalid JSON"
-                        ) from error
-                else:
-                    sealed["format"] = artifact["format"]
-                manifest_hash = hashlib.sha256(
-                    json.dumps(
-                        sealed,
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                ).hexdigest()
+                try:
+                    manifest_hash = artifact_manifest_hash(artifact.__getitem__)
+                except (TypeError, ValueError) as error:
+                    raise BackupError(
+                        f"Artifact {artifact['id']} contains invalid JSON"
+                    ) from error
                 if manifest_hash != artifact["manifest_hash"]:
                     raise BackupError(
                         f"Artifact {artifact['id']} manifest hash differs"

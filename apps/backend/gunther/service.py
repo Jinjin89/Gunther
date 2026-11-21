@@ -4,7 +4,6 @@ import hashlib
 import json
 import logging
 import re
-import secrets
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -35,8 +34,10 @@ from gunther.agent import (
 )
 from gunther.agent import Notes as Work
 from gunther.answer_runs import Stopped
+from gunther.artifact_manifest import artifact_manifest_hash
+from gunther.artifact_read import artifact_detail, artifact_summary, latest_check_records
 from gunther.artifact_workspace import evidence_from_citation
-from gunther.checks import complete, coverage_of, issue_view, merge_verdicts, read_verdicts
+from gunther.checks import complete, merge_verdicts
 from gunther.database import session_scope
 from gunther.document_structure import evidence_eligible
 from gunther.extraction import (
@@ -96,7 +97,6 @@ from gunther.outputs import (
     Pool,
     Spec,
     _marked,
-    heading_of,
     join_document,
     section_hash,
     split_document,
@@ -115,7 +115,6 @@ from gunther.schemas import (
     ArtifactOut,
     ArtifactPartOut,
     ArtifactPendingOut,
-    ArtifactProvenanceOut,
     ArtifactQuestionOut,
     ArtifactSpecOut,
     ArtifactStepOut,
@@ -162,13 +161,9 @@ from gunther.schemas import (
     KnowledgeSessionSummaryOut,
     KnowledgeUnitOut,
     NotebookNoteOut,
-    OutlineItem,
-    OutputInputsOut,
-    OutputIssueOut,
     OutputModelOut,
     OutputProvenanceOut,
     OutputScope,
-    OutputSectionOut,
     OverviewCountsOut,
     OverviewOut,
     RestyleSlidesInput,
@@ -228,38 +223,6 @@ def _canonical(value: object) -> bytes:
     )
 
 
-def manifest_hash_of(artifact: Artifact) -> str:
-    """The hash that seals a version: what it says, what it cites and where it came from.
-
-    Version 1 (the old builder) covers its format, audience, title, content and pinned
-    knowledge. Version 2 (agents) also covers the kind, style, brief, origin, citations,
-    outline, scope and inputs. ``scripts/backup_gunther.py`` repeats this.
-    """
-
-    sealed: dict[str, object] = {
-        "audience": artifact.audience,
-        "title": artifact.title,
-        "contentHash": artifact.content_hash,
-        "acceptedUnitIds": json.loads(artifact.accepted_unit_ids_json),
-        "revisionSnapshot": json.loads(artifact.revision_snapshot_json),
-        "provenance": json.loads(artifact.provenance_json),
-    }
-    if json.loads(artifact.provenance_json).get("schema_version") == 2:
-        sealed.update(
-            kind=artifact.kind,
-            style=artifact.style,
-            brief=artifact.brief,
-            origin=artifact.origin,
-            citations=json.loads(artifact.citations_json),
-            outline=json.loads(artifact.outline_json),
-            scope=json.loads(artifact.scope_json),
-            inputs=json.loads(artifact.inputs_json),
-        )
-    else:
-        sealed["format"] = artifact.format
-    return hashlib.sha256(_canonical(sealed)).hexdigest()
-
-
 def _timestamp(value: datetime) -> str:
     return f"{value.isoformat(timespec='milliseconds')}Z"
 
@@ -303,10 +266,6 @@ def _device_time(value: str | None) -> datetime | None:
 
 class ArtifactConflictError(ValueError):
     """An idempotency key or immutable lineage head conflicts with current state."""
-
-
-class ArtifactIntegrityError(RuntimeError):
-    """Stored immutable Artifact bytes or provenance no longer match their hashes."""
 
 
 @dataclass(frozen=True)
@@ -2990,205 +2949,6 @@ class KnowledgeService:
             ).all()
             return [self._knowledge_unit_out(session, item) for item in knowledge_units]
 
-    @staticmethod
-    def _artifact_summary_out(artifact: Artifact) -> ArtifactSummaryOut:
-        accepted_unit_ids = json.loads(artifact.accepted_unit_ids_json)
-        provenance = json.loads(artifact.provenance_json)
-        return ArtifactSummaryOut(
-            id=artifact.id,
-            workspace_id=artifact.workspace_id,
-            knowledge_base_id=artifact.knowledge_base_id,
-            lineage_id=artifact.lineage_id,
-            version_number=artifact.version_number,
-            supersedes_artifact_id=artifact.supersedes_artifact_id,
-            format=artifact.format,
-            audience=artifact.audience,
-            title=artifact.title,
-            content_hash=artifact.content_hash,
-            manifest_hash=artifact.manifest_hash,
-            accepted_unit_ids=accepted_unit_ids,
-            unit_count=len(accepted_unit_ids),
-            created_at=_timestamp(artifact.created_at),
-            kind=artifact.kind,
-            style=artifact.style,
-            origin=artifact.origin,
-            conversation_id=provenance.get("conversation_id"),
-            conversation_title=provenance.get("conversation_title"),
-            client_request_id=artifact.client_request_id or None,
-            request=provenance.get("request"),
-        )
-
-    @staticmethod
-    def _verified_artifact_payload(
-        session: Session, artifact: Artifact
-    ) -> tuple[list[ArtifactUnitSnapshotOut], ArtifactProvenanceOut]:
-        try:
-            accepted_unit_ids = json.loads(artifact.accepted_unit_ids_json)
-            snapshots = [
-                ArtifactUnitSnapshotOut.model_validate(item)
-                for item in json.loads(artifact.revision_snapshot_json)
-            ]
-            # Version 2 is an output built by agents; version 1 is the old builder's.
-            provenance: ArtifactProvenanceOut = (
-                OutputProvenanceOut
-                if json.loads(artifact.provenance_json).get("schema_version") == 2
-                else ArtifactProvenanceOut
-            ).model_validate(json.loads(artifact.provenance_json))
-        except Exception as error:
-            raise ArtifactIntegrityError(
-                f"Artifact {artifact.id} contains invalid immutable provenance"
-            ) from error
-        agents = isinstance(provenance, OutputProvenanceOut)
-
-        content_hash = hashlib.sha256(artifact.content.encode("utf-8")).hexdigest()
-        if not secrets.compare_digest(content_hash, artifact.content_hash):
-            raise ArtifactIntegrityError(
-                f"Artifact {artifact.id} content failed its integrity check"
-            )
-        if (
-            not isinstance(accepted_unit_ids, list)
-            or accepted_unit_ids != [snapshot.unit_id for snapshot in snapshots]
-            or provenance.workspace_id != artifact.workspace_id
-            or provenance.knowledge_base_id != artifact.knowledge_base_id
-            or provenance.accepted_unit_ids != accepted_unit_ids
-            or provenance.revision_ids != [snapshot.revision_id for snapshot in snapshots]
-            # The old builder used accepted knowledge only; agents read sources as well.
-            or provenance.accepted_only == agents
-        ):
-            raise ArtifactIntegrityError(
-                f"Artifact {artifact.id} provenance failed its integrity check"
-            )
-        if isinstance(provenance, OutputProvenanceOut) and (
-            provenance.kind != artifact.kind
-            or artifact.format != artifact.kind
-            or provenance.style != artifact.style
-            or provenance.audience != artifact.audience
-            or provenance.brief != artifact.brief
-            or provenance.origin != artifact.origin
-        ):
-            raise ArtifactIntegrityError(
-                f"Artifact {artifact.id} provenance failed its integrity check"
-            )
-
-        bindings = session.scalars(
-            select(ArtifactUnitBinding)
-            .where(ArtifactUnitBinding.artifact_id == artifact.id)
-            .order_by(ArtifactUnitBinding.position)
-        ).all()
-        if len(bindings) != len(snapshots):
-            raise ArtifactIntegrityError(
-                f"Artifact {artifact.id} binding count failed its integrity check"
-            )
-        for position, (snapshot, binding) in enumerate(zip(snapshots, bindings, strict=True)):
-            snapshot_hash = hashlib.sha256(snapshot.content.encode("utf-8")).hexdigest()
-            revision = session.get(KnowledgeUnitRevision, snapshot.revision_id)
-            if (
-                not secrets.compare_digest(snapshot_hash, snapshot.content_hash)
-                or binding.position != position
-                or binding.unit_id != snapshot.unit_id
-                or binding.revision_id != snapshot.revision_id
-                or not secrets.compare_digest(binding.content_hash, snapshot.content_hash)
-                or revision is None
-                or revision.unit_id != snapshot.unit_id
-                or revision.revision_number != snapshot.revision_number
-                or not secrets.compare_digest(
-                    hashlib.sha256(revision.content.encode("utf-8")).hexdigest(),
-                    snapshot.content_hash,
-                )
-            ):
-                raise ArtifactIntegrityError(
-                    f"Artifact {artifact.id} pinned revision failed its integrity check"
-                )
-
-        try:
-            manifest_hash = manifest_hash_of(artifact)
-        except (TypeError, ValueError) as error:
-            raise ArtifactIntegrityError(
-                f"Artifact {artifact.id} manifest contains invalid JSON"
-            ) from error
-        if not secrets.compare_digest(manifest_hash, artifact.manifest_hash):
-            raise ArtifactIntegrityError(
-                f"Artifact {artifact.id} manifest failed its integrity check"
-            )
-        return snapshots, provenance
-
-    @classmethod
-    def _artifact_out(cls, session: Session, artifact: Artifact) -> ArtifactOut:
-        snapshots, provenance = cls._verified_artifact_payload(session, artifact)
-        summary = cls._artifact_summary_out(artifact)
-        scope = json.loads(artifact.scope_json)
-        inputs = json.loads(artifact.inputs_json)
-        return ArtifactOut(
-            **summary.model_dump(),
-            content=artifact.content,
-            unit_snapshots=snapshots,
-            provenance=provenance,
-            brief=artifact.brief,
-            outline=[
-                OutlineItem.model_validate(item) for item in json.loads(artifact.outline_json)
-            ],
-            citations=[
-                ConversationCitationOut.model_validate(item)
-                for item in json.loads(artifact.citations_json)
-            ],
-            scope=OutputScope.model_validate(scope) if scope else None,
-            inputs=OutputInputsOut(
-                sources=len(inputs.get("sources", [])),
-                units=len(inputs.get("units", [])),
-                sessions=len(inputs.get("sessions", [])),
-            ),
-            model_label=(
-                provenance.model.label
-                if isinstance(provenance, OutputProvenanceOut) and provenance.model
-                else None
-            ),
-            sections=cls._output_sections(session, artifact),
-        )
-
-    @staticmethod
-    def _latest_check_records(session: Session, artifact_id: str) -> dict[str, dict]:
-        row = session.scalar(
-            select(ArtifactCheck)
-            .where(ArtifactCheck.artifact_id == artifact_id)
-            .order_by(ArtifactCheck.created_at.desc(), ArtifactCheck.id.desc())
-            .limit(1)
-        )
-        if row is None:
-            return {}
-        records = json.loads(row.checks_json).get("sections", [])
-        texts = {}
-        if any("verdicts" not in record for record in records):
-            artifact = session.get(Artifact, artifact_id)
-            if artifact is not None:
-                texts = {section_hash(t): _marked(t).body
-                         for t in split_document(artifact.content, artifact.kind)[1]}
-        return {record["hash"]: {
-            "hash": record["hash"],
-            "verdicts": read_verdicts(record, texts.get(record["hash"], "")),
-        } for record in records}
-
-    @classmethod
-    def _output_sections(cls, session: Session, artifact: Artifact) -> list[OutputSectionOut]:
-        """The sections of a version, and whether the Checker has looked at each as it is now."""
-
-        if artifact.origin == "legacy":
-            return []
-        records = cls._latest_check_records(session, artifact.id)
-        sections = []
-        for index, text in enumerate(split_document(artifact.content, artifact.kind)[1]):
-            digest = section_hash(text)
-            state = records.get(digest, {}).get("verdicts")
-            sections.append(
-                OutputSectionOut(
-                    index=index,
-                    heading=heading_of(text),
-                    checked=state is not None and complete(state),
-                    issues=[OutputIssueOut(**issue) for issue in issue_view(state or {})],
-                    coverage=coverage_of(state, digest) if state is not None else None,
-                )
-            )
-        return sections
-
     def list_artifacts(self, knowledge_base_id: str, workspace_id: str) -> list[ArtifactSummaryOut]:
         with session_scope(self.sessions) as session:
             if self._live_knowledge_base(session, knowledge_base_id) is None:
@@ -3201,9 +2961,7 @@ class KnowledgeService:
                 )
                 .order_by(Artifact.created_at.desc(), Artifact.version_number.desc())
             ).all()
-            for artifact in artifacts:
-                self._verified_artifact_payload(session, artifact)
-            return [self._artifact_summary_out(artifact) for artifact in artifacts]
+            return [artifact_summary(session, artifact) for artifact in artifacts]
 
     def get_artifact(
         self, knowledge_base_id: str, artifact_id: str, workspace_id: str
@@ -3218,7 +2976,7 @@ class KnowledgeService:
             )
             if artifact is None:
                 raise LookupError(f"Artifact {artifact_id} was not found")
-            shown = self._artifact_out(session, artifact)
+            shown = artifact_detail(session, artifact)
             skill = getattr(shown.provenance, "skill", None)
             if (skill and skill.render_check and skill.render_check.get("status") == "captured"
                     and self.slide_renderer
@@ -3322,7 +3080,7 @@ class KnowledgeService:
                 raise ArtifactConflictError(
                     "clientRequestId was already used for a different Artifact request"
                 )
-            return self._artifact_out(session, existing)
+            return artifact_detail(session, existing)
 
     def _output_library(
         self, session: Session, workspace_id: str, base_id: str
@@ -3991,7 +3749,7 @@ class KnowledgeService:
                     outline_json=json.dumps(outline, ensure_ascii=False, separators=(",", ":")),
                     citations_json=json.dumps(citations, ensure_ascii=False, separators=(",", ":")),
                 )
-                artifact.manifest_hash = manifest_hash_of(artifact)
+                artifact.manifest_hash = artifact_manifest_hash(artifact.__getattribute__)
                 session.add(artifact)
                 session.flush()
                 cited_revisions = [
@@ -4030,7 +3788,7 @@ class KnowledgeService:
                         )
                     )
                 session.flush()
-                return self._artifact_out(session, artifact)
+                return artifact_detail(session, artifact)
         except (IntegrityError, ArtifactConflictError) as error:
             earlier = self._earlier_output(workspace_id, client_request_id, fingerprint)
             if earlier is not None:
@@ -4515,7 +4273,7 @@ class KnowledgeService:
                     ),
                     parent.content,
                     json.loads(parent.outline_json),
-                    self._latest_check_records(session, parent.id),
+                    latest_check_records(session, parent),
                     payload.instruction,
                     payload.section_index,
                     tool,
@@ -4585,7 +4343,7 @@ class KnowledgeService:
             built = BuiltOutput(parent.title, parent.content, json.loads(parent.outline_json),
                 [ConversationCitationOut.model_validate(c)
                  for c in json.loads(parent.citations_json)],
-                list(self._latest_check_records(session, parent.id).values()), model, effort,
+                list(latest_check_records(session, parent).values()), model, effort,
                 skill={"name": "slides", "version": 11, **previous_skill})
             fields = {
                 "kind": parent.kind, "style": parent.style, "audience": parent.audience,
@@ -4643,7 +4401,7 @@ class KnowledgeService:
             self._require_agent_output(parent)
             if parent.kind != "slides":
                 raise ValueError("Only a deck has a style.")
-            records = self._latest_check_records(session, parent.id)
+            records = latest_check_records(session, parent)
             made_by = self._made_by(parent) or {}
             content = parent.content
             fields = {
@@ -4748,7 +4506,7 @@ class KnowledgeService:
             self._output_library(session, workspace_id, base_id)
             parent = self._output_version(session, workspace_id, base_id, artifact_id, latest=True)
             self._require_agent_output(parent)
-            records = self._latest_check_records(session, parent.id)
+            records = latest_check_records(session, parent)
             hashes = dict.fromkeys(
                 section_hash(text) for text in split_document(payload.content, parent.kind)[1]
             )
@@ -4795,14 +4553,14 @@ class KnowledgeService:
                 session, workspace_id, base_id, artifact_id, latest=False
             )
             self._require_agent_output(artifact)
-            known = {key: row["verdicts"] for key, row in
-                     self._latest_check_records(session, artifact.id).items()}
+            records = latest_check_records(session, artifact)
+            known = {key: row["verdicts"] for key, row in records.items()}
             artifact_kind = artifact.kind
             sections = split_document(artifact.content, artifact.kind)[1]
             if all(
                 (key := section_hash(text)) in known and complete(known[key]) for text in sections
             ):
-                return self._artifact_out(session, artifact)
+                return artifact_detail(session, artifact, check_records=records)
             by_ref = {
                 citation.ref: evidence_from_citation(citation)
                 for citation in (
@@ -4817,7 +4575,7 @@ class KnowledgeService:
             artifact = self._output_version(
                 session, workspace_id, base_id, artifact_id, latest=False
             )
-            latest = self._latest_check_records(session, artifact_id)
+            latest = latest_check_records(session, artifact)
             for check in checks:
                 saved = latest.get(check["hash"], {}).get("verdicts", {})
                 found = check["verdicts"]
@@ -4831,7 +4589,7 @@ class KnowledgeService:
                 )
             )
             session.flush()
-            return self._artifact_out(session, artifact)
+            return artifact_detail(session, artifact)
 
     # Conversations of the Artifacts agent (see artifact_workspace) ------------------------------
 
@@ -5094,9 +4852,10 @@ class KnowledgeService:
             )
             if head is None or head.origin == "legacy":
                 continue
+            checks = latest_check_records(session, head)
             workspaces.import_work(
-                self._artifact_out(session, head),
-                self._latest_check_records(session, head.id),
+                artifact_detail(session, head, check_records=checks),
+                checks,
                 workspace,
                 brief,
             )
@@ -5418,7 +5177,7 @@ class KnowledgeService:
             "paused": "paused",
         }[reply.kind]
         artifact = (
-            self._artifact_out(session, session.get(Artifact, reply.artifact_id))
+            artifact_detail(session, session.get(Artifact, reply.artifact_id))
             if reply.kind == "result" and reply.artifact_id
             else None
         )
@@ -5512,13 +5271,15 @@ class KnowledgeService:
                         Artifact.version_number.between(synced + 1, head.version_number),
                     ).limit(1))
                     if rebuild and rebuild.id != head.id:
+                        checks = latest_check_records(session, rebuild)
                         workspaces.sync(
-                            work, self._artifact_out(session, rebuild),
-                            self._latest_check_records(session, rebuild.id), workspace, brief,
+                            work, artifact_detail(session, rebuild, check_records=checks),
+                            checks, workspace, brief,
                         )
-                shown = self._artifact_out(session, head)
+                checks = latest_check_records(session, head)
+                shown = artifact_detail(session, head, check_records=checks)
                 workspaces.sync(
-                    work, shown, self._latest_check_records(session, head.id), workspace, brief
+                    work, shown, checks, workspace, brief
                 )
                 versions[work.key], saved[work.key], heads[work.key] = (
                     shown.version_number,

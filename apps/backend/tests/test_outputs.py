@@ -26,7 +26,7 @@ from fake_models import (
 )
 from fastapi.testclient import TestClient
 from legacy_artifacts import insert_legacy_version
-from sqlalchemy import func, select, text
+from sqlalchemy import event, func, select, text
 
 from evals.sse import ask_turn, read_events
 from gunther.agent import Evidence, checker_inventory
@@ -972,6 +972,23 @@ def test_a_rebuild_gives_the_edited_outline_to_studio_and_is_the_next_version(
 CLAIM = "CD19 marks B cells, and a good deal more besides in some tissues"
 
 
+@contextmanager
+def check_reads(client: TestClient):
+    with client.app.state.knowledge_service.sessions() as session:
+        engine = session.get_bind()
+    reads = []
+
+    def record_read(_connection, _cursor, statement, parameters, _context, _executemany):
+        if statement.startswith("SELECT") and "FROM artifact_checks" in statement:
+            reads.append(parameters)
+
+    event.listen(engine, "before_cursor_execute", record_read)
+    try:
+        yield reads
+    finally:
+        event.remove(engine, "before_cursor_execute", record_read)
+
+
 def test_an_edit_keeps_the_typed_text_and_checks_only_what_it_did_not_change(
     tmp_path: Path,
 ) -> None:
@@ -1017,7 +1034,11 @@ def test_an_edit_keeps_the_typed_text_and_checks_only_what_it_did_not_change(
         assert sum(is_auditing(r) for r in calls) == 1
         assert sum(is_support_checking(r) for r in calls) == 1
         # Nothing is left to check: no calls and no new findings.
-        again_checked = client.post(route(base_id, second["id"], "/check"), headers=headers).json()
+        with check_reads(client) as reads:
+            again_checked = client.post(
+                route(base_id, second["id"], "/check"), headers=headers
+            ).raise_for_status().json()
+        assert len(reads) == 1
         assert again_checked == checked and len(fake.requests) == before + len(calls)
         with client.app.state.knowledge_service.sessions() as session:
             rows = session.scalar(
