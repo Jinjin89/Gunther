@@ -17,11 +17,33 @@ import openai
 from openai.types.chat import ChatCompletionChunk
 
 from evals.sse import ask_turn
+from gunther.extraction import CandidateAssertion, ExtractionPayload
 from gunther.llm import ModelGateway, ModelInfo
 from gunther.model_profiles import profile_for
 from gunther.model_registry import PRESETS
+from gunther.models import Source
 
 Reply = str | dict[str, Any] | Exception | Callable[[dict[str, Any]], Any]
+
+
+def assertion_payload(*claims: tuple[str, str, str, str]) -> ExtractionPayload:
+    return ExtractionPayload(assertions=[
+        CandidateAssertion(
+            subject_label=subject, subject_type="Concept", predicate=predicate,
+            object_label=object_, object_type="Concept", confidence=0.9,
+            evidence_quote=quote, qualifiers=[],
+        )
+        for subject, predicate, object_, quote in claims
+    ])
+
+
+def store_saved_claims(client, source_id: str, *claims: tuple[str, str, str, str]) -> None:
+    """Seed existing Analysis results for tests of readers and review routes."""
+    service = client.app.state.knowledge_service
+    with service.sessions.begin() as session:
+        source = session.get(Source, source_id)
+        assert source is not None
+        service.store_source_extraction(session, source, assertion_payload(*claims))
 
 
 def api_error(kind: type[openai.APIStatusError], status: int, message: str) -> Exception:

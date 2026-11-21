@@ -701,7 +701,7 @@ class WebCaptureService:
             import_result=ImportResultOut(
                 source=summary,
                 created=ImportCountsOut(entities=0, assertions=0),
-                extraction_mode=self.knowledge.extractor.mode,
+                extraction_mode=self.knowledge.extraction_mode,
                 duplicate=True,
             ),
             snapshot=self._snapshot_out(snapshot),

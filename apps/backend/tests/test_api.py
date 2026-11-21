@@ -5,7 +5,15 @@ from pathlib import Path
 import httpx
 import openai
 import pytest
-from fake_models import FakeProvider, api_error, ask_from_search, gateway, model
+from fake_models import (
+    FakeProvider,
+    api_error,
+    ask_from_search,
+    assertion_payload,
+    gateway,
+    model,
+    store_saved_claims,
+)
 from fastapi.testclient import TestClient
 from legacy_artifacts import insert_legacy_version
 from recording_fixtures import append_recording_chunk, completed_recording
@@ -14,6 +22,7 @@ from evals.sse import AnswerStreamError, ask_turn
 from gunther.config import Settings
 from gunther.database import create_database_engine
 from gunther.extraction import ModelExtractor
+from gunther.llm import ModelError
 from gunther.main import create_app
 from gunther.models import Artifact, SessionMessage
 from gunther.realtime import (
@@ -24,13 +33,20 @@ from gunther.realtime import (
     qwen_text,
 )
 
+MARKER_CLAIM = ("CD3D", "marker_of", "T cell", "CD3D -> marker_of -> T cell")
+CELL_TYPE_CLAIM = ("T cell", "is_a", "lymphocyte", "T cell -> is_a -> lymphocyte")
+COURSE_CLAIM = (
+    "Backpropagation", "depends_on", "chain rule", "Backpropagation -> depends_on -> chain rule",
+)
 
-def make_client() -> TestClient:
+
+def make_client(*, processing_worker_enabled: bool = True) -> TestClient:
     app = create_app(
         Settings(
             database_url="sqlite+pysqlite:///:memory:",
             deepseek_api_key=None,
             stt_provider="compatible",
+            processing_worker_enabled=processing_worker_enabled,
         )
     )
     return TestClient(app)
@@ -118,8 +134,10 @@ def answered_session(client: TestClient, title: str) -> tuple[str, str, str]:
     return base_id, session_id, turn["assistantMessage"]["id"]
 
 
-def test_import_builds_evidence_backed_graph() -> None:
-    with make_client() as client:
+def test_capture_analysis_builds_evidence_backed_graph() -> None:
+    with make_client(processing_worker_enabled=False) as client:
+        fake = FakeProvider(assertion_payload(MARKER_CLAIM, CELL_TYPE_CLAIM).model_dump_json())
+        client.app.state.knowledge_service.extractor = ModelExtractor(gateway(fake))
         response = client.post(
             "/api/sources",
             json={
@@ -130,8 +148,10 @@ def test_import_builds_evidence_backed_graph() -> None:
         )
         assert response.status_code == 201
         imported = response.json()
-        assert imported["created"] == {"entities": 3, "assertions": 2}
-        assert imported["extractionMode"] == "local"
+        assert imported["created"] == {"entities": 0, "assertions": 0}
+        assert imported["extractionMode"] == "model"
+        assert not fake.requests
+        assert client.app.state.processing_worker.run_once(ai=True)
         source = client.get(f"/api/sources/{imported['source']['id']}").json()
         assert source["content"] == "CD3D -> marker_of -> T cell\nT cell -> is_a -> lymphocyte"
         assert source["assertionCount"] == 2
@@ -186,14 +206,15 @@ def test_knowledge_base_metadata_can_be_created_and_count_sessions() -> None:
 
 def test_review_changes_assertion_status() -> None:
     with make_client() as client:
-        client.post(
+        saved = client.post(
             "/api/sources",
             json={
                 "title": "Course note",
                 "kind": "course",
                 "content": "Backpropagation -> depends_on -> chain rule",
             },
-        )
+        ).raise_for_status().json()
+        store_saved_claims(client, saved["source"]["id"], COURSE_CLAIM)
         assertion = client.get("/api/assertions").json()[0]
 
         reviewed = client.patch(
@@ -215,6 +236,7 @@ def test_source_review_updates_all_candidate_claims_atomically() -> None:
                 "content": "CD3D -> marker_of -> T cell\nT cell -> is_a -> lymphocyte",
             },
         ).json()
+        store_saved_claims(client, imported["source"]["id"], MARKER_CLAIM, CELL_TYPE_CLAIM)
 
         reviewed = client.patch(
             f"/api/sources/{imported['source']['id']}/assertions/status",
@@ -257,10 +279,14 @@ def test_unified_inbox_files_an_unassigned_source_idempotently() -> None:
             json={
                 "title": "Unsorted evidence",
                 "kind": "paper",
-                "content": "Sleep improves memory consolidation.",
+                "content": "Sleep -> improves -> memory consolidation",
             },
         ).json()
         source_id = imported["source"]["id"]
+        store_saved_claims(client, source_id, (
+            "Sleep", "improves", "memory consolidation",
+            "Sleep -> improves -> memory consolidation",
+        ))
 
         assert client.get(f"/api/sources/{source_id}").json()["knowledgeBases"] == []
         unfiled = client.get("/api/inbox?state=unfiled&itemType=source")
@@ -271,7 +297,7 @@ def test_unified_inbox_files_an_unassigned_source_idempotently() -> None:
                 "itemType": "source",
                 "state": "unfiled",
                 "title": "Unsorted evidence",
-                "preview": "Sleep improves memory consolidation.",
+                "preview": "Sleep -> improves -> memory consolidation",
                 "sourceKind": "paper",
                 "knowledgeBases": [],
                 "sourceId": source_id,
@@ -590,19 +616,23 @@ def test_notebook_filing_rejects_empty_invalid_and_repeated_promotions() -> None
         assert edit_snapshot.status_code == 409
 
 
-def test_local_extractor_understands_simple_english_relationships() -> None:
+@pytest.mark.parametrize("content", [
+    "Spaced repetition improves retention.",
+    "Sleep -> improves -> retention",
+    "Sleep | improves | retention",
+    "Subject | Predicate | Object\n--- | --- | ---\nSleep | improves | retention",
+])
+def test_capture_text_is_retained_without_guessed_assertions(content):
     with make_client() as client:
         imported = client.post(
             "/api/sources",
-            json={
-                "title": "Learning note",
-                "kind": "note",
-                "content": "Spaced repetition improves retention.",
-            },
-        ).json()
-        assert imported["created"]["assertions"] == 1
-        assertion = client.get("/api/assertions").json()[0]
-        assert assertion["predicate"] == "improves"
+            json={"title": "Learning note", "kind": "note", "content": content},
+        ).raise_for_status().json()
+        assert imported["created"] == {"entities": 0, "assertions": 0}
+        source = client.get(f"/api/sources/{imported['source']['id']}").raise_for_status().json()
+        assert source["content"] == content
+        assert source["analysis"]["state"] == "needs_model"
+        assert client.get("/api/assertions").json() == []
 
 
 def test_a_language_model_key_selects_model_extraction() -> None:
@@ -727,13 +757,11 @@ def test_long_recording_is_saved_incrementally(tmp_path) -> None:
         assert imported.json()["fileName"].endswith(".mp3")
 
 
-def test_deepseek_extraction_failure_preserves_source_with_local_rules() -> None:
+def test_deepseek_extraction_failure_is_reported_without_a_fallback() -> None:
     failing = FakeProvider(api_error(openai.InternalServerError, 500, "provider unavailable"))
     extractor = ModelExtractor(gateway(failing))
-    result = extractor.extract("Cell note", "CD3D -> marker_of -> T cell")
-
-    assert result.mode == "local"
-    assert result.assertions[0].subject_label == "CD3D"
+    with pytest.raises(ModelError):
+        extractor.extract("Cell note", "CD3D -> marker_of -> T cell")
 
 
 @pytest.mark.parametrize("home", [True, False])
@@ -766,6 +794,7 @@ def test_session_keeps_messages_context_and_citations() -> None:
             },
         ).json()
         source_id = imported["source"]["id"]
+        store_saved_claims(client, source_id, MARKER_CLAIM)
         created = client.post(
             f"/api/knowledge-bases/{base_id}/sessions",
             json={"focusChapterId": "identity", "selectedSourceIds": [source_id]},
@@ -977,15 +1006,18 @@ def test_a_version_from_the_old_builder_stays_readable_sealed_and_bound_to_its_l
     with make_client() as client:
         base_id = create_base(client, "Artifact Biology")
         other_base_id = create_base(client, "Other Field")
-        client.post(
+        imported = client.post(
             "/api/sources",
             json={
                 "title": "Reviewed evidence",
                 "kind": "note",
-                "content": "CD3D is a useful T-cell marker.",
+                "content": "CD3D -> marker_of -> T cells",
                 "knowledgeBaseId": base_id,
             },
-        )
+        ).raise_for_status().json()
+        store_saved_claims(client, imported["source"]["id"], (
+            "CD3D", "marker_of", "T cells", "CD3D -> marker_of -> T cells",
+        ))
         knowledge_session = client.post(
             f"/api/knowledge-bases/{base_id}/sessions",
             json={},
@@ -1135,6 +1167,10 @@ def test_session_retrieval_excludes_unrelated_claims_from_citations() -> None:
                 "knowledgeBaseId": "biology",
             },
         ).json()
+        store_saved_claims(
+            client, imported["source"]["id"], MARKER_CLAIM, CELL_TYPE_CLAIM, COURSE_CLAIM,
+            ("Gradient descent", "uses", "gradients", "Gradient descent -> uses -> gradients"),
+        )
         knowledge_session = client.post(
             "/api/knowledge-bases/biology/sessions",
             json={"selectedSourceIds": [imported["source"]["id"]]},
@@ -1163,6 +1199,7 @@ def test_knowledge_base_source_membership_bounds_default_retrieval() -> None:
                 "knowledgeBaseId": "biology",
             },
         ).json()["source"]
+        store_saved_claims(client, biology["id"], MARKER_CLAIM)
         software = client.post(
             "/api/sources",
             json={
@@ -1189,7 +1226,7 @@ def test_knowledge_base_source_membership_bounds_default_retrieval() -> None:
 def test_unrelated_question_returns_an_evidence_gap_without_padding_citations() -> None:
     with make_client() as client:
         create_base(client, "Biology")
-        client.post(
+        imported = client.post(
             "/api/sources",
             json={
                 "title": "Biology source",
@@ -1197,7 +1234,8 @@ def test_unrelated_question_returns_an_evidence_gap_without_padding_citations() 
                 "content": "CD3D -> marker_of -> T cell",
                 "knowledgeBaseId": "biology",
             },
-        )
+        ).raise_for_status().json()
+        store_saved_claims(client, imported["source"]["id"], MARKER_CLAIM)
         knowledge_session = client.post("/api/knowledge-bases/biology/sessions", json={}).json()
         turn = ask_from_search(
             client, knowledge_session['id'], {"content": "How do black holes evaporate?"},
@@ -1216,7 +1254,7 @@ def test_unrelated_question_returns_an_evidence_gap_without_padding_citations() 
 def test_session_does_not_answer_from_one_generic_word_overlap() -> None:
     with make_client() as client:
         create_base(client, "Biology")
-        client.post(
+        imported = client.post(
             "/api/sources",
             json={
                 "title": "Cell identity note",
@@ -1224,7 +1262,8 @@ def test_session_does_not_answer_from_one_generic_word_overlap() -> None:
                 "content": "CD3D -> marker_of -> T cell\nT cell -> is_a -> lymphocyte",
                 "knowledgeBaseId": "biology",
             },
-        )
+        ).raise_for_status().json()
+        store_saved_claims(client, imported["source"]["id"], MARKER_CLAIM, CELL_TYPE_CLAIM)
         knowledge_session = client.post("/api/knowledge-bases/biology/sessions", json={}).json()
 
         turn = ask_from_search(

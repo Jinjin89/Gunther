@@ -402,7 +402,7 @@ def test_a_vague_request_is_asked_about_and_the_answer_makes_the_deck(tmp_path: 
             ],
             "actions": [
                 {"do": "select", "artifact": "new:slides"},
-                {"do": "search_library", "query": "CD3D markers"},
+                {"do": "search_library", "query": "CD3D marker"},
             ],
         },
         {
@@ -456,7 +456,7 @@ def test_a_vague_request_is_asked_about_and_the_answer_makes_the_deck(tmp_path: 
         ]
         assert names(events, "action", "done")[0] == "Started a deck"
         assert any(
-            label.startswith("Searched your library for “CD3D markers”")
+            label.startswith("Searched your library for “CD3D marker”")
             for label in names(events, "action", "done")
         )
         assert [data["text"] for name, data in events if name == "question"] == [
@@ -925,7 +925,7 @@ def test_nothing_is_saved_when_nothing_changed(tmp_path: Path) -> None:
 
 def test_a_repeated_action_is_skipped(tmp_path: Path) -> None:
     fake = FakeProvider(deck_replies())
-    search = {"do": "search_library", "query": "CD3D markers"}
+    search = {"do": "search_library", "query": "CD3D marker"}
     with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         a_deck(client, fake, base_id)

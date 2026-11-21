@@ -201,9 +201,16 @@ class InboxKnowledgeBaseRefOut(ApiModel):
     title: str
 
 
+class SourceAnalysisOut(ApiModel):
+    job_id: str
+    state: Literal["queued", "running", "completed", "failed", "needs_model", "cancelled"]
+    error: str | None
+
+
 class SourceDetailOut(SourceSummaryOut):
     content: str
     assertions: list[AssertionOut] = Field(default_factory=list)
+    analysis: SourceAnalysisOut | None = None
     web_snapshot: WebSnapshotOut | None = None
     # Libraries this source is filed in; empty while it waits in Inbox.
     knowledge_bases: list[InboxKnowledgeBaseRefOut] = Field(default_factory=list)

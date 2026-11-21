@@ -6,10 +6,12 @@ import time
 from pathlib import Path
 
 import pytest
+from fake_models import FakeProvider, assertion_payload, gateway
 from fastapi.testclient import TestClient
 
 from gunther import web_capture
 from gunther.config import Settings
+from gunther.extraction import ModelExtractor
 from gunther.main import create_app
 from gunther.web_capture import (
     PinnedHttpFetcher,
@@ -74,6 +76,8 @@ def make_client(
     tmp_path: Path,
     fetcher: ScriptedFetcher,
     resolver: FakeResolver | None = None,
+    *,
+    processing_worker_enabled: bool = True,
 ) -> TestClient:
     return TestClient(
         create_app(
@@ -83,6 +87,7 @@ def make_client(
                 recordings_dir=tmp_path / "recordings",
                 deepseek_api_key=None,
                 stt_provider="compatible",
+                processing_worker_enabled=processing_worker_enabled,
             ),
             web_capture_fetcher=fetcher,
             web_capture_resolver=resolver or FakeResolver(),
@@ -152,7 +157,12 @@ def test_web_capture_preserves_bytes_body_hash_locator_provenance_and_inbox(
         b"<script>not evidence</script></body></html>"
     )
     fetcher = ScriptedFetcher({"https://example.com/guide": html_response(original)})
-    with make_client(tmp_path, fetcher) as client:
+    with make_client(tmp_path, fetcher, processing_worker_enabled=False) as client:
+        statement = "BRCA1 -> associated_with -> DNA repair"
+        fake = FakeProvider(assertion_payload(
+            ("BRCA1", "associated_with", "DNA repair", statement),
+        ).model_dump_json())
+        client.app.state.knowledge_service.extractor = ModelExtractor(gateway(fake))
         response = client.post(
             "/api/captures/web",
             json={
@@ -181,10 +191,13 @@ def test_web_capture_preserves_bytes_body_hash_locator_provenance_and_inbox(
             "assetId": asset["id"],
         }
         assert client.get(asset["downloadUrl"]).content == original
+        assert captured["importResult"]["created"] == {"assertions": 0, "entities": 0}
+        assert not fake.requests
+        assert client.app.state.processing_worker.run_once(ai=True)
 
         detail = client.get(f"/api/sources/{source['id']}").json()
         assert detail["webSnapshot"] == snapshot
-        assert "BRCA1 -> associated_with -> DNA repair" in detail["content"]
+        assert statement in detail["content"]
         assert "not evidence" not in detail["content"]
         assert detail["assertions"][0]["evidence"][0]["locator"].startswith("line ")
         assert any(

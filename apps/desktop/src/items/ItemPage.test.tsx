@@ -7,6 +7,7 @@ import { ItemPage, type ItemPageProps } from "./ItemPage";
 
 const api = vi.hoisted(() => ({
   source: vi.fn(),
+  retrySourceAnalysis: vi.fn(),
   sourceDocument: vi.fn(),
   sourceStructure: vi.fn(),
   notes: vi.fn(),
@@ -138,6 +139,18 @@ describe("ItemPage navigation", () => {
 });
 
 describe("source pages", () => {
+  it("keeps the captured text readable when analysis fails and retries the same source", async () => {
+    api.source.mockResolvedValue(source({ analysis: { jobId: "job_1", state: "failed", error: "Analysis could not extract claims." } }));
+    api.retrySourceAnalysis.mockResolvedValue({ jobId: "job_1", state: "queued", error: null });
+    const user = userEvent.setup();
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Analysis could not extract claims.");
+    expect(screen.getByText("text", { selector: "strong" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(api.retrySourceAnalysis).toHaveBeenCalledWith("src_1");
+    expect(await screen.findByText("Waiting for Analysis…")).toBeVisible();
+  });
+
   it("files an unfiled source into the chosen library and moves on", async () => {
     api.source.mockResolvedValue(source());
     const user = userEvent.setup();

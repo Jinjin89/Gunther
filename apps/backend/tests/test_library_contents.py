@@ -2,13 +2,16 @@
 
 from pathlib import Path
 
+import openai
 import pytest
-from fake_models import ask_from_search
+from fake_models import FakeProvider, api_error, ask_from_search, gateway
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
+from test_papers import abstract_note, drain
 
 from gunther.config import Settings
 from gunther.database import session_scope
+from gunther.library_topics import create_topic_writer
 from gunther.main import create_app
 from gunther.models import (
     KnowledgeSession,
@@ -444,3 +447,40 @@ def test_a_source_can_be_renamed_and_keeps_its_place(client):
     assert client.patch("/api/sources/src_missing", json={"title": "A name"}).status_code == 404
     assert client.post(f"/api/sources/{note}/trash").status_code == 200
     assert client.patch(f"/api/sources/{note}", json={"title": "Again"}).status_code == 404
+
+
+def test_section_overview_keeps_the_saved_version_when_analysis_is_unavailable(client):
+    base = library(client)
+    quote = "The trial measured retention after one week."
+    paper = abstract_note(client, base, "Learning trial", quote)
+    topic = section(client, base, "Reading", sourceIds=[paper])
+    drain(client)
+    path = f"/api/knowledge-bases/{base}/topics/{topic}/overview"
+    assert client.post(path).status_code == 409
+    assert client.get(path).status_code == 404
+
+    with session_scope(client.app.state.knowledge_service.sessions) as session:
+        session.add(TopicSynthesis(topic_id=topic, markdown="# Previous overview", method="local"))
+    legacy = client.get(path).raise_for_status().json()
+    assert legacy["method"] == "local" and legacy["markdown"] == "# Previous overview"
+    assert client.post(path).status_code == 409
+    assert client.get(path).json() == legacy
+
+    fake = FakeProvider(
+        "The trial found improvement [2].",
+        api_error(openai.InternalServerError, 500, "provider unavailable"),
+        "The trial measured retention after one week. [1]",
+    )
+    client.app.state.topic_writer = create_topic_writer(gateway(fake))
+    for _ in range(2):
+        assert client.post(path).status_code == 502
+        assert client.get(path).json() == legacy
+
+    written = client.post(path).raise_for_status().json()
+    assert written["method"] != "local" and "retention after one week. [1]" in written["markdown"]
+    [citation] = written["citations"]
+    assert (citation["sourceId"], citation["quote"]) == (paper, quote)
+    assert citation["blockId"]
+    client.app.state.topic_writer = None
+    assert client.post(path).status_code == 409
+    assert client.get(path).json() == written

@@ -265,6 +265,8 @@ max_unverified = 0
 
     def reply(request):
         system = str(request["messages"][0]["content"])
+        if system.startswith("Extract explicit, evidence-backed knowledge assertions."):
+            return "Analysis unavailable in this fixture."
         if system.startswith("You grade one answer"):
             return json.dumps(JUDGEMENT)
         return agent_replies(
@@ -295,6 +297,7 @@ def test_runner_end_to_end_with_fake_models(tmp_path: Path) -> None:
     folder = run_with_fakes(tmp_path, Options(label="fake"))
     assert (folder / "report.md").exists() and (folder / "raw.json").exists()
     raw = json.loads((folder / "raw.json").read_text(encoding="utf-8"))
+    assert any("extract_assertions: The trial" in note for note in raw["notes"])
     results = raw["configurations"][0]["results"]
     assert set(results) == {"L1", "R1"}
     assert results["L1"]["checks"]["searched"] is True

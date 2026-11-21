@@ -2,7 +2,8 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ContentsSource, KnowledgeTopic, LibraryContents as Contents } from "@gunther/contracts";
-import { knowledgeApi } from "../api";
+import { ApiRequestError, knowledgeApi } from "../api";
+import { OPEN_SETTINGS_EVENT } from "../models/askModel";
 import { LibraryContents } from "./LibraryContents";
 
 const source = (id: string, title: string, kind: ContentsSource["kind"], extra: Partial<ContentsSource> = {}): ContentsSource => ({
@@ -321,11 +322,11 @@ describe("Library contents", () => {
 
   it("writes a section overview and opens a cited paper", async () => {
     const user = userEvent.setup();
-    vi.spyOn(knowledgeApi, "topicOverview").mockRejectedValue(new Error("none"));
+    vi.spyOn(knowledgeApi, "topicOverview").mockRejectedValue(new ApiRequestError("No overview yet", 404));
     const write = vi.spyOn(knowledgeApi, "writeTopicOverview").mockResolvedValue({
       topicId: "r", markdown: "# Readings\n\n## Papers\n\nGenome quality needs controls. [1]\n",
       citations: [{ number: 1, sourceId: "p1", sourceTitle: "Quality paper", blockId: "b1", revisionId: "r1", quote: "Genome quality needs controls." }],
-      method: "local", sourceCount: 1, createdAt: "2026-09-28T10:00:00",
+      method: "deepseek:flash", sourceCount: 1, createdAt: "2026-09-28T10:00:00",
     });
     const { onOpenSource } = await showReadings();
     await user.click(screen.getByRole("button", { name: "Readings" }));
@@ -334,6 +335,30 @@ describe("Library contents", () => {
     expect(await screen.findByText("Genome quality needs controls. [1]")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Quality paper" }));
     expect(onOpenSource).toHaveBeenCalledWith("p1", ["p1"]);
+  });
+
+  it.each([409, 502])("keeps a saved overview after a write fails with status %s", async (status) => {
+    const user = userEvent.setup();
+    const previous = { topicId: "r", markdown: "Saved overview.", citations: [], method: "local", sourceCount: 1, createdAt: "2026-09-28T10:00:00" };
+    vi.spyOn(knowledgeApi, "topicOverview").mockResolvedValue(previous);
+    const write = vi.spyOn(knowledgeApi, "writeTopicOverview")
+      .mockRejectedValueOnce(new ApiRequestError("Analysis is unavailable.", status))
+      .mockResolvedValueOnce({ ...previous, markdown: "Updated overview.", method: "deepseek:flash" });
+    await showReadings();
+    await user.click(screen.getByRole("button", { name: "Readings" }));
+    await user.click(await panel().findByRole("button", { name: "Rewrite overview" }));
+    expect(await panel().findByRole("alert")).toHaveTextContent("Analysis is unavailable.");
+    expect(panel().getByText("Saved overview.")).toBeVisible();
+    if (status === 409) {
+      const settings = vi.fn();
+      window.addEventListener(OPEN_SETTINGS_EVENT, settings, { once: true });
+      await user.click(panel().getByRole("button", { name: "Open Settings" }));
+      expect(settings).toHaveBeenCalledWith(expect.objectContaining({ detail: { pane: "models" } }));
+    } else {
+      await user.click(panel().getByRole("button", { name: "Retry" }));
+      expect(await panel().findByText("Updated overview.")).toBeVisible();
+      expect(write).toHaveBeenCalledTimes(2);
+    }
   });
 
   it("renames a section and writes its note in the panel", async () => {

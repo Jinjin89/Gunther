@@ -262,3 +262,26 @@ A check is a set of verdicts, one per (claim text hash, evidence hash, stage), e
 verdicts by key: a verdict survives while its key exists. Coverage, "partial" and
 "unavailable" are derived from the verdicts, never stored separately. Old check rows
 are read into this shape at the edge.
+A44 = A44a + A44b
+
+# Round 16 — written facts and Retry (batch A44)
+
+Written facts have two forms: a Markdown table headed exactly `subject | predicate |
+object`, and an arrow line `A -> B -> C` outside any table. A standalone `a | b | c`
+line is dropped on purpose: it can't be told apart from a table row, and no app screen or
+doc offers it. Saved assertions keep opening. A table starts at a header row plus a
+delimiter row and ends at the first blank line (the GFM rule). Every line in between is a
+table row, whatever it contains.
+Retry replaces only unreviewed model output. Reviewed assertions (verified or disputed)
+are user decisions and stay. A new model claim with the same subject, predicate, object
+and quote as an existing one reuses its id, evidence and review state.
+
+# Round 17 — no written-fact parser (supersedes Round 16's first paragraph)
+
+Three review rounds kept finding Markdown shapes (short rows, one-cell rows, quoted
+tables) that the hand-rolled parser misreads. That means the parser is a guess over
+free text, not an explicit input. `parse_structured_assertions` is deleted with both
+of its callers. Facts in a capture come only from Analysis, which reads tables and arrows
+itself. With no Analysis model, the capture shows needs-a-key or an error with Retry.
+Saved user-entered assertions keep opening and keep their review state. Round 16's
+Retry paragraph stands.

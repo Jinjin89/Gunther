@@ -3,7 +3,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
-from fake_models import ask_from_search
+from fake_models import ask_from_search, store_saved_claims
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select, text
 
@@ -354,10 +354,18 @@ def test_topic_assertions_choose_scoped_evidence_and_its_pinned_revision(tmp_pat
     with client_for(tmp_path) as client:
         biology = base(client)
         src = source(
-            client, biology, "Exercise improves memory.\nClinical exercise supports memory."
+            client, biology,
+            "Exercise -> improves -> memory\nClinical exercise -> supports -> memory",
+        )
+        clinical_claim = ("Clinical exercise", "supports", "memory",
+                          "Clinical exercise -> supports -> memory")
+        store_saved_claims(
+            client, src,
+            ("Exercise", "improves", "memory", "Exercise -> improves -> memory"), clinical_claim,
         )
         # A distinct source contains the same words, but is not filed under this topic.
-        source(client, biology, "Clinical exercise supports memory.\nUnrelated study.")
+        other = source(client, biology, "Clinical exercise -> supports -> memory\nUnrelated study.")
+        store_saved_claims(client, other, clinical_claim)
         structured = client.get(f"/api/sources/{src}/structure").json()
         block = next(b for b in structured["blocks"] if b["content"].startswith("Clinical"))
         topic = client.post(

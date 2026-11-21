@@ -31,7 +31,9 @@ from gunther.database import session_scope
 from gunther.document_parser import DoclingError, DoclingParser
 from gunther.document_structure import organize_document, pdf_metadata
 from gunther.documents import ParsedDocument, text_document
+from gunther.extraction import analysis_job_key
 from gunther.knowledge_index import ASSET_PARSER, KnowledgeIndex, embeddable, new_id
+from gunther.llm import AnalysisNeedsModel
 from gunther.models import (
     Asset,
     BlockEmbedding,
@@ -309,6 +311,10 @@ class ProcessingWorker:
                 elif kind == "extract_assertions":
                     source_title, source_content = source.title, source.content
                     source_hash = source.content_hash
+                    current_analysis = (
+                        source.trashed_at is None
+                        and job.dedupe_key == analysis_job_key(source.id, source_hash)
+                    )
                 elif kind == "measure_recording":
                     recording_id = job.dedupe_key.split(":")[1]
                     recording = session.get(RecordingSession, recording_id)
@@ -503,9 +509,12 @@ class ProcessingWorker:
             elif kind == "digest":
                 result = self.digest_writer.write(request) if self.digest_writer else None
             elif kind == "extract_assertions":
-                extraction = self.assets.knowledge_service.extractor.extract(
-                    source_title, source_content
-                )
+                extraction = None
+                if current_analysis:
+                    extractor = self.assets.knowledge_service.extractor
+                    if extractor is None:
+                        raise AnalysisNeedsModel()
+                    extraction = extractor.extract(source_title, source_content)
             elif kind == "measure_recording":
                 if self.recordings_dir is None:
                     raise ValueError("Recording storage is unavailable")
@@ -517,8 +526,6 @@ class ProcessingWorker:
                 raise ValueError("Processing provider is not configured")
 
             with session_scope(self.sessions) as session:
-                # Conditional UPDATE acquires the write lock before publication. A cancelled
-                # job or a reclaimed lease can never publish stale output.
                 owned = session.execute(
                     update(ProcessingJob)
                     .where(
@@ -529,9 +536,7 @@ class ProcessingWorker:
                     )
                     .values(updated_at=utc_now())
                 ).rowcount
-                if not owned:
-                    return
-                if self.stopping.is_set():
+                if not owned or self.stopping.is_set():
                     return
                 source = session.get(Source, source_id)
                 if kind == "parse_asset":
@@ -556,10 +561,16 @@ class ProcessingWorker:
                 elif kind == "digest":
                     digest.publish(session, source, request, result)
                 elif kind == "extract_assertions":
-                    if source.trashed_at is None and source.content_hash == source_hash:
-                        self.assets.knowledge_service.store_source_extraction(
-                            session, source, extraction
-                        )
+                    if (
+                        extraction is None or source.trashed_at is not None
+                        or source.content_hash != source_hash
+                    ):
+                        job = session.get(ProcessingJob, job_id)
+                        job.state, job.lease_token, job.lease_until = "cancelled", None, None
+                        return
+                    self.assets.knowledge_service.replace_source_analysis(
+                        session, source, extraction
+                    )
                 elif kind == "measure_recording":
                     recording = session.get(RecordingSession, recording_id)
                     if (
@@ -635,6 +646,11 @@ class ProcessingWorker:
                         if job.kind == "digest"
                         else f"Processing failed ({type(error).__name__}). Original preserved."
                     )
+                    if job.kind == "extract_assertions":
+                        if isinstance(error, AnalysisNeedsModel):
+                            job.state, job.error = "needs_model", str(error)
+                        else:
+                            job.state, job.error = "failed", "Analysis could not extract claims."
                     if layout_started:
                         reason = (
                             str(error) if isinstance(error, DoclingError)

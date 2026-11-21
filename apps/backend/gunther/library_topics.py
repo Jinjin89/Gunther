@@ -6,10 +6,8 @@ model each paper is its title-and-abstract vector; without it, a keyword
 the same library gives the same suggestions. Each is named by the terms that
 set it apart from the others (class-based TF-IDF); the user renames on accept.
 
-An overview is one page per topic: every paper with its year, authors and the
-opening of its abstract, cited to the abstract's own blocks. When DeepSeek is
-configured, it writes a synthesis from those abstracts instead, with the same
-citations, and any answer citing a paper it was not given is discarded.
+The Analysis model writes a topic overview from its papers' own abstracts.
+Each citation links to the abstract used for the synthesis.
 """
 
 from __future__ import annotations
@@ -20,14 +18,14 @@ import math
 import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gunther import usage, vector_index
 from gunther.content import search_tokens
-from gunther.llm import ModelError, ModelGateway, ModelInfo
+from gunther.llm import AnalysisNeedsModel, ModelError, ModelGateway, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.models import (
     ContentBlock,
@@ -274,21 +272,6 @@ def suggest(session: Session, base_id: str, model: str | None) -> dict[str, obje
 # Overviews ---------------------------------------------------------------------
 
 
-class TopicWriter(Protocol):
-    method: str
-
-    def write(self, title: str, description: str, papers: list[Paper]) -> str | None: ...
-
-
-class LocalTopicWriter:
-    """No model: the overview is the papers' own abstracts, ordered by year."""
-
-    method = "local"
-
-    def write(self, title: str, description: str, papers: list[Paper]) -> str | None:
-        return None
-
-
 class ModelTopicWriter:
     """The Analysis model writes a topic's overview from its papers' abstracts."""
 
@@ -299,41 +282,33 @@ class ModelTopicWriter:
         self.method = model.method
 
     @usage.job("analysis", "topic")
-    def write(self, title: str, description: str, papers: list[Paper]) -> str | None:
+    def write(self, title: str, description: str, papers: list[Paper]) -> str:
         sources = "\n\n".join(
             f"[{index}] {paper.title} ({paper.year or 'n.d.'}). {paper.abstract[:1500]}"
             for index, paper in enumerate(papers, start=1)
         )
-        try:
-            text = self.gateway.complete(
-                self.model,
-                system=(
-                    "You write a literature overview for one topic, only from the numbered "
-                    "abstracts given. Use Markdown with these sections: ## Overview, "
-                    "## Main lines of work, ## Where papers agree or differ, ## Open questions. "
-                    "Cite every claim with the paper numbers, like [2] or [3][5]. Do not cite "
-                    "anything else or add outside knowledge. Write in the language of the "
-                    "topic title."
-                ),
-                messages=f"Topic: {title}\n{description}\n\nAbstracts:\n\n{sources}",
-                effort=self.effort,
-            ).text
-        except ModelError:
-            return None
+        text = self.gateway.complete(
+            self.model,
+            system=(
+                "You write a literature overview for one topic, only from the numbered "
+                "abstracts given. Use Markdown with these sections: ## Overview, "
+                "## Main lines of work, ## Where papers agree or differ, ## Open questions. "
+                "Cite every claim with the paper numbers, like [2] or [3][5]. Do not cite "
+                "anything else or add outside knowledge. Write in the language of the "
+                "topic title."
+            ),
+            messages=f"Topic: {title}\n{description}\n\nAbstracts:\n\n{sources}",
+            effort=self.effort,
+        ).text
         cited = [int(value) for value in re.findall(r"\[(\d+)\]", text)]
         if not text or not cited or any(not 1 <= value <= len(papers) for value in cited):
-            return None
+            raise ModelError("The overview did not cite the supplied abstracts correctly.")
         return text
 
 
-def create_topic_writer(gateway: ModelGateway | None) -> TopicWriter:
+def create_topic_writer(gateway: ModelGateway | None) -> ModelTopicWriter | None:
     chosen = gateway.for_role("analysis") if gateway else None
-    return ModelTopicWriter(gateway, *chosen) if gateway and chosen else LocalTopicWriter()
-
-
-def _opening(text: str, sentences: int = 2) -> str:
-    parts = re.findall(r".+?(?:[.!?。！？](?=\s|$)|$)", text.strip())
-    return " ".join(part.strip() for part in parts[:sentences] if part.strip())
+    return ModelTopicWriter(gateway, *chosen) if gateway and chosen else None
 
 
 def topic_papers(session: Session, base_id: str, topic_id: str) -> list[Paper]:
@@ -352,18 +327,23 @@ def topic_papers(session: Session, base_id: str, topic_id: str) -> list[Paper]:
 
 
 def write_overview(
-    session: Session, base_id: str, topic_id: str, writer: TopicWriter, model: str | None
+    session: Session, base_id: str, topic_id: str,
+    writer: ModelTopicWriter | None, model: str | None,
 ) -> TopicSynthesis:
     topic = session.get(TopicNode, topic_id)
     subtree_ids(session, base_id, topic_id)  # raises LookupError outside this library
     papers = topic_papers(session, base_id, topic_id)
     if not papers:
         raise ValueError("File papers under this topic before writing its overview")
-    read = papers
-    if len(papers) > MAX_WRITER_PAPERS:
+    if writer is None:
+        raise AnalysisNeedsModel()
+    read = [paper for paper in papers if paper.abstract.strip()]
+    if not read:
+        raise ValueError("File papers with abstracts before writing this overview")
+    if len(read) > MAX_WRITER_PAPERS:
         vectors = (
             vector_index.paper_vectors(
-                session, model=model, source_ids=[paper.source_id for paper in papers]
+                session, model=model, source_ids=[paper.source_id for paper in read]
             )
             if model
             else {}
@@ -371,13 +351,13 @@ def write_overview(
         if vectors:
             import numpy
 
-            known = [paper for paper in papers if paper.source_id in vectors]
+            known = [paper for paper in read if paper.source_id in vectors]
             matrix = _normalized(numpy.stack([vectors[p.source_id] for p in known]))
             centre = matrix.mean(axis=0)
             central = numpy.argsort(-(matrix @ centre))[:MAX_WRITER_PAPERS]
             read = sorted((known[i] for i in central), key=lambda p: (p.year or 9999, p.title))
         else:
-            read = papers[-MAX_WRITER_PAPERS:]
+            read = read[-MAX_WRITER_PAPERS:]
 
     citations = []
     for number, paper in enumerate(read, start=1):
@@ -393,7 +373,7 @@ def write_overview(
             "sourceTitle": source.title if source else paper.title,
             "blockId": block.id if block else None,
             "revisionId": paper.revision_id,
-            "quote": _opening(paper.abstract, 3),
+            "quote": paper.abstract[:1500],
         })
 
     years = [paper.year for paper in papers if paper.year]
@@ -411,35 +391,23 @@ def write_overview(
     ]
     with usage.job("analysis", "topic", ref=topic_id):
         written = writer.write(topic.title, topic.description, read)
-    method = writer.method if written else "local"
-    if written:
-        if len(read) < len(papers):
-            lines += [f"_Written from the {len(read)} most central of {len(papers)} papers._", ""]
-        lines += [written, "", "## Papers", ""]
-        lines += [
-            f"{number}. {paper.title} ({paper.year or 'n.d.'})"
-            + (f" — {paper.authors}" if paper.authors else "")
-            for number, paper in enumerate(read, start=1)
-        ]
-    else:
-        lines += ["## Papers", ""]
-        for number, paper in enumerate(read, start=1):
-            lines += [f"### {paper.title} ({paper.year or 'n.d.'})", ""]
-            if paper.authors:
-                lines += [f"_{paper.authors}_", ""]
-            if paper.abstract:
-                lines += [f"{_opening(paper.abstract)} [{number}]", ""]
-        if len(read) < len(papers):
-            lines += [f"_And {len(papers) - len(read)} more papers._"]
+    if len(read) < len(papers):
+        lines += [f"_Written from {len(read)} abstracts across {len(papers)} filed papers._", ""]
+    lines += [written, "", "## Papers", ""]
+    lines += [
+        f"{number}. {paper.title} ({paper.year or 'n.d.'})"
+        + (f" — {paper.authors}" if paper.authors else "")
+        for number, paper in enumerate(read, start=1)
+    ]
     markdown = "\n".join(lines).rstrip() + "\n"
 
     row = session.get(TopicSynthesis, topic_id)
     if row is None:
-        row = TopicSynthesis(topic_id=topic_id, markdown=markdown, method=method)
+        row = TopicSynthesis(topic_id=topic_id, markdown=markdown, method=writer.method)
         session.add(row)
     row.markdown = markdown
     row.citations_json = json.dumps(citations, ensure_ascii=False)
-    row.method = method
+    row.method = writer.method
     row.source_count = len(papers)
     row.created_at = utc_now()
     session.flush()

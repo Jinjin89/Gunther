@@ -238,9 +238,10 @@ def test_model_summaries_run_in_their_own_lane(tmp_path):
         drain(client, ai=False)
         with session_scope(client.app.state.knowledge_service.sessions) as session:
             left = {job.kind: job.state for job in session.scalars(select(ProcessingJob))}
-        # Reading and indexing are done; only the summary waits for its lane.
-        assert left["digest"] == "queued"
-        assert all(state == "completed" for kind, state in left.items() if kind != "digest")
+        # Reading and indexing are done. Only the installed model job waits for its lane.
+        assert left.pop("digest") == "queued"
+        assert left.pop("extract_assertions") == "needs_model"
+        assert all(state == "completed" for state in left.values())
         drain(client, ai=True)
         with session_scope(client.app.state.knowledge_service.sessions) as session:
             assert (

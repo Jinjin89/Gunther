@@ -10,7 +10,6 @@ from gunther.content import ParsedBlock
 from gunther.database import Base, create_database_engine, create_session_factory, session_scope
 from gunther.document_parser import docling_document
 from gunther.document_structure import evidence_eligible
-from gunther.extraction import LocalExtractor
 from gunther.knowledge_index import embeddable
 from gunther.migrations import run_migrations
 from gunther.models import ContentBlock, DocumentElement, Source, SourcePaper
@@ -120,7 +119,7 @@ def service(tmp_path):
     run_migrations(engine, Base.metadata)
     sessions = create_session_factory(engine)
     try:
-        yield KnowledgeService(sessions, LocalExtractor())
+        yield KnowledgeService(sessions)
     finally:
         engine.dispose()
 

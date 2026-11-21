@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from fake_models import ask_from_search
+from fake_models import FakeProvider, ask_from_search, gateway
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
@@ -12,6 +12,7 @@ from gunther import vector_index
 from gunther.config import Settings
 from gunther.content import parse_content
 from gunther.database import session_scope
+from gunther.library_topics import create_topic_writer
 from gunther.main import create_app
 from gunther.models import ContentBlock, Source, SourcePaper, Work
 from gunther.papers import publish, read_paper
@@ -447,10 +448,13 @@ def test_topics_are_suggested_accepted_asked_and_written_up(tmp_path):
             client.get(f"/api/knowledge-bases/{base}/topics/{topic['id']}/overview").status_code
             == 404
         )
+        client.app.state.topic_writer = create_topic_writer(gateway(FakeProvider(
+            "## Overview\n\nThe papers discuss fuel efficiency. [1]"
+        )))
         written = client.post(f"/api/knowledge-bases/{base}/topics/{topic['id']}/overview")
         assert written.status_code == 200, written.text
         overview = written.json()
-        assert overview["method"] == "local" and overview["sourceCount"] == 6
+        assert overview["method"] == "DeepSeek:deepseek-flash" and overview["sourceCount"] == 6
         assert overview["markdown"].startswith("# Rockets\n")
         assert "[1]" in overview["markdown"]
         assert {c["sourceId"] for c in overview["citations"]} == set(rockets)

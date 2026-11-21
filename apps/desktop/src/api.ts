@@ -57,6 +57,7 @@ import type {
   ActivityList,
   SourceSummary,
   SourceDetail,
+  SourceAnalysis,
   UpdateAssertionStatusInput,
   UpdateKnowledgeBaseInput,
   UpdateKnowledgeProposalInput,
@@ -562,6 +563,12 @@ function logFailure(init: RequestInit | undefined, path: string, what: string) {
   log.warn("api", `${init?.method ?? "GET"} ${path.split("?")[0]} → ${what}`);
 }
 
+export class ApiRequestError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit, expectedWorkspaceId?: string): Promise<T> {
   await waitForDesktopBackend();
   let response: Response;
@@ -586,7 +593,7 @@ async function request<T>(path: string, init?: RequestInit, expectedWorkspaceId?
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { detail?: string } | null;
     logFailure(init, path, `${response.status} ${body?.detail ?? ""}`.trim());
-    throw new Error(body?.detail ?? `Request failed with status ${response.status}`);
+    throw new ApiRequestError(body?.detail ?? `Request failed with status ${response.status}`, response.status);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -725,6 +732,7 @@ export const knowledgeApi = {
   graph: () => request<KnowledgeGraph>("/graph"),
   sources: (knowledgeBaseId?: string) => request<SourceSummary[]>(knowledgeBaseId ? `/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/sources` : "/sources"),
   source: (id: string) => request<SourceDetail>(`/sources/${encodeURIComponent(id)}`),
+  retrySourceAnalysis: (id: string) => request<SourceAnalysis>(`/sources/${encodeURIComponent(id)}/analysis/retry`, { method: "POST" }),
   renameSource: (id: string, title: string) => request<SourceSummary>(`/sources/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ title }) }),
   assertions: (status?: Assertion["status"]) =>
     request<Assertion[]>(`/assertions${status ? `?status=${status}` : ""}`),

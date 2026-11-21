@@ -36,5 +36,27 @@
     "kind": "note",
     "content": "CD3D -> marker_of -> T cell\nT cell -> is_a -> lymphocyte\nBackpropagation -> depends_on -> chain rule\nGradient descent -> uses -> gradients",
     "knowledge_base_id": "single-cell-annotation"
-  }
+  },
+  "assertions": [
+    {
+      "subject_label": "CD3D", "subject_type": "Concept", "predicate": "marker_of",
+      "object_label": "T cell", "object_type": "Concept", "confidence": 1.0,
+      "evidence_quote": "CD3D -> marker_of -> T cell", "qualifiers": []
+    },
+    {
+      "subject_label": "T cell", "subject_type": "Concept", "predicate": "is_a",
+      "object_label": "lymphocyte", "object_type": "Concept", "confidence": 1.0,
+      "evidence_quote": "T cell -> is_a -> lymphocyte", "qualifiers": []
+    },
+    {
+      "subject_label": "Backpropagation", "subject_type": "Concept", "predicate": "depends_on",
+      "object_label": "chain rule", "object_type": "Concept", "confidence": 1.0,
+      "evidence_quote": "Backpropagation -> depends_on -> chain rule", "qualifiers": []
+    },
+    {
+      "subject_label": "Gradient descent", "subject_type": "Concept", "predicate": "uses",
+      "object_label": "gradients", "object_type": "Concept", "confidence": 1.0,
+      "evidence_quote": "Gradient descent -> uses -> gradients", "qualifiers": []
+    }
+  ]
 }

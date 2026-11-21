@@ -3,47 +3,35 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier, Event, Lock
 
+from sqlalchemy import select
+
 from gunther.database import Base, create_database_engine, create_session_factory
-from gunther.extraction import ExtractionResult, LocalExtractor
 from gunther.migrations import run_migrations
+from gunther.models import ProcessingJob
 from gunther.schemas import CreateKnowledgeBaseInput, CreateSourceInput
 from gunther.service import KnowledgeService
 
 
-class ControlledExtractor(LocalExtractor):
-    def __init__(self) -> None:
-        self.entered = Event()
-        self.release = Event()
-        self.calls = 0
-        self._calls_lock = Lock()
-
-    def extract(self, title: str, content: str) -> ExtractionResult:
-        with self._calls_lock:
-            self.calls += 1
-        self.entered.set()
-        assert self.release.wait(timeout=5)
-        return super().extract(title, content)
-
-
-class BarrierExtractor(LocalExtractor):
-    def __init__(self, barrier: Barrier) -> None:
-        self.barrier = barrier
-
-    def extract(self, title: str, content: str) -> ExtractionResult:
-        self.barrier.wait(timeout=5)
-        return super().extract(title, content)
-
-
-def make_service(tmp_path: Path, extractor: LocalExtractor):
+def make_service(tmp_path: Path):
     engine = create_database_engine(f"sqlite+pysqlite:///{tmp_path / 'gunther.sqlite'}")
     run_migrations(engine, Base.metadata)
     sessions = create_session_factory(engine)
-    return engine, sessions, KnowledgeService(sessions, extractor)
+    return engine, sessions, KnowledgeService(sessions)
 
 
-def test_one_service_extracts_identical_concurrent_import_only_once(tmp_path: Path) -> None:
-    extractor = ControlledExtractor()
-    engine, _sessions, service = make_service(tmp_path, extractor)
+def test_one_service_queues_identical_concurrent_import_only_once(tmp_path: Path):
+    entered, release = Event(), Event()
+    calls_lock = Lock()
+    calls = 0
+
+    def find_capture(_session):
+        nonlocal calls
+        with calls_lock:
+            calls += 1
+        entered.set()
+        assert release.wait(timeout=5)
+
+    engine, sessions, service = make_service(tmp_path)
     payload = CreateSourceInput(
         title="Concurrent note",
         kind="note",
@@ -53,38 +41,46 @@ def test_one_service_extracts_identical_concurrent_import_only_once(tmp_path: Pa
 
     def second_import():
         second_started.set()
-        return service.import_source(payload)
+        return service.import_source(payload, find_existing_capture=find_capture)
 
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            first = executor.submit(service.import_source, payload)
-            assert extractor.entered.wait(timeout=5)
+            first = executor.submit(
+                service.import_source, payload, find_existing_capture=find_capture,
+            )
+            assert entered.wait(timeout=5)
             second = executor.submit(second_import)
             assert second_started.wait(timeout=5)
 
-            # Keep the first extraction open long enough for the second request to
-            # reach the content-hash lock. It must not invoke the extractor itself.
+            # Keep the first lookup open until the second request reaches the content-hash lock.
             time.sleep(0.15)
-            assert extractor.calls == 1
-            extractor.release.set()
+            assert calls == 1
+            release.set()
 
             results = [first.result(timeout=5), second.result(timeout=5)]
 
         assert sorted(result.duplicate for result in results) == [False, True]
         assert results[0].source.id == results[1].source.id
         assert len(service.list_sources()) == 1
-        assert extractor.calls == 1
+        assert calls == 1
+        with sessions() as session:
+            analysis_jobs = session.scalars(select(ProcessingJob.id).where(
+                ProcessingJob.kind == "extract_assertions",
+            )).all()
+            assert len(analysis_jobs) == 1
     finally:
-        extractor.release.set()
+        release.set()
         engine.dispose()
 
 
-def test_database_race_falls_back_to_existing_source_and_files_both_memberships(
-    tmp_path: Path,
-) -> None:
+def test_database_race_falls_back_to_existing_source_and_files_both_memberships(tmp_path: Path):
     barrier = Barrier(2)
-    engine, sessions, first_service = make_service(tmp_path, BarrierExtractor(barrier))
-    second_service = KnowledgeService(sessions, BarrierExtractor(barrier))
+
+    def find_capture(_session):
+        barrier.wait(timeout=5)
+
+    engine, sessions, first_service = make_service(tmp_path)
+    second_service = KnowledgeService(sessions)
     first_base = first_service.create_knowledge_base(
         CreateKnowledgeBaseInput(
             title="First library",
@@ -115,8 +111,12 @@ def test_database_race_falls_back_to_existing_source_and_files_both_memberships(
 
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            first = executor.submit(first_service.import_source, first_payload)
-            second = executor.submit(second_service.import_source, second_payload)
+            first = executor.submit(
+                first_service.import_source, first_payload, find_existing_capture=find_capture,
+            )
+            second = executor.submit(
+                second_service.import_source, second_payload, find_existing_capture=find_capture,
+            )
             results = [first.result(timeout=10), second.result(timeout=10)]
 
         assert sorted(result.duplicate for result in results) == [False, True]

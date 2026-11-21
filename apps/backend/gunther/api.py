@@ -109,6 +109,7 @@ from gunther.schemas import (
     RestyleSlidesInput,
     ReviewSlidesInput,
     ReviseOutputInput,
+    SourceAnalysisOut,
     SourceDetailOut,
     SourceKind,
     SourceSummaryOut,
@@ -1076,7 +1077,18 @@ def create_source(
     defer_analysis: Annotated[bool, Query(alias="deferAnalysis")] = False,
 ) -> ImportResultOut:
     try:
-        return _service(request).import_source(payload, defer_analysis=defer_analysis)
+        # The deferred receipt parameter remains valid. Both forms queue Analysis.
+        return _service(request).import_source(payload)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.post(
+    "/sources/{source_id}/analysis/retry", response_model=SourceAnalysisOut, status_code=202
+)
+def retry_source_analysis(source_id: str, request: Request) -> SourceAnalysisOut:
+    try:
+        return _service(request).retry_source_analysis(source_id)
     except LookupError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 

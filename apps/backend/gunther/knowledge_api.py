@@ -7,6 +7,7 @@ from sqlalchemy import func, select, update
 from gunther import digest, library_topics, papers, vector_index
 from gunther.database import session_scope
 from gunther.knowledge_index import embeddable, enqueue
+from gunther.llm import AnalysisNeedsModel, ModelError
 from gunther.models import (
     BlockEmbedding,
     CitationMention,
@@ -226,6 +227,12 @@ def write_topic_overview(base_id: str, topic_id: str, request: Request):
                 request.app.state.topic_writer,
                 index.embedder.model_id if index.embedder else None,
             )
+        except AnalysisNeedsModel as error:
+            raise HTTPException(409, str(error)) from error
+        except ModelError as error:
+            raise HTTPException(
+                502, "Analysis could not write this overview. Try again."
+            ) from error
         except (LookupError, ValueError) as error:
             raise structure_error(error) from error
         return library_topics.overview_out(row)

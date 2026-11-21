@@ -43,7 +43,7 @@ from gunther.device_auth import (
 from gunther.digest import create_digest_writer
 from gunther.document_parser import DoclingParser
 from gunther.embedding import OnnxEmbedder, default_model_directory, model_is_installed
-from gunther.extraction import LocalExtractor, create_extractor
+from gunther.extraction import create_extractor
 from gunther.knowledge_api import router as knowledge_router
 from gunther.lecture import create_lecture_summarizer
 from gunther.library_folders import WATCHED_MODELS, LibraryFolders
@@ -248,7 +248,7 @@ def create_app(
     service_store = service_settings or ServiceSettingsStore(active_settings.service_settings_file)
     active_settings = service_store.apply(base_settings)
     # The models are connected below, once the worker exists (see _connect_models).
-    knowledge_service = KnowledgeService(sessions, LocalExtractor())
+    knowledge_service = KnowledgeService(sessions)
     embedder, off_reason = _semantic_search(active_settings, sessions)
     knowledge_service.index.embedder = embedder
     knowledge_service.index.semantic_off_reason = off_reason

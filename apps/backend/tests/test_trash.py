@@ -2,7 +2,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
-from fake_models import ask_from_search
+from fake_models import ask_from_search, store_saved_claims
 from fastapi.testclient import TestClient
 from legacy_artifacts import insert_legacy_version
 from sqlalchemy import func, select, text
@@ -289,7 +289,9 @@ def test_deleting_a_library_forever_clears_everything_it_owned(storage: Path) ->
     with make_client(storage) as client:
         base_id = create_base(client, "Biology")
         other_id = create_base(client, "Chemistry")
-        shared = add_source(client, "Shared", "CD3D is a useful T-cell marker.", base_id)
+        marker = "CD3D -> marker_of -> T cells"
+        shared = add_source(client, "Shared", marker, base_id)
+        store_saved_claims(client, shared, ("CD3D", "marker_of", "T cells", marker))
         client.post(f"/api/sources/{shared}/file", json={"knowledgeBaseId": other_id})
         parent = client.post(f"/api/knowledge-bases/{base_id}/topics", json={"title": "Cells"})
         client.post(
@@ -352,8 +354,11 @@ def test_deleting_a_library_forever_clears_everything_it_owned(storage: Path) ->
 def test_ask_leaves_sources_in_trash_out_of_its_answers(storage: Path) -> None:
     with make_client(storage) as client:
         base_id = create_base(client, "Immunology")
-        add_source(client, "T cells", "CD3D -> marker_of -> T cell", base_id)
-        b_cells = add_source(client, "B cells", "CD19 -> marker_of -> B cell", base_id)
+        t_marker, b_marker = "CD3D -> marker_of -> T cell", "CD19 -> marker_of -> B cell"
+        t_cells = add_source(client, "T cells", t_marker, base_id)
+        b_cells = add_source(client, "B cells", b_marker, base_id)
+        store_saved_claims(client, t_cells, ("CD3D", "marker_of", "T cell", t_marker))
+        store_saved_claims(client, b_cells, ("CD19", "marker_of", "B cell", b_marker))
         client.post(f"/api/sources/{b_cells}/trash")
         knowledge_session = client.post(f"/api/knowledge-bases/{base_id}/sessions", json={}).json()
         turn = ask_from_search(

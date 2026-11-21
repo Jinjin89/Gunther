@@ -382,11 +382,18 @@ export interface FileSourceResult {
 export interface SourceDetail extends SourceSummary {
   content: string;
   assertions: Assertion[];
+  analysis?: SourceAnalysis | null;
   webSnapshot: WebSnapshot | null;
   /** Libraries this source is filed in; empty while it waits in Inbox. */
   knowledgeBases?: InboxKnowledgeBaseRef[];
   /** When the source was moved to Trash; absent or null while it is in use. */
   trashedAt?: string | null;
+}
+
+export interface SourceAnalysis {
+  jobId: string;
+  state: "queued" | "running" | "completed" | "failed" | "needs_model" | "cancelled";
+  error: string | null;
 }
 
 /** Keyword and semantic search on this device. */

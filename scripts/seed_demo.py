@@ -4,8 +4,13 @@ import argparse
 import json
 from pathlib import Path
 
-from gunther.database import Base, connection_transaction, create_database_engine, session_scope
-from gunther.extraction import LocalExtractor
+from gunther.database import (
+    Base,
+    connection_transaction,
+    create_database_engine,
+    session_scope,
+)
+from gunther.extraction import ExtractionPayload
 from gunther.migrations import run_migrations
 from gunther.models import KnowledgeBaseRecord, Source
 from gunther.schemas import CreateSourceInput, UpdateAssertionStatusInput
@@ -23,6 +28,7 @@ def main() -> None:
     fixture = json.loads(args.fixture.read_text(encoding="utf-8"))
     bases = [KnowledgeBaseRecord(**data) for data in fixture["knowledge_bases"]]
     source = CreateSourceInput.model_validate(fixture["source"])
+    analysis = ExtractionPayload.model_validate({"assertions": fixture.get("assertions", [])})
     database = args.database.resolve()
     database.parent.mkdir(parents=True, exist_ok=True)
     engine = create_database_engine(f"sqlite+pysqlite:///{database}")
@@ -36,12 +42,16 @@ def main() -> None:
                         session.add(base)
                 has_sources = session.scalar(select(Source.id).limit(1)) is not None
             if not has_sources:
-                service = KnowledgeService(sessions, LocalExtractor())
+                service = KnowledgeService(sessions)
                 result = service.import_source(source)
-                service.update_source_assertion_statuses(
-                    result.source.id,
-                    UpdateAssertionStatusInput(status="verified", reason="Demo fixture import"),
-                )
+                if analysis.assertions:
+                    with session_scope(sessions) as session:
+                        stored = session.get(Source, result.source.id)
+                        service.store_source_extraction(session, stored, analysis)
+                    service.update_source_assertion_statuses(
+                        result.source.id,
+                        UpdateAssertionStatusInput(status="verified", reason="Demo fixture import"),
+                    )
     finally:
         engine.dispose()
 

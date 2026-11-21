@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { knowledgeApi, recordingAssetUrl, sourceAssetUrl } from "../api";
 import type { KnowledgeBase } from "../atlas";
 import { countWords } from "../components/markdown/markdownEditing";
+import { openSettings } from "../components/SettingsLayout";
 import { ClaimsList, FileDecision, ReviewDecision, SettledDecision } from "./Decision";
 import { AsideSection, DetailsList, formatDate, ItemHeader, ItemLayout, shortHash, type DetailRow, type IdentityTone, type ItemNavigation } from "./ItemLayout";
 import { SOURCE_KIND_LABEL } from "./itemRef";
@@ -51,16 +52,20 @@ export interface SourceItemProps {
 
 export function SourceItem({ source: initial, bases, nav, onResolved, onOpenBase, onCreateBase, onNotify, onTitle }: SourceItemProps) {
   const [source, setSource] = useState(initial);
+  const [retryingAnalysis, setRetryingAnalysis] = useState(false);
   useEffect(() => setSource(initial), [initial]);
   useEffect(() => onTitle(source.title), [onTitle, source.title]);
   useEffect(() => {
-    if (!source.recordingDurationPending) return;
+    if (!source.recordingDurationPending && source.analysis?.state !== "queued" && source.analysis?.state !== "running") return;
     let alive = true;
     let timer: number;
     const check = async () => {
       try {
         const next = await knowledgeApi.source(source.id);
-        if (alive) setSource(next);
+        if (alive) {
+          setSource(next);
+          if (next.assertionCount !== source.assertionCount) window.dispatchEvent(new CustomEvent("gunther:inbox-updated"));
+        }
       } catch {
         if (alive) timer = window.setTimeout(() => void check(), 2500);
       }
@@ -136,6 +141,20 @@ export function SourceItem({ source: initial, bases, nav, onResolved, onOpenBase
     }
   };
 
+  const retryAnalysis = async () => {
+    setRetryingAnalysis(true);
+    try {
+      const analysis = await knowledgeApi.retrySourceAnalysis(source.id);
+      setSource((previous) => ({ ...previous, analysis }));
+    } catch (reason) {
+      onNotify(reason instanceof Error ? reason.message : "Analysis could not be retried.");
+    } finally {
+      setRetryingAnalysis(false);
+    }
+  };
+  const analysis = source.analysis;
+  const canRetryAnalysis = analysis && (analysis.state === "failed" || analysis.state === "needs_model" || analysis.state === "cancelled");
+
   const created = formatDate(source.createdAt);
   let kicker = identity.label;
   let meta: Array<string | null> = [created];
@@ -205,6 +224,11 @@ export function SourceItem({ source: initial, bases, nav, onResolved, onOpenBase
 
   const aside = (
     <>
+      {analysis && analysis.state !== "completed" && <AsideSection title="Analysis">
+        <p role={canRetryAnalysis ? "alert" : "status"}>{analysis.error ?? (analysis.state === "cancelled" ? "Analysis was cancelled." : analysis.state === "running" ? "Checking claims…" : "Waiting for Analysis…")}</p>
+        {analysis.state === "needs_model" && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => openSettings("models")}>Open Settings</button>}
+        {canRetryAnalysis && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={retryingAnalysis} onClick={() => void retryAnalysis()}>Retry</button>}
+      </AsideSection>}
       {state === "unfiled" && <FileDecision bases={bases} what="source" onFile={fileTo} onCreateBase={onCreateBase} />}
       {state === "review" && <ReviewDecision base={libraries[0] ?? null} known={bases.find((base) => base.id === libraries[0]?.id)} pending={pending} onOpenBase={onOpenBase} onDecide={reviewAll} />}
       {state === "settled" && (

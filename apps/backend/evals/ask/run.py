@@ -34,9 +34,9 @@ from gunther.model_profiles import EFFORTS, Effort
 RESULTS = Path(__file__).resolve().parents[1] / "results"
 LIBRARY_TITLE = "Velmora cool roofs"
 SETUP_TIMEOUT_SECONDS = 600
-# Writing a capture's AI summary is a nicety; every other failed job spoils the library.
-TOLERATED_JOBS = {"digest"}
-FINISHED = {"completed", "failed"}
+# The original text remains searchable when either optional model job is unavailable.
+TOLERATED_JOBS = {"digest", "extract_assertions"}
+FINISHED = {"completed", "failed", "needs_model", "cancelled"}
 
 
 class ExamError(Exception):
@@ -115,7 +115,7 @@ def make_app(
 
 
 def wait_for_jobs(client: TestClient, headers: dict, source_ids: set[str], say: Callable) -> list:
-    """Poll until every job of these sources has finished; return the ones that failed."""
+    """Poll until every job has settled and return the ones without a result."""
 
     deadline = time.monotonic() + SETUP_TIMEOUT_SECONDS
     while True:
@@ -123,7 +123,7 @@ def wait_for_jobs(client: TestClient, headers: dict, source_ids: set[str], say: 
         mine = [job for job in jobs if job["sourceId"] in source_ids]
         waiting = [job for job in mine if job["state"] not in FINISHED]
         if mine and not waiting:
-            return [job for job in mine if job["state"] == "failed"]
+            return [job for job in mine if job["state"] != "completed"]
         if time.monotonic() > deadline:
             raise ExamError(
                 f"The library was still being read after {SETUP_TIMEOUT_SECONDS // 60} minutes "
@@ -436,7 +436,7 @@ def run_exam(
         + ("on." if not info["semanticOffReason"] else f"off ({info['semanticOffReason']})."),
     ]
     if info["failedJobs"]:
-        notes.append(f"Failed setup jobs (tolerated): {'; '.join(info['failedJobs'])}.")
+        notes.append(f"Unavailable setup jobs (tolerated): {'; '.join(info['failedJobs'])}.")
     if judge_ref in asked:
         notes.append(
             "Warning: the judge is also a model under test, so it may favour its own answers."

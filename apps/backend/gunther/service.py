@@ -16,7 +16,7 @@ from typing import Literal
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from sqlalchemy import and_, delete, func, or_, select, true
+from sqlalchemy import and_, delete, func, or_, select, true, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
@@ -39,9 +39,15 @@ from gunther.artifact_workspace import evidence_from_citation
 from gunther.checks import complete, coverage_of, issue_view, merge_verdicts, read_verdicts
 from gunther.database import session_scope
 from gunther.document_structure import evidence_eligible
-from gunther.extraction import CandidateAssertion, ExtractionResult, Extractor
+from gunther.extraction import (
+    CandidateAssertion,
+    ExtractionPayload,
+    ModelExtractor,
+    analysis_job_key,
+    normalize_predicate,
+)
 from gunther.knowledge_index import KnowledgeIndex, enqueue
-from gunther.llm import ModelError, ModelGateway, ModelInfo, Turn
+from gunther.llm import AnalysisNeedsModel, ModelError, ModelGateway, ModelInfo, Turn
 from gunther.model_profiles import Effort
 from gunther.models import (
     Artifact,
@@ -67,6 +73,7 @@ from gunther.models import (
     KnowledgeUnitRevision,
     MessageTrace,
     NotebookNote,
+    ProcessingJob,
     Revision,
     SessionBranch,
     SessionMessage,
@@ -167,6 +174,7 @@ from gunther.schemas import (
     RestyleSlidesInput,
     ReviseOutputInput,
     SessionMessageOut,
+    SourceAnalysisOut,
     SourceDetailOut,
     SourceSummaryOut,
     UpdateArtifactConversationInput,
@@ -258,6 +266,17 @@ def _timestamp(value: datetime) -> str:
 
 def _normalized_label(value: str) -> str:
     return " ".join(value.casefold().split())
+
+
+def _assertion_key(
+    subject: str, predicate: str, object_: str, quote: str,
+) -> tuple[str, str, str, str]:
+    return (
+        _normalized_label(subject),
+        normalize_predicate(predicate),
+        _normalized_label(object_),
+        quote,
+    )
 
 
 def _slug(value: str) -> str:
@@ -461,7 +480,7 @@ class KnowledgeService:
     def __init__(
         self,
         sessions: sessionmaker[Session],
-        extractor: Extractor,
+        extractor: ModelExtractor | None = None,
     ) -> None:
         self.sessions = sessions
         self.extractor = extractor
@@ -488,8 +507,8 @@ class KnowledgeService:
         self._artifact_conversations_lock = Lock()
 
     @property
-    def extraction_mode(self) -> str:
-        return self.extractor.mode
+    def extraction_mode(self) -> Literal["local", "model"]:
+        return "model" if self.extractor is not None else "local"
 
     @staticmethod
     def _live_knowledge_base(
@@ -786,7 +805,7 @@ class KnowledgeService:
 
     def _find_or_create_entity(
         self, session: Session, label: str, entity_type: str
-    ) -> tuple[Entity, bool]:
+    ) -> Entity:
         normalized = _normalized_label(label)
         entity = session.scalar(
             select(Entity).where(
@@ -795,7 +814,7 @@ class KnowledgeService:
             )
         )
         if entity:
-            return entity, False
+            return entity
 
         entity = Entity(
             id=_id("ent"),
@@ -806,7 +825,7 @@ class KnowledgeService:
         )
         session.add(entity)
         session.flush()
-        return entity, True
+        return entity
 
     @staticmethod
     def _locator(content: str, quote: str) -> str:
@@ -877,7 +896,7 @@ class KnowledgeService:
         return ImportResultOut(
             source=self._source_summary(session, source),
             created=ImportCountsOut(entities=0, assertions=0),
-            extraction_mode=self.extractor.mode,
+            extraction_mode=self.extraction_mode,
             duplicate=True,
         )
 
@@ -889,7 +908,6 @@ class KnowledgeService:
         fingerprint: str | None = None,
         find_existing_capture: Callable[[Session], Source | None] | None = None,
         defer_processing: bool = False,
-        defer_analysis: bool = False,
     ) -> ImportResultOut:
         content = payload.content.strip()
         content_hash = fingerprint or source_fingerprint(payload.title, payload.kind, content)
@@ -902,7 +920,6 @@ class KnowledgeService:
                 initialize_source=initialize_source,
                 find_existing_capture=find_existing_capture,
                 defer_processing=defer_processing,
-                defer_analysis=defer_analysis,
             )
 
     def _import_source(
@@ -914,7 +931,6 @@ class KnowledgeService:
         initialize_source: Callable[[Session, Source], None] | None = None,
         find_existing_capture: Callable[[Session], Source | None] | None = None,
         defer_processing: bool = False,
-        defer_analysis: bool = False,
     ) -> ImportResultOut:
 
         with session_scope(self.sessions) as session:
@@ -932,12 +948,6 @@ class KnowledgeService:
                     existing,
                     payload.knowledge_base_id,
                 )
-
-        extraction = (
-            ExtractionResult(assertions=[], mode=self.extractor.mode)
-            if defer_processing or defer_analysis
-            else self.extractor.extract(payload.title, content)
-        )
 
         try:
             with session_scope(self.sessions) as session:
@@ -959,23 +969,20 @@ class KnowledgeService:
                 if not defer_processing and session.get(SourceIndexHead, source.id) is None:
                     self.index.add_source(session, source)
 
-                if defer_analysis:
+                if not defer_processing and content:
                     # Commit the source, its readable index and the analysis job together.
                     # Saving a capture must never wait for a model over the network.
-                    enqueue(
+                    job = enqueue(
                         session, source.id, "extract_assertions",
-                        f"extract_assertions:{source.id}:{source.content_hash}",
+                        analysis_job_key(source.id, source.content_hash),
                     )
-                created_entities = self.store_source_extraction(session, source, extraction)
-
+                    if self.extractor is None:
+                        job.state, job.error = "needs_model", str(AnalysisNeedsModel())
                 session.flush()
                 return ImportResultOut(
                     source=self._source_summary(session, source),
-                    created=ImportCountsOut(
-                        entities=created_entities,
-                        assertions=len(extraction.assertions),
-                    ),
-                    extraction_mode=extraction.mode,
+                    created=ImportCountsOut(entities=0, assertions=0),
+                    extraction_mode=self.extraction_mode,
                     duplicate=False,
                 )
         except IntegrityError:
@@ -992,20 +999,18 @@ class KnowledgeService:
                 )
 
     def store_source_extraction(
-        self, session: Session, source: Source, extraction: ExtractionResult
-    ) -> int:
+        self, session: Session, source: Source, extraction: ExtractionPayload
+    ) -> None:
         """Publish assertions and their exact evidence inside the caller's transaction."""
 
-        created_entities = 0
         fragments: dict[str, Fragment] = {}
         for candidate in extraction.assertions:
-            subject, subject_created = self._find_or_create_entity(
+            subject = self._find_or_create_entity(
                 session, candidate.subject_label, candidate.subject_type
             )
-            object_entity, object_created = self._find_or_create_entity(
+            object_entity = self._find_or_create_entity(
                 session, candidate.object_label, candidate.object_type
             )
-            created_entities += int(subject_created) + int(object_created)
             fragment = fragments.get(candidate.evidence_quote)
             if fragment is None:
                 fragment = Fragment(
@@ -1027,11 +1032,52 @@ class KnowledgeService:
             session.add(
                 Revision(
                     id=_id("rev"), target_type="assertion", target_id=assertion.id,
-                    action="created", actor=f"extractor:{extraction.mode}",
+                    action="created",
+                    actor="extractor:model",
                     reason="Imported from source evidence",
                 )
             )
-        return created_entities
+
+    def replace_source_analysis(
+        self, session: Session, source: Source, extraction: ExtractionPayload,
+    ) -> None:
+        """Replace stale model drafts while retaining reviewed and matching claims."""
+        from_analysis = select(Revision.id).where(
+            Revision.target_id == Assertion.id,
+            Revision.target_type == "assertion",
+            Revision.action == "created",
+            Revision.actor == "extractor:model",
+        ).exists()
+        unreviewed = and_(from_analysis, Assertion.status == "provisional").label("unreviewed")
+        previous = session.execute(self._assertion_query().add_columns(unreviewed).where(
+            Assertion.source_id == source.id,
+        ).order_by(unreviewed, Assertion.created_at, Assertion.id)).all()
+        available = {
+            _assertion_key(claim.subject_label, claim.predicate, claim.object_label,
+                           claim.evidence_quote): claim
+            for claim in extraction.assertions
+        }
+        replaced = []
+        for assertion, can_replace in previous:
+            matching = {
+                _assertion_key(assertion.subject.label, assertion.predicate, assertion.object.label,
+                               link.fragment.content)
+                for link in assertion.evidence_links
+            } & available.keys()
+            for key in matching:
+                del available[key]
+            if can_replace and not matching:
+                replaced.append(assertion)
+        if replaced:
+            fragments = {link.fragment_id for row in replaced for link in row.evidence_links}
+            session.execute(delete(Assertion).where(Assertion.id.in_([row.id for row in replaced])))
+            session.execute(delete(Fragment).where(
+                Fragment.id.in_(fragments), ~Fragment.evidence_links.any(),
+            ))
+
+        self.store_source_extraction(
+            session, source, extraction.model_copy(update={"assertions": list(available.values())}),
+        )
 
     @staticmethod
     def _create_assertion(
@@ -1425,6 +1471,34 @@ class KnowledgeService:
                 session.flush()
             return self._source_summary(session, source)
 
+    @staticmethod
+    def _source_analysis_job(session: Session, source: Source) -> ProcessingJob | None:
+        return session.scalar(select(ProcessingJob).where(
+            ProcessingJob.dedupe_key == analysis_job_key(source.id, source.content_hash)
+        ))
+
+    @staticmethod
+    def _source_analysis_out(job: ProcessingJob) -> SourceAnalysisOut:
+        return SourceAnalysisOut(job_id=job.id, state=job.state, error=job.error)
+
+    def retry_source_analysis(self, source_id: str) -> SourceAnalysisOut:
+        with session_scope(self.sessions) as session:
+            source = session.get(Source, source_id)
+            if source is None or source.trashed_at is not None:
+                raise LookupError("Source was not found")
+            if (job := self._source_analysis_job(session, source)) is None:
+                raise LookupError("Source analysis was not found")
+            now = utc_now()
+            session.execute(update(ProcessingJob).where(
+                ProcessingJob.id == job.id,
+                ProcessingJob.state.in_(("failed", "needs_model", "cancelled")),
+            ).values(
+                state="queued", attempts=0, error=None, lease_token=None, lease_until=None,
+                available_at=now, updated_at=now,
+            ))
+            session.refresh(job)
+            return self._source_analysis_out(job)
+
     def get_source(self, source_id: str) -> SourceDetailOut:
         with session_scope(self.sessions) as session:
             source = session.get(Source, source_id)
@@ -1435,6 +1509,7 @@ class KnowledgeService:
                 self._assertion_query().where(Assertion.source_id == source_id)
             ).all()
             snapshot = session.scalar(select(WebSnapshot).where(WebSnapshot.source_id == source_id))
+            analysis = self._source_analysis_job(session, source)
             knowledge_bases = session.execute(
                 select(KnowledgeBaseRecord.id, KnowledgeBaseRecord.title)
                 .join(
@@ -1450,6 +1525,7 @@ class KnowledgeService:
             return SourceDetailOut(
                 **summary.model_dump(),
                 content=source.content,
+                analysis=self._source_analysis_out(analysis) if analysis else None,
                 trashed_at=_timestamp(source.trashed_at) if source.trashed_at else None,
                 knowledge_bases=[
                     InboxKnowledgeBaseRefOut(id=base_id, title=title)

@@ -1204,6 +1204,7 @@ def test_revision_accepts_a_divider_with_its_layout_heading(tmp_path):
 ])
 def test_revision_handles_invalid_writer_and_fitter_replies(tmp_path, stage, problem):
     cover = f"<!-- layout: title; design: v2 -->\n{SLIDES[0]}"
+    takeaways = "## Takeaways\n\n- CD19 marks B cells [2]."
     heading = "<!-- layout: points -->\n## The evidence distinguishes the two cell populations"
     short = heading + "\n- CD3D marks T cells [1]."
     complete = short + "\n- CD19 marks B cells [2]."
@@ -1223,7 +1224,7 @@ def test_revision_handles_invalid_writer_and_fitter_replies(tmp_path, stage, pro
 
     fake = FakeProvider(reply)
     with built_output(tmp_path, fake, kind="slides",
-                      written=[cover, *SLIDES[1:]]) as (client, base_id, first):
+                      written=[cover, SLIDES[1], takeaways]) as (client, base_id, first):
         options = {"clientRequestId": "revise_slide_retry_01", "sectionIndex": 1}
         events = revise(client, base_id, first["id"], "Clarify the slide", **options)
         assert bool(fits) == (stage == "fit")

@@ -129,6 +129,13 @@ class ModelError(RuntimeError):
     """A model could not answer. The message says why, in plain words."""
 
 
+class AnalysisNeedsModel(ModelError):
+    """The Analysis role has no configured model."""
+
+    def __init__(self) -> None:
+        super().__init__("Set up an Analysis model in Settings.")
+
+
 ClientFactory = Callable[[ModelInfo], Any]
 
 

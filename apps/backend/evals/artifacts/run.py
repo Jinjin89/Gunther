@@ -916,6 +916,8 @@ def run_exam(
         f"Cases: {len(cases)}; {options.jobs} at a time"
         + (f"; each run {options.repeat} times." if options.repeat > 1 else "."),
     ]
+    if info["failedJobs"]:
+        notes.append(f"Unavailable setup jobs (tolerated): {'; '.join(info['failedJobs'])}.")
     version = code_version()
     if version:
         notes.append(f"Code: {version}.")

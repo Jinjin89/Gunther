@@ -74,7 +74,9 @@ def test_repo_seed_loads_explicit_fixture_and_can_be_replayed(tmp_path):
         [source] = client.get("/api/sources").json()
         assert source["title"] == fixture["source"]["title"]
         assertions = client.get("/api/assertions").json()
-        assert len(assertions) == len(fixture["source"]["content"].splitlines())
+        assert {item["evidence"][0]["quote"] for item in assertions} == {
+            claim["evidence_quote"] for claim in fixture["assertions"]
+        }
         assert {item["status"] for item in assertions} == {"verified"}
 
     result = run_repo_command(*seed)
