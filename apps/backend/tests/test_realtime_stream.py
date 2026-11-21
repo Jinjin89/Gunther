@@ -204,7 +204,6 @@ def make_app(tmp_path: Path, server: FakeQwen, model: str, **job: Any) -> Iterat
         database_url=f"sqlite+pysqlite:///{tmp_path / 'gunther.sqlite'}",
         assets_dir=tmp_path / "assets",
         recordings_dir=tmp_path / "recordings",
-        seed_demo=False,
         deepseek_api_key=None,
         auth_token=SIDECAR_TOKEN,
         service_settings_file=tmp_path / "service-settings.json",
@@ -661,7 +660,6 @@ def test_test_connection_checks_both_halves_of_the_pair(
         database_url=f"sqlite+pysqlite:///{tmp_path / 'gunther.sqlite'}",
         assets_dir=tmp_path / "assets",
         recordings_dir=tmp_path / "recordings",
-        seed_demo=False,
         auth_token=SIDECAR_TOKEN,
         service_settings_file=tmp_path / "service-settings.json",
     )
@@ -735,7 +733,6 @@ def test_silence_answered_with_an_empty_400_is_empty_text_but_other_400s_are_err
         database_url=f"sqlite+pysqlite:///{tmp_path / 'gunther.sqlite'}",
         assets_dir=tmp_path / "assets",
         recordings_dir=tmp_path / "recordings",
-        seed_demo=False,
         auth_token=SIDECAR_TOKEN,
         stt_provider="qwen",
         qwen_stt_api_key=KEY,

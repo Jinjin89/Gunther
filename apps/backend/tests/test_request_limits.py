@@ -63,7 +63,6 @@ def test_recording_chunk_rejects_oversized_body_before_storage(tmp_path, monkeyp
         Settings(
             database_url="sqlite+pysqlite:///:memory:",
             recordings_dir=tmp_path / "recordings",
-            seed_demo=False,
             deepseek_api_key=None,
         )
     )
@@ -88,7 +87,6 @@ def test_global_transport_limit_rejects_declared_json_before_schema_parsing(
             database_url=f"sqlite+pysqlite:///{tmp_path / 'gunther.sqlite'}",
             assets_dir=tmp_path / "assets",
             recordings_dir=tmp_path / "recordings",
-            seed_demo=False,
             deepseek_api_key=None,
         )
     )

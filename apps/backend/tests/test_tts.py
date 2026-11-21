@@ -70,7 +70,6 @@ def app_for(tmp_path: Path, fake: FakeProvider | None = None) -> TestClient:
         assets_dir=tmp_path / "assets",
         recordings_dir=tmp_path / "recordings",
         speech_dir=tmp_path / "speech",
-        seed_demo=False,
         deepseek_api_key="sk-llm" if fake else None,
         processing_worker_enabled=False,
         auth_token=SIDECAR_TOKEN,

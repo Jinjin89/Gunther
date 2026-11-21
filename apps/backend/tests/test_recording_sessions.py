@@ -17,7 +17,6 @@ def _settings(tmp_path: Path) -> Settings:
     return Settings(
         database_url=f"sqlite+pysqlite:///{tmp_path / 'gunther.sqlite'}",
         recordings_dir=tmp_path / "recordings",
-        seed_demo=False,
         deepseek_api_key=None,
     )
 

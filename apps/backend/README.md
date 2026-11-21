@@ -125,12 +125,26 @@ Artifact 当前没有 PATCH/DELETE/archive、全局 Search 或 PDF/DOCX renderer
 - `STT_PROVIDER=auto|sensevoice|compatible`（`compatible` = 任何 OpenAI 风格的 `/audio/transcriptions` 服务，配 `STT_BASE_URL`、`STT_API_KEY`、`STT_MODEL`、`STT_LANGUAGE`）；
 - `SENSEVOICE_URL` 与 segment seconds；
 - `STORAGE_QUOTA_BYTES`（默认 20 GiB）与 `STORAGE_MIN_FREE_BYTES`（默认 1 GiB）；
-- 可选 `LLM_API_KEY`（旧名 `DEEPSEEK_API_KEY` 仍可用）、`TAVILY_API_KEY`（联网搜索）；也可在桌面端 Settings → Services 里填写（见 `docs/SERVICE_SETTINGS.md`）；
-- `SEED_DEMO=false` 默认创建空工作区。
+- 可选 `LLM_API_KEY`（旧名 `DEEPSEEK_API_KEY` 仍可用）、`TAVILY_API_KEY`（联网搜索）；也可在桌面端 Settings → Services 里填写（见 `docs/SERVICE_SETTINGS.md`）。
 
 Provider key 不应进入 Git、日志、前端 bundle 或移动普通 profile。
 
 Asset 与 Recording 共用线程安全的 `StorageBudget`。已知/未知长度、并发 reservation 与写入前复检均在同一预算内；单请求过大返回 413，配额、最低剩余空间或 ENOSPC/EDQUOT 返回 507。失败路径回滚数据库/文件并清理临时文件，受控目录遇到 symlink 时 fail closed。
+
+## 开发示例与 Studio 冒烟测试
+
+新工作区初始为空。从仓库根目录运行以下命令，将示例导入指定的开发数据库。
+
+```sh
+PYTHONPATH=apps/backend uv run --project apps/backend python scripts/seed_demo.py \
+  /tmp/gunther-demo/gunther.sqlite scripts/fixtures/demo.json
+```
+
+将仓库里的示例牌组传给已打包的 sidecar，以检查 Studio 模块和文档格式。
+
+```sh
+/path/to/gunther-backend --studio-smoke scripts/fixtures/studio-package.md
+```
 
 ## 两种运行安全边界
 

@@ -34,7 +34,6 @@ def settings_for(tmp_path: Path, **overrides: object) -> Settings:
         "database_url": f"sqlite+pysqlite:///{tmp_path / 'gunther.sqlite'}",
         "assets_dir": tmp_path / "assets",
         "recordings_dir": tmp_path / "recordings",
-        "seed_demo": False,
         "deepseek_api_key": None,
         "tavily_api_key": None,
         "stt_provider": "auto",

@@ -1,0 +1,40 @@
+{
+  "knowledge_bases": [
+    {
+      "id": "single-cell-annotation",
+      "title": "Single-cell RNA-seq Annotation",
+      "eyebrow": "Computational biology",
+      "subtitle": "From raw barcodes to defensible cell identities",
+      "question": "How do we turn expression profiles into cell identities we can explain, challenge, and reuse?",
+      "description": "A living field guide connecting experimental context, data quality, analytical choices, biological evidence, references, and uncertainty.",
+      "color": "green",
+      "status": "Living"
+    },
+    {
+      "id": "full-stack-development",
+      "title": "Full-stack Development",
+      "eyebrow": "Software engineering",
+      "subtitle": "A system from interface to operations",
+      "question": "How do the layers of a reliable product fit together?",
+      "description": "Architecture, frontend, backend, data, delivery, and operations organized as one coherent practice.",
+      "color": "blue",
+      "status": "Growing"
+    },
+    {
+      "id": "project-management",
+      "title": "Project Management",
+      "eyebrow": "Leadership",
+      "subtitle": "Move uncertain work toward a useful outcome",
+      "question": "How do we create clarity without pretending uncertainty is gone?",
+      "description": "A practical knowledge base for framing, planning, coordination, risk, delivery, and organizational learning.",
+      "color": "clay",
+      "status": "Outline"
+    }
+  ],
+  "source": {
+    "title": "Starter knowledge",
+    "kind": "note",
+    "content": "CD3D -> marker_of -> T cell\nT cell -> is_a -> lymphocyte\nBackpropagation -> depends_on -> chain rule\nGradient descent -> uses -> gradients",
+    "knowledge_base_id": "single-cell-annotation"
+  }
+}

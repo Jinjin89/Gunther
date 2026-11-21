@@ -237,3 +237,13 @@ library; ~66 components hand-roll loading/refresh with useEffect. Phase B adds a
 server reads: in-flight dedupe, invalidate-on-event, retry, per-read error. Start with
 Ask (Home + Library) and the settings panes; migrate others only where it deletes code.
 Codex to give a short go/no-go with evidence before building.
+
+# Round 13 — prompts are not code (batch 32)
+
+The special-case rule is about production **code** that branches on particular
+inputs. Worked examples and good/bad contrasts inside a model prompt teach a general
+rule; they stay. No prompt rewording in this cleanup: it can't be verified without
+model runs and changes output quality. Prompts change only where they reference removed
+code. SC-02's prompt part is dropped (prompts.py and reference.py stay as they were);
+the smoke-input and seed moves stand. Batches 32 and 33 are merged as batch 32, and the
+batch 11 CSS follow-up rides along (supervisor's instruction).

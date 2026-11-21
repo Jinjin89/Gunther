@@ -290,14 +290,6 @@ class ArtifactIntegrityError(RuntimeError):
     """Stored immutable Artifact bytes or provenance no longer match their hashes."""
 
 
-@dataclass(frozen=True, slots=True)
-class _SourcePassage:
-    source: Source
-    quote: str
-    locator: str
-    confidence: float
-
-
 @dataclass(frozen=True)
 class _LibraryScope:
     """What one search of a library may read: sources, their claims, a topic's passages."""
@@ -1989,77 +1981,6 @@ class KnowledgeService:
         ranked = sorted(assertions, key=score, reverse=True)
         matched = [item for item in ranked if any(term in assertion_text(item) for term in terms)]
         return matched[:limit]
-
-    @staticmethod
-    def _source_text_passages(source: Source) -> list[tuple[str, str]]:
-        """Split preserved source text into bounded, human-auditable citation passages."""
-
-        locator = "Source text"
-        passages: list[tuple[str, str]] = []
-        seen: set[str] = set()
-        for raw_line in source.content.splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
-            heading = re.match(r"^#{1,6}\s+(.+)$", line)
-            if heading:
-                locator = heading.group(1).strip()[:120] or "Source text"
-                continue
-            line = re.sub(r"^(?:[-*+]\s+|\d+[.)]\s+)", "", line).strip()
-            for raw_passage in re.split(r"(?<=[.!?。！？])\s+", line):
-                passage = re.sub(r"\s+", " ", raw_passage).strip()
-                if len(passage) < 12:
-                    continue
-                if len(passage) > 600:
-                    passage = passage[:597].rstrip() + "…"
-                identity = passage.casefold()
-                if identity in seen:
-                    continue
-                seen.add(identity)
-                passages.append((passage, locator))
-        return passages
-
-    def _rank_source_passages(
-        self, sources: list[Source], question: str, limit: int = 5
-    ) -> list[_SourcePassage]:
-        """Retrieve from raw preserved text when extraction produced no matching claim."""
-
-        terms = self._query_terms(question)
-        if not terms:
-            return []
-        required_matches = 1 if len(terms) <= 1 else 2
-        candidates: list[tuple[float, Source, str, str, int]] = []
-        for source in sources:
-            title = re.sub(r"[^\w]+", " ", source.title.casefold()).strip()
-            for quote, locator in self._source_text_passages(source):
-                haystack = re.sub(r"[^\w]+", " ", f"{source.title} {quote}".casefold()).strip()
-                matches = sum(term in haystack for term in terms)
-                if matches < required_matches:
-                    continue
-                title_matches = sum(term in title for term in terms)
-                coverage = matches / len(terms)
-                score = matches * 3 + coverage + min(title_matches, 2) * 0.2
-                candidates.append((score, source, quote, locator, matches))
-
-        candidates.sort(key=lambda item: (item[0], item[4], len(item[2])), reverse=True)
-        results: list[_SourcePassage] = []
-        source_counts: Counter[str] = Counter()
-        for score, source, quote, locator, matches in candidates:
-            if source_counts[source.id] >= 2:
-                continue
-            confidence = min(0.9, 0.58 + (matches / len(terms)) * 0.3 + min(score, 12) / 200)
-            results.append(
-                _SourcePassage(
-                    source=source,
-                    quote=quote,
-                    locator=locator,
-                    confidence=round(confidence, 2),
-                )
-            )
-            source_counts[source.id] += 1
-            if len(results) >= limit:
-                break
-        return results
 
     def _web_tool(self, wanted: bool) -> tuple[Tool | None, str | None]:
         """The web as a tool for one question, or why it is not offered."""
@@ -6233,77 +6154,3 @@ class KnowledgeService:
                 recent_sources=[self._source_summary(session, source) for source in sources],
                 recent_assertions=[self._assertion_out(assertion) for assertion in assertions],
             )
-
-    def seed_if_empty(self) -> None:
-        seed_bases = (
-            {
-                "id": "single-cell-annotation",
-                "title": "Single-cell RNA-seq Annotation",
-                "eyebrow": "Computational biology",
-                "subtitle": "From raw barcodes to defensible cell identities",
-                "question": (
-                    "How do we turn expression profiles into cell identities we can explain, "
-                    "challenge, and reuse?"
-                ),
-                "description": (
-                    "A living field guide connecting experimental context, data quality, "
-                    "analytical choices, biological evidence, references, and uncertainty."
-                ),
-                "color": "green",
-                "status": "Living",
-            },
-            {
-                "id": "full-stack-development",
-                "title": "Full-stack Development",
-                "eyebrow": "Software engineering",
-                "subtitle": "A system from interface to operations",
-                "question": "How do the layers of a reliable product fit together?",
-                "description": (
-                    "Architecture, frontend, backend, data, delivery, and operations organized "
-                    "as one coherent practice."
-                ),
-                "color": "blue",
-                "status": "Growing",
-            },
-            {
-                "id": "project-management",
-                "title": "Project Management",
-                "eyebrow": "Leadership",
-                "subtitle": "Move uncertain work toward a useful outcome",
-                "question": "How do we create clarity without pretending uncertainty is gone?",
-                "description": (
-                    "A practical knowledge base for framing, planning, coordination, risk, "
-                    "delivery, and organizational learning."
-                ),
-                "color": "clay",
-                "status": "Outline",
-            },
-        )
-        with session_scope(self.sessions) as session:
-            for payload in seed_bases:
-                if not session.get(KnowledgeBaseRecord, payload["id"]):
-                    session.add(KnowledgeBaseRecord(**payload))
-            source_count = session.scalar(select(func.count()).select_from(Source)) or 0
-        self.ensure_saved_knowledge_units()
-        if source_count:
-            return
-
-        result = self.import_source(
-            CreateSourceInput(
-                title="Starter knowledge",
-                kind="note",
-                content=(
-                    "CD3D -> marker_of -> T cell\n"
-                    "T cell -> is_a -> lymphocyte\n"
-                    "Backpropagation -> depends_on -> chain rule\n"
-                    "Gradient descent -> uses -> gradients"
-                ),
-                knowledge_base_id="single-cell-annotation",
-            )
-        )
-        with session_scope(self.sessions) as session:
-            assertions = session.scalars(
-                select(Assertion).where(Assertion.source_id == result.source.id)
-            ).all()
-            for assertion in assertions:
-                assertion.status = "verified"

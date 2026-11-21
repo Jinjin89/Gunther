@@ -107,7 +107,6 @@ def make_app(
         assets_dir=directory / "assets",
         recordings_dir=directory / "recordings",
         speech_dir=directory / "speech",
-        seed_demo=False,
         auth_token=token,
         service_settings_file=settings_file,
         **(overrides or {}),

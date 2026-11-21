@@ -29,7 +29,6 @@ def make_client() -> TestClient:
     app = create_app(
         Settings(
             database_url="sqlite+pysqlite:///:memory:",
-            seed_demo=False,
             deepseek_api_key=None,
             stt_provider="compatible",
         )
@@ -610,7 +609,6 @@ def test_a_language_model_key_selects_model_extraction() -> None:
     app = create_app(
         Settings(
             database_url="sqlite+pysqlite:///:memory:",
-            seed_demo=False,
             deepseek_api_key="test-key",
         )
     )
@@ -673,7 +671,6 @@ def test_recording_audio_is_preserved_and_retrievable(tmp_path) -> None:
         Settings(
             database_url="sqlite+pysqlite:///:memory:",
             recordings_dir=tmp_path / "recordings",
-            seed_demo=False,
             deepseek_api_key=None,
         )
     )
@@ -694,7 +691,6 @@ def test_long_recording_is_saved_incrementally(tmp_path) -> None:
         Settings(
             database_url="sqlite+pysqlite:///:memory:",
             recordings_dir=tmp_path / "recordings",
-            seed_demo=False,
             deepseek_api_key=None,
         )
     )
@@ -869,7 +865,6 @@ def test_saved_answers_without_a_unit_get_one_when_the_app_starts(tmp_path: Path
             create_app(
                 Settings(
                     database_url=url,
-                    seed_demo=False,
                     deepseek_api_key=None,
                     stt_provider="compatible",
                     processing_worker_enabled=False,

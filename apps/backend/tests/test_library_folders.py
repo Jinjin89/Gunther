@@ -94,7 +94,6 @@ def make_client(tmp_path: Path, **overrides: object) -> TestClient:
         "library_root": tmp_path / "Gunther",
         "previous_assets_dir": tmp_path / "data/assets",
         "previous_recordings_dir": tmp_path / "data/recordings",
-        "seed_demo": False,
         "deepseek_api_key": None,
         "processing_worker_enabled": False,
         **overrides,

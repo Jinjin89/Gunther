@@ -37,7 +37,6 @@ def make_client(tmp_path: Path, auth_token: str | None = TOKEN) -> TestClient:
         database_url=f"sqlite+pysqlite:///{tmp_path / 'gunther.sqlite'}",
         assets_dir=tmp_path / "assets",
         recordings_dir=tmp_path / "recordings",
-        seed_demo=False,
         deepseek_api_key=None,
         stt_provider="compatible",
         auth_token=auth_token,

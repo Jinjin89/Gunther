@@ -1,42 +1,33 @@
-"""Packaging smoke: `--studio-smoke` imports every studio module and checks a fixture deck
-with the format checker, no model involved. Exit 0 means the frozen helper carries the studio."""
+"""Import Studio and check a supplied Markdown deck without a model."""
 
 from __future__ import annotations
 
+import argparse
 import importlib
 import json
 import sys
+from pathlib import Path
 
 MODULES = ("format", "prompts", "reference", "pipeline", "work")
-FIXTURE = """<!-- layout: title -->
-# Orders grew 12% while returns fell
-
-Note: opening.
-
----
-
-<!-- layout: statement -->
-# Returns fell because packaging changed
-
-Note: why.
-"""
 
 
 def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="gunther-backend --studio-smoke", description=__doc__)
+    parser.add_argument("deck", type=Path, help="Markdown deck to check")
+    args = parser.parse_args(argv)
+    try:
+        content = args.deck.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        parser.error(str(error))
+
     loaded = [importlib.import_module(f"gunther.studio.{name}").__name__ for name in MODULES]
     from gunther.studio import format as fmt
-
-    slides = fmt.split_slides(FIXTURE)
-    parsed = [fmt.parse_slide(text) for text in slides]
-    checked = fmt.check_deck(FIXTURE)
     from gunther.studio.reference import DECK_FORMAT, REPORT_FORMAT
 
-    ok = (
-        len(slides) == 2
-        and all(p.title for p in parsed)
-        and bool(DECK_FORMAT)
-        and bool(REPORT_FORMAT)
-    )
+    slides = fmt.split_slides(content)
+    parsed = [fmt.parse_slide(text) for text in slides]
+    checked = fmt.check_deck(content)
+    ok = not checked and bool(DECK_FORMAT) and bool(REPORT_FORMAT)
     print(
         json.dumps(
             {

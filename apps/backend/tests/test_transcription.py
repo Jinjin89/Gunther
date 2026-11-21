@@ -30,7 +30,6 @@ def test_audio_is_sent_to_the_configured_server_in_segments(tmp_path: Path, monk
         database_url=f"sqlite+pysqlite:///{tmp_path / 'gunther.sqlite'}",
         assets_dir=tmp_path / "assets",
         recordings_dir=tmp_path / "recordings",
-        seed_demo=False,
         processing_worker_enabled=False,
         stt_provider="compatible",
         stt_base_url="https://asr.example/v1/",

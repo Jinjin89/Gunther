@@ -73,7 +73,6 @@ def client_for(path: Path, **overrides) -> TestClient:
         "recordings_dir": path / "recordings",
         "processing_worker_enabled": False,
         "ocr_provider": "disabled",
-        "seed_demo": False,
         "deepseek_api_key": None,
         "stt_provider": "compatible",
         **overrides,

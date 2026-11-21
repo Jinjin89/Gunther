@@ -90,7 +90,6 @@ def _real_settings(data_directory: Path) -> Settings:
         database_url=f"sqlite+pysqlite:///{data_directory / 'gunther.sqlite'}",
         assets_dir=data_directory / "assets",
         recordings_dir=data_directory / "recordings",
-        seed_demo=False,
         deepseek_api_key=None,
         stt_provider="compatible",
     )
@@ -726,7 +725,6 @@ def test_backup_reads_originals_from_the_library_root(tmp_path: Path) -> None:
         library_root=library_root,
         previous_assets_dir=data_directory / "assets",
         previous_recordings_dir=data_directory / "recordings",
-        seed_demo=False,
         deepseek_api_key=None,
         stt_provider="compatible",
         processing_worker_enabled=False,
@@ -791,7 +789,6 @@ def test_outputs_built_by_agents_are_verified_in_a_backup(tmp_path: Path) -> Non
         database_url=f"sqlite+pysqlite:///{data / 'gunther.sqlite'}",
         assets_dir=data / "assets",
         recordings_dir=data / "recordings",
-        seed_demo=False,
         deepseek_api_key="sk-test-0000000000001234",
         stt_provider="compatible",
         processing_worker_enabled=False,

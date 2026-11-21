@@ -81,7 +81,6 @@ def make_client(
                 database_url=f"sqlite+pysqlite:///{tmp_path / 'gunther.sqlite'}",
                 assets_dir=tmp_path / "assets",
                 recordings_dir=tmp_path / "recordings",
-                seed_demo=False,
                 deepseek_api_key=None,
                 stt_provider="compatible",
             ),

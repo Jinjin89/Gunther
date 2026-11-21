@@ -262,7 +262,6 @@ async function main() {
         LLM_BASE_URL: `http://127.0.0.1:${model.port}/v1`,
         LLM_MODEL: "fake-model",
         AI_SUMMARIES: "off",
-        SEED_DEMO: "false",
         UV_CACHE_DIR: path.join(root, ".uv-cache"),
       },
     });

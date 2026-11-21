@@ -77,7 +77,6 @@ def make_client(tmp_path: Path, ocr_provider: OcrProvider | None = None) -> Test
                 database_url=f"sqlite+pysqlite:///{tmp_path / 'gunther.sqlite'}",
                 assets_dir=tmp_path / "assets",
                 recordings_dir=tmp_path / "recordings",
-                seed_demo=False,
                 deepseek_api_key=None,
                 stt_provider="compatible",
                 processing_worker_enabled=False,
@@ -637,11 +636,11 @@ def test_character_limit_is_applied_during_html_extraction(
     path = tmp_path / "long.html"
     path.write_bytes(b"<p>" + (b"A" * 200) + b"</p>")
 
-    text, limitation = asset_service.extract_asset_text(path, path.name, "text/html")
+    result = asset_service.extract_asset_content(path, path.name, "text/html")
 
-    assert len(text) == 40
-    assert limitation is not None
-    assert "limited to 40 characters" in limitation
+    assert len(result.text) == 40
+    assert result.limitation is not None
+    assert "limited to 40 characters" in result.limitation
 
 
 def test_docx_compression_bomb_limit_degrades_to_downloadable_original(

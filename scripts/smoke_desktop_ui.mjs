@@ -429,7 +429,6 @@ async function run() {
       SERVICE_SETTINGS_FILE: path.join(dataDirectory, "service-settings.json"),
       // Originals and readable library folders live in a root inside the smoke's data.
       LIBRARY_ROOT: libraryRoot,
-      SEED_DEMO: "false",
       UV_CACHE_DIR: path.join(root, ".uv-cache"),
     };
     delete backendEnvironment.GUNTHER_DESKTOP_SIDECAR;

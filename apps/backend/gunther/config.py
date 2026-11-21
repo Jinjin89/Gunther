@@ -98,9 +98,6 @@ class Settings(BaseSettings):
         "http://tauri.localhost",
         "tauri://localhost",
     ]
-    # Production and new local workspaces start as the user's own empty library.
-    # Demo content remains opt-in through SEED_DEMO=true for product tours.
-    seed_demo: bool = False
     processing_worker_enabled: bool = True
     # Search by meaning as well as by keyword, with a local model (Chinese and
     # English); nothing leaves the device. The model ships with the desktop app;

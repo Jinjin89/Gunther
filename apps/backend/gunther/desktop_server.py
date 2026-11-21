@@ -228,7 +228,6 @@ def _desktop_settings(
         # Spoken answers are a cache: kept with the app's data, not next to the bundled code.
         "speech_dir": data_dir / "speech",
         "auth_token": auth_token,
-        "seed_demo": False,
         "service_settings_file": (config_dir or data_dir) / SERVICE_SETTINGS_FILE_NAME,
     }
     if library_root is not None:

@@ -604,17 +604,6 @@ def extract_asset_content(
     )
 
 
-def extract_asset_text(
-    path: Path,
-    file_name: str,
-    media_type: str,
-    ocr_provider: OcrProvider | None = None,
-) -> tuple[str, str | None]:
-    """Return extracted text and a user-readable limitation, if any."""
-    result = extract_asset_content(path, file_name, media_type, ocr_provider)
-    return result.text, result.limitation
-
-
 class AssetService:
     """Stream immutable originals to disk, then create the normal reviewable Source."""
 

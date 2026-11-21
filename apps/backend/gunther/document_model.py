@@ -107,20 +107,6 @@ class Evidence:
             "manifest": self.manifest,
         }
 
-    @classmethod
-    def from_json(cls, data: dict) -> Evidence:
-        blocks = []
-        for item in data.get("blocks", []):
-            box = item.get("box")
-            blocks.append(Block(**{**item, "box": tuple(box) if box else None}))
-        return cls(
-            blocks,
-            pages={int(page): size for page, size in data.get("pages", {}).items()},
-            metadata=data.get("metadata", {}),
-            body_font_size=data.get("bodyFontSize"),
-            manifest=data.get("manifest", {}),
-        )
-
 
 # 2. Plan ------------------------------------------------------------------------
 

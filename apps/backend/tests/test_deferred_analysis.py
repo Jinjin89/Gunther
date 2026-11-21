@@ -17,7 +17,7 @@ def client_for(path: Path) -> TestClient:
     return TestClient(create_app(Settings(
         database_url=f"sqlite+pysqlite:///{path / 'db.sqlite'}",
         assets_dir=path / "assets", recordings_dir=path / "recordings",
-        processing_worker_enabled=False, ocr_provider="disabled", seed_demo=False,
+        processing_worker_enabled=False, ocr_provider="disabled",
         deepseek_api_key=None, stt_provider="compatible",
     )))
 

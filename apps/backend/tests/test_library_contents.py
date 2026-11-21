@@ -31,7 +31,6 @@ def client(tmp_path: Path):
             assets_dir=tmp_path / "assets",
             recordings_dir=tmp_path / "recordings",
             library_root=root,
-            seed_demo=False,
             deepseek_api_key=None,
             processing_worker_enabled=False,
         )

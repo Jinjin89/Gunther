@@ -326,8 +326,6 @@ def create_app(
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await asyncio.to_thread(sweep_listen_copies)
         knowledge_service.ensure_saved_knowledge_units()
-        if active_settings.seed_demo:
-            knowledge_service.seed_if_empty()
         # In-memory SQLite uses a single shared connection: tests drive run_once
         # explicitly rather than allowing concurrent transactions on that connection.
         background = not active_settings.database_url.endswith(":memory:")

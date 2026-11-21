@@ -34,7 +34,6 @@ def _settings(tmp_path: Path, *, quota: int) -> Settings:
         recordings_dir=tmp_path / "recordings",
         storage_quota_bytes=quota,
         storage_min_free_bytes=0,
-        seed_demo=False,
         deepseek_api_key=None,
     )
 

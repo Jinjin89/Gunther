@@ -211,7 +211,6 @@ def make_client(tmp_path: Path) -> TestClient:
         database_url=f"sqlite+pysqlite:///{tmp_path / 'gunther.sqlite'}",
         assets_dir=tmp_path / "assets",
         recordings_dir=tmp_path / "recordings",
-        seed_demo=False,
         processing_worker_enabled=False,
         auth_token=SIDECAR_TOKEN,
         service_settings_file=tmp_path / "service-settings.json",
