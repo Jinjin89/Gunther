@@ -183,12 +183,8 @@ so far are `/compare` (Compare sources) and `/research` (Deep research, below).
   if the revising call fails the answer stays as written and a note says so. The steps
   read "Checked the method" and "Revised to follow the method".
 - **Shown.** The answer's context keeps `skill` (`name`, `version`, `title`, `auto`) and
-  the answer says "Used: Compare sources" beside the model line.
-- **Auto-match** (`ASK_AUTO_SKILLS=true`, off by default, no switch in the app). When on
-  and no skill was chosen, the planner is offered the skills and may name one when the
-  message clearly asks for that method. The same question is then planned again with the
-  skill's method, and `skill.auto` is true. It stays off until the exam shows it picks
-  well (cases SK2 and SK3, `--auto-skills`).
+  the answer says "Used: Compare sources" beside the model line. Older answers with
+  `skill.auto` equal to `true` show "picked by Ask". New answers use a skill when you choose it.
 
 ## Deep research (`/research`)
 

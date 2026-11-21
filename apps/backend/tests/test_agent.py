@@ -48,8 +48,10 @@ from gunther.agent import (
 )
 from gunther.answer_runs import AnswerRun
 from gunther.config import Settings
+from gunther.database import session_scope
 from gunther.llm import Turn
 from gunther.main import create_app
+from gunther.models import SessionMessage
 from gunther.service import conversation_history
 from gunther.skillbook import ask_skills
 from gunther.web_capture import (
@@ -551,8 +553,6 @@ def test_a_failed_check_keeps_the_answer_and_says_so() -> None:
 
 
 def test_the_history_the_model_reads_turns_labels_back_into_pool_numbers() -> None:
-    from gunther.models import SessionMessage
-
     refs = [6, 4]
     message = SessionMessage(
         id="m",
@@ -1232,7 +1232,6 @@ def test_sources_are_numbered_in_the_order_the_text_cites_them_and_uncited_ones_
 
 def test_renumbering_and_the_history_the_model_reads_use_the_same_ids() -> None:
     from gunther.agent import renumber_citations
-    from gunther.models import SessionMessage
     from gunther.service import conversation_history
 
     assert renumber_citations("A [6]. B [4][6]. C [?].", [6, 4]) == "A [1]. B [2][1]. C [?]."
@@ -1687,7 +1686,7 @@ def test_a_skill_adds_its_method_to_the_planner_and_writer() -> None:
     writer = writing_system(fake)
     assert METHOD in writer and "Never merge two sources into one claim" in writer
     assert writer.index("You are Gunther") < writer.index(METHOD)
-    assert result.skill is COMPARE and not result.skill_auto
+    assert result.skill is COMPARE
 
 
 def test_a_skill_with_no_budgets_uses_asks_default_one() -> None:
@@ -1796,50 +1795,6 @@ def test_a_rework_reply_without_a_skill_is_still_not_checked() -> None:
     assert not result.checked and result.skill is None
 
 
-def test_without_a_skill_nothing_about_a_method_is_sent() -> None:
-    fake = FakeProvider(agent_replies("Hi!", {"action": "answer"}))
-    run(fake, box(lib(lambda q: [])), skills={})
-    for request in fake.requests:
-        assert "Method (from" not in system_of(request)
-        assert "Skills you may use" not in system_of(request)
-
-
-def test_auto_match_picks_a_skill_when_it_is_offered_and_plans_again_with_it() -> None:
-    searched: list[str] = []
-    fake = FakeProvider(
-        agent_replies(
-            "A [1]. B [1].",
-            {"action": "search_library", "query": "ignored", "skill": "compare"},
-            {"action": "search_library", "query": "Harlow vs Okafor"},
-            {"action": "answer"},
-        )
-    )
-    toolbox = box(lib(lambda q: searched.append(q) or [passage("Trial", "18%")]))
-    result = run(fake, toolbox, skills=ask_skills())
-    planners = [system_of(r) for r in fake.requests if is_planning(r)]
-    assert "Skills you may use" in planners[0] and "- compare: " in planners[0]
-    assert METHOD not in planners[0] and METHOD in planners[1]
-    assert "Skills you may use" not in planners[1]
-    assert searched == ["Harlow vs Okafor"]  # the first plan's actions never ran
-    assert result.skill is COMPARE and result.skill_auto
-    assert METHOD in writing_system(fake)
-
-
-def test_auto_match_ignores_a_skill_it_does_not_know() -> None:
-    fake = FakeProvider(
-        agent_replies("A.", {"action": "answer", "skill": "poetry"}, {"action": "answer"})
-    )
-    result = run(fake, box(lib(lambda q: [])), skills=ask_skills())
-    assert result.skill is None and sum(is_planning(r) for r in fake.requests) == 1
-
-
-def test_a_chosen_skill_is_not_second_guessed_by_auto_match() -> None:
-    fake = FakeProvider(agent_replies("A.", {"action": "answer", "skill": "compare"}))
-    result = run(fake, box(lib(lambda q: [])), skill=COMPARE, skills=ask_skills())
-    assert not result.skill_auto
-    assert not any("Skills you may use" in system_of(r) for r in fake.requests)
-
-
 def ask(client: TestClient, session_id: str, **body):
     return ask_turn(client, session_id, {"content": "Compare them", **body}, headers=SIDECAR)
 
@@ -1888,30 +1843,43 @@ def test_an_answer_keeps_the_skill_it_followed(tmp_path: Path) -> None:
     assert plain["context"]["skill"] is None
 
 
-def test_auto_match_is_off_by_default(tmp_path: Path) -> None:
+def test_plain_ask_ignores_a_skill_in_the_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ASK_AUTO_SKILLS", "true")
     fake = FakeProvider(agent_replies("A.", {"action": "answer", "skill": "compare"}))
     with app_for(tmp_path, fake) as client:
         session_id = ready_session(client)
         answer = ask(client, session_id)["assistantMessage"]
-    assert not any("Skills you may use" in system_of(r) for r in fake.requests)
+    assert answer["content"] == "A."
     assert answer["context"]["skill"] is None
+    assert sum(is_planning(r) for r in fake.requests) == 1
+    for request in fake.requests:
+        assert "Skills you may use" not in system_of(request)
+        assert "Method (from" not in system_of(request)
 
 
-def test_auto_match_picks_a_skill_when_on(tmp_path: Path) -> None:
-    fake = FakeProvider(
-        agent_replies(
-            "A [1].",
-            {"action": "answer", "skill": "compare"},
-            {"action": "answer"},
-            checked=method_check((True, True, True)),
-        )
-    )
-    with app_for(tmp_path, fake, ask_auto_skills=True) as client:
+def test_a_saved_automatic_skill_keeps_its_attribution(tmp_path: Path) -> None:
+    fake = FakeProvider(agent_replies("A follow-up.", {"action": "answer"}))
+    previous_skill = {"name": "compare", "version": 1, "title": "Compare sources", "auto": True}
+    with app_for(tmp_path, fake) as client:
         session_id = ready_session(client)
-        answer = ask(client, session_id)["assistantMessage"]
-    assert any("Skills you may use" in system_of(r) for r in fake.requests)
-    assert answer["context"]["skill"]["name"] == "compare"
-    assert answer["context"]["skill"]["auto"] is True
+        with session_scope(client.app.state.knowledge_service.sessions) as session:
+            session.add(
+                SessionMessage(
+                    id="msg_earlier_answer",
+                    session_id=session_id,
+                    role="assistant",
+                    content="An earlier comparison.",
+                    context_json=json.dumps({"responder_mode": "model", "skill": previous_skill}),
+                )
+            )
+        saved = client.get(f"/api/sessions/{session_id}", headers=SIDECAR).json()
+        [earlier] = saved["messages"]
+        assert earlier["content"] == "An earlier comparison."
+        assert earlier["context"]["skill"] == previous_skill
+        follow_up = ask(client, session_id, content="What about the first source?")
+    assert follow_up["assistantMessage"]["context"]["skill"] is None
 
 
 # Research -------------------------------------------------------------------------------------
@@ -2280,25 +2248,3 @@ def test_an_asking_answer_is_saved_and_the_next_turn_can_answer_it(tmp_path: Pat
     framing = [r for r in fake.requests if is_framing(r)][-1]
     roles = [m["role"] for m in framing["messages"]]
     assert "assistant" in roles  # the second framing sees the question it asked
-
-
-def test_auto_match_that_picks_research_frames_the_question_before_searching() -> None:
-    searched: list[str] = []
-
-    def search(query: str) -> list[Evidence]:
-        searched.append(query)
-        return doc(query)
-
-    fake = FakeProvider(
-        agent_replies(
-            "Cool roofs help [1].",
-            {"action": "search_library", "query": "ignored", "skill": "research"},
-            {"action": "answer"},
-            framed=FRAME,
-            kept=serving,
-        )
-    )
-    result = run(fake, box(lib(search)), skills=ask_skills())
-    assert result.skill is RESEARCH and result.skill_auto
-    assert searched == ["trial results", "reanalysis", "downsides"]  # not the first plan's search
-    assert result.research["state"] == "done" and len(result.work.sub_questions) == 3

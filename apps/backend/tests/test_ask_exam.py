@@ -98,8 +98,8 @@ CHECKED = {"tool": "search_library", "label": "Checked your library for a claim:
 
 def test_cases_file_loads_and_every_case_is_valid() -> None:
     cases = score.load_cases()
-    assert len(cases) == 31
-    assert len({c.id for c in cases}) == 31
+    assert len(cases) == 29
+    assert len({c.id for c in cases}) == 29
     assert {c.category for c in cases} <= score.CATEGORIES
     # Every title a case names is a note of the demo library.
     titles = set(score.library_texts())
@@ -108,9 +108,9 @@ def test_cases_file_loads_and_every_case_is_valid() -> None:
         assert set(c.cite_any) <= titles and set(c.must_not_cite) <= titles | {"*"}
     # Every case carries every field of the contract, even if it is left empty.
     raw = score.CASES_FILE.read_text(encoding="utf-8")
-    assert raw.count("[[case]]") == 31
+    assert raw.count("[[case]]") == 29
     for field in score.Case.__dataclass_fields__:
-        assert raw.count(f"\n{field} = ") == 31, field
+        assert raw.count(f"\n{field} = ") == 29, field
 
 
 def test_demo_library_keeps_its_only_here_facts_in_one_file() -> None:
@@ -278,7 +278,11 @@ max_unverified = 0
     folder = run_exam(
         options,
         model_client_factory=fake.factory,
-        overrides={"deepseek_api_key": "sk-test-0000000000001234", "stt_provider": "compatible"},
+        overrides={
+            "deepseek_api_key": "sk-test-0000000000001234",
+            "stt_provider": "compatible",
+            "tavily_api_key": None,
+        },
         results_root=tmp_path / "results",
         library_dir=library,
         cases_file=cases,
@@ -295,6 +299,7 @@ def test_runner_end_to_end_with_fake_models(tmp_path: Path) -> None:
     assert set(results) == {"L1", "R1"}
     assert results["L1"]["checks"]["searched"] is True
     assert results["L1"]["outcome"]["citations"][0]["sourceTitle"] == "The trial"
+    assert results["L1"]["outcome"]["context"]["skill"] is None
     assert results["L1"]["failures"] == []
     # The second case asks a question first, then rework: the last answer is scored.
     assert results["R1"]["outcome"]["answer"]
@@ -351,33 +356,19 @@ def test_agent_efforts_reach_the_agent(tmp_path: Path, monkeypatch) -> None:
     assert seen == {"plan_effort": "off", "check_effort": "medium"}
 
 
-def test_auto_skill_cases_run_only_with_the_auto_skills_flag(tmp_path: Path) -> None:
+def test_the_exam_lists_cases_skipped_without_tavily(tmp_path: Path) -> None:
     extra = """
 [[case]]
-id = "A1"
-category = "auto-skill"
-question = "How many buildings were in the trial?"
-needs = ["auto_skills"]
-expect_skill = ""
+id = "W1"
+category = "web"
+question = "What are the latest findings from outside the library?"
+web = true
+needs = ["tavily"]
 """
-    (tmp_path / "off").mkdir()
-    (tmp_path / "on").mkdir()
-    folder = run_with_fakes(tmp_path / "off", Options(label="off", only=["A1", "L1"]), extra)
+    folder = run_with_fakes(tmp_path, Options(label="fake", only=["W1", "L1"]), extra)
     raw = json.loads((folder / "raw.json").read_text(encoding="utf-8"))
     assert set(raw["configurations"][0]["results"]) == {"L1"}
-    assert "A1 needs auto_skills" in (folder / "report.md").read_text(encoding="utf-8")
-    folder = run_with_fakes(
-        tmp_path / "on", Options(label="on", only=["A1"], auto_skills=True), extra
-    )
-    raw = json.loads((folder / "raw.json").read_text(encoding="utf-8"))
-    ran = raw["configurations"][0]["results"]["A1"]
-    assert ran["checks"]["skill"] is True  # no skill picked, none expected
-
-
-def test_the_runner_flag_turns_auto_skills_on() -> None:
-    from evals.ask.run import parse
-
-    assert not parse([]).auto_skills and parse(["--auto-skills"]).auto_skills
+    assert "W1 needs tavily" in (folder / "report.md").read_text(encoding="utf-8")
 
 
 def test_research_cases_ask_first_or_stay_in_their_budget() -> None:

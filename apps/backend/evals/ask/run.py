@@ -55,8 +55,6 @@ class Options:
     label: str = "exam"
     reseed: bool = False
     repeat: int = 1
-    # Let Ask pick a skill itself (ASK_AUTO_SKILLS); the auto-skill cases only run with it.
-    auto_skills: bool = False
 
 
 @dataclass(frozen=True)
@@ -332,10 +330,7 @@ def run_configuration(
             judge_model = gateway.get(judge_ref)
             if judge_model is None:
                 raise ExamError(f"The judge {judge_ref} is not a model that is set up.")
-            have = {
-                "tavily": client.app.state.online_search.mode == "tavily",
-                "auto_skills": service.auto_skills,
-            }
+            have = {"tavily": client.app.state.online_search.mode == "tavily"}
             for case in cases:
                 missing = [need for need in case.needs if not have.get(need)]
                 if missing:
@@ -378,8 +373,6 @@ def run_exam(
     ``model_client_factory`` and ``overrides`` stand in for real models in tests only.
     """
 
-    if options.auto_skills:
-        overrides = {**(overrides or {}), "ask_auto_skills": True}
     settings_source = options.settings
     if settings_source is None and os.environ.get("SERVICE_SETTINGS_FILE"):
         settings_source = Path(os.environ["SERVICE_SETTINGS_FILE"])
@@ -509,11 +502,6 @@ def parse(argv: list[str] | None = None) -> Options:
         default=1,
         help="run each case this many times; a case's result is then its pass rate",
     )
-    parser.add_argument(
-        "--auto-skills",
-        action="store_true",
-        help="let Ask pick a skill itself (ASK_AUTO_SKILLS=true); the auto-skill cases need it",
-    )
     args = parser.parse_args(argv)
     split = lambda text: [part.strip() for part in text.split(",") if part.strip()]  # noqa: E731
     return Options(
@@ -527,7 +515,6 @@ def parse(argv: list[str] | None = None) -> Options:
         label=args.label,
         reseed=args.reseed,
         repeat=max(1, args.repeat),
-        auto_skills=args.auto_skills,
     )
 
 

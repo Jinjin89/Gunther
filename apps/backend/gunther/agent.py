@@ -204,9 +204,8 @@ class AgentResult:
     support_notes: tuple[str, ...] = ()
     # What this question found: the agent's working memory, not the visible `notes`.
     work: Notes | None = None
-    # The skill the answer followed (an AskSkill), and whether the planner picked it itself.
+    # The explicitly selected skill the answer followed.
     skill: AskSkill | None = None
-    skill_auto: bool = False
     # Research only: {"state": "asking" | "done" | "stopped_early", "budget", "used", "limits",
     # "coreQuestion", "doneWhen"}.
     research: dict[str, Any] | None = None
@@ -241,8 +240,6 @@ class Plan(BaseModel):
     # False when the reply only reworks text the user gave or earlier answers.
     new_facts: bool = True
     mode: Literal["transform", "reuse", "evidence"] = "evidence"
-    # A skill's command, only when the planner was offered skills and one clearly fits.
-    skill: str = Field(default="", max_length=40)
 
     @model_validator(mode="before")
     @classmethod
@@ -506,16 +503,6 @@ def with_method(system: str, skill: AskSkill | None, step: str) -> str:
     return (
         f"{system}\n\nMethod (from the skill “{skill.title}”):\n{skill.method(step)}\n"
         "If the method conflicts with the rules above, the rules win."
-    )
-
-
-def skills_offered(skills: Mapping[str, AskSkill]) -> str:
-    """The planner's list of skills it may pick, when Ask may choose one itself."""
-
-    lines = "\n".join(f"- {skill.command}: {skill.description}" for skill in skills.values())
-    return (
-        "Skills you may use (set \"skill\" to its name only when the message clearly asks for "
-        f"that method):\n{lines}"
     )
 
 
@@ -926,7 +913,6 @@ class AskAgent:
         brief: str = "",
         skill: AskSkill | None = None,
         budget_name: str | None = None,
-        skills: Mapping[str, AskSkill] | None = None,
         stopping: Callable[[], bool] | None = None,
     ) -> AgentResult:
         chosen = budget or (
@@ -956,7 +942,6 @@ class AskAgent:
             brief,
             skill,
             budget_name,
-            skills,
             stopping,
             accounting,
         )
@@ -977,7 +962,6 @@ class AskAgent:
         brief: str = "",
         skill: AskSkill | None = None,
         budget_name: str | None = None,
-        skills: Mapping[str, AskSkill] | None = None,
         stopping: Callable[[], bool] | None = None,
         accounting: RunBudget | None = None,
     ) -> AgentResult:
@@ -990,15 +974,13 @@ class AskAgent:
         to stop the work. ``budget`` is how far gathering and the checks may go. ``brief`` is
         the conversation's rendered brief (what the user wants), shown to the planner and
         the writer. ``skill`` is the method to follow (its budget, named by ``budget_name``,
-        unless ``budget`` is given); ``skills``, when there is no ``skill``, are the ones the
-        planner may pick for itself. A skill that frames (``/research``) first splits the
+        unless ``budget`` is given). A skill that frames (``/research``) first splits the
         question into sub-questions, or asks the user one or two things. ``stopping``, asked
         before each step of gathering, says the reader wants to stop: gathering ends and the
         answer is written from what is held.
         """
 
         raw = events or (lambda _event: None)
-        auto = False
         by_default = Budget(
             searches=self.limits.tool_calls,
             leads=self.limits.leads,
@@ -1148,7 +1130,6 @@ class AskAgent:
                     notes=tuple(notes),
                     error=str(error),
                     skill=skill,
-                    skill_auto=auto,
                     research=research_state("done"),
                 )
             work.core_question = " ".join(framed.core_question.split())
@@ -1166,7 +1147,6 @@ class AskAgent:
                     effort=effort,
                     notes=tuple(notes),
                     skill=skill,
-                    skill_auto=auto,
                     research=research_state("asking"),
                 )
             for part in framed.sub_questions[: budget.sub_questions[1]]:
@@ -1188,7 +1168,6 @@ class AskAgent:
                     notes=tuple(notes),
                     error=error,
                     skill=skill,
-                    skill_auto=auto,
                     research=research_state("done"),
                 )
             steps.append(Step("frame", label, "", len(work.sub_questions)))
@@ -1236,9 +1215,6 @@ class AskAgent:
             )
             system = f"{PLANNER}\n\n{RESEARCH_PLAN}" if work.sub_questions else PLANNER
             system = with_method(system, skill, "plan")
-            offer = bool(skills) and skill is None
-            if offer:
-                system = f"{system}\n\n{skills_offered(skills or {})}"
             with trace.step(
                 "plan", "Deciding the next step" if steps else "Deciding what to look up"
             ) as planning:
@@ -1262,7 +1238,6 @@ class AskAgent:
                         break
                     plan = Plan(actions=[Action(action=first.name, query=question[:300])])
                 final_plan = plan
-                picked = (skills or {}).get(plan.skill.strip().lstrip("/")) if offer else None
                 chosen = (
                     [Action(action="answer")]
                     if plan.mode == "transform"
@@ -1274,22 +1249,7 @@ class AskAgent:
                     query=chosen[0].query,
                     actions=[f"{a.action}: {a.query}" if a.query else a.action for a in chosen],
                     new_facts=plan.new_facts,
-                    skill=picked.command if picked else "",
                 )
-            if picked is not None and calls == 1:
-                # The method changes how to plan: plan again with it, before anything runs.
-                skill, auto = picked, True
-                budget = skill.budget(budget_name)
-                if accounting:
-                    accounting.searches_limit, accounting.reads_limit = (
-                        budget.searches,
-                        budget.reads,
-                    )
-                    accounting.gathering_limit = budget.calls
-                    accounting.total_limit = budget.total_calls or budget.calls + 14
-                if skill.frame and (early := open_research()) is not None:
-                    return early
-                continue
             ran = 0
             finished = False
             results: list[tuple[Tool, str, list[Evidence]]] = []
@@ -1365,7 +1325,6 @@ class AskAgent:
                 notes=tuple(notes),
                 error=str(error),
                 skill=skill,
-                skill_auto=auto,
                 research=research_state("stopped_early" if stopped else "done")
                 if researching
                 else None,
@@ -1469,7 +1428,6 @@ class AskAgent:
             coverage=coverage,
             work=work if work.findings or work.sub_questions else None,
             skill=skill,
-            skill_auto=auto,
             research=research_state("stopped_early" if stopped else "done")
             if researching
             else None,

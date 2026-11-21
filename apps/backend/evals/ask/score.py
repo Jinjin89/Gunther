@@ -30,7 +30,6 @@ CATEGORIES = {
     "section",
     "long",
     "skill",
-    "auto-skill",
     "research",
 }
 SEARCH_RULES = {"must", "must_not", "any"}
@@ -176,7 +175,7 @@ def checks(case: Case, outcome: Outcome) -> dict[str, bool]:
     lowered = outcome.answer.lower()
     for text in case.must_not_contain:
         found[f"without {text!r}"] = text.lower() not in lowered
-    if case.expect_skill or case.category == "auto-skill":
+    if case.expect_skill:
         found["skill"] = str((context.get("skill") or {}).get("name", "")) == case.expect_skill
     if case.expect_state:
         found["state"] = str((context.get("research") or {}).get("state", "")) == case.expect_state

@@ -357,7 +357,6 @@ class _Answer:
     budget_usage: dict | None = None
     work: Work | None = None
     skill: AskSkill | None = None
-    skill_auto: bool = False
     research: dict | None = None
 
 
@@ -478,8 +477,6 @@ class KnowledgeService:
         self.slide_renderer = None
         # Reads a stored asset: id -> (path, media type, name). Set by the app.
         self.asset_reader: Callable[[str], tuple[Path, str, str]] | None = None
-        # Let Ask pick a skill itself from the message (settings.ask_auto_skills).
-        self.auto_skills = False
         # (plan effort, check effort) for Ask's own steps; the exam sets it, nothing else.
         self.agent_efforts: tuple[Effort, Effort] | None = None
         # Reads a public web page for the agent: URL -> (text, title). Set by the app; it
@@ -2154,7 +2151,6 @@ class KnowledgeService:
             brief=brief,
             skill=skill,
             budget_name=budget,
-            skills=ask_skills() if self.auto_skills and skill is None else None,
             stopping=stopping,
         )
         about = {
@@ -2164,7 +2160,6 @@ class KnowledgeService:
             "steps": result.steps,
             "notes": result.notes,
             "skill": result.skill,
-            "skill_auto": result.skill_auto,
             "research": result.research,
         }
         if result.error is not None:
@@ -2683,7 +2678,7 @@ class KnowledgeService:
                         "name": response.skill.name,
                         "version": response.skill.version,
                         "title": response.skill.title,
-                        "auto": response.skill_auto,
+                        "auto": False,
                     }
                     if response.skill
                     else None

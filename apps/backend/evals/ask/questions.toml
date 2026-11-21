@@ -575,50 +575,6 @@ expect_skill = "compare"
 expect_state = ""
 
 [[case]]
-id = "SK2"
-category = "auto-skill"
-history = []
-question = "What are the differences between the Harlow trial and Okafor's reanalysis?"
-web = false
-skill = ""
-budget = ""
-search = "any"
-cite_any = []
-must_not_cite = []
-cite_web = false
-must_mention = []
-must_not_claim = []
-max_unverified = 1
-max_words = 0
-max_searches = 0
-must_not_contain = []
-needs = ["auto_skills"]
-expect_skill = "compare"
-expect_state = ""
-
-[[case]]
-id = "SK3"
-category = "auto-skill"
-history = []
-question = "What subsidy does Velmora offer for cool roofs?"
-web = false
-skill = ""
-budget = ""
-search = "any"
-cite_any = []
-must_not_cite = []
-cite_web = false
-must_mention = []
-must_not_claim = []
-max_unverified = 1
-max_words = 0
-max_searches = 0
-must_not_contain = []
-needs = ["auto_skills"]
-expect_skill = ""
-expect_state = ""
-
-[[case]]
 id = "RS1"
 category = "research"
 history = []

@@ -618,8 +618,8 @@ class ConversationContextOut(ApiModel):
     # What this question found, for the context panel: {"subQuestions": [{id, text, query}],
     # "findings": [{ref | title, serves, says}]}. `ref` is the number in the answer's text.
     work: dict[str, object] | None = None
-    # The skill the answer followed: {"name", "version", "title", "auto"}; auto when Ask
-    # picked it from the message instead of the person choosing it.
+    # The skill the answer followed: {"name", "version", "title", "auto"}.
+    # Older answers may have auto=True from automatic selection.
     skill: dict[str, object] | None = None
     # Deep research: {"state": "asking" | "done" | "stopped_early", "budget", "used": {"searches",
     # "reads"}, "limits": {"searches", "reads"}, "coreQuestion", "doneWhen"}. "asking": the answer

@@ -1,6 +1,6 @@
 # The Ask exam
 
-A fixed set of 25 questions over a small demo library (ten notes about cool roofs in a made-up city, "Velmora"), asked through the real Ask path with real models and scored. It is the before/after measure for changes to Ask, so every number comes from the same library, the same questions and the same judge. It is a developer tool: nothing in the app or the sidecar uses it.
+A fixed set of 29 questions over a small demo library (ten notes about cool roofs in a made-up city, "Velmora"), asked through the real Ask path with real models and scored. It is the before/after measure for changes to Ask, so every number comes from the same library, the same questions and the same judge. It is a developer tool: nothing in the app or the sidecar uses it.
 
 ## Run it
 
@@ -10,14 +10,16 @@ From `apps/backend`:
 .venv/bin/python -m evals.ask.run --label baseline
 ```
 
-It needs a model, and for the two web questions a Tavily key (without one those cases are skipped and listed). Give it keys in one of two ways, both gitignored:
+The exam needs a model. Three cases also need a Tavily key and are listed as skipped when the key is missing. Supply keys through either of these git-ignored paths.
 
 - a `.env` at the repo root: `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL`, `TAVILY_API_KEY`; or
 - a copy of the app's `service-settings.json`: `--settings PATH` (or the env var `SERVICE_SETTINGS_FILE`). It carries the models, the job-to-model choices and the Tavily key as saved in Settings.
 
-Useful flags: `--models REF,REF` (default: the Ask job's model), `--writer-effort LEVEL`, `--plan-effort off,low` (default `low`, as in the app), `--check-effort off,low` (default `off`; every combination is run), `--judge REF` (default: the first model; a warning is printed when the judge is also under test), `--only L1,C2`, `--label NAME`, `--reseed`, `--auto-skills` (let Ask pick a skill itself, as `ASK_AUTO_SKILLS=true`; the auto-skill cases SK2 and SK3 are skipped and listed without it), `--repeat N` (run each case N times on the same copy; a case's result is then its pass rate, the scorecard shows means over all runs and lists the cases whose runs disagreed, and the raw results are kept as `L1#1`, `L1#2`; one run is noisy, so use `--repeat 2` or more to compare before and after).
+Use `--models REF,REF` to compare models or omit it to use the Ask job's model. Use `--writer-effort LEVEL`, `--plan-effort off,low`, and `--check-effort off,low` to choose effort. The exam runs every combination of model, planning effort, and checking effort. The default planning effort is `low` and the default checking effort is `off`. Use `--judge REF` to choose a judge or omit it to use the first model. The report warns when the judge is also under test. `--only L1,C2` selects cases, `--label NAME` names the run, and `--reseed` rebuilds the library template.
 
-A full run is about 28 questions, 8 of them with earlier messages asked first (47 Ask turns in all); each turn makes roughly 4 to 12 model calls, plus one judge call per scored answer. Expect on the order of 300 to 600 calls and 10 to 30 minutes per configuration, depending on the model. Seeding the library the first time adds a few minutes of reading and indexing.
+Use `--repeat N` to run each case N times on the same copy. The scorecard reports pass rates and lists cases whose results differed. The raw results are kept as `L1#1`, `L1#2`, and so on. Use `--repeat 2` or more to compare before and after.
+
+A full run has 29 questions and 51 Ask turns, including the earlier messages in eight cases. Each turn makes roughly 4 to 12 model calls, with one judge call per scored answer. Expect on the order of 300 to 600 calls and 10 to 30 minutes per configuration, depending on the model. Seeding the library the first time adds a few minutes of reading and indexing.
 
 ## Why a template library
 
