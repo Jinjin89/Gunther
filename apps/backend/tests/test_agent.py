@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import httpx
 import openai
+import pytest
 from fake_models import (
     FakeProvider,
     agent_replies,
@@ -28,6 +29,7 @@ from fake_models import (
 )
 from fastapi.testclient import TestClient
 
+from evals.sse import AnswerStreamError, ask_turn, read_events
 from gunther import online_search
 from gunther.agent import (
     AskAgent,
@@ -677,11 +679,12 @@ def test_web_results_become_citations_and_the_steps_are_kept(tmp_path: Path, mon
     )
     with app_for(tmp_path, fake, tavily_api_key="tvly-test-0000000000001234") as client:
         session_id = ready_session(client)
-        reply = client.post(
-            f"/api/sessions/{session_id}/messages",
+        reply = ask_turn(
+            client,
+            session_id,
+            {"content": "What is new about CD3D?", "web": True},
             headers=SIDECAR,
-            json={"content": "What is new about CD3D?", "web": True},
-        ).json()["assistantMessage"]
+        )["assistantMessage"]
     assert reply["content"] == "CD3D is covered by a recent review [1]."
     [citation] = reply["citations"]
     assert citation["kind"] == "web" and citation["url"] == "https://www.example.org/cd3d"
@@ -707,11 +710,9 @@ def test_the_web_stays_off_unless_the_question_asks_for_it(tmp_path: Path, monke
     )
     with app_for(tmp_path, fake, tavily_api_key="tvly-test-0000000000001234") as client:
         session_id = ready_session(client)
-        reply = client.post(
-            f"/api/sessions/{session_id}/messages",
-            headers=SIDECAR,
-            json={"content": "CD3D?"},
-        ).json()["assistantMessage"]
+        reply = ask_turn(
+            client, session_id, {"content": "CD3D?"}, headers=SIDECAR,
+        )["assistantMessage"]
     planning = next(r for r in fake.requests if is_planning(r))
     assert "the web was not searched" in str(planning["messages"][-1]["content"])
     assert reply["context"]["webSearched"] is False
@@ -732,25 +733,15 @@ def test_without_a_model_the_reply_says_a_model_is_needed(tmp_path: Path) -> Non
     )
     with TestClient(create_app(settings, model_client_factory=fake.factory)) as client:
         session_id = ready_session(client)
-        reply = client.post(
-            f"/api/sessions/{session_id}/messages", headers=SIDECAR, json={"content": "CD3D?"}
-        ).json()["assistantMessage"]
+        reply = ask_turn(
+            client, session_id, {"content": "CD3D?"}, headers=SIDECAR,
+        )["assistantMessage"]
     assert "Settings → Models" in reply["context"]["modelError"]
     assert fake.requests == []
     assert json.dumps(reply)  # serialisable
 
 
 # Streaming and Home --------------------------------------------------------------------
-
-
-def read_events(response) -> list[tuple[str, dict]]:
-    events, name = [], ""
-    for line in response.iter_lines():
-        if line.startswith("event: "):
-            name = line[7:]
-        elif line.startswith("data: "):
-            events.append((name, json.loads(line[6:])))
-    return events
 
 
 def test_an_answer_can_be_streamed_as_it_is_worked_out(tmp_path: Path) -> None:
@@ -795,9 +786,7 @@ def test_the_checker_s_labels_and_notes_are_saved_with_the_answer(tmp_path: Path
     )
     with app_for(tmp_path, fake) as client:
         session_id = ready_session(client)
-        sent = client.post(
-            f"/api/sessions/{session_id}/messages", headers=SIDECAR, json={"content": "CD3D?"}
-        ).json()
+        sent = ask_turn(client, session_id, {"content": "CD3D?"}, headers=SIDECAR)
     answer = sent["assistantMessage"]
     assert answer["content"] == "CD3D marks T cells [p:1]."
     assert answer["context"]["checked"] is True
@@ -1123,13 +1112,12 @@ def test_home_questions_read_every_library_or_the_ones_pointed_at(tmp_path: Path
         session_id = home.json()["id"]
 
         def ask(**extra) -> dict:
-            response = client.post(
-                f"/api/sessions/{session_id}/messages",
+            return ask_turn(
+                client,
+                session_id,
+                {"content": "What are the CD3D markers?", **extra},
                 headers=SIDECAR,
-                json={"content": "What are the CD3D markers?", **extra},
-            )
-            assert response.status_code == 200, response.text
-            return response.json()["assistantMessage"]
+            )["assistantMessage"]
 
         everywhere = ask()
         assert {c["sourceTitle"] for c in everywhere["citations"]} == {"Cell note", "Gene note"}
@@ -1523,10 +1511,9 @@ def read_a_page(tmp_path: Path, monkeypatch, pages: Pages, *, web_on: bool) -> t
     )
     with web_app(tmp_path, fake, pages) as client:
         session_id = ready_session(client)
-        url = f"/api/sessions/{session_id}/messages"
-        client.post(url, headers=SIDECAR, json={"content": "Any report?", "web": True})
-        second = client.post(url, headers=SIDECAR, json={"content": "More?", "web": web_on})
-    return second.json()["assistantMessage"], fake.requests
+        ask_turn(client, session_id, {"content": "Any report?", "web": True}, headers=SIDECAR)
+        second = ask_turn(client, session_id, {"content": "More?", "web": web_on}, headers=SIDECAR)
+    return second["assistantMessage"], fake.requests
 
 
 def test_reading_a_web_page_needs_the_web_switch(tmp_path: Path, monkeypatch) -> None:
@@ -1612,9 +1599,9 @@ def read_note(tmp_path: Path, content: str, query: str) -> tuple[str, dict]:
         session_id = client.post(
             f"/api/knowledge-bases/{base_id}/sessions", headers=SIDECAR, json={}
         ).json()["id"]
-        reply = client.post(
-            f"/api/sessions/{session_id}/messages", headers=SIDECAR, json={"content": "What?"}
-        ).json()["assistantMessage"]
+        reply = ask_turn(
+            client, session_id, {"content": "What?"}, headers=SIDECAR,
+        )["assistantMessage"]
     writing = [
         str(r["messages"][-1]["content"])
         for r in fake.requests
@@ -1659,9 +1646,9 @@ def test_a_saved_answer_keeps_what_each_source_said(tmp_path: Path) -> None:
     )
     with app_for(tmp_path, fake) as client:
         session_id = ready_session(client)
-        reply = client.post(
-            f"/api/sessions/{session_id}/messages", headers=SIDECAR, json={"content": "CD3D?"}
-        ).json()["assistantMessage"]
+        reply = ask_turn(
+            client, session_id, {"content": "CD3D?"}, headers=SIDECAR,
+        )["assistantMessage"]
     assert reply["context"]["work"] == {
         "subQuestions": [],
         "findings": [{"ref": 1, "serves": "", "says": "CD3D marks T cells."}],
@@ -1854,11 +1841,7 @@ def test_a_chosen_skill_is_not_second_guessed_by_auto_match() -> None:
 
 
 def ask(client: TestClient, session_id: str, **body):
-    return client.post(
-        f"/api/sessions/{session_id}/messages",
-        headers=SIDECAR,
-        json={"content": "Compare them", **body},
-    )
+    return ask_turn(client, session_id, {"content": "Compare them", **body}, headers=SIDECAR)
 
 
 def test_unknown_skill_is_refused(tmp_path: Path) -> None:
@@ -1866,10 +1849,13 @@ def test_unknown_skill_is_refused(tmp_path: Path) -> None:
     with app_for(tmp_path, fake) as client:
         session_id = ready_session(client)
         asked = len(fake.requests)
-        refused = ask(client, session_id, skill="nope")
-        assert refused.status_code == 400 and refused.json()["detail"] == "Unknown skill: /nope"
+        with pytest.raises(AnswerStreamError, match="^Unknown skill: /nope$") as refused:
+            ask(client, session_id, skill="nope")
+        assert refused.value.status == 400
         assert len(fake.requests) == asked  # refused before any model was asked
-        assert ask(client, session_id, budget="huge").status_code == 422
+        with pytest.raises(httpx.HTTPStatusError) as invalid:
+            ask(client, session_id, budget="huge")
+        assert invalid.value.response.status_code == 422
 
 
 def test_the_skills_menu_lists_every_ask_skill(tmp_path: Path) -> None:
@@ -1891,8 +1877,8 @@ def test_an_answer_keeps_the_skill_it_followed(tmp_path: Path) -> None:
     )
     with app_for(tmp_path, fake) as client:
         session_id = ready_session(client)
-        answer = ask(client, session_id, skill="compare").json()["assistantMessage"]
-        plain = ask(client, session_id).json()["assistantMessage"]
+        answer = ask(client, session_id, skill="compare")["assistantMessage"]
+        plain = ask(client, session_id)["assistantMessage"]
     assert answer["context"]["skill"] == {
         "name": "compare",
         "version": 1,
@@ -1906,7 +1892,7 @@ def test_auto_match_is_off_by_default(tmp_path: Path) -> None:
     fake = FakeProvider(agent_replies("A.", {"action": "answer", "skill": "compare"}))
     with app_for(tmp_path, fake) as client:
         session_id = ready_session(client)
-        answer = ask(client, session_id).json()["assistantMessage"]
+        answer = ask(client, session_id)["assistantMessage"]
     assert not any("Skills you may use" in system_of(r) for r in fake.requests)
     assert answer["context"]["skill"] is None
 
@@ -1922,7 +1908,7 @@ def test_auto_match_picks_a_skill_when_on(tmp_path: Path) -> None:
     )
     with app_for(tmp_path, fake, ask_auto_skills=True) as client:
         session_id = ready_session(client)
-        answer = ask(client, session_id).json()["assistantMessage"]
+        answer = ask(client, session_id)["assistantMessage"]
     assert any("Skills you may use" in system_of(r) for r in fake.requests)
     assert answer["context"]["skill"]["name"] == "compare"
     assert answer["context"]["skill"]["auto"] is True
@@ -2268,13 +2254,13 @@ def test_the_research_state_is_kept_with_the_saved_answer(tmp_path: Path) -> Non
     fake = FakeProvider(agent_replies("Cool roofs help [1].", framed=FRAME, kept=serving))
     with app_for(tmp_path, fake) as client:
         session_id = ready_session(client)
-        answer = ask(client, session_id, skill="research").json()["assistantMessage"]
+        answer = ask(client, session_id, skill="research")["assistantMessage"]
+        plain = ask(client, session_id)["assistantMessage"]
     research = answer["context"]["research"]
     assert research["state"] == "done" and research["coreQuestion"] == FRAME["core_question"]
     assert research["doneWhen"] == FRAME["done_when"]
     assert answer["context"]["skill"]["name"] == "research"
     assert [q["id"] for q in answer["context"]["work"]["subQuestions"]] == ["q1", "q2", "q3"]
-    plain = ask(client, session_id).json()["assistantMessage"]
     assert plain["context"]["research"] is None
 
 
@@ -2286,11 +2272,11 @@ def test_an_asking_answer_is_saved_and_the_next_turn_can_answer_it(tmp_path: Pat
     )
     with app_for(tmp_path, fake) as client:
         session_id = ready_session(client)
-        asking = ask(client, session_id, skill="research").json()["assistantMessage"]
+        asking = ask(client, session_id, skill="research")["assistantMessage"]
         assert asking["content"] == "Which options?"
         assert asking["context"]["research"]["state"] == "asking" and asking["citations"] == []
         done = ask(client, session_id, skill="research", content="Cool roofs and green roofs")
-    assert done.json()["assistantMessage"]["context"]["research"]["state"] == "done"
+    assert done["assistantMessage"]["context"]["research"]["state"] == "done"
     framing = [r for r in fake.requests if is_framing(r)][-1]
     roles = [m["role"] for m in framing["messages"]]
     assert "assistant" in roles  # the second framing sees the question it asked

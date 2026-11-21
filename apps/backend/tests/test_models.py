@@ -9,6 +9,7 @@ import pytest
 from fake_models import FakeProvider, agent_replies, api_error, gateway, model
 from fastapi.testclient import TestClient
 
+from evals.sse import AnswerStreamError, ask_turn
 from gunther import service_settings
 from gunther.config import Settings
 from gunther.llm import ModelError, Turn
@@ -486,13 +487,9 @@ def test_a_conversation_can_switch_model_and_effort_at_any_turn(tmp_path: Path) 
         ).json()["id"]
 
         def ask(content: str, **choice) -> dict:
-            response = client.post(
-                f"/api/sessions/{session_id}/messages",
-                headers=SIDECAR,
-                json={"content": content, **choice},
-            )
-            assert response.status_code == 200, response.text
-            return response.json()["assistantMessage"]
+            return ask_turn(
+                client, session_id, {"content": content, **choice}, headers=SIDECAR
+            )["assistantMessage"]
 
         # The Ask job's defaults when nothing is picked.
         first = ask("Which marker identifies T cells?")
@@ -548,12 +545,9 @@ def test_a_conversation_can_switch_model_and_effort_at_any_turn(tmp_path: Path) 
             "DeepSeek · Flash",
         ]
 
-        gone = client.post(
-            f"/api/sessions/{session_id}/messages",
-            headers=SIDECAR,
-            json={"content": "Hello?", "model": "glm/glm-5.3"},
-        )
-        assert gone.status_code == 400 and "not set up" in gone.json()["detail"]
+        with pytest.raises(AnswerStreamError, match="not set up") as gone:
+            ask("Hello?", model="glm/glm-5.3")
+        assert gone.value.status == 400
 
 
 def test_a_failing_model_says_so_and_the_quotes_stand_in(tmp_path: Path) -> None:
@@ -584,11 +578,9 @@ def test_a_failing_model_says_so_and_the_quotes_stand_in(tmp_path: Path) -> None
         session_id = client.post(
             f"/api/knowledge-bases/{base_id}/sessions", headers=SIDECAR, json={}
         ).json()["id"]
-        reply = client.post(
-            f"/api/sessions/{session_id}/messages",
-            headers=SIDECAR,
-            json={"content": "Which marker identifies T cells?"},
-        ).json()["assistantMessage"]
+        reply = ask_turn(
+            client, session_id, {"content": "Which marker identifies T cells?"}, headers=SIDECAR,
+        )["assistantMessage"]
     assert reply["context"]["responderMode"] == "local"
     assert reply["context"]["modelLabel"] == "DeepSeek · Flash"
     assert reply["context"]["modelError"] == (

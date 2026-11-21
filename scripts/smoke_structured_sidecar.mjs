@@ -52,15 +52,32 @@ const awaitReady = async () => {
 try {
   let token = await awaitReady();
   const origin = `http://127.0.0.1:${port}/api`;
-  const request = async (route, options = {}) => {
+  const requestResponse = async (route, options = {}) => {
     const response = await fetch(origin + route, {
       ...options, headers: { "X-Gunther-Token": token, "Content-Type": "application/json", ...options.headers },
       signal: AbortSignal.timeout(10_000),
     });
     assert.ok(response.ok, `${route}: HTTP ${response.status}`);
-    return response.json();
+    return response;
   };
+  const request = async (route, options) => (await requestResponse(route, options)).json();
   const post = (route, value) => request(route, { method: "POST", body: JSON.stringify(value) });
+  const ask = async (id, content) => {
+    const response = await requestResponse(`/sessions/${id}/messages/stream`, {
+      method: "POST", body: JSON.stringify({ content }),
+    });
+    const frames = (await response.text()).replace(/\r\n?/g, "\n").split("\n\n");
+    for (const frame of frames.slice(0, -1)) {
+      const lines = frame.split("\n");
+      const event = lines.find((line) => line.startsWith("event:"))?.slice(6).trim();
+      if (!["done", "error", "stopped"].includes(event)) continue;
+      const data = JSON.parse(lines.filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).replace(/^ /, "")).join("\n"));
+      assert.equal(event, "done", data.detail ?? `Ask ended with ${event}`);
+      return data;
+    }
+    assert.fail("The Ask stream ended without a terminal event");
+  };
   const workspaceId = (await request("/workspace/bootstrap")).workspaceId;
   assert.equal((await request("/storage")).foldersEnabled, true);
   assert.equal((await fetch(origin + "/retrieval/status")).status, 401);
@@ -83,7 +100,7 @@ try {
   const topic = await post(`/knowledge-bases/${library.id}/topics`, { title: "Quality" });
   await post(`/knowledge-bases/${library.id}/topics/${topic.id}/evidence`, { blockId: block.id });
   const session = await post(`/knowledge-bases/${library.id}/sessions`, { focusChapterId: topic.id });
-  const answer = await post(`/sessions/${session.id}/messages`, { content: "Genome quality controls" });
+  const answer = await ask(session.id, "Genome quality controls");
   assert.deepEqual(answer.assistantMessage.citations.map((citation) => citation.blockId), [block.id]);
   const citation = await request(`/sources/${source.id}/structure?revision_id=${structure.revisionId}&block_id=${block.id}`);
   assert.equal(citation.blocks[0].content, block.content);
@@ -98,7 +115,7 @@ try {
   assert.equal(retrieval.semanticConfigured, true, retrieval.semanticOffReason ?? "semantic search is off");
   assert.ok(retrieval.passages > 0 && retrieval.embeddedBlocks === retrieval.passages, "Passages were not embedded");
   const open = await post(`/knowledge-bases/${library.id}/sessions`, {});
-  const semantic = await post(`/sessions/${open.id}/messages`, { content: "如何保证基因组的质量？" });
+  const semantic = await ask(open.id, "如何保证基因组的质量？");
   assert.equal(semantic.assistantMessage.citations[0]?.blockId, block.id, "Semantic search missed the passage");
   helper.kill("SIGINT");
   for (let attempt = 0; attempt < 100 && helper.exitCode === null && helper.signalCode === null; attempt++) await delay(100);

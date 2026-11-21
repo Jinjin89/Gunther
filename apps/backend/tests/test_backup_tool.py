@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from legacy_artifacts import insert_legacy_version
 
+from evals.sse import ask_turn
 from gunther.config import Settings
 from gunther.main import create_app
 from gunther.migrations import LATEST_SCHEMA_VERSION
@@ -366,10 +367,10 @@ def test_nonempty_asset_and_completed_recording_survive_full_restore(
             f"/api/knowledge-bases/{knowledge_base_id}/sessions",
             json={"title": "Restore evidence review"},
         ).json()
-        turn = client.post(
-            f"/api/sessions/{knowledge_session['id']}/messages",
-            json={"content": "What evidence supports a conserved domain?"},
-        ).json()
+        turn = ask_turn(
+            client, knowledge_session["id"],
+            {"content": "What evidence supports a conserved domain?"},
+        )
         assert turn["assistantMessage"]["citations"]
         proposal = client.post(
             f"/api/sessions/{knowledge_session['id']}/messages/"

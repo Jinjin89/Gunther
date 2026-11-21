@@ -4,10 +4,12 @@ from pathlib import Path
 
 import httpx
 import openai
+import pytest
 from fake_models import FakeProvider, api_error, gateway, model
 from fastapi.testclient import TestClient
 from legacy_artifacts import insert_legacy_version
 
+from evals.sse import AnswerStreamError, ask_turn
 from gunther.config import Settings
 from gunther.database import create_database_engine
 from gunther.extraction import ModelExtractor
@@ -112,10 +114,7 @@ def answered_session(client: TestClient, title: str) -> tuple[str, str, str]:
         },
     )
     session_id = client.post(f"/api/knowledge-bases/{base_id}/sessions", json={}).json()["id"]
-    turn = client.post(
-        f"/api/sessions/{session_id}/messages",
-        json={"content": "What improves retention?"},
-    ).json()
+    turn = ask_turn(client, session_id, {"content": "What improves retention?"})
     return base_id, session_id, turn["assistantMessage"]["id"]
 
 
@@ -771,12 +770,7 @@ def test_session_keeps_messages_context_and_citations() -> None:
         assert created.status_code == 201
         session_id = created.json()["id"]
 
-        turn = client.post(
-            f"/api/sessions/{session_id}/messages",
-            json={"content": "What supports T-cell identity?"},
-        )
-        assert turn.status_code == 200
-        body = turn.json()
+        body = ask_turn(client, session_id, {"content": "What supports T-cell identity?"})
         assert body["session"]["title"] == "What supports T-cell identity?"
         assert body["assistantMessage"]["citations"][0]["sourceId"] == source_id
         assert body["assistantMessage"]["context"] == {
@@ -830,9 +824,9 @@ def test_sessions_can_be_pinned_and_archived_without_deleting_history() -> None:
         ).json()
         assert archived[0]["id"] == session_id
         assert client.get(f"/api/sessions/{session_id}").status_code == 200
-        reply = client.post(f"/api/sessions/{session_id}/messages", json={"content": "Continue"})
-        assert reply.status_code == 400
-        assert "Restore the archived session" in reply.json()["detail"]
+        with pytest.raises(AnswerStreamError, match="Restore the archived session") as reply:
+            ask_turn(client, session_id, {"content": "Continue"})
+        assert reply.value.status == 400
         context_change = client.patch(
             f"/api/sessions/{session_id}", json={"focusChapterId": "new-focus"}
         )
@@ -926,10 +920,7 @@ def test_assistant_answer_can_be_saved_as_knowledge() -> None:
             "/api/knowledge-bases/learning/sessions",
             json={"focusChapterId": "practice"},
         ).json()
-        turn = client.post(
-            f"/api/sessions/{knowledge_session['id']}/messages",
-            json={"content": "What improves retention?"},
-        ).json()
+        turn = ask_turn(client, knowledge_session['id'], {"content": "What improves retention?"})
         assistant_id = turn["assistantMessage"]["id"]
 
         created = client.post(
@@ -1010,10 +1001,9 @@ def test_a_version_from_the_old_builder_stays_readable_sealed_and_bound_to_its_l
             f"/api/knowledge-bases/{base_id}/sessions",
             json={},
         ).json()
-        turn = client.post(
-            f"/api/sessions/{knowledge_session['id']}/messages",
-            json={"content": "Which marker identifies T cells?"},
-        ).json()
+        turn = ask_turn(
+            client, knowledge_session['id'], {"content": "Which marker identifies T cells?"},
+        )
         proposal = client.post(
             f"/api/sessions/{knowledge_session['id']}/messages/"
             f"{turn['assistantMessage']['id']}/proposal",
@@ -1160,10 +1150,9 @@ def test_session_retrieval_excludes_unrelated_claims_from_citations() -> None:
             "/api/knowledge-bases/biology/sessions",
             json={"selectedSourceIds": [imported["source"]["id"]]},
         ).json()
-        turn = client.post(
-            f"/api/sessions/{knowledge_session['id']}/messages",
-            json={"content": "What supports T-cell identity?"},
-        ).json()
+        turn = ask_turn(
+            client, knowledge_session['id'], {"content": "What supports T-cell identity?"},
+        )
 
         quotes = {citation["quote"] for citation in turn["assistantMessage"]["citations"]}
         assert quotes == {
@@ -1200,10 +1189,7 @@ def test_knowledge_base_source_membership_bounds_default_retrieval() -> None:
         assert client.get("/api/knowledge-bases/software/sources").json()[0]["id"] == software["id"]
 
         knowledge_session = client.post("/api/knowledge-bases/biology/sessions", json={}).json()
-        turn = client.post(
-            f"/api/sessions/{knowledge_session['id']}/messages",
-            json={"content": "What does CD3D mark?"},
-        ).json()
+        turn = ask_turn(client, knowledge_session['id'], {"content": "What does CD3D mark?"})
         cited_source_ids = {
             citation["sourceId"] for citation in turn["assistantMessage"]["citations"]
         }
@@ -1224,10 +1210,9 @@ def test_unrelated_question_returns_an_evidence_gap_without_padding_citations() 
             },
         )
         knowledge_session = client.post("/api/knowledge-bases/biology/sessions", json={}).json()
-        turn = client.post(
-            f"/api/sessions/{knowledge_session['id']}/messages",
-            json={"content": "How do black holes evaporate?"},
-        ).json()
+        turn = ask_turn(
+            client, knowledge_session['id'], {"content": "How do black holes evaporate?"},
+        )
 
         assert turn["assistantMessage"]["citations"] == []
         assert "needs a language model" in turn["assistantMessage"]["content"]
@@ -1255,12 +1240,11 @@ def test_session_does_not_answer_from_one_generic_word_overlap() -> None:
         )
         knowledge_session = client.post("/api/knowledge-bases/biology/sessions", json={}).json()
 
-        turn = client.post(
-            f"/api/sessions/{knowledge_session['id']}/messages",
-            json={
+        turn = ask_turn(
+            client, knowledge_session['id'], {
                 "content": ("What evidence supports checking doublets before cell-type annotation?")
             },
-        ).json()
+        )
 
         assert turn["assistantMessage"]["citations"] == []
         assert "needs a language model" in turn["assistantMessage"]["content"]
@@ -1289,10 +1273,10 @@ def test_session_grounds_an_answer_in_raw_source_text_without_extracted_claims()
             "/api/knowledge-bases/lecture-notes/sessions", json={}
         ).json()
 
-        turn = client.post(
-            f"/api/sessions/{knowledge_session['id']}/messages",
-            json={"content": "Do RNA counts need quality control before clustering?"},
-        ).json()
+        turn = ask_turn(
+            client, knowledge_session["id"],
+            {"content": "Do RNA counts need quality control before clustering?"},
+        )
 
         citations = turn["assistantMessage"]["citations"]
         assert citations
@@ -1353,10 +1337,7 @@ def test_empty_knowledge_base_does_not_leak_global_sources() -> None:
             },
         )
         empty_session = client.post("/api/knowledge-bases/unrelated/sessions", json={}).json()
-        turn = client.post(
-            f"/api/sessions/{empty_session['id']}/messages",
-            json={"content": "What improves leverage?"},
-        ).json()
+        turn = ask_turn(client, empty_session['id'], {"content": "What improves leverage?"})
 
         assert turn["assistantMessage"]["citations"] == []
         assert turn["assistantMessage"]["context"]["sourcesConsidered"] == 0
@@ -1447,14 +1428,8 @@ def test_session_can_branch_from_an_earlier_answer_without_mutating_parent() -> 
         parent = client.post(
             "/api/knowledge-bases/learning/sessions", json={"title": "Study design"}
         ).json()
-        first_turn = client.post(
-            f"/api/sessions/{parent['id']}/messages",
-            json={"content": "What improves recall?"},
-        ).json()
-        client.post(
-            f"/api/sessions/{parent['id']}/messages",
-            json={"content": "What remains uncertain?"},
-        )
+        first_turn = ask_turn(client, parent['id'], {"content": "What improves recall?"})
+        ask_turn(client, parent["id"], {"content": "What remains uncertain?"})
 
         branch = client.post(
             f"/api/sessions/{parent['id']}/messages/{first_turn['assistantMessage']['id']}/branch"

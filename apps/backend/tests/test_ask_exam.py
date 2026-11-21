@@ -3,10 +3,14 @@
 import json
 from pathlib import Path
 
+import pytest
 from fake_models import FakeProvider, agent_replies
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+from fastapi.testclient import TestClient
 
 from evals.ask import score
-from evals.ask.run import Options, run_exam
+from evals.ask.run import Configuration, Options, run_case, run_exam
 
 
 def case(**fields) -> score.Case:
@@ -22,6 +26,70 @@ def outcome(answer: str, *, steps=(), titles=(), **context) -> score.Outcome:
         ],
         context={"steps": list(steps), **context},
     )
+
+
+@pytest.mark.parametrize(
+    ("terminal", "failure", "line_end"),
+    [
+        ("done", "", "\n"),
+        ("done", "", "\r"),
+        ("done", "", "\r\n"),
+        ("error", "Ask error 400. Invalid question", "\r\n"),
+        ("stopped", "The answer was stopped.", "\r\n"),
+        (None, "The answer stream ended without a terminal event.", "\r\n"),
+    ],
+    ids=["done-lf", "done-cr", "done-crlf", "error", "stopped", "no-terminal"],
+)
+def test_runner_requires_a_saved_turn_from_the_answer_stream(terminal, failure, line_end):
+    app = FastAPI()
+    asked, refreshed, traced = [], [], []
+    answer = "First line\u2028Second line\u2029Next paragraph"
+
+    @app.post("/api/knowledge-bases/library/sessions")
+    def session():
+        return {"id": "session"}
+
+    @app.post("/api/sessions/session/messages/stream")
+    def stream(payload: dict):
+        asked.append(payload["content"])
+        chunks = [line_end.join([
+            ": keepalive", "", "event: text", 'data: {"text":"Draft only"}', "", "",
+        ])]
+        data = {
+            "done": {"assistantMessage": {
+                "id": "message", "content": answer, "citations": [], "context": {},
+            }},
+            "error": {"status": 400, "detail": "Invalid question"},
+            "stopped": {},
+        }
+        if terminal:
+            lines = json.dumps(data[terminal], ensure_ascii=False, indent=2).split("\n")
+            chunks.append(line_end.join([
+                f"event: {terminal}", *(f"data: {line}" for line in lines), "", "",
+            ]))
+        return StreamingResponse(iter(chunks), media_type="text/event-stream")
+
+    @app.post("/api/sessions/session/brief/refresh")
+    def refresh():
+        refreshed.append(len(asked))
+        return {}
+
+    @app.get("/api/sessions/session/messages/message/trace")
+    def trace():
+        traced.append(asked[-1])
+        return {"steps": [{"usage": {"total_tokens": 19}}]}
+
+    config = Configuration("fake/model", None, "low", "off")
+    with TestClient(app) as client:
+        result = run_case(client, {}, "library", case(history=("Earlier?",)), config)
+
+    if failure:
+        assert result.failed == failure and not result.answer
+        assert asked == ["Earlier?"] and refreshed == traced == []
+    else:
+        assert not result.failed and result.answer == answer
+        assert (result.calls, result.tokens) == (1, 19)
+        assert asked == ["Earlier?", "Q?"] and refreshed == [1, 2] and traced == ["Q?"]
 
 
 LOOKED_UP = {"tool": "search_library", "label": "Searched your library for: x"}

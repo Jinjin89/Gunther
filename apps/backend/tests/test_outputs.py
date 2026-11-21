@@ -28,6 +28,7 @@ from fastapi.testclient import TestClient
 from legacy_artifacts import insert_legacy_version
 from sqlalchemy import func, select, text
 
+from evals.sse import ask_turn, read_events
 from gunther.agent import Evidence
 from gunther.config import Settings
 from gunther.main import create_app
@@ -142,16 +143,6 @@ def library(
             json={"title": name, "kind": "note", "knowledgeBaseId": base_id, "content": content},
         ).json()["source"]["id"]
     return base_id, ids
-
-
-def read_events(response) -> list[tuple[str, dict]]:
-    events, name = [], ""
-    for line in response.iter_lines():
-        if line.startswith("event: "):
-            name = line[7:]
-        elif line.startswith("data: "):
-            events.append((name, json.loads(line[6:])))
-    return events
 
 
 def build(client: TestClient, base_id: str, request: dict, headers=None) -> list[tuple[str, dict]]:
@@ -713,9 +704,7 @@ def test_saved_knowledge_seeds_the_pool_so_its_passages_can_be_cited_without_a_s
         session_id = client.post(
             f"/api/knowledge-bases/{base_id}/sessions", headers=SIDECAR, json={}
         ).json()["id"]
-        turn = client.post(
-            f"/api/sessions/{session_id}/messages", headers=SIDECAR, json={"content": "CD3D?"}
-        ).json()
+        turn = ask_turn(client, session_id, {"content": "CD3D?"}, headers=SIDECAR)
         unit_id = client.post(
             f"/api/sessions/{session_id}/messages/{turn['assistantMessage']['id']}/proposal",
             headers=SIDECAR,
@@ -768,9 +757,7 @@ def test_a_saved_answers_passage_from_a_source_that_has_left_the_library_is_not_
         session_id = client.post(
             f"/api/knowledge-bases/{base_id}/sessions", headers=SIDECAR, json={}
         ).json()["id"]
-        turn = client.post(
-            f"/api/sessions/{session_id}/messages", headers=SIDECAR, json={"content": "CD3D?"}
-        ).json()
+        turn = ask_turn(client, session_id, {"content": "CD3D?"}, headers=SIDECAR)
         unit_id = client.post(
             f"/api/sessions/{session_id}/messages/{turn['assistantMessage']['id']}/proposal",
             headers=SIDECAR,
@@ -808,9 +795,7 @@ def test_a_discussion_seeds_the_pool_too(tmp_path: Path) -> None:
         session_id = client.post(
             f"/api/knowledge-bases/{base_id}/sessions", headers=SIDECAR, json={}
         ).json()["id"]
-        turn = client.post(
-            f"/api/sessions/{session_id}/messages", headers=SIDECAR, json={"content": "CD3D?"}
-        ).json()
+        turn = ask_turn(client, session_id, {"content": "CD3D?"}, headers=SIDECAR)
         fake.replies = [output_replies(ONE_SECTION, ["## T cells\n\nCD3D marks T cells [1]."])]
         artifact = built(
             build(client, base_id, body(scope={"mode": "selection", "sessionIds": [session_id]}))
@@ -1095,9 +1080,7 @@ def test_a_version_from_the_old_builder_cannot_be_changed_but_can_be_rebuilt(
         session_id = client.post(
             f"/api/knowledge-bases/{base_id}/sessions", headers=SIDECAR, json={}
         ).json()["id"]
-        turn = client.post(
-            f"/api/sessions/{session_id}/messages", headers=SIDECAR, json={"content": "CD3D?"}
-        ).json()
+        turn = ask_turn(client, session_id, {"content": "CD3D?"}, headers=SIDECAR)
         unit_id = client.post(
             f"/api/sessions/{session_id}/messages/{turn['assistantMessage']['id']}/proposal",
             headers=SIDECAR,

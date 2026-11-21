@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
+from evals.sse import ask_turn
 from gunther.config import Settings
 from gunther.database import session_scope
 from gunther.main import create_app
@@ -345,8 +346,8 @@ def test_delete_removes_the_subtree_and_keeps_every_source(client):
     # Asking a session that still points at a vanished section does not break.
     with session_scope(client.app.state.knowledge_service.sessions) as session:
         session.get(KnowledgeSession, asked["id"]).focus_chapter_id = sub
-    reply = client.post(f"/api/sessions/{asked['id']}/messages", json={"content": "anything?"})
-    assert reply.status_code in {200, 201}, reply.text
+    reply = ask_turn(client, asked["id"], {"content": "anything?"})
+    assert reply["assistantMessage"]["role"] == "assistant"
     assert client.delete(f"/api/knowledge-bases/{base}/topics/{part}").status_code == 404
     assert client.delete(f"/api/knowledge-bases/{other}/topics/{keep}").status_code == 404
 

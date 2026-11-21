@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select, text
 
+from evals.sse import ask_turn
 from gunther.asset_service import AssetTextExtraction
 from gunther.config import PROJECT_ROOT, Settings
 from gunther.content import ParsedBlock, parse_content
@@ -79,11 +80,7 @@ def ask(client: TestClient, base_id: str, question: str, topic: str | None = Non
             "focusChapterId": topic,
         },
     ).json()
-    response = client.post(
-        f"/api/sessions/{conversation['id']}/messages", json={"content": question}
-    )
-    assert response.status_code == 200, response.text
-    return response.json()["assistantMessage"]
+    return ask_turn(client, conversation["id"], {"content": question})["assistantMessage"]
 
 
 def capture(client: TestClient, base_id: str):

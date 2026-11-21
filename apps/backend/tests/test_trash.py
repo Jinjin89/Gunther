@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from legacy_artifacts import insert_legacy_version
 from sqlalchemy import func, select, text
 
+from evals.sse import AnswerStreamError, ask_turn
 from gunther.config import Settings
 from gunther.database import session_scope
 from gunther.main import create_app
@@ -296,10 +297,9 @@ def test_deleting_a_library_forever_clears_everything_it_owned(storage: Path) ->
             json={"title": "T cells", "parentId": parent.json()["id"]},
         )
         knowledge_session = client.post(f"/api/knowledge-bases/{base_id}/sessions", json={}).json()
-        turn = client.post(
-            f"/api/sessions/{knowledge_session['id']}/messages",
-            json={"content": "Which marker identifies T cells?"},
-        ).json()
+        turn = ask_turn(
+            client, knowledge_session['id'], {"content": "Which marker identifies T cells?"},
+        )
         proposal = client.post(
             f"/api/sessions/{knowledge_session['id']}/messages/"
             f"{turn['assistantMessage']['id']}/proposal",
@@ -356,21 +356,16 @@ def test_ask_leaves_sources_in_trash_out_of_its_answers(storage: Path) -> None:
         b_cells = add_source(client, "B cells", "CD19 -> marker_of -> B cell", base_id)
         client.post(f"/api/sources/{b_cells}/trash")
         knowledge_session = client.post(f"/api/knowledge-bases/{base_id}/sessions", json={}).json()
-        turn = client.post(
-            f"/api/sessions/{knowledge_session['id']}/messages",
-            json={"content": "Which marker identifies B cells?"},
-        ).json()
+        turn = ask_turn(
+            client, knowledge_session['id'], {"content": "Which marker identifies B cells?"},
+        )
         quotes = " ".join(c["quote"] for c in turn["assistantMessage"]["citations"])
         assert "CD19" not in quotes
 
         client.post(f"/api/knowledge-bases/{base_id}/trash")
-        assert (
-            client.post(
-                f"/api/sessions/{knowledge_session['id']}/messages",
-                json={"content": "Anything else?"},
-            ).status_code
-            == 404
-        )
+        with pytest.raises(AnswerStreamError, match="was not found") as gone:
+            ask_turn(client, knowledge_session["id"], {"content": "Anything else?"})
+        assert gone.value.status == 404
 
 
 def test_the_desktop_app_may_send_trash_deletions_across_origins(storage: Path) -> None:

@@ -907,12 +907,6 @@ export const knowledgeApi = {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
-  sendMessage: (id: string, payload: CreateSessionMessageInput, signal?: AbortSignal) =>
-    request<ConversationTurn>(`/sessions/${encodeURIComponent(id)}/messages`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-      ...(signal ? { signal } : {}),
-    }),
   /** Send a message and hear the agent at work; resolves with the saved turn. */
   sendMessageStream: async (id: string, payload: CreateSessionMessageInput, onEvent: (event: AnswerEvent) => void, signal?: AbortSignal): Promise<ConversationTurn> => {
     await waitForDesktopBackend();

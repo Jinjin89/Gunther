@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import MetaData, inspect, select
 from test_models import SIDECAR, settings_for
 
+from evals.sse import ask_turn
 from gunther import trace, usage, usage_api
 from gunther.database import Base, create_database_engine, create_session_factory, session_scope
 from gunther.digest import DigestRequest, ModelDigestWriter, Passage
@@ -516,12 +517,7 @@ def test_ask_and_brief_are_tagged_at_their_entry_points(tmp_path):
         session_id = ready_session(client)
         client.delete("/api/usage", headers=SIDECAR)
         before = len(fake.requests)
-        response = client.post(
-            f"/api/sessions/{session_id}/messages",
-            headers=SIDECAR,
-            json={"content": "What marks T cells?"},
-        )
-        assert response.status_code == 200, response.text
+        ask_turn(client, session_id, {"content": "What marks T cells?"}, headers=SIDECAR)
         client.app.state.knowledge_service.refresh_brief(session_id)
         rows = client.get("/api/usage/recent?limit=200", headers=SIDECAR).json()["requests"]
         assert len(rows) == len(fake.requests) - before

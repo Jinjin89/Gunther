@@ -69,7 +69,6 @@ from gunther.schemas import (
     AssetCaptureOut,
     BriefOut,
     BuildOutputInput,
-    ConversationTurnOut,
     CreateArtifactConversationInput,
     CreateDevicePairingInput,
     CreateKnowledgeBaseInput,
@@ -1253,20 +1252,6 @@ def update_knowledge_session(
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-@router.post("/sessions/{session_id}/messages", response_model=ConversationTurnOut)
-def create_session_message(
-    session_id: str,
-    payload: CreateSessionMessageInput,
-    request: Request,
-) -> ConversationTurnOut:
-    try:
-        return _service(request).create_session_turn(session_id, payload)
-    except LookupError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-
-
 @router.get("/ask/skills", response_model=list[AskSkillOut])
 def list_ask_skills() -> list[AskSkillOut]:
     """The skills the composer's / menu offers."""
@@ -1332,7 +1317,7 @@ async def stream_session_message(
     payload: CreateSessionMessageInput,
     request: Request,
 ) -> StreamingResponse:
-    """Like posting a message, but as server-sent events while it is answered.
+    """Answer a posted message and send events as the work progresses.
 
     ``step`` and ``text`` events report the agent at work; ``done`` carries
     the saved turn, ``error`` says why there is none, and ``stopped`` follows

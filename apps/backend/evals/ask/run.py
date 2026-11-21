@@ -22,8 +22,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
+from httpx import HTTPStatusError
 
 from evals.ask import report, score
+from evals.sse import AnswerStreamError, ask_turn
 from gunther.config import Settings
 from gunther.llm import ClientFactory, ModelGateway
 from gunther.main import create_app
@@ -267,10 +269,14 @@ def run_case(
         if case.budget:
             body["budget"] = case.budget
         started = time.perf_counter()
-        response = client.post(f"/api/sessions/{session_id}/messages", headers=headers, json=body)
-        if response.status_code >= 300:
+        try:
+            turn = ask_turn(client, session_id, body, headers=headers)
+        except HTTPStatusError as error:
+            response = error.response
             return score.Outcome(failed=f"HTTP {response.status_code}: {response.text[:200]}")
-        turn = response.json()
+        except AnswerStreamError as error:
+            status = f"Ask error {error.status}. " if error.status is not None else ""
+            return score.Outcome(failed=status + str(error))
         seconds = time.perf_counter() - started
         if brief:
             client.post(f"/api/sessions/{session_id}/brief/refresh", headers=headers)

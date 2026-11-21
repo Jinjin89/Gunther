@@ -5,15 +5,12 @@ from pathlib import Path
 from fake_models import FakeProvider, agent_replies
 from test_agent import SIDECAR, app_for, ready_session
 
+from evals.sse import ask_turn
 from gunther import trace
 
 
 def ask(client, session_id: str, question: str = "What marks T cells?") -> dict:
-    response = client.post(
-        f"/api/sessions/{session_id}/messages", headers=SIDECAR, json={"content": question}
-    )
-    assert response.status_code == 200, response.text
-    return response.json()["assistantMessage"]
+    return ask_turn(client, session_id, {"content": question}, headers=SIDECAR)["assistantMessage"]
 
 
 def kinds(steps: list[dict]) -> list[str]:

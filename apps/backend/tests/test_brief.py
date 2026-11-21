@@ -6,6 +6,7 @@ from pathlib import Path
 from fake_models import FakeProvider, agent_replies, gateway, is_keeping_brief, is_planning
 from test_agent import SIDECAR, app_for, ready_session
 
+from evals.sse import ask_turn
 from gunther.brief import (
     Brief,
     BriefKeeper,
@@ -127,9 +128,7 @@ def requests_of(fake: FakeProvider, kind) -> list[dict]:
 
 
 def ask(client, session_id: str, text: str = "CD3D?") -> dict:
-    return client.post(
-        f"/api/sessions/{session_id}/messages", headers=SIDECAR, json={"content": text}
-    ).json()
+    return ask_turn(client, session_id, {"content": text}, headers=SIDECAR)
 
 
 def brief_of(client, session_id: str) -> dict:
