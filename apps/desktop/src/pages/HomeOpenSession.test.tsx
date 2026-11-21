@@ -14,7 +14,7 @@ const api = vi.hoisted(() => ({
 vi.mock("../api", () => ({ knowledgeApi: api, AnswerStoppedError: class extends Error {} }));
 
 const home = () => (
-  <HomePage bases={[]} inboxCount={0} onCapture={vi.fn()} onOpenBase={vi.fn()} onOpenChapter={vi.fn()} onAskBase={vi.fn()} onOpenNote={vi.fn()} onOpenLibraries={vi.fn()} onCreateBase={vi.fn()} onOpenInbox={vi.fn()} onNotify={vi.fn()} resolveWorkspaceId={vi.fn().mockResolvedValue("wsp")} />
+  <HomePage bases={[]} inboxCount={0} onCapture={vi.fn()} onOpenBase={vi.fn()} onAskBase={vi.fn()} onOpenNote={vi.fn()} onOpenLibraries={vi.fn()} onCreateBase={vi.fn()} onOpenInbox={vi.fn()} onNotify={vi.fn()} resolveWorkspaceId={vi.fn().mockResolvedValue("wsp")} />
 );
 
 describe("Activity opens a Home conversation", () => {

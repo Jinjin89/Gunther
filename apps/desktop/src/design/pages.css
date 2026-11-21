@@ -69,7 +69,7 @@
   font-variant-numeric: tabular-nums;
 }
 .gx-library-meta > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gx-library-meta > span:last-child { margin-left: auto; flex: none; }
+.gx-library-meta > time { margin-left: auto; flex: none; }
 .gx-library-card.is-new {
   align-items: center;
   justify-content: center;

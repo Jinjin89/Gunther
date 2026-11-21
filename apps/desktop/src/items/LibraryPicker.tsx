@@ -137,7 +137,7 @@ export function LibraryPicker({ bases, value, onChange, onCreate, disabled = fal
                 {base ? <LibraryGlyph base={base} size="sm" /> : <span className="gx-picker-inbox"><Inbox size={12} /></span>}
                 <span>
                   <strong>{base?.title ?? noneLabel}</strong>
-                  <small>{base ? `${base.indexedSourceCount ?? base.sourceCount} source${(base.indexedSourceCount ?? base.sourceCount) === 1 ? "" : "s"}` : "Decide where it belongs later"}</small>
+                  <small>{base ? `${base.sourceCount} source${base.sourceCount === 1 ? "" : "s"}` : "Decide where it belongs later"}</small>
                 </span>
                 {(base?.id ?? "") === value && <Check size={14} className="gx-picker-check" />}
               </div>

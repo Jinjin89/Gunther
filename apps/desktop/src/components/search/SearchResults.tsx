@@ -3,7 +3,7 @@ import type { CSSProperties, KeyboardEvent } from "react";
 import { ArrowRight, ArrowUpRight, BookOpen, Bookmark, Check, ChevronRight, CircleAlert, FileText, Globe2, MessageSquareText, Sparkles, StickyNote, WifiOff } from "lucide-react";
 import type { KnowledgeBase } from "../../atlas";
 import { LibraryGlyph } from "../../design/LibraryGlyph";
-import type { CuratedResult, SubmittedSearch } from "./useKnowledgeSearch";
+import type { SubmittedSearch } from "./useKnowledgeSearch";
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -28,7 +28,7 @@ interface SearchResultsProps {
   bases: KnowledgeBase[];
   submitted: SubmittedSearch;
   indexedResults: KnowledgeSearchResult[];
-  curatedResults: CuratedResult[];
+  libraryMatches: KnowledgeBase[];
   webResult: WebSearchResult | null;
   searching: boolean;
   error: string | null;
@@ -36,7 +36,6 @@ interface SearchResultsProps {
   researchSaved: boolean;
   onOpenResult: (result: KnowledgeSearchResult) => void;
   onOpenBase: (id: string) => void;
-  onOpenChapter: (baseId: string, chapterId: string) => void;
   onAsk: (baseId: string, question: string) => void;
   onSaveResearch: () => void;
   /** Return keyboard focus to the search box (↑ from the first result, or Esc). */
@@ -60,7 +59,7 @@ export function SearchResults({
   bases,
   submitted,
   indexedResults,
-  curatedResults,
+  libraryMatches,
   webResult,
   searching,
   error,
@@ -68,14 +67,13 @@ export function SearchResults({
   researchSaved,
   onOpenResult,
   onOpenBase,
-  onOpenChapter,
   onAsk,
   onSaveResearch,
   onExit,
 }: SearchResultsProps) {
   const scopedBases = submitted.baseIds.map((id) => bases.find((base) => base.id === id)).filter((base): base is KnowledgeBase => Boolean(base));
   const askTarget = scopedBases.length === 1 ? scopedBases[0] : undefined;
-  const localCount = indexedResults.length + curatedResults.length;
+  const localCount = indexedResults.length + libraryMatches.length;
   const includesKnowledge = submitted.scope !== "web";
   const includesWeb = submitted.scope !== "knowledge";
   let rowIndex = 0;
@@ -160,22 +158,22 @@ export function SearchResults({
               </button>
             );
           })}
-          {curatedResults.map((result) => {
+          {libraryMatches.map((base) => {
             const style = { "--i": rowIndex++ } as CSSProperties;
             return (
               <button
                 type="button"
                 className="gx-result"
                 data-result-item
-                key={`${result.type}-${result.base.id}-${result.chapter?.id ?? ""}`}
+                key={`library-${base.id}`}
                 style={style}
-                onClick={() => result.chapter ? onOpenChapter(result.base.id, result.chapter.id) : onOpenBase(result.base.id)}
+                onClick={() => onOpenBase(base.id)}
               >
-                <span className="gx-result-icon">{result.type === "base" ? <BookOpen size={15} /> : <FileText size={15} />}</span>
+                <span className="gx-result-icon"><BookOpen size={15} /></span>
                 <span className="gx-result-body">
-                  <strong>{result.chapter?.title ?? result.base.title}</strong>
-                  <p><Highlighted text={result.chapter?.summary ?? result.base.description} query={submitted.query} /></p>
-                  <small><LibraryGlyph base={result.base} size="xs" />{result.base.title}<i>·</i>{result.type === "base" ? "Library" : "Chapter"}</small>
+                  <strong>{base.title}</strong>
+                  <p><Highlighted text={base.description} query={submitted.query} /></p>
+                  <small><LibraryGlyph base={base} size="xs" />Library</small>
                 </span>
                 <ChevronRight size={15} className="gx-result-chevron" />
               </button>

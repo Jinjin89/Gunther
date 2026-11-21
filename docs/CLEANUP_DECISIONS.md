@@ -227,3 +227,13 @@ each (re)connect; within a connection, frames advance by their sample count and 
 difference smaller than one frame is jitter, not a gap or an overlap. Replace the
 stricter rule from the previous 08h round with this. After this round, new live-audio
 edge cases go to follow-ups unless they lose saved audio or hide a failure.
+
+# Round 12 — Phase B candidate: one server-state library for the desktop
+
+Batch 09 review rounds kept finding hand-rolled read/refresh bugs (all-or-nothing
+bootstrap, updates dropped while a read is in flight). The desktop has no server-state
+library; ~66 components hand-roll loading/refresh with useEffect. Phase B adds a batch
+(before 18/19) to evaluate and, if it holds up, adopt **TanStack Query** for desktop
+server reads: in-flight dedupe, invalidate-on-event, retry, per-read error. Start with
+Ask (Home + Library) and the settings panes; migrate others only where it deletes code.
+Codex to give a short go/no-go with evidence before building.

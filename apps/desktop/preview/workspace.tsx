@@ -75,6 +75,7 @@ const saveVersion = (source: Artifact, changes: Partial<Artifact>) => {
 Object.assign(knowledgeApi, {
   modelMenu: async () => ({ models: [{ ref: "preview/sample", provider: "Preview", label: "Sample", display: "Sample preview", vision: false, levels: [] }], default: { model: "preview/sample", effort: "high" }, efforts: [] }),
   sources: async () => sources,
+  proposals: async () => [],
   knowledgeUnits: async () => [],
   sessions: async () => conversations,
   topics: async () => [],
@@ -121,7 +122,6 @@ function WorkspacePreview() {
   const [mode, setMode] = useState<AtlasMode>("outputs");
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [notice, setNotice] = useState("");
-  const [chapter, setChapter] = useState("");
   const [previewFocused, setPreviewFocused] = useState(false);
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   const [sidebarPreference, setSidebarPreference] = useState<"expanded" | "collapsed" | null>(() => {
@@ -143,7 +143,7 @@ function WorkspacePreview() {
     <div className="atlas-app-body">
       <AtlasRail active="base" inboxCount={0} bases={[base, makeBase({ id: "preview_biology", title: "Biology", color: "blue" })]} activeBaseId={base.id} profileName="UI review" onNavigate={() => navigate("contents")} onOpenBase={() => navigate("contents")} onSidebarAuto={() => setSidebarPreference(null)} sidebarAutomatic={sidebarPreference === null} />
       <main className="atlas-workspace">
-        {mode === "outputs" ? <OutputsPage base={base} workspaceId="preview_workspace" onNotify={setNotice} onAdd={inform} focused={previewFocused} onFocus={setPreviewFocused} allowVoiceInput={false} /> : <KnowledgeBaseWorkspace showHeader={false} base={base} workspaceId="preview_workspace" mode={mode} selectedChapterId={chapter} onMode={navigate} onChapter={setChapter} onBack={() => navigate("contents")} onEvidence={inform} onAdd={inform} onRecord={inform} onExport={inform} onEdit={inform} onNotify={setNotice} onOpenSource={inform} />}
+        {mode === "outputs" ? <OutputsPage base={base} workspaceId="preview_workspace" onNotify={setNotice} onAdd={inform} focused={previewFocused} onFocus={setPreviewFocused} allowVoiceInput={false} /> : <KnowledgeBaseWorkspace showHeader={false} base={base} workspaceId="preview_workspace" mode={mode} onMode={navigate} onBack={() => navigate("contents")} onAdd={inform} onRecord={inform} onExport={inform} onEdit={inform} onNotify={setNotice} onOpenSource={inform} />}
       </main>
     </div>
     {notice && <div className="gx-toast" role="status" onClick={() => setNotice("")}>{notice}</div>}

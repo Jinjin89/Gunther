@@ -40,14 +40,12 @@ const readCollapsed = (baseId: string): Set<string> => {
  * them, then what is not placed yet; on the right, a panel about what is chosen there: the
  * library, a section (named and noted in place) or a source. Drag rows, or use Move to….
  */
-export function LibraryContents({ baseId, library, toolbarEnd, afterList, onOpenSource, onAsk, onAskLibrary, onEditLibrary, onAddSource, onChanged, onLoaded }: {
+export function LibraryContents({ baseId, library, toolbarEnd, onOpenSource, onAsk, onAskLibrary, onEditLibrary, onAddSource, onChanged }: {
   baseId: string;
   /** The library's name and note, for the side panel. */
   library?: LibraryInfo;
   /** Buttons at the end of the toolbar (import, add source). */
   toolbarEnd?: ReactNode;
-  /** Shown under the list (a demo library's references). */
-  afterList?: ReactNode;
   onOpenSource: (id: string, queue: string[]) => void;
   onAsk: (sectionId: string) => void;
   onAskLibrary?: () => void;
@@ -55,8 +53,6 @@ export function LibraryContents({ baseId, library, toolbarEnd, afterList, onOpen
   onAddSource: () => void;
   /** The sections changed (so lists of sections elsewhere can reload). */
   onChanged?: () => void;
-  /** How many sources the library has, once known. */
-  onLoaded?: (sourceCount: number) => void;
 }) {
   const [contents, setContents] = useState<Contents | null>(null);
   const [unavailable, setUnavailable] = useState(false);
@@ -110,8 +106,6 @@ export function LibraryContents({ baseId, library, toolbarEnd, afterList, onOpen
     window.addEventListener("gunther:topics-updated", refresh);
     return () => { window.removeEventListener("gunther:sources-updated", refresh); window.removeEventListener("gunther:topics-updated", refresh); };
   }, [baseId, load]);
-
-  useEffect(() => { if (contents) onLoaded?.(contents.sources.length); }, [contents, onLoaded]);
 
   // Sources still being read change on their own: look again until they are done.
   const reading = contents?.sources.some((source) => source.processing === "reading" || source.durationPending) ?? false;
@@ -473,7 +467,6 @@ export function LibraryContents({ baseId, library, toolbarEnd, afterList, onOpen
         </div>
         {dragging && dragging.length > 0 && pointer && createPortal(<div className="contents-drag-chip" style={{ left: pointer.x + 14, top: pointer.y + 10 }}>{dragging.length === 1 ? dragTitle(tree, dragging[0]!) : `${dragging.length} items`}</div>, document.body)}
       </DndContext>
-      {afterList}
     </div>
 
     <aside className="contents-panel" aria-label="Details">{panel()}</aside>

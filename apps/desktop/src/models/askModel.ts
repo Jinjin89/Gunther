@@ -77,21 +77,26 @@ export function announceModelsChanged() {
 }
 
 /** The models Ask can use now, kept fresh when Settings saves. */
-export function useModelMenu() {
+export function useModelMenu({ autoLoad = true } = {}) {
   const [menu, setMenu] = useState<ModelMenu | null>(null);
   const [unavailable, setUnavailable] = useState(false);
-  const load = useCallback(() => {
-    void Promise.resolve().then(() => knowledgeApi.modelMenu()).then((next) => {
-      setMenu(next);
+  const reload = useCallback(async () => {
+    try {
+      setMenu(await knowledgeApi.modelMenu());
       setUnavailable(false);
-    }).catch(() => setUnavailable(true));
+    } catch (reason) {
+      setUnavailable(true);
+      throw reason;
+    }
   }, []);
   useEffect(() => {
+    if (!autoLoad) return undefined;
+    const load = () => void reload().catch(() => undefined);
     load();
     window.addEventListener(MODELS_CHANGED_EVENT, load);
     return () => window.removeEventListener(MODELS_CHANGED_EVENT, load);
-  }, [load]);
-  return { menu, unavailable };
+  }, [autoLoad, reload]);
+  return { menu, unavailable, reload };
 }
 
 /** This device's Ask choice, shared by Home and every conversation. */
@@ -117,16 +122,25 @@ const WEB_PREFERENCE_EVENT = "gunther:search-web-changed";
  * Whether web search is set up (a Tavily key in Settings), and whether this
  * device has it switched on for questions. Off unless it is both.
  */
-export function useWebSearch() {
+export function useWebSearch({ autoLoad = true } = {}) {
   const [available, setAvailable] = useState(false);
   const [preferred, setPreferred] = useState(() => persistentStorage.getItem(WEB_PREFERENCE_KEY) === "on");
-  const load = useCallback(() => {
-    void Promise.resolve().then(() => knowledgeApi.health()).then((health) => setAvailable(health.webSearchMode === "tavily")).catch(() => setAvailable(false));
+  const reload = useCallback(async () => {
+    try {
+      const health = await knowledgeApi.health();
+      setAvailable(health.webSearchMode === "tavily");
+    } catch (reason) {
+      setAvailable(false);
+      throw reason;
+    }
   }, []);
   useEffect(() => {
-    load();
+    const load = () => void reload().catch(() => undefined);
     const sync = () => setPreferred(persistentStorage.getItem(WEB_PREFERENCE_KEY) === "on");
-    window.addEventListener(MODELS_CHANGED_EVENT, load);
+    if (autoLoad) {
+      load();
+      window.addEventListener(MODELS_CHANGED_EVENT, load);
+    }
     window.addEventListener(WEB_PREFERENCE_EVENT, sync);
     window.addEventListener("storage", sync);
     return () => {
@@ -134,7 +148,7 @@ export function useWebSearch() {
       window.removeEventListener(WEB_PREFERENCE_EVENT, sync);
       window.removeEventListener("storage", sync);
     };
-  }, [load]);
+  }, [autoLoad, reload]);
   const setEnabled = useCallback((next: boolean) => {
     try {
       persistentStorage.setItem(WEB_PREFERENCE_KEY, next ? "on" : "off");
@@ -144,7 +158,7 @@ export function useWebSearch() {
     setPreferred(next);
     window.dispatchEvent(new CustomEvent(WEB_PREFERENCE_EVENT));
   }, []);
-  return { available, enabled: available && preferred, preferred, setEnabled };
+  return { available, enabled: available && preferred, preferred, setEnabled, reload };
 }
 
 /** How answers are worded. Only the wording: every style still cites its sources. */

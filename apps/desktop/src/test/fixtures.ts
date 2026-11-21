@@ -10,13 +10,10 @@ export const makeBase = (overrides: Partial<KnowledgeBase> = {}): KnowledgeBase 
   description: "Papers, classes, recordings, and decisions in one durable home.",
   color: "green",
   status: "Growing",
-  progress: 42,
-  updated: "Today",
-  chapterCount: 3,
-  sourceCount: 2,
-  indexedSourceCount: 5,
-  chapters: [],
-  sources: [],
+  sourceCount: 5,
+  sessionCount: 0,
+  createdAt: "2026-08-29T08:00:00.000Z",
+  updatedAt: "2026-08-29T09:00:00.000Z",
   ...overrides,
 });
 

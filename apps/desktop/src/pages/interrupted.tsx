@@ -5,23 +5,8 @@ import { AnswerStreamError } from "../api";
 import { openSettings } from "../components/SettingsLayout";
 import { AnswerTrace } from "../developer/AnswerTrace";
 
-type Reason = "stopped" | "failed";
-
 /** A question that got no answer: kept in the conversation, marked, and easy to ask again. */
 export const isInterrupted = (message: SessionMessage) => message.role === "user" && Boolean(message.context.interrupted);
-
-/** The marker shown at once when a question is stopped; the service's saved copy replaces it. */
-export function interruptedQuestion(sessionId: string, content: string, reason: Reason): SessionMessage {
-  return {
-    id: `local-interrupted-${Date.now()}`,
-    sessionId,
-    role: "user",
-    content,
-    citations: [],
-    context: { sourcesConsidered: 0, assertionsConsidered: 0, verifiedAssertions: 0, retrievalMode: "all", responderMode: "local", interrupted: reason },
-    createdAt: new Date().toISOString(),
-  };
-}
 
 /** Whether this attempt's failed question is in the reloaded conversation. */
 export const hasSavedQuestion = (messages: SessionMessage[] | undefined, error: unknown) =>

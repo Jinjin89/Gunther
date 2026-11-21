@@ -308,12 +308,7 @@ button.contents-panel-source:hover { background: var(--gx-hover); }
 .contents-picker-empty { padding: 12px 10px; color: var(--gx-faint); font-size: var(--gx-text-sm); }
 .contents-picker > footer { display: flex; justify-content: flex-end; padding: 10px 14px; border-top: 1px solid var(--gx-line); }
 
-/* References of a demo library, and the bulk-import status in the toolbar */
-.contents-references { margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--gx-line); }
-.contents-references h2 { margin: 0 0 6px; font-size: var(--gx-text-sm); font-weight: 600; color: var(--gx-muted); }
-.contents-references li { display: flex; gap: 10px; align-items: baseline; justify-content: space-between; padding: 6px 4px; font-size: var(--gx-text-sm); }
-.contents-references ul { margin: 0; padding: 0; list-style: none; }
-.contents-references small { color: var(--gx-faint); }
+/* Bulk-import status in the toolbar */
 .bulk-import.is-compact { display: contents; }
 .bulk-import.is-compact > .gx-btn-quiet { height: auto; min-height: 30px; padding: 0 10px; gap: 6px; border-color: var(--gx-line-2); border-radius: 7px; background: var(--gx-surface); box-shadow: var(--gx-shadow-xs); font-size: var(--gx-text-xs); }
 .bulk-import.is-compact > .gx-btn-quiet:hover:not(:disabled) { border-color: var(--gx-line-3); background: var(--gx-surface-2); }

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CircleAlert, LoaderCircle, RotateCcw } from "lucide-react";
 import { knowledgeApi } from "../api";
 import type { KnowledgeBase } from "../atlas";
-import { metadataToBase } from "../atlasMetadata";
 import { CaptureSheet } from "../components/AtlasUtilities";
 import type { RecorderSnapshot } from "../components/LectureRecorder";
 import {
@@ -80,7 +79,7 @@ export default function CaptureWindowApp() {
         knowledgeApi.knowledgeBases(),
       ]);
       setWorkspaceId(bootstrap.workspaceId);
-      setBases(metadata.map(metadataToBase));
+      setBases(metadata);
       return bootstrap.workspaceId;
     } catch (reason) {
       setWorkspaceId(null);

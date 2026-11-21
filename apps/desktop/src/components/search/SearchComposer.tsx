@@ -65,7 +65,7 @@ const matchLibraries = (bases: KnowledgeBase[], excluded: string[], query: strin
 };
 
 const sourceCount = (base: KnowledgeBase) => {
-  const count = base.indexedSourceCount ?? base.sourceCount;
+  const count = base.sourceCount;
   return `${count} ${count === 1 ? "source" : "sources"}`;
 };
 

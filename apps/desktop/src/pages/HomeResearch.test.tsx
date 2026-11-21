@@ -25,7 +25,7 @@ const turn = (research: object | null, content: string, first = 1) => ({
 });
 const asking = { state: "asking", budget: "deep", used: { searches: 0, reads: 0 }, limits: { searches: 16, reads: 8 }, coreQuestion: "", doneWhen: "" };
 
-const renderHome = () => render(<HomePage bases={[]} inboxCount={0} onCapture={vi.fn()} onOpenBase={vi.fn()} onOpenChapter={vi.fn()} onAskBase={vi.fn()} onOpenNote={vi.fn()} onOpenLibraries={vi.fn()} onCreateBase={vi.fn()} onOpenInbox={vi.fn()} onNotify={vi.fn()} resolveWorkspaceId={vi.fn().mockResolvedValue("wsp")} />);
+const renderHome = () => render(<HomePage bases={[]} inboxCount={0} onCapture={vi.fn()} onOpenBase={vi.fn()} onAskBase={vi.fn()} onOpenNote={vi.fn()} onOpenLibraries={vi.fn()} onCreateBase={vi.fn()} onOpenInbox={vi.fn()} onNotify={vi.fn()} resolveWorkspaceId={vi.fn().mockResolvedValue("wsp")} />);
 const box = () => screen.getByRole("textbox", { name: "Search your knowledge or the web" });
 
 describe("research from Home", () => {

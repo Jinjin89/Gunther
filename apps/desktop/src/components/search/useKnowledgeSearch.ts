@@ -1,7 +1,7 @@
 import type { KnowledgeSearchResult, SearchScope, WebSearchResult } from "@gunther/contracts";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { knowledgeApi } from "../../api";
-import type { KnowledgeBase, KnowledgeChapter } from "../../atlas";
+import type { KnowledgeBase } from "../../atlas";
 
 /** Library-scoped searches ask for a little more, since each library is a narrower pool. */
 const SCOPED_RESULT_LIMIT = 40;
@@ -10,12 +10,6 @@ export interface SubmittedSearch {
   query: string;
   scope: SearchScope;
   baseIds: string[];
-}
-
-export interface CuratedResult {
-  type: "base" | "chapter";
-  base: KnowledgeBase;
-  chapter: KnowledgeChapter | null;
 }
 
 export function useKnowledgeSearch(bases: KnowledgeBase[]) {
@@ -68,18 +62,12 @@ export function useKnowledgeSearch(bases: KnowledgeBase[]) {
     setError(null);
   }, []);
 
-  // Bundled field guides are searched locally so their chapters stay reachable.
-  const curatedResults = useMemo<CuratedResult[]>(() => {
+  const libraryMatches = useMemo(() => {
     if (!submitted || submitted.scope === "web") return [];
     const needle = submitted.query.toLowerCase();
     const scopedBases = submitted.baseIds.length ? bases.filter((base) => submitted.baseIds.includes(base.id)) : bases;
-    return scopedBases.flatMap((base) => [
-      ...(base.title.toLowerCase().includes(needle) || base.description.toLowerCase().includes(needle) ? [{ type: "base" as const, base, chapter: null }] : []),
-      ...base.chapters
-        .filter((chapter) => `${chapter.title} ${chapter.question} ${chapter.summary} ${chapter.topics.map((topic) => `${topic.title} ${topic.markers?.join(" ") ?? ""}`).join(" ")}`.toLowerCase().includes(needle))
-        .map((chapter) => ({ type: "chapter" as const, base, chapter })),
-    ]).slice(0, 10);
+    return scopedBases.filter((base) => base.title.toLowerCase().includes(needle) || base.description.toLowerCase().includes(needle)).slice(0, 10);
   }, [bases, submitted]);
 
-  return { submitted, indexedResults, curatedResults, webResult, searching, error, run, reset };
+  return { submitted, indexedResults, libraryMatches, webResult, searching, error, run, reset };
 }

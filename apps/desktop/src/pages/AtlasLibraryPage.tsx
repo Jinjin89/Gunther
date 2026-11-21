@@ -1,7 +1,8 @@
 import { ArrowUpRight, FilePlus2, Plus, Search, X } from "lucide-react";
 import { useMemo, useState, type CSSProperties } from "react";
-import { knowledgeBases, type KnowledgeBase } from "../atlas";
+import type { KnowledgeBase } from "../atlas";
 import { LibraryGlyph } from "../design/LibraryGlyph";
+import { formatDate } from "../items/ItemLayout";
 
 interface AtlasLibraryPageProps {
   bases: KnowledgeBase[];
@@ -13,12 +14,7 @@ interface AtlasLibraryPageProps {
 
 const FILTER_THRESHOLD = 4;
 
-/** Indexed counts come from the local service; bundled guides only have references. */
-const sourceSummary = (base: KnowledgeBase) => base.indexedSourceCount === undefined
-  ? `${base.sourceCount} ${base.sourceCount === 1 ? "reference" : "references"}`
-  : `${base.indexedSourceCount} indexed · ${base.sourceCount} ${base.sourceCount === 1 ? "reference" : "references"}`;
-
-export function AtlasLibraryPage({ bases = knowledgeBases, loading = false, onOpen, onAdd, onCreateBase }: AtlasLibraryPageProps) {
+export function AtlasLibraryPage({ bases, loading = false, onOpen, onAdd, onCreateBase }: AtlasLibraryPageProps) {
   const [filter, setFilter] = useState("");
   const needle = filter.trim().toLowerCase();
   const visible = useMemo(() => needle
@@ -61,8 +57,8 @@ export function AtlasLibraryPage({ bases = knowledgeBases, loading = false, onOp
             <h2>{base.title}</h2>
             <p>{base.description}</p>
             <span className="gx-library-meta">
-              <span>{sourceSummary(base)} · {base.chapterCount} {base.chapterCount === 1 ? "chapter" : "chapters"}</span>
-              <span title="Last updated">{base.updated}</span>
+              <span>{base.sourceCount} {base.sourceCount === 1 ? "source" : "sources"}</span>
+              <time dateTime={base.updatedAt} title="Last updated">{formatDate(base.updatedAt)}</time>
             </span>
           </button>
         ))}

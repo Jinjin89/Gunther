@@ -5,8 +5,7 @@
  */
 
 /* Scrims and sheets */
-.atlas-overlay,
-.drawer-scrim {
+.atlas-overlay {
   inset: var(--gx-titlebar-h) 0 0 0;
   background: var(--gx-overlay);
   backdrop-filter: blur(2px);
@@ -268,10 +267,6 @@
 .recording-dock-pulse { border: 1px solid var(--gx-line); background: var(--gx-surface-2); }
 .recording-dock-summary small { color: var(--gx-muted); }
 
-/* Evidence drawer */
-.evidence-drawer { box-shadow: var(--gx-shadow-lg); }
-.evidence-drawer h2 { font-family: var(--gx-font-display); font-weight: 500; }
-.evidence-policy { border: 1px solid var(--gx-line); background: var(--gx-surface-2); }
 
 /* Startup failure screen */
 .startup-error h1 { font-family: var(--gx-font-display); font-weight: 500; letter-spacing: -0.015em; }
@@ -294,10 +289,8 @@
 .citation-card > header span,
 .citation-card > header strong,
 .empty-citations strong,
-.knowledge-health header strong,
 .accepted-units .unit-origin p,
 .composer textarea,
-.source-index,
 .chapter-number,
 .studio-document section > span,
 .base-health-stats strong,

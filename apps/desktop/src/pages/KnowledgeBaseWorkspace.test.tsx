@@ -11,13 +11,12 @@ vi.mock("../outputs/OutputsPage", () => ({ OutputsPage: () => <div>Outputs area<
 
 const view = (mode: AtlasMode | "overview" | "sources", extra: Record<string, unknown> = {}) => {
   const onMode = vi.fn();
-  render(<KnowledgeBaseWorkspace base={makeBase({ id: "lib", title: "ML 2026", description: "Lectures and slides for autumn." })} workspaceId={null} mode={mode as AtlasMode} selectedChapterId="" onMode={onMode} onChapter={vi.fn()} onBack={vi.fn()} onEvidence={vi.fn()} onAdd={vi.fn()} onRecord={vi.fn()} onExport={vi.fn()} onEdit={vi.fn()} onNotify={vi.fn()} onOpenSource={vi.fn()} {...extra} />);
+  render(<KnowledgeBaseWorkspace base={makeBase({ id: "lib", title: "ML 2026", description: "Lectures and slides for autumn." })} workspaceId={null} mode={mode as AtlasMode} onMode={onMode} onBack={vi.fn()} onAdd={vi.fn()} onRecord={vi.fn()} onExport={vi.fn()} onEdit={vi.fn()} onNotify={vi.fn()} onOpenSource={vi.fn()} {...extra} />);
   return { onMode };
 };
 
 beforeEach(() => {
   window.localStorage.clear();
-  vi.spyOn(knowledgeApi, "topics").mockResolvedValue([]);
   vi.spyOn(knowledgeApi, "contents").mockResolvedValue({
     sections: [{ id: "a", parentId: null, title: "Part A", description: "", position: 0, version: 1, passageCount: 0 }],
     placements: [{ sourceId: "s1", sectionId: "a", position: 0 }],

@@ -39,7 +39,6 @@ interface HomePageProps {
   focusRequest?: number;
   onCapture: (kind?: HomeCaptureKind) => void;
   onOpenBase: (id: string, mode?: AtlasMode) => void;
-  onOpenChapter: (baseId: string, chapterId: string) => void;
   onAskBase: (id: string, question: string) => void;
   onOpenNote: (id: string) => void;
   /** Open a note or source in its own page; `queue` is what J / K step through. */
@@ -113,7 +112,6 @@ export function HomePage({
   focusRequest = 0,
   onCapture,
   onOpenBase,
-  onOpenChapter,
   onAskBase,
   onOpenNote,
   onOpenItem,
@@ -393,7 +391,7 @@ export function HomePage({
           bases={bases}
           submitted={submitted}
           indexedResults={search.indexedResults}
-          curatedResults={search.curatedResults}
+          libraryMatches={search.libraryMatches}
           webResult={search.webResult}
           searching={search.searching}
           error={search.error}
@@ -401,7 +399,6 @@ export function HomePage({
           researchSaved={Boolean(search.webResult) && savedResearchQuery === search.webResult?.query}
           onOpenResult={openResult}
           onOpenBase={(id) => onOpenBase(id)}
-          onOpenChapter={onOpenChapter}
           onAsk={onAskBase}
           onSaveResearch={() => void saveResearch()}
           onExit={() => composer.current?.focus()}
@@ -432,7 +429,7 @@ export function HomePage({
                   <LibraryGlyph base={base} size="md" />
                   <span className="gx-row-body">
                     <strong>{base.title}</strong>
-                    <small>{plural(base.indexedSourceCount ?? base.sourceCount, "source")} · {plural(base.chapterCount, "chapter")}</small>
+                    <small>{plural(base.sourceCount, "source")}</small>
                   </span>
                   <ArrowRight size={14} className="gx-row-arrow" />
                 </button>

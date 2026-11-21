@@ -5,14 +5,13 @@ import { makeBase } from "../test/fixtures";
 import { AtlasLibraryPage } from "./AtlasLibraryPage";
 
 describe("AtlasLibraryPage", () => {
-  it("states the durable library model and reports indexed and reference counts honestly", () => {
-    const bundledBase = makeBase({ id: "bundled", title: "Bundled base", sourceCount: 1 });
-    delete bundledBase.indexedSourceCount;
+  it("displays each library's stored source count and last update", () => {
+    const updatedAt = "2026-10-19T15:00:00Z";
     render(
       <AtlasLibraryPage
         bases={[
-          makeBase({ id: "indexed", title: "Indexed base", indexedSourceCount: 8, sourceCount: 2 }),
-          bundledBase,
+          makeBase({ id: "indexed", title: "Indexed base", sourceCount: 8, updatedAt }),
+          makeBase({ id: "small", title: "Small base", sourceCount: 1 }),
         ]}
         onOpen={vi.fn()}
         onAdd={vi.fn()}
@@ -22,8 +21,9 @@ describe("AtlasLibraryPage", () => {
 
     expect(screen.getByRole("heading", { name: "Libraries" })).toBeVisible();
     expect(screen.getByText("2 libraries")).toBeVisible();
-    expect(screen.getByText("8 indexed · 2 references · 3 chapters")).toBeVisible();
-    expect(screen.getByText("1 reference · 3 chapters")).toBeVisible();
+    expect(screen.getByText("8 sources")).toBeVisible();
+    expect(screen.getByText("1 source")).toBeVisible();
+    expect(screen.getAllByTitle("Last updated")[0]).toHaveAttribute("datetime", updatedAt);
   });
 
   it("routes capture, creation, and opening through explicit callbacks", async () => {

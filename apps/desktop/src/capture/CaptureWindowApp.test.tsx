@@ -32,7 +32,6 @@ vi.mock("../api", () => ({
     knowledgeBases: mocks.knowledgeBases,
   },
 }));
-vi.mock("../atlasMetadata", () => ({ metadataToBase: (metadata: unknown) => metadata }));
 vi.mock("./capturePersistence", () => ({
   persistTextCapture: mocks.persistText,
   persistAssetCapture: mocks.persistAsset,

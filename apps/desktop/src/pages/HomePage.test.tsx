@@ -34,7 +34,6 @@ const renderHome = (overrides: Partial<React.ComponentProps<typeof HomePage>> = 
     inboxCount: 0,
     onCapture: vi.fn(),
     onOpenBase: vi.fn(),
-    onOpenChapter: vi.fn(),
     onAskBase: vi.fn(),
     onOpenNote: vi.fn(),
     onOpenLibraries: vi.fn(),

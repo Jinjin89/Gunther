@@ -35,7 +35,7 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
-import { knowledgeBases, type KnowledgeBase, type KnowledgeChapter } from "../atlas";
+import type { KnowledgeBase } from "../atlas";
 import { knowledgeApi } from "../api";
 import type { ThemePreference } from "../design/theme";
 import { appendStoredCapture } from "../localCaptureQueue";
@@ -82,7 +82,6 @@ interface CaptureSheetProps {
   workspaceId?: string | null;
   resolveWorkspaceId?: () => Promise<string | null>;
   baseId?: string | null;
-  chapterId?: string | undefined;
   initialKind?: CaptureKind | null | undefined;
   initialRecordingContext?: RecordingContext | undefined;
   surface?: CaptureSheetSurface;
@@ -145,7 +144,7 @@ const hostLabel = (url: string) => {
   }
 };
 
-export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspaceId, baseId = null, chapterId, initialKind = null, initialRecordingContext = "lecture", surface = "overlay", onRecordingState, onRecorderSnapshot, onHide, onClose, onSearch, onCaptured, onAssetCaptured }: CaptureSheetProps) {
+export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspaceId, baseId = null, initialKind = null, initialRecordingContext = "lecture", surface = "overlay", onRecordingState, onRecorderSnapshot, onHide, onClose, onSearch, onCaptured, onAssetCaptured }: CaptureSheetProps) {
   const [kind, setKind] = useState<CaptureKind | null>(null);
   const [targetBaseId, setTargetBaseId] = useState(baseId ?? "");
   const [title, setTitle] = useState("");
@@ -181,7 +180,6 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
   const targetBase = bases.find((base) => base.id === targetBaseId);
   const recordingBase = bases.find((base) => base.id === recordingBaseId);
   const recordingTargetLabel = recordingBase?.title ?? "Inbox · organize later";
-  const chapter = targetBase?.chapters.find((item) => item.id === chapterId);
   const recoverableRecordingDrafts = useMemo(
     () => recordingDraftsForWorkspace(recordingDrafts, workspaceId),
     [recordingDrafts, workspaceId],
@@ -722,7 +720,6 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
         {kind === "recording"
           ? <LibraryPicker bases={bases} value={recordingBaseId} onChange={setRecordingBaseId} noneLabel="Inbox" disabled={recordingActive} label="Save to" placement="above" />
           : <LibraryPicker bases={bases} value={targetBaseId} onChange={setTargetBaseId} noneLabel="Inbox" label="Save to" placement="above" />}
-        {chapter && kind !== "recording" && <em>→ {chapter.title}</em>}
       </div>
       <span className="gx-capture-foot-fill" />
       {hasUnreviewedWork && kind !== "recording" && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={discardCapture} aria-label="Discard this capture" title="Discard this capture"><Trash2 size={13} />Discard</button>}
@@ -826,34 +823,6 @@ export function CreateKnowledgeBaseSheet({ open, base, onClose, onSave, onTrash 
     {error && <p className="create-base-error" role="alert"><CircleAlert size={13} />{error}</p>}
     <footer>{base && onTrash ? <button type="button" className="quiet-button gx-sheet-trash" onClick={onTrash}><Trash2 size={13} />Move library to Trash</button> : <span>{base ? "Session history and accepted knowledge stay unchanged." : "Inbox sources can be filed here at any time."}</span>}<div><button type="button" className="quiet-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={working || !title.trim() || question.trim().length < 3 || description.trim().length < 3}>{working ? "Saving…" : base ? "Save details" : "Create library"}<ArrowRight size={14} /></button></div></footer>
   </form></section>;
-}
-
-interface EvidenceDrawerProps {
-  base: KnowledgeBase;
-  chapter: KnowledgeChapter | null;
-  onClose: () => void;
-}
-
-export function EvidenceDrawer({ base, chapter, onClose }: EvidenceDrawerProps) {
-  if (!chapter) return null;
-  const sources = base.sources.filter((source) => chapter.sourceIds.includes(source.id));
-  return (
-    <div className="drawer-scrim" onMouseDown={onClose} role="presentation">
-      <aside className="evidence-drawer" onMouseDown={(event) => event.stopPropagation()} aria-label="Chapter evidence">
-        <header><div><span className="atlas-eyebrow">Evidence layer</span><h2>{chapter.title}</h2><p>Sources used to shape this chapter. Open a source to inspect the original.</p></div><button onClick={onClose}><X size={18} /></button></header>
-        <div className="evidence-policy"><ShieldCheck size={16} /><span><strong>Grounded, not automatic</strong><small>Sources can support a claim. They do not remove the need for biological judgment.</small></span></div>
-        <div className="evidence-source-list">
-          {sources.map((source, index) => <a href={source.url} target="_blank" rel="noreferrer" key={source.id}>
-            <span className="source-index">{String(index + 1).padStart(2, "0")}</span>
-            <span><small>{source.kind} · {source.publisher}</small><strong>{source.title}</strong><p>{source.scope}</p></span>
-            <ArrowRight size={14} />
-          </a>)}
-          {sources.length === 0 && <div className="empty-evidence"><BookOpen size={19} /><strong>No grounded sources yet</strong><p>Add a trusted source to turn this outline into living knowledge.</p></div>}
-        </div>
-        <footer><span><i />{sources.length} linked sources</span><button onClick={onClose}>Done</button></footer>
-      </aside>
-    </div>
-  );
 }
 
 async function writeClipboard(value: string): Promise<void> {
@@ -1144,7 +1113,7 @@ export function SettingsPageV2({ theme, onTheme, onNotify }: { theme: ThemePrefe
   </div>;
 }
 
-export function AccountPageV2({ bases = knowledgeBases }: { bases?: KnowledgeBase[] }) {
+export function AccountPageV2({ bases }: { bases: KnowledgeBase[] }) {
   const defaultProfile = { initials: "KE", name: "Knowledge explorer", role: "Local learner", bio: "Building clear, evidence-backed maps of difficult fields." };
   const [profile, setProfile] = useState(() => {
     try { return { ...defaultProfile, ...JSON.parse(persistentStorage.getItem("gunther:profile") ?? "{}") as Partial<typeof defaultProfile> }; } catch { return defaultProfile; }
@@ -1159,5 +1128,5 @@ export function AccountPageV2({ bases = knowledgeBases }: { bases?: KnowledgeBas
     persistentStorage.setItem("gunther:profile", JSON.stringify(next));
     setEditing(false);
   };
-  return <div className="utility-page account-v2 page-enter"><header className="gx-page-header"><div><h1>Account</h1><p>Your profile is stored on this device and travels with complete workbook exports.</p></div></header><section className={`profile-card-v2 ${editing ? "is-editing" : ""}`}><span className="profile-avatar-v2">{profile.initials}</span>{editing ? <form className="profile-edit-form" onSubmit={saveProfile}><label><span>Initials</span><input autoFocus value={draftProfile.initials} maxLength={3} onChange={(event) => setDraftProfile((current) => ({ ...current, initials: event.target.value }))} /></label><label><span>Name</span><input value={draftProfile.name} maxLength={80} onChange={(event) => setDraftProfile((current) => ({ ...current, name: event.target.value }))} /></label><label><span>Role</span><input value={draftProfile.role} maxLength={80} onChange={(event) => setDraftProfile((current) => ({ ...current, role: event.target.value }))} /></label><label className="is-wide"><span>Bio</span><textarea value={draftProfile.bio} rows={2} maxLength={240} onChange={(event) => setDraftProfile((current) => ({ ...current, bio: event.target.value }))} /></label><div><button type="button" className="quiet-button" onClick={() => { setDraftProfile(profile); setEditing(false); }}>Cancel</button><button className="primary-button"><Check size={13} />Save locally</button></div></form> : <><div><small>{profile.role}</small><h2>{profile.name}</h2><p>{profile.bio}</p></div><button className="quiet-button" onClick={() => setEditing(true)}>Edit profile</button></>}</section><section className="profile-stats-v2"><div><strong>{bases.length}</strong><span>libraries</span></div><div><strong>{bases.reduce((sum, base) => sum + base.chapterCount, 0)}</strong><span>chapters</span></div><div><strong>{bases.reduce((sum, base) => sum + (base.indexedSourceCount ?? 0), 0)}</strong><span>indexed sources</span></div></section></div>;
+  return <div className="utility-page account-v2 page-enter"><header className="gx-page-header"><div><h1>Account</h1><p>Your profile is stored on this device and travels with complete workbook exports.</p></div></header><section className={`profile-card-v2 ${editing ? "is-editing" : ""}`}><span className="profile-avatar-v2">{profile.initials}</span>{editing ? <form className="profile-edit-form" onSubmit={saveProfile}><label><span>Initials</span><input autoFocus value={draftProfile.initials} maxLength={3} onChange={(event) => setDraftProfile((current) => ({ ...current, initials: event.target.value }))} /></label><label><span>Name</span><input value={draftProfile.name} maxLength={80} onChange={(event) => setDraftProfile((current) => ({ ...current, name: event.target.value }))} /></label><label><span>Role</span><input value={draftProfile.role} maxLength={80} onChange={(event) => setDraftProfile((current) => ({ ...current, role: event.target.value }))} /></label><label className="is-wide"><span>Bio</span><textarea value={draftProfile.bio} rows={2} maxLength={240} onChange={(event) => setDraftProfile((current) => ({ ...current, bio: event.target.value }))} /></label><div><button type="button" className="quiet-button" onClick={() => { setDraftProfile(profile); setEditing(false); }}>Cancel</button><button className="primary-button"><Check size={13} />Save locally</button></div></form> : <><div><small>{profile.role}</small><h2>{profile.name}</h2><p>{profile.bio}</p></div><button className="quiet-button" onClick={() => setEditing(true)}>Edit profile</button></>}</section><section className="profile-stats-v2"><div><strong>{bases.length}</strong><span>libraries</span></div><div><strong>{bases.reduce((sum, base) => sum + base.sourceCount, 0)}</strong><span>sources</span></div></section></div>;
 }

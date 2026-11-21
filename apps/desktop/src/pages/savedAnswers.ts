@@ -1,5 +1,5 @@
 import type { KnowledgeProposal, KnowledgeSession, KnowledgeUnit, SessionMessage } from "@gunther/contracts";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { knowledgeApi } from "../api";
 
 export interface SavedAnswer {
@@ -13,22 +13,28 @@ const trusted = (units: KnowledgeUnit[]) => units.filter((unit) => unit.status =
  * Answers saved as knowledge in one library. Saving is the only review step: the answer
  * becomes a trusted unit at once, and Remove takes it back out (it can be saved again).
  */
-export function useSavedAnswers(baseId: string, onNotify: (message: string) => void, onError: (message: string | null) => void) {
+export function useSavedAnswers(baseId: string, onNotify: (message: string) => void, onError: (message: string | null) => void, { loadOnMount = true } = {}) {
   const [saved, setSaved] = useState<Record<string, SavedAnswer>>({});
   const [units, setUnits] = useState<KnowledgeUnit[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    void Promise.all([knowledgeApi.proposals(baseId), knowledgeApi.knowledgeUnits(baseId)]).then(([proposals, all]) => {
-      if (cancelled) return;
-      setSaved(Object.fromEntries(proposals.map((item) => [item.messageId, { id: item.id, status: item.status }])));
-      setUnits(trusted(all));
-    }).catch(() => undefined);
-    return () => { cancelled = true; };
+  const reloadProposals = useCallback(async (signal?: AbortSignal) => {
+    const proposals = await knowledgeApi.proposals(baseId);
+    if (signal?.aborted) return;
+    setSaved(Object.fromEntries(proposals.map((item) => [item.messageId, { id: item.id, status: item.status }])));
   }, [baseId]);
 
-  const refreshUnits = () => knowledgeApi.knowledgeUnits(baseId).then((all) => setUnits(trusted(all))).catch(() => undefined);
+  const reloadUnits = useCallback(async (signal?: AbortSignal) => {
+    const all = await knowledgeApi.knowledgeUnits(baseId);
+    if (!signal?.aborted) setUnits(trusted(all));
+  }, [baseId]);
+
+  useEffect(() => {
+    if (!loadOnMount) return undefined;
+    const controller = new AbortController();
+    void Promise.allSettled([reloadProposals(controller.signal), reloadUnits(controller.signal)]);
+    return () => controller.abort();
+  }, [loadOnMount, reloadProposals, reloadUnits]);
 
   const decide = async (message: SessionMessage, run: () => Promise<KnowledgeProposal>, done: string, failed: string) => {
     setBusyId(message.id);
@@ -37,7 +43,7 @@ export function useSavedAnswers(baseId: string, onNotify: (message: string) => v
       const proposal = await run();
       setSaved((current) => ({ ...current, [message.id]: { id: proposal.id, status: proposal.status } }));
       onNotify(done);
-      void refreshUnits();
+      void reloadUnits().catch(() => undefined);
     } catch (reason) {
       onError(reason instanceof Error ? reason.message : failed);
     } finally {
@@ -46,13 +52,15 @@ export function useSavedAnswers(baseId: string, onNotify: (message: string) => v
   };
 
   return {
+    reloadProposals,
+    reloadUnits,
     /** Trusted units only; a removed answer's unit is not listed. */
     units,
     /** The message being saved or removed, if any. */
     busyId,
     isSaved: (messageId: string) => saved[messageId]?.status === "accepted",
     save: async (session: Pick<KnowledgeSession, "id" | "focusChapterId"> | null, message: SessionMessage) => {
-      if (!session || session.id.startsWith("local-")) {
+      if (!session) {
         onNotify("Reconnect the knowledge service to save this answer.");
         return;
       }
