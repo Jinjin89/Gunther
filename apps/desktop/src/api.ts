@@ -106,7 +106,7 @@ import type {
   TrashItem,
   TrashItemKind,
 } from "@gunther/contracts";
-import { readServerEvents } from "./sse";
+import { readRunEvents, RunStreamError, type RunTerminal } from "./sse";
 import { webCaptureSchema } from "@gunther/contracts";
 import { invoke } from "@tauri-apps/api/core";
 import { log } from "./log";
@@ -204,15 +204,11 @@ async function initializeBackendConnection(): Promise<void> {
   return connectionInitialization;
 }
 
-function authenticatedHeaders(headers?: HeadersInit): Headers {
-  const authenticated = new Headers(headers);
-  if (authToken) authenticated.set("X-Gunther-Token", authToken);
-  return authenticated;
-}
-
-async function authenticatedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  await initializeBackendConnection();
-  return fetch(input, { ...init, headers: authenticatedHeaders(init?.headers) });
+/** Send against the connection established by the readiness check. */
+function authenticatedFetch(path: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  if (authToken) headers.set("X-Gunther-Token", authToken);
+  return fetch(`${apiBase}${path}`, { ...init, headers });
 }
 
 class RecordingChunkRequestError extends Error {
@@ -229,7 +225,7 @@ async function waitForDesktopBackend(): Promise<void> {
     let last = "no answer";
     for (let attempt = 0; attempt < 40; attempt += 1) {
       try {
-        const response = await authenticatedFetch(`${apiBase}/health`, { cache: "no-store" });
+        const response = await authenticatedFetch("/health", { cache: "no-store" });
         if (response.ok) {
           const health = (await response.json().catch(() => null)) as Partial<Health> | null;
           if (health?.status === "ok" && typeof health.extractionMode === "string") return;
@@ -260,9 +256,9 @@ export async function reconnectBackend(): Promise<void> {
   await waitForDesktopBackend();
 }
 
-async function backendFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+async function backendFetch(path: string, init?: RequestInit): Promise<Response> {
   await waitForDesktopBackend();
-  return authenticatedFetch(input, init);
+  return authenticatedFetch(path, init);
 }
 
 function withQueryToken(url: string): string {
@@ -308,7 +304,7 @@ async function uploadAsset(
   });
   if (knowledgeBaseId) params.set("knowledgeBaseId", knowledgeBaseId);
   if (notes.trim()) params.set("notes", notes.trim().slice(0, 5_000));
-  const response = await backendFetch(`${apiBase}/captures/assets?${params.toString()}`, {
+  const response = await authenticatedFetch(`/captures/assets?${params.toString()}`, {
     method: "POST",
     headers: {
       "Content-Type": file.type || "application/octet-stream",
@@ -325,7 +321,7 @@ async function uploadAsset(
 
 async function startRecordingSession(title: string, contentType: string, expectedWorkspaceId?: string): Promise<RecordingSession> {
   await waitForDesktopBackend();
-  const response = await backendFetch(`${apiBase}/recordings/sessions?title=${encodeURIComponent(title)}`, {
+  const response = await authenticatedFetch(`/recordings/sessions?title=${encodeURIComponent(title)}`, {
     method: "POST",
     headers: {
       "Content-Type": contentType || "audio/webm",
@@ -359,7 +355,7 @@ async function appendRecordingChunk(
   let lastFailure: unknown = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      const response = await backendFetch(`${apiBase}/recordings/${encodeURIComponent(id)}/chunks?sequence=${sequence}`, {
+      const response = await backendFetch(`/recordings/${encodeURIComponent(id)}/chunks?sequence=${sequence}`, {
         method: "PUT",
         headers: {
           "Content-Type": blob.type || "audio/webm",
@@ -385,8 +381,7 @@ async function appendRecordingChunk(
   throw lastFailure instanceof Error ? lastFailure : new Error("Recording chunk could not be saved.");
 }
 
-async function completeRecordingSession(id: string, expectedWorkspaceId?: string): Promise<RecordingSession> {
-  await waitForDesktopBackend();
+function completeRecordingSession(id: string, expectedWorkspaceId?: string): Promise<RecordingSession> {
   return request<RecordingSession>(`/recordings/${encodeURIComponent(id)}/complete`, { method: "POST" }, expectedWorkspaceId);
 }
 
@@ -400,7 +395,7 @@ async function checkpointRecordingSession(
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const response = await backendFetch(
-        `${apiBase}/recordings/${encodeURIComponent(id)}/checkpoint`,
+        `/recordings/${encodeURIComponent(id)}/checkpoint`,
         {
           method: "PATCH",
           headers: {
@@ -447,27 +442,22 @@ export class AnswerStoppedError extends Error {
   }
 }
 
-export class AnswerStreamError extends Error {
-  constructor(message: string, readonly questionId?: string) {
-    super(message);
+export class AnswerStreamError extends RunStreamError {
+  constructor(message: string, readonly questionId?: string, status?: number) {
+    super(message, status);
     this.name = "AnswerStreamError";
   }
 }
 
-/** The events of an answer until it is saved, fails or is stopped. */
-async function readAnswer(body: ReadableStream<Uint8Array>, onEvent: (event: AnswerEvent) => void): Promise<ConversationTurn> {
-  for await (const message of readServerEvents(body)) {
-    const data = JSON.parse(message.data) as Record<string, unknown>;
-    if (message.event === "done") return data as unknown as ConversationTurn;
-    if (message.event === "stopped") throw new AnswerStoppedError();
-    if (message.event === "error") throw new AnswerStreamError(
-      typeof data.detail === "string" ? data.detail : "The answer could not be written.",
-      typeof data.questionId === "string" ? data.questionId : undefined,
-    );
-    onEvent(data as unknown as AnswerEvent);
-  }
-  throw new Error("The connection closed before the answer was finished.");
-}
+const answerTerminal: RunTerminal = {
+  stopped: () => new AnswerStoppedError(),
+  failed: "The answer could not be written.",
+  closed: "The connection closed before the answer was finished.",
+  error(message, status, payload) {
+    const questionId = (payload as { questionId?: unknown } | null)?.questionId;
+    return new AnswerStreamError(message, typeof questionId === "string" ? questionId : undefined, status);
+  },
+};
 
 /** Someone pressed Stop; nothing was saved. */
 export class OutputStoppedError extends Error {
@@ -482,78 +472,19 @@ export type OutputDone = Artifact | ArtifactTurnOut;
 /** Told apart by `outcome`: only a turn has one. */
 export const isTurnResult = (done: OutputDone): done is ArtifactTurnOut => "outcome" in done;
 
-/** The events of an output until it is saved, fails or is stopped. */
-async function readOutput(body: ReadableStream<Uint8Array>, onEvent: (event: ArtifactTurnEvent) => void): Promise<OutputDone> {
-  for await (const message of readServerEvents(body)) {
-    const data = JSON.parse(message.data) as Record<string, unknown>;
-    if (message.event === "done") return data as unknown as OutputDone;
-    if (message.event === "stopped") throw new OutputStoppedError();
-    if (message.event === "error") throw new Error(typeof data.detail === "string" ? data.detail : "The output could not be built.");
-    onEvent(data as unknown as ArtifactTurnEvent);
-  }
-  throw new Error("The connection closed before the output was finished.");
-}
-
 /** What is heard while the Artifacts agent works on a message: its own events and the skill's. */
 export type ArtifactTurnEvent = ArtifactAgentEvent | OutputEvent;
 
-/** The events of a turn of the Artifacts agent until it ends, fails or is stopped. */
-async function readTurn(body: ReadableStream<Uint8Array>, onEvent: (event: ArtifactTurnEvent) => void): Promise<ArtifactTurnOut> {
-  for await (const message of readServerEvents(body)) {
-    const data = JSON.parse(message.data) as Record<string, unknown>;
-    if (message.event === "done") return data as unknown as ArtifactTurnOut;
-    if (message.event === "stopped") throw new OutputStoppedError();
-    if (message.event === "error") throw new Error(typeof data.detail === "string" ? data.detail : "The message could not be handled.");
-    onEvent(data as unknown as ArtifactTurnEvent);
-  }
-  throw new Error("The connection closed before the message was handled.");
-}
-
-/** Start a build or a revision (a POST), or follow one (a GET), and hear it until it ends. */
-async function streamOutput(path: string, init: RequestInit, workspaceId: string, onEvent: (event: ArtifactTurnEvent) => void, signal?: AbortSignal): Promise<OutputDone | null> {
-  await waitForDesktopBackend();
-  let response: Response;
-  try {
-    response = await backendFetch(`${apiBase}${path}`, {
-      ...init,
-      headers: { "Content-Type": "application/json", "X-Gunther-Workspace-Id": workspaceId },
-      ...(signal ? { signal } : {}),
-    });
-  } catch (reason) {
-    if (reason instanceof TypeError) throw new ServiceUnavailableError();
-    throw reason;
-  }
-  if (response.status === 204) return null;
-  if (!response.ok || !response.body) {
-    const body = (await response.json().catch(() => null)) as { detail?: string } | null;
-    throw new Error(body?.detail ?? `Request failed with status ${response.status}`);
-  }
-  if (init.method === "POST") kickActivity();
-  return readOutput(response.body, onEvent);
-}
-
-/** Send a message to the Artifacts agent (a POST) and hear it until its turn ends. */
-async function streamTurn(path: string, payload: ArtifactTurnInput, workspaceId: string, onEvent: (event: ArtifactTurnEvent) => void, signal?: AbortSignal): Promise<ArtifactTurnOut> {
-  await waitForDesktopBackend();
-  let response: Response;
-  try {
-    response = await backendFetch(`${apiBase}${path}`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-      headers: { "Content-Type": "application/json", "X-Gunther-Workspace-Id": workspaceId },
-      ...(signal ? { signal } : {}),
-    });
-  } catch (reason) {
-    if (reason instanceof TypeError) throw new ServiceUnavailableError();
-    throw reason;
-  }
-  if (!response.ok || !response.body) {
-    const body = (await response.json().catch(() => null)) as { detail?: string } | null;
-    throw new Error(body?.detail ?? `Request failed with status ${response.status}`);
-  }
-  kickActivity();
-  return readTurn(response.body, onEvent);
-}
+const outputTerminal: RunTerminal = {
+  stopped: () => new OutputStoppedError(),
+  failed: "The output could not be built.",
+  closed: "The connection closed before the output was finished.",
+};
+const turnTerminal: RunTerminal = {
+  ...outputTerminal,
+  failed: "The message could not be handled.",
+  closed: "The connection closed before the message was handled.",
+};
 
 const outputsPath = (baseId: string) => `/knowledge-bases/${encodeURIComponent(baseId)}`;
 
@@ -568,54 +499,72 @@ export class ApiRequestError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit, expectedWorkspaceId?: string): Promise<T> {
+interface RequestOptions {
+  expectedWorkspaceId?: string | undefined;
+  logErrors?: boolean;
+  jsonHeader?: boolean;
+}
+
+async function requestResponse(
+  path: string, init?: RequestInit,
+  { expectedWorkspaceId, logErrors = true, jsonHeader = true }: RequestOptions = {},
+): Promise<Response> {
   await waitForDesktopBackend();
+  const headers = new Headers(init?.headers);
+  if (jsonHeader && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (expectedWorkspaceId) headers.set("X-Gunther-Workspace-Id", expectedWorkspaceId);
   let response: Response;
   try {
-    response = await backendFetch(`${apiBase}${path}`, {
-      ...init,
-      headers: {
-        "Content-Type": "application/json",
-        ...init?.headers,
-        ...(expectedWorkspaceId ? { "X-Gunther-Workspace-Id": expectedWorkspaceId } : {}),
-      },
-    });
+    response = await authenticatedFetch(path, { ...init, headers });
   } catch (reason) {
-    // fetch rejects with a TypeError when the service is unreachable; aborts keep their own error.
-    if (reason instanceof TypeError) {
-      logFailure(init, path, `unreachable (${reason.message})`);
+    // Fetch uses TypeError for a network failure. An aborted request can carry any reason.
+    if (reason instanceof TypeError && !init?.signal?.aborted) {
+      if (logErrors) logFailure(init, path, `unreachable (${reason.message})`);
       throw new ServiceUnavailableError();
     }
     throw reason;
   }
 
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { detail?: string } | null;
-    logFailure(init, path, `${response.status} ${body?.detail ?? ""}`.trim());
-    throw new ApiRequestError(body?.detail ?? `Request failed with status ${response.status}`, response.status);
+    const body = (await response.json().catch((reason: unknown) => {
+      if (init?.signal?.aborted) throw reason;
+      return null;
+    })) as { detail?: unknown } | null;
+    const detail = typeof body?.detail === "string" ? body.detail : null;
+    if (logErrors) logFailure(init, path, `${response.status} ${detail ?? ""}`.trim());
+    throw new ApiRequestError(detail ?? `Request failed with status ${response.status}`, response.status);
   }
+  return response;
+}
+
+async function request<T>(path: string, init?: RequestInit, expectedWorkspaceId?: string): Promise<T> {
+  const response = await requestResponse(path, init, { expectedWorkspaceId });
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
 async function requestBlob(path: string, init?: RequestInit): Promise<Blob> {
-  await waitForDesktopBackend();
-  let response: Response;
-  try {
-    response = await backendFetch(`${apiBase}${path}`, { ...init, headers: { "Content-Type": "application/json", ...init?.headers } });
-  } catch (reason) {
-    if (reason instanceof TypeError) {
-      logFailure(init, path, `unreachable (${reason.message})`);
-      throw new ServiceUnavailableError();
-    }
-    throw reason;
-  }
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { detail?: string } | null;
-    logFailure(init, path, `${response.status} ${body?.detail ?? ""}`.trim());
-    throw new Error(body?.detail ?? `Request failed with status ${response.status}`);
-  }
+  const response = await requestResponse(path, init);
   return response.blob();
+}
+
+function requireStreamBody(response: Response): ReadableStream<Uint8Array> {
+  if (!response.body) throw new ApiRequestError(`Request failed with status ${response.status}`, response.status);
+  return response.body;
+}
+
+async function startRun<Result, Progress>(
+  path: string, payload: unknown, onEvent: (event: Progress) => void, terminal: RunTerminal,
+  signal?: AbortSignal, expectedWorkspaceId?: string,
+): Promise<Result> {
+  const response = await requestResponse(path, {
+    method: "POST",
+    body: JSON.stringify(payload),
+    ...(signal ? { signal } : {}),
+  }, { expectedWorkspaceId, logErrors: false });
+  const body = requireStreamBody(response);
+  kickActivity();
+  return readRunEvents<Result, Progress>(body, onEvent, terminal);
 }
 
 export const knowledgeApi = {
@@ -892,37 +841,17 @@ export const knowledgeApi = {
       body: JSON.stringify(payload),
     }),
   /** Send a message and hear the agent at work; resolves with the saved turn. */
-  sendMessageStream: async (id: string, payload: CreateSessionMessageInput, onEvent: (event: AnswerEvent) => void, signal?: AbortSignal): Promise<ConversationTurn> => {
-    await waitForDesktopBackend();
-    let response: Response;
-    try {
-      response = await backendFetch(`${apiBase}/sessions/${encodeURIComponent(id)}/messages/stream`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        ...(signal ? { signal } : {}),
-      });
-    } catch (reason) {
-      if (reason instanceof TypeError) throw new ServiceUnavailableError();
-      throw reason;
-    }
-    if (!response.ok || !response.body) {
-      const body = (await response.json().catch(() => null)) as { detail?: string } | null;
-      throw new Error(body?.detail ?? `Request failed with status ${response.status}`);
-    }
-    kickActivity();
-    return readAnswer(response.body, onEvent);
-  },
+  sendMessageStream: (id: string, payload: CreateSessionMessageInput, onEvent: (event: AnswerEvent) => void, signal?: AbortSignal) =>
+    startRun<ConversationTurn, AnswerEvent>(`/sessions/${encodeURIComponent(id)}/messages/stream`, payload, onEvent, answerTerminal, signal),
   /**
    * Follow an answer still being written in this conversation: what it did so far, then live.
    * Null when none is. Aborting only stops listening; the answer is still saved.
    */
   followAnswer: async (id: string, onEvent: (event: AnswerEvent) => void, signal?: AbortSignal): Promise<ConversationTurn | null> => {
-    await waitForDesktopBackend();
-    const response = await backendFetch(`${apiBase}/sessions/${encodeURIComponent(id)}/answer/stream`, signal ? { signal } : {});
+    const response = await requestResponse(`/sessions/${encodeURIComponent(id)}/answer/stream`,
+      signal ? { signal } : {}, { logErrors: false, jsonHeader: false });
     if (response.status === 204 || !response.body) return null;
-    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
-    return readAnswer(response.body, onEvent);
+    return readRunEvents<ConversationTurn, AnswerEvent>(response.body, onEvent, answerTerminal);
   },
   /** Stop the answer being written; its stream then ends with AnswerStoppedError. */
   /** Fold the last answer into the conversation's brief; a failure comes back as `error`. */
@@ -961,11 +890,17 @@ export const knowledgeApi = {
       expectedWorkspaceId,
     ),
   /** Build a report or slides and hear the agents at work; resolves with the saved version. */
-  artifactTurnStream: (baseId: string, conversationId: string, payload: ArtifactTurnInput, workspaceId: string, onEvent: (event: ArtifactTurnEvent) => void, signal?: AbortSignal): Promise<ArtifactTurnOut> =>
-    streamTurn(`${outputsPath(baseId)}/artifact-conversations/${encodeURIComponent(conversationId)}/messages/stream`, payload, workspaceId, onEvent, signal),
+  artifactTurnStream: (baseId: string, conversationId: string, payload: ArtifactTurnInput, workspaceId: string, onEvent: (event: ArtifactTurnEvent) => void, signal?: AbortSignal) =>
+    startRun<ArtifactTurnOut, ArtifactTurnEvent>(`${outputsPath(baseId)}/artifact-conversations/${encodeURIComponent(conversationId)}/messages/stream`, payload, onEvent, turnTerminal, signal, workspaceId),
   /** Follow a build, revision or turn of the Artifacts agent still running in this library; null when there is none. Aborting only stops listening. A turn ends with how it ended, anything else with the saved version. */
-  followOutputBuild: (baseId: string, workspaceId: string, onEvent: (event: ArtifactTurnEvent) => void, signal?: AbortSignal) =>
-    streamOutput(`${outputsPath(baseId)}/outputs/build/stream`, { method: "GET" }, workspaceId, onEvent, signal),
+  followOutputBuild: async (baseId: string, workspaceId: string, onEvent: (event: ArtifactTurnEvent) => void, signal?: AbortSignal): Promise<OutputDone | null> => {
+    const response = await requestResponse(`${outputsPath(baseId)}/outputs/build/stream`, {
+      method: "GET",
+      ...(signal ? { signal } : {}),
+    }, { expectedWorkspaceId: workspaceId, logErrors: false });
+    if (response.status === 204) return null;
+    return readRunEvents<OutputDone, ArtifactTurnEvent>(requireStreamBody(response), onEvent, outputTerminal);
+  },
   /** The Artifacts conversations of a library, the latest first. */
   artifactConversations: (baseId: string, workspaceId: string) =>
     request<ArtifactConversationSummary[]>(`${outputsPath(baseId)}/artifact-conversations`, undefined, workspaceId),
@@ -991,11 +926,11 @@ export const knowledgeApi = {
   editOutput: (baseId: string, artifactId: string, payload: EditOutputRequest, workspaceId: string) =>
     request<Artifact>(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/edits`, { method: "POST", body: JSON.stringify(payload) }, workspaceId),
   /** Have the Checker look at the sections it has not checked as they read now. */
-  reviewSlidesStream: async (baseId: string, artifactId: string, payload: { clientRequestId: string; model?: string; effort?: string }, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal): Promise<Artifact> =>
-    (await streamOutput(outputsPath(baseId) + "/artifacts/" + encodeURIComponent(artifactId) + "/visual-review/stream", { method: "POST", body: JSON.stringify(payload) }, workspaceId, event => onEvent(event as OutputEvent), signal)) as Artifact,
+  reviewSlidesStream: (baseId: string, artifactId: string, payload: { clientRequestId: string; model?: string; effort?: string }, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal) =>
+    startRun<Artifact, OutputEvent>(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/visual-review/stream`, payload, onEvent, outputTerminal, signal, workspaceId),
   /** Draw every slide of the latest version again in another style: the next version. */
-  restyleSlidesStream: async (baseId: string, artifactId: string, payload: RestyleSlidesRequest, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal): Promise<Artifact> =>
-    (await streamOutput(outputsPath(baseId) + "/artifacts/" + encodeURIComponent(artifactId) + "/restyle/stream", { method: "POST", body: JSON.stringify(payload) }, workspaceId, event => onEvent(event as OutputEvent), signal)) as Artifact,
+  restyleSlidesStream: (baseId: string, artifactId: string, payload: RestyleSlidesRequest, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal) =>
+    startRun<Artifact, OutputEvent>(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/restyle/stream`, payload, onEvent, outputTerminal, signal, workspaceId),
   checkOutput: (baseId: string, artifactId: string, workspaceId: string) =>
     request<Artifact>(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/check`, { method: "POST" }, workspaceId),
   updateProposal: (id: string, payload: UpdateKnowledgeProposalInput) =>

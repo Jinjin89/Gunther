@@ -1,11 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { knowledgeApi, OutputStoppedError, recordingAssetUrl, recordingSocketUrl, ServiceUnavailableError, sourceAssetUrl } from "./api";
+import { AnswerStoppedError, AnswerStreamError, ApiRequestError, knowledgeApi, OutputStoppedError, recordingAssetUrl, recordingSocketUrl, ServiceUnavailableError, sourceAssetUrl } from "./api";
+import { ACTIVITY_CHANGED_EVENT } from "./activity/events";
+import { RunStreamError } from "./sse";
 
 const response = (data: unknown, status = 200): Response => ({
   ok: status >= 200 && status < 300,
   status,
   json: vi.fn().mockResolvedValue(data),
 } as unknown as Response);
+
+const events = (...blocks: Array<[string, unknown]>) => new ReadableStream<Uint8Array>({
+  start(controller) {
+    const encoder = new TextEncoder();
+    for (const [name, data] of blocks) controller.enqueue(encoder.encode(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`));
+    controller.close();
+  },
+});
+const stream = (body: ReadableStream<Uint8Array>) => new Response(body);
 
 describe("desktop knowledge API contract", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
@@ -205,15 +216,33 @@ describe("desktop knowledge API contract", () => {
     expect(JSON.parse(edit.body as string)).toEqual({ clientRequestId: "edit_request_1", content: "# Typed" });
   });
 
+  it("uses the installed connection and token with the requested workspace", async () => {
+    const install = vi.fn().mockResolvedValue({ baseUrl: "http://127.0.0.1:28789", authToken: "desktop-token" });
+    vi.stubGlobal("__TAURI_INTERNALS__", { invoke: install });
+    vi.resetModules();
+    const { knowledgeApi: installedApi } = await import("./api");
+    fetchMock.mockResolvedValueOnce(response({ status: "ok", extractionMode: "local" }));
+    fetchMock.mockResolvedValueOnce(response([]));
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await installedApi.artifacts("biology", "wsp_primary");
+    await installedApi.followOutputBuild("biology", "wsp_primary", () => undefined);
+
+    expect(install).toHaveBeenCalledOnce();
+    expect(install.mock.calls[0]?.[0]).toBe("backend_connection");
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://127.0.0.1:28789/api/health",
+      "http://127.0.0.1:28789/api/knowledge-bases/biology/artifacts",
+      "http://127.0.0.1:28789/api/knowledge-bases/biology/outputs/build/stream",
+    ]);
+    for (const [, init] of fetchMock.mock.calls.slice(1)) {
+      const headers = new Headers(init.headers);
+      expect(headers.get("X-Gunther-Workspace-Id")).toBe("wsp_primary");
+      expect(headers.get("X-Gunther-Token")).toBe("desktop-token");
+    }
+  });
+
   describe("an output being built", () => {
-    const events = (...blocks: Array<[string, unknown]>) => new ReadableStream<Uint8Array>({
-      start(controller) {
-        const encoder = new TextEncoder();
-        for (const [name, data] of blocks) controller.enqueue(encoder.encode(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`));
-        controller.close();
-      },
-    });
-    const stream = (body: ReadableStream<Uint8Array>, status = 200) => ({ ok: status < 300, status, body, json: vi.fn().mockResolvedValue({}) }) as unknown as Response;
     const request = { clientRequestId: "review_request_1" };
 
     it("hands over each event, then the saved version, to a workspace-bound request", async () => {
@@ -276,11 +305,15 @@ describe("desktop knowledge API contract", () => {
       await expect(knowledgeApi.artifactTurnStream("biology", "talk", { clientRequestId: "turn_request_2", text: "Go" }, "wsp_primary", () => undefined)).rejects.toBeInstanceOf(OutputStoppedError);
       fetchMock.mockResolvedValueOnce(stream(events(["error", { status: 502, detail: "The model is down." }])));
       await expect(knowledgeApi.artifactTurnStream("biology", "talk", { clientRequestId: "turn_request_3", text: "Go" }, "wsp_primary", () => undefined)).rejects.toThrow("The model is down.");
+      fetchMock.mockResolvedValueOnce(stream(events(["error", { status: 502 }])));
+      await expect(knowledgeApi.artifactTurnStream("biology", "talk", { clientRequestId: "turn_request_4", text: "Go" }, "wsp_primary", () => undefined))
+        .rejects.toMatchObject({ message: "The message could not be handled.", status: 502 });
     });
 
     it("says why nothing was saved, and tells a stop from a failure", async () => {
       fetchMock.mockResolvedValueOnce(stream(events(["error", { status: 502, detail: "DeepSeek did not accept the API key." }])));
-      await expect(knowledgeApi.reviewSlidesStream("biology", "deck", request, "wsp_primary", () => undefined)).rejects.toThrow("DeepSeek did not accept the API key.");
+      await expect(knowledgeApi.reviewSlidesStream("biology", "deck", request, "wsp_primary", () => undefined))
+        .rejects.toMatchObject({ name: RunStreamError.name, message: "DeepSeek did not accept the API key.", status: 502 });
 
       fetchMock.mockResolvedValueOnce(stream(events(["stopped", { type: "stopped" }])));
       await expect(knowledgeApi.reviewSlidesStream("biology", "deck", request, "wsp_primary", () => undefined)).rejects.toBeInstanceOf(OutputStoppedError);
@@ -289,7 +322,8 @@ describe("desktop knowledge API contract", () => {
       await expect(knowledgeApi.reviewSlidesStream("biology", "deck", request, "wsp_primary", () => undefined)).rejects.toThrow("The connection closed before the output was finished.");
 
       fetchMock.mockResolvedValueOnce({ ok: false, status: 409, body: null, json: vi.fn().mockResolvedValue({ detail: "Gunther is still building an output here." }) } as unknown as Response);
-      await expect(knowledgeApi.reviewSlidesStream("biology", "deck", request, "wsp_primary", () => undefined)).rejects.toThrow("Gunther is still building an output here.");
+      await expect(knowledgeApi.reviewSlidesStream("biology", "deck", request, "wsp_primary", () => undefined))
+        .rejects.toMatchObject({ message: "Gunther is still building an output here.", status: 409 });
     });
 
     it("follows a build that is running, and gets nothing when none is", async () => {
@@ -304,12 +338,80 @@ describe("desktop knowledge API contract", () => {
     });
   });
 
+  it("keeps Ask progress, the completed turn and Start's activity notification", async () => {
+    const progress = { type: "text", text: "Line\u2028separator\u2029next" };
+    const turn = { userMessage: { id: "msg_1" }, assistantMessage: { id: "msg_2", content: progress.text } };
+    const heard = vi.fn();
+    const activity = vi.fn();
+    window.addEventListener(ACTIVITY_CHANGED_EVENT, activity);
+    try {
+      fetchMock.mockResolvedValueOnce(stream(events(["text", progress], ["done", turn])));
+      await expect(knowledgeApi.sendMessageStream("session/1", { content: "What changed?" }, heard)).resolves.toEqual(turn);
+      expect(heard.mock.calls).toEqual([[progress]]);
+      expect(activity).toHaveBeenCalledOnce();
+
+      const replay = { type: "resumed", question: "What changed?", startedAt: 1 };
+      fetchMock.mockResolvedValueOnce(stream(events(["resumed", replay], ["done", turn])));
+      await expect(knowledgeApi.followAnswer("session/1", heard)).resolves.toEqual(turn);
+      expect(heard.mock.calls).toEqual([[progress], [replay]]);
+      expect(activity).toHaveBeenCalledOnce();
+    } finally {
+      window.removeEventListener(ACTIVITY_CHANGED_EVENT, activity);
+    }
+  });
+
+  it("keeps Ask's saved question ID and distinguishes Stop from failure on replay", async () => {
+    const follow = () => knowledgeApi.followAnswer("session", vi.fn());
+    fetchMock.mockResolvedValueOnce(stream(events(["error", { status: 502, detail: "The model is down.", questionId: "msg_1" }])));
+    await expect(follow()).rejects.toMatchObject({
+      name: AnswerStreamError.name, status: 502, message: "The model is down.", questionId: "msg_1",
+    });
+    fetchMock.mockResolvedValueOnce(stream(events(["stopped", { type: "stopped" }])));
+    await expect(follow()).rejects.toBeInstanceOf(AnswerStoppedError);
+    fetchMock.mockResolvedValueOnce(stream(events(["text", { type: "text", text: "Partial" }])));
+    await expect(follow()).rejects.toThrow("The connection closed before the answer was finished.");
+  });
+
+  it("keeps a no-content follow distinct from a server failure or a bodyless start", async () => {
+    const heard = vi.fn();
+    const empty = new Response(null, { status: 204 });
+    const json = vi.spyOn(empty, "json");
+    fetchMock.mockResolvedValueOnce(empty).mockResolvedValueOnce(empty);
+    await expect(knowledgeApi.stopAnswer("session")).resolves.toBeUndefined();
+    await expect(knowledgeApi.followAnswer("session", heard)).resolves.toBeNull();
+    expect(json).not.toHaveBeenCalled();
+
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 200 }));
+    await expect(knowledgeApi.followAnswer("session", heard)).resolves.toBeNull();
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 200 }));
+    await expect(knowledgeApi.sendMessageStream("session", { content: "Ask" }, heard))
+      .rejects.toMatchObject({ status: 200 });
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 503 }));
+    await expect(knowledgeApi.followAnswer("session", heard)).rejects.toMatchObject({ status: 503 });
+    expect(heard).not.toHaveBeenCalled();
+  });
+
+  it("preserves the abort reason when stopping a follow listener", async () => {
+    const controller = new AbortController();
+    const reason = new TypeError("Left the conversation");
+    fetchMock.mockImplementationOnce((_url, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    }));
+    const pending = knowledgeApi.followAnswer("session", vi.fn(), controller.signal);
+    await vi.waitFor(() => expect(fetchMock.mock.calls[0]?.[1].signal).toBe(controller.signal));
+    controller.abort(reason);
+    await expect(pending).rejects.toBe(reason);
+  });
+
   it("preserves backend error detail and provides a status fallback", async () => {
     fetchMock.mockResolvedValueOnce(response({ detail: "Knowledge base no longer exists" }, 404));
-    await expect(knowledgeApi.knowledgeBases()).rejects.toThrow("Knowledge base no longer exists");
+    await expect(knowledgeApi.knowledgeBases()).rejects.toEqual(new ApiRequestError("Knowledge base no longer exists", 404));
 
     fetchMock.mockResolvedValueOnce(response({}, 503));
-    await expect(knowledgeApi.sources()).rejects.toThrow("Request failed with status 503");
+    await expect(knowledgeApi.sources()).rejects.toMatchObject({ status: 503, message: "Request failed with status 503" });
+
+    fetchMock.mockResolvedValueOnce(response({ detail: [{ msg: "Field required" }] }, 422));
+    await expect(knowledgeApi.speechPart("job", 0)).rejects.toMatchObject({ status: 422, message: "Request failed with status 422" });
   });
 
   it("starts readings and fetches their parts, scripts, and kept audio", async () => {

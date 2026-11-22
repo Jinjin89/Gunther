@@ -39,3 +39,38 @@ export async function* readServerEvents(body: ReadableStream<Uint8Array>): Async
     reader.releaseLock();
   }
 }
+
+export class RunStreamError extends Error {
+  constructor(message: string, readonly status?: number) {
+    super(message);
+    this.name = "RunStreamError";
+  }
+}
+
+export interface RunTerminal {
+  stopped: () => Error;
+  failed: string;
+  closed: string;
+  error?: (message: string, status: number | undefined, payload: unknown) => Error;
+}
+
+/** Decode one run until its result, keeping each channel's progress and failure types. */
+export async function readRunEvents<Result, Progress>(
+  body: ReadableStream<Uint8Array>,
+  onEvent: (event: Progress) => void,
+  terminal: RunTerminal,
+): Promise<Result> {
+  for await (const message of readServerEvents(body)) {
+    const data: unknown = JSON.parse(message.data);
+    if (message.event === "done") return data as Result;
+    if (message.event === "stopped") throw terminal.stopped();
+    if (message.event === "error") {
+      const payload = data as { detail?: unknown; status?: unknown } | null;
+      const detail = typeof payload?.detail === "string" ? payload.detail : terminal.failed;
+      const status = typeof payload?.status === "number" ? payload.status : undefined;
+      throw terminal.error?.(detail, status, data) ?? new RunStreamError(detail, status);
+    }
+    onEvent(data as Progress);
+  }
+  throw new Error(terminal.closed);
+}

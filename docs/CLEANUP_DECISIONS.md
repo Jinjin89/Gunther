@@ -316,3 +316,9 @@ not reconstructed. The conversation reopens with what it stored, and the user ca
 approve or make again. Replaying a turn whose version is already published returns that
 version and leaves the conversation unchanged (no draft key, no lineage switch). Rule B
 stands: one owner commits version, workspace and conversation together, only on success.
+
+# Round 12 answer: no TanStack Query in this cleanup
+
+Accepted no-go (batch 18). The desktop targets Safari 13 / macOS 11, and Query v5 supports
+Safari 15+. The gain is about 11 components. Batch 19b keeps REST reads as inputs to its
+shared hook. Revisit if the minimum macOS rises.
