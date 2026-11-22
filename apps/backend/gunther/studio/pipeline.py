@@ -35,6 +35,7 @@ from gunther.checks import Verdicts, finding, read_verdicts, verdicts_of
 from gunther.llm import Image, ModelError, ModelInfo
 from gunther.llm import unfence as _unfence
 from gunther.model_profiles import Effort
+from gunther.output_checks import check_part
 from gunther.output_document import assemble_output, project_outline
 from gunther.outputs import (
     STYLES,
@@ -301,7 +302,7 @@ class _MaterialCheckerGateway:
 
 
 class StudioAgents(OutputAgents):
-    """Makes a report or a deck with the studio method. Checking reuses OutputAgents."""
+    """Makes a report or a deck with the Studio method."""
 
     def __init__(
         self,
@@ -1717,8 +1718,8 @@ class StudioAgents(OutputAgents):
                 "\nActual image readings (linked asset IDs identify the source figures above):\n"
                 + json.dumps(self.scientific_context.get("figure_readings", []), ensure_ascii=False)
             )
-        checked = checker.check_artifact_claims(
-            model,
+        checked = check_part(
+            checker, model,
             STUDIO_CHECK + ("\n" + P.SCIENCE_TRUTH if self.scientific_context else ""),
             checked,
             by_ref, limit=self.limits.sentences, prior=prior or {}, inventory=inventory,

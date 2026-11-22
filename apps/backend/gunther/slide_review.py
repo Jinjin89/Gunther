@@ -20,6 +20,7 @@ from gunther.outputs import (
     with_layout,
 )
 from gunther.run_budget import BudgetedGateway, RunBudget
+from gunther.slide_inspection import measure_slides
 from gunther.slide_render import RenderError, SlideRenderer, built_hash
 from gunther.slide_scene import (
     SceneEnvelope,
@@ -148,14 +149,14 @@ def apply_repairs(built: BuiltOutput, repairs: VisualRepairs, allowed: set[str])
 
 def geometry_findings(snapshot: dict) -> list[dict]:
     findings = []
-    for slide in snapshot["slides"]:
+    for slide in measure_slides(snapshot):
 
         def add(
             problem: str,
             correction: str,
             block: str | None = None,
             route: str = "layout",
-            identity: str = slide["id"],
+            identity: str = slide.slide_id,
         ) -> None:
             findings.append(
                 {
@@ -168,26 +169,26 @@ def geometry_findings(snapshot: dict) -> list[dict]:
                 }
             )
 
-        if slide.get("overflow"):
+        if slide.overflow:
             add(
                 "Content clips or overflows the slide.",
                 "Reallocate the existing blocks; "
                 "if they still cannot fit, split the slide through the outline planner.",
             )
-        if slide.get("assetFailures") or any(not image["loaded"] for image in slide["images"]):
+        if slide.missing_images:
             add("A source figure did not load.", "Restore the source asset before reviewing.")
-        if slide.get("sceneIssue"):
-            add(slide["sceneIssue"], "Repair the scene using the existing content blocks.")
-        for item in slide.get("smallText", [])[:4]:
+        if slide.scene_issue:
+            add(slide.scene_issue, "Repair the scene using the existing content blocks.")
+        for item in slide.small_text[:4]:
             add(
                 f"{item['role'].capitalize()} text is {item['size']:.1f}px; "
                 f"the {item['role']} floor is {item['minimum']}px.",
                 "Allocate more room and increase type; keep values and qualifications intact.",
                 item.get("blockId"),
             )
-        if slide.get("overlaps"):
+        if slide.overlaps:
             add("Content blocks overlap.", "Separate the blocks within the slide bounds.")
-        if any("LastResort" in font for font in slide.get("resolvedFonts", [])):
+        if slide.missing_glyphs:
             add(
                 "Some glyphs use the missing-character font.",
                 "Use an installed font for this script.",
@@ -297,7 +298,8 @@ def review_deck(
         snapshot = renderer.capture(built, use)
         if snapshot["candidateHash"] != built_hash(built):
             raise RenderError("The capture is stale for this candidate.")
-        findings = geometry_findings(snapshot)
+        initial_geometry = geometry_findings(snapshot)
+        findings = list(initial_geometry)
         record["findings"] = findings
         record["history"].append({"snapshotId": snapshot["id"], "candidateHash": built_hash(built)})
         if not model.vision:
@@ -398,7 +400,7 @@ def review_deck(
                     record["findings"] = [
                         f
                         for f in findings
-                        if f["slideId"] not in changed and f not in geometry_findings(snapshot)
+                        if f["slideId"] not in changed and f not in initial_geometry
                     ] + rechecked
                     record["repairedSlides"] = changed
                     record["history"].append(

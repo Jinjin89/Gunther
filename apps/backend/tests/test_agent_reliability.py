@@ -11,7 +11,9 @@ from pydantic import BaseModel
 
 from gunther.agent import AskAgent, Budget, Evidence, Tool, Toolbox
 from gunther.brief import Brief, SettledItem, _enforce
+from gunther.checks import coverage_of
 from gunther.llm import ModelError
+from gunther.output_checks import check_part
 from gunther.run_budget import BudgetedGateway, RunBudget
 
 
@@ -81,19 +83,38 @@ def test_retry_rechecks_a_claim_when_the_passage_context_changes():
         1: Evidence("library", "Trial", "The first result."),
         2: Evidence("library", "Trial", "The second result."),
     }
-    first = agent.check_artifact_claims(
-        chosen.models[0], "Results?", text, evidence, limit=20, prior={}
+    first = check_part(
+        agent, chosen.models[0], "Results?", text, evidence, limit=20,
     )
     evidence[2] = Evidence(
         "library", "Trial", "The second result.", context="The earlier result was corrected."
     )
-    retried = agent.check_artifact_claims(
-        chosen.models[0], "Results?", text, evidence, limit=20, prior=first
+    retried = check_part(
+        agent, chosen.models[0], "Results?", text, evidence, limit=20, prior=first,
     )
     prompt = fake.requests[-1]["messages"][-1]["content"]
     assert "First result" not in prompt and "Second result" in prompt
     assert [row["verdict"] for row in retried.values()] == ["supported", "supported"]
     assert len(fake.requests) == 2
+
+
+@pytest.mark.parametrize("status", ["partial", "unavailable"])
+def test_ask_and_artifacts_derive_coverage_from_the_same_verdicts(status):
+    reply = (
+        '{"sentences":[{"n":1,"verdict":"supported"}]}'
+        if status == "partial" else ModelError("The Checker is unavailable")
+    )
+    chosen = gateway(FakeProvider(reply))
+    agent = AskAgent(chosen)
+    text = "First result [1]. Second result [1]."
+    evidence = {1: Evidence("library", "Trial", "Both results.")}
+
+    _, answer, _, _ = agent.check_sentences(chosen.models[0], "Results?", text, evidence)
+    state = check_part(agent, chosen.models[0], "Results?", text, evidence, limit=20)
+    coverage = coverage_of(state, "section")
+    assert coverage == {**answer._coverage, "answerHash": "section"}
+    assert coverage["status"] == status
+    assert {row["stage"] for row in state.values()} == {"checker"}
 
 
 def test_source_budget_splits_batches_and_never_silently_drops_a_claim():

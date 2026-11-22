@@ -41,8 +41,7 @@ from gunther import trace, usage
 from gunther.checks import (
     LEGACY_EVIDENCE,
     Verdicts,
-    claim_view,
-    merge_verdicts,
+    claim_coverage,
     stage_rows,
     verdicts_of,
 )
@@ -875,21 +874,6 @@ def checker_inventory(
         })
         for claim in claims
     ))
-
-
-def claim_coverage(claims: list[dict[str, Any]], *, unavailable: bool = False) -> dict[str, Any]:
-    unchecked = sum(claim["verdict"] == "unchecked" for claim in claims)
-    checked = len(claims) - unchecked
-    return {
-        "status": (
-            "skipped" if not claims else "complete" if not unchecked
-            else "unavailable" if unavailable and not checked else "partial"
-        ),
-        "considered": len(claims),
-        "checked": checked,
-        "unchecked": unchecked,
-        "claims": claims,
-    }
 
 
 def _marked_unsourced(span: str) -> str:
@@ -1748,18 +1732,6 @@ class AskAgent:
             return None
         return list(verdict.claims)
 
-    def check_artifact_claims(
-        self, model: ModelInfo, question: str, text: str, by_ref: Mapping[int | None, Evidence],
-        *, limit: int, prior: Verdicts, inventory: Verdicts | None = None,
-    ) -> Verdicts:
-        active = checker_inventory(text, by_ref, prior) if inventory is None else inventory
-        claims = [claim_view(row) for row in merge_verdicts(active, prior).values()]
-        check = self.check_claim_records(model, question, text, by_ref, limit=limit, claims=claims)
-        checked = verdicts_of(*(
-            stored_verdict("checker", row) for row in check._coverage["claims"]
-        ))
-        return merge_verdicts(active, prior, checked)
-
     def check_claim_records(
         self,
         model: ModelInfo,
@@ -1772,7 +1744,7 @@ class AskAgent:
         limit: int | None = None,
         claims: list[dict[str, Any]] | None = None,
     ) -> Check:
-        """Check an answer or resume the saved claim list for the same section."""
+        """Check an answer, updating any supplied claim records in place."""
         text = collapse_citations(text)
         if claims is None:
             claims = check_claims(text, by_ref)
@@ -1877,7 +1849,7 @@ class AskAgent:
         check = Check.model_construct(
             sentences=list(verdicts.values()), checklist=checklist_results
         )
-        check._coverage = claim_coverage(claims, unavailable=bool(failed_calls))
+        check._coverage = claim_coverage([stored_verdict("checker", claim) for claim in claims])
         unchecked = check._coverage["unchecked"]
         if unchecked and notes is not None:
             notes.append(

@@ -75,12 +75,12 @@ from gunther.models import (
     SourceIndexHead,
     SourceRevision,
 )
+from gunther.output_checks import support_inventory
 from gunther.outputs import (
     Pool,
     check_heading_refs,
     section_hash,
     split_document,
-    support_inventory,
 )
 from gunther.schemas import ConversationCitationOut
 from gunther.service import KnowledgeService

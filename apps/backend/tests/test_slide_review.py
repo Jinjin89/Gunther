@@ -19,6 +19,7 @@ from gunther.slide_review import (
     review_deck,
 )
 from gunther.slide_scene import SceneEnvelope, graphics_hash, source_hash, with_scene
+from gunther.studio.look import measured
 
 
 def deck(pages=2, vision=True):
@@ -249,12 +250,32 @@ def test_content_and_structure_findings_route_to_checked_tools(tmp_path, route):
 
 
 def test_nonvision_model_gets_geometry_without_hidden_provider_calls(tmp_path):
+    class Crowded(Renderer):
+        def capture(self, candidate, use="talk"):
+            snapshot = super().capture(candidate, use)
+            snapshot["slides"][1].update(
+                drawn="text", overflow=True, overflowWhy="Body spills",
+                smallText=[{
+                    "role": "body", "text": "Quality was not measured.", "size": 12,
+                    "minimum": 18, "blockId": "b2",
+                }],
+            )
+            return snapshot
+
     candidate, fake = deck(vision=False), FakeProvider()
-    result = run(candidate, Renderer(tmp_path), fake)
+    result = run(candidate, Crowded(tmp_path), fake)
     assert not fake.requests and result.content == candidate.content
-    assert result.skill["renderCheck"]["status"] == "captured"
-    assert result.skill["visualReview"]["imageReview"] == "unavailable"
-    assert result.skill["visualReview"]["status"] == "needs_review"
+    snapshot, review = result.skill["renderCheck"], result.skill["visualReview"]
+    assert snapshot["status"] == "captured"
+    assert review["imageReview"] == "unavailable" and review["status"] == "needs_review"
+    overflow, size = review["findings"]
+    assert overflow["slideId"] == "p2" and "overflows" in overflow["problem"]
+    assert (size["slideId"], size["blockId"], size["problem"]) == (
+        "p2", "b2", "Body text is 12.0px; the body floor is 18px.",
+    )
+    [cover, body] = measured(snapshot, ["title", "stats"])
+    assert cover["score"] == 0
+    assert (body["score"], body["fallback"], body["why"]) == (17, "stats", "Body spills")
 
 
 @pytest.mark.parametrize("failure,stale", [(True, False), (False, True)])

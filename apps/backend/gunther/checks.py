@@ -88,7 +88,7 @@ def claim_view(row: Mapping[str, Any]) -> dict[str, Any]:
     return view
 
 
-def _coverage(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def claim_coverage(rows: list[dict[str, Any]]) -> dict[str, Any]:
     unchecked = sum(row["verdict"] in PENDING for row in rows)
     checked = len(rows) - unchecked
     status = "skipped" if not rows else "complete"
@@ -102,11 +102,11 @@ def _coverage(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def coverage_of(verdicts: Verdicts, digest: str) -> dict[str, Any]:
-    coverage = _coverage(stage_rows(verdicts, "checker"))
+    coverage = claim_coverage(stage_rows(verdicts, "checker"))
     coverage["answerHash"] = digest
-    statuses = {coverage["status"], _coverage(stage_rows(verdicts, "legacy"))["status"]}
+    statuses = {coverage["status"], claim_coverage(stage_rows(verdicts, "legacy"))["status"]}
     if support := stage_rows(verdicts, "support"):
-        coverage["support"] = _coverage(support)
+        coverage["support"] = claim_coverage(support)
         statuses.add(coverage["support"]["status"])
     if rows := stage_rows(verdicts, "audit"):
         audit = rows[0]

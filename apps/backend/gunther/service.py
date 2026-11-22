@@ -99,10 +99,10 @@ from gunther.models import (
     utc_now,
 )
 from gunther.online_search import DisabledOnlineSearch, OnlineSearchProvider
+from gunther.output_checks import check_saved_part
 from gunther.outputs import (
     BuiltOutput,
     Notes,
-    OutputAgents,
     OutputLimits,
     Planned,
     Pool,
@@ -4131,7 +4131,15 @@ class KnowledgeService:
                 if citation.ref is not None
             }
         with usage.job("outputs", artifact_kind, ref=artifact_id):
-            checks = OutputAgents(self.models).check(model, sections, known, by_ref)
+            checker = AskAgent(self.models)
+            limit = OutputLimits().sentences
+            checks = []
+            for text in sections:
+                digest = section_hash(text)
+                state = known.get(digest)
+                if state is None or not complete(state):
+                    state = check_saved_part(checker, model, text, by_ref, state, limit=limit)
+                checks.append({"hash": digest, "verdicts": state})
         with session_scope(self.sessions) as session:
             artifact = output_version(
                 session, workspace_id, base_id, artifact_id, latest=False

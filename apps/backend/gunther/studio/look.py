@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from gunther.llm import Image, ModelError, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.outputs import BuiltOutput, Draft, Events, Pool
+from gunther.slide_inspection import measure_slides
 from gunther.studio import format as fmt
 from gunther.studio import prompts as P
 from gunther.studio.reference import DECK_FORMAT, READ_NOTE
@@ -62,28 +63,25 @@ def measured(snapshot: dict, layouts: list[str] | None = None) -> list[dict[str,
     layout it could not draw from the content as written (it fell back to plain text)."""
 
     out = []
-    for n, slide in enumerate(snapshot.get("slides", [])):
+    for slide in measure_slides(snapshot, requested_layouts=layouts or ()):
         small = [
             f"{item['text'][:40]!r} {item['size']:.0f}px (minimum {item['minimum']})"
-            for item in slide.get("smallText", [])
+            for item in slide.small_text
         ]
-        overflow = bool(slide.get("overflow"))
         # A designed slide names each element that spills out of its box or off the stage.
         spill = [
             f"{item.get('element', 'element')} {str(item.get('text', ''))[:40]!r} "
             + ("is outside the stage" if item.get("kind") == "outside" else "spills out of its box")
-            for item in (slide.get("designed") or {}).get("overflow", [])
+            for item in slide.designed_overflow
         ]
-        asked = layouts[n] if layouts and n < len(layouts) else ""
-        fallback = bool(asked) and asked != "text" and slide.get("drawn") == "text"
         out.append(
             {
-                "overflow": overflow,
-                "why": slide.get("overflowWhy") or "",
+                "overflow": slide.overflow,
+                "why": slide.overflow_reason,
                 "small": small,
                 "spill": spill,
-                "fallback": asked if fallback else "",
-                "score": (10 if overflow else 0) + len(small) + (6 if fallback else 0),
+                "fallback": slide.fallback,
+                "score": (10 if slide.overflow else 0) + len(small) + (6 if slide.fallback else 0),
             }
         )
     return out

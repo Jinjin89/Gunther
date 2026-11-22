@@ -31,20 +31,18 @@ from gunther.checks import (
     Verdicts,
     audit_verdict,
     claim_text,
-    coverage_of,
     has_stage,
-    issue_view,
     merge_verdicts,
     verdicts_of,
 )
 from gunther.llm import ModelError
+from gunther.output_checks import check_saved_part, support_inventory
 from gunther.output_document import number_output_citations, number_output_part
 from gunther.outputs import (
     COMPOSITION_LAYOUTS,
     UNCHANGED,
     BuiltOutput,
     Draft,
-    Issue,
     Notes,
     Planned,
     Pool,
@@ -58,7 +56,6 @@ from gunther.outputs import (
     numbered_check,
     section_hash,
     split_document,
-    support_inventory,
     title_of,
 )
 from gunther.schemas import OutlineItem
@@ -365,7 +362,9 @@ class StudioWorkAgents(StudioAgents):
 
     def check_unbuilt(self, model, text, by_ref, prior=None) -> Verdicts:
         if has_stage(prior or {}, "audit", "support"):
-            return super().check_unbuilt(model, text, by_ref, prior)
+            return check_saved_part(
+                self.ask, model, text, by_ref, prior, limit=self.limits.sentences,
+            )
         findings = {k: row for k, row in (prior or {}).items() if row["stage"] == "finding"}
         return findings | self._claims(model, text, by_ref, prior=prior)
 
@@ -621,9 +620,8 @@ class StudioWorkAgents(StudioAgents):
                 if not has_stage(state, "checker"):
                     state = self._claims(model, part, by_ref)
                     record = numbered_check(Draft(part, state), part, numbers)
-                issues = [Issue(**issue) for issue in issue_view(state)]
-                coverage = coverage_of(state, section_hash(part))
-                _, reason = chart_unverified(part, issues, coverage, by_ref, index)
+                draft = Draft(part, state)
+                _, reason = chart_unverified(part, draft.issues, draft.coverage, by_ref, index)
                 if reason is not None:
                     raise ModelError("Chart values must be verified before saving. " + reason)
             if record is not None:

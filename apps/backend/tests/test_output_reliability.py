@@ -30,7 +30,7 @@ from test_outputs import (
     workspace,
 )
 
-from gunther.agent import Evidence, Tool
+from gunther.agent import AskAgent, Evidence, Tool
 from gunther.artifact_read import latest_check_records
 from gunther.artifact_workspace import ConversationBrief, Workspace, import_work, sync
 from gunther.asset_service import AssetTextExtraction
@@ -38,8 +38,9 @@ from gunther.checks import coverage_of, read_verdicts
 from gunther.database import session_scope
 from gunther.llm import ModelError
 from gunther.models import Artifact, ArtifactAsset, ArtifactCheck, Asset
+from gunther.output_checks import check_saved_part
 from gunther.output_document import assemble_output
-from gunther.outputs import Draft, OutputAgents, Planned, Pool, Spec, section_hash, split_document
+from gunther.outputs import Draft, OutputLimits, Planned, Pool, Spec, section_hash, split_document
 from gunther.schemas import ArtifactOut, ConversationCitationOut
 from gunther.studio.pipeline import StudioAgents
 
@@ -143,10 +144,12 @@ def test_retry_keeps_studios_cover_claims_and_leaves_audience_metadata_out():
     coverage = coverage_of(state, digest)
     assert coverage["considered"] == 2 and coverage["status"] == "partial"
 
-    [checked] = OutputAgents(models).check(model(), [cover], {digest: state}, evidence)
+    checked = check_saved_part(
+        AskAgent(models), model(), cover, evidence, state, limit=OutputLimits().sentences,
+    )
     prompt = fake.requests[-1]["messages"][-1]["content"]
     assert re.findall(r"^\(\d+\) (.*)$", prompt, re.M) == [subtitle]
-    coverage = coverage_of(checked["verdicts"], digest)
+    coverage = coverage_of(checked, digest)
     assert coverage["status"] == "complete" and coverage["considered"] == 2
 
 
