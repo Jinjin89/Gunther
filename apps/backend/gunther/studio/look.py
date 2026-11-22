@@ -1,7 +1,7 @@
 """Render and look: the finished deck is drawn by the real renderer, measured, and shown to a
 model that can see. What it finds is fixed once, on at most four slides, without changing a fact.
 
-See docs/ARTIFACT_QUALITY_GOAL.md §4.6. This never fails a build: with no renderer, no browser
+See docs/OUTPUTS.md#checks-decks-and-exports. This never fails a build: with no renderer, no browser
 or no model that can see, the step says why and the deck is saved as it was.
 """
 

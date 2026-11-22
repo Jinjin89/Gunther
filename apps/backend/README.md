@@ -125,7 +125,7 @@ Artifact 当前没有 PATCH/DELETE/archive、全局 Search 或 PDF/DOCX renderer
 - `STT_PROVIDER=auto|sensevoice|compatible`（`compatible` = 任何 OpenAI 风格的 `/audio/transcriptions` 服务，配 `STT_BASE_URL`、`STT_API_KEY`、`STT_MODEL`、`STT_LANGUAGE`）；
 - `SENSEVOICE_URL` 与 segment seconds；
 - `STORAGE_QUOTA_BYTES`（默认 20 GiB）与 `STORAGE_MIN_FREE_BYTES`（默认 1 GiB）；
-- 可选 `LLM_API_KEY`（旧名 `DEEPSEEK_API_KEY` 仍可用）、`TAVILY_API_KEY`（联网搜索）；也可在桌面端 Settings → Services 里填写（见 `docs/SERVICE_SETTINGS.md`）。
+- 可选 `LLM_API_KEY`（旧名 `DEEPSEEK_API_KEY` 仍可用）、`TAVILY_API_KEY`（联网搜索）；也可在桌面端 Settings → Services 里填写（见 [Settings](../../docs/SETTINGS.md)）。
 
 Provider key 不应进入 Git、日志、前端 bundle 或移动普通 profile。
 
@@ -175,4 +175,4 @@ uv run --project apps/backend python scripts/backup_gunther.py restore \
   /private/backups/gunther-backup-... --data-dir /new/absent/data-dir
 ```
 
-恢复只允许写入不存在的新目录，绝不覆盖现有数据。完整性范围包括 SQLite、Asset、Recording ledger/file 与 Artifact hashes/bindings。详细 Runbook 见 [`docs/OPERATIONS_AND_RECOVERY_CN.md`](../../docs/OPERATIONS_AND_RECOVERY_CN.md)。
+恢复只允许写入不存在的新目录，绝不覆盖现有数据。完整性范围包括 SQLite、Asset、Recording ledger/file 与 Artifact hashes/bindings。详细 Runbook 见 [Operations](../../docs/OPERATIONS.md)。

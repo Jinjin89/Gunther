@@ -1,47 +1,16 @@
 # Scientific decks from a fact sheet, made in visible steps
 
-Status: plan agreed 2026-11-02 (all four open questions answered, §11); not built yet. Builds on
-[SCIENTIFIC_PRESENTATION_WORKFLOW.md](SCIENTIFIC_PRESENTATION_WORKFLOW.md) (what a journal-club
-deck must teach) and [ARTIFACT_AGENT_PLAN.md](ARTIFACT_AGENT_PLAN.md) (the agent, its workspace
-and its actions). Read [AGENTS.md](../AGENTS.md) first.
+Status: agreed plan, unbuilt. The decisions are in §11. Read [AGENTS.md](../AGENTS.md).
+The shipped study workflow and its work actions are in [Outputs](OUTPUTS.md).
 
-The user chose to do both parts (A: how facts are gathered and used, B: an agent that works in
-visible steps and listens), and to write this plan first. Each phase in §8 is built by one Sonnet
-subagent and reviewed by Opus against §10 before the next starts. The decisions are in §11.
+## 1. Why
 
-## 1. Why: what goes wrong today
-
-A scientific deck is made by one action, `make`, in
-`apps/backend/gunther/studio/pipeline.py` (`StudioAgents.make`). It runs about thirteen steps in
-a fixed order: purpose → read → study map → read figures → coverage plan → storyline (+ critic) →
-write → fix format → scientific gate → check every claim → refit → design → look.
-
-Measured with the fake-model request ledger (11 slides, 3 figures), after the 2026-10-30 fixes:
-
-| | calls | carry the whole paper |
-| --- | --- | --- |
-| reading, study map, coverage, story, critic, write | 9 | 5 |
-| scientific review, learner, comparison, revision | 4 | 3 |
-| claim check, one per slide | 11 | 11 |
-| claim repair | 4 | 4 |
-
-Three structural problems follow from this shape. Patching the symptoms one by one has not
-worked; the shape has to change.
-
-1. **Every step re-reads the whole paper.** `material_request` puts the whole material in front
-   of every task. When a paper is longer than 60k tokens, `read` makes notes, but
-   `StudioAgents.read` still returns `notes + the whole raw paper`. So for a real 100k-token
-   paper each of about 23 calls sends about 100k tokens. That is roughly 2.3M input tokens per
-   build, before any retry: the user's 4.5M-token runs were two builds.
-2. **Facts are worked out again in every step.** The study map, coverage plan, storyline, writer,
-   reviewer and eleven claim checks each read the paper and decide afresh what it says. Nothing
-   ties a sentence on a slide to the evidence it came from, so checking must re-read the paper
-   for every slide. Reviewers re-read everything too, so every round finds "new" problems and
-   never settles.
-3. **`make` is one opaque action of 60–100 model calls.** The agent cannot see inside it, cannot
-   stop between steps, and cannot hear the user. A message sent after a Stop starts another full
-   `make`. Coverage of central figures is checked only after the deck is written, when fixing it
-   means rewriting slides.
+The current scientific build coordinates material reading, study planning, figure reading,
+drafting and review from [StudioAgents.make](../apps/backend/gunther/studio/pipeline.py).
+Build stages reuse the material prefix and can resume at checkpoints. The study, writer and
+check steps still receive source material to work out the facts they need. This plan gives
+them one verified fact sheet and makes the agent's action boundaries available for new
+messages during a run. It uses the existing Understand, Plan and part writing entry points.
 
 ## 2. The target: what a deck is made from
 
@@ -280,7 +249,7 @@ allowed, marked `[?]`, as the truth rule says today.
 ### 4.1 Steps become actions
 
 The studio's `make` stops being one opaque action. The steps above map onto the actions the
-orchestrator already knows (`artifact_agent.Act.do`) and the step code it already calls
+orchestrator already knows (`artifact_actions.Act.do`) and the step code it already calls
 (`artifact_steps.WorkSteps`):
 
 | Action | Studio step | Workspace field it fills |
@@ -288,21 +257,16 @@ orchestrator already knows (`artifact_agent.Act.do`) and the step code it alread
 | understand | S0–S3: purpose, facts, figures, study | `Work.facts` (new), `Work.study` (new), `Work.approach` |
 | plan whole | S4 | `Work.outline` (items carry facts, claims, panels) |
 | write parts | S5 (+ S6 for the written parts) | `Work.parts` |
-| check parts | S6 | `PartRec.issues` |
+| check parts | S6 | `PartRec.verdicts` |
 | review | S7 | parts rewritten, open problems in `Work.skipped` |
 | make | runs understand → plan whole → write all → review as **separate actions** in the same turn | all of the above |
 
-Today `WorkSteps.understand` and `plan_whole` raise "use make" for studio works; they gain studio
-implementations (`_studio_understand`, `_studio_plan`), the way `write` already has
-`_studio_write`. `make` becomes a macro: `ArtifactAgent._do_make` queues the four actions; each
-one emits its own `action` event, is stored, and is a **step boundary** (§4.2). So the user sees
-"Reading the paper → Planning 15 slides → Writing slides 1–15 → Reviewing", each with its own
-progress, and the agent can stop between them.
-
-`STUDIO_NOTE` changes: for a new scientific deck the agent may run `make`, or the steps itself; a
-remake after a changed brief runs only what is out of date (§4.4). Cost of `make` in
-`ArtifactAgent._cost` becomes the sum of its steps; the turn budget (`AgentLimits.calls`) is
-checked before each step, never in the middle of one.
+`WorkSteps.understand` and `plan_whole` already call Studio's `understand_work` and
+`replan_work`. Extend those entry points to share the proposed fact sheet and slide plan.
+Make `_do_make` queue the four actions as a macro. Each action emits its event, is stored,
+and provides a step boundary (see §4.2). A changed brief reruns only the parts that depend
+on it. `ArtifactAgent._cost` accounts for the stages and checks the turn budget at each
+boundary. [Work steps](../apps/backend/gunther/artifact_steps.py) · [Studio work](../apps/backend/gunther/studio/work.py) · [Action handlers](../apps/backend/gunther/artifact_actions.py)
 
 ### 4.2 Step boundaries
 
@@ -320,7 +284,7 @@ Today the composer turns into a Stop button while a turn runs, so the user can o
 
 - The composer stays usable during a run; Send and Stop sit side by side. A message sent during a
   run goes to `POST /api/knowledge-bases/{kb}/artifact-conversations/{id}/inbox`
-  (`api.py`, `service.artifact_inbox`), stored as a user message marked `while_working`.
+  (add the route in `artifact_conversations_api.py` and the write in `artifact_turns.py`), stored as a user message marked `while_working`.
 - The running turn reads the inbox at the next step boundary (never mid-step).
 - New non-terminal action `say` (`Act.do = "say"`, field `text`): a short message to the user
   that does not end the turn, emitted as a `reply` event and stored as part of the turn. The
@@ -335,7 +299,7 @@ Today the composer turns into a Stop button while a turn runs, so the user can o
 
 - A message after a Stop is a new turn. Its first decision must `say` an answer to it (the same
   rule as §4.3), then go on from the first out-of-date step. Nothing still valid is redone: the
-  digests decide, as they already do for skill works.
+  stored work digests select the next step.
 - "Continue" resumes from the first out-of-date step.
 - The digests of the new fields: facts ← the pool's passages; study ← facts (not the brief);
   outline ← study + the brief's goal, audience, length and use; a part ← its item, its facts'
@@ -383,8 +347,8 @@ function (`facts.cite`) and test it alone.
 ### 6.4 Prompt cache
 
 Keep one shared prefix per build for S4–S7: `STUDIO_BASE` + fact sheet + study, then the task.
-Put the slide-specific part last. Verify with the request ledger (`/tmp/jc-ledger/ledger.py`,
-adapt it) that S4–S7 share the prefix.
+Put the slide-specific part last. Use fake provider requests to verify that S4–S7 share
+the prefix. [Prompt cache tests](../apps/backend/tests/test_prompt_cache.py)
 
 ### 6.5 Size
 
@@ -404,13 +368,13 @@ current path; a remake builds the fact sheet. Do not migrate stored workspaces.
 | `apps/backend/gunther/studio/facts.py` (new) | `Fact`, `FactSheet`, `PartFacts`, `normalise`, `verify_quote`, `panel_facts`, `merge`, `cite`, `values_ok` |
 | `apps/backend/gunther/studio/science.py` | `Study` (merges `StudyMap` + `CoveragePlan`), `study_problems`, `plan_problems`; `content_problems` split into plan and slide checks |
 | `apps/backend/gunther/studio/prompts.py` | `FACTS`, `STUDY`, `SLIDE_PLAN`, `WRITE_FROM_FACTS`, `FAITHFUL`, `LEARNER` (text-only), `REVIEW` (study-based); retire `STUDY_MAP`, `COVERAGE_PLAN`, `STUDY_STORY`, `STUDY_WRITE` and the scientific use of `CRITIC` once replaced |
-| `apps/backend/gunther/studio/pipeline.py` | scientific branch of `make` becomes S0–S8 functions callable one by one; `verify` not used for scientific decks; `resume`/`checkpoint` removed for scientific decks |
+| `studio/pipeline.py`, `studio/material.py`, `studio/study.py`, `studio/drafting.py`, `studio/verification.py` | expose the scientific stages as callable steps and replace their build resume data with stored work digests |
 | `apps/backend/gunther/studio/work.py` | `StudioWorkAgents.write_part` writes from the item's facts; `load_built` carries facts, study and item fields |
 | `apps/backend/gunther/artifact_workspace.py` | `Work.facts`, `Work.study`; `ItemRec.facts/claims/panels/takeaway`; digests for facts and study |
-| `apps/backend/gunther/artifact_steps.py` | `_studio_understand`, `_studio_plan`; `_studio_write` from facts; `_studio_review` = S7 |
-| `apps/backend/gunther/artifact_agent.py` | `make` as a macro of actions; `say` action; inbox read at boundaries; `STUDIO_NOTE`; `_cost` |
-| `apps/backend/gunther/service.py`, `api.py`, `schemas.py` | inbox endpoint and storage; message kind `while_working` |
-| `apps/desktop/src/outputs/ArtifactComposer.tsx`, `OutputsPage.tsx`, `liveOutput.ts`, `ArtifactMessages.tsx` | Send during a run; show `say` replies in the live turn |
+| `apps/backend/gunther/artifact_steps.py` | extend Understand, whole Replan, part writing and Review with facts, the slide plan and S7 |
+| `artifact_agent.py`, `artifact_actions.py` | `make` as a macro of actions, `say` action, inbox reads at boundaries, orchestrator prompt and `_cost` |
+| `artifact_turns.py`, `artifact_conversations_api.py`, `schemas.py` | inbox endpoint and storage; message kind `while_working` |
+| `apps/desktop/src/outputs/{ArtifactComposer.tsx,OutputsPage.tsx,liveOutput.ts,ArtifactMessages.tsx}` | Send during a run; show `say` replies in the live turn |
 | `packages/contracts` | event and message types for `say` and the inbox |
 
 ## 8. Phases
@@ -447,8 +411,9 @@ delivered. Tests: the learner request contains no paper text and no notes; a pro
 listed; one still open is listed; review status values unchanged (`ready`, `open_problems`,
 `unavailable`).
 
-**P6 Steps as actions.** `_studio_understand`, `_studio_plan`; `make` as a macro of separate
-actions; digests for facts and study; `STUDIO_NOTE`; `_cost`; budget checked between steps.
+**P6 Steps as actions.** Extend Understand and whole Replan. Make `make` a macro of separate
+actions. Add digests for facts and study, update the orchestrator prompt, and check the budget
+at each step boundary.
 Tests (through the API, fake models): a new deck shows four separate action events; a Stop after
 planning keeps the plan and the next turn writes without re-reading; a reworded audience replans
 and rewrites but keeps facts, figures and study; a failed write keeps the plan.
@@ -462,7 +427,7 @@ desktop test for Send next to Stop.
 **P8 Measure and tidy.** Adapt the ledger to the new steps and record the before/after table in
 this doc (calls, input size, shared prefix, thinking levels, by step). Remove dead code: the
 scientific `resume`/`checkpoint`, `STUDY_MAP`, `COVERAGE_PLAN`, `STUDY_STORY`, `STUDY_WRITE`,
-the scientific critic. Update `SCIENTIFIC_PRESENTATION_WORKFLOW.md` (current behaviour section).
+the scientific critic. Update the [Outputs guide](OUTPUTS.md) when this workflow ships.
 
 ## 9. What is not in this round
 

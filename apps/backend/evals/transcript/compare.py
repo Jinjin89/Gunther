@@ -2,7 +2,7 @@
 
     .venv/bin/python -m evals.transcript.compare [--audio noisy|clean] [--only today,stream,...]
 
-Methods (docs/LIVE_TRANSCRIPT_PLAN.md):
+Compared methods (see apps/backend/evals/transcript/README.md):
   today      3.2 s pieces cut by the clock, each sent alone to the HTTP model (realtime.py today)
   stream     Layer 1: the streaming model, sent at real-time pace; final sentences only
   paragraph  Layer 2: each paragraph (from Layer 1's times) heard again by the HTTP model, with
@@ -421,7 +421,7 @@ def final_check(samples: np.ndarray, groups: list[dict], current: list[str]) -> 
     return {"text": join(checked), "paragraphs": checked, "terms": terms}
 
 
-# The minute check (docs/LIVE_TRANSCRIPT_PLAN.md §2.5) ------------------------------------
+# The minute check (docs/CAPTURE.md#live-transcript-v2) ------------------------------------
 
 WINDOW_MS = 60_000
 MAX_WINDOW_MS = 180_000

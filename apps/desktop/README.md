@@ -61,7 +61,7 @@ macOS 打包在 Tauri 完成后会移除安装卷根目录的 `.VolumeIcon.icns`
 
 **回收站**：Inbox 行、详情页工具栏与 Library 设置都可以“移到回收站”（⌘⌫），提示条可撤销（⌘Z）。回收站中的内容不出现在 Inbox、搜索与 Ask，可随时恢复；30 天后或“永久删除”时才真正删除，原件只在不再被其他来源使用时移除。
 
-**Library 目录**：每个 Library 同时是磁盘上的普通文件夹（默认 `~/Gunther`，由后端配置 `LIBRARY_ROOT` 决定），包含原件、Markdown 正文与 `source.json`；设置页显示位置并可在 Finder 中打开。详见 [Library folders](../../docs/LIBRARY_FOLDERS.md)。
+**Library 目录**：每个 Library 同时是磁盘上的普通文件夹（默认 `~/Gunther`，由后端配置 `LIBRARY_ROOT` 决定），包含原件、Markdown 正文与 `source.json`；设置页显示位置并可在 Finder 中打开。详见 [Library folders](../../docs/LIBRARY.md#library-folders)。
 
 **快捷键**：统一注册表驱动匹配、提示与 ⌘/ 快捷键一览；桌面版中 ⌘N、⌘⇧C、⌘⇧R、⌘K、⌘,、⌘/、⌘⇧L 由原生菜单负责。
 
@@ -71,7 +71,7 @@ Notebook / Note 是快速记录编辑界面，不是临时 Library。未归类 N
 
 ## Capture
 
-Capture 打开即可书写（默认笔记），类型栏 ⌘1–6 切换且保留已输入内容；粘贴链接或表格会提示切换类型，文件可拖放到窗口任意位置；底栏选择 Inbox 或 Library，⌘↵ 保存，Esc 隐藏到菜单栏。菜单栏图标是 Gunther 的“G”标记，只在采集时改变（录音红灯与计时、暂停琥珀双竖线），菜单只列出当前可用的动作；设置中可选择“仅在采集时显示”。详见 [独立 Capture 与菜单栏设计](../../docs/CAPTURE_MENU_BAR_DESIGN_CN.md)。
+Capture 打开即可书写（默认笔记），类型栏 ⌘1–6 切换且保留已输入内容；粘贴链接或表格会提示切换类型，文件可拖放到窗口任意位置；底栏选择 Inbox 或 Library，⌘↵ 保存，Esc 隐藏到菜单栏。菜单栏图标是 Gunther 的“G”标记，只在采集时改变（录音红灯与计时、暂停琥珀双竖线），菜单只列出当前可用的动作；设置中可选择“仅在采集时显示”。详见 [Capture 与菜单栏](../../docs/CAPTURE.md#dictation-and-menu-bar)。
 
 统一 Capture 支持：
 
@@ -160,7 +160,7 @@ macOS 安装版采用两个位置：
     └── backups/
 ```
 
-可选 `.env` 放在配置目录；秘密配置应单独加密备份。旧 Application Support 数据在首次升级时安全复制迁移，旧副本保留。重装自动打开已有数据库，保留工作区 ID；缺失数据库时只恢复匹配快照，否则保留文件并报告恢复需求。详见 [Library folders](../../docs/LIBRARY_FOLDERS.md)。
+可选 `.env` 放在配置目录；秘密配置应单独加密备份。旧 Application Support 数据在首次升级时安全复制迁移，旧副本保留。重装自动打开已有数据库，保留工作区 ID；缺失数据库时只恢复匹配快照，否则保留文件并报告恢复需求。详见 [Library folders](../../docs/LIBRARY.md#library-folders)。
 
 ## Mobile gateway
 

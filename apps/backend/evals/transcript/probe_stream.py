@@ -1,4 +1,4 @@
-"""Answer the open questions about Qwen's streaming model (docs/LIVE_TRANSCRIPT_PLAN.md §2.10).
+"""Exercise Qwen's streaming model (see apps/backend/evals/transcript/README.md).
 
     .venv/bin/python -m evals.transcript.probe_stream [--trial NAME ...]
 

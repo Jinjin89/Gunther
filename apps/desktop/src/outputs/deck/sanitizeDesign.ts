@@ -1,5 +1,5 @@
 /**
- * The HTML a designed slide carries comes from a model, so it is cleaned before it is drawn (docs/DESIGNED_SLIDES_PLAN.md §8):
+ * The HTML a designed slide carries comes from a model, so it is cleaned before it is drawn (docs/STUDIO_FORMAT.md#designed-slides-and-saved-scenes):
  * no scripts or event handlers, no external addresses (a link or a `url()` may only point at `#something` in the slide),
  * no pictures, frames, style sheets or embedded documents. HTML and inline SVG stay, with their `style` attributes.
  * The one custom element is `<gunther-chart>`, where the app draws the slide's chart.

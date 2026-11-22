@@ -379,7 +379,7 @@ def structured_document(
 ) -> ParsedDocument:
     """Evidence, the rule draft, a model's correction when one is set up, then assembly.
 
-    See docs/DOCUMENT_STRUCTURE_PLAN.md. Imported here rather than at the top: the
+    See docs/LIBRARY.md. Imported here rather than at the top: the
     offline layout helper imports this module for its program and has no model client.
     """
     from gunther.document_evidence import build_evidence

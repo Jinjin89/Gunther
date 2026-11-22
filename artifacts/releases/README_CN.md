@@ -90,4 +90,4 @@ npm run restore:data -- /备份目录/gunther-backup-... --data-dir /新的不�
 - Artifact 尚无归档、全局 Search、PDF/DOCX renderer 与完整版本 diff。
 - restore CLI 已完成安全自动化闭环，但仍没有应用内恢复向导、真实用户数据人工演练或加密异地备份策略。
 
-完整能力、证据口径与限制见[验收报告](../../docs/ACCEPTANCE_REPORT_V3_CN.md)。
+完整能力、证据口径与限制见[验收报告](https://github.com/Jinjin89/Gunther/blob/f693f1618260d0cba0c9b7ecb63af872c5cc27e5/docs/ACCEPTANCE_REPORT_V3_CN.md)。

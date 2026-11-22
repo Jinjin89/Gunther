@@ -1,6 +1,6 @@
 /**
  * The live transcript as data: live sentences, confirmed sentences, check windows and
- * paragraphs (docs/LIVE_TRANSCRIPT_PLAN.md §4.2). Pure functions, no React: the recorder
+ * paragraphs (docs/CAPTURE.md#live-transcript-v2). Pure functions, no React: the recorder
  * holds one `TranscriptState` and replaces it with the result of each call.
  *
  * Times are milliseconds on the recording clock (audio recorded so far, pauses excluded).

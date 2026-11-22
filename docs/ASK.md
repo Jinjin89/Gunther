@@ -1,0 +1,24 @@
+# Ask
+
+Start on Home to search across libraries or ask with selected scope. Inside a library, Ask keeps a durable conversation with its own source selection and optional section focus. File a Home conversation in a library, branch at an answer, or archive it. The editable brief carries context across turns.
+
+## Ask a question
+
+Select the model and effort in the composer. Choose all eligible library sources or a selection. The Web switch allows public web search when Tavily is configured. Compare and Research are explicit methods. Research frames sub-questions, gathers and grades rounds of evidence, and can stop gathering and write from the material already collected.
+
+Ask needs a configured model. The composer links to Settings when a model or key is needed. A model or required grading failure leaves a retryable question. Optional relevance grading can retain ungraded results. Reconnect runs the same startup reads as opening the page. History and saved answers can load independently, and each failed read has its own Retry. Send requires a usable model, request settings and a reachable service.
+
+## Evidence and checking
+
+1. The planner chooses an offered tool or starts the answer. Library lookup uses the selected scope and read-more can expand a numbered source. A repeated source keeps its number in the conversation pool.
+2. The writer sees the usable passages and their citations. The checker audits uncited factual statements, assesses claim support and can look up marked statements. Unsupported or unverified wording and missing evidence stay visible. Partial support, inference and dispute markers remain attached to their sources.
+3. The answer stores the source revision, block or region and supporting text with its citations. Reopen that answer to see its evidence snapshot. The answer may read a pinned revision through the verified reader. Search and new reads respect current library membership and Trash.
+4. Choose Save as knowledge on a cited answer to publish a trusted knowledge unit. Remove withdraws it from active knowledge. Saved questions and answers use their IDs for retry and promotion.
+
+## Streaming and trace
+
+Ask uses `POST /api/sessions/{id}/messages/stream`. Attach to existing work at `GET /api/sessions/{id}/answer/stream`, or stop it with `POST /api/sessions/{id}/answer/stop`. Home and Library share the answer listener. The stream reports steps and text, then a stored answer or a terminal failure. Terminal events follow persistence and the Activity update. Clients parse SSE on CR, LF and CRLF line breaks.
+
+Turn handling is in [ask_turns.py](../apps/backend/gunther/ask_turns.py) and [ask_api.py](../apps/backend/gunther/ask_api.py). The [agent](../apps/backend/gunther/agent.py) uses [evidence readers](../apps/backend/gunther/evidence_reader.py), [citations](../apps/backend/gunther/citations.py) and [claim checks](../apps/backend/gunther/claim_checks.py). The [Ask exam](../apps/backend/evals/README.md) runs its fixture turns through the same streaming path.
+
+Enable Keep how answers are made in Developer settings to inspect a new answer's Trace. It shows the plan, searches, results, grading, writing and checks, with recorded model requests, replies and timing. Saved answers with local provenance remain readable as stored. [Developer settings](SETTINGS.md#developer)

@@ -4,7 +4,7 @@ A conversation keeps one *brief* (what the user wants; every line is marked as t
 words, as typed in the panel, or as the agent's guess), one *pool* of sources, each under a
 number it keeps for the whole conversation, and one *work* per artifact (a deck or a report):
 the approach, the material cards, the outline, and the parts (a slide or a section each) with
-what the Checker found in them. See docs/ARTIFACT_AGENT_PLAN.md.
+what the Checker found in them. See docs/OUTPUTS.md.
 
 What is out of date is **computed**, never remembered as a mark. Each step keeps a digest of
 what it was made from (the brief's fields, the approach, a part's outline item and cards) and is

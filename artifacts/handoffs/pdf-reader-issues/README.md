@@ -44,8 +44,7 @@ signature verification succeeded.
 
 The separate selected-source visibility and save-ordering bug has since been fixed and
 covered by 236 backend workflow tests and 71 desktop tests. It is not an outstanding parser
-issue. The next presentation-quality task is described in
-[Scientific presentations that explain the study](../../../docs/SCIENTIFIC_PRESENTATION_WORKFLOW.md).
+issue. See [Outputs](../../../docs/OUTPUTS.md) for the study workflow and [Next projects](../../../docs/NEXT.md#studio-claims-and-covers) for planned cover and claim work.
 
 Use general fixes and independent development fixtures. Do not inspect the user's held-out
 papers, old identifying screenshots, or live library to tailor production rules. Preserve

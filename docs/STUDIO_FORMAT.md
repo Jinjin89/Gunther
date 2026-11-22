@@ -1,9 +1,8 @@
 # Studio format: how a new deck and a new report are written down
 
-Part of `ARTIFACT_QUALITY_GOAL.md`. This is the contract between the backend writer
-(`gunther/studio/`), the in-app renderer, and the PPTX/DOCX exporters. Content stays plain
-Markdown (so the claim checker, citations, versions and the text editor keep working), with a
-strict grammar per layout. Old artifacts keep their old format and old renderer.
+Studio stores Markdown with a defined grammar for each layout. The backend writer,
+in-app renderer and exporters use that content for citations, checking and editing.
+Saved markers select the format and renderer for each version. [Outputs](OUTPUTS.md)
 
 ## 1. Decks (design v2)
 
@@ -13,10 +12,9 @@ A deck is slides separated by a line `---`. Each slide starts with a marker line
 <!-- layout: <id>[; key: value]... -->
 ```
 
-The **title slide's** marker carries `design: v2` (this is what selects the new renderer) and
-optionally `theme: paper|ink|editorial` (default `paper`) and `accent: <name>` (one of the
-existing accent names; default `blue`). Other slides' markers carry only the layout and the
-options listed for that layout.
+The **title slide's** marker carries `design: v2` to select the Studio renderer. It can also
+carry `theme: paper|ink|editorial|brand` (default `paper`) and `accent: <name>` (default
+`blue`). Other slide markers name the layout and its options.
 
 Every slide except `title` and `section` starts with `## <title>` (the action title: a full
 sentence carrying the point). Speaker notes come last, after a line starting with `Note:`
@@ -28,16 +26,15 @@ the slide listing the sources cited on that slide ("Sources: Harlow 2024, p. 3; 
 
 ### Units and budgets
 
-A "unit" is one Latin character or half a CJK character (a CJK character counts 2 units). The
-budgets below are hard limits for `talk` decks; `read` decks may use 1.5× the body budgets
-(titles keep theirs). The backend rejects a slide over budget and asks for a shorter one; the
-renderer must lay out content at its full budget without overflow at 1280×720 in every theme
-(the gallery in §4 proves this).
+Wide and fullwidth characters count as two units. Other characters count as one, and
+citation markers and emphasis do not count. Most body budgets allow 1.5× in `read` decks.
+The format checker asks for a shorter slide when needed and records unresolved format problems.
+Decks render at 1280×720. [Format checks](../apps/backend/gunther/studio/format.py)
 
 | Field | Units |
 | --- | --- |
-| Action title (`## …`) | 12–100 |
-| Title slide title | 8–80; subtitle ≤ 160; meta ≤ 80 |
+| Action title (`## …`) | 12–90 |
+| Title slide | Title 8–80, subtitle up to 160, at most one metadata line |
 
 ### Layouts
 
@@ -52,7 +49,7 @@ Briefing for the city energy committee · March 2026
 ```
 Line 1 `# title`; line 2 subtitle (optional); line 3 meta (optional, no citations).
 
-**`section`** — a divider between parts (title 8–80 units, line ≤ 160).
+**`section`** — a divider between parts with a title of 4–80 units and up to one line beneath it.
 ```
 <!-- layout: section -->
 # What the trial measured
@@ -173,7 +170,9 @@ Quote ≤ 240 units; attribution line ≤ 90.
 ![Figure 3: Peak indoor temperature, treated vs control](gunther-asset:ast_3f9a1c)
 The gap opens above 30 °C outside [1]
 ```
-Image line, then takeaway line ≤ 160.
+Image line, then a takeaway. A figure with explanation bullets uses the fixed side-column
+budget. `figure_detail` uses a larger column and three to six explanation bullets. The
+figure can carry a source-backed panel crop.
 
 **`statement`** — one big sentence (a key question, a turning point, the core message).
 ```
@@ -211,10 +210,25 @@ three summers. Hand over to the next slide on where the savings concentrate.
 ```
 Talk decks: every content slide has notes (3–6 sentences, what to say). Read decks: optional.
 
+### Designed slides and saved scenes
+
+The cover can declare a `style` of `light`, `dark` or `bold`. A slide can end with a
+`:::design` block containing its HTML. The fact guard checks the HTML against the verified
+Markdown. It rejects unsafe content and checks that the title, visible text, numbers and
+citations are kept. The renderer sanitizes the HTML and supplies a managed chart for the
+`<gunther-chart>` placeholder. Slides without an accepted design use the template.
+[Design rules](../apps/backend/gunther/studio/design.py) · [Renderer](../apps/desktop/src/outputs/deck/DesignedSlide.tsx)
+
+The reader also accepts saved Markdown layout and scene markers. A scene's tree positions
+blocks by ID. Its source hash and, for version 2 scenes, graphics hash bind it to the
+slide content. An invalid or stale scene falls back to its Markdown layout. Edits keep
+the marker format of the version being edited. [Scene reader](../apps/backend/gunther/slide_scene.py)
+
 ## 2. Reports (design v2)
 
 A report is Markdown: `# Title`, an optional italic line, then `## ` sections. A report in this
-design starts with a line `<!-- report: v2 -->` before the title. Two block extensions:
+design starts with a line `<!-- report: v2 -->` before the title. It supports a summary,
+exhibits and callouts.
 
 **Executive summary**: the first section is `## <heading>` immediately followed by the marker
 line `<!-- block: summary -->`. The renderer draws it as a summary box. It holds 1 short
@@ -246,17 +260,14 @@ Headings are claims. Sub-headings use `###`. Footnotes are not used; citations a
 
 ## 3. Exports (desktop)
 
-- **PPTX** (pptxgenjs): one slide per deck slide, the same layout geometry, real text boxes,
-  native charts for `chart`, tables as real tables, speaker notes as notes, the source line as
-  a small text box, fonts declared (system fonts per theme; CJK falls back to the platform's
-  CJK font). Citations become superscript numbers.
-- **DOCX** (docx): title, summary box as a shaded table cell, headings, paragraphs with
-  superscript citation numbers, exhibits as real tables (charts as a table plus caption — Word
-  charts are out of scope), callouts as shaded boxes, a "Sources" list at the end.
-- **PDF**: the existing print path draws the same components.
+- **PPTX** uses editable text and tables, native charts for template slides, and speaker
+  notes. A designed slide exports a picture of the visual layer with editable text boxes
+  placed over it. [Deck export](../apps/desktop/src/outputs/deck/exportPptx.ts)
+- **DOCX** keeps headings, summary and callout boxes, exhibit tables and a Sources list.
+  Citation marks are superscript numbers. [Report export](../apps/desktop/src/outputs/deck/exportDocx.ts)
+- **PDF** uses the print renderer. The same content can be copied or downloaded as Markdown.
 
 ## 4. Gallery
 
-A development page (not in the app UI) renders every layout × theme at short, budget-maximum
-and CJK content, plus the same as PPTX → PNG through LibreOffice for parity. The fixtures live in
-`apps/desktop/src/outputs/deck/fixtures/` and are shared with the backend's grammar tests.
+Developer render and export checks use the short, maximum, CJK and designed fixtures.
+The backend grammar tests share the deck inputs. [Fixtures](../apps/desktop/src/outputs/deck/fixtures/) · [Slide evals](../apps/backend/evals/slides/README.md)

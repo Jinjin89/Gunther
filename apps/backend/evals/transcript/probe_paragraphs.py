@@ -3,7 +3,7 @@
     .venv/bin/python -m evals.transcript.probe_paragraphs [--run <results.json>]
 
 Takes the sentences of a stream run (the newest `compare.py` run by default), asks the `LLM_*`
-model where paragraphs start (prompt §5.2 of docs/LIVE_TRANSCRIPT_PLAN.md), once over the whole
+model where paragraphs start (docs/CAPTURE.md#live-transcript-v2), once over the whole
 transcript and once the live way (about once a minute, earlier paragraphs frozen), and prints
 the paragraphs next to the script's true paragraph starts.
 """

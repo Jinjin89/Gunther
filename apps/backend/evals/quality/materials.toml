@@ -1,4 +1,4 @@
-# Gold material for the quality evaluation (docs/ARTIFACT_QUALITY_GOAL.md section 6).
+# Gold material for the quality evaluation (apps/backend/evals/quality/README.md).
 #
 # Each [[set]] is one library: real public pages read through the app's own web capture
 # (kind "web"), a PDF turned into text with pdftotext and filed as a note when the capture

@@ -7,7 +7,7 @@
 3. Check: the plan against the shape; every problem is a named ``Violation``.
 4. Assemble: evidence + a plan without errors -> the stored document.
 
-See docs/DOCUMENT_STRUCTURE_PLAN.md for the element contract and the types.
+See docs/LIBRARY.md#readings-and-provenance for the reading contract.
 """
 
 from __future__ import annotations

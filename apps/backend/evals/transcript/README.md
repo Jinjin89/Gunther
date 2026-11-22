@@ -1,6 +1,6 @@
 # Live transcription measurements
 
-Developer tools for `docs/LIVE_TRANSCRIPT_PLAN.md`. Nothing in the app uses them. They call Qwen with the key in the repo's `.env` (`QWEN_STT_API_KEY`, and `QWEN_STT_BASE_URL` if your address isn't `https://maas.qianwenaiapi.com`), and the terms step uses the `LLM_*` model there. Run from `apps/backend`.
+Developer tools for comparing transcript methods and measuring provider behavior. See the [live transcript guide](../../../../docs/CAPTURE.md#live-transcript-v2). They call Qwen with the key in the repo's `.env` (`QWEN_STT_API_KEY`, and `QWEN_STT_BASE_URL` if your address isn't `https://maas.qianwenaiapi.com`), and the terms step uses the `LLM_*` model there. Run from `apps/backend`.
 
 1. **Make the test lecture** (once; spoken sentences are cached):
 
@@ -16,7 +16,7 @@ Developer tools for `docs/LIVE_TRANSCRIPT_PLAN.md`. Nothing in the app uses them
    .venv/bin/python -m evals.transcript.compare [--audio noisy|clean] [--only today,stream,paragraph,final]
    ```
 
-   - `today`: 3.2 s pieces cut by the clock, each sent alone (what `realtime.py` does now);
+   - `today`: 3.2 s pieces cut by the clock, each sent alone as a comparison baseline;
    - `stream`: Layer 1, the streaming model at real-time pace (`--params '{"...": ...}'` adds streaming parameters);
    - `paragraph`: Layer 2, each paragraph heard again by the HTTP model with the previous one as context;
    - `final`: Layer 3, terms from the whole transcript plus the paragraphs before and after.
@@ -37,7 +37,7 @@ Speech made by text-to-speech is cleaner than a real room, so the absolute numbe
    .venv/bin/python -m evals.transcript.probe_pause
    ```
 
-5. **Group sentences into paragraphs by content** (the `LLM_*` model, prompt §5.2), whole and live:
+5. **Group sentences into paragraphs by content** (the `LLM_*` model), whole and live:
 
    ```
    .venv/bin/python -m evals.transcript.probe_paragraphs [--run <results.json>]

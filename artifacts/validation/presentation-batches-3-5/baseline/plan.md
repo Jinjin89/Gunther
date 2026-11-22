@@ -1,10 +1,10 @@
 # Gunther slide structure and visual design implementation plan
 
-18 October 2026. Status: batches 0–2 implemented; batches 3–5 planned. See the [implementation record and review artifacts](PRESENTATION_BATCHES_0_2.md).
+18 October 2026. Status: batches 0–2 implemented; batches 3–5 planned. See the [implementation record and review artifacts](https://github.com/Jinjin89/Gunther/blob/f693f1618260d0cba0c9b7ecb63af872c5cc27e5/docs/PRESENTATION_BATCHES_0_2.md).
 
 Build a stronger planning and rendering workflow on the existing reveal.js viewer, shared `SlideFace`, evidence cards, and versioned artifacts. The first release should produce a clearer sequence of supported ideas, a coherent visual style, and a review of the actual rendered slides. Each change must preserve the relationship between claims and their sources.
 
-Basis: [structure research](PRESENTATION_STRUCTURE_RESEARCH.md) and [public slide skills research](PRESENTATION_SKILLS_RESEARCH.md). This plan extends the current working tree, including its existing presentation changes.
+Basis: [structure research](https://github.com/Jinjin89/Gunther/blob/f693f1618260d0cba0c9b7ecb63af872c5cc27e5/docs/PRESENTATION_STRUCTURE_RESEARCH.md) and [public slide skills research](https://github.com/Jinjin89/Gunther/blob/f693f1618260d0cba0c9b7ecb63af872c5cc27e5/docs/PRESENTATION_SKILLS_RESEARCH.md). This plan extends the current working tree, including its existing presentation changes.
 
 ## Implementation decisions
 

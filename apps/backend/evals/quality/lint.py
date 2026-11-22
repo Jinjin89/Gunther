@@ -1,5 +1,5 @@
 # ruff: noqa: E501
-"""Hard-defect linter: pure code, no model (docs/ARTIFACT_QUALITY_GOAL.md section 1).
+"""Hard-defect linter: pure code, no model (apps/backend/evals/quality/README.md).
 
 ``lint(kind, content, use, measure)`` returns a list of ``Defect``. Rules:
 

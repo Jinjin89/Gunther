@@ -376,7 +376,7 @@ def _traced(found: Sequence[Evidence]) -> list[dict[str, Any]]:
 class AskAgent(ClaimChecks, AskResearch):
     gateway: ModelGateway
 
-    # Measured on 2026-10-02 (docs/ASK_RESEARCH_PLAN.md, Phase 6): thinking a little while
+    # Measured on 2026-10-02 (docs/ASK.md#evidence-and-checking): thinking a little while
     # planning gave the best answers for about two seconds more; checking stays off.
     plan_effort: Effort = "low"
 

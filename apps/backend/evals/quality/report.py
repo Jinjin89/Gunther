@@ -105,7 +105,9 @@ def render(raw: dict[str, Any]) -> str:
         f"- Judge usage: {raw['judgeUsage']['calls']} calls, {raw['judgeUsage']['tokens']} tokens "
         "(not counted in the build columns).",
         "- Ship rate = (ship + minor edit) / all slides or sections; strict = ship only. "
-        "The bar: ship rate >= 80%, titles-only >= 90%, hard defects 0 (docs/ARTIFACT_QUALITY_GOAL.md).",
+        "Targets are ship rate ≥ 80%, titles-only pass rate ≥ 90%, and zero hard defects. "
+        "[What is measured](https://github.com/Jinjin89/Gunther/blob/main/"
+        "apps/backend/evals/quality/README.md#what-is-measured).",
         "",
     ]
     builds = raw["builds"]

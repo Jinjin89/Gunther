@@ -4,7 +4,7 @@ read → memo (what is worth saying) → storyline (titles first, with a critic)
 thing at once) → format fix → verify (claims against passages, surgical fixes) → assemble.
 
 About eight model calls for a deck instead of dozens, each with the whole picture in view.
-See docs/ARTIFACT_QUALITY_GOAL.md §4 and docs/STUDIO_FORMAT.md.
+See docs/OUTPUTS.md and docs/STUDIO_FORMAT.md.
 """
 
 from __future__ import annotations

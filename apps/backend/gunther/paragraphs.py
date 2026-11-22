@@ -1,4 +1,4 @@
-"""Where paragraphs start in a spoken transcript, by content (docs/LIVE_TRANSCRIPT_PLAN.md §5.2).
+"""Where paragraphs start in a spoken transcript, by content (docs/CAPTURE.md).
 
 The Analysis model reads numbered sentences and says only which numbers start a paragraph.
 It never returns or changes text, so every word on screen still comes from listening.

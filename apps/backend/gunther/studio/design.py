@@ -9,7 +9,7 @@ The design is one more block at its end:
     :::
 
 A slide without that block is drawn by the template renderer (old decks, and any slide whose
-design failed the guard twice). See docs/DESIGNED_SLIDES_PLAN.md.
+design failed the guard twice). See docs/STUDIO_FORMAT.md.
 """
 
 from __future__ import annotations

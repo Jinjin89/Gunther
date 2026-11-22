@@ -1,6 +1,6 @@
 # The Artifacts exam
 
-A fixed set of 32 messages sent to a slide deck and a report that were built from the Ask exam's demo library (ten notes about cool roofs in a made-up city, "Velmora"), and scored: did the right part change, did everything else stay exactly as it was, did the Checker look at what changed, did the assistant ask when it should, and what did it cost. It is the before/after measure for changes to how Artifacts understand a message (`docs/ARTIFACT_AGENT_PLAN.md`), so every number comes from the same library, the same two documents, the same messages and the same judge. It is a developer tool: nothing in the app or the sidecar uses it.
+A fixed set of 32 messages sent to a slide deck and a report that were built from the Ask exam's demo library (ten notes about cool roofs in a made-up city, "Velmora"), and scored: did the right part change, did everything else stay exactly as it was, did the Checker look at what changed, did the assistant ask when it should, and what did it cost. It is the before/after measure for changes to how Artifacts understand a message ([Outputs](../../../../docs/OUTPUTS.md)), so every number comes from the same library, the same two documents, the same messages and the same judge. It is a developer tool: nothing in the app or the sidecar uses it.
 
 ## Run it
 
@@ -10,7 +10,7 @@ From `apps/backend`:
 .venv/bin/python -m evals.artifacts.run --path baseline --label baseline --jobs 4
 ```
 
-It needs a model. Give it keys the way the Ask exam does (both are gitignored): a `.env` at the repo root, or a copy of the app's `service-settings.json` with `--settings PATH` (or the env var `SERVICE_SETTINGS_FILE`). Outputs are always made with their skills here, as the app does by default.
+It needs a model. Give it keys the way the Ask exam does (both are gitignored): a `.env` at the repo root, or a copy of the app's `service-settings.json` with `--settings PATH` (or the env var `SERVICE_SETTINGS_FILE`). Studio makes the fixtures and handles newly requested output builds.
 
 Flags:
 

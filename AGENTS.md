@@ -36,23 +36,17 @@ Both come first.
 - Prefer a well-known library to hand-rolled code.
 - Dev tools (evals, benchmarks, debug viewers) are repo commands, not app UI.
 
-## Documents and reading
+## Rules learned in the cleanup
 
-- Recover each document's own organization before preparing retrieval passages.
-  Prefer explicit structure, bookmarks, reading order, typography and layout.
-  Documents can have different sections, or no headings at all; do not impose
-  a paper template or manufacture section names.
-- Keep the original file and provenance. The reading version uses the
-  document's own text, never rewritten: every block is placed once (metadata,
-  body text, visual content with its caption, references) or dropped with a
-  recorded reason (page headers/footers, decoration, and back matter the
-  document type does not read as content, such as competing interests).
-  Report incomplete extraction rather than guessing.
-- Distinguish publication dates from file creation/modification dates, and
-  publishers from the software that produced a file.
-
-## Docs
-
-- Docs describe the system as it is now. When a plan is built, fold what is still
-  true into the guide and delete the plan. No progress logs, no "uncommitted"
-  notes, no review instructions for work that has shipped.
+- Identify a thing by its stable ID or source position. A table row belongs to its exhibit index and row index.
+- Get intent from explicit controls or structured model fields. Do not use word lists or regexes over free-form user or document text. Parsers for defined formats are fine.
+- Keep teaching examples in model prompts.
+- Let the format's decoder decide whether it can read a file. Preserve the parts it can read and report skipped parts and reasons.
+- Recover each document's own structure from tags, bookmarks, reading order, typography and geometry. Allow a reading with no headings.
+- Keep originals and provenance. The reading keeps the source's wording. Place each block of source text once or record its omission. Distinguish publication dates from file dates, and publishers from authoring software.
+- Verify identity, eligibility and integrity before use. Filter eligible rows before a limited query.
+- Derive status from the final state. Count slides still failing after the last repair.
+- Give each write one owner. Stage changes, then publish together so a failed save leaves stored state intact.
+- When review repeatedly finds edge cases in a heuristic, remove it or give it one owner with one precedence rule.
+- Let an interrupted turn from an older build reopen with its stored work and restart from there.
+- Document the system as shipped. Fold completed plans into the living guide. [Documentation index](README.md#guides)

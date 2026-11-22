@@ -1,0 +1,37 @@
+# Architecture
+
+Gunther keeps one workspace on the computer running the Python service. The desktop and phone act through its API. SQLite holds durable records and references to managed files. Library folders give a readable view of that workspace.
+
+## Processes and boundaries
+
+- **Desktop.** Tauri owns the backend Helper, windows, tray, shortcuts and private local files. React uses the TypeScript shapes in [packages/contracts](../packages/contracts/) and the HTTP and stream readers in [apps/desktop/src](../apps/desktop/src/). The packaged Helper listens on loopback and uses a per-launch token and Origin checks.
+- **Mobile.** Flutter uses the same API through a scoped HTTPS gateway after pairing. Device credentials and trust material live in secure storage. The phone persists captures in an outbox until the workspace acknowledges them.
+- **Backend.** [main.py](../apps/backend/gunther/main.py) creates the FastAPI app, wires providers and workers, and owns app middleware and lifetime. [api.py](../apps/backend/gunther/api.py) mounts the job routers in route order. [service.py](../apps/backend/gunther/service.py) wires the domain operations to one `KnowledgeService` instance. Routes parse and authorize requests, then call those operations.
+
+## Job map
+
+Paths in the table are relative to [apps/backend/gunther](../apps/backend/gunther/).
+
+| Job | HTTP owners | Domain owners |
+| --- | --- | --- |
+| Workspace and pairing | `system_api.py`, `main.py` | `device_auth.py` and the `mobile_gateway*` modules handle device scope, pairing and the HTTPS connection. |
+| Capture, source reads and filing | `source_api.py`, `knowledge_api.py` | `source_service.py` handles registration, filing and assertion review. `asset_service.py` and `web_capture.py` preserve originals. The initial reader in `asset_service.py`, `document_parser.py` and `processing.py` read and publish revisions. |
+| Libraries, Contents and search | `library_api.py`, `knowledge_api.py`, `trash_api.py` | `library_service.py` handles library records and search. `topics.py` owns Contents, `library_folders.py` writes the file view, and `knowledge_index.py` and `vector_index.py` serve retrieval. |
+| Ask and saved knowledge | `ask_api.py`, `knowledge_units_api.py` | `ask_turns.py` manages sessions, briefs, replies and Retry. `agent.py` runs plan, gather and write. `ask_research.py` frames and grades research. `evidence.py`, `evidence_service.py`, `evidence_reader.py`, `citations.py` and `claim_checks.py` serve both Ask and Outputs. `knowledge_units.py` handles saving and removing knowledge. |
+| Outputs | `artifact_conversations_api.py`, `artifact_read_api.py`, `output_commands_api.py`, `artifact_api_common.py` | `artifact_turns.py` and `artifact_conversations.py` own stored turns and workspaces. `artifact_agent.py` decides and dispatches, `artifact_view.py` projects work, `artifact_actions.py` gates and executes actions, and `artifact_turn_result.py` prepares results. `artifact_steps.py` and `studio/work.py` perform work operations. `artifact_versions.py` commits versions and `artifact_read.py` verifies and opens them. |
+| Studio builds and checks | Outputs routers | `output_commands.py` handles direct output operations. `output_material.py` binds the selected sources and saved material. `studio/pipeline.py` runs and resumes the stages. `studio/material.py`, `studio/study.py`, `studio/drafting.py` and `studio/verification.py` perform them. `studio/state.py` holds build state and `studio/requests.py` prepares and schedules requests. `output_document.py` assembles versions and numbers citations. `output_checks.py` and `checks.py` share verdicts with saved part checks. |
+| Recording, live text and dictation | `recording_api.py` | `recording_service.py` owns the upload ledger, `recording_metadata.py` resolves audio references and duration, and `realtime.py` handles v2 audio and provider events. `transcription.py` and `retranscribe.py` handle uploaded and stored audio. `paragraphs.py` groups the text. |
+| Providers, meters and diagnostics | `models_api.py`, `settings_api.py`, `speech_api.py`, `tts_api.py`, `usage_api.py`, `developer_api.py`, `activity_api.py` | `service_settings.py` persists settings. `llm.py` sends model requests, `model_profiles.py` maps effort, `usage.py` meters calls and `trace.py` captures Ask traces. `activity.py` records user-visible work. |
+
+## Data flow
+
+1. Capture registers a note or source, or stages and verifies an original first. File receipts identify the queued job. The worker claims a lease, reads and indexes the file, and publishes a revision only if its expected head and lease still match. Originals and their evidence links remain available.
+2. Search and Ask resolve a library, section or list of sources. Retrieval uses eligible current passages and verifies a pinned revision before reading any cached passage from it. An answer stores numbered evidence snapshots with the turn. An explicit Save as knowledge publishes a trusted unit revision.
+3. An output binds its material, builds or edits the work, checks the claims and stages a candidate version. The version commit owns the seal, lineage head and associated conversation writes. Opening a saved version verifies its seal before projecting sections and checks.
+4. Live audio and durable recording uploads use separate transports. Recording completion uses the server byte ledger and checkpoint. Ask and Outputs share `answer_runs.py` for following a stream and stopping it. Their completion events follow the durable save and Activity update.
+
+## Storage
+
+- [models.py](../apps/backend/gunther/models.py) contains the SQLite records. [database.py](../apps/backend/gunther/database.py) enables WAL and foreign keys. [migrations.py](../apps/backend/gunther/migrations.py) applies ordered migrations at startup.
+- A source has original capture provenance and immutable reading revisions, including ordered elements and indexed passages. The head selects the current reading. The source paper card and search index are derived. Figures and citations carry source, revision and region identity.
+- A library root has readable folders and a private `.gunther/` directory for the database, originals and recovery state. The desktop config directory holds private preferences and provider keys. See [Library folders](LIBRARY.md#library-folders) and [Operations](OPERATIONS.md#data-and-logs).

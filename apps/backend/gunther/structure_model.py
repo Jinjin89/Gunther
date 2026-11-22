@@ -1,4 +1,4 @@
-"""A model corrects the rule draft of a document's structure (docs/DOCUMENT_STRUCTURE_PLAN.md §5).
+"""A model corrects the rule draft of a document's structure. See docs/LIBRARY.md.
 
 The Analysis model reads the document as numbered blocks, one line each, beside the plan the
 layout rules drafted, and answers with a corrected plan. It moves block ids and never writes

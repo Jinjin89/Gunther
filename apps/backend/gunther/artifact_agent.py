@@ -5,7 +5,7 @@ map of the artifact with what is out of date, the changes so far, the last messa
 turn did), and decides the next one to three actions. Code checks each action, runs it over
 Studio's steps (``WorkSteps``), the tools and the answerer, and the orchestrator decides
 again with the notes of what happened, until an action ends the turn: ``ask``, ``answer``,
-``save`` or ``reply``. See docs/ARTIFACT_AGENT_PLAN.md.
+``save`` or ``reply``. See docs/OUTPUTS.md.
 
 The orchestrator names positions (slide 4, source [7]) as the view shows them; code maps them
 to the workspace's stable ids before anything runs. Nothing here fakes a result: a decision

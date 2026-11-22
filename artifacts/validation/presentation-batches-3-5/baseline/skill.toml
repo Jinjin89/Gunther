@@ -1,7 +1,7 @@
 # How Gunther runs the Slides skill. The instructions are in SKILL.md: its text before the
 # first step heading is the preamble, and each step's section starts at "## <id>".
 # Gunther's own rules (citations, language, the JSON each step returns) always come first
-# and win over anything here. See docs/OUTPUTS.md (Skills).
+# and win over anything here. See https://github.com/Jinjin89/Gunther/blob/f693f1618260d0cba0c9b7ecb63af872c5cc27e5/docs/OUTPUTS.md#skills.
 
 name = "slides"
 kind = "slides"

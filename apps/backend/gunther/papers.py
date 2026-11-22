@@ -12,7 +12,7 @@ Everything here is read from the source's current revision without a model:
 - the abstract, with the blocks it came from, so it can be cited;
 - the outline: every section heading, as the reader's contents list them.
 
-A document organized by its structure plan (docs/DOCUMENT_STRUCTURE_PLAN.md)
+A document organized by its structure plan (docs/LIBRARY.md#readings-and-provenance)
 already marks its title, authors and abstract; those marks are used as they are.
 
 The result is kept in ``source_papers`` and written as ``summary.md`` in the
