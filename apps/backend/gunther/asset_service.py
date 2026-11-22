@@ -154,21 +154,31 @@ def _bom_encoding(data: bytes) -> str | None:
     return None
 
 
-def _decode_text(data: bytes, *, final: bool = True) -> tuple[str, str | None]:
-    encoding = _bom_encoding(data)
-    if encoding is None:
+def _decode_text(
+    data: bytes, *, final: bool = True, declared_encoding: str | None = None,
+) -> tuple[str, str | None]:
+    def decode(encoding: str, errors: str = "strict") -> str:
+        if final:
+            return data.decode(encoding, errors=errors)
+        return getincrementaldecoder(encoding)(errors=errors).decode(data, final=False)
+
+    def decode_with_warning(encoding: str) -> tuple[str, str | None]:
         try:
-            return getincrementaldecoder("utf-8")().decode(data, final=final), None
+            return decode(encoding), None
         except UnicodeDecodeError:
-            encoding = "windows-1252"
-    decoder = getincrementaldecoder(encoding)
+            return decode(encoding, "replace"), "Some undecodable characters were replaced."
+
+    encoding = _bom_encoding(data) or declared_encoding
+    if encoding:
+        try:
+            return decode_with_warning(encoding)
+        except (LookupError, UnicodeError):
+            # An unsupported charset declaration leaves encoding detection to the bytes.
+            pass
     try:
-        return decoder().decode(data, final=final), None
+        return decode("utf-8"), None
     except UnicodeDecodeError:
-        return (
-            decoder(errors="replace").decode(data, final=final),
-            "Some undecodable characters were replaced.",
-        )
+        return decode_with_warning("windows-1252")
 
 
 def _combine_limitations(*limitations: str | None) -> str | None:

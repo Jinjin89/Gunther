@@ -385,10 +385,12 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
         await onAssetCaptured(assetFile, title || assetFile.name, targetBaseId || null, saving, content.trim(), boundWorkspaceId);
       } else {
         const captureId = `cap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const submissionTitle = saving === "link" ? saveTitle : saveTitle || "Untitled source";
+        const submissionContent = saveText.trim();
         appendStoredCapture({
           id: captureId,
-          title: saveTitle,
-          content: saveText,
+          title: submissionTitle,
+          content: submissionContent,
           kind: saving,
           baseId: saveBaseId,
           workspaceId: boundWorkspaceId,
@@ -396,7 +398,7 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
           createdAt: new Date().toISOString(),
         });
         await flushPersistentStorage();
-        await onCaptured(saving === "link" ? saveTitle : saveTitle || "Untitled source", saveBaseId || null, saveText.trim(), saving, captureId, normalizedUrl ?? undefined, boundWorkspaceId);
+        await onCaptured(submissionTitle, saveBaseId || null, submissionContent, saving, captureId, normalizedUrl ?? undefined, boundWorkspaceId);
       }
       // When the parent keeps Capture open, clear only what was just saved.
       if (isRecording) {

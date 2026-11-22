@@ -147,6 +147,15 @@ class WebFetchResponse:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class _PageReading:
+    content_type: str
+    media_type: str
+    decoded: str
+    text: str
+    title: str | None
+
+
 class WebResolver(Protocol):
     def resolve(self, host: str, port: int) -> Sequence[str]: ...
 
@@ -497,31 +506,6 @@ class _HtmlTitle(HTMLParser):
         return " ".join(" ".join(self.parts).split())
 
 
-def _decode_response(data: bytes, content_type: str) -> str:
-    match = re.search(r"(?:^|;)\s*charset\s*=\s*[\"']?([^;\s\"']+)", content_type, re.I)
-    if match and len(match.group(1)) <= 40:
-        try:
-            decoded = data.decode(match.group(1), errors="replace")
-        except LookupError:
-            pass
-        else:
-            if "\x00" not in decoded:
-                return decoded
-    return _decode_text(data)[0]
-
-
-def _readable_page(data: bytes, content_type: str) -> tuple[str, str | None]:
-    media_type = content_type.split(";", 1)[0].strip().casefold()
-    decoded = _decode_response(data, content_type)
-    if media_type == "text/plain":
-        return decoded.strip(), None
-    title_parser = _HtmlTitle()
-    title_parser.feed(decoded)
-    readable_parser = _ReadableHtml()
-    readable_parser.feed(decoded)
-    return readable_parser.text().strip(), title_parser.title() or None
-
-
 def _redirect_url(
     target: ResolvedWebTarget, response: WebFetchResponse, redirect_count: int
 ) -> str | None:
@@ -540,9 +524,7 @@ def _redirect_url(
     return redirected_url
 
 
-def _page_content_type(response: WebFetchResponse) -> str:
-    """The content type of a page that may be read, after the status and size checks."""
-
+def _read_page(response: WebFetchResponse) -> _PageReading:
     if not 200 <= response.status < 300:
         raise WebCaptureFetchError(f"The web page returned HTTP status {response.status}")
     content_type = (response.header("content-type") or "").strip()
@@ -557,25 +539,32 @@ def _page_content_type(response: WebFetchResponse) -> str:
         raise WebCaptureValidationError("The web response is empty")
     if len(response.body) > MAX_RESPONSE_BYTES:
         raise WebCaptureTooLargeError("The expanded web response is too large")
-    return content_type
+    match = re.search(r"(?:^|;)\s*charset\s*=\s*[\"']?([^;\s\"']+)", content_type, re.I)
+    charset = match[1] if match and len(match[1]) <= 40 else None
+    decoded, _ = _decode_text(response.body, declared_encoding=charset)
+    if media_type == "text/plain":
+        return _PageReading(content_type, media_type, decoded, decoded.strip(), None)
+    title_parser = _HtmlTitle()
+    title_parser.feed(decoded)
+    readable_parser = _ReadableHtml()
+    readable_parser.feed(decoded)
+    return _PageReading(
+        content_type, media_type, decoded, readable_parser.text().strip(),
+        title_parser.title() or None,
+    )
 
 
-def fetch_public_page(
+def _fetch_response(
     url: str,
     policy: PublicWebUrlPolicy,
     fetcher: WebFetcher,
     *,
-    timeout: float = TOTAL_TIMEOUT_SECONDS,
-) -> tuple[str, str | None]:
-    """The readable text and title of one public page, for reading a source further.
-
-    The same rules as a capture: the public-address policy for the URL and every
-    redirect, the redirect and size limits, and only HTML or plain text.
-    """
-
-    deadline = time.monotonic() + timeout
-    target = policy.resolve(url)
+    deadline: float,
+) -> tuple[ResolvedWebTarget, WebFetchResponse]:
     for redirect_count in range(MAX_REDIRECTS + 1):
+        if time.monotonic() >= deadline:
+            raise WebCaptureTimeoutError("The web page timed out")
+        target = policy.resolve(url)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise WebCaptureTimeoutError("The web page timed out")
@@ -587,11 +576,27 @@ def fetch_public_page(
             raise WebCaptureTimeoutError("The web page timed out") from error
         except Exception as error:
             raise WebCaptureFetchError("The web page could not be fetched") from error
+        if time.monotonic() >= deadline:
+            raise WebCaptureTimeoutError("The web page timed out")
         redirected = _redirect_url(target, response, redirect_count)
         if redirected is None:
-            return _readable_page(response.body, _page_content_type(response))
-        target = policy.resolve(redirected)
+            return target, response
+        url = redirected
     raise WebCaptureValidationError("The web page redirected too many times")
+
+
+def fetch_public_page(
+    url: str,
+    policy: PublicWebUrlPolicy,
+    fetcher: WebFetcher,
+    *,
+    timeout: float = TOTAL_TIMEOUT_SECONDS,
+) -> tuple[str, str | None]:
+    """Read the text and title of a public page for Ask."""
+
+    _, response = _fetch_response(url, policy, fetcher, deadline=time.monotonic() + timeout)
+    page = _read_page(response)
+    return page.text, page.title
 
 
 def _asset_file_name(final_url: str, media_type: str) -> str:
@@ -708,49 +713,19 @@ class WebCaptureService:
             idempotent_replay=True,
         )
 
-    async def _resolve_with_deadline(
-        self,
-        url: str,
-        deadline: float,
-    ) -> ResolvedWebTarget:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise WebCaptureTimeoutError("The web capture timed out")
+    async def _fetch(
+        self, url: str, *, timeout: float,
+    ) -> tuple[ResolvedWebTarget, WebFetchResponse]:
         try:
             return await asyncio.wait_for(
-                asyncio.to_thread(self.policy.resolve, url),
-                timeout=remaining,
+                asyncio.to_thread(
+                    _fetch_response, url, self.policy, self.fetcher,
+                    deadline=time.monotonic() + timeout,
+                ),
+                timeout=timeout,
             )
         except TimeoutError as error:
             raise WebCaptureTimeoutError("The web capture timed out") from error
-
-    async def _fetch(self, original_url: str) -> tuple[ResolvedWebTarget, WebFetchResponse]:
-        deadline = time.monotonic() + TOTAL_TIMEOUT_SECONDS
-        target = await self._resolve_with_deadline(original_url, deadline)
-        for redirect_count in range(MAX_REDIRECTS + 1):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise WebCaptureTimeoutError("The web capture timed out")
-            try:
-                response = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.fetcher.fetch,
-                        target,
-                        timeout_seconds=remaining,
-                    ),
-                    timeout=remaining,
-                )
-            except WebCaptureError:
-                raise
-            except TimeoutError as error:
-                raise WebCaptureTimeoutError("The web capture timed out") from error
-            except Exception as error:
-                raise WebCaptureFetchError("The web page could not be fetched") from error
-            redirected_url = _redirect_url(target, response, redirect_count)
-            if redirected_url is None:
-                return target, response
-            target = await self._resolve_with_deadline(redirected_url, deadline)
-        raise WebCaptureValidationError("The web page redirected too many times")
 
     @staticmethod
     def _source_content(
@@ -796,18 +771,12 @@ class WebCaptureService:
                 if library is None or library.trashed_at is not None:
                     raise LookupError(f"Knowledge Base {intent.knowledge_base_id} was not found")
 
-        target, response = await self._fetch(requested_url)
-        content_type = _page_content_type(response)
-        media_type = content_type.split(";", 1)[0].strip().casefold()
-
-        readable, page_title = await asyncio.to_thread(
-            _readable_page,
-            response.body,
-            content_type,
-        )
+        target, response = await self._fetch(requested_url, timeout=TOTAL_TIMEOUT_SECONDS)
+        page = await asyncio.to_thread(_read_page, response)
+        content_type = page.content_type
         document = (
-            html_document(_decode_response(response.body, content_type), target.url)
-            if media_type != "text/plain"
+            html_document(page.decoded, target.url)
+            if page.media_type != "text/plain"
             else None
         )
         if document is not None:
@@ -826,8 +795,8 @@ class WebCaptureService:
                     break
                 attempted.add(url)
                 try:
-                    _, fetched = await asyncio.wait_for(
-                        self._fetch(url), timeout=max(0.1, deadline - time.monotonic())
+                    _, fetched = await self._fetch(
+                        url, timeout=min(TOTAL_TIMEOUT_SECONDS, deadline - time.monotonic()),
                     )
                     if (
                         not 200 <= fetched.status < 300
@@ -859,10 +828,10 @@ class WebCaptureService:
         captured_at = datetime.now(UTC).replace(tzinfo=None)
         content_hash = hashlib.sha256(response.body).hexdigest()
         snapshot_id = f"wbs_{uuid4().hex}"
-        title = (intent.title or page_title or target.host).strip()[:160]
+        title = (intent.title or page.title or target.host).strip()[:160]
         asset = await self.assets.preserve_bytes(
             response.body,
-            file_name=_asset_file_name(target.url, media_type),
+            file_name=_asset_file_name(target.url, page.media_type),
             media_type=content_type,
         )
         source_content = self._source_content(
@@ -872,7 +841,7 @@ class WebCaptureService:
             captured_at,
             response,
             content_type,
-            readable,
+            page.text,
             intent.notes,
             content_hash,
         )

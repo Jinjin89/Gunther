@@ -1,9 +1,11 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import App from "./App";
 import { activityItem } from "./activity/fixtures";
 import { knowledgeApi } from "./api";
+import { appendStoredCapture, loadStoredCaptures } from "./localCaptureQueue";
+import * as storage from "./persistentStorage";
 import { makeBase } from "./test/fixtures";
 
 HTMLElement.prototype.scrollTo ??= () => undefined;
@@ -72,4 +74,53 @@ it("uses stored metadata and Contents for a library with a former sample ID", as
   expect(screen.getByText(savedLibrary.description)).toBeVisible();
   expect(knowledgeApi.contents).toHaveBeenCalledWith(savedLibrary.id);
   expect(screen.queryByText("Single-cell Best Practices · Annotation")).not.toBeInTheDocument();
+});
+
+it("recovers queued links according to their stored URL and workspace", async () => {
+  vi.spyOn(knowledgeApi, "activity").mockResolvedValue({ version: 1, items: [] });
+  const legacyLink = {
+    id: "cap-legacy", title: "", content: "Existing reading", kind: "link",
+    baseId: null, workspaceId: "wsp",
+  };
+  const snapshot = {
+    ...legacyLink, id: "cap-snapshot", title: " Page ", content: " Notes ",
+    url: "https://example.org/page", baseId: savedLibrary.id,
+  };
+  appendStoredCapture(legacyLink);
+  appendStoredCapture(snapshot);
+  appendStoredCapture({ ...snapshot, id: "cap-foreign", workspaceId: "different" });
+  appendStoredCapture({ ...snapshot, id: "cap-unbound", workspaceId: null });
+  const importSource = vi.spyOn(knowledgeApi, "importSource");
+  const captureWeb = vi.spyOn(knowledgeApi, "captureWeb");
+  render(<App />);
+
+  expect(await screen.findByText("2 locally preserved captures recovered.")).toBeVisible();
+  expect(importSource).toHaveBeenCalledExactlyOnceWith({
+    title: "Untitled source", content: "Existing reading", kind: "link",
+  }, "wsp", { deferAnalysis: true });
+  expect(captureWeb).toHaveBeenCalledExactlyOnceWith({
+    url: snapshot.url, title: "Page", notes: "Notes",
+    knowledgeBaseId: savedLibrary.id, clientCaptureId: snapshot.id,
+  }, "wsp");
+  expect(loadStoredCaptures().map(({ id }) => id)).toEqual(["cap-foreign", "cap-unbound"]);
+});
+
+it("recovers a saved link when a storage flush would fail", async () => {
+  vi.spyOn(knowledgeApi, "activity").mockResolvedValue({ version: 1, items: [] });
+  const flush = vi.spyOn(storage, "flushPersistentStorage")
+    .mockRejectedValue(new Error("Native storage is unavailable"));
+  const captureWeb = vi.spyOn(knowledgeApi, "captureWeb");
+  const saved = {
+    id: "cap-saved-link", url: "https://example.org/page", title: "Saved page",
+    content: "", kind: "link", baseId: null, workspaceId: "wsp",
+  };
+  appendStoredCapture(saved);
+  render(<App />);
+
+  await waitFor(() => expect(captureWeb).toHaveBeenCalledExactlyOnceWith({
+    url: saved.url, title: saved.title, clientCaptureId: saved.id,
+  }, saved.workspaceId));
+  expect(await screen.findByText("1 locally preserved capture recovered.")).toBeVisible();
+  expect(flush).not.toHaveBeenCalled();
+  expect(loadStoredCaptures()).toEqual([]);
 });

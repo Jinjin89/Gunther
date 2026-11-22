@@ -139,15 +139,19 @@ describe("CaptureSheet web snapshots", () => {
     const user = userEvent.setup();
     const onCaptured = renderSheet("wsp_primary");
 
-    await user.type(screen.getByRole("textbox", { name: "Title" }), "Recovered thought");
-    await user.type(screen.getByRole("textbox", { name: "Source content" }), "Do not lose this note.");
+    const content = "Do not lose this note.";
+    await user.type(screen.getByRole("textbox", { name: "Source content" }), `  ${content}  `);
     await user.click(screen.getByRole("button", { name: /Save note/i }));
 
     await waitFor(() => expect(onCaptured).toHaveBeenCalledOnce());
     expect(window.localStorage.getItem("gunther:local-captures-quarantine")).toContain("{damaged-json");
-    expect(JSON.parse(window.localStorage.getItem("gunther:local-captures") ?? "[]")).toEqual([
-      expect.objectContaining({ title: "Recovered thought", content: "Do not lose this note.", kind: "note", workspaceId: "wsp_primary" }),
-    ]);
+    const [queued] = JSON.parse(window.localStorage.getItem("gunther:local-captures") ?? "[]");
+    expect(queued).toMatchObject({
+      title: "Untitled source", content, kind: "note", workspaceId: "wsp_primary",
+    });
+    expect(onCaptured).toHaveBeenCalledExactlyOnceWith(
+      queued.title, null, queued.content, "note", queued.id, undefined, "wsp_primary",
+    );
   });
 });
 

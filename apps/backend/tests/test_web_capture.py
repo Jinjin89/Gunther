@@ -8,23 +8,27 @@ from pathlib import Path
 import pytest
 from fake_models import FakeProvider, assertion_payload, gateway
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from gunther import web_capture
 from gunther.config import Settings
+from gunther.database import session_scope
 from gunther.extraction import ModelExtractor
 from gunther.main import create_app
+from gunther.models import WebSnapshot
 from gunther.web_capture import (
     PinnedHttpFetcher,
     PublicWebUrlPolicy,
     ResolvedWebTarget,
     WebCaptureFetchError,
+    WebCaptureTimeoutError,
     WebCaptureTooLargeError,
     WebFetchResponse,
     _acquire_capture_lock,
     _decode_transfer_body,
     _PinnedHttpsConnection,
-    _readable_page,
     _release_capture_lock,
+    fetch_public_page,
 )
 
 PUBLIC_IP = "93.184.216.34"
@@ -305,7 +309,44 @@ def test_client_capture_id_is_idempotent_without_refetching(tmp_path: Path) -> N
         assert restarted_fetcher.calls == []
 
 
-def test_redirects_are_manually_validated_and_preserve_both_urls(tmp_path: Path) -> None:
+def test_older_web_snapshot_without_a_fingerprint_still_replays(tmp_path: Path) -> None:
+    url = "https://example.com/legacy"
+    fetcher = ScriptedFetcher({url: html_response(b"<p>Saved reading</p>")})
+    payload = {"url": url, "clientCaptureId": "legacy_capture_1234"}
+    with make_client(tmp_path, fetcher) as client:
+        captured = client.post("/api/captures/web", json=payload).raise_for_status().json()
+        with session_scope(client.app.state.knowledge_service.sessions) as session:
+            snapshot = session.scalars(select(WebSnapshot).where(
+                WebSnapshot.client_capture_id == payload["clientCaptureId"],
+            )).one()
+            snapshot.request_fingerprint = None
+
+    restarted = ScriptedFetcher({})
+    with make_client(tmp_path, restarted) as client:
+        replay = client.post(
+            "/api/captures/web", json={**payload, "notes": "Context changed"},
+        ).raise_for_status().json()
+        assert replay["idempotentReplay"] is True
+        assert replay["snapshot"] == captured["snapshot"]
+        assert replay["importResult"]["source"]["id"] == captured["importResult"]["source"]["id"]
+        assert client.post(
+            "/api/captures/web", json={**payload, "url": "https://example.com/other"},
+        ).status_code == 409
+        assert restarted.calls == []
+
+
+def test_redirected_page_is_decoded_once_per_read_and_keeps_snapshot_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = "<title>Final report</title><p>Evidence – final.</p>".encode("windows-1252")
+    decoded_bodies = []
+    decode_text = web_capture._decode_text
+
+    def decode(data, **kwargs):
+        decoded_bodies.append(data)
+        return decode_text(data, **kwargs)
+
+    monkeypatch.setattr(web_capture, "_decode_text", decode)
     resolver = FakeResolver({"example.com": [PUBLIC_IP], "cdn.example.net": ["1.1.1.1"]})
     fetcher = ScriptedFetcher(
         {
@@ -314,19 +355,34 @@ def test_redirects_are_manually_validated_and_preserve_both_urls(tmp_path: Path)
                 status=302,
                 headers={"Location": "https://cdn.example.net/final"},
             ),
-            "https://cdn.example.net/final": html_response(b"<p>Final evidence</p>"),
+            "https://cdn.example.net/final": html_response(
+                original, headers={"content-type": "text/html"},
+            ),
         }
     )
     with make_client(tmp_path, fetcher, resolver) as client:
+        url = "https://example.com/start"
+        reader = client.app.state.knowledge_service.page_reader
+        text, title = reader(url)
+        assert title == "Final report"
+        assert "Evidence – final." in text
+        assert decoded_bodies == [original]
         response = client.post(
             "/api/captures/web",
-            json={"url": "https://example.com/start"},
+            json={"url": url},
         )
         assert response.status_code == 201
-        assert response.json()["snapshot"]["originalUrl"] == "https://example.com/start"
-        assert response.json()["snapshot"]["finalUrl"] == "https://cdn.example.net/final"
-        assert [target.address for target in fetcher.calls] == [PUBLIC_IP, "1.1.1.1"]
-        assert resolver.calls == [("example.com", 443), ("cdn.example.net", 443)]
+        captured = response.json()
+        assert captured["snapshot"]["originalUrl"] == url
+        assert captured["snapshot"]["finalUrl"] == "https://cdn.example.net/final"
+        assert captured["importResult"]["source"]["title"] == title
+        source_id = captured["importResult"]["source"]["id"]
+        reading = client.get(f"/api/sources/{source_id}/document").json()
+        assert "Evidence – final." in [element["content"] for element in reading["elements"]]
+        assert client.get(captured["asset"]["downloadUrl"]).content == original
+        assert decoded_bodies == [original, original]
+        assert [target.address for target in fetcher.calls] == [PUBLIC_IP, "1.1.1.1"] * 2
+        assert resolver.calls == [("example.com", 443), ("cdn.example.net", 443)] * 2
 
 
 def test_redirect_count_is_bounded(tmp_path: Path) -> None:
@@ -368,6 +424,10 @@ def test_total_fetch_timeout_is_enforced(tmp_path: Path, monkeypatch) -> None:
             json={"url": "https://example.com/slow"},
         )
         assert response.status_code == 504
+    with pytest.raises(WebCaptureTimeoutError):
+        fetch_public_page(
+            "https://example.com/slow", PublicWebUrlPolicy(FakeResolver()), fetcher, timeout=0.01,
+        )
 
 
 @pytest.mark.parametrize(
@@ -511,7 +571,11 @@ def test_compressed_and_expanded_response_limits_are_independent(monkeypatch) ->
 
 def test_declared_html_charset_is_used_for_chinese_readable_text() -> None:
     html = "<title>生物信息学</title><p>基因组课程资料</p>".encode("gbk")
-    readable, title = _readable_page(html, "text/html; charset=gbk")
+    url = "https://example.com/notes"
+    fetcher = ScriptedFetcher({
+        url: html_response(html, headers={"content-type": "text/html; charset=gbk"}),
+    })
+    readable, title = fetch_public_page(url, PublicWebUrlPolicy(FakeResolver()), fetcher)
     assert title == "生物信息学"
     assert "基因组课程资料" in readable
 
@@ -587,6 +651,7 @@ def test_production_http_fetcher_uses_pinned_ip_and_original_host(monkeypatch) -
     response = PinnedHttpFetcher().fetch(target, timeout_seconds=10)
     assert response.body == b"pinned"
     assert captured["connection"] == (PUBLIC_IP, 80, 5.0)
+    assert captured["request"][:2] == ("GET", "/page")  # type: ignore[index]
     assert captured["request"][2]["Host"] == "example.com"  # type: ignore[index]
 
 

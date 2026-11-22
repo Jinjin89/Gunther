@@ -84,6 +84,23 @@ describe("shared Capture persistence", () => {
     expect(mocks.removeStoredCapture).toHaveBeenCalledWith("capture-recording");
   });
 
+  it("retains a link on workspace rejection and retries the same snapshot request", async () => {
+    const input = {
+      title: " Report ", baseId: null, content: " Keep this context ", kind: "link" as const,
+      captureId: "cap-report", url: "https://example.org/report", workspaceId: "wsp-primary",
+    };
+    mocks.captureWeb.mockRejectedValueOnce(new Error("Workspace identity changed"));
+
+    expect((await persistTextCapture(input)).savedToService).toBe(false);
+    expect(mocks.removeStoredCapture).not.toHaveBeenCalled();
+    expect((await persistTextCapture(input)).savedToService).toBe(true);
+    expect(mocks.captureWeb.mock.calls).toEqual(Array.from({ length: 2 }, () => [
+      { url: input.url, title: "Report", notes: "Keep this context", clientCaptureId: input.captureId },
+      input.workspaceId,
+    ]));
+    expect(mocks.removeStoredCapture).toHaveBeenCalledExactlyOnceWith(input.captureId);
+  });
+
   it("keeps original asset capture and its destination message in the shared path", async () => {
     const file = new File(["paper"], "paper.pdf", { type: "application/pdf" });
 

@@ -3,7 +3,7 @@ import { ActivityStatus } from "./activity/ActivityStatus";
 import { publishRecordingStatus } from "./activity/recordingStatus";
 import { ActivityProvider } from "./activity/useActivity";
 import { Check } from "lucide-react";
-import type { ActivityOpen, CreateKnowledgeBaseInput, CreateSourceInput, NotebookNote, TrashItem } from "@gunther/contracts";
+import type { ActivityOpen, CreateKnowledgeBaseInput, NotebookNote, TrashItem } from "@gunther/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { normalizeAtlasMode, type AtlasMode, type KnowledgeBase } from "./atlas";
 import { AtlasPage, AtlasRail, AtlasTitlebar, type AtlasView } from "./components/AtlasChrome";
@@ -17,7 +17,7 @@ import { LibraryWorkspaceNavigation } from "./components/LibraryWorkspaceNavigat
 import { NotebookPage } from "./pages/NotebookPage";
 import { TrashPage } from "./pages/TrashPage";
 import { knowledgeApi } from "./api";
-import { loadStoredCaptures, removeStoredCapture } from "./localCaptureQueue";
+import { loadStoredCaptures } from "./localCaptureQueue";
 import { isTauriRuntime, listenForCaptureSaved, listenForMenuCommand, listenForOpenSearch, openCaptureWindow, type MenuCommand } from "./capture/captureBridge";
 import { persistAssetCapture, persistTextCapture } from "./capture/capturePersistence";
 import { CAPTURE_SWITCH_DOM_EVENT, type CaptureLaunchRequest } from "./capture/captureTypes";
@@ -75,34 +75,16 @@ const recoverStoredCaptures = (workspaceId: string | null) => {
       let recovered = 0;
       for (const capture of captures.filter((candidate) => candidate.workspaceId === workspaceId)) {
         try {
-          if (capture.kind === "note") {
-            const note = await knowledgeApi.createNote({
-              title: capture.title || "Untitled note",
-              content: capture.content,
-              clientCaptureId: capture.id,
-            }, workspaceId);
-            // The editable Inbox note is already durable. Filing is a second,
-            // recoverable action and must never duplicate the original thought.
-            removeStoredCapture(capture.id);
-            if (capture.baseId) await knowledgeApi.fileNote(note.id, capture.baseId, workspaceId).catch(() => undefined);
-          } else if (capture.kind === "link" && capture.url) {
-            await knowledgeApi.captureWeb({
-              url: capture.url,
-              ...(capture.title.trim() ? { title: capture.title.trim() } : {}),
-              ...(capture.content.trim() ? { notes: capture.content.trim() } : {}),
-              ...(capture.baseId ? { knowledgeBaseId: capture.baseId } : {}),
-              clientCaptureId: capture.id,
-            }, workspaceId);
-          } else {
-            await knowledgeApi.importSource({
-              title: capture.title || "Untitled source",
-              content: capture.content,
-              kind: capture.kind as CreateSourceInput["kind"],
-              ...(capture.baseId ? { knowledgeBaseId: capture.baseId } : {}),
-            }, workspaceId, { deferAnalysis: true });
-          }
-          removeStoredCapture(capture.id);
-          recovered += 1;
+          const result = await persistTextCapture({
+            title: capture.title,
+            content: capture.content,
+            kind: capture.kind as CaptureKind,
+            baseId: capture.baseId,
+            captureId: capture.id,
+            url: capture.url,
+            workspaceId,
+          });
+          if (result.savedToService) recovered += 1;
         } catch {
           // Keep the local retry copy untouched until the service is available.
         }
