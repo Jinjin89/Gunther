@@ -4,14 +4,7 @@ import logging
 
 from pydantic import BaseModel, Field
 
-from gunther.agent import (
-    AskAgent,
-    Evidence,
-    check_claims,
-    check_evidence_hash,
-    checker_inventory,
-    leads_in,
-)
+from gunther.agent import AskAgent
 from gunther.checks import (
     PENDING,
     Verdicts,
@@ -24,6 +17,9 @@ from gunther.checks import (
     verdict,
     verdicts_of,
 )
+from gunther.citations import leads_in
+from gunther.claim_checks import check_claims, check_evidence_hash, checker_inventory
+from gunther.evidence import Evidence
 from gunther.llm import ModelError, ModelInfo
 from gunther.outputs import Issue, _marked, _plain, check_heading_refs, cited_sentences
 

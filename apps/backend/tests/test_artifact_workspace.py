@@ -17,7 +17,6 @@ from test_output_skills import (
 )
 from test_outputs import app_for, library, route, workspace
 
-from gunther.agent import Evidence
 from gunther.artifact_read import latest_check_records
 from gunther.artifact_workspace import (
     BriefUpdate,
@@ -51,6 +50,7 @@ from gunther.artifact_workspace import (
     sync,
 )
 from gunther.checks import audit_verdict, finding, verdict, verdicts_of
+from gunther.evidence import Evidence
 from gunther.models import Artifact
 from gunther.outputs import BuiltOutput, _marked, layout_of, section_hash, split_document
 from gunther.schemas import ConversationCitationOut

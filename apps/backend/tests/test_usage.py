@@ -25,7 +25,7 @@ from gunther.main import create_app
 from gunther.migrations import MIGRATIONS, get_schema_version, run_migrations
 from gunther.models import ModelUsage
 from gunther.run_budget import BudgetedGateway, RunBudget
-from gunther.studio.pipeline import _in_context
+from gunther.studio.requests import _in_context
 
 COUNTS = {"prompt_tokens": 100, "completion_tokens": 40, "total_tokens": 140}
 NORMALIZED = {"input": 100, "cached": None, "output": 40, "reasoning": None}

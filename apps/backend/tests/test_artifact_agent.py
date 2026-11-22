@@ -43,20 +43,11 @@ from test_outputs import (
     workspace,
 )
 
-from gunther.agent import checker_inventory
 from gunther.answer_runs import Stopped
-from gunther.artifact_agent import (
-    Act,
-    AgentLimits,
-    Gate,
-    Numbering,
-    View,
-    audience_of,
-    build_view,
-    ranges,
-    validate,
-)
+from gunther.artifact_actions import Act, Gate, validate
 from gunther.artifact_manifest import artifact_manifest_hash
+from gunther.artifact_turn_result import audience_of
+from gunther.artifact_view import AgentLimits, Numbering, View, build_view, ranges
 from gunther.artifact_workspace import (
     ConversationBrief,
     Line,
@@ -66,6 +57,7 @@ from gunther.artifact_workspace import (
     evidence_from_citation,
 )
 from gunther.checks import claim_text
+from gunther.claim_checks import checker_inventory
 from gunther.llm import ModelError
 from gunther.models import (
     Artifact,
@@ -2238,7 +2230,7 @@ def test_a_reply_after_a_change_is_refused_until_it_is_saved(tmp_path: Path) -> 
 
 
 def test_a_passage_may_be_a_paragraph_number_or_an_opening_cut_short() -> None:
-    from gunther.artifact_agent import resolve_passage
+    from gunther.artifact_view import resolve_passage
 
     report = "## Heat\n\nFirst paragraph [1].\n\nSecond paragraph, which is long [2].\n\nThird."
     assert resolve_passage("¶2", report, False) == "Second paragraph, which is long [2]."

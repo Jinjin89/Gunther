@@ -30,12 +30,13 @@ from test_outputs import (
     workspace,
 )
 
-from gunther.agent import AskAgent, Evidence, Tool
+from gunther.agent import AskAgent
 from gunther.artifact_read import latest_check_records
 from gunther.artifact_workspace import ConversationBrief, Workspace, import_work, sync
 from gunther.asset_service import AssetTextExtraction
 from gunther.checks import coverage_of, read_verdicts
 from gunther.database import session_scope
+from gunther.evidence import Evidence, Tool
 from gunther.llm import ModelError
 from gunther.models import Artifact, ArtifactAsset, ArtifactCheck, Asset
 from gunther.output_checks import check_saved_part

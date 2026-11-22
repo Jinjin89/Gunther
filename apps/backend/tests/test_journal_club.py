@@ -27,8 +27,9 @@ from gunther.models import Artifact
 from gunther.outputs import Notes, Spec
 from gunther.studio import format as fmt
 from gunther.studio import science as S
-from gunther.studio.pipeline import Run, StudioAgents
+from gunther.studio.pipeline import StudioAgents
 from gunther.studio.reference import DECK_FORMAT, STUDY_DECK_FORMAT
+from gunther.studio.state import Run
 
 
 def run():

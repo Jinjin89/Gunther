@@ -29,7 +29,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
-from gunther.agent import ANY_CITATION, Evidence, sentence_spans
 from gunther.brief import _quoted
 from gunther.checks import (
     Verdicts,
@@ -40,6 +39,8 @@ from gunther.checks import (
     merge_verdicts,
     read_verdicts,
 )
+from gunther.citations import ANY_CITATION, sentence_spans
+from gunther.evidence import Evidence
 from gunther.outputs import (
     DECK_USES,
     OUTPUT_STRUCTURES,

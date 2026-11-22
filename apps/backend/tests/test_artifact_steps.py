@@ -18,7 +18,6 @@ from fake_models import (
 )
 from test_output_skills import OUTLINE, REPORT, SLIDES, SLIDES_OUTLINE
 
-from gunther.agent import Evidence, Tool
 from gunther.artifact_steps import PassageNotFound, WorkSteps
 from gunther.artifact_workspace import (
     ConversationBrief,
@@ -37,6 +36,7 @@ from gunther.artifact_workspace import (
     status,
 )
 from gunther.checks import finding, verdicts_of
+from gunther.evidence import Evidence, Tool
 from gunther.llm import ModelError
 from gunther.outputs import Notes, Pool, layout_of, section_hash, split_document, with_layout
 from gunther.schemas import ConversationCitationOut

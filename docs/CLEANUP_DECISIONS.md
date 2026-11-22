@@ -409,3 +409,4 @@ the job map in docs/CLEANUP_ARCHITECTURE.md. No logic edits, renames or signatur
 beyond imports. A move doesn't count toward the insertion cap. The checker verifies with
 `git diff --color-moved` that nothing but imports and moved blocks changed. One file per
 batch, starting with service.py.
+C3 = studio/pipeline.py + agent.py + artifact_agent.py (supervisor merge, Round 14; the one-file-per-batch line in Round 28 is relaxed for verified pure moves)

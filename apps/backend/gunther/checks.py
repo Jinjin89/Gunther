@@ -160,7 +160,7 @@ def read_verdicts(record: Mapping[str, Any], text: str) -> Verdicts:
     if any("tableRow" in claim and "tableHeader" not in claim
            for claim in coverage.get("claims") or []):
         # Older Checker rows recorded the exhibit and row position. Read its header there.
-        from gunther.agent import check_claims
+        from gunther.claim_checks import check_claims
 
         table_headers = {tuple(row["tableRow"]): row["tableHeader"]
                          for row in check_claims(text, {}) if "tableRow" in row}

@@ -31,11 +31,12 @@ from sqlalchemy import event, func, select, text
 
 from evals.sse import ask_turn, read_events
 from gunther import output_commands as service_module
-from gunther.agent import Evidence, checker_inventory
 from gunther.answer_runs import AnswerRun
 from gunther.artifact_versions import commit_version
 from gunther.checks import coverage_of, verdict, verdicts_of
+from gunther.claim_checks import checker_inventory
 from gunther.config import Settings
+from gunther.evidence import Evidence
 from gunther.llm import ModelError
 from gunther.main import create_app
 from gunther.models import Artifact, ArtifactCheck, ArtifactUnitBinding, Source

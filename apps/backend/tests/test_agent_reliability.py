@@ -9,9 +9,11 @@ import pytest
 from fake_models import FakeProvider, agent_replies, api_error, gateway
 from pydantic import BaseModel
 
-from gunther.agent import AskAgent, Budget, Evidence, Tool, Toolbox
+from gunther.agent import AskAgent
+from gunther.ask_research import Budget
 from gunther.brief import Brief, SettledItem, _enforce
 from gunther.checks import coverage_of
+from gunther.evidence import Evidence, Tool, Toolbox
 from gunther.llm import ModelError
 from gunther.output_checks import check_part
 from gunther.run_budget import BudgetedGateway, RunBudget

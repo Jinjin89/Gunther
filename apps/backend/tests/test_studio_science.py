@@ -10,7 +10,7 @@ from fake_models import FakeProvider, gateway, model
 from PIL import Image, ImageDraw
 from test_studio_pipeline import request_text, router
 
-from gunther.agent import Evidence, ToolFailure
+from gunther.evidence import Evidence, ToolFailure
 from gunther.llm import ModelError
 from gunther.outputs import Notes, Pool, Spec
 from gunther.schemas import ConversationCitationOut

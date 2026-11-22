@@ -324,7 +324,7 @@ def test_a_request_about_the_look_designs_the_named_slides_and_leaves_their_word
 
 
 def test_a_request_about_the_look_is_refused_on_a_deck_with_no_style_and_on_a_report(tmp_path):
-    from gunther.artifact_agent import Act, Gate, validate
+    from gunther.artifact_actions import Act, Gate, validate
     from gunther.artifact_workspace import PartRec
 
     with studio_deck(tmp_path, studio_inner) as (client, base_id, first, go):

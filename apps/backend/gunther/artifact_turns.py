@@ -13,9 +13,9 @@ from sqlalchemy.orm import Session
 
 from gunther import artifact_agent, usage
 from gunther import artifact_workspace as workspaces
-from gunther.agent import Evidence
 from gunther.answer_runs import Stopped
 from gunther.artifact_read import artifact_detail, latest_check_records
+from gunther.artifact_turn_result import TurnResult, audience_of
 from gunther.artifact_versions import (
     ArtifactConflictError,
     commit_version,
@@ -24,6 +24,7 @@ from gunther.artifact_versions import (
     output_version,
 )
 from gunther.database import session_scope
+from gunther.evidence import Evidence
 from gunther.llm import ModelError, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.models import Artifact, ArtifactConversation, ArtifactMessage, utc_now
@@ -187,7 +188,7 @@ class ArtifactTurns:
         user_id, reply_id = _id("acm"), _id("acm")
         emit({"type": "turn", "conversationId": conversation_id, "messageId": user_id})
         failure: BaseException | None = None
-        result: artifact_agent.TurnResult | None = None
+        result: TurnResult | None = None
         preserve_on_failure = payload.rebuild is not None
         with usage.job("outputs", ref=conversation_id), session_scope(self.sessions) as session:
             library = output_library(session, workspace_id, base_id)
@@ -442,7 +443,7 @@ class ArtifactTurns:
         payload: ArtifactTurnInput,
         model: ModelInfo,
         effort: Effort,
-        result: artifact_agent.TurnResult,
+        result: TurnResult,
         workspace: workspaces.Workspace,
         brief: workspaces.ConversationBrief,
         scope: OutputScope,
@@ -488,7 +489,7 @@ class ArtifactTurns:
             parent_id=parent,
             kind=kind,
             style=(workspaces._style_of(work) or "auto") if kind == "report" else None,
-            audience=artifact_agent.audience_of(brief),
+            audience=audience_of(brief),
             title=built.title,
             brief=workspaces.render_brief(brief, work),
             origin="rebuild" if payload.rebuild else "revise" if parent else "build",

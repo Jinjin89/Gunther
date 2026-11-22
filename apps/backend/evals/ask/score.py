@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from gunther.agent import SENTENCE_END, UNSOURCED
+from gunther.citations import SENTENCE_END, UNSOURCED
 from gunther.llm import ModelError, ModelGateway, ModelInfo
 
 CASES_FILE = Path(__file__).parent / "questions.toml"

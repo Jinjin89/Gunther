@@ -10,11 +10,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from gunther.agent import (
-    Evidence,
-    check_citations,
-    checker_inventory,
-)
 from gunther.artifact_workspace import (
     CardRec,
     PartRec,
@@ -35,7 +30,11 @@ from gunther.checks import (
     merge_verdicts,
     verdicts_of,
 )
+from gunther.citations import check_citations
+from gunther.claim_checks import checker_inventory
+from gunther.evidence import Evidence
 from gunther.llm import ModelError
+from gunther.llm import unfence as _unfence
 from gunther.output_checks import check_saved_part, support_inventory
 from gunther.output_document import number_output_citations, number_output_part
 from gunther.outputs import (
@@ -64,17 +63,10 @@ from gunther.studio import design as D
 from gunther.studio import format as fmt
 from gunther.studio import prompts as P
 from gunther.studio import science as S
-from gunther.studio.pipeline import (
-    DeckStory,
-    Insight,
-    Memo,
-    Run,
-    StudioAgents,
-    _no_events,
-    _unfence,
-    source_images_kept,
-)
+from gunther.studio.drafting import source_images_kept
+from gunther.studio.pipeline import StudioAgents
 from gunther.studio.reference import DECK_FORMAT, READ_NOTE, REPORT_FORMAT, STUDY_DECK_FORMAT
+from gunther.studio.state import DeckStory, Insight, Memo, Run, _no_events
 
 logger = logging.getLogger(__name__)
 

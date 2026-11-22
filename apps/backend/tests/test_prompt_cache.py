@@ -14,9 +14,10 @@ from gunther.llm import Turn
 from gunther.outputs import Notes, Spec
 from gunther.studio import design as D
 from gunther.studio import format as fmt
-from gunther.studio import pipeline as pipeline
+from gunther.studio import material
 from gunther.studio import prompts as P
-from gunther.studio.pipeline import StudioAgents, material_request, warm_map
+from gunther.studio.pipeline import StudioAgents
+from gunther.studio.requests import material_request, warm_map
 
 REPORT = """<!-- report: v2 -->
 # Plan with the adjusted saving
@@ -225,8 +226,8 @@ def test_design_warms_first_actual_request_after_a_figure():
 
 
 def test_large_material_keeps_original_passages_and_fixed_order(monkeypatch):
-    monkeypatch.setattr(pipeline, "DIRECT_TOKENS", 1)
-    monkeypatch.setattr(pipeline, "PART_TOKENS", 1)
+    monkeypatch.setattr(material, "DIRECT_TOKENS", 1)
+    monkeypatch.setattr(material, "PART_TOKENS", 1)
 
     def route(request):
         if "research analyst reading part" in request_text(request):

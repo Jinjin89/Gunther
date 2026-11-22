@@ -198,7 +198,7 @@ def look(
         for i in range(1, len(slides) + 1, IMAGES_PER_CALL)
     ]
     findings: list[LookFinding] = []
-    from gunther.studio.pipeline import warm_map
+    from gunther.studio.requests import warm_map
 
     def safe(numbers: list[int]) -> list[LookFinding] | None:
         try:
@@ -406,7 +406,7 @@ def look(
     record["designed"] = designed_targets
     if designed_targets:
         from gunther.studio import design as D
-        from gunther.studio.pipeline import WORKERS
+        from gunther.studio.requests import WORKERS
 
         # The drafts' own citation numbers (the pool's), not the renumbered ones the deck shows:
         # the design is renumbered with the text when the deck is assembled.

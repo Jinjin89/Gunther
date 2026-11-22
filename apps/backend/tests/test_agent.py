@@ -32,25 +32,21 @@ from sqlalchemy import select
 
 from evals.sse import AnswerStreamError, ask_turn, read_events
 from gunther import online_search, trace
-from gunther.agent import (
-    AskAgent,
-    Budget,
-    Evidence,
-    Tool,
-    Toolbox,
-    ToolFailure,
+from gunther.agent import AskAgent, writer_prompt
+from gunther.answer_runs import AnswerRun
+from gunther.ask_research import Budget
+from gunther.ask_turns import conversation_history
+from gunther.citations import (
     _aligned_notes,
     check_citations,
     collapse_citations,
     leads_in,
     renumber_citations,
     sentence_spans,
-    writer_prompt,
 )
-from gunther.answer_runs import AnswerRun
-from gunther.ask_turns import conversation_history
 from gunther.config import Settings
 from gunther.database import session_scope
+from gunther.evidence import Evidence, Tool, Toolbox, ToolFailure
 from gunther.llm import Turn
 from gunther.main import create_app
 from gunther.models import ContentBlock, SessionMessage, SourceIndexHead
@@ -794,7 +790,7 @@ def test_the_checker_s_labels_and_notes_are_saved_with_the_answer(tmp_path: Path
 
 
 def test_notes_follow_the_partly_supported_markers_that_are_left() -> None:
-    from gunther.agent import _aligned_notes
+    from gunther.citations import _aligned_notes
 
     before = "A [p:9]. B [p:2]. C [p:9]."
     assert _aligned_notes(before, ["x", "y", "z"], "A. B [p:2]. C.") == ("y",)
@@ -1252,8 +1248,8 @@ def test_sources_are_numbered_in_the_order_the_text_cites_them_and_uncited_ones_
 
 
 def test_renumbering_and_the_history_the_model_reads_use_the_same_ids() -> None:
-    from gunther.agent import renumber_citations
     from gunther.ask_turns import conversation_history
+    from gunther.citations import renumber_citations
 
     assert renumber_citations("A [6]. B [4][6]. C [?].", [6, 4]) == "A [1]. B [2][1]. C [?]."
 

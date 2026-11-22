@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from gunther.agent import Evidence
+from gunther.evidence import Evidence
 from gunther.skill_checks import figures_of
 from gunther.studio import format as fmt
 

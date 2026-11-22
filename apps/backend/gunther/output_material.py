@@ -10,8 +10,8 @@ from dataclasses import dataclass, replace
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from gunther.agent import Evidence, Tool, ToolFailure
 from gunther.ask_turns import conversation_pool
+from gunther.evidence import Evidence, Tool, ToolFailure
 from gunther.evidence_reader import (
     FIGURE_DISTANCE,
     element_positions,

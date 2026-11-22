@@ -17,7 +17,6 @@ from typing import Any
 from pydantic import BaseModel
 
 from gunther import usage
-from gunther.agent import Evidence, Tool, check_citations
 from gunther.artifact_workspace import (
     CardRec,
     ConversationBrief,
@@ -35,6 +34,8 @@ from gunther.artifact_workspace import (
     rebind_approach_refs,
     spec_of,
 )
+from gunther.citations import check_citations
+from gunther.evidence import Evidence, Tool
 from gunther.llm import ModelInfo
 from gunther.model_profiles import Effort
 from gunther.output_document import assemble_output, project_outline

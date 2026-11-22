@@ -9,10 +9,10 @@ from threading import Lock
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from gunther import artifact_agent
 from gunther.artifact_conversations import ArtifactConversations
 from gunther.artifact_read import ArtifactReader
 from gunther.artifact_turns import ArtifactTurns
+from gunther.artifact_view import AgentLimits
 from gunther.ask_turns import AskTurns
 from gunther.evidence_service import EvidenceService
 from gunther.extraction import ModelExtractor
@@ -65,6 +65,6 @@ class KnowledgeService(
         self._source_import_locks_guard = Lock()
         self._source_import_locks: dict[str, tuple[Lock, int]] = {}
         # How far one turn of the Artifacts agent may go; the exam and tests may change it.
-        self.artifact_limits = artifact_agent.AgentLimits()
+        self.artifact_limits = AgentLimits()
         # Listing and importing serialize creation of missing conversation rows.
         self._artifact_conversations_lock = Lock()

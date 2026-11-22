@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from gunther.agent import Evidence, ReadResult, Tool, ToolFailure
+from gunther.evidence import Evidence, ReadResult, Tool, ToolFailure
 from gunther.evidence_reader import nearby_figures, read_passage
 from gunther.models import (
     Assertion,

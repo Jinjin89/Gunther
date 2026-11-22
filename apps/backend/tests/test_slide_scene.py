@@ -225,7 +225,7 @@ def test_graphic_candidates_match_shared_contract_fixture() -> None:
 
 
 def test_chart_checker_includes_first_data_row_and_preserves_negative_sign() -> None:
-    from gunther.agent import Evidence
+    from gunther.evidence import Evidence
     from gunther.outputs import Page
     from gunther.skill_checks import Context, chart_numbers_cited
 
@@ -248,7 +248,7 @@ def test_chart_checker_includes_first_data_row_and_preserves_negative_sign() -> 
 
 
 def test_chart_source_numbers_allow_cjk_adjacent_values_and_keep_negative_signs() -> None:
-    from gunther.agent import Evidence
+    from gunther.evidence import Evidence
     from gunther.outputs import VALUE_IN, Page
     from gunther.skill_checks import Context, chart_numbers_cited
 

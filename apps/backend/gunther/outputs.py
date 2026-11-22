@@ -8,24 +8,15 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, NamedTuple
 
-from gunther.agent import (
-    CITATION_GROUP,
-    SENTENCE_END,
-    UNSOURCED,
-    AskAgent,
-    Evidence,
-    Limits,
-    Step,
-    Tool,
-    ToolFailure,
-    renumber_citations,
-)
+from gunther.agent import AskAgent, Limits
 from gunther.checks import (
     Verdicts,
     coverage_of,
     issue_view,
     map_refs,
 )
+from gunther.citations import CITATION_GROUP, SENTENCE_END, UNSOURCED, renumber_citations
+from gunther.evidence import Evidence, Step, Tool, ToolFailure
 from gunther.llm import ModelGateway, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.schemas import ConversationCitationOut

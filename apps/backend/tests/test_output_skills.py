@@ -16,7 +16,7 @@ from test_outputs import (
     workspace,
 )
 
-from gunther.agent import Evidence
+from gunther.evidence import Evidence
 from gunther.output_document import assemble_output
 from gunther.outputs import Draft, Planned, Pool, Spec, split_document
 from gunther.schemas import ConversationCitationOut

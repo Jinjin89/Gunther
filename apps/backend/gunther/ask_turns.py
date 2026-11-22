@@ -15,10 +15,11 @@ from sqlalchemy.orm import Session, selectinload
 
 from gunther import brief as briefs
 from gunther import trace, usage
-from gunther.agent import DEFAULT_STYLE, STYLES, AskAgent, Evidence, Toolbox
-from gunther.agent import Notes as Work
+from gunther.agent import DEFAULT_STYLE, STYLES, AskAgent
 from gunther.artifact_workspace import evidence_from_citation
+from gunther.ask_research import Notes as Work
 from gunther.database import session_scope
+from gunther.evidence import Evidence, Toolbox
 from gunther.llm import ModelError, Turn
 from gunther.model_profiles import Effort
 from gunther.models import (

@@ -6,13 +6,14 @@ from dataclasses import replace
 import pytest
 from fake_models import FakeProvider, gateway, model, output_replies
 
-from gunther.agent import Evidence, Tool
 from gunther.answer_runs import Stopped
+from gunther.evidence import Evidence, Tool
 from gunther.llm import ModelError
 from gunther.outputs import Issue, Notes, Planned, Pool, Spec, split_document
 from gunther.schemas import ConversationCitationOut
 from gunther.studio import format as fmt
-from gunther.studio.pipeline import Run, StudioAgents
+from gunther.studio.pipeline import StudioAgents
+from gunther.studio.state import Run
 
 PASSAGES = [
     "The trial followed 412 buildings in six districts over the summers 2021 to 2023.",
@@ -1005,7 +1006,7 @@ def test_without_a_renderer_the_step_is_skipped():
 
 
 def test_the_title_slide_borrows_the_citations_other_slides_give_for_its_figures():
-    from gunther.studio.pipeline import _lend_refs
+    from gunther.studio.verification import _lend_refs
 
     rest = (
         "## Weather adjustment halves the saving\n- 9% weather-adjusted saving [3][4]\n"
@@ -1019,7 +1020,8 @@ def test_the_title_slide_borrows_the_citations_other_slides_give_for_its_figures
 def test_the_subtitle_is_rewritten_to_state_what_the_slide_titles_say():
     from types import SimpleNamespace
 
-    from gunther.studio.pipeline import Draft, StudioAgents
+    from gunther.outputs import Draft
+    from gunther.studio.pipeline import StudioAgents
 
     deck = [
         "<!-- layout: title; design: v2; theme: paper -->\n# Cool roofs\nA vague promise\n"
@@ -1040,7 +1042,7 @@ def test_a_figure_with_no_source_brings_the_passages_that_state_it_to_the_fix():
     from types import SimpleNamespace
 
     from gunther.outputs import Issue
-    from gunther.studio.pipeline import _stating
+    from gunther.studio.verification import _stating
 
     by_ref = {
         1: SimpleNamespace(context="水泥产量下降9.5%，房地产开发投资下降10.6%", text=""),

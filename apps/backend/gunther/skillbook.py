@@ -10,7 +10,7 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
-from gunther.agent import Budget
+from gunther.ask_research import Budget
 
 SKILLS_DIR = Path(__file__).resolve().parent / "skills"
 

@@ -250,7 +250,7 @@ def design_slides(
     twice loses its design, unless ``keep_on_fail``: then it keeps the one it had.
     ``progress(done, total)`` hears each slide finished."""
 
-    from gunther.studio.pipeline import warm_map
+    from gunther.studio.requests import warm_map
 
     guide, base = load_style(style)
     parsed = [fmt.parse_slide(slide) for slide in slides]

@@ -466,7 +466,8 @@ class OutputCommands:
         stored slides as they are."""
 
         from gunther.studio import design as D
-        from gunther.studio.pipeline import WORKERS, StudioAgents
+        from gunther.studio.pipeline import StudioAgents
+        from gunther.studio.requests import WORKERS
 
         fingerprint = self._output_fingerprint(
             workspace_id,

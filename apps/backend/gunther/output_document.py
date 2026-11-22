@@ -2,7 +2,8 @@
 
 from collections.abc import Iterable, Mapping, Sequence
 
-from gunther.agent import Evidence, check_citations, renumber_citations
+from gunther.citations import check_citations, renumber_citations
+from gunther.evidence import Evidence
 from gunther.llm import ModelError, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.outputs import (
