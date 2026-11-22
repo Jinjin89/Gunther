@@ -272,6 +272,60 @@ describe("saving a recording independently of transcript processing", () => {
     expect(knowledgeApi.completeRecordingSession).toHaveBeenCalledOnce();
   });
 
+  it("keeps the newer local edit when an older checkpoint commits after disconnect", async () => {
+    server = {
+      ...server, status: "completed", sizeBytes: 128, nextExpectedSequence: 1,
+      transcript: "Initial words.", checkpointRevision: 1, checkpointedAt: server.updatedAt,
+      recovery: { ...server.recovery, canResume: false, audioAvailable: true },
+    };
+    window.localStorage.setItem("gunther:recording-drafts", JSON.stringify([{
+      id: server.id, formatVersion: 3, title: "Edited lecture", transcript: server.transcript,
+      summary: null, seconds: 0, recording: server, moments: [], recordingContext: "lecture",
+      knowledgeBaseId: "", workspaceId: "wsp_primary", updatedAt: server.updatedAt,
+    }]));
+    const first = recordingSheet();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Edited lecture/ })); });
+
+    const delayed = deferred<void>();
+    const checkpoints = vi.mocked(knowledgeApi.checkpointRecordingSession);
+    checkpoints.mockImplementationOnce(async (_id, payload) => {
+      await delayed.promise;
+      const committedAt = new Date().toISOString();
+      server = {
+        ...server, ...payload, transcriptSegments: payload.transcriptSegments ?? null,
+        checkpointRevision: server.checkpointRevision + 1,
+        checkpointedAt: committedAt, updatedAt: committedAt,
+      };
+      return { ...server };
+    });
+    const older = "An earlier transcript was sent.";
+    const newer = "I corrected the wording locally.";
+    const editor = screen.getByPlaceholderText(/Paste or type a transcript|Your words will appear/);
+    fireEvent.change(editor, { target: { value: older } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    expect(checkpoints.mock.lastCall?.[1].transcript).toBe(older);
+
+    act(() => { vi.advanceTimersByTime(100); });
+    fireEvent.change(editor, { target: { value: newer } });
+    const [draft] = loadRecordingDrafts();
+    expect(draft?.transcript).toBe(newer);
+    first.unmount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+      delayed.resolve();
+    });
+    expect(server.transcript).toBe(older);
+    expect(Date.parse(server.checkpointedAt!)).toBeGreaterThan(Date.parse(draft!.updatedAt));
+    act(() => { vi.advanceTimersByTime(500); });
+
+    const onCaptured = vi.fn().mockResolvedValue(undefined);
+    recordingSheet(onCaptured);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Edited lecture/ })); });
+    expect(loadRecordingDrafts()[0]?.transcript).toBe(newer);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Save recording/ })); });
+    expect(onCaptured.mock.calls[0]?.[2]).toContain(newer);
+  });
+
   it("restores an import from the server offset after a committed chunk loses its reply", async () => {
     vi.mocked(knowledgeApi.appendRecordingChunk).mockImplementationOnce(async (_id, blob, sequence) => {
       server = { ...server, sizeBytes: blob.size, nextExpectedSequence: sequence + 1 };
@@ -344,6 +398,41 @@ describe("saving a recording independently of transcript processing", () => {
     expect(knowledgeApi.completeRecordingSession).not.toHaveBeenCalled();
     expect(loadRecordingDrafts()[0]?.importedAudio).toEqual(importedAudio);
     expect([...spool.keys()]).toEqual([0]);
+  });
+
+  it.each([
+    { label: "missing suffix chunk", sequence: 0, prefixBytes: 0, local: "ab", corrupt: false },
+    { label: "wrong prefix size", sequence: 1, prefixBytes: 1, local: "c", corrupt: false },
+    { label: "invalid manifest", sequence: 0, prefixBytes: 0, local: "ab", corrupt: true },
+  ])("verifies a resumed import with a $label before uploading any chunk", async ({
+    sequence, prefixBytes, local, corrupt,
+  }) => {
+    server = { ...server, nextExpectedSequence: sequence, sizeBytes: prefixBytes };
+    if (sequence > 0) {
+      await spoolRecordingChunk(
+        server.id, 0, new Blob(["ab"], { type: "audio/webm" }), "wsp_primary", "import",
+      );
+    }
+    await spoolRecordingChunk(
+      server.id, sequence, new Blob([local], { type: "audio/webm" }), "wsp_primary", "import",
+    );
+    const importedAudio = {
+      fileName: "resume.webm", contentType: "audio/webm", sizeBytes: 3,
+      chunkSizeBytes: 2, chunkCount: 2, stagedChunkCount: 2, phase: "uploading",
+      checksumAlgorithm: corrupt ? "unknown" : "SHA-256",
+    };
+    window.localStorage.setItem("gunther:recording-drafts", JSON.stringify([{
+      id: server.id, formatVersion: 3, title: "Resumed import", transcript: "",
+      summary: null, seconds: 0, recording: server, moments: [], recordingContext: "lecture",
+      knowledgeBaseId: "", workspaceId: "wsp_primary", updatedAt: server.updatedAt, importedAudio,
+    }]));
+    recordingSheet();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Resumed import/ })); });
+
+    expect(screen.getByText(/does not match a complete import manifest/)).toBeVisible();
+    expect(knowledgeApi.appendRecordingChunk).not.toHaveBeenCalled();
+    expect(knowledgeApi.completeRecordingSession).not.toHaveBeenCalled();
+    expect([...spool.keys()]).toEqual(sequence > 0 ? [0, sequence] : [sequence]);
   });
 
   it.each([

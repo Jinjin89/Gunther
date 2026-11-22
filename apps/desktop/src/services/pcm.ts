@@ -12,8 +12,8 @@ export function pcm16Length(length: number, sourceRate: number, targetRate = 24_
 }
 
 /**
- * Mono float samples as base64 16-bit PCM, the format the live transcription socket takes:
- * 24 kHz for the original protocol, 16 kHz for protocol 2.
+ * Mono float samples as base64 16-bit PCM at the requested rate.
+ * Desktop recording and dictation send 16 kHz PCM over the v2 live socket.
  */
 export function encodePcm16(samples: Float32Array, sourceRate: number, targetRate = 24_000, startSample?: number) {
   const ratio = sourceRate / targetRate;

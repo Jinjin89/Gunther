@@ -404,20 +404,21 @@ class ServiceSettingsStore:
         except (speech_registry.SpeechError, TypeError, AttributeError):
             logger.warning("Saved transcription providers could not be read; using the defaults")
 
-    def _write(self) -> None:
+    def _write(self, changes: dict[str, Any] | None = None) -> None:
         if self.path is None:
             return
+        changes = changes or {}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "version": self.VERSION,
-            "values": self._values,
-            "checks": self._checks,
-            "providers": self._providers,
-            "roles": self._roles,
-            "speechProviders": self._speech_providers,
-            "speechRoles": self._speech_roles,
-            "tts": self._tts,
-            "developer": self._developer,
+            "values": changes.get("_values", self._values),
+            "checks": changes.get("_checks", self._checks),
+            "providers": changes.get("_providers", self._providers),
+            "roles": changes.get("_roles", self._roles),
+            "speechProviders": changes.get("_speech_providers", self._speech_providers),
+            "speechRoles": changes.get("_speech_roles", self._speech_roles),
+            "tts": changes.get("_tts", self._tts),
+            "developer": changes.get("_developer", self._developer),
         }
         descriptor, temporary = tempfile.mkstemp(
             prefix=".service-settings.", suffix=".json", dir=self.path.parent
@@ -433,6 +434,13 @@ class ServiceSettingsStore:
         except BaseException:
             Path(temporary).unlink(missing_ok=True)
             raise
+
+    def _commit_settings(self, changes: dict[str, Any]) -> list[Callable[[], None]]:
+        """Persist before installing the candidate. The caller holds the store lock."""
+        self._write(changes)
+        for name, value in changes.items():
+            setattr(self, name, value)
+        return list(self._listeners)
 
     def values(self) -> dict[str, Any]:
         with self._lock:
@@ -450,13 +458,9 @@ class ServiceSettingsStore:
             key: validate_value(key, value) for key, value in changes.items() if value is not None
         }
         with self._lock:
-            for key, value in changes.items():
-                if value is None:
-                    self._values.pop(key, None)
-                else:
-                    self._values[key] = validated[key]
-            self._write()
-            listeners = list(self._listeners)
+            values = {key: value for key, value in self._values.items() if key not in changes}
+            values.update(validated)
+            listeners = self._commit_settings({"_values": values})
         for listener in listeners:
             listener()
 
@@ -477,16 +481,7 @@ class ServiceSettingsStore:
                 changes["_values"] = {
                     key: value for key, value in self._values.items() if key not in legacy_keys
                 }
-            previous = {name: getattr(self, name) for name in changes}
-            for name, value in changes.items():
-                setattr(self, name, value)
-            try:
-                self._write()
-            except BaseException:
-                for name, value in previous.items():
-                    setattr(self, name, value)
-                raise
-            listeners = list(self._listeners)
+            listeners = self._commit_settings(changes)
         for listener in listeners:
             listener()
 
@@ -538,9 +533,7 @@ class ServiceSettingsStore:
 
     def save_developer(self, *, traces: bool) -> None:
         with self._lock:
-            self._developer = {"traces": bool(traces)}
-            self._write()
-            listeners = list(self._listeners)
+            listeners = self._commit_settings({"_developer": {"traces": bool(traces)}})
         for listener in listeners:
             listener()
 

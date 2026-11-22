@@ -222,15 +222,20 @@ export function importStorageHasCapacity(
 export function importedAudioSpoolIsComplete(
   imported: ImportedAudioDraft,
   chunks: Array<Pick<RecordingSpoolChunk, "sequence" | "sizeBytes" | "source">>,
+  acknowledged: Pick<RecordingSession, "nextExpectedSequence" | "sizeBytes"> = {
+    nextExpectedSequence: 0, sizeBytes: 0,
+  },
 ): boolean {
-  if (chunks.length !== imported.chunkCount) return false;
-  let totalSize = 0;
-  for (let index = 0; index < chunks.length; index += 1) {
-    const chunk = chunks[index]!;
-    if (chunk.sequence !== index || chunk.source !== "import") return false;
-    totalSize += chunk.sizeBytes;
-  }
-  return totalSize === imported.sizeBytes;
+  const start = acknowledged.nextExpectedSequence;
+  const prefixBytes = Math.min(start * imported.chunkSizeBytes, imported.sizeBytes);
+  return Number.isSafeInteger(start) && start >= 0
+    && acknowledged.sizeBytes === prefixBytes
+    && chunks.length === imported.chunkCount - start
+    && chunks.every((chunk, index) => {
+      const sequence = start + index;
+      const size = Math.min(imported.chunkSizeBytes, imported.sizeBytes - sequence * imported.chunkSizeBytes);
+      return chunk.sequence === sequence && chunk.source === "import" && chunk.sizeBytes === size;
+    });
 }
 
 async function assertImportedAudioStorageAvailable(fileSizeBytes: number): Promise<void> {
@@ -498,10 +503,23 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     await assertRecordingSpoolAvailable();
     const boundWorkspaceId = requireWorkspaceId();
     let latest = await knowledgeApi.recordingMetadata(sessionOverride.id, boundWorkspaceId);
-    let chunks = await readBoundSpool(latest, boundWorkspaceId, latest.nextExpectedSequence);
+    const importManifest = importedAudioRef.current;
+    let chunks = await readBoundSpool(
+      latest, boundWorkspaceId, importManifest ? undefined : latest.nextExpectedSequence,
+    );
 
     if (latest.status === "failed") {
       throw new Error("The saved recording session is marked as failed.");
+    }
+    if (importManifest) {
+      const acknowledged = latest.nextExpectedSequence;
+      chunks = chunks.filter((chunk) => chunk.sequence >= acknowledged);
+      if (!importedAudioSpoolIsComplete(importManifest, chunks, latest)) {
+        throw new Error("The saved audio does not match a complete import manifest.");
+      }
+      await deleteAcknowledgedRecordingSpool(latest.id, acknowledged, boundWorkspaceId);
+    } else if (chunks.some((chunk) => chunk.source === "import")) {
+      throw new Error("The saved audio does not match a complete import manifest.");
     }
     if (latest.status === "completed") {
       if (chunks.length) {
@@ -882,7 +900,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
         return;
       }
       if (event.type === "service.error") {
-        if (event.code === "sensevoice_segment_failed" || event.code === "segment_failed") {
+        if (event.code === "segment_failed") {
           setNotice(String(event.message ?? "Live transcription missed one short piece; the original audio is still safe."));
           return;
         }

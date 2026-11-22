@@ -1210,8 +1210,7 @@ class CaptureViewModel extends ChangeNotifier {
       case LiveTranscriptionFlushedEvent():
         break;
       case LiveTranscriptionErrorEvent():
-        if (event.code == 'segment_failed' ||
-            event.code == 'sensevoice_segment_failed') {
+        if (event.code == 'segment_failed') {
           _liveAudioSkipped = true;
         }
         _recordingTranscriptionStatus =

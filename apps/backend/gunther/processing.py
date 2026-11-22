@@ -17,7 +17,7 @@ from pathlib import Path
 from threading import Event, Thread
 from typing import TYPE_CHECKING
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from gunther import digest, papers, vector_index
@@ -304,6 +304,20 @@ class ProcessingWorker:
         if initial and current_head is not None:
             return current_head
         previous = session.get(SourceRevision, current_head) if current_head else None
+        structure = draft.document.manifest.get("structure") or {}
+        if not initial and structure.get("state") != "checked" and session.scalar(
+            select(SourceRevision.id)
+            .where(
+                SourceRevision.source_id == source.id,
+                func.json_extract(SourceRevision.manifest_json, "$.structure.state") == "checked",
+            )
+            .limit(1)
+        ) is not None:
+            _finish_job(
+                job, "failed",
+                "Structure review did not succeed; the previous document revision was retained.",
+            )
+            return None
         if (
             previous and json.loads(previous.manifest_json).get("method") == "docling"
             and draft.document.manifest.get("method") != "docling"

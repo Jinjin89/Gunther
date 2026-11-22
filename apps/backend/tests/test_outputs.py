@@ -32,6 +32,7 @@ from sqlalchemy import event, func, select, text
 from evals.sse import ask_turn, read_events
 from gunther import service as service_module
 from gunther.agent import Evidence, checker_inventory
+from gunther.answer_runs import AnswerRun
 from gunther.artifact_versions import commit_version
 from gunther.checks import coverage_of, verdict, verdicts_of
 from gunther.config import Settings
@@ -1592,15 +1593,32 @@ def test_a_failed_build_says_why_in_the_list(tmp_path: Path) -> None:
     assert item["error"] == events[-1][1]["detail"]
 
 
-def test_a_revision_has_its_own_words(tmp_path: Path) -> None:
+def test_a_revision_has_its_own_words(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     revised = [REPORT[0], "## B cells\n\nCD19 marks B cells, briefly, in the sources [1]."]
     fake = FakeProvider(output_replies(OUTLINE, revised))
     with built_output(tmp_path, fake) as (client, base_id, first):
+        terminal = threading.Event()
+        states = []
+        publish = AnswerRun.publish
+
+        def observe(run, name, data):
+            publish(run, name, data)
+            if name in {"done", "error"}:
+                with client.app.state.knowledge_service.sessions() as db:
+                    saved = name == "done" and db.get(Artifact, data["id"]) is not None
+                states.append((name, activity_of(client)[f"output:{base_id}"]["state"], saved))
+                terminal.set()
+
+        monkeypatch.setattr(AnswerRun, "publish", observe)
         built(revise(client, base_id, first["id"], "Say it more briefly", sectionIndex=1))
+        assert terminal.wait(5)
+        terminal.clear()
         done = activity_of(client)[f"output:{base_id}"]
         # An old version can't be revised: that ends as a failure with the page's message.
         events = revise(client, base_id, first["id"], "Again")
+        assert terminal.wait(5)
         failed = activity_of(client)[f"output:{base_id}"]
+    assert states == [("done", "done", True), ("error", "failed", False)]
     assert (done["title"], done["state"]) == ("Report revised", "done")
     assert (failed["title"], failed["state"]) == ("Couldn't revise the report", "failed")
     assert failed["error"] == events[-1][1]["detail"]

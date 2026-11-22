@@ -16,6 +16,7 @@ from sqlalchemy import select
 from gunther import asset_service
 from gunther.config import Settings
 from gunther.database import session_scope
+from gunther.documents import text_document
 from gunther.main import create_app
 from gunther.models import ProcessingJob, Source
 from gunther.ocr import OcrError, OcrPage, OcrProvider, OcrRegion, UnavailableOcrProvider
@@ -964,4 +965,48 @@ def test_failed_text_reparse_keeps_the_last_reading(tmp_path, monkeypatch):
         retried = read_capture(client, receipt)
         assert retried["revisionId"] == first["revisionId"]
         assert retried["elements"] == first["elements"]
+        assert "previous document revision was retained" in retried["processing"]["warning"]
+
+
+@pytest.mark.parametrize("failed_state", ["failed", "needs-key", None])
+def test_read_again_keeps_a_checked_revision_when_structure_review_does_not_succeed(
+    tmp_path, failed_state,
+):
+    class Layout:
+        version = "docling/test"
+        state = "needs-key"
+
+        def parse(self, _path):
+            document = text_document(f"An organized reading with structure state {self.state}.")
+            document.manifest.update(method="docling", schema=2)
+            if self.state is None:
+                document.manifest.update(schema=1, structureWarning="Structure could not be read.")
+            else:
+                document.manifest["structure"] = {"state": self.state}
+            return document
+
+    with make_client(tmp_path) as client:
+        layout = Layout()
+        client.app.state.processing_worker.document_parser = layout
+        receipt = client.post(
+            "/api/captures/assets",
+            params={"title": "Lecture handout", "fileName": "handout.pdf"},
+            headers={"Content-Type": "application/pdf"},
+            content=blank_pdf_bytes(1),
+        ).raise_for_status().json()
+        source_id = receipt["importResult"]["source"]["id"]
+        first = read_capture(client, receipt)
+        assert first["manifest"]["structure"]["state"] == "needs-key"
+
+        layout.state = "checked"
+        client.post(f"/api/sources/{source_id}/reprocess").raise_for_status()
+        checked = read_capture(client, receipt)
+        assert checked["manifest"]["structure"]["state"] == "checked"
+        assert checked["revisionId"] != first["revisionId"]
+
+        layout.state = failed_state
+        client.post(f"/api/sources/{source_id}/reprocess").raise_for_status()
+        retried = read_capture(client, receipt)
+        assert retried["revisionId"] == checked["revisionId"]
+        assert retried["elements"] == checked["elements"]
         assert "previous document revision was retained" in retried["processing"]["warning"]

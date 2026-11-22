@@ -20,6 +20,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
+from gunther.activity import Tracked
+
 # Events that end an answer's stream: the saved turn, an error, or a stop.
 FINAL = frozenset({"done", "error", "stopped"})
 _stop_requested: ContextVar[threading.Event | None] = ContextVar("gunther_stop", default=None)
@@ -57,14 +59,29 @@ class AnswerRun:
     events: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     stop_requested: threading.Event = field(default_factory=threading.Event)
     finished: bool = False
+    _activity: tuple[Tracked, str, str] | None = field(default=None, init=False)
     _watchers: list[_Watcher] = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
+    def track_activity(self, tracked: Tracked, *, done: str, failed: str) -> Tracked:
+        self._activity = (tracked, done, failed)
+        return tracked
+
     def publish(self, name: str, data: dict[str, Any]) -> None:
         with self._lock:
-            self.events.append((name, data))
             if name in FINAL:
+                # The worker has saved its result. Finish Activity before readers
+                # can follow the terminal event or see that the run has ended.
+                if self._activity is not None:
+                    tracked, done, failed = self._activity
+                    if name == "done":
+                        tracked.done(done)
+                    elif name == "stopped":
+                        tracked.stopped()
+                    else:
+                        tracked.failed(failed, data["detail"])
                 self.finished = True
+            self.events.append((name, data))
             watchers = list(self._watchers)
         for watcher in watchers:
             watcher.loop.call_soon_threadsafe(watcher.queue.put_nowait, (name, data))
@@ -140,7 +157,8 @@ class AnswerRuns:
         """Begin an answer on its own thread; None when one is already being written."""
 
         with self._lock:
-            if session_id in self._runs:
+            current = self._runs.get(session_id)
+            if current is not None and not current.finished:
                 return None
             run = AnswerRun(session_id, question)
             self._runs[session_id] = run
@@ -162,7 +180,7 @@ class AnswerRuns:
 
     def stop(self, session_id: str) -> bool:
         run = self.get(session_id)
-        if run is None:
+        if run is None or run.finished:
             return False
         run.stop_requested.set()
         return True

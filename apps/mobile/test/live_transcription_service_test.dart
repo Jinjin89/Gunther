@@ -92,13 +92,6 @@ void main() {
           clientMessages.add(decoded);
           if (decoded['type'] == 'input_audio_buffer.append') {
             if (!appendSeen.isCompleted) appendSeen.complete();
-            socket.add(
-              jsonEncode({
-                'type': 'service.error',
-                'code': 'sensevoice_segment_failed',
-                'message': 'One segment was missed.',
-              }),
-            );
           } else if (decoded['type'] == 'input_audio_buffer.commit') {
             if (!commitSeen.isCompleted) commitSeen.complete();
           }
@@ -120,9 +113,6 @@ void main() {
         service.appendPcm(Uint8List.fromList(<int>[1, 2, 3, 4]));
         service.commit();
         await Future.wait(<Future<void>>[appendSeen.future, commitSeen.future]);
-        await _waitUntil(
-          () => events.whereType<LiveTranscriptionErrorEvent>().isNotEmpty,
-        );
 
         final request = await requestSeen.future;
         expect(request.uri.path, '/api/recordings/live');
@@ -140,10 +130,6 @@ void main() {
           3,
           4,
         ]);
-        expect(
-          events.whereType<LiveTranscriptionErrorEvent>().single.code,
-          'sensevoice_segment_failed',
-        );
       } finally {
         await service.dispose();
         await eventSubscription.cancel();

@@ -367,3 +367,11 @@ It does not rewrite a component's state machine (startup selection, recorder
 completion, finish and restore). A shared piece is wired in with the smallest change. If
 a batch needs to change a state machine to share code, it stops and says so in its
 report.
+
+# Round 25 — BFIX item 2 deferred
+
+The checkpoint's `checkpointedAt` is the server's commit time, not the user's edit time,
+so the two can't be compared safely. BFIX item 2 (draft recovery order) goes back to
+886b42c's behaviour, where the local draft wins. That never loses typed text. The real
+fix (store the client edit time per snapshot) belongs to the recorder redesign, the next
+project after this cleanup. The checker's item-2 FIX is overruled.

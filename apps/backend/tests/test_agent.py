@@ -928,12 +928,26 @@ def activity_of(client: TestClient) -> dict[str, dict]:
     return {item["id"]: item for item in client.app.state.activity.snapshot()["items"]}
 
 
-def test_an_answer_is_listed_while_it_is_written_and_when_it_is_ready(tmp_path: Path) -> None:
+def test_an_answer_is_listed_while_it_is_written_and_when_it_is_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     fake = FakeProvider(agent_replies("Saved answer.", {"action": "answer"}))
     gate = threading.Event()
     question = "What " + "does CD3D mark? " * 10
     with app_for(tmp_path, fake) as client:
         session_id = ready_session(client)
+        key = f"answer:{session_id}"
+        at_terminal = []
+        publish = AnswerRun.publish
+
+        def observe(run, name, data):
+            publish(run, name, data)
+            if name == "done":
+                with session_scope(client.app.state.knowledge_service.sessions) as db:
+                    saved = db.get(SessionMessage, data["assistantMessage"]["id"])
+                at_terminal.append((activity_of(client)[key]["state"], saved is not None))
+
+        monkeypatch.setattr(AnswerRun, "publish", observe)
         base_id = client.get(f"/api/sessions/{session_id}", headers=SIDECAR).json()[
             "knowledgeBaseId"
         ]
@@ -944,7 +958,6 @@ def test_an_answer_is_listed_while_it_is_written_and_when_it_is_ready(tmp_path: 
                 json={"content": question},
             )
         )
-        key = f"answer:{session_id}"
         wait_for(lambda: activity_of(client).get(key, {}).get("detail") == "Writing")
         item = activity_of(client)[key]
         assert (item["title"], item["state"], item["kind"]) == (
@@ -957,7 +970,9 @@ def test_an_answer_is_listed_while_it_is_written_and_when_it_is_ready(tmp_path: 
         }  # fmt: skip
         gate.set()
         first.join(10)
+        wait_for(lambda: bool(at_terminal))
         done = activity_of(client)[key]
+    assert at_terminal == [("done", True)]
     assert (done["state"], done["title"]) == ("done", "Answer ready")
     assert done["endedAt"] and done["canStop"] is False
 

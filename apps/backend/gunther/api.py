@@ -1281,27 +1281,27 @@ async def stream_session_message(
     def work(run: AnswerRun) -> None:
         writing = False
         # A conversation that isn't there is answered 404 below, with nothing to show.
-        tracked = (
-            activity.track(
-                f"answer:{session_id}",
-                "answer",
-                "Writing an answer",
-                question,
-                open=where,
-                stop=lambda: runs.stop(session_id),
-                detail="Thinking",
+        tracked = None
+        if library_id:
+            tracked = run.track_activity(
+                activity.track(
+                    f"answer:{session_id}",
+                    "answer",
+                    "Writing an answer",
+                    question,
+                    open=where,
+                    stop=lambda: runs.stop(session_id),
+                    detail="Thinking",
+                ),
+                done="Answer ready",
+                failed="Couldn't write the answer",
             )
-            if library_id
-            else None
-        )
 
         def fail(status: int, detail: str, question_id: str | None = None) -> None:
             data: dict[str, int | str] = {"status": status, "detail": detail}
             if question_id is not None:
                 data["questionId"] = question_id
             run.publish("error", data)
-            if tracked is not None:
-                tracked.failed("Couldn't write the answer", detail)
 
         def hear(event: dict) -> None:
             nonlocal writing
@@ -1339,13 +1339,9 @@ async def stream_session_message(
                 else service.create_session_turn(session_id, payload, hear)
             )
             run.publish("done", turn.model_dump(mode="json", by_alias=True))
-            if tracked is not None:
-                tracked.done("Answer ready")
         except Stopped:
             service.record_interrupted_question(session_id, payload, "stopped")
             run.publish("stopped", {"type": "stopped"})
-            if tracked is not None:
-                tracked.stopped()
         except AskFailure as error:
             question_id = service.record_interrupted_question(session_id, payload, "failed", error)
             fail(error.status, str(error), question_id)
@@ -1358,10 +1354,6 @@ async def stream_session_message(
             error = AskFailure("The answer could not be written.", 500)
             question_id = service.record_interrupted_question(session_id, payload, "failed", error)
             fail(error.status, str(error), question_id)
-        finally:
-            # Whatever happened above, no entry is left running.
-            if tracked is not None:
-                tracked.failed("Couldn't write the answer", "Something went wrong.")
 
     run = _answer_runs(request).start(session_id, payload.content, work)
     if run is None:
@@ -1562,59 +1554,57 @@ def _output_run(
         sections = 0
         # A section can be checked again after it is done: each counts once.
         finished: set[int] = set()
-        with activity.track(
-            f"output:{knowledge_base_id}",
-            "output",
-            running,
-            about,
-            open={"view": "library", "libraryId": knowledge_base_id, "tab": "outputs"},
-            stop=lambda: runs.stop(_outputs_key(knowledge_base_id)),
-            detail="Planning",
-        ) as tracked:
+        tracked = run.track_activity(
+            activity.track(
+                f"output:{knowledge_base_id}",
+                "output",
+                running,
+                about,
+                open={"view": "library", "libraryId": knowledge_base_id, "tab": "outputs"},
+                stop=lambda: runs.stop(_outputs_key(knowledge_base_id)),
+                detail="Planning",
+            ),
+            done=done_word,
+            failed=failed_word,
+        )
 
-            def hear(event: dict) -> None:
-                nonlocal sections
-                check_stop()
-                if event["type"] == "action" and event.get("state") == "running":
-                    tracked.update(detail=event.get("label") or "Working")
-                elif event["type"] == "stage" and event.get("state") == "running":
-                    # A studio build's step, with what it is doing now ("4 of 11 slides checked").
-                    tracked.update(
-                        detail=" · ".join(filter(None, (event.get("label"), event.get("detail"))))
-                        or "Working"
-                    )
-                elif event["type"] == "outline":
-                    sections = len(event.get("sections") or [])
-                elif event["type"] == "section":
-                    number = event["index"] + 1
-                    of = f" of {sections}" if sections else ""
-                    if event["state"] == "done":
-                        finished.add(event["index"])
-                        if sections:
-                            tracked.update(progress=len(finished) / sections)
-                    elif event["state"] in _SECTION_VERBS:
-                        verb = _SECTION_VERBS[event["state"]]
-                        tracked.update(detail=f"{verb} section {number}{of}")
-                if event["type"] != "saving":
-                    run.publish(event["type"], event)
+        def hear(event: dict) -> None:
+            nonlocal sections
+            check_stop()
+            if event["type"] == "action" and event.get("state") == "running":
+                tracked.update(detail=event.get("label") or "Working")
+            elif event["type"] == "stage" and event.get("state") == "running":
+                # A studio build's step, with what it is doing now ("4 of 11 slides checked").
+                tracked.update(
+                    detail=" · ".join(filter(None, (event.get("label"), event.get("detail"))))
+                    or "Working"
+                )
+            elif event["type"] == "outline":
+                sections = len(event.get("sections") or [])
+            elif event["type"] == "section":
+                number = event["index"] + 1
+                of = f" of {sections}" if sections else ""
+                if event["state"] == "done":
+                    finished.add(event["index"])
+                    if sections:
+                        tracked.update(progress=len(finished) / sections)
+                elif event["state"] in _SECTION_VERBS:
+                    verb = _SECTION_VERBS[event["state"]]
+                    tracked.update(detail=f"{verb} section {number}{of}")
+            if event["type"] != "saving":
+                run.publish(event["type"], event)
 
-            def fail(status: int, detail: str) -> None:
-                run.publish("error", {"status": status, "detail": detail})
-                tracked.failed(failed_word, detail)
-
-            try:
-                with stopping_on(run.stop_requested):
-                    artifact = call(hear)
-                run.publish("done", shaped(artifact))
-                tracked.done(done_word)
-            except Stopped:
-                run.publish("stopped", {"type": "stopped"})
-                tracked.stopped()
-            except tuple(_ARTIFACT_ERROR_STATUS) as error:
-                fail(_artifact_error_status(error), str(error))
-            except Exception:
-                logger.exception("Building an output failed")
-                fail(500, "The output could not be built.")
+        try:
+            with stopping_on(run.stop_requested):
+                artifact = call(hear)
+            run.publish("done", shaped(artifact))
+        except Stopped:
+            run.publish("stopped", {"type": "stopped"})
+        except tuple(_ARTIFACT_ERROR_STATUS) as error:
+            run.publish("error", {"status": _artifact_error_status(error), "detail": str(error)})
+        except Exception:
+            logger.exception("Building an output failed")
+            run.publish("error", {"status": 500, "detail": "The output could not be built."})
 
     run = _answer_runs(request).start(_outputs_key(knowledge_base_id), label, work)
     if run is None:

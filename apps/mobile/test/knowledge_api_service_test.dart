@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gunther_mobile/data/services/knowledge_api_service.dart';
 
@@ -14,13 +15,13 @@ void main() {
     );
     final upload = File('${temporary.path}/sample.bin');
     await upload.writeAsBytes([7, 8, 9], flush: true);
-    final requests = <({String method, String path, String? token})>[];
+    final requests = <({String method, Uri uri, String? token})>[];
     final customHeaders = <String?>[];
     final bodies = <List<int>>[];
     final subscription = server.listen((request) async {
       requests.add((
         method: request.method,
-        path: request.uri.path,
+        uri: request.uri,
         token: request.headers.value('X-Gunther-Token'),
       ));
       customHeaders.add(request.headers.value('X-Chunk-Sha256'));
@@ -44,10 +45,11 @@ void main() {
       await service.post('notes', const {'title': 'Captured'});
       await service.patch('notes/note-1', const {'status': 'filed'});
       await service.postEmpty('recordings/recording-1/complete');
+      final chunk = Uint8List.fromList([1, 2, 3]);
       await service.putBytes(
-        'recordings/recording-1/chunks?seq=0',
-        Uint8List.fromList([1, 2, 3]),
-        headers: const {'X-Chunk-Sha256': 'abc123'},
+        'recordings/recording-1/chunks?sequence=0',
+        chunk,
+        headers: {'X-Chunk-Sha256': sha256.convert(chunk).toString()},
       );
       await service.uploadFile(
         'captures/assets?title=Sample',
@@ -67,7 +69,7 @@ void main() {
         'PUT',
         'POST',
       ]);
-      expect(requests.map((request) => request.path), [
+      expect(requests.map((request) => request.uri.path), [
         '/api/health',
         '/api/notes',
         '/api/notes/note-1',
@@ -75,7 +77,8 @@ void main() {
         '/api/recordings/recording-1/chunks',
         '/api/captures/assets',
       ]);
-      expect(customHeaders[4], 'abc123');
+      expect(requests[4].uri.queryParameters, {'sequence': '0'});
+      expect(customHeaders[4], sha256.convert(bodies[4]).toString());
       expect(utf8.decode(bodies[1]), jsonEncode({'title': 'Captured'}));
       expect(bodies[4], [1, 2, 3]);
       expect(bodies[5], [7, 8, 9]);

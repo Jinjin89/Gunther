@@ -31,7 +31,7 @@ def test_failed_provider_save_keeps_effective_settings(tmp_path, monkeypatch, ki
     notifications = []
     store.subscribe(lambda: notifications.append(read()))
 
-    def fail_write():
+    def fail_write(_changes):
         raise OSError("disk full")
 
     with monkeypatch.context() as patch:
@@ -171,6 +171,43 @@ def test_saving_applies_at_once_and_survives_a_restart(tmp_path: Path) -> None:
         assert field(web, "tavily_api_key")["isSet"] is False
         health = client.get("/api/health", headers=SIDECAR).json()
         assert health["webSearchMode"] == "not_configured"
+
+
+def test_a_failed_service_save_leaves_disk_memory_and_listeners_at_the_previous_value(
+    tmp_path, monkeypatch,
+):
+    path = tmp_path / "service-settings.json"
+    route = "/api/settings/services/web_search"
+    with TestClient(create_app(settings_for(tmp_path))) as client:
+        seeded = client.put(route, headers=SIDECAR, json={"values": {"tavily_api_key": KEY}})
+        seeded.raise_for_status()
+        store = client.app.state.service_settings
+        previous_bytes = path.read_bytes()
+        previous_values = store.values()
+        notifications = []
+        store.subscribe(lambda: notifications.append(store.values()))
+        real_replace = os.replace
+
+        def fail_replace(source, destination):
+            if destination == path:
+                assert store._values == previous_values
+                assert json.loads(Path(source).read_text())["values"]["tavily_api_key"] is None
+                raise OSError("Disk is full")
+            return real_replace(source, destination)
+
+        change = {"values": {"tavily_api_key": ""}}
+        with monkeypatch.context() as patch:
+            patch.setattr(service_settings.os, "replace", fail_replace)
+            failed = client.put(route, headers=SIDECAR, json=change)
+        assert failed.status_code == 503
+        assert path.read_bytes() == previous_bytes
+        assert store.values() == previous_values
+        assert notifications == []
+        assert field(services(client)["web_search"], "tavily_api_key")["hint"] == "1234"
+
+        client.put(route, headers=SIDECAR, json=change).raise_for_status()
+        assert notifications == [{"tavily_api_key": None}]
+        assert json.loads(path.read_bytes())["values"] == notifications[0]
 
 
 @pytest.mark.parametrize(
