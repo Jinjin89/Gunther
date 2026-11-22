@@ -21,6 +21,7 @@ from fake_models import (
     is_sentence_checking,
     is_support_checking,
     is_writing,
+    orchestrator_replies,
     output_replies,
     studio_task,
 )
@@ -34,6 +35,7 @@ from gunther.agent import Evidence, checker_inventory
 from gunther.artifact_versions import commit_version
 from gunther.checks import coverage_of, verdict, verdicts_of
 from gunther.config import Settings
+from gunther.llm import ModelError
 from gunther.main import create_app
 from gunther.models import Artifact, ArtifactCheck, ArtifactUnitBinding, Source
 from gunther.outputs import (
@@ -202,11 +204,9 @@ def saved_output(client, base_id, outline=None, written=None, *, approach=None, 
     spec = Spec(payload.kind, payload.audience, style, payload.brief, theme=payload.theme)
     with service.sessions() as session:
         limits = OutputLimits()
-        resolved = service._resolve_output_scope(session, base_id, payload.scope)
-        _, seeds, inputs = service._output_material(session, resolved, limits)
-        pool = service._output_pool(seeds, limits)
-        service._studio_reading(session, resolved.source_ids, pool, pinned=seeds)
-        snapshots = service._unit_snapshots(session, resolved.units)
+        material = service._output_material(session, base_id, payload.scope, allow_empty=True)
+        pool = service._output_pool(material.seeds, limits)
+        service._studio_reading(session, material.source_ids, pool, pinned=material.seeds)
     plans, drafts = [], []
     for index, (row, part) in enumerate(zip(outline["sections"], written, strict=True)):
         layout = row.get("layout", "") if deck and approach else ""
@@ -250,9 +250,9 @@ def saved_output(client, base_id, outline=None, written=None, *, approach=None, 
         workspace_id=workspace_id, base_id=base_id, client_request_id=payload.client_request_id,
         fingerprint=payload.client_request_id, parent_id=None, kind=payload.kind, style=style,
         audience=payload.audience, title=title, brief=payload.brief, origin="build",
-        content=version.content, scope=payload.scope.model_dump(), inputs=inputs,
+        content=version.content, scope=payload.scope.model_dump(), inputs=material.inputs,
         outline=version.outline, citations=[c.model_dump() for c in version.citations],
-        snapshots=snapshots, model=None, checks=version.checks, made_by=provenance,
+        snapshots=material.snapshots, model=None, checks=version.checks, made_by=provenance,
     ).model_dump(mode="json", by_alias=True)
 
 
@@ -673,8 +673,9 @@ def test_an_empty_library_is_not_built_from(tmp_path: Path) -> None:
     assert fake.requests == []
 
 
+@pytest.mark.parametrize("entry", ["build", "conversation"])
 def test_saved_knowledge_seeds_the_pool_so_its_passages_can_be_cited_without_a_search(
-    tmp_path: Path,
+    tmp_path: Path, entry: str,
 ) -> None:
     fake = FakeProvider(
         agent_replies(
@@ -689,16 +690,33 @@ def test_saved_knowledge_seeds_the_pool_so_its_passages_can_be_cited_without_a_s
             f"/api/knowledge-bases/{base_id}/sessions", headers=SIDECAR, json={}
         ).json()["id"]
         turn = ask_turn(client, session_id, {"content": "CD3D?"}, headers=SIDECAR)
+        message_id = turn["assistantMessage"]["id"]
         unit_id = client.post(
-            f"/api/sessions/{session_id}/messages/{turn['assistantMessage']['id']}/proposal",
+            f"/api/sessions/{session_id}/messages/{message_id}/proposal",
             headers=SIDECAR,
             json={"title": "The T-cell marker"},
         ).json()["knowledgeUnitId"]
-        fake.replies = [output_replies(ONE_SECTION, ["## T cells\n\nCD3D marks T cells [1]."])]
+        scope = {"mode": "selection", "unitIds": [unit_id]}
+        writer = output_replies(ONE_SECTION, ["## T cells\n\nCD3D marks T cells [1]."])
         before = len(fake.requests)
-        artifact = built(
-            build(client, base_id, body(scope={"mode": "selection", "unitIds": [unit_id]}))
-        )
+        if entry == "build":
+            fake.replies[:] = [writer]
+            artifact = built(build(client, base_id, body(scope=scope)))
+        else:
+            fake.replies[:] = [orchestrator_replies([{"actions": [
+                {"do": "select", "artifact": "new:report"},
+                {"do": "make"},
+                {"do": "save", "text": "Here is the report."},
+            ]}], writer)]
+            headers = workspace(client)
+            path = f"/api/knowledge-bases/{base_id}/artifact-conversations"
+            conversation = client.post(path, headers=headers, json={"scope": scope})
+            cid = conversation.raise_for_status().json()["id"]
+            response = client.post(
+                f"{path}/{cid}/messages/stream", headers=headers,
+                json={"kind": "start", "text": "Make a report", "clientRequestId": "saved-unit"},
+            )
+            artifact = built(read_events(response.raise_for_status()))["artifact"]
         with client.app.state.knowledge_service.sessions() as session:
             bindings = session.scalars(
                 select(ArtifactUnitBinding).where(ArtifactUnitBinding.artifact_id == artifact["id"])
@@ -717,6 +735,11 @@ def test_saved_knowledge_seeds_the_pool_so_its_passages_can_be_cited_without_a_s
     # The saved answer is pinned, as the old builder pinned them.
     assert artifact["acceptedUnitIds"] == [unit_id]
     assert [(b.unit_id, b.position) for b in bindings] == [(unit_id, 0)]
+    [snapshot] = artifact["unitSnapshots"]
+    assert (snapshot["unitId"], snapshot["sourceMessageId"], snapshot["evidenceCount"]) == (
+        unit_id, message_id, 1,
+    )
+    assert artifact["provenance"]["revisionIds"] == [snapshot["revisionId"]]
     new = fake.requests[before:]
     assert not any(is_grading(r) for r in new)
     # The planner and the writer read the saved answer as a note, not as a source.
@@ -1067,6 +1090,19 @@ def test_a_typed_number_without_a_passage_is_flagged_when_checked(tmp_path: Path
     [issue] = checked["sections"][1]["issues"]
     assert (issue["claim"], issue["verdict"]) == ("CD19 marks B cells.", "unsupported")
     assert issue["note"] == "Its number has no source in the list."
+
+
+def test_check_route_preserves_model_error_detail(tmp_path: Path, monkeypatch) -> None:
+    def fail_check(*args):
+        raise ModelError("The Checker could not reach the model.")
+
+    with app_for(tmp_path, FakeProvider()) as client:
+        base_id, _ = library(client)
+        monkeypatch.setattr(client.app.state.knowledge_service, "check_output", fail_check)
+        response = client.post(route(base_id, "art_check", "/check"), headers=workspace(client))
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": "The Checker could not reach the model."}
 
 
 def test_a_version_from_the_old_builder_cannot_be_changed_but_can_be_rebuilt(

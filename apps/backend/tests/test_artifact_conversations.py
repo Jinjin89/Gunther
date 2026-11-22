@@ -129,16 +129,20 @@ def test_what_cannot_be_done_is_refused_in_words(tmp_path: Path) -> None:
         headers = workspace(client)
         client.post(conversations(base_id), headers=headers, json={"id": "mine"})
 
-        assert client.get(conversations(base_id, "/nope"), headers=headers).status_code == 404
+        absent = client.get(conversations(base_id, "/nope"), headers=headers)
+        assert absent.status_code == 404
+        assert absent.json() == {"detail": "Conversation nope was not found"}
         assert client.get(conversations("no-library"), headers=headers).status_code == 404
         # A conversation belongs to its library.
         assert client.get(conversations(other_id, "/mine"), headers=headers).status_code == 404
         taken = client.post(conversations(other_id), headers=headers, json={"id": "mine"})
         assert taken.status_code == 409
+        assert taken.json() == {"detail": "That conversation id is used somewhere else."}
         blank = client.patch(
             conversations(base_id, "/mine"), headers=headers, json={"title": "   "}
         )
         assert blank.status_code == 400
+        assert blank.json() == {"detail": "title must not be blank"}
         missing = {"mode": "selection", "sourceIds": ["src_gone"], "unitIds": [], "sessionIds": []}
         gone = client.patch(
             conversations(base_id, "/mine"), headers=headers, json={"scope": missing}

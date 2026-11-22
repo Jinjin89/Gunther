@@ -3,7 +3,7 @@
 import pytest
 from fake_models import FakeProvider
 from test_output_skills import saved_skill_output
-from test_outputs import app_for, built, library, read_events, workspace
+from test_outputs import SIDECAR, app_for, built, library, read_events, workspace
 from test_slide_review import Renderer
 
 
@@ -66,7 +66,8 @@ def test_review_current_renders_save_reopen_idempotency_freshness_and_access(
             return
         workspace_id = headers["X-Gunther-Workspace-Id"]
         image = saved_path + f"/renders/capture1/contact.png?workspace_id={workspace_id}"
-        assert client.get(image, headers=headers).status_code == 200
+        assert client.get(image, headers=SIDECAR).status_code == 200
+        assert client.get(image.split("?")[0], headers=headers).status_code == 422
         assert client.get(image.replace(workspace_id, "wrong"), headers=headers).status_code == 404
         cross = image.replace(reviewed["id"], original["id"])
         assert client.get(cross, headers=headers).status_code == 404

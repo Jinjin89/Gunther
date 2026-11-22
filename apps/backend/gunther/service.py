@@ -280,13 +280,21 @@ class _LibraryScope:
 class _OutputScope:
     """What an output may be built from, found in the database."""
 
-    asked: OutputScope
     # Every live source of the library (what a seed passage must belong to).
     library_source_ids: list[str]
     # The sources the library tool searches.
     source_ids: list[str]
     units: list[KnowledgeUnit]
     sessions: list[KnowledgeSession]
+
+
+@dataclass
+class _OutputMaterial:
+    source_ids: list[str]
+    notes: Notes
+    seeds: list[Evidence]
+    inputs: dict[str, list[dict[str, object]]]
+    snapshots: list[ArtifactUnitSnapshotOut]
 
 
 @dataclass(frozen=True, slots=True)
@@ -3089,7 +3097,7 @@ class KnowledgeService:
         )
         if scope.mode == "library":
             found = list(session.scalars(units.order_by(KnowledgeUnit.updated_at.desc())))
-            return _OutputScope(scope, members, members, found, [])
+            return _OutputScope(members, members, found, [])
         in_library = set(members)
         found_units = {
             unit.id: unit
@@ -3116,35 +3124,47 @@ class KnowledgeService:
                         f"These {what} are not in this library, or were removed: {', '.join(gone)}"
                     )
         return _OutputScope(
-            scope,
             members,
             [item for item in scope.source_ids if item in in_library],
             [found_units[item] for item in scope.unit_ids if item in found_units],
             [found_sessions[item] for item in scope.session_ids if item in found_sessions],
         )
 
-    @staticmethod
-    def _unit_head(
-        session: Session, unit: KnowledgeUnit
-    ) -> tuple[KnowledgeUnitRevision, KnowledgeProposal, SessionMessage | None]:
-        """A saved answer's current text, the proposal it came from, and the answer itself."""
+    def _output_material(
+        self,
+        session: Session,
+        base_id: str,
+        scope: OutputScope,
+        *,
+        strict: bool = True,
+        allow_empty: bool = False,
+    ) -> _OutputMaterial:
+        """Resolve what the output may read and pin each selected answer once."""
 
-        head = next((item for item in unit.revisions if item.id == unit.head_revision_id), None)
-        if head is None:
-            raise ValueError(f"Knowledge Unit {unit.id} has no head revision")
-        proposal = session.get(KnowledgeProposal, head.source_proposal_id)
-        if proposal is None:
-            raise ValueError(f"Knowledge Unit {unit.id} has no source proposal")
-        return head, proposal, session.get(SessionMessage, proposal.message_id)
+        resolved = self._resolve_output_scope(session, base_id, scope, strict=strict)
+        if not allow_empty and not (resolved.source_ids or resolved.units or resolved.sessions):
+            raise ValueError(NOTHING_TO_BUILD_FROM)
+        in_library = set(resolved.library_source_ids)
+        seeds: list[Evidence] = []
 
-    def _unit_snapshots(
-        self, session: Session, units: list[KnowledgeUnit]
-    ) -> list[ArtifactUnitSnapshotOut]:
-        """The saved answers an output pins, each as it reads now."""
+        def take(messages: list[SessionMessage]) -> None:
+            for item in conversation_pool(messages):
+                # A passage of a source that has left this library is not the library's now.
+                if item.kind == "library" and item.payload[0].source_id not in in_library:
+                    continue
+                seeds.append(replace(item, ref=None))
 
         snapshots = []
-        for unit in units:
-            head, proposal, message = self._unit_head(session, unit)
+        for unit in resolved.units:
+            head = next((item for item in unit.revisions if item.id == unit.head_revision_id), None)
+            if head is None:
+                raise ValueError(f"Knowledge Unit {unit.id} has no head revision")
+            proposal = session.get(KnowledgeProposal, head.source_proposal_id)
+            if proposal is None:
+                raise ValueError(f"Knowledge Unit {unit.id} has no source proposal")
+            message = session.get(SessionMessage, proposal.message_id)
+            if message is not None:
+                take([message])
             snapshots.append(
                 ArtifactUnitSnapshotOut(
                     unit_id=unit.id,
@@ -3165,32 +3185,6 @@ class KnowledgeService:
             raise ValueError(
                 "The saved answers chosen are larger than the 2,000,000-byte limit; choose fewer"
             )
-        return snapshots
-
-    def _output_material(
-        self, session: Session, resolved: _OutputScope, limits: OutputLimits
-    ) -> tuple[Notes, list[Evidence], dict[str, list[dict[str, object]]]]:
-        """Notes for the planner and writer, the passages that saved answers and discussions
-        cite (to seed the pool), and a record of what the output could use."""
-
-        in_library = set(resolved.library_source_ids)
-        seeds: list[Evidence] = []
-
-        def take(messages: list[SessionMessage]) -> None:
-            for item in conversation_pool(messages):
-                # A passage of a source that has left this library is not the library's now.
-                if item.kind == "library" and item.payload[0].source_id not in in_library:
-                    continue
-                seeds.append(replace(item, ref=None))
-
-        knowledge: list[tuple[str, str]] = []
-        unit_inputs: list[dict[str, object]] = []
-        for unit in resolved.units:
-            head, _, message = self._unit_head(session, unit)
-            knowledge.append((unit.title, head.content))
-            unit_inputs.append({"id": unit.id, "revisionId": head.id})
-            if message is not None:
-                take([message])
         discussions: list[tuple[str, str]] = []
         session_inputs: list[dict[str, object]] = []
         for item in resolved.sessions:
@@ -3239,7 +3233,7 @@ class KnowledgeService:
             else {}
         )
         notes = Notes(
-            knowledge=tuple(knowledge[:20]),
+            knowledge=tuple((item.title, item.content) for item in snapshots[:20]),
             discussions=tuple(discussions[:10]),
             sources=tuple(
                 (source.title, digests.get(source.id) or source.content[:300])
@@ -3251,10 +3245,10 @@ class KnowledgeService:
                 {"id": source.id, "title": source.title, "revisionId": heads.get(source.id)}
                 for source in sources
             ],
-            "units": unit_inputs,
+            "units": [{"id": item.unit_id, "revisionId": item.revision_id} for item in snapshots],
             "sessions": session_inputs,
         }
-        return notes, seeds, inputs
+        return _OutputMaterial(resolved.source_ids, notes, seeds, inputs, snapshots)
 
     @staticmethod
     def _studio_metadata(
@@ -3625,12 +3619,8 @@ class KnowledgeService:
                 owner = json.loads(parent.provenance_json).get("conversation_id")
                 if owner and owner != payload.conversation_id:
                     raise ValueError("This artifact belongs to a different conversation.")
-            resolved = self._resolve_output_scope(session, base_id, payload.scope)
-            if not (resolved.source_ids or resolved.units or resolved.sessions):
-                raise ValueError(NOTHING_TO_BUILD_FROM)
-            notes, seeds, inputs = self._output_material(session, resolved, limits)
-            snapshots = self._unit_snapshots(session, resolved.units)
-            pool = self._output_pool(seeds, limits)
+            material = self._output_material(session, base_id, payload.scope)
+            pool = self._output_pool(material.seeds, limits)
             outline = (
                 [Planned(item.heading, item.goal, id=item.id) for item in payload.outline]
                 if payload.outline else None
@@ -3646,8 +3636,10 @@ class KnowledgeService:
                     theme=payload.theme or cover.attrs.get("theme") or theme,
                     deck_style=cover.attrs.get("style"),
                 )
-            reading_gaps = self._studio_reading(session, resolved.source_ids, pool, pinned=seeds)
-            notes = replace(notes, extraction_gaps=tuple(reading_gaps))
+            reading_gaps = self._studio_reading(
+                session, material.source_ids, pool, pinned=material.seeds
+            )
+            notes = replace(material.notes, extraction_gaps=tuple(reading_gaps))
             studio = StudioAgents(
                 self.models,
                 limits,
@@ -3677,7 +3669,7 @@ class KnowledgeService:
                 fallback_title=fallback_title,
                 purpose=purpose,
                 fixed_outline=outline,
-                scope={"selection": payload.scope.model_dump(), "inputs": inputs},
+                scope={"selection": payload.scope.model_dump(), "inputs": material.inputs},
                 web=payload.web,
             )
             made_by = {
@@ -3707,10 +3699,10 @@ class KnowledgeService:
             origin="rebuild" if parent_id else "build",
             content=built.content,
             scope=payload.scope.model_dump(),
-            inputs=inputs,
+            inputs=material.inputs,
             outline=built.outline,
             citations=[item.model_dump() for item in built.citations],
-            snapshots=snapshots,
+            snapshots=material.snapshots,
             model=OutputModelOut(ref=model.ref, label=model.display, effort=effort),
             checks=built.checks,
             made_by=made_by,
@@ -3983,14 +3975,13 @@ class KnowledgeService:
                 owner = json.loads(parent.provenance_json).get("conversation_id")
                 if owner and owner != payload.conversation_id:
                     raise ValueError("This artifact belongs to a different conversation.")
-            resolved = self._resolve_output_scope(
+            material = self._output_material(
                 session,
                 base_id,
                 OutputScope.model_validate(json.loads(parent.scope_json)),
                 strict=False,
+                allow_empty=True,
             )
-            notes, _, inputs = self._output_material(session, resolved, limits)
-            snapshots = self._unit_snapshots(session, resolved.units)
             pool = Pool(limits.pool)
             citations = map(
                 ConversationCitationOut.model_validate, json.loads(parent.citations_json)
@@ -4002,7 +3993,7 @@ class KnowledgeService:
                 ]
             )
             tool = self._output_search_tool(
-                session, resolved.source_ids, f"{library.title}: {library.question}"
+                session, material.source_ids, f"{library.title}: {library.question}"
             )
             made_by = self._made_by(parent) or {}
             agents = StudioWorkAgents(self.models, parent.kind, limits)
@@ -4032,7 +4023,7 @@ class KnowledgeService:
                     payload.section_index,
                     tool,
                     pool,
-                    notes,
+                    material.notes,
                     events,
                 )
             made_by = {
@@ -4063,9 +4054,9 @@ class KnowledgeService:
             parent_id=artifact_id,
             origin="revise",
             content=built.content,
-            inputs=inputs,
+            inputs=material.inputs,
             citations=[item.model_dump() for item in built.citations],
-            snapshots=snapshots,
+            snapshots=material.snapshots,
             model=OutputModelOut(ref=model.ref, label=model.display, effort=effort),
             checks=built.checks,
             made_by=made_by,
@@ -5041,13 +5032,9 @@ class KnowledgeService:
                 {work.key: work.spec.model_copy(deep=True) for work in workspace.works},
             )
             scope = self._conversation_scope(row)
-            resolved = self._resolve_output_scope(session, base_id, scope, strict=False)
-            if not (resolved.source_ids or resolved.units or resolved.sessions):
-                raise ValueError(NOTHING_TO_BUILD_FROM)
-            notes, seeds, inputs = self._output_material(session, resolved, limits)
-            snapshots = self._unit_snapshots(session, resolved.units)
+            material = self._output_material(session, base_id, scope, strict=False)
             tool = self._output_search_tool(
-                session, resolved.source_ids, f"{library.title}: {library.question}"
+                session, material.source_ids, f"{library.title}: {library.question}"
             )
             web, web_reason = self._web_tool(payload.web)
             reader = self._source_reader(session)
@@ -5094,9 +5081,9 @@ class KnowledgeService:
 
             selected_heads = {
                 str(source["id"]): str(source["revisionId"])
-                for source in inputs["sources"] if source.get("revisionId")
+                for source in material.inputs["sources"] if source.get("revisionId")
             }
-            pinned_keys = {item.key for item in seeds}
+            pinned_keys = {item.key for item in material.seeds}
 
             def evidence_allowed(item: Evidence) -> bool:
                 return self._output_evidence_in_scope(
@@ -5105,9 +5092,9 @@ class KnowledgeService:
 
             def studio_reading(made: Pool) -> Notes:
                 reading_gaps = self._studio_reading(
-                    session, resolved.source_ids, made, pinned=seeds
+                    session, material.source_ids, made, pinned=material.seeds
                 )
-                return replace(notes, extraction_gaps=tuple(reading_gaps))
+                return replace(material.notes, extraction_gaps=tuple(reading_gaps))
 
             def studio(
                 spec: Spec, made: Pool, use: str | None, resume=None, checkpoint=None,
@@ -5138,7 +5125,7 @@ class KnowledgeService:
                     fallback_title=library.title,
                     purpose=purpose,
                     fixed_outline=fixed_outline,
-                    scope={"selection": scope.model_dump(), "inputs": inputs},
+                    scope={"selection": scope.model_dump(), "inputs": material.inputs},
                     web=payload.web,
                     resume=resume,
                     checkpoint=checkpoint,
@@ -5156,7 +5143,7 @@ class KnowledgeService:
                     budget=budget,
                     model=model,
                     effort=effort,
-                    notes=notes,
+                    notes=material.notes,
                     library_tool=tool,
                     web_tool=web,
                     web_reason=web_reason or "",
@@ -5169,7 +5156,7 @@ class KnowledgeService:
                     reply_id=reply_id,
                     versions=versions,
                     saved=saved,
-                    seeds=[seed for seed in seeds[: limits.seed]],
+                    seeds=material.seeds[: limits.seed],
                     emit=emit,
                     limits=agent_limits,
                 )
@@ -5218,7 +5205,7 @@ class KnowledgeService:
             try:
                 artifact, message = self._save_turn_version(
                     base_id, workspace_id, conversation_id, payload, model, effort, result,
-                    workspace, brief, scope, inputs, snapshots, heads, emit, keep,
+                    workspace, brief, scope, material.inputs, material.snapshots, heads, emit, keep,
                 )
             except Exception as error:
                 preserve_on_failure = True

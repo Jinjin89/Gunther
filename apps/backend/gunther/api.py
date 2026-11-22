@@ -3,6 +3,8 @@ import json
 import logging
 import re
 import secrets
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
@@ -15,6 +17,7 @@ from starlette.concurrency import run_in_threadpool
 from gunther import listen_copy, speech_registry, usage
 from gunther.answer_runs import AnswerRun, AnswerRuns, Stopped
 from gunther.artifact_read import ArtifactIntegrityError
+from gunther.artifact_versions import ArtifactConflictError
 from gunther.asset_service import (
     AssetNotFoundError,
     AssetService,
@@ -125,7 +128,7 @@ from gunther.schemas import (
     WebSearchOut,
     WorkspaceBootstrapOut,
 )
-from gunther.service import ArtifactConflictError, AskFailure, KnowledgeService
+from gunther.service import AskFailure, KnowledgeService
 from gunther.skillbook import ask_skills
 from gunther.storage_budget import StorageBudgetError
 from gunther.web_capture import (
@@ -1433,6 +1436,32 @@ def knowledge_units(knowledge_base_id: str, request: Request) -> list[KnowledgeU
     return _service(request).list_knowledge_units(knowledge_base_id)
 
 
+WorkspaceHeader = Annotated[
+    str, Header(alias="X-Gunther-Workspace-Id", min_length=1, max_length=40)
+]
+
+# Check the conflict subclass before ValueError.
+_ARTIFACT_ERROR_STATUS = {
+    ArtifactConflictError: 409,
+    ArtifactIntegrityError: 409,
+    LookupError: 404,
+    ModelError: 502,
+    ValueError: 400,
+}
+
+
+def _artifact_error_status(error: Exception) -> int:
+    return next(code for kind, code in _ARTIFACT_ERROR_STATUS.items() if isinstance(error, kind))
+
+
+@contextmanager
+def _artifact_http_errors(*additional: type[Exception]) -> Iterator[None]:
+    try:
+        yield
+    except (ArtifactIntegrityError, LookupError, *additional) as error:
+        raise HTTPException(status_code=_artifact_error_status(error), detail=str(error)) from error
+
+
 @router.get(
     "/knowledge-bases/{knowledge_base_id}/artifacts",
     response_model=list[ArtifactSummaryOut],
@@ -1440,21 +1469,10 @@ def knowledge_units(knowledge_base_id: str, request: Request) -> list[KnowledgeU
 def artifacts(
     knowledge_base_id: str,
     request: Request,
-    workspace_id: Annotated[
-        str,
-        Header(
-            alias="X-Gunther-Workspace-Id",
-            min_length=1,
-            max_length=40,
-        ),
-    ],
+    workspace_id: WorkspaceHeader,
 ) -> list[ArtifactSummaryOut]:
-    try:
+    with _artifact_http_errors():
         return _service(request).list_artifacts(knowledge_base_id, workspace_id)
-    except ArtifactIntegrityError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    except LookupError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.get(
@@ -1465,7 +1483,7 @@ def artifact_render(knowledge_base_id: str, artifact_id: str, snapshot_id: str, 
                     request: Request, workspace_id: Annotated[str, Query(min_length=1,
                                                                        max_length=40)]):
     service = _service(request)
-    try:
+    with _artifact_http_errors():
         shown = service.get_artifact(knowledge_base_id, artifact_id, workspace_id)
         skill = getattr(shown.provenance, "skill", None)
         render = skill.render_check if skill else None
@@ -1477,10 +1495,6 @@ def artifact_render(knowledge_base_id: str, artifact_id: str, snapshot_id: str, 
         path = service.slide_renderer.file(snapshot_id, name)
         return FileResponse(path, media_type="application/pdf" if name.endswith(".pdf")
                             else "image/png", headers={"Cache-Control": "private, no-store"})
-    except ArtifactIntegrityError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    except LookupError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.get(
@@ -1491,30 +1505,14 @@ def artifact(
     knowledge_base_id: str,
     artifact_id: str,
     request: Request,
-    workspace_id: Annotated[
-        str,
-        Header(
-            alias="X-Gunther-Workspace-Id",
-            min_length=1,
-            max_length=40,
-        ),
-    ],
+    workspace_id: WorkspaceHeader,
 ) -> ArtifactOut:
-    try:
+    with _artifact_http_errors():
         return _service(request).get_artifact(
             knowledge_base_id,
             artifact_id,
             workspace_id,
         )
-    except ArtifactIntegrityError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    except LookupError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-
-
-WorkspaceHeader = Annotated[
-    str, Header(alias="X-Gunther-Workspace-Id", min_length=1, max_length=40)
-]
 
 
 _SECTION_VERBS = {"researching": "Researching", "writing": "Writing", "checking": "Checking"}
@@ -1617,14 +1615,8 @@ def _output_run(
             except Stopped:
                 run.publish("stopped", {"type": "stopped"})
                 tracked.stopped()
-            except (ArtifactConflictError, ArtifactIntegrityError) as error:
-                fail(409, str(error))
-            except LookupError as error:
-                fail(404, str(error))
-            except ModelError as error:
-                fail(502, str(error))
-            except ValueError as error:
-                fail(400, str(error))
+            except tuple(_ARTIFACT_ERROR_STATUS) as error:
+                fail(_artifact_error_status(error), str(error))
             except Exception:
                 logger.exception("Building an output failed")
                 fail(500, "The output could not be built.")
@@ -1788,14 +1780,8 @@ def edit_output(
 ) -> ArtifactOut:
     """Save typed text as the next version, exactly as typed."""
 
-    try:
+    with _artifact_http_errors(ValueError):
         return _service(request).edit_output(knowledge_base_id, workspace_id, artifact_id, payload)
-    except LookupError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    except (ArtifactConflictError, ArtifactIntegrityError) as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @router.post(
@@ -1810,16 +1796,8 @@ def check_output(
 ) -> ArtifactOut:
     """Have the Checker look at the sections it has not checked as they read now."""
 
-    try:
+    with _artifact_http_errors(ValueError, ModelError):
         return _service(request).check_output(knowledge_base_id, workspace_id, artifact_id)
-    except LookupError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    except (ArtifactConflictError, ArtifactIntegrityError) as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    except ModelError as error:
-        raise HTTPException(status_code=502, detail=str(error)) from error
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @router.get(
@@ -1831,12 +1809,8 @@ def artifact_conversations(
 ) -> list[ArtifactConversationSummaryOut]:
     """The Artifacts conversations of a library, the latest first."""
 
-    try:
+    with _artifact_http_errors(ArtifactConflictError):
         return _service(request).artifact_conversations(knowledge_base_id, workspace_id)
-    except LookupError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    except (ArtifactConflictError, ArtifactIntegrityError) as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.post(
@@ -1852,16 +1826,10 @@ def create_artifact_conversation(
 ) -> ArtifactConversationOut:
     """Start an Artifacts conversation, under the id given (a device's keeps its own)."""
 
-    try:
+    with _artifact_http_errors(ValueError):
         return _service(request).create_artifact_conversation(
             knowledge_base_id, workspace_id, payload
         )
-    except LookupError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    except (ArtifactConflictError, ArtifactIntegrityError) as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @router.post(
@@ -1876,16 +1844,10 @@ def import_artifact_conversations(
 ) -> list[ArtifactConversationSummaryOut]:
     """Take in the conversations a device kept. Ids that exist are skipped."""
 
-    try:
+    with _artifact_http_errors(ValueError):
         return _service(request).import_artifact_conversations(
             knowledge_base_id, workspace_id, payload
         )
-    except LookupError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    except (ArtifactConflictError, ArtifactIntegrityError) as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @router.get(
@@ -1900,14 +1862,10 @@ def artifact_conversation(
 ) -> ArtifactConversationOut:
     """One Artifacts conversation: its messages, brief and works."""
 
-    try:
+    with _artifact_http_errors(ArtifactConflictError):
         return _service(request).artifact_conversation(
             knowledge_base_id, workspace_id, conversation_id
         )
-    except LookupError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    except (ArtifactConflictError, ArtifactIntegrityError) as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.patch(
@@ -1923,16 +1881,10 @@ def update_artifact_conversation(
 ) -> ArtifactConversationOut:
     """Rename an Artifacts conversation, change what it reads from, or archive it."""
 
-    try:
+    with _artifact_http_errors(ValueError):
         return _service(request).update_artifact_conversation(
             knowledge_base_id, workspace_id, conversation_id, payload
         )
-    except LookupError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    except (ArtifactConflictError, ArtifactIntegrityError) as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @router.patch(
@@ -1948,16 +1900,10 @@ def edit_artifact_brief(
 ) -> ArtifactBriefStateOut:
     """Set the lines the user typed in the Brief panel; they are marked as theirs."""
 
-    try:
+    with _artifact_http_errors(ValueError):
         return _service(request).edit_artifact_brief(
             knowledge_base_id, workspace_id, conversation_id, payload
         )
-    except LookupError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    except (ArtifactConflictError, ArtifactIntegrityError) as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @router.patch("/proposals/{proposal_id}", response_model=KnowledgeProposalOut)
