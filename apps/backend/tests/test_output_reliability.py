@@ -126,9 +126,10 @@ def test_check_persists_an_unavailable_audit_and_retries_only_unchecked_claims(t
         assert len(fake.requests) == start
 
 
-def test_retry_keeps_studios_cover_claims_and_leaves_audience_metadata_out():
+@pytest.mark.parametrize("metadata", ["Team · 2025", "Spring 2026"])
+def test_retry_keeps_studios_cover_claims_and_leaves_audience_metadata_out(metadata):
     subtitle = "CD3D marks T cells [1]."
-    cover = f"<!-- layout: title -->\n# Marker comparison\n\n{subtitle}\n\nTeam · 2025"
+    cover = f"<!-- layout: title -->\n# Marker comparison\n\n{subtitle}\n\n{metadata}"
     evidence = {1: Evidence("library", "Markers", "CD3D marks T cells.")}
     normal_reply = output_replies(OUTLINE, REPORT)
 

@@ -395,6 +395,40 @@ ROCKETS = [
 ]
 
 
+def topic_frequency_fixture(tmp_path, repetitions):
+    abstracts = {
+        "Snow limit": "Forêt boréale. Snowpack recedes. " + "Rhododendron " * repetitions,
+        "Slope notes": "Forêt boréale. Snowpack retreats.",
+        "Tree lines": "Forêt boréale. Snowpack persists.",
+        "Shallow water": "方法。海流。Northward drift.",
+        "Sea crossing": "方法。海流。Seaward drift.",
+        "Tidal station": "方法。海流。Coastal drift.",
+    }
+    with client_for(tmp_path) as client:
+        base = library(client, "Mixed field observations")
+        titles = {
+            abstract_note(client, base, title, "研究。Aperçu. " + text): title
+            for title, text in abstracts.items()
+        }
+        drain(client)
+        result = client.get(f"/api/knowledge-bases/{base}/topic-suggestions").raise_for_status()
+        return {
+            tuple(sorted(titles[source] for source in group["sourceIds"])): group["keywords"]
+            for group in result.json()["suggestions"]
+        }
+
+
+def test_topic_names_count_papers_instead_of_repeated_words(tmp_path):
+    regular, repeated = tmp_path / "regular", tmp_path / "repeated"
+    regular.mkdir()
+    repeated.mkdir()
+    labels = topic_frequency_fixture(regular, 1)
+    assert topic_frequency_fixture(repeated, 60) == labels
+    assert "forêt boréale" in labels[("Slope notes", "Snow limit", "Tree lines")]
+    assert "方法" in labels[("Sea crossing", "Shallow water", "Tidal station")]
+    assert not {"研究", "aperçu"} & {term for terms in labels.values() for term in terms}
+
+
 def test_topics_are_suggested_accepted_asked_and_written_up(tmp_path):
     root = tmp_path / "Gunther"
     with client_for(tmp_path, library_root=root) as client:

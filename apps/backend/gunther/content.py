@@ -131,7 +131,7 @@ def _is_label(text: str) -> bool:
     return capitalised > 0.4 * len(tokens) or short > 0.5 * len(tokens)
 
 
-def search_tokens(value: str) -> list[str]:
+def search_tokens(value: str, *, include_stopwords: bool = False) -> list[str]:
     """Versioned, identical query/index tokenization; no external dictionary needed.
 
     CJK bigrams support unsegmented Chinese, including two-character terms. Latin
@@ -146,7 +146,7 @@ def search_tokens(value: str) -> list[str]:
             word = _CJK.sub(" ", word)
         for part in word.split():
             part = re.sub(r"[-–—]+", "", part)
-            if part not in STOPWORDS and len(part) > 1:
+            if part and (include_stopwords or (part not in STOPWORDS and len(part) > 1)):
                 tokens.append(part)
     return tokens
 

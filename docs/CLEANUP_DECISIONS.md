@@ -375,3 +375,26 @@ so the two can't be compared safely. BFIX item 2 (draft recovery order) goes bac
 886b42c's behaviour, where the local draft wins. That never loses typed text. The real
 fix (store the client edit time per snapshot) belongs to the recorder redesign, the next
 project after this cleanup. The checker's item-2 FIX is overruled.
+
+# Round 26 — Phase E scope (from E0)
+
+The offline replay works (about 14 s), but here it covers only four inputs: two recorded
+Docling layouts and two synthetic ones. The real development corpus (the 13-paper
+harness) is not on this box. Reading-rule changes (SC-03/04/05/06/07/09/10/17) would be
+checked only against those four inputs. That is too thin for rules tuned on real papers.
+They are **deferred as the next project**, with E0.md as its plan and the user's corpus as
+its gate. This cleanup does only the two items fixtures can verify fully: SC-12 (topic
+terms by document frequency, fixed library fixture) and SC-16 (numerical claims judged
+by field, referent, units and provenance, using offline Checker and Studio fixtures).
+E0 is a study, so its report-format FIX items are not needed.
+
+# Round 27 — E43 keeps SC-12 only
+
+Each review round of SC-16 found another cover or chart regression in Studio. Cover
+fields are parsed from text in two places (the desktop renderer and claim preparation),
+and the retry and fallback paths drop units. That needs one cover model and one claim
+identity, which is a redesign, not a cleanup. All SC-16 changes go back to d50d4e8. The
+checker's reproductions (Spring 2026 cover date, dated subtitle, numeric first column,
+ms vs s units through retry and fallback, one cited cell, wrapped journal-club question,
+citation in subtitle, idempotent metadata) move into docs/READING_RULES_NEXT.md as part
+of the next project. SC-12 (topic terms by document frequency) stays.

@@ -3,8 +3,8 @@
 Suggestions cluster the papers not yet filed under a topic. With the local
 model each paper is its title-and-abstract vector; without it, a keyword
 (TF-IDF) vector of the same text. Clusters are spherical k-means, seeded, so
-the same library gives the same suggestions. Each is named by the terms that
-set it apart from the others (class-based TF-IDF); the user renames on accept.
+the same library gives the same suggestions. Each is named by terms shared by
+its papers and concentrated in the group; the user renames on accept.
 
 The Analysis model writes a topic overview from its papers' own abstracts.
 Each citation links to the abstract used for the synthesis.
@@ -17,6 +17,7 @@ import json
 import math
 import re
 from collections import Counter
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -44,19 +45,6 @@ MIN_PAPERS = 6
 MAX_SUGGESTIONS = 15
 # How many abstracts a written synthesis reads; larger topics use the most central.
 MAX_WRITER_PAPERS = 40
-GENERIC = frozenset(
-    {
-        "paper", "papers", "study", "studies", "result", "results", "method", "methods",
-        "approach", "approaches", "propose", "proposed", "based", "using", "use", "used",
-        "show", "shows", "shown", "present", "presents", "new", "novel", "also", "however",
-        "two", "one", "three", "first", "well", "work", "different", "may", "many", "high",
-        "performance", "provide", "provides", "significant", "significantly", "including",
-        "across", "between", "within", "while", "further", "here", "both", "than", "such",
-        "all", "has", "have", "been", "not", "more", "most", "which", "into", "over", "only",
-        "our", "these", "each", "other", "some", "large", "set", "sets", "abstract",
-        "研究", "方法", "结果", "本文", "我们", "提出", "基于",
-    }
-)
 
 
 @dataclass(slots=True)
@@ -70,12 +58,22 @@ class Paper:
     abstract_block_ids: list[str]
 
 
-def _terms(text: str) -> list[str]:
-    tokens = [token for token in search_tokens(text) if token not in GENERIC]
-    words = [token for token in tokens if token.isascii() and not token.isdigit()]
-    return words + [f"{a} {b}" for a, b in zip(words, words[1:], strict=False)] + [
-        token for token in tokens if not token.isascii()
-    ]
+def _terms(paper: Paper) -> Iterator[str]:
+    for text in (paper.title, paper.abstract):
+        for clause in re.split(r"[^\w\s\-–—]+", text):
+            previous = ""
+            for word in clause.split():
+                tokens = [t for t in search_tokens(word, include_stopwords=True) if not t.isdigit()]
+                yield from tokens
+                # Only pair adjacent words, never fragments of one unsegmented word.
+                current = tokens[0] if len(tokens) == 1 else ""
+                if previous and current:
+                    yield f"{previous} {current}"
+                previous = current
+
+
+def _document_frequency(documents: Iterable[Counter[str]]) -> Counter[str]:
+    return Counter(term for document in documents for term in document)
 
 
 def _unfiled_papers(session: Session, base_id: str) -> list[Paper]:
@@ -115,22 +113,21 @@ def _paper(row: SourcePaper) -> Paper:
     )
 
 
-def _keyword_matrix(papers: list[Paper]) -> Any:
+def _keyword_matrix(documents: Sequence[Counter[str]]) -> Any:
     import numpy
 
-    documents = [Counter(_terms(f"{paper.title} {paper.abstract}")) for paper in papers]
-    frequency = Counter(term for document in documents for term in document)
+    frequency = _document_frequency(documents)
     vocabulary = {
         term: index
         for index, (term, _) in enumerate(
             item for item in frequency.most_common(4000) if item[1] >= 2
         )
     }
-    matrix = numpy.zeros((len(papers), max(1, len(vocabulary))), dtype=numpy.float32)
+    matrix = numpy.zeros((len(documents), max(1, len(vocabulary))), dtype=numpy.float32)
     for row, document in enumerate(documents):
         for term, count in document.items():
             if term in vocabulary:
-                idf = math.log(len(papers) / frequency[term]) + 1
+                idf = math.log(len(documents) / frequency[term])
                 matrix[row, vocabulary[term]] = (1 + math.log(count)) * idf
     return matrix
 
@@ -179,31 +176,28 @@ def _kmeans(matrix: Any, k: int, *, restarts: int = 12, iterations: int = 40) ->
     return best
 
 
-def _names(groups: list[list[Paper]], count: int = 3) -> list[list[str]]:
-    """The terms that set each group apart from the rest (class-based TF-IDF)."""
+def _names(
+    groups: list[list[Paper]], documents: dict[str, Counter[str]], count: int = 3,
+) -> list[list[str]]:
+    """Prefer terms shared within a group and more common there than elsewhere."""
 
-    bags = [
-        Counter(term for paper in group for term in _terms(f"{paper.title} {paper.abstract}"))
-        for group in groups
-    ]
-    totals: Counter[str] = sum(bags, Counter())
-    average = sum(sum(bag.values()) for bag in bags) / max(1, len(bags))
+    library = _document_frequency(documents.values())
     names = []
-    for bag in bags:
-        size = sum(bag.values()) or 1
-        # Frequent here, rare elsewhere: "model" is common to every group of ML
-        # papers, "bert" belongs to one. Phrases read better as names.
-        scored = sorted(
-            bag,
-            key=lambda t: (bag[t] / size)
-            * math.log(1 + average / totals[t])
-            * (bag[t] / totals[t])
-            * (1.3 if " " in t else 1.0),
-            reverse=True,
-        )
+    for group in groups:
+        shared = _document_frequency(documents[paper.source_id] for paper in group)
+        # Compare the fractions of documents containing the term using a common denominator.
+        scores = {
+            term: hits * len(documents) - library[term] * len(group)
+            if len(documents) > len(group) else hits
+            for term, hits in shared.items() if hits >= 2
+        }
         chosen: list[str] = []
-        for term in scored:
-            if bag[term] < 2 or any(term in other or other in term for other in chosen):
+        for term in sorted(scores, key=lambda t: (-scores[t], -shared[t], -t.count(" "), t)):
+            if scores[term] <= 0:
+                break
+            if any(
+                f" {term} " in f" {other} " or f" {other} " in f" {term} " for other in chosen
+            ):
                 continue
             chosen.append(term)
             if len(chosen) == count:
@@ -233,12 +227,13 @@ def suggest(session: Session, base_id: str, model: str | None) -> dict[str, obje
     )
     # The same papers give the same groups, in whatever order they arrived.
     papers.sort(key=lambda paper: (title_key(paper.title), paper.source_id))
+    documents = {paper.source_id: Counter(_terms(paper)) for paper in papers}
     if model and len(vectors) >= 0.8 * len(papers):
         papers = [paper for paper in papers if paper.source_id in vectors]
         matrix = numpy.stack([vectors[paper.source_id] for paper in papers])
         method = "semantic"
     else:
-        matrix = _keyword_matrix(papers)
+        matrix = _keyword_matrix(list(documents.values()))
         method = "keywords"
     k = max(2, min(MAX_SUGGESTIONS, round(math.sqrt(len(papers) / 2))))
     labels = _kmeans(matrix, k)
@@ -251,7 +246,7 @@ def suggest(session: Session, base_id: str, model: str | None) -> dict[str, obje
             order = numpy.argsort(-(points[labels == index] @ centre))
             groups.append(([members[i] for i in order], centre))
     groups.sort(key=lambda item: len(item[0]), reverse=True)
-    names = _names([members for members, _ in groups])
+    names = _names([members for members, _ in groups], documents)
     suggestions = []
     for (members, _), terms in zip(groups, names, strict=True):
         title = " · ".join(term[:1].upper() + term[1:] for term in terms) or members[0].title
@@ -383,7 +378,7 @@ def write_overview(
     lines = [f"# {topic.title}", ""]
     if topic.description.strip():
         lines += [topic.description.strip(), ""]
-    shared = _names([papers])[0] if len(papers) >= 2 else []
+    shared = _names([papers], {paper.source_id: Counter(_terms(paper)) for paper in papers})[0]
     lines += [
         f"{len(papers)} paper{'s' if len(papers) != 1 else ''}{span}."
         + (f" Shared terms: {', '.join(shared)}." if shared else ""),
