@@ -45,12 +45,7 @@ pub fn save_choice(data_dir: &Path, root: &Path) -> Result<(), String> {
         library_root: Some(root.to_path_buf()),
     })
     .map_err(|error| error.to_string())?;
-    let temporary = data_dir.join(format!("{CHOICE_FILE_NAME}.tmp"));
-    let mut file = crate::secure_open(&temporary, false).map_err(|error| error.to_string())?;
-    file.set_len(0).map_err(|error| error.to_string())?;
-    std::io::Write::write_all(&mut file, text.as_bytes())
-        .and_then(|()| file.sync_all())
-        .and_then(|()| fs::rename(&temporary, data_dir.join(CHOICE_FILE_NAME)))
+    crate::private_file::write_private_atomic(&data_dir.join(CHOICE_FILE_NAME), text.as_bytes())
         .map_err(|error| format!("The new location could not be remembered: {error}"))
 }
 

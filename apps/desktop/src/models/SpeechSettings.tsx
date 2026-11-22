@@ -1,9 +1,9 @@
 import type { SpeechOverview, SpeechProvider, SpeechRole, SpeechKind, SpeechTestResult } from "@gunther/contracts";
-import { AudioLines, Check, ChevronRight, CircleAlert, Eye, EyeOff, KeyRound, Plug, Plus, Server, Trash2, TriangleAlert, X } from "lucide-react";
+import { AudioLines, Check, ChevronRight, CircleAlert, Plug, Plus, Server, Trash2, TriangleAlert, X } from "lucide-react";
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { knowledgeApi } from "../api";
+import { ProviderKeyField, ServiceStatusBadge } from "../components/SettingsFields";
 
-const STATE_LABELS = { configured: "Set up", not_configured: "Not set up", error: "Needs attention", off: "Off" } as const;
 const message = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
 
 interface ProviderDraft {
@@ -72,40 +72,6 @@ export function useSavedDraft<D extends object>(saved: D, persist: (draft: D) =>
     return pending.current;
   };
   return { draft, current, edit, commit, pending, state, error, setError };
-}
-
-/** The parts of a provider its status and key fields need, shared by Transcription and Read aloud. */
-type KeyedProvider = Pick<SpeechProvider, "name" | "keySet" | "keyHint" | "keyShared" | "keyOptional" | "status">;
-
-export function StatusBadge({ provider }: { provider: Pick<KeyedProvider, "status"> }) {
-  const { state, check } = provider.status;
-  const label = state === "configured" && check?.ok ? "Connected" : STATE_LABELS[state];
-  return <span className={`service-badge is-${state}`}><i aria-hidden="true" />{label}</span>;
-}
-
-export function KeyField({ provider, value, onChange, onCommit, inputId }: { provider: KeyedProvider; value: string | undefined; onChange: (value: string | undefined) => void; /** The key is finished (field left, Enter) or removed: save it. */ onCommit?: (value: string | undefined) => void; inputId: string }) {
-  const [visible, setVisible] = useState(false);
-  const [replacing, setReplacing] = useState(false);
-  useEffect(() => setReplacing(false), [provider.keyHint, provider.keySet]);
-  if (provider.keySet && !replacing && !value) {
-    const removing = value === "";
-    return <div className="service-secret-saved">
-      <span className={`service-secret-mask ${removing ? "is-removing" : ""}`}><KeyRound size={13} aria-hidden="true" />{removing ? "Removed when you save" : `•••• ${provider.keyHint ?? "saved"}`}</span>
-      {removing
-        ? <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => onChange(undefined)}>Undo</button>
-        : <>
-          <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => setReplacing(true)}>Replace</button>
-          <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => { onChange(""); onCommit?.(""); }}>Remove</button>
-        </>}
-    </div>;
-  }
-  return <div className="service-secret-input">
-    <input id={inputId} type={visible ? "text" : "password"} value={value ?? ""} placeholder={provider.keyShared ? `Using your ${provider.name} key from Models` : provider.keyOptional ? "Only if your server asks for one" : "Paste your key"} autoComplete="off" spellCheck={false} autoFocus={replacing} onChange={(event) => onChange(event.target.value === "" ? undefined : event.target.value)} onBlur={() => { if (value) onCommit?.(value); }} onKeyDown={(event) => { if (event.key === "Enter" && value) { event.preventDefault(); onCommit?.(value); } }} />
-    <button type="button" className="gx-icon-button" aria-label={visible ? "Hide API key" : "Show API key"} title={visible ? "Hide" : "Show"} onClick={() => setVisible((current) => !current)}>
-      {visible ? <EyeOff size={14} /> : <Eye size={14} />}
-    </button>
-    {replacing && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => { setReplacing(false); onChange(undefined); }}>Cancel</button>}
-  </div>;
 }
 
 function ProviderEditor({ provider, onOverview, onRemoved, onNotify }: {
@@ -212,7 +178,7 @@ function ProviderEditor({ provider, onOverview, onRemoved, onNotify }: {
       {provider.kind !== "sensevoice" && <div className="service-field">
         <label htmlFor={`${baseId}-key`}>API key{provider.keySource === "environment" && draft.apiKey === undefined && <span className="service-source" title="Set in the backend's environment or .env file. A key saved here takes its place.">from .env</span>}</label>
         <div className="service-control">
-          <KeyField provider={provider} value={draft.apiKey} inputId={`${baseId}-key`} onChange={(apiKey) => edit({ apiKey })} onCommit={(apiKey) => commit({ apiKey })} />
+          <ProviderKeyField provider={provider} value={draft.apiKey} inputId={`${baseId}-key`} onChange={(apiKey) => edit({ apiKey })} onCommit={(apiKey) => commit({ apiKey })} />
           {provider.keyShared && !provider.keySet && <small>No key needed here: the {provider.name} key you already saved is used.</small>}
         </div>
       </div>}
@@ -341,7 +307,7 @@ export function SpeechSettings({ onNotify }: { onNotify: (message: string) => vo
             <button type="button" className="service-summary" aria-expanded={expanded} aria-controls={panelId} onClick={() => setOpen(expanded ? null : provider.id)}>
               <span className="service-icon" aria-hidden="true">{provider.kind === "compatible" || provider.kind === "sensevoice" ? <Server size={15} /> : <span className="provider-initial">{provider.name.slice(0, 1)}</span>}</span>
               <span className="service-heading"><strong>{provider.name}</strong><small>{provider.status.summary}{provider.models.length > 0 && provider.status.state !== "error" ? ` · ${provider.models.map((model) => model.label).join(", ")}` : ""}</small></span>
-              <StatusBadge provider={provider} />
+              <ServiceStatusBadge status={provider.status} />
               <ChevronRight size={15} className="service-chevron" aria-hidden="true" />
             </button>
             {expanded && <div id={panelId} className="service-panel">

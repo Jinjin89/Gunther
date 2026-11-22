@@ -1,4 +1,4 @@
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -17,6 +17,7 @@ mod external_links;
 mod leftover;
 mod library_location;
 mod microphone_access;
+mod private_file;
 mod storage_paths;
 mod tray_glyph;
 
@@ -74,31 +75,6 @@ fn create_private_dir(path: &Path) -> std::io::Result<()> {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
     }
     Ok(())
-}
-
-fn secure_open(path: &Path, append: bool) -> std::io::Result<File> {
-    if let Ok(metadata) = std::fs::symlink_metadata(path) {
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "private file path must be a regular file",
-            ));
-        }
-    }
-    let mut options = OpenOptions::new();
-    options.create(true).write(true).append(append);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-    }
-    let file = options.open(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(file)
 }
 
 fn secure_read(path: &Path) -> std::io::Result<String> {
@@ -216,7 +192,7 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
     // Its output, a crash's traceback included, goes to today's backend log.
     let stdout = app_log::open_backend_file().or_else(|error| {
         log::warn!("The backend log file could not be opened ({error}); using backend.log");
-        secure_open(&data_dir.join("backend.log"), true)
+        private_file::secure_open(&data_dir.join("backend.log"), true)
     })?;
     let stderr = stdout.try_clone()?;
     let mut command = Command::new(&executable);

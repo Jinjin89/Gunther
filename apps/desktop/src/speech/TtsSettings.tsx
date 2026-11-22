@@ -2,7 +2,8 @@ import type { TtsOption, TtsOverview, TtsPreset, TtsProvider, TtsRole, TtsRoleIn
 import { Check, ChevronRight, CircleAlert, Loader2, Play, Plus, Trash2, Volume2, X } from "lucide-react";
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { knowledgeApi } from "../api";
-import { KeyField, StatusBadge, useSavedDraft } from "../models/SpeechSettings";
+import { ProviderKeyField, ServiceStatusBadge } from "../components/SettingsFields";
+import { useSavedDraft } from "../models/SpeechSettings";
 import { readAloud } from "./readAloud";
 import { allowSpeakerSound } from "./speakerAccess";
 
@@ -210,7 +211,7 @@ function ProviderEditor({ provider, onOverview, onRemoved, onNotify, onChecked }
       <div className="service-field">
         <label htmlFor={`${baseId}-key`}>API key</label>
         <div className="service-control">
-          <KeyField provider={provider} value={draft.apiKey} inputId={`${baseId}-key`} onChange={(apiKey) => edit({ apiKey })} onCommit={(apiKey) => commit({ apiKey })} />
+          <ProviderKeyField provider={provider} value={draft.apiKey} inputId={`${baseId}-key`} onChange={(apiKey) => edit({ apiKey })} onCommit={(apiKey) => commit({ apiKey })} />
           {provider.keyShared && !provider.keySet && <small>No key needed here: the {provider.name} key you already saved is used.</small>}
         </div>
       </div>
@@ -325,7 +326,7 @@ export function TtsSettings({ onNotify }: { onNotify: (message: string) => void 
             <button type="button" className="service-summary" aria-expanded={expanded} aria-controls={panelId} onClick={() => setOpen(expanded ? null : provider.id)}>
               <span className="service-icon" aria-hidden="true"><span className="provider-initial">{provider.name.slice(0, 1)}</span></span>
               <span className="service-heading"><strong>{provider.name}</strong><small>{provider.status.summary}{provider.models.length > 0 && provider.status.state === "configured" ? ` · ${provider.models.map((model) => model.label).join(", ")}` : ""}</small></span>
-              <StatusBadge provider={provider} />
+              <ServiceStatusBadge status={provider.status} />
               <ChevronRight size={15} className="service-chevron" aria-hidden="true" />
             </button>
             {expanded && <div id={panelId} className="service-panel">

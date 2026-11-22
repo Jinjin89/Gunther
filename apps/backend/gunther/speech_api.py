@@ -3,21 +3,26 @@
 The desktop owner sets them up. Keys never leave the backend.
 """
 
-import hashlib
-import json
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 
 from gunther import speech_registry
-from gunther.device_auth import AuthPrincipal
+from gunther.provider_settings import (
+    edit_provider,
+    find_provider,
+    provider_fingerprint,
+    unique_provider_name,
+)
 from gunther.realtime import try_qwen_live
 from gunther.schemas import ApiModel
-from gunther.service_settings import ServiceSettingsStore, list_models, secret_hint
+from gunther.service_settings import list_models, secret_hint
+from gunther.settings_api_common import require_desktop_owner, service_settings
 from gunther.speech_registry import PRESETS, ROLES, Registry, SpeechError
 from gunther.transcription import qwen_root, sensevoice_health, try_qwen_model
 
+OWNER_REQUIRED = "Transcription can only be set up on the desktop"
 router = APIRouter()
 
 
@@ -35,43 +40,18 @@ class RolesIn(ApiModel):
     roles: dict[str, dict[str, Any]]
 
 
-def _owner_only(request: Request) -> None:
-    principal = getattr(request.state, "auth_principal", None)
-    if not isinstance(principal, AuthPrincipal) or principal.kind == "device":
-        raise HTTPException(403, "Transcription can only be set up on the desktop")
-
-
-def _store(request: Request) -> ServiceSettingsStore:
-    return request.app.state.service_settings
-
-
 def _registry(request: Request) -> Registry:
     return request.app.state.speech_registry
-
-
-def _fingerprint(provider: dict[str, Any], effective_key: str | None) -> str:
-    return hashlib.sha256(
-        json.dumps(
-            {
-                "kind": provider["kind"],
-                "baseUrl": provider["baseUrl"],
-                "key": effective_key,
-                "models": [model["id"] for model in provider["models"]],
-            },
-            sort_keys=True,
-        ).encode()
-    ).hexdigest()
 
 
 def _provider_out(provider: dict[str, Any], request: Request) -> dict[str, Any]:
     registry = _registry(request)
     preset = PRESETS[provider["kind"]]
     key = provider.get("apiKey")
-    check = _store(request).speech_check(provider["id"])
-    if check and check.get("fingerprint") != _fingerprint(
-        provider, speech_registry.key_for(provider, registry.shared)[0]
-    ):
-        check = None
+    effective_key, shared = speech_registry.key_for(provider, registry.shared)
+    check = service_settings(request).provider_check(
+        "speech", provider["id"], provider_fingerprint(provider, effective_key)
+    )
     problem = speech_registry.problem_with(provider, registry.shared)
     if problem:
         status = {"state": "not_configured", "summary": "Needs an API key."}
@@ -94,7 +74,7 @@ def _provider_out(provider: dict[str, Any], request: Request) -> dict[str, Any]:
         "keyHint": secret_hint(key),
         "keySource": "environment" if registry.from_environment and key else "saved",
         # No key of its own: the one saved for the same company under Models is used.
-        "keyShared": speech_registry.key_for(provider, registry.shared)[1],
+        "keyShared": shared,
         "keyOptional": preset.key_optional,
         "note": preset.note,
         "models": [
@@ -107,7 +87,7 @@ def _provider_out(provider: dict[str, Any], request: Request) -> dict[str, Any]:
         ],
         "status": {
             **status,
-            "check": check and {k: check[k] for k in ("ok", "message", "warning", "checkedAt")},
+            "check": check,
         },
     }
 
@@ -140,7 +120,7 @@ def _roles_out(request: Request) -> list[dict[str, Any]]:
 def speech_overview(request: Request) -> dict[str, Any]:
     registry = _registry(request)
     return {
-        "persisted": _store(request).persisted,
+        "persisted": service_settings(request).persisted,
         "fromEnvironment": registry.from_environment,
         "providers": [_provider_out(provider, request) for provider in registry.providers],
         "roles": _roles_out(request),
@@ -160,27 +140,9 @@ def speech_overview(request: Request) -> dict[str, Any]:
 
 def _save(request: Request, providers: list[dict[str, Any]] | None = None, roles=None) -> None:
     try:
-        _store(request).save_speech(providers=providers, roles=roles)
+        service_settings(request).save_speech(providers=providers, roles=roles)
     except OSError as error:
         raise HTTPException(503, "The settings could not be saved to disk") from error
-
-
-def _find(request: Request, provider_id: str) -> tuple[list[dict[str, Any]], int]:
-    providers = [dict(provider) for provider in _registry(request).providers]
-    for index, provider in enumerate(providers):
-        if provider["id"] == provider_id:
-            return providers, index
-    raise HTTPException(404, "There is no such provider")
-
-
-def _unique_name(name: str, providers: list[dict[str, Any]]) -> str:
-    taken = {provider["name"] for provider in providers}
-    if name not in taken:
-        return name
-    number = 2
-    while f"{name} {number}" in taken:
-        number += 1
-    return f"{name} {number}"
 
 
 def _roles_after(request: Request, providers: list[dict[str, Any]]) -> dict[str, Any]:
@@ -200,13 +162,13 @@ def _roles_after(request: Request, providers: list[dict[str, Any]]) -> dict[str,
 
 @router.get("/settings/speech")
 def get_speech(request: Request) -> dict[str, Any]:
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     return speech_overview(request)
 
 
 @router.post("/settings/speech/providers", status_code=201)
 def create_provider(payload: ProviderIn, request: Request) -> dict[str, Any]:
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     preset = PRESETS.get(payload.kind or "")
     if preset is None:
         raise HTTPException(422, "Choose a kind of provider.")
@@ -216,7 +178,7 @@ def create_provider(payload: ProviderIn, request: Request) -> dict[str, Any]:
         provider = speech_registry.clean_provider(
             {
                 "kind": payload.kind,
-                "name": _unique_name(payload.name or preset.name, providers),
+                "name": unique_provider_name(payload.name or preset.name, providers),
                 "baseUrl": payload.base_url or preset.base_url,
                 "apiKey": payload.api_key,
                 "models": payload.models if payload.models is not None else list(preset.models),
@@ -233,19 +195,11 @@ def create_provider(payload: ProviderIn, request: Request) -> dict[str, Any]:
 
 @router.put("/settings/speech/providers/{provider_id}")
 def update_provider(provider_id: str, payload: ProviderIn, request: Request) -> dict[str, Any]:
-    _owner_only(request)
-    providers, index = _find(request, provider_id)
+    require_desktop_owner(request, OWNER_REQUIRED)
+    providers, index = find_provider(_registry(request).providers, provider_id)
     current = providers[index]
     changes = payload.model_dump(exclude_unset=True)
-    draft = {**current}
-    if "name" in changes:
-        draft["name"] = changes["name"]
-    if "base_url" in changes:
-        draft["baseUrl"] = changes["base_url"]
-    if "api_key" in changes:
-        draft["apiKey"] = changes["api_key"]
-    if "models" in changes:
-        draft["models"] = changes["models"]
+    draft = edit_provider(current, changes)
     try:
         providers[index] = speech_registry.clean_provider(draft)
     except SpeechError as error:
@@ -256,8 +210,8 @@ def update_provider(provider_id: str, payload: ProviderIn, request: Request) -> 
 
 @router.delete("/settings/speech/providers/{provider_id}")
 def delete_provider(provider_id: str, request: Request) -> dict[str, Any]:
-    _owner_only(request)
-    providers, index = _find(request, provider_id)
+    require_desktop_owner(request, OWNER_REQUIRED)
+    providers, index = find_provider(_registry(request).providers, provider_id)
     del providers[index]
     _save(request, providers=providers, roles=_roles_after(request, providers))
     return speech_overview(request)
@@ -265,7 +219,7 @@ def delete_provider(provider_id: str, request: Request) -> dict[str, Any]:
 
 @router.put("/settings/speech/roles")
 def save_roles(payload: RolesIn, request: Request) -> dict[str, Any]:
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     try:
         changes = speech_registry.clean_roles(payload.roles)
     except SpeechError as error:
@@ -343,19 +297,11 @@ async def _test(provider: dict[str, Any], api_key: str | None) -> dict[str, Any]
 async def test_provider(provider_id: str, payload: ProviderIn, request: Request) -> dict[str, Any]:
     """Try a provider with the values on screen; a saved one's result is kept."""
 
-    _owner_only(request)
-    providers, index = _find(request, provider_id)
+    require_desktop_owner(request, OWNER_REQUIRED)
+    providers, index = find_provider(_registry(request).providers, provider_id)
     current = providers[index]
     changes = payload.model_dump(exclude_unset=True)
-    draft = {**current}
-    for field, saved_field in (
-        ("name", "name"),
-        ("base_url", "baseUrl"),
-        ("api_key", "apiKey"),
-        ("models", "models"),
-    ):
-        if field in changes:
-            draft[saved_field] = changes[field]
+    draft = edit_provider(current, changes)
     try:
         draft = speech_registry.clean_provider(draft)
     except SpeechError as error:
@@ -363,7 +309,7 @@ async def test_provider(provider_id: str, payload: ProviderIn, request: Request)
     effective_key = speech_registry.key_for(draft, _registry(request).shared)[0]
     outcome = await _test(draft, effective_key)
     entry = {k: outcome[k] for k in ("ok", "message", "warning")}
-    _store(request).record_speech_check(
-        provider_id, {**entry, "fingerprint": _fingerprint(draft, effective_key)}
+    service_settings(request).record_provider_check(
+        "speech", provider_id, {**entry, "fingerprint": provider_fingerprint(draft, effective_key)}
     )
     return {**outcome, "overview": speech_overview(request)}

@@ -2,7 +2,6 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -24,15 +23,8 @@ fn read_map(path: &Path) -> Result<BTreeMap<String, String>, String> {
 }
 
 pub(crate) fn atomic_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
-    let parent = path.parent().ok_or("Invalid storage path")?;
-    crate::create_private_dir(parent).map_err(|error| error.to_string())?;
-    let staging = path.with_extension("json.tmp");
-    let mut file = crate::secure_open(&staging, false).map_err(|error| error.to_string())?;
-    file.set_len(0).map_err(|error| error.to_string())?;
-    file.write_all(&serde_json::to_vec(value).map_err(|error| error.to_string())?)
-        .map_err(|error| error.to_string())?;
-    file.sync_all().map_err(|error| error.to_string())?;
-    fs::rename(staging, path).map_err(|error| error.to_string())
+    let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
+    crate::private_file::write_private_atomic(path, &bytes).map_err(|error| error.to_string())
 }
 
 fn workspace_entry(key: &str) -> bool {

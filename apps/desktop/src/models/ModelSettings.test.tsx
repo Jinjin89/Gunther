@@ -130,7 +130,8 @@ describe("ModelSettings", () => {
     await userEvent.type(key, "sk-new-0000000000009999");
     await userEvent.click(screen.getByRole("button", { name: "Show API key" }));
     expect(key).toHaveAttribute("type", "text");
-    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(api.updateProvider).not.toHaveBeenCalled();
+    await userEvent.type(key, "{Enter}");
     expect(api.updateProvider).toHaveBeenCalledWith("deepseek", expect.objectContaining({ apiKey: "sk-new-0000000000009999" }));
   });
 

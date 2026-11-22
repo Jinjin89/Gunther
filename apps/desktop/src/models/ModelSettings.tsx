@@ -1,11 +1,11 @@
 import type { Effort, ModelProvider, ModelRole, ModelsOverview, ProviderKind, ProviderTestResult } from "@gunther/contracts";
 import { EFFORTS } from "@gunther/contracts";
-import { Check, ChevronRight, CircleAlert, Eye, EyeOff, KeyRound, Plug, Plus, RefreshCw, Server, Trash2, TriangleAlert, X } from "lucide-react";
+import { Check, ChevronRight, CircleAlert, Plug, Plus, RefreshCw, Server, Trash2, TriangleAlert, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { knowledgeApi } from "../api";
+import { ProviderKeyField, ServiceStatusBadge } from "../components/SettingsFields";
 import { announceModelsChanged, EFFORT_NAMES, resolveEffort } from "./askModel";
 
-const STATE_LABELS = { configured: "Set up", not_configured: "Not set up", error: "Needs attention", off: "Off" } as const;
 const message = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
 
 interface ModelDraft {
@@ -43,47 +43,6 @@ const validUrl = (value: string) => {
     return false;
   }
 };
-
-function StatusBadge({ provider }: { provider: ModelProvider }) {
-  const { state, check } = provider.status;
-  const label = state === "configured" && check?.ok ? "Connected" : STATE_LABELS[state];
-  return <span className={`service-badge is-${state}`}><i aria-hidden="true" />{label}</span>;
-}
-
-function KeyField({ provider, value, onChange, inputId }: { provider: ModelProvider; value: string | undefined; onChange: (value: string | undefined) => void; inputId: string }) {
-  const [visible, setVisible] = useState(false);
-  const [replacing, setReplacing] = useState(false);
-  useEffect(() => setReplacing(false), [provider.keyHint, provider.keySet]);
-  const saved = provider.keySource === "saved" || provider.keySource === "environment";
-  if (provider.keySet && saved && !replacing && !value) {
-    const removing = value === "";
-    return <div className="service-secret-saved">
-      <span className={`service-secret-mask ${removing ? "is-removing" : ""}`}><KeyRound size={13} aria-hidden="true" />{removing ? "Removed when you save" : `•••• ${provider.keyHint ?? "saved"}`}</span>
-      {removing
-        ? <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => onChange(undefined)}>Undo</button>
-        : <>
-          <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => setReplacing(true)}>Replace</button>
-          <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => onChange("")}>Remove</button>
-        </>}
-    </div>;
-  }
-  return <div className="service-secret-input">
-    <input
-      id={inputId}
-      type={visible ? "text" : "password"}
-      value={value ?? ""}
-      placeholder={provider.keyOptional ? "Only if your server asks for one" : "Paste your key"}
-      autoComplete="off"
-      spellCheck={false}
-      autoFocus={replacing}
-      onChange={(event) => onChange(event.target.value === "" ? undefined : event.target.value)}
-    />
-    <button type="button" className="gx-icon-button" aria-label={visible ? "Hide API key" : "Show API key"} title={visible ? "Hide" : "Show"} onClick={() => setVisible((current) => !current)}>
-      {visible ? <EyeOff size={14} /> : <Eye size={14} />}
-    </button>
-    {replacing && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => { setReplacing(false); onChange(undefined); }}>Cancel</button>}
-  </div>;
-}
 
 function ProviderEditor({ provider, overview, onOverview, onRemoved, onNotify }: {
   provider: ModelProvider;
@@ -203,7 +162,7 @@ function ProviderEditor({ provider, overview, onOverview, onRemoved, onNotify }:
       </div>
       <div className="service-field">
         <label htmlFor={`${baseId}-key`}>API key{provider.keySource === "environment" && draft.apiKey === undefined && <span className="service-source" title="Set in the backend's environment or .env file. A key saved here takes its place.">from .env</span>}</label>
-        <div className="service-control"><KeyField provider={provider} value={draft.apiKey} inputId={`${baseId}-key`} onChange={(apiKey) => edit({ apiKey })} /></div>
+        <div className="service-control"><ProviderKeyField provider={provider} value={draft.apiKey} inputId={`${baseId}-key`} onChange={(apiKey) => edit({ apiKey })} /></div>
       </div>
       <div className="service-field">
         <label>Models</label>
@@ -334,7 +293,7 @@ export function ModelSettings({ onNotify }: { onNotify: (message: string) => voi
             <button type="button" className="service-summary" aria-expanded={expanded} aria-controls={panelId} onClick={() => setOpen(expanded ? null : provider.id)}>
               <span className="service-icon" aria-hidden="true">{provider.kind === "compatible" ? <Server size={15} /> : <span className="provider-initial">{provider.name.slice(0, 1)}</span>}</span>
               <span className="service-heading"><strong>{provider.name}</strong><small>{provider.status.summary}{provider.models.length > 0 && provider.status.state !== "error" ? ` · ${provider.models.map((model) => model.label).join(", ")}` : ""}</small></span>
-              <StatusBadge provider={provider} />
+              <ServiceStatusBadge status={provider.status} />
               <ChevronRight size={15} className="service-chevron" aria-hidden="true" />
             </button>
             {expanded && <div id={panelId} className="service-panel">

@@ -9,28 +9,18 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import select
 
 from gunther.database import session_scope
-from gunther.device_auth import AuthPrincipal
 from gunther.log_buffer import RecentLog
 from gunther.models import ProcessingJob, Source
 from gunther.schemas import ApiModel
 from gunther.service import KnowledgeService
-from gunther.service_settings import ServiceSettingsStore
+from gunther.settings_api_common import require_desktop_owner, service_settings
 
+OWNER_REQUIRED = "Developer settings are only on the desktop"
 router = APIRouter()
 
 
 class DeveloperIn(ApiModel):
     traces: bool
-
-
-def _owner_only(request: Request) -> None:
-    principal = getattr(request.state, "auth_principal", None)
-    if not isinstance(principal, AuthPrincipal) or principal.kind == "device":
-        raise HTTPException(403, "Developer settings are only on the desktop")
-
-
-def _store(request: Request) -> ServiceSettingsStore:
-    return request.app.state.service_settings
 
 
 def _service(request: Request) -> KnowledgeService:
@@ -39,25 +29,25 @@ def _service(request: Request) -> KnowledgeService:
 
 @router.get("/settings/developer")
 def get_developer(request: Request) -> dict[str, Any]:
-    _owner_only(request)
-    return _store(request).developer()
+    require_desktop_owner(request, OWNER_REQUIRED)
+    return service_settings(request).developer()
 
 
 @router.put("/settings/developer")
 def save_developer(payload: DeveloperIn, request: Request) -> dict[str, Any]:
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     try:
-        _store(request).save_developer(traces=payload.traces)
+        service_settings(request).save_developer(traces=payload.traces)
     except OSError as error:
         raise HTTPException(503, "The settings could not be saved to disk") from error
-    return _store(request).developer()
+    return service_settings(request).developer()
 
 
 @router.get("/sessions/{session_id}/messages/{message_id}/trace")
 def message_trace(session_id: str, message_id: str, request: Request) -> dict[str, Any]:
     """How an answer was made, step by step; 404 when it was not kept."""
 
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     found = _service(request).message_trace(session_id, message_id)
     if found is None:
         raise HTTPException(
@@ -74,7 +64,7 @@ def recent_logs(
     level: str = Query("info", pattern="^(info|warning|error)$"),
     limit: int = Query(200, ge=1, le=400),
 ) -> dict[str, Any]:
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     recent: RecentLog = request.app.state.recent_log
     return {"lines": recent.lines(limit=limit, level=level)}
 
@@ -83,7 +73,7 @@ def recent_logs(
 def recent_jobs(request: Request, limit: int = Query(50, ge=1, le=200)) -> dict[str, Any]:
     """Background work (reading, embedding, summaries), newest first."""
 
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     with session_scope(_service(request).sessions) as session:
         rows = session.execute(
             select(ProcessingJob, Source.title)

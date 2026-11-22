@@ -466,6 +466,30 @@ class ServiceSettingsStore:
         with self._lock:
             return copy.deepcopy(self._providers), copy.deepcopy(self._roles)
 
+    def _save_provider_settings(
+        self, candidates: dict[str, Any], legacy_keys: tuple[str, ...] = ()
+    ) -> None:
+        changes = {
+            name: copy.deepcopy(value) for name, value in candidates.items() if value is not None
+        }
+        with self._lock:
+            if legacy_keys:
+                changes["_values"] = {
+                    key: value for key, value in self._values.items() if key not in legacy_keys
+                }
+            previous = {name: getattr(self, name) for name in changes}
+            for name, value in changes.items():
+                setattr(self, name, value)
+            try:
+                self._write()
+            except BaseException:
+                for name, value in previous.items():
+                    setattr(self, name, value)
+                raise
+            listeners = list(self._listeners)
+        for listener in listeners:
+            listener()
+
     def save_models(
         self,
         providers: list[dict[str, Any]] | None = None,
@@ -473,18 +497,9 @@ class ServiceSettingsStore:
     ) -> None:
         """Save providers and/or roles, already checked (see model_registry)."""
 
-        with self._lock:
-            if providers is not None:
-                self._providers = copy.deepcopy(providers)
-                # Providers replace the one language model of version 1.
-                for key in LEGACY_KEYS:
-                    self._values.pop(key, None)
-            if roles is not None:
-                self._roles = copy.deepcopy(roles)
-            self._write()
-            listeners = list(self._listeners)
-        for listener in listeners:
-            listener()
+        self._save_provider_settings(
+            {"_providers": providers, "_roles": roles}, LEGACY_KEYS if providers is not None else ()
+        )
 
     def speech(self) -> tuple[list[dict[str, Any]] | None, dict[str, dict[str, Any]] | None]:
         """Saved transcription providers and jobs, or None for each not saved yet."""
@@ -499,18 +514,10 @@ class ServiceSettingsStore:
     ) -> None:
         """Save transcription providers and/or jobs, already checked (see speech_registry)."""
 
-        with self._lock:
-            if providers is not None:
-                self._speech_providers = copy.deepcopy(providers)
-                # Providers replace the single service of before.
-                for key in speech_registry.LEGACY_KEYS:
-                    self._values.pop(key, None)
-            if roles is not None:
-                self._speech_roles = copy.deepcopy(roles)
-            self._write()
-            listeners = list(self._listeners)
-        for listener in listeners:
-            listener()
+        self._save_provider_settings(
+            {"_speech_providers": providers, "_speech_roles": roles},
+            speech_registry.LEGACY_KEYS if providers is not None else (),
+        )
 
     def tts(self) -> dict[str, Any] | None:
         """Saved read-aloud settings, or None when never saved."""
@@ -521,12 +528,7 @@ class ServiceSettingsStore:
     def save_tts(self, config: dict[str, Any]) -> None:
         """Save read-aloud settings, already checked (see tts_service)."""
 
-        with self._lock:
-            self._tts = copy.deepcopy(config)
-            self._write()
-            listeners = list(self._listeners)
-        for listener in listeners:
-            listener()
+        self._save_provider_settings({"_tts": config})
 
     def developer(self) -> dict[str, Any]:
         """Settings → Developer: whether each answer keeps how it was made."""
@@ -542,44 +544,30 @@ class ServiceSettingsStore:
         for listener in listeners:
             listener()
 
-    def record_speech_check(self, provider_id: str, entry: dict[str, Any]) -> None:
+    def record_provider_check(
+        self,
+        namespace: Literal["provider", "speech", "tts"],
+        provider_id: str,
+        entry: dict[str, Any],
+    ) -> None:
         with self._lock:
-            self._checks[f"speech:{provider_id}"] = {**entry, "checkedAt": _now()}
+            self._checks[f"{namespace}:{provider_id}"] = {**entry, "checkedAt": _now()}
             try:
                 self._write()
             except OSError:
-                logger.warning("The result of a connection test could not be saved", exc_info=True)
+                check = "voice sample" if namespace == "tts" else "connection test"
+                logger.warning("The result of a %s could not be saved", check, exc_info=True)
 
-    def speech_check(self, provider_id: str) -> dict[str, Any] | None:
-        with self._lock:
-            entry = self._checks.get(f"speech:{provider_id}")
-            return dict(entry) if entry else None
+    def provider_check(
+        self, namespace: Literal["provider", "speech", "tts"], provider_id: str, fingerprint: str
+    ) -> dict[str, Any] | None:
+        """Return the public result of a check made with the current settings."""
 
-    def record_tts_check(self, provider_id: str, entry: dict[str, Any]) -> None:
         with self._lock:
-            self._checks[f"tts:{provider_id}"] = {**entry, "checkedAt": _now()}
-            try:
-                self._write()
-            except OSError:
-                logger.warning("The result of a voice sample could not be saved", exc_info=True)
-
-    def tts_check(self, provider_id: str) -> dict[str, Any] | None:
-        with self._lock:
-            entry = self._checks.get(f"tts:{provider_id}")
-            return dict(entry) if entry else None
-
-    def record_model_check(self, provider_id: str, entry: dict[str, Any]) -> None:
-        with self._lock:
-            self._checks[f"provider:{provider_id}"] = {**entry, "checkedAt": _now()}
-            try:
-                self._write()
-            except OSError:
-                logger.warning("The result of a connection test could not be saved", exc_info=True)
-
-    def model_check(self, provider_id: str) -> dict[str, Any] | None:
-        with self._lock:
-            entry = self._checks.get(f"provider:{provider_id}")
-            return dict(entry) if entry else None
+            entry = self._checks.get(f"{namespace}:{provider_id}")
+            if entry and entry.get("fingerprint") == fingerprint:
+                return {key: entry[key] for key in ("ok", "message", "warning", "checkedAt")}
+        return None
 
     def subscribe(self, listener: Callable[[], None]) -> None:
         with self._lock:

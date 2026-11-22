@@ -12,9 +12,10 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
 from gunther import tts_providers
-from gunther.device_auth import AuthPrincipal
+from gunther.provider_settings import edit_provider, find_provider, unique_provider_name
 from gunther.schemas import ApiModel
-from gunther.service_settings import ServiceSettingsStore, secret_hint
+from gunther.service_settings import secret_hint
+from gunther.settings_api_common import require_desktop_owner, service_settings
 from gunther.tts_providers import PROVIDERS, TtsError, repair_wav
 from gunther.tts_service import (
     ROLES,
@@ -34,6 +35,7 @@ from gunther.tts_service import (
     resolve_model,
 )
 
+OWNER_REQUIRED = "Reading aloud can only be set up on the desktop"
 router = APIRouter()
 
 
@@ -62,16 +64,6 @@ class SampleIn(ApiModel):
     options: dict[str, str] | None = None
 
 
-def _owner_only(request: Request) -> None:
-    principal = getattr(request.state, "auth_principal", None)
-    if not isinstance(principal, AuthPrincipal) or principal.kind == "device":
-        raise HTTPException(403, "Reading aloud can only be set up on the desktop")
-
-
-def _store(request: Request) -> ServiceSettingsStore:
-    return request.app.state.service_settings
-
-
 def _service(request: Request) -> TtsService:
     return request.app.state.tts
 
@@ -83,7 +75,7 @@ def _registries(request: Request) -> tuple[Any, Any]:
 
 def _config(request: Request) -> dict[str, Any]:
     try:
-        return clean_config(_store(request).tts())
+        return clean_config(service_settings(request).tts())
     except TtsConfigError:
         # Hand-edited settings Gunther cannot read: start over rather than break Settings.
         return clean_config(None)
@@ -117,8 +109,10 @@ def _record(request: Request, provider: dict[str, Any], error: TtsError | None) 
     """Remember that a provider spoke (or why it did not), so Settings can say Connected."""
 
     entry = {"ok": error is None, "message": str(error) if error else "It spoke.", "warning": None}
-    _store(request).record_tts_check(
-        provider["id"], {**entry, "fingerprint": _fingerprint(provider, _registries(request))}
+    service_settings(request).record_provider_check(
+        "tts",
+        provider["id"],
+        {**entry, "fingerprint": _fingerprint(provider, _registries(request))},
     )
 
 
@@ -129,8 +123,6 @@ def _provider_out(
     key, shared = key_for(provider, *registries)
     problem = problem_with(provider, *registries)
     count = len(provider["models"])
-    if check and check.get("fingerprint") != _fingerprint(provider, registries):
-        check = None
     if problem:
         status = {"state": "not_configured", "summary": "Needs an API key."}
     elif check and not check["ok"]:
@@ -157,7 +149,7 @@ def _provider_out(
         ],
         "status": {
             **status,
-            "check": check and {k: check[k] for k in ("ok", "message", "warning", "checkedAt")},
+            "check": check,
         },
     }
 
@@ -186,13 +178,17 @@ def overview(request: Request) -> dict[str, Any]:
         )
     answers = next(role for role in roles if role["id"] == "answers")
     _, answers_problem = resolve(config, *registries)
+    store = service_settings(request)
     return {
-        "persisted": _store(request).persisted,
+        "persisted": store.persisted,
         # For the Listen button: read by itself, and why it cannot read (null when it can).
         "autoRead": answers["autoRead"],
         "problem": answers_problem,
         "providers": [
-            _provider_out(provider, registries, _store(request).tts_check(provider["id"]))
+            _provider_out(
+                provider, registries,
+                store.provider_check("tts", provider["id"], _fingerprint(provider, registries)),
+            )
             for provider in providers
         ],
         "roles": roles,
@@ -212,27 +208,9 @@ def _save(
     except TtsConfigError as error:
         raise HTTPException(422, str(error)) from error
     try:
-        _store(request).save_tts(cleaned)
+        service_settings(request).save_tts(cleaned)
     except OSError as error:
         raise HTTPException(503, "The settings could not be saved to disk") from error
-
-
-def _find(request: Request, provider_id: str) -> tuple[list[dict[str, Any]], int]:
-    providers = _providers(request)
-    for index, provider in enumerate(providers):
-        if provider["id"] == provider_id:
-            return providers, index
-    raise HTTPException(404, "There is no such provider")
-
-
-def _unique_name(name: str, providers: list[dict[str, Any]]) -> str:
-    taken = {provider["name"] for provider in providers}
-    if name not in taken:
-        return name
-    number = 2
-    while f"{name} {number}" in taken:
-        number += 1
-    return f"{name} {number}"
 
 
 def _roles_after(request: Request, providers: list[dict[str, Any]]) -> dict[str, Any]:
@@ -265,13 +243,13 @@ def _roles_after(request: Request, providers: list[dict[str, Any]]) -> dict[str,
 
 @router.get("/settings/tts")
 def get_tts(request: Request) -> dict[str, Any]:
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     return overview(request)
 
 
 @router.post("/settings/tts/providers", status_code=201)
 def create_provider(payload: ProviderIn, request: Request) -> dict[str, Any]:
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     supplier = PROVIDERS.get(payload.kind or "")
     if supplier is None:
         raise HTTPException(422, "Choose a kind of provider.")
@@ -280,7 +258,7 @@ def create_provider(payload: ProviderIn, request: Request) -> dict[str, Any]:
         provider = clean_provider(
             {
                 "kind": payload.kind,
-                "name": _unique_name(payload.name or supplier.name, providers),
+                "name": unique_provider_name(payload.name or supplier.name, providers),
                 "baseUrl": payload.base_url or supplier.base_url,
                 "apiKey": payload.api_key,
                 "models": payload.models,
@@ -296,18 +274,10 @@ def create_provider(payload: ProviderIn, request: Request) -> dict[str, Any]:
 
 @router.put("/settings/tts/providers/{provider_id}")
 def update_provider(provider_id: str, payload: ProviderIn, request: Request) -> dict[str, Any]:
-    _owner_only(request)
-    providers, index = _find(request, provider_id)
+    require_desktop_owner(request, OWNER_REQUIRED)
+    providers, index = find_provider(_providers(request), provider_id)
     changes = payload.model_dump(exclude_unset=True)
-    draft = {**providers[index]}
-    for field, key in (
-        ("name", "name"),
-        ("base_url", "baseUrl"),
-        ("api_key", "apiKey"),
-        ("models", "models"),
-    ):
-        if field in changes:
-            draft[key] = changes[field]
+    draft = edit_provider(providers[index], changes)
     try:
         providers[index] = clean_provider(draft)
     except TtsConfigError as error:
@@ -318,8 +288,8 @@ def update_provider(provider_id: str, payload: ProviderIn, request: Request) -> 
 
 @router.delete("/settings/tts/providers/{provider_id}")
 def delete_provider(provider_id: str, request: Request) -> dict[str, Any]:
-    _owner_only(request)
-    providers, index = _find(request, provider_id)
+    require_desktop_owner(request, OWNER_REQUIRED)
+    providers, index = find_provider(_providers(request), provider_id)
     del providers[index]
     _save(request, providers, _roles_after(request, providers))
     return overview(request)
@@ -327,7 +297,7 @@ def delete_provider(provider_id: str, request: Request) -> dict[str, Any]:
 
 @router.put("/settings/tts/roles")
 def save_roles(payload: RolesIn, request: Request) -> dict[str, Any]:
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     config = _config(request)
     providers = _providers(request)
     roles = dict(config["roles"])
@@ -355,7 +325,7 @@ def save_roles(payload: RolesIn, request: Request) -> dict[str, Any]:
 async def sample(payload: SampleIn, request: Request) -> Response:
     """Hear a voice before keeping it: a provider being edited, or the Answers job."""
 
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     registries = _registries(request)
     config = _config(request)
     providers = providers_in_use(config, *registries)
@@ -402,7 +372,7 @@ async def sample(payload: SampleIn, request: Request) -> Response:
 
 @router.delete("/settings/tts/cache")
 def clear_cache(request: Request) -> dict[str, Any]:
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     _service(request).clear()
     return overview(request)
 
@@ -413,7 +383,7 @@ async def begin_speech(
 ) -> dict[str, Any]:
     """Find the kept clip or start a reading whose parts play as they arrive."""
 
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     resolved, problem = resolve(_config(request), *_registries(request))
     if resolved is None:
         raise HTTPException(409, problem)
@@ -435,7 +405,7 @@ async def begin_speech(
 async def job_part(job_id: str, index: int, request: Request) -> Response:
     """One part of an answer being made; waits until it exists."""
 
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     try:
         audio = await _service(request).job_part(job_id, index)
     except SpeechNotFound as error:
@@ -449,7 +419,7 @@ async def job_part(job_id: str, index: int, request: Request) -> Response:
 def job_script(job_id: str, request: Request) -> dict[str, str]:
     """What is being spoken, while the answer is still being made."""
 
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     try:
         return {"script": _service(request).job_script(job_id)}
     except SpeechNotFound as error:
@@ -458,7 +428,7 @@ def job_script(job_id: str, request: Request) -> dict[str, str]:
 
 @router.get("/speech/clips/{clip_id}/audio")
 def clip_audio(clip_id: str, request: Request) -> Response:
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     try:
         path = _service(request).audio_path(clip_id)
     except SpeechNotFound as error:
@@ -471,7 +441,7 @@ def clip_audio(clip_id: str, request: Request) -> Response:
 def clip_script(clip_id: str, request: Request) -> dict[str, str]:
     """What was spoken, for people who want to check how a table was described."""
 
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     try:
         return {"script": _service(request).script_of(clip_id)}
     except SpeechNotFound as error:

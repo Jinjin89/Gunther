@@ -1129,12 +1129,14 @@ mod tests {
             .unwrap();
         assert_eq!(runtime.menu_bar_mode, MenuBarMode::WhileCapturing);
 
-        std::fs::create_dir(path.with_extension("json.tmp")).unwrap();
+        let backup = path.with_extension("previous");
+        std::fs::rename(&path, &backup).unwrap();
+        std::fs::create_dir(&path).unwrap();
         assert!(runtime
             .save_menu_bar_mode(&path, MenuBarMode::Always)
             .is_err());
         assert_eq!(runtime.menu_bar_mode, MenuBarMode::WhileCapturing);
-        let contents = std::fs::read_to_string(path).unwrap();
+        let contents = std::fs::read_to_string(backup).unwrap();
         let preference: MenuBarPreference = serde_json::from_str(&contents).unwrap();
         assert_eq!(preference.mode, MenuBarMode::WhileCapturing);
         std::fs::remove_dir_all(directory).unwrap();

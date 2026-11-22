@@ -17,6 +17,39 @@ SIDECAR = {"X-Gunther-Token": SIDECAR_TOKEN}
 KEY = "sk-test-0000000000001234"
 
 
+@pytest.mark.parametrize("kind", ["models", "speech", "tts"])
+def test_failed_provider_save_keeps_effective_settings(tmp_path, monkeypatch, kind):
+    path = tmp_path / "service-settings.json"
+    original = {"llm_api_key": KEY, "stt_api_key": "existing-transcription-key"}
+    path.write_text(json.dumps({"values": original}))
+    store = ServiceSettingsStore(path)
+    read = getattr(store, kind)
+    save = getattr(store, f"save_{kind}")
+    changes = {"providers": [], "roles": {}}
+    arguments = {"config": changes} if kind == "tts" else changes
+    before = read()
+    notifications = []
+    store.subscribe(lambda: notifications.append(read()))
+
+    def fail_write():
+        raise OSError("disk full")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "_write", fail_write)
+        with pytest.raises(OSError, match="disk full"):
+            save(**arguments)
+
+    assert read() == before
+    assert store.values() == original
+    assert json.loads(path.read_text()) == {"values": original}
+    assert notifications == []
+
+    save(**arguments)
+    expected = changes if kind == "tts" else ([], {})
+    assert notifications == [expected]
+    assert getattr(ServiceSettingsStore(path), kind)() == expected
+
+
 def test_saved_developer_settings_load_with_retired_output_preferences(tmp_path: Path) -> None:
     path = tmp_path / "service-settings.json"
     path.write_text(json.dumps({

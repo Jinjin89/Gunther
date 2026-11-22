@@ -27,11 +27,8 @@ pub fn for_home(home: &Path, legacy: &Path, development: bool) -> Result<Storage
             let value: serde_json::Value = serde_json::from_str(&text)
                 .map_err(|error| format!("The previous library location is unreadable: {error}"))?;
             if value.get("libraryRoot").is_some() {
-                let mut file =
-                    crate::secure_open(&choice, false).map_err(|error| error.to_string())?;
-                std::io::Write::write_all(&mut file, text.as_bytes())
+                crate::private_file::write_private_atomic(&choice, text.as_bytes())
                     .map_err(|error| error.to_string())?;
-                file.sync_all().map_err(|error| error.to_string())?;
             }
         }
     }

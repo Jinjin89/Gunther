@@ -4,20 +4,25 @@ The desktop owner sets them up; any signed-in device may list the models that
 are ready, to pick one in Ask. Keys never leave the backend.
 """
 
-import hashlib
-import json
 from collections.abc import Iterable
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
 from gunther import model_registry
-from gunther.device_auth import AuthPrincipal
 from gunther.model_profiles import DIALECTS, EFFORT_LABELS, EFFORTS, profile_for
 from gunther.model_registry import PRESETS, ROLES, Registry, RegistryError
+from gunther.provider_settings import (
+    edit_provider,
+    find_provider,
+    provider_fingerprint,
+    unique_provider_name,
+)
 from gunther.schemas import ApiModel
-from gunther.service_settings import ServiceSettingsStore, list_models, secret_hint
+from gunther.service_settings import list_models, secret_hint
+from gunther.settings_api_common import require_desktop_owner, service_settings
 
+OWNER_REQUIRED = "Models can only be set up on the desktop"
 router = APIRouter()
 
 
@@ -35,16 +40,6 @@ class RolesIn(ApiModel):
     roles: dict[str, dict[str, Any]]
 
 
-def _owner_only(request: Request) -> None:
-    principal = getattr(request.state, "auth_principal", None)
-    if not isinstance(principal, AuthPrincipal) or principal.kind == "device":
-        raise HTTPException(403, "Models can only be set up on the desktop")
-
-
-def _store(request: Request) -> ServiceSettingsStore:
-    return request.app.state.service_settings
-
-
 def _registry(request: Request) -> Registry:
     return request.app.state.model_registry
 
@@ -58,20 +53,6 @@ def _levels(dialect_id: str) -> list[dict[str, str]]:
     return [{"id": level, "label": dialect.name(level)} for level in dialect.levels]
 
 
-def _key_fingerprint(provider: dict[str, Any], key: str | None) -> str:
-    return hashlib.sha256(
-        json.dumps(
-            {
-                "kind": provider["kind"],
-                "baseUrl": provider["baseUrl"],
-                "key": key,
-                "models": [model["id"] for model in provider["models"]],
-            },
-            sort_keys=True,
-        ).encode()
-    ).hexdigest()
-
-
 def _provider_out(provider: dict[str, Any], request: Request) -> dict[str, Any]:
     registry, settings = _registry(request), _settings(request)
     preset = PRESETS[provider["kind"]]
@@ -79,9 +60,9 @@ def _provider_out(provider: dict[str, Any], request: Request) -> dict[str, Any]:
     if registry.from_environment and source == "saved":
         source = "environment"
     ready = bool(key) or preset.key_optional
-    check = _store(request).model_check(provider["id"])
-    if check and check.get("fingerprint") != _key_fingerprint(provider, key):
-        check = None
+    check = service_settings(request).provider_check(
+        "provider", provider["id"], provider_fingerprint(provider, key)
+    )
     if not ready:
         status = {"state": "not_configured", "summary": "Needs an API key."}
     elif check and not check["ok"]:
@@ -125,7 +106,7 @@ def _provider_out(provider: dict[str, Any], request: Request) -> dict[str, Any]:
         "models": models,
         "status": {
             **status,
-            "check": check and {k: check[k] for k in ("ok", "message", "warning", "checkedAt")},
+            "check": check,
         },
     }
 
@@ -165,7 +146,7 @@ def _roles_out(request: Request) -> list[dict[str, Any]]:
 def models_overview(request: Request) -> dict[str, Any]:
     registry = _registry(request)
     return {
-        "persisted": _store(request).persisted,
+        "persisted": service_settings(request).persisted,
         "fromEnvironment": registry.from_environment,
         "providers": [_provider_out(provider, request) for provider in registry.providers],
         "roles": _roles_out(request),
@@ -190,17 +171,9 @@ def models_overview(request: Request) -> dict[str, Any]:
 
 def _save(request: Request, providers: list[dict[str, Any]] | None = None, roles=None) -> None:
     try:
-        _store(request).save_models(providers=providers, roles=roles)
+        service_settings(request).save_models(providers=providers, roles=roles)
     except OSError as error:
         raise HTTPException(503, "The settings could not be saved to disk") from error
-
-
-def _find(request: Request, provider_id: str) -> tuple[list[dict[str, Any]], int]:
-    providers = [dict(provider) for provider in _registry(request).providers]
-    for index, provider in enumerate(providers):
-        if provider["id"] == provider_id:
-            return providers, index
-    raise HTTPException(404, "There is no such provider")
 
 
 # Routes ------------------------------------------------------------------------
@@ -231,20 +204,20 @@ def list_ready_models(request: Request) -> dict[str, Any]:
 
 @router.get("/settings/models")
 def get_models(request: Request) -> dict[str, Any]:
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     return models_overview(request)
 
 
 @router.post("/settings/providers", status_code=201)
 def create_provider(payload: ProviderIn, request: Request) -> dict[str, Any]:
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     providers = [dict(provider) for provider in _registry(request).providers]
     preset = PRESETS.get(payload.kind or "")
     if preset is None:
         raise HTTPException(422, "Choose a kind of provider.")
     raw = {
         "kind": payload.kind,
-        "name": payload.name or _unique_name(preset.name, providers),
+        "name": payload.name or unique_provider_name(preset.name, providers),
         "baseUrl": payload.base_url or preset.base_url,
         "apiKey": payload.api_key,
         "models": payload.models if payload.models is not None else list(preset.models),
@@ -258,21 +231,11 @@ def create_provider(payload: ProviderIn, request: Request) -> dict[str, Any]:
     return models_overview(request)
 
 
-def _unique_name(name: str, providers: list[dict[str, Any]]) -> str:
-    names = {provider["name"] for provider in providers}
-    if name not in names:
-        return name
-    number = 2
-    while f"{name} {number}" in names:
-        number += 1
-    return f"{name} {number}"
-
-
 def _still_following(request: Request, roles: dict[str, Any], chosen: Iterable[str] = ()) -> dict:
     """The jobs to save. One that follows another (Outputs follows Ask) and was never
     given a model of its own is left out, so it keeps following."""
 
-    saved = _store(request).models()[1] or {}
+    saved = service_settings(request).models()[1] or {}
     return {
         role_id: choice
         for role_id, choice in roles.items()
@@ -302,19 +265,15 @@ def _roles_after(request: Request, providers: list[dict[str, Any]]) -> dict[str,
 
 @router.put("/settings/providers/{provider_id}")
 def update_provider(provider_id: str, payload: ProviderIn, request: Request) -> dict[str, Any]:
-    _owner_only(request)
-    providers, index = _find(request, provider_id)
+    require_desktop_owner(request, OWNER_REQUIRED)
+    providers, index = find_provider(_registry(request).providers, provider_id)
     current = providers[index]
-    changes = payload.model_dump(exclude_unset=True, by_alias=False)
-    raw = {
-        **current,
-        "name": changes.get("name", current["name"]),
-        "baseUrl": changes.get("base_url", current["baseUrl"]),
-        "apiKey": current["apiKey"] if "api_key" not in changes else changes["api_key"],
-        "models": changes["models"] if changes.get("models") is not None else current["models"],
-    }
+    changes = payload.model_dump(exclude_unset=True)
+    if changes.get("models") is None:
+        changes.pop("models", None)
+    draft = edit_provider(current, changes)
     try:
-        providers[index] = model_registry.clean_provider(raw)
+        providers[index] = model_registry.clean_provider(draft)
     except RegistryError as error:
         raise HTTPException(422, str(error)) from error
     _save(request, providers=providers, roles=_roles_after(request, providers))
@@ -323,8 +282,8 @@ def update_provider(provider_id: str, payload: ProviderIn, request: Request) -> 
 
 @router.delete("/settings/providers/{provider_id}")
 def delete_provider(provider_id: str, request: Request) -> dict[str, Any]:
-    _owner_only(request)
-    providers, index = _find(request, provider_id)
+    require_desktop_owner(request, OWNER_REQUIRED)
+    providers, index = find_provider(_registry(request).providers, provider_id)
     del providers[index]
     _save(request, providers=providers, roles=_roles_after(request, providers))
     return models_overview(request)
@@ -332,7 +291,7 @@ def delete_provider(provider_id: str, request: Request) -> dict[str, Any]:
 
 @router.put("/settings/model-roles")
 def save_roles(payload: RolesIn, request: Request) -> dict[str, Any]:
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     try:
         changes = model_registry.clean_roles(payload.roles)
     except RegistryError as error:
@@ -366,7 +325,7 @@ async def _test(request: Request, provider: dict[str, Any]) -> dict[str, Any]:
         "message": result.message,
         "warning": warning,
         "available": available,
-        "fingerprint": _key_fingerprint(provider, key),
+        "fingerprint": provider_fingerprint(provider, key),
     }
 
 
@@ -374,7 +333,7 @@ async def _test(request: Request, provider: dict[str, Any]) -> dict[str, Any]:
 async def test_new_provider(payload: ProviderIn, request: Request) -> dict[str, Any]:
     """Try a provider before adding it; lists the models it offers."""
 
-    _owner_only(request)
+    require_desktop_owner(request, OWNER_REQUIRED)
     preset = PRESETS.get(payload.kind or "")
     if preset is None:
         raise HTTPException(422, "Choose a kind of provider.")
@@ -399,26 +358,20 @@ async def test_new_provider(payload: ProviderIn, request: Request) -> dict[str, 
 async def test_provider(provider_id: str, payload: ProviderIn, request: Request) -> dict[str, Any]:
     """Try a provider with the values on screen; a saved one's result is kept."""
 
-    _owner_only(request)
-    providers, index = _find(request, provider_id)
+    require_desktop_owner(request, OWNER_REQUIRED)
+    providers, index = find_provider(_registry(request).providers, provider_id)
     current = providers[index]
     changes = payload.model_dump(exclude_unset=True)
-    draft = {**current}
-    for field, saved_field in (
-        ("name", "name"),
-        ("base_url", "baseUrl"),
-        ("api_key", "apiKey"),
-        ("models", "models"),
-    ):
-        if field in changes:
-            draft[saved_field] = changes[field]
+    draft = edit_provider(current, changes)
     try:
         draft = model_registry.clean_provider(draft)
     except RegistryError as error:
         raise HTTPException(422, str(error)) from error
     outcome = await _test(request, draft)
-    _store(request).record_model_check(
-        provider_id, {k: outcome[k] for k in ("ok", "message", "warning", "fingerprint")}
+    service_settings(request).record_provider_check(
+        "provider",
+        provider_id,
+        {k: outcome[k] for k in ("ok", "message", "warning", "fingerprint")},
     )
     outcome.pop("fingerprint")
     return {**outcome, "overview": models_overview(request)}

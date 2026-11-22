@@ -122,6 +122,28 @@ describe("SpeechSettings", () => {
     expect(api.updateSpeechProvider).toHaveBeenCalledWith("qwen", expect.objectContaining({ baseUrl: "https://dashscope.aliyuncs.com" }));
   });
 
+  it("can undo a failed key removal and inherit the Models key after a successful removal", async () => {
+    const inherited = overview();
+    inherited.providers[1] = { ...inherited.providers[1]!, keySet: false, keyHint: null, keyShared: true };
+    api.updateSpeechProvider
+      .mockRejectedValueOnce(new Error("Could not save key"))
+      .mockResolvedValueOnce(inherited);
+    render(<SpeechSettings onNotify={vi.fn()} />);
+    await userEvent.click(await screen.findByRole("button", { name: /^Qwen/ }));
+    const keyField = within(screen.getByText("API key", { selector: "label" }).closest(".service-field")!);
+
+    await userEvent.click(keyField.getByRole("button", { name: "Remove" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not save key");
+    expect(screen.getByText("Removed when you save")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(screen.getByText(/1234/)).toBeInTheDocument();
+    expect(api.updateSpeechProvider).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(keyField.getByRole("button", { name: "Remove" }));
+    expect(await screen.findByPlaceholderText("Using your Qwen key from Models")).toHaveValue("");
+    expect(api.updateSpeechProvider.mock.calls.map(([, body]) => body.apiKey)).toEqual(["", ""]);
+  });
+
   it("discards a late test result when its model has been changed", async () => {
     let finish!: (value: unknown) => void;
     api.testSpeechProvider.mockReturnValue(new Promise((resolve) => { finish = resolve; }));

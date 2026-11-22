@@ -1,7 +1,8 @@
-import type { ServiceField, ServiceSettings as Service, ServiceSettingValue, ServiceState, ServiceTestResult } from "@gunther/contracts";
-import { AudioLines, Check, ChevronRight, CircleAlert, Eye, EyeOff, FileText, Globe, KeyRound, Plug, TriangleAlert } from "lucide-react";
+import type { ServiceField, ServiceSettings as Service, ServiceSettingValue, ServiceTestResult } from "@gunther/contracts";
+import { AudioLines, Check, ChevronRight, CircleAlert, FileText, Globe, Plug, TriangleAlert } from "lucide-react";
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { knowledgeApi } from "../api";
+import { SecretField, ServiceStatusBadge } from "./SettingsFields";
 import { announceModelsChanged, MODELS_CHANGED_EVENT } from "../models/askModel";
 
 type Draft = Record<string, ServiceSettingValue>;
@@ -11,14 +12,6 @@ const SERVICE_ICONS: Record<string, ReactNode> = {
   web_search: <Globe size={15} />,
   transcription: <AudioLines size={15} />,
   summaries: <FileText size={15} />,
-};
-
-const STATE_LABELS: Record<ServiceState, string> = {
-  // "Connected" only once a test of these values passed.
-  configured: "Set up",
-  not_configured: "Not set up",
-  error: "Needs attention",
-  off: "Off",
 };
 
 const message = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
@@ -65,58 +58,6 @@ function applyPresets(field: ServiceField, choice: string, values: Values): Draf
   return next;
 }
 
-function StatusBadge({ service }: { service: Service }) {
-  const { state, check } = service.status;
-  // A passing test of the values in use says more than "Ready".
-  const label = state === "configured" && check?.ok ? "Connected" : STATE_LABELS[state];
-  return <span className={`service-badge is-${state}`}><i aria-hidden="true" />{label}</span>;
-}
-
-function SecretField({ field, value, onChange, inputId, describedBy }: {
-  field: ServiceField;
-  value: ServiceSettingValue | undefined;
-  onChange: (value: ServiceSettingValue | undefined) => void;
-  inputId: string;
-  describedBy: string;
-}) {
-  const [visible, setVisible] = useState(false);
-  const removing = value === "";
-  const editing = typeof value === "string" && value !== "";
-  const [replacing, setReplacing] = useState(false);
-  // A newly saved or removed key closes the editor.
-  useEffect(() => setReplacing(false), [field.hint, field.isSet]);
-
-  if (field.isSet && !replacing && !editing) {
-    return <div className="service-secret-saved">
-      <span className={`service-secret-mask ${removing ? "is-removing" : ""}`}><KeyRound size={13} aria-hidden="true" />{removing ? "Removed when you save" : `•••• ${field.hint ?? "saved"}`}</span>
-      {removing
-        ? <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => onChange(undefined)}>Undo</button>
-        : <>
-          <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => setReplacing(true)}>Replace</button>
-          <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => onChange("")}>Remove</button>
-        </>}
-    </div>;
-  }
-
-  return <div className="service-secret-input">
-    <input
-      id={inputId}
-      type={visible ? "text" : "password"}
-      value={typeof value === "string" ? value : ""}
-      placeholder={field.isSet ? "Paste a new key" : field.placeholder || "Paste your key"}
-      autoComplete="off"
-      spellCheck={false}
-      autoFocus={replacing}
-      aria-describedby={describedBy}
-      onChange={(event) => onChange(event.target.value === "" ? undefined : event.target.value)}
-    />
-    <button type="button" className="gx-icon-button" aria-label={visible ? `Hide ${field.label}` : `Show ${field.label}`} title={visible ? "Hide" : "Show"} onClick={() => setVisible((current) => !current)}>
-      {visible ? <EyeOff size={14} /> : <Eye size={14} />}
-    </button>
-    {replacing && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => { setReplacing(false); onChange(undefined); }}>Cancel</button>}
-  </div>;
-}
-
 function FieldControl({ field, value, draftValue, onChange, inputId, describedBy, invalid }: {
   field: ServiceField;
   value: ServiceSettingValue;
@@ -126,7 +67,16 @@ function FieldControl({ field, value, draftValue, onChange, inputId, describedBy
   describedBy: string;
   invalid: boolean;
 }) {
-  if (field.kind === "secret") return <SecretField field={field} value={draftValue} onChange={onChange} inputId={inputId} describedBy={describedBy} />;
+  if (field.kind === "secret") return <SecretField
+    inputId={inputId}
+    describedBy={describedBy}
+    label={field.label}
+    isSet={field.isSet}
+    hint={field.hint}
+    placeholder={field.isSet ? "Paste a new key" : field.placeholder || "Paste your key"}
+    value={typeof draftValue === "string" ? draftValue : undefined}
+    onChange={onChange}
+  />;
   if (field.kind === "toggle") {
     return <label className="service-switch">
       <input id={inputId} type="checkbox" role="switch" checked={Boolean(value)} aria-describedby={describedBy} onChange={(event) => onChange(event.target.checked)} />
@@ -337,7 +287,7 @@ export function ServiceSettings({ onNotify, only, heading }: {
           <button type="button" className="service-summary" aria-expanded={expanded} aria-controls={panelId} onClick={() => setOpen(expanded ? null : service.id)}>
             <span className="service-icon" aria-hidden="true">{SERVICE_ICONS[service.id] ?? <Plug size={15} />}</span>
             <span className="service-heading"><strong>{service.title}</strong><small>{service.status.summary}</small></span>
-            <StatusBadge service={service} />
+            <ServiceStatusBadge status={service.status} />
             <ChevronRight size={15} className="service-chevron" aria-hidden="true" />
           </button>
           {expanded && <div id={panelId} className="service-panel">

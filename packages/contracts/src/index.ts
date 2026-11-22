@@ -461,6 +461,12 @@ export interface ProviderModel {
   levels: EffortLevel[];
 }
 
+export interface ProviderStatus {
+  state: ServiceState;
+  summary: string;
+  check: (ServiceCheck & { checkedAt: string }) | null;
+}
+
 export interface ModelProvider {
   id: string;
   name: string;
@@ -473,11 +479,7 @@ export interface ModelProvider {
   keyOptional: boolean;
   note: string;
   models: ProviderModel[];
-  status: {
-    state: ServiceState;
-    summary: string;
-    check: (ServiceCheck & { checkedAt: string }) | null;
-  };
+  status: ProviderStatus;
 }
 
 export interface ModelRole {
@@ -546,11 +548,7 @@ export interface SpeechProvider {
   keyOptional: boolean;
   note: string;
   models: SpeechModel[];
-  status: {
-    state: ServiceState;
-    summary: string;
-    check: (ServiceCheck & { checkedAt: string }) | null;
-  };
+  status: ProviderStatus;
 }
 
 /** A job: which transcription model does it, and whether it works live. */
@@ -636,11 +634,7 @@ export interface TtsProvider {
   readsStructure: boolean;
   note: string;
   models: SpeechModel[];
-  status: {
-    state: ServiceState;
-    summary: string;
-    check: (ServiceCheck & { checkedAt: string }) | null;
-  };
+  status: ProviderStatus;
 }
 
 /** A job: which voice model speaks it, with which voice. */
