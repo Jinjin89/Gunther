@@ -335,7 +335,7 @@ def test_repeating_a_case_gives_a_pass_rate_and_names_the_cases_that_disagreed(
 def test_agent_efforts_reach_the_agent(tmp_path: Path, monkeypatch) -> None:
     from fake_models import gateway
 
-    from gunther import service as service_module
+    from gunther import ask_turns as service_module
     from gunther.agent import AskAgent, Toolbox
     from gunther.service import KnowledgeService
 

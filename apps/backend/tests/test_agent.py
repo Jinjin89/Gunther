@@ -48,13 +48,13 @@ from gunther.agent import (
     writer_prompt,
 )
 from gunther.answer_runs import AnswerRun
+from gunther.ask_turns import conversation_history
 from gunther.config import Settings
 from gunther.database import session_scope
 from gunther.llm import Turn
 from gunther.main import create_app
 from gunther.models import ContentBlock, SessionMessage, SourceIndexHead
 from gunther.schemas import CreateSessionMessageInput
-from gunther.service import conversation_history
 from gunther.skillbook import ask_skills
 from gunther.web_capture import (
     PublicWebUrlPolicy,
@@ -1253,7 +1253,7 @@ def test_sources_are_numbered_in_the_order_the_text_cites_them_and_uncited_ones_
 
 def test_renumbering_and_the_history_the_model_reads_use_the_same_ids() -> None:
     from gunther.agent import renumber_citations
-    from gunther.service import conversation_history
+    from gunther.ask_turns import conversation_history
 
     assert renumber_citations("A [6]. B [4][6]. C [?].", [6, 4]) == "A [1]. B [2][1]. C [?]."
 

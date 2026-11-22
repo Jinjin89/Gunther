@@ -14,7 +14,7 @@ from gunther.extraction import ModelExtractor, analysis_job_key
 from gunther.knowledge_index import enqueue
 from gunther.main import create_app
 from gunther.models import Assertion, Fragment, ProcessingJob, Revision, Source, utc_now
-from gunther.service import source_fingerprint
+from gunther.source_identity import source_fingerprint
 
 
 def client_for(path: Path) -> TestClient:

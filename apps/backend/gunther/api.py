@@ -18,6 +18,7 @@ from gunther import listen_copy, speech_registry, usage
 from gunther.answer_runs import AnswerRun, AnswerRuns, Stopped, check_stop, stopping_on
 from gunther.artifact_read import ArtifactIntegrityError
 from gunther.artifact_versions import ArtifactConflictError
+from gunther.ask_turns import AskFailure
 from gunther.asset_service import (
     AssetNotFoundError,
     AssetService,
@@ -122,7 +123,7 @@ from gunther.schemas import (
     WebSearchOut,
     WorkspaceBootstrapOut,
 )
-from gunther.service import AskFailure, KnowledgeService
+from gunther.service import KnowledgeService
 from gunther.skillbook import ask_skills
 from gunther.storage_budget import StorageBudgetError
 from gunther.transcription import RELISTEN_PAD_MS, ListenError, relisten_audio, sensevoice_health

@@ -398,3 +398,14 @@ checker's reproductions (Spring 2026 cover date, dated subtitle, numeric first c
 ms vs s units through retry and fallback, one cited cell, wrapped journal-club question,
 citation in subtitle, idempotent metadata) move into docs/READING_RULES_NEXT.md as part
 of the next project. SC-12 (topic terms by document frequency) stays.
+
+# Round 28 — Phase C splits
+
+Phase C covers files over ~1,000 lines that mix jobs: service.py (5.6k), api.py (1.9k),
+studio/pipeline.py, agent.py and artifact_agent.py. Reading code (structure_draft,
+document_model, document_structure) waits for the reading project. The recorder and the
+mobile capture view model wait for the recorder redesign. Splits are pure moves along
+the job map in docs/CLEANUP_ARCHITECTURE.md. No logic edits, renames or signature changes
+beyond imports. A move doesn't count toward the insertion cap. The checker verifies with
+`git diff --color-moved` that nothing but imports and moved blocks changed. One file per
+batch, starting with service.py.

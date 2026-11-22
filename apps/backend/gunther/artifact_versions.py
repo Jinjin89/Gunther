@@ -32,6 +32,7 @@ from gunther.schemas import (
     OutputProvenanceOut,
 )
 
+# The largest an output's text may be, in bytes.
 MAX_OUTPUT_BYTES = 2_500_000
 
 

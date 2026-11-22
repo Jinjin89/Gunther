@@ -30,7 +30,7 @@ from legacy_artifacts import insert_legacy_version
 from sqlalchemy import event, func, select, text
 
 from evals.sse import ask_turn, read_events
-from gunther import service as service_module
+from gunther import output_commands as service_module
 from gunther.agent import Evidence, checker_inventory
 from gunther.answer_runs import AnswerRun
 from gunther.artifact_versions import commit_version

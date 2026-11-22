@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from gunther.artifact_manifest import artifact_manifest_hash
 from gunther.checks import complete, coverage_of, issue_view, read_verdicts
+from gunther.database import session_scope
 from gunther.models import Artifact, ArtifactCheck, ArtifactUnitBinding, KnowledgeUnitRevision
 from gunther.outputs import _marked, heading_of, section_hash, split_document
 from gunther.schemas import (
@@ -237,3 +238,106 @@ def artifact_detail(
         ),
         sections=sections,
     )
+
+
+class ArtifactReader:
+    def list_artifacts(self, knowledge_base_id: str, workspace_id: str) -> list[ArtifactSummaryOut]:
+        with session_scope(self.sessions) as session:
+            if self._live_knowledge_base(session, knowledge_base_id) is None:
+                raise LookupError(f"Knowledge Base {knowledge_base_id} was not found")
+            artifacts = session.scalars(
+                select(Artifact)
+                .where(
+                    Artifact.knowledge_base_id == knowledge_base_id,
+                    Artifact.workspace_id == workspace_id,
+                )
+                .order_by(Artifact.created_at.desc(), Artifact.version_number.desc())
+            ).all()
+            return [artifact_summary(session, artifact) for artifact in artifacts]
+
+    def get_artifact(
+        self, knowledge_base_id: str, artifact_id: str, workspace_id: str
+    ) -> ArtifactOut:
+        with session_scope(self.sessions) as session:
+            artifact = session.scalar(
+                select(Artifact).where(
+                    Artifact.id == artifact_id,
+                    Artifact.workspace_id == workspace_id,
+                    Artifact.knowledge_base_id == knowledge_base_id,
+                )
+            )
+            if artifact is None:
+                raise LookupError(f"Artifact {artifact_id} was not found")
+            shown = artifact_detail(session, artifact)
+            skill = getattr(shown.provenance, "skill", None)
+            if (skill and skill.render_check and skill.render_check.get("status") == "captured"
+                    and self.slide_renderer
+                    and not self.slide_renderer.current(skill.render_check)):
+                reason = "The renderer or source figures changed after this review."
+                skill.render_check = {**skill.render_check, "status": "stale", "reason": reason}
+                if skill.visual_review:
+                    skill.visual_review = {
+                        **skill.visual_review, "status": "stale", "reason": reason}
+            return shown
+
+    def artifact_kind(self, base_id: str, artifact_id: str) -> str:
+        """``slides`` or ``report``: what this version of an output is."""
+
+        with session_scope(self.sessions) as session:
+            artifact = session.scalar(
+                select(Artifact).where(
+                    Artifact.id == artifact_id, Artifact.knowledge_base_id == base_id
+                )
+            )
+            if artifact is None:
+                raise LookupError(f"Artifact {artifact_id} was not found")
+            return artifact.kind
+
+    @staticmethod
+    def _require_agent_output(artifact: Artifact) -> None:
+        if artifact.origin == "legacy":
+            raise ValueError(
+                "This version came from the old builder. Build a new output to change it."
+            )
+
+    @staticmethod
+    def _reusable_figure_readings(session: Session, base_id: str) -> list[dict]:
+        """Earlier Studio figure records in this library, checked by fingerprint before reuse."""
+
+        found: list[dict] = []
+        rows = session.scalars(
+            select(Artifact.provenance_json)
+            .where(
+                Artifact.knowledge_base_id == base_id,
+                Artifact.kind == "slides",
+            )
+            .order_by(Artifact.created_at.desc())
+            .limit(30)
+        )
+        for row in rows:
+            try:
+                approach = (json.loads(row).get("approach") or {})
+            except ValueError:
+                continue
+            found += approach.get("figure_readings") or approach.get("figureReadings") or []
+        return found
+
+    @staticmethod
+    def _made_by(artifact: Artifact) -> dict[str, object] | None:
+        """How a version was made by a skill, for the versions that follow it."""
+
+        provenance = json.loads(artifact.provenance_json)
+        skill = provenance.get("skill")
+        if not isinstance(skill, dict):
+            return None
+        from gunther.schemas import SkillRunOut
+
+        skill = SkillRunOut.model_validate(skill).model_dump(mode="json", by_alias=True)
+        return {
+            "generator": provenance.get("generator"),
+            "skill": {"name": skill.get("name"), "version": skill.get("version"), "skipped": [],
+                      **{key: skill[key] for key in ("renderCheck", "visualReview")
+                         if key in skill}},
+            "approach": provenance.get("approach"),
+            "use": provenance.get("use"),
+        }
