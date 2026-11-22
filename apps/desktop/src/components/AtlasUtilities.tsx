@@ -53,10 +53,16 @@ import {
   type MobileGatewayStatus,
   type PairedDevice,
 } from "../devicePairing";
-import { LectureRecorder, loadRecordingDrafts, recordingDraftsForWorkspace, removeRecordingDraft, type LectureRecorderHandle, type RecorderSnapshot, type RecordingDraft } from "./LectureRecorder";
+import { LectureRecorder, type LectureRecorderHandle, type RecorderSnapshot } from "./LectureRecorder";
 import { BrandMark } from "../design/BrandMark";
 import { LibraryPicker } from "../items/LibraryPicker";
 import { parseDelimitedTable } from "../items/sourceContent";
+import {
+  loadRecordingDrafts,
+  recordingDraftsForWorkspace,
+  removeRecordingDraft,
+  type RecordingDraft,
+} from "../services/recordingDrafts";
 import { comboKeys, formatCombo, useEscape, useShortcut, withShortcut } from "../shortcuts/shortcuts";
 import { LibraryFolderSettings } from "./LibraryFolderSettings";
 import { SemanticSearchSetting } from "./SemanticSearchSetting";
@@ -223,8 +229,7 @@ export function CaptureSheet({ open, bases, workspaceId = null, resolveWorkspace
     void knowledgeApi.recordings(workspaceId).then((recordings) => {
       if (!active) return;
       const locallyTracked = new Set(
-        loadRecordingDrafts()
-          .filter((draft) => draft.workspaceId === workspaceId)
+        recordingDraftsForWorkspace(loadRecordingDrafts(), workspaceId)
           .map((draft) => draft.recording.id),
       );
       setInterruptedRecordings(recordings.filter((recording) => recording.status === "capturing" && recording.sizeBytes > 0 && !locallyTracked.has(recording.id)));

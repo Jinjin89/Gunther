@@ -16,9 +16,6 @@ vi.mock("./LectureRecorder", async () => {
   const React = await import("react");
   const idle = { phase: "idle", seconds: 0, persistence: "idle", transcriptWords: 0, transcriptionLabel: "Local audio", markedMoments: 0 };
   return {
-    loadRecordingDrafts: () => [],
-    recordingDraftsForWorkspace: () => [],
-    removeRecordingDraft: vi.fn(),
     LectureRecorder: React.forwardRef(function FakeRecorder(props: {
       title: string;
       onKnowledgeContent: (content: string) => void;

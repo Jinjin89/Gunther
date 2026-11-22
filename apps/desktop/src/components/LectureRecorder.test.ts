@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   importedAudioSpoolIsComplete,
   importStorageHasCapacity,
+  transcriptionLabelFor,
+} from "./LectureRecorder";
+import {
   loadRecordingDrafts,
   recordingDraftsForWorkspace,
-  transcriptionLabelFor,
   type ImportedAudioDraft,
   type RecordingDraft,
-} from "./LectureRecorder";
+} from "../services/recordingDrafts";
 import { parseTranscript } from "../items/sourceContent";
 import {
   applyPiece,

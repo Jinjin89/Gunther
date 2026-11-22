@@ -2,12 +2,13 @@ import type { RecordingSession } from "@gunther/contracts";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { knowledgeApi, recordingAssetUrl } from "../api";
+import { parseRecordingContent } from "../items/sourceContent";
 import { log } from "../log";
 import { renderTranscript, transcriptFromText } from "../services/liveTranscript";
 import { assertRecordingSpoolAvailable, spoolRecordingChunk, type RecordingSpoolChunk } from "../services/recordingSpool";
 import * as pcm from "../services/pcm";
+import { loadRecordingDrafts } from "../services/recordingDrafts";
 import { CaptureSheet } from "./AtlasUtilities";
-import { loadRecordingDrafts } from "./LectureRecorder";
 
 const spool = vi.hoisted(() => new Map<number, RecordingSpoolChunk>());
 
@@ -405,6 +406,47 @@ describe("saving a recording independently of transcript processing", () => {
     expect(onCaptured.mock.calls[0]?.[2]).toContain(transcript.trimEnd());
     expect(server.transcript).toBe(transcript);
     expect(knowledgeApi.completeRecordingSession).not.toHaveBeenCalled();
+  });
+
+  it("reopens a v2 draft with the newer saved checkpoint and its timed audio", async () => {
+    const firstCheckpoint = { ...server, transcript: "[00:00] Opening words.", checkpointRevision: 1 };
+    const earlier = new Date(Date.parse(server.updatedAt) - 5_000).toISOString();
+    const segments = transcriptFromText([
+      { startSeconds: 0, text: "Opening words." },
+      { startSeconds: 9, text: "Words from the newer checkpoint." },
+    ])!;
+    server = {
+      ...server, status: "completed", sizeBytes: 128, nextExpectedSequence: 1, durationSeconds: 15,
+      transcript: renderTranscript(segments), transcriptSegments: { ...segments, grouping: undefined },
+      checkpointRevision: 2, checkpointedAt: server.updatedAt,
+      recovery: { ...server.recovery, canResume: false, audioAvailable: true },
+    };
+    vi.mocked(knowledgeApi.checkpointRecordingSession).mockResolvedValue(server);
+    window.localStorage.setItem("gunther:recording-drafts", JSON.stringify([{
+      id: server.id, formatVersion: 2, title: "Saved lecture", transcript: firstCheckpoint.transcript,
+      summary: null, seconds: 5, recording: firstCheckpoint, moments: [], recordingContext: "lecture",
+      knowledgeBaseId: "", workspaceId: "wsp_primary", updatedAt: earlier,
+    }]));
+
+    const onCaptured = vi.fn().mockResolvedValue(undefined);
+    const { container } = recordingSheet(onCaptured);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Saved lecture/ })); });
+    expect(container.querySelector("audio")).toHaveAttribute("src", recordingAssetUrl(server.id));
+    expect(screen.getByRole("button", { name: "Play from 00:09" })).toBeEnabled();
+    expect(loadRecordingDrafts()[0]).toMatchObject({
+      formatVersion: 3, transcript: server.transcript, recording: { checkpointRevision: 2 },
+      segments: { grouping: { state: "idle" } },
+    });
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Save recording/ })); });
+    expect(onCaptured).toHaveBeenCalledOnce();
+    const content = parseRecordingContent(onCaptured.mock.calls[0]![2], {
+      recordingId: server.id, recordingDurationSeconds: server.durationSeconds,
+    });
+    expect(content).toMatchObject({
+      recordingId: server.id, durationSeconds: 15, transcriptText: server.transcript,
+    });
+    expect(loadRecordingDrafts()).toEqual([]);
   });
 
   it("freezes the latest live text and ignores late checks and grouping answers after saving", async () => {

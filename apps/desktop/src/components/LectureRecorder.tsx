@@ -1,4 +1,3 @@
-import { persistentStorage } from "../persistentStorage";
 import type {
   LectureSummary,
   RecordingAsset,
@@ -61,6 +60,7 @@ import {
 } from "../services/liveTranscript";
 import { parseTranscript } from "../items/sourceContent";
 import { TranscriptParagraphs } from "./TranscriptParagraphs";
+import { preserveRecordingDraft, type ImportedAudioDraft, type RecordingDraft } from "../services/recordingDrafts";
 import {
   assertRecordingSpoolAvailable,
   bindRecordingSpoolWorkspace,
@@ -72,38 +72,6 @@ import {
 } from "../services/recordingSpool";
 
 export type RecorderPhase = "idle" | "requesting" | "importing" | "recording" | "paused" | "stopped" | "error";
-
-type ImportedAudioPhase = "staging" | "ready" | "uploading" | "complete";
-
-export interface ImportedAudioDraft {
-  fileName: string;
-  contentType: string;
-  sizeBytes: number;
-  chunkSizeBytes: number;
-  chunkCount: number;
-  stagedChunkCount: number;
-  checksumAlgorithm: "SHA-256";
-  phase: ImportedAudioPhase;
-}
-
-export interface RecordingDraft {
-  /** 3 adds `segments`; a version 2 draft has only the text and still restores. */
-  formatVersion?: 2 | 3;
-  id: string;
-  title: string;
-  transcript: string;
-  /** The live transcript as sentences and paragraphs (drafts are never kept). */
-  segments?: TranscriptState | null;
-  summary: LectureSummary | null;
-  seconds: number;
-  recording: RecordingAsset;
-  moments: RecordingMoment[];
-  recordingContext: "lecture" | "meeting" | "memo";
-  knowledgeBaseId: string;
-  workspaceId: string | null;
-  importedAudio?: ImportedAudioDraft | null;
-  updatedAt: string;
-}
 
 export interface RecorderSnapshot {
   phase: RecorderPhase;
@@ -125,7 +93,6 @@ export interface LectureRecorderHandle {
   prepareSave: () => string | null;
 }
 
-const RECORDING_DRAFTS_KEY = "gunther:recording-drafts";
 const IMPORT_CHUNK_SIZE_BYTES = 8 * 1024 * 1024;
 const IMPORT_MAX_SIZE_BYTES = 2 * 1024 * 1024 * 1024;
 export const MICROPHONE_PERMISSION_TIMEOUT_MS = 15_000;
@@ -240,47 +207,6 @@ function microphoneFailure(reason: unknown): { issue: MicrophoneIssue; notice: s
   };
 }
 
-function normalizeImportedAudioDraft(value: unknown): ImportedAudioDraft | null {
-  if (!value || typeof value !== "object") return null;
-  const candidate = value as Partial<ImportedAudioDraft>;
-  const validPhase = candidate.phase === "staging"
-    || candidate.phase === "ready"
-    || candidate.phase === "uploading"
-    || candidate.phase === "complete";
-  if (
-    typeof candidate.fileName !== "string"
-    || !candidate.fileName
-    || typeof candidate.contentType !== "string"
-    || !candidate.contentType
-    || typeof candidate.sizeBytes !== "number"
-    || !Number.isSafeInteger(candidate.sizeBytes)
-    || candidate.sizeBytes <= 0
-    || typeof candidate.chunkSizeBytes !== "number"
-    || !Number.isSafeInteger(candidate.chunkSizeBytes)
-    || candidate.chunkSizeBytes <= 0
-    || typeof candidate.chunkCount !== "number"
-    || !Number.isSafeInteger(candidate.chunkCount)
-    || candidate.chunkCount <= 0
-    || typeof candidate.stagedChunkCount !== "number"
-    || !Number.isSafeInteger(candidate.stagedChunkCount)
-    || candidate.stagedChunkCount < 0
-    || candidate.stagedChunkCount > candidate.chunkCount
-    || candidate.checksumAlgorithm !== "SHA-256"
-    || !validPhase
-  ) return null;
-  if (candidate.chunkCount !== Math.ceil(candidate.sizeBytes / candidate.chunkSizeBytes)) return null;
-  return {
-    fileName: candidate.fileName,
-    contentType: candidate.contentType,
-    sizeBytes: candidate.sizeBytes,
-    chunkSizeBytes: candidate.chunkSizeBytes,
-    chunkCount: candidate.chunkCount,
-    stagedChunkCount: candidate.stagedChunkCount,
-    checksumAlgorithm: "SHA-256",
-    phase: candidate.phase as ImportedAudioPhase,
-  };
-}
-
 /** Keep enough headroom for IndexedDB bookkeeping and normal app writes. */
 export function importStorageHasCapacity(
   estimate: { quota?: number; usage?: number },
@@ -319,43 +245,6 @@ async function assertImportedAudioStorageAvailable(fileSizeBytes: number): Promi
   if (estimate && !importStorageHasCapacity(estimate, fileSizeBytes)) {
     throw new Error("This device does not have enough durable app storage for a recoverable copy of this audio file.");
   }
-}
-
-export function loadRecordingDrafts(): RecordingDraft[] {
-  try {
-    const parsed = JSON.parse(persistentStorage.getItem(RECORDING_DRAFTS_KEY) ?? "[]") as RecordingDraft[];
-    return parsed
-      .filter((draft) => draft?.id && draft?.recording?.id)
-      .map((draft) => ({
-        ...draft,
-        formatVersion: draft.formatVersion === 3 ? (3 as const) : (2 as const),
-        segments: decodeTranscriptState(draft.segments),
-        workspaceId: typeof draft.workspaceId === "string" ? draft.workspaceId : null,
-        importedAudio: normalizeImportedAudioDraft(draft.importedAudio),
-      }))
-      .slice(0, 20);
-  } catch {
-    return [];
-  }
-}
-
-export function removeRecordingDraft(id: string) {
-  const next = loadRecordingDrafts().filter((draft) => draft.id !== id);
-  persistentStorage.setItem(RECORDING_DRAFTS_KEY, JSON.stringify(next));
-}
-
-export function recordingDraftsForWorkspace(
-  drafts: RecordingDraft[],
-  workspaceId: string | null,
-): RecordingDraft[] {
-  return workspaceId
-    ? drafts.filter((draft) => draft.workspaceId === workspaceId)
-    : [];
-}
-
-function preserveRecordingDraft(draft: RecordingDraft) {
-  const next = [draft, ...loadRecordingDrafts().filter((item) => item.id !== draft.id)].slice(0, 20);
-  persistentStorage.setItem(RECORDING_DRAFTS_KEY, JSON.stringify(next));
 }
 
 function isRecordingSession(recording: RecordingAsset): recording is RecordingSession {
