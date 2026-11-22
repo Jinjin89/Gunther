@@ -5,10 +5,10 @@ from fastapi.testclient import TestClient
 from recording_fixtures import append_recording_chunk
 from starlette.requests import Request
 
-import gunther.api as api_module
-from gunther.api import _read_limited_body
+import gunther.recording_api as api_module
 from gunther.config import Settings
 from gunther.main import create_app
+from gunther.recording_api import _read_limited_body
 from gunther.recording_service import RecordingTooLargeError
 from gunther.request_body_limit import (
     ASSET_REQUEST_BODY_BYTES,
