@@ -31,7 +31,6 @@ from gunther.models import (
     SourceRevision,
     utc_now,
 )
-from gunther.realtime import ListenError
 from gunther.retranscribe import (
     Heard,
     Stretch,
@@ -49,6 +48,7 @@ from gunther.retranscribe import (
     transcript_section,
     transcript_state,
 )
+from gunther.transcription import ListenError
 from tests.test_audio_decode import encode
 from tests.test_listen_again import SIDECAR, settings_for, with_provider
 

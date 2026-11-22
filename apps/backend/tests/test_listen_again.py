@@ -660,7 +660,7 @@ def test_relisten_says_why_it_cannot(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 
 def test_a_timeout_names_itself_instead_of_empty_brackets() -> None:
-    from gunther.realtime import _provider_message
+    from gunther.transcription import _provider_message
 
     assert _provider_message(httpx.ReadTimeout(""), "Qwen") == (
         "Qwen could not be reached (ReadTimeout)."

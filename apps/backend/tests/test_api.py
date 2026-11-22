@@ -25,8 +25,8 @@ from gunther.extraction import ModelExtractor
 from gunther.llm import ModelError
 from gunther.main import create_app
 from gunther.models import Artifact, SessionMessage
-from gunther.realtime import (
-    _pcm16_wav,
+from gunther.transcription import (
+    pcm16_wav,
     qwen_endpoint,
     qwen_heard_nothing,
     qwen_request,
@@ -53,7 +53,7 @@ def make_client(*, processing_worker_enabled: bool = True) -> TestClient:
 
 
 def test_sensevoice_pcm_segments_are_wrapped_as_24khz_wav() -> None:
-    wav_data = _pcm16_wav(b"\x00\x00\xff\x7f")
+    wav_data = pcm16_wav(b"\x00\x00\xff\x7f")
     with wave.open(io.BytesIO(wav_data), "rb") as audio:
         assert audio.getnchannels() == 1
         assert audio.getsampwidth() == 2

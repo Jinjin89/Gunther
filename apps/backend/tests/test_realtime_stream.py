@@ -20,7 +20,7 @@ import pytest
 from fastapi.testclient import TestClient
 from websockets.asyncio.server import serve
 
-from gunther import realtime, speech_api
+from gunther import realtime, speech_api, transcription
 from gunther.config import Settings
 from gunther.main import create_app
 from gunther.qwen_stream import (
@@ -283,6 +283,7 @@ def test_drafts_and_a_final_share_an_id_and_times_follow_the_recording_clock(
         final = socket.receive_json()
         assert draft["type"] == "transcript.piece" and draft["final"] is False
         assert draft["end_ms"] is None and draft["start_ms"] == 60_000
+        assert "sentences" not in draft
         assert final["id"] == draft["id"] and final["final"] is True
         assert final["sentences"] == [
             {"start_ms": 60_000, "end_ms": 60_300, "text": "We'll use it."}
@@ -707,10 +708,12 @@ def test_silence_answered_with_an_empty_400_is_empty_text_but_other_400s_are_err
     def response(status: int, body: str) -> httpx.Response:
         return httpx.Response(status, content=body.encode())
 
-    assert realtime.qwen_heard_nothing(response(400, "{}"))
-    assert realtime.qwen_heard_nothing(response(400, '{"message": "ASR_RESPONSE_HAVE_NO_WORDS"}'))
-    assert not realtime.qwen_heard_nothing(response(400, '{"message": "boom"}'))
-    assert not realtime.qwen_heard_nothing(response(500, "{}"))
+    assert transcription.qwen_heard_nothing(response(400, "{}"))
+    assert transcription.qwen_heard_nothing(
+        response(400, '{"message": "ASR_RESPONSE_HAVE_NO_WORDS"}')
+    )
+    assert not transcription.qwen_heard_nothing(response(400, '{"message": "boom"}'))
+    assert not transcription.qwen_heard_nothing(response(500, "{}"))
 
     body = {"text": "{}"}
 
@@ -726,7 +729,7 @@ def test_silence_answered_with_an_empty_400_is_empty_text_but_other_400s_are_err
 
     async def probe() -> str | None:
         async with httpx.AsyncClient() as client:
-            return await realtime.try_qwen_model(client, "https://qwen.example", KEY, "m")
+            return await transcription.try_qwen_model(client, "https://qwen.example", KEY, "m")
 
     assert asyncio.run(probe()) is None
     settings = Settings(

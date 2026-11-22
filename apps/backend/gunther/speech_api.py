@@ -12,10 +12,11 @@ from fastapi import APIRouter, HTTPException, Request
 
 from gunther import speech_registry
 from gunther.device_auth import AuthPrincipal
-from gunther.realtime import qwen_root, sensevoice_health, try_qwen_live, try_qwen_model
+from gunther.realtime import try_qwen_live
 from gunther.schemas import ApiModel
 from gunther.service_settings import ServiceSettingsStore, list_models, secret_hint
 from gunther.speech_registry import PRESETS, ROLES, Registry, SpeechError
+from gunther.transcription import qwen_root, sensevoice_health, try_qwen_model
 
 router = APIRouter()
 

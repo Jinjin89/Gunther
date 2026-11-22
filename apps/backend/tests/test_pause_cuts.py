@@ -17,6 +17,8 @@ from fastapi.testclient import TestClient
 
 from gunther import realtime
 from gunther.main import create_app
+from gunther.speech_registry import Choice
+from gunther.transcription import transcribe_segment
 from tests.test_listen_again import (
     SIDECAR,
     pcm_b64,
@@ -225,6 +227,7 @@ def test_only_sensevoice_gets_drafts_in_segmented_mode(
             draft = socket.receive_json()
             assert draft["type"] == "transcript.piece" and draft["final"] is False
             assert draft["end_ms"] is None and draft["text"].startswith("text")
+            assert "sentences" not in draft
             talk(socket, tone(600), silence(800), start_ms=2400)
             socket.send_json({"type": "input_audio_buffer.commit"})
             events = until(socket, "transcript.flushed")
@@ -300,13 +303,27 @@ def test_qwen_upload_gets_the_context_as_messages_cut_from_the_front() -> None:
         seen.append(json.loads(request.read()))
         return httpx.Response(200, json={"output": {"text": "ok"}})
 
-    transcribe = realtime._qwen_transcriber(
-        "https://qwen.example", "key", "qwen-audio-3.1-asr-flash", 16_000, "A title"
+    choice = Choice(
+        kind="qwen",
+        provider="Qwen",
+        base_url="https://qwen.example",
+        api_key="key",
+        model="qwen-audio-3.1-asr-flash",
+        label="Qwen-Audio",
+        stream=True,
+        language="",
     )
 
     async def go() -> None:
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            await transcribe(client, bytes(3200), "old " * 300 + "the newest words")
+            text = await transcribe_segment(
+                client,
+                choice,
+                bytes(3200),
+                title="A title",
+                recent="old " * 300 + "the newest words",
+            )
+            assert text == "ok"
 
     asyncio.run(go())
     messages = seen[0]["input"]["messages"]

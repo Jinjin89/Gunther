@@ -359,3 +359,11 @@ that 318ad32 didn't have. LectureRecorder.tsx goes back to 318ad32's completion,
 restore and spool logic, apart from the minimal wiring to call the shared upload
 boundary. The checker's completion cases become regression tests. They pass on 318ad32
 and must pass again.
+
+# Round 24 — Phase B leaves UI state machines alone
+
+Learned from Rounds 20 and 23: Phase B extracts shared transport, readers and helpers.
+It does not rewrite a component's state machine (startup selection, recorder
+completion, finish and restore). A shared piece is wired in with the smallest change. If
+a batch needs to change a state machine to share code, it stops and says so in its
+report.

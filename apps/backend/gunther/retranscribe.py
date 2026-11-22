@@ -37,7 +37,6 @@ from gunther.knowledge_index import KnowledgeIndex
 from gunther.models import RecordingSession, Source, utc_now
 from gunther.paragraphs import ParagraphsError, group_paragraphs
 from gunther.qwen_stream import BYTES_PER_MS
-from gunther.realtime import RELISTEN_PAD_MS, ListenError, relisten_audio
 from gunther.recording_metadata import (
     TRANSCRIPT_HEADING,
     RecordingReference,
@@ -46,6 +45,7 @@ from gunther.recording_metadata import (
     with_recording_header,
 )
 from gunther.source_identity import source_fingerprint
+from gunther.transcription import RELISTEN_PAD_MS, ListenError, relisten_audio
 
 logger = logging.getLogger(__name__)
 

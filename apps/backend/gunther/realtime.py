@@ -3,14 +3,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
-import io
 import json
 import logging
 import secrets
 import uuid
-import wave
 from collections import deque
-from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
@@ -33,7 +30,13 @@ from gunther.qwen_stream import (
     split_sentences,
     stream_url,
 )
-from gunther.speech_registry import Choice, qwen_live_id, qwen_upload_id
+from gunther.speech_registry import Choice, qwen_live_id
+from gunther.transcription import (
+    CONTEXT_CHARS,
+    sensevoice_health,
+    sensevoice_root,
+    transcribe_segment,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,180 +46,6 @@ async def _accept(websocket: WebSocket) -> None:
 
     if websocket.client_state == WebSocketState.CONNECTING:
         await websocket.accept()
-
-
-def _sensevoice_root(url: str) -> str:
-    normalized = url.rstrip("/")
-    return normalized[:-3] if normalized.endswith("/v1") else normalized
-
-
-async def sensevoice_health(url: str, timeout: float = 1.2) -> dict[str, object] | None:
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(f"{_sensevoice_root(url)}/health")
-            response.raise_for_status()
-            payload = response.json()
-            return payload if isinstance(payload, dict) and payload.get("ok") is True else None
-    except (httpx.HTTPError, ValueError, TypeError):
-        return None
-
-
-def _pcm16_wav(pcm: bytes, sample_rate: int = 24_000) -> bytes:
-    aligned = pcm[: len(pcm) - (len(pcm) % 2)]
-    output = io.BytesIO()
-    with wave.open(output, "wb") as destination:
-        destination.setnchannels(1)
-        destination.setsampwidth(2)
-        destination.setframerate(sample_rate)
-        destination.writeframes(aligned)
-    return output.getvalue()
-
-
-# (client, audio, the recent final text) -> the words. Servers that cannot use what was
-# said before ignore the last argument.
-Transcriber = Callable[..., Awaitable[str]]
-# The tail of the recent text that goes along as context (an OpenAI-style ``prompt``).
-CONTEXT_CHARS = 800
-
-
-def _form_transcriber(
-    endpoint: str,
-    headers: dict[str, str],
-    form: dict[str, str],
-    sample_rate: int = 24_000,
-    title: str | None = None,
-) -> Transcriber:
-    """An ``/audio/transcriptions`` server: the segment goes up as a WAV file.
-
-    With a ``title`` (even an empty one) the server also gets a ``prompt``: the title, then
-    the tail of what it wrote last. SenseVoice passes ``None`` because it cannot use one.
-    """
-
-    async def transcribe(client: httpx.AsyncClient, pcm: bytes, recent: str = "") -> str:
-        data = dict(form)
-        if title is not None:
-            prompt = f"{title.strip()[:200]}\n{recent[-CONTEXT_CHARS:]}".strip()
-            if prompt:
-                data["prompt"] = prompt
-        response = await client.post(
-            endpoint,
-            headers=headers,
-            files={"file": ("segment.wav", _pcm16_wav(pcm, sample_rate), "audio/wav")},
-            data=data,
-        )
-        response.raise_for_status()
-        return str(response.json().get("text", "")).strip()
-
-    return transcribe
-
-
-def qwen_root(base_url: str) -> str:
-    """Qwen's address without a path: the saved one may still end in /compatible-mode/v1."""
-
-    root = base_url.rstrip("/")
-    return root.removesuffix("/compatible-mode/v1").removesuffix("/api/v1")
-
-
-def qwen_endpoint(base_url: str) -> str:
-    return f"{qwen_root(base_url)}/api/v1/services/aigc/multimodal-generation/generation"
-
-
-def qwen_request(
-    model: str, wav: bytes, sample_rate: int = 24_000, context: list[str] | None = None
-) -> dict[str, object]:
-    """Qwen-Audio takes the audio as a data URI inside a message.
-
-    ``context`` (terms, then what came before and after) goes first, one user message
-    each, at most 400 characters; Qwen uses it to hear the same words again.
-    """
-
-    encoded = base64.b64encode(wav).decode("ascii")
-    hints = [
-        {"role": "user", "content": [{"type": "input_text", "text": text[:400]}]}
-        for text in (context or [])
-        if text.strip()
-    ]
-    return {
-        "model": model,
-        "input": {
-            "messages": [
-                *hints,
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_audio",
-                            "input_audio": {
-                                "data": f"data:audio/wav;base64,{encoded}",
-                                "format": "wav",
-                            },
-                        }
-                    ],
-                },
-            ]
-        },
-        "parameters": {"format": "wav", "sample_rate": str(sample_rate)},
-    }
-
-
-def qwen_text(payload: object) -> str:
-    """The words in a Qwen-Audio reply: ``output.text``."""
-
-    output = payload.get("output") if isinstance(payload, dict) else None
-    if isinstance(output, dict) and isinstance(output.get("text"), str):
-        return output["text"].strip()
-    return ""
-
-
-def qwen_heard_nothing(response: httpx.Response) -> bool:
-    """Qwen refuses audio with no speech in it (a pause, only noise) instead of returning ''.
-
-    Qwen-Audio 3.1 says ASR_RESPONSE_HAVE_NO_WORDS; Qwen-Audio 3.0 answers silence with
-    a 400 whose body is an empty JSON object.
-    """
-
-    if response.status_code != 400:
-        return False
-    if "ASR_RESPONSE_HAVE_NO_WORDS" in response.text:
-        return True
-    try:
-        return response.json() == {}
-    except ValueError:
-        return False
-
-
-async def try_qwen_model(
-    client: httpx.AsyncClient, base_url: str, api_key: str, model: str
-) -> str | None:
-    """Send half a second of silence to a model's upload id; what is wrong, or None if it answers.
-
-    Qwen's model list leaves out the Qwen-Audio recognisers, so asking the model is the
-    only reliable check.
-    """
-
-    model = qwen_upload_id(model)
-    try:
-        response = await client.post(
-            qwen_endpoint(base_url),
-            headers={"Authorization": f"Bearer {api_key}"},
-            json=qwen_request(model, _pcm16_wav(b"\x00\x00" * 12_000)),
-        )
-    except httpx.HTTPError:
-        return f"{model}: Qwen did not answer. Try again."
-    if response.status_code < 400 or qwen_heard_nothing(response):
-        return None
-    if response.status_code in (401, 403):
-        return "Qwen did not accept this API key."
-    text = response.text
-    if response.status_code == 404 or "Model not exist" in text:
-        return f"{model}: Qwen has no model with this id."
-    if "Input should be" in text:
-        return (
-            f"{model} takes an older kind of request. "
-            "Use a Qwen-Audio model such as qwen-audio-3.1-asr-flash."
-        )
-    # Anything else came from the model itself (silence it could not read), so it exists.
-    return None
 
 
 # How long Qwen's live socket may take to start a task before the model counts as not live.
@@ -303,34 +132,6 @@ async def try_qwen_live(base_url: str, api_key: str, model: str) -> str | None:
     return None
 
 
-def _qwen_transcriber(
-    base_url: str, api_key: str, model: str, sample_rate: int = 24_000, title: str = ""
-) -> Transcriber:
-    """Qwen by upload: always the model's upload id, whichever of the pair was saved.
-
-    The title and the tail of the recent text go along as context messages (Qwen reads
-    only the first 400 characters of each, so the tail is cut to the part that matters).
-    """
-
-    upload_model = qwen_upload_id(model)
-
-    async def transcribe(client: httpx.AsyncClient, pcm: bytes, recent: str = "") -> str:
-        hints = [title.strip()[:400], recent.strip()[-400:]]
-        response = await client.post(
-            qwen_endpoint(base_url),
-            headers={"Authorization": f"Bearer {api_key}"},
-            json=qwen_request(
-                upload_model, _pcm16_wav(pcm, sample_rate), sample_rate, [h for h in hints if h]
-            ),
-        )
-        if qwen_heard_nothing(response):
-            return ""
-        response.raise_for_status()
-        return qwen_text(response.json())
-
-    return transcribe
-
-
 class _V2InputClock:
     # The recording clock counts captured PCM, with pauses excluded. Clients send all
     # PCM preceding a Pause or Stop before committing, and keep the boundary until
@@ -370,6 +171,32 @@ def _gap_event(start_ms: int, end_ms: int, reason: str) -> dict[str, object]:
     return {"type": "transcript.gap", "start_ms": start_ms, "end_ms": end_ms, "reason": reason}
 
 
+def _piece_event(
+    piece_id: str,
+    start_ms: int,
+    end_ms: int | None,
+    text: str,
+    sentences: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    event: dict[str, Any] = {
+        "type": "transcript.piece",
+        "id": piece_id,
+        "start_ms": start_ms,
+        "end_ms": end_ms,
+        "text": text,
+        "final": end_ms is not None,
+    }
+    if end_ms is not None:
+        if sentences is None:
+            sentences = [{"start_ms": start_ms, "end_ms": end_ms, "text": text}] if text else []
+        event["sentences"] = sentences
+    return event
+
+
+def _flushed_event(until_ms: int) -> dict[str, object]:
+    return {"type": "transcript.flushed", "until_ms": until_ms}
+
+
 _warned_no_pause_model = False
 
 
@@ -386,9 +213,8 @@ def _warn_no_pause_model() -> None:
 async def _proxy_segmented_transcription(
     websocket: WebSocket,
     *,
-    transcriber: Transcriber,
-    provider: str,
-    label: str,
+    choice: Choice,
+    context: str,
     segment_seconds: float,
     ready: dict[str, object],
     reset_url: str | None = None,
@@ -420,7 +246,7 @@ async def _proxy_segmented_transcription(
         segmenter = vad.Segmenter(detector)
     else:
         segmenter = vad.FixedBlocks(int(LIVE_RATE * 2 * max(1.0, segment_seconds)))
-    drafts = provider == "sensevoice" and detector is not None
+    drafts = choice.kind == "sensevoice" and detector is not None
     audio = bytearray()  # 16 kHz audio from ``audio_base`` on that a piece may still need
     audio_base = 0
     odd = b""  # a half sample when the client's chunk ends inside one
@@ -464,7 +290,7 @@ async def _proxy_segmented_transcription(
             await websocket.send_json(
                 {
                     "type": "service.ready",
-                    "provider": provider,
+                    "provider": choice.kind,
                     **ready,
                     "protocol": 2,
                     "check_again": check_again,
@@ -472,57 +298,41 @@ async def _proxy_segmented_transcription(
                 }
             )
 
-            async def send_piece(
-                number: int, start_ms: int, end_ms: int, text: str, final: bool
-            ) -> None:
-                event: dict[str, Any] = {
-                    "type": "transcript.piece",
-                    "id": f"{tag}-{number}",
-                    "start_ms": start_ms,
-                    "end_ms": end_ms if final else None,
-                    "text": text,
-                    "final": final,
-                }
-                if final:
-                    event["sentences"] = (
-                        [{"start_ms": start_ms, "end_ms": end_ms, "text": text}] if text else []
-                    )
-                await websocket.send_json(event)
-
             async def write_piece(number: int, chunk: bytes, start_ms: int, end_ms: int) -> None:
                 nonlocal recent
                 text = ""
                 if len(chunk) >= 2:
                     try:
-                        text = await transcriber(client, chunk, recent)
+                        text = await transcribe_segment(
+                            client, choice, chunk, title=context, recent=recent
+                        )
                     except (httpx.HTTPError, ValueError, TypeError) as error:
                         await websocket.send_json(
                             {
                                 "type": "service.error",
                                 "code": "segment_failed",
-                                "message": f"{label} missed one segment: {error}",
+                                "message": f"{choice.provider} missed one segment: {error}",
                             }
                         )
                         text = ""
-                if not text:
-                    # Empty speech clears a draft that was on screen; otherwise nothing is said.
-                    if number in drafted:
-                        await send_piece(number, start_ms, end_ms, "", True)
+                # Empty speech clears a draft that was on screen.
+                if text:
+                    recent = f"{recent} {text}".strip()[-CONTEXT_CHARS:]
+                elif number not in drafted:
                     return
-                recent = f"{recent} {text}".strip()[-CONTEXT_CHARS:]
-                await send_piece(number, start_ms, end_ms, text, True)
+                await websocket.send_json(_piece_event(f"{tag}-{number}", start_ms, end_ms, text))
 
-            async def write_draft(number: int, chunk: bytes, start_ms: int, end_ms: int) -> None:
+            async def write_draft(number: int, chunk: bytes, start_ms: int) -> None:
                 if number <= pieces_closed:
                     return  # its final is already queued: a draft now would only be stale
                 try:
-                    text = await transcriber(client, chunk, "")
+                    text = await transcribe_segment(client, choice, chunk, title=context)
                 except (httpx.HTTPError, ValueError, TypeError) as error:
                     logger.debug("Draft of a live piece failed: %s", error)
                     return
                 if text and number > pieces_closed:
                     drafted.add(number)
-                    await send_piece(number, start_ms, end_ms, text, False)
+                    await websocket.send_json(_piece_event(f"{tag}-{number}", start_ms, None, text))
 
             async def work() -> None:
                 nonlocal outstanding
@@ -546,7 +356,7 @@ async def _proxy_segmented_transcription(
                             {
                                 "type": "service.error",
                                 "code": "provider_unavailable",
-                                "message": f"{label} stopped responding: {error}",
+                                "message": f"{choice.provider} stopped responding: {error}",
                             }
                         )
                         await websocket.close(code=1011)
@@ -562,7 +372,7 @@ async def _proxy_segmented_transcription(
                     return  # the piece is under 1 s, or under 2 s of new audio has come
                 draft_marks[number] = end
                 chunk = bytes(audio[start - audio_base : end - audio_base])
-                enqueue(("draft", number, chunk, at_ms(start), at_ms(end)))
+                enqueue(("draft", number, chunk, at_ms(start)))
 
             worker = asyncio.create_task(work())
             try:
@@ -608,9 +418,7 @@ async def _proxy_segmented_transcription(
                             audio_base = keep
                     elif message_type == "input_audio_buffer.commit":
                         enqueue_pieces(segmenter.flush())
-                        enqueue(("event", {
-                            "type": "transcript.flushed", "until_ms": input_clock.until_ms
-                        }))
+                        enqueue(("event", _flushed_event(input_clock.until_ms)))
                     elif message_type == "input_audio_buffer.clear":
                         segmenter.discard()
             finally:
@@ -625,7 +433,7 @@ async def _proxy_segmented_transcription(
                 {
                     "type": "service.error",
                     "code": "provider_unavailable",
-                    "message": f"{label} stopped responding: {error}",
+                    "message": f"{choice.provider} stopped responding: {error}",
                 }
             )
             await websocket.close(code=1011)
@@ -840,7 +648,7 @@ class _LiveStream:
             not self.chunks or self.chunks[0].start >= self.flush_marks[0][0]
         ):
             _, until_ms = self.flush_marks.popleft()
-            await self.send({"type": "transcript.flushed", "until_ms": until_ms})
+            await self.send(_flushed_event(until_ms))
 
     def _remove_front(self, count: int) -> None:
         del self.chunks[:count]
@@ -922,20 +730,12 @@ class _LiveStream:
 
     async def _on_result(self, task: _Task, sentence: dict[str, Any]) -> None:
         text = str(sentence.get("text") or "")
+        piece_id = f"{self.tag}-{task.number}-{sentence.get('sentence_id', 0)}"
         begin = sentence.get("begin_time")
         start_ms = task.start_ms + int(begin if begin is not None else 0)
         if not sentence.get("sentence_end"):
             if text.strip():
-                await self.send(
-                    {
-                        "type": "transcript.piece",
-                        "id": f"{self.tag}-{task.number}-{sentence.get('sentence_id', 0)}",
-                        "start_ms": start_ms,
-                        "end_ms": None,
-                        "text": text,
-                        "final": False,
-                    }
-                )
+                await self.send(_piece_event(piece_id, start_ms, None, text))
             return
         end = sentence.get("end_time")
         end_ms = task.start_ms + int(end) if end is not None else start_ms
@@ -950,15 +750,9 @@ class _LiveStream:
         spoken = " ".join(item["text"] for item in sentences)
         self.recent = f"{self.recent} {spoken}".strip()[-2 * 400 :]
         await self.send(
-            {
-                "type": "transcript.piece",
-                "id": f"{self.tag}-{task.number}-{sentence.get('sentence_id', 0)}",
-                "start_ms": sentences[0]["start_ms"],
-                "end_ms": sentences[-1]["end_ms"],
-                "text": spoken,
-                "final": True,
-                "sentences": sentences,
-            }
+            _piece_event(
+                piece_id, sentences[0]["start_ms"], sentences[-1]["end_ms"], spoken, sentences
+            )
         )
 
     # Keeping a task going -----------------------------------------------------
@@ -1114,10 +908,6 @@ async def _proxy_live_stream(
     await live.run()
 
 
-def compatible_endpoint(base_url: str) -> str:
-    return f"{base_url.rstrip('/')}/audio/transcriptions"
-
-
 # A take sent whole is cut only when it gets long (Qwen takes about five minutes).
 WHOLE_TAKE_SECONDS = 150.0
 
@@ -1169,62 +959,37 @@ async def proxy_realtime_transcription(
                 "another model, such as Qwen, in Settings → Transcription.",
             )
             return
-        root = _sensevoice_root(choice.base_url)
-        transcriber = _form_transcriber(
-            f"{root}/v1/audio/transcriptions",
-            {},
-            {"model": "sensevoice", "response_format": "json"},
-            LIVE_RATE,
-        )
         ready = {**ready, "local": True, "diarize": bool(status.get("diarize"))}
-        reset_url = f"{root}/reset"
-    elif choice.kind == "qwen":
-        if choice.stream:
-            # Accept first: checking the live model can take seconds on a slow link, and the
-            # client's audio waits in the socket meanwhile instead of in its own small queue.
-            await _accept(websocket)
-            live_model = qwen_live_id(choice.model)
-            upstream, reason = await open_live_socket(
-                choice.base_url, choice.api_key or "", live_model
+        reset_url = f"{sensevoice_root(choice.base_url)}/reset"
+    elif choice.kind == "qwen" and choice.stream:
+        # Accept first: checking the live model can take seconds on a slow link, and the
+        # client's audio waits in the socket meanwhile instead of in its own small queue.
+        await _accept(websocket)
+        live_model = qwen_live_id(choice.model)
+        upstream, reason = await open_live_socket(choice.base_url, choice.api_key or "", live_model)
+        if upstream is not None:
+            await _proxy_live_stream(
+                websocket,
+                upstream,
+                choice,
+                sample_rate=sample_rate,
+                offset_ms=offset_ms,
+                context=context,
+                listen=listen,
+                check_again=check_again,
+                group_paragraphs=group_paragraphs,
             )
-            if upstream is not None:
-                await _proxy_live_stream(
-                    websocket,
-                    upstream,
-                    choice,
-                    sample_rate=sample_rate,
-                    offset_ms=offset_ms,
-                    context=context,
-                    listen=listen,
-                    check_again=check_again,
-                    group_paragraphs=group_paragraphs,
-                )
-                return
-            logger.warning(
-                "%s has no live text here (%s); recording sends short pieces instead",
-                live_model,
-                reason,
-            )
-            ready = {**ready, "live": "segments"}
-        transcriber = _qwen_transcriber(
-            choice.base_url, choice.api_key or "", choice.model, LIVE_RATE, context
+            return
+        logger.warning(
+            "%s has no live text here (%s); recording sends short pieces instead",
+            live_model,
+            reason,
         )
-    else:
-        form = {"model": choice.model, "response_format": "json"}
-        if choice.language:
-            form["language"] = choice.language
-        transcriber = _form_transcriber(
-            compatible_endpoint(choice.base_url),
-            {"Authorization": f"Bearer {choice.api_key}"} if choice.api_key else {},
-            form,
-            LIVE_RATE,
-            context,
-        )
+        ready = {**ready, "live": "segments"}
     await _proxy_segmented_transcription(
         websocket,
-        transcriber=transcriber,
-        provider=choice.kind,
-        label=choice.provider,
+        choice=choice,
+        context=context,
         segment_seconds=seconds,
         ready=ready,
         reset_url=reset_url,
@@ -1235,156 +1000,3 @@ async def proxy_realtime_transcription(
         check_again=check_again,
         group_paragraphs=group_paragraphs,
     )
-
-
-# Listening again ---------------------------------------------------------------
-
-# Audio is read this much past each end so a word at the edge is not cut.
-RELISTEN_PAD_MS = 300
-# A minute of 16 kHz audio is about 2.6 MB once encoded for Qwen.
-# A minute of 16 kHz audio is ~2.6 MB as base64. On a slow link a check fails within about a
-# minute and says so (the live text stays, with Retry) rather than holding up later checks.
-RELISTEN_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
-RELISTEN_PROMPT_CHARS = 800
-
-
-class ListenError(Exception):
-    """The model could not listen again; the message is the provider's, for the user."""
-
-
-def _provider_message(error: Exception, label: str) -> str:
-    if isinstance(error, httpx.HTTPStatusError):
-        detail = ""
-        try:
-            body = error.response.json()
-        except ValueError:
-            body = None
-        if isinstance(body, dict):
-            nested = body.get("error")
-            candidates = [
-                body.get("message"),
-                nested.get("message") if isinstance(nested, dict) else nested,
-                body.get("detail"),
-            ]
-            detail = next((str(item) for item in candidates if isinstance(item, str) and item), "")
-        if not detail:
-            detail = error.response.text.strip()[:200]
-        status = error.response.status_code
-        return f"{label} answered {status}: {detail}" if detail else f"{label} answered {status}."
-    # A timeout's message is empty: name the kind of failure instead.
-    return f"{label} could not be reached ({str(error) or type(error).__name__})."
-
-
-def _qwen_words(payload: object) -> list[dict[str, Any]]:
-    """The words of a Qwen-Audio reply: ``output.sentence`` is one object, or a list of them."""
-
-    output = payload.get("output") if isinstance(payload, dict) else None
-    sentence = output.get("sentence") if isinstance(output, dict) else None
-    found: list[dict[str, Any]] = []
-    for item in sentence if isinstance(sentence, list) else [sentence]:
-        words = item.get("words") if isinstance(item, dict) else None
-        if isinstance(words, list):
-            found.extend(word for word in words if isinstance(word, dict))
-    return found
-
-
-def _join_text(parts: list[str]) -> str:
-    """Sentences back into text: a space between words, none where either side is CJK."""
-
-    out = ""
-    for part in parts:
-        if out and not (_is_cjk(out[-1]) or _is_cjk(part[:1])):
-            out += " "
-        out += part
-    return out
-
-
-def _is_cjk(character: str) -> bool:
-    return bool(character) and ord(character) >= 0x2E80
-
-
-async def relisten_audio(
-    choice: Choice,
-    pcm: bytes,
-    *,
-    audio_start_ms: int,
-    start_ms: int,
-    end_ms: int,
-    terms: list[str],
-    before: str,
-    after: str,
-    timeout: httpx.Timeout = RELISTEN_TIMEOUT,
-) -> dict[str, Any]:
-    """Have a job's model write the words of ``pcm`` (16 kHz) again, with context.
-
-    ``audio_start_ms`` is where ``pcm`` begins on the recording clock; ``start_ms`` and
-    ``end_ms`` are the range asked for, the rest being padding. Qwen answers with word
-    times, which become sentences on the recording clock (those lying only in the
-    padding are dropped); other providers answer text only, with no sentences.
-    """
-
-    wav = _pcm16_wav(pcm, LIVE_RATE)
-    term_text = ", ".join(term.strip() for term in terms if term.strip())
-    async with httpx.AsyncClient(timeout=timeout) as client:
-
-        async def post(**request: Any) -> httpx.Response:
-            try:
-                return await client.post(**request)
-            except (httpx.ConnectError, httpx.RemoteProtocolError):
-                # One more try when the connection never opened or was dropped; a timeout is
-                # not retried, so a slow link fails once instead of twice as slowly.
-                return await client.post(**request)
-
-        try:
-            if choice.kind == "qwen":
-                response = await post(
-                    url=qwen_endpoint(choice.base_url),
-                    headers={"Authorization": f"Bearer {choice.api_key}"},
-                    json=qwen_request(
-                        qwen_upload_id(choice.model),
-                        wav,
-                        LIVE_RATE,
-                        [term_text[:400], before.strip()[-400:], after.strip()[:400]],
-                    ),
-                )
-                if qwen_heard_nothing(response):
-                    return {"text": "", "sentences": []}
-                response.raise_for_status()
-                payload = response.json()
-                heard = split_sentences(_qwen_words(payload), audio_start_ms)
-                sentences = [
-                    sentence
-                    for sentence in heard
-                    if sentence["end_ms"] > start_ms and sentence["start_ms"] < end_ms
-                ]
-                text = qwen_text(payload)
-                if heard and len(sentences) != len(heard):
-                    # Words that lie only in the padding are not part of the answer.
-                    text = _join_text([sentence["text"] for sentence in sentences])
-                return {"text": text, "sentences": sentences}
-            if choice.kind == "sensevoice":
-                root = _sensevoice_root(choice.base_url)
-                endpoint, headers = f"{root}/v1/audio/transcriptions", {}
-                form = {"model": "sensevoice", "response_format": "json"}
-            else:
-                endpoint = compatible_endpoint(choice.base_url)
-                headers = {"Authorization": f"Bearer {choice.api_key}"} if choice.api_key else {}
-                form = {"model": choice.model, "response_format": "json"}
-                if choice.language:
-                    form["language"] = choice.language
-                prompt = term_text
-                room = RELISTEN_PROMPT_CHARS - len(prompt) - 1
-                if before.strip() and room > 0:
-                    prompt = f"{prompt} {before.strip()[-room:]}".strip()
-                if prompt:
-                    form["prompt"] = prompt[:RELISTEN_PROMPT_CHARS]
-            response = await post(
-                url=endpoint,
-                headers=headers,
-                files={"file": ("segment.wav", wav, "audio/wav")},
-                data=form,
-            )
-            response.raise_for_status()
-            return {"text": str(response.json().get("text", "")).strip(), "sentences": []}
-        except (httpx.HTTPError, ValueError, TypeError, AttributeError) as error:
-            raise ListenError(_provider_message(error, choice.provider)) from error

@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { recordingSocketUrl } from "../api";
+import {
+  appendLiveAudio,
+  commitLiveAudio,
+  openLiveTranscription,
+  readLiveTranscriptionEvent,
+} from "./liveTranscriptionTransport";
 import { encodePcm16, pcm16Length } from "./pcm";
 import { dictationText, updateDictation, type DictationText } from "./dictationText";
 
@@ -91,7 +96,7 @@ export function useDictation(onText: (text: string, pieces: DictationText) => vo
   const commit = useCallback((session: Session) => {
     if (!session.ready || session.committed || session.socket?.readyState !== WebSocket.OPEN) return;
     session.committed = true;
-    session.socket.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+    commitLiveAudio(session.socket);
     armTimeout(session, "The voice-input connection timed out. Your text is still here.");
   }, [armTimeout]);
 
@@ -146,14 +151,14 @@ export function useDictation(onText: (text: string, pieces: DictationText) => vo
       if (current.current !== session) return;
       const processor = context.createScriptProcessor(4_096, 1, 1);
       session.processor = processor;
-      const socket = new WebSocket(recordingSocketUrl("", "dictation", { offsetMs: 0 }));
+      const socket = openLiveTranscription("", "dictation", { offsetMs: 0 });
       session.socket = socket;
       context.createMediaStreamSource(stream).connect(processor);
       processor.connect(context.destination);
       // Capture and show listening immediately; service setup runs while audio is queued.
       setState("listening");
       let lastLevel = 0;
-      const send = (audio: string) => socket.send(JSON.stringify({ type: "input_audio_buffer.append", audio }));
+      const send = (audio: string) => appendLiveAudio(socket, audio);
       processor.onaudioprocess = (event) => {
         if (current.current !== session || session.stopping) return;
         const samples = event.inputBuffer.getChannelData(0);
@@ -176,12 +181,8 @@ export function useDictation(onText: (text: string, pieces: DictationText) => vo
       armTimeout(session, "Could not connect to live transcription. Please try again.");
       socket.onmessage = (message) => {
         if (current.current !== session) return;
-        let event: Record<string, unknown>;
-        try {
-          event = JSON.parse(String(message.data)) as Record<string, unknown>;
-          if (!event || typeof event !== "object" || Array.isArray(event)) throw new Error("Invalid event");
-        }
-        catch { fail(session, "The transcription service returned an invalid response."); return; }
+        const event = readLiveTranscriptionEvent(message);
+        if (!event) { fail(session, "The transcription service returned an invalid response."); return; }
         if (event.type === "service.ready") {
           if (session.ready) return;
           session.ready = true;

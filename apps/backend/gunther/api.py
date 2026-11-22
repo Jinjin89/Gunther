@@ -42,13 +42,7 @@ from gunther.lecture import LectureSummaryError
 from gunther.llm import ModelError
 from gunther.pairing_exchange_guard import PairingExchangeRejected
 from gunther.paragraphs import ParagraphsError, group_paragraphs
-from gunther.realtime import (
-    RELISTEN_PAD_MS,
-    ListenError,
-    proxy_realtime_transcription,
-    relisten_audio,
-    sensevoice_health,
-)
+from gunther.realtime import proxy_realtime_transcription
 from gunther.recording_service import (
     MAX_CHUNK_BYTES,
     RecordingConflictError,
@@ -131,6 +125,7 @@ from gunther.schemas import (
 from gunther.service import AskFailure, KnowledgeService
 from gunther.skillbook import ask_skills
 from gunther.storage_budget import StorageBudgetError
+from gunther.transcription import RELISTEN_PAD_MS, ListenError, relisten_audio, sensevoice_health
 from gunther.web_capture import (
     WebCaptureConflictError,
     WebCaptureFetchError,

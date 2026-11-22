@@ -1,5 +1,6 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { log } from "../log";
 import { useDictation } from "./useDictation";
 
 class Socket {
@@ -63,7 +64,7 @@ describe("streaming dictation lifecycle", () => {
     act(() => audio());
     expect(socket.sent).toHaveLength(0);
     act(() => socket.receive(ready));
-    expect(socket.sent[0]?.type).toBe("input_audio_buffer.append");
+    expect(socket.sent[0]).toEqual({ type: "input_audio_buffer.append", audio: expect.any(String) });
   });
 
   it("shows revisions before stopping and completes when the service finishes the take", async () => {
@@ -152,6 +153,18 @@ describe("streaming dictation lifecycle", () => {
     act(() => { socket.receive(ready); socket.receive(phrase("Earlier words.", true)); });
     act(() => socket.receive({ type: "service.error", code: "segment_failed", message: "A segment failed." }));
     expect(result.current.error).toBe("A segment failed.");
+    expect(result.current.transcript).toBe("Earlier words.");
+    expect(onComplete).not.toHaveBeenCalled();
+  });
+
+  it("keeps the latest text when the transport receives a malformed message", async () => {
+    const { result, socket, onComplete } = await setup();
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => undefined);
+    act(() => { socket.receive(ready); socket.receive(phrase("Earlier words.", true)); });
+    act(() => socket.onmessage?.(new MessageEvent("message", { data: '["Partial transcript"]' })));
+    expect(warn).toHaveBeenCalledExactlyOnceWith("transcription", "Received an invalid live transcription frame.");
+    expect(result.current.state).toBe("idle");
+    expect(result.current.error).toBe("The transcription service returned an invalid response.");
     expect(result.current.transcript).toBe("Earlier words.");
     expect(onComplete).not.toHaveBeenCalled();
   });

@@ -22,8 +22,14 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { knowledgeApi, recordingAssetUrl, recordingSocketUrl } from "../api";
+import { knowledgeApi, recordingAssetUrl } from "../api";
 import { flushAudio, offerAudio } from "../services/audioQueue";
+import {
+  appendLiveAudio,
+  commitLiveAudio,
+  openLiveTranscription,
+  readLiveTranscriptionEvent,
+} from "../services/liveTranscriptionTransport";
 import { runOnce } from "../services/singleFlight";
 import { encodePcm16, pcm16Length } from "../services/pcm";
 import {
@@ -895,7 +901,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
       resolve();
     }, FLUSH_WAIT_MS);
     flushWaitersRef.current.push(waiter);
-    socket.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+    commitLiveAudio(socket);
   });
 
   const closeAudioPipeline = useCallback(() => {
@@ -920,7 +926,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   }, []);
 
   const sendAudio = (socket: WebSocket, item: PendingAudio) => {
-    socket.send(JSON.stringify({ type: "input_audio_buffer.append", audio: item.audio, offset_ms: item.offsetMs }));
+    appendLiveAudio(socket, item.audio, item.offsetMs);
     const sent = sentPcmRef.current;
     sent.push(item);
     while (sent.length > 1 && item.offsetMs - sent[0]!.offsetMs > SENT_AUDIO_MS) sent.shift();
@@ -945,10 +951,10 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   const openTranscriptionSocket = (context: string) => {
     if (!transcriptionEnabledRef.current) return;
     // The connection starts at the oldest audio still waiting: queued audio keeps its true place.
-    const socket = new WebSocket(recordingSocketUrl(context, "recording", {
+    const socket = openLiveTranscription(context, "recording", {
       offsetMs: pendingPcmRef.current[0]?.offsetMs ?? currentClockMs(),
       recordingId: recordingSessionRef.current?.id,
-    }));
+    });
     socketRef.current = socket;
     setProvider("connecting");
     // Whether this socket replaces one that dropped (the first connection has nothing to catch up on).
@@ -961,7 +967,8 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
     socket.onopen = sendQueued;
     socket.onmessage = (message) => {
       if (socketRef.current !== socket) return;
-      const event = JSON.parse(String(message.data)) as Record<string, unknown>;
+      const event = readLiveTranscriptionEvent(message);
+      if (!event) return;
       if (event.type === "service.ready") {
         reconnectAttemptsRef.current = 0;
         setProvider("live");

@@ -2,6 +2,7 @@ import type { RecordingSession } from "@gunther/contracts";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { knowledgeApi, recordingAssetUrl } from "../api";
+import { log } from "../log";
 import { renderTranscript, transcriptFromText } from "../services/liveTranscript";
 import { assertRecordingSpoolAvailable, spoolRecordingChunk, type RecordingSpoolChunk } from "../services/recordingSpool";
 import * as pcm from "../services/pcm";
@@ -458,6 +459,17 @@ describe("saving a recording independently of transcript processing", () => {
       fireEvent.click(screen.getByRole("button", { name: "Finish" }));
       socket.receive({ type: "transcript.flushed", until_ms: 5_000 });
     });
+  });
+
+  it("logs a malformed frame and accepts the next live transcript piece", async () => {
+    const { socket } = await startCapture(false, false);
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => undefined);
+
+    act(() => socket.onmessage?.({ data: '{"text":"Partial transcript"' }));
+    expect(warn).toHaveBeenCalledExactlyOnceWith("transcription", "Received an invalid live transcription frame.");
+
+    piece(socket, "heard", 0, 5_000, "Words after the bad frame.");
+    expect(screen.getByText("Words after the bad frame.")).toBeVisible();
   });
 
   it("stamps 44.1 kHz audio from the emitted samples across reconnect", async () => {
