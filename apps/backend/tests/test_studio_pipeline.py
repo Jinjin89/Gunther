@@ -7,6 +7,7 @@ import pytest
 from fake_models import FakeProvider, gateway, model, output_replies
 
 from gunther.agent import Evidence, Tool
+from gunther.answer_runs import Stopped
 from gunther.llm import ModelError
 from gunther.outputs import Issue, Notes, Planned, Pool, Spec, split_document
 from gunther.schemas import ConversationCitationOut
@@ -749,6 +750,43 @@ def test_a_failed_build_resumes_after_its_memo_and_storyline():
     again = [request_text(r) for r in fake.requests[before:]]
     assert not any("lead analyst" in s or "presentation strategist" in s for s in again)
     assert "design: v2" in built.content
+
+
+@pytest.mark.parametrize("changed", ["nothing", "brief", "citation_revision"])
+def test_stopping_at_story_completion_keeps_only_a_matching_checkpoint(changed):
+    fake = FakeProvider(router)
+    spec = Spec("slides", "collaborator", brief="A 10-minute talk")
+    evidence = pool()
+    checkpoint = {}
+
+    def stop(event):
+        if (event.get("type"), event.get("id"), event.get("state")) == ("stage", "story", "done"):
+            assert checkpoint["storyline"]
+            raise Stopped
+
+    with pytest.raises(Stopped):
+        StudioAgents(gateway(fake), use="talk").make(
+            model(), "high", spec, evidence, Notes(), stop, checkpoint=checkpoint.update,
+        )
+    assert not any("presentation writer" in request_text(r) for r in fake.requests)
+    if changed == "brief":
+        spec = replace(spec, brief="A revised 10-minute talk")
+    elif changed == "citation_revision":
+        first, *others = evidence.items
+        citation = first.payload[0].model_copy(update={
+            "source_revision_id": "republished", "block_id": "republished_block",
+        })
+        evidence = Pool(50)
+        evidence.restore([replace(first, payload=(citation, None)), *others])
+
+    before = len(fake.requests)
+    StudioAgents(gateway(fake), use="talk").make(
+        model(), "high", spec, evidence, Notes(), resume=checkpoint,
+    )
+    tasks = [request_text(r) for r in fake.requests[before:]]
+    assert any("presentation writer" in task for task in tasks)
+    assert any("lead analyst" in task for task in tasks) == (changed != "nothing")
+    assert any("presentation strategist" in task for task in tasks) == (changed != "nothing")
 
 
 def test_report_rebuild_fingerprints_style_intent_and_replays_legacy(tmp_path, monkeypatch):

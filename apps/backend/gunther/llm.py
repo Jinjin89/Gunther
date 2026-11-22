@@ -24,6 +24,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Sequence
+from contextlib import ExitStack
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -210,36 +211,15 @@ class ModelGateway:
     ) -> Completion:
         """Ask once. ``on_text`` hears the answer's text as it is written."""
 
-        admit = REQUEST_ADMISSION.get()
-        if admit is not None:
-            admit()
         turns = [Turn("user", messages)] if isinstance(messages, str) else list(messages)
         if trace.current() is None:
             return self._complete(
                 model, system, turns, images, effort, json_mode, max_tokens, on_text
             )
-        # Settings → Developer keeps how answers are made: the exact request and reply.
-        with trace.step(
-            "model",
-            model.display,
-            model=model.ref,
-            effort=effort,
-            json=json_mode,
-            system=system,
-            messages=[{"role": turn.role, "content": turn.content} for turn in turns],
-            images=len(images),
-        ) as call:
-            completion = self._complete(
-                model, system, turns, images, effort, json_mode, max_tokens, on_text, call
+        with ExitStack() as trace_steps:
+            return self._complete(
+                model, system, turns, images, effort, json_mode, max_tokens, on_text, trace_steps,
             )
-            trace.update(
-                call,
-                reply=completion.text,
-                reasoning=completion.reasoning,
-                effortApplied=completion.effort_applied,
-                notes=list(completion.notes),
-            )
-            return completion
 
     def _complete(
         self,
@@ -251,8 +231,10 @@ class ModelGateway:
         json_mode: bool,
         max_tokens: int | None,
         on_text: Callable[[str], None] | None,
-        call: dict[str, Any] | None = None,
+        trace_steps: ExitStack | None = None,
     ) -> Completion:
+        call: dict[str, Any] | None = None
+        image_count = len(images)
         notes: list[str] = []
         if images and not model.vision:
             notes.append(f"{model.label} cannot see images; it read their text instead.")
@@ -273,6 +255,20 @@ class ModelGateway:
         with self._lock:
             send_usage = model.ref not in self._without_usage
         while True:
+            # Admit every send, including retries, before starting its usage record.
+            if (admit := REQUEST_ADMISSION.get()) is not None:
+                admit()
+            if trace_steps is not None and call is None:
+                call = trace_steps.enter_context(trace.step(
+                    "model",
+                    model.display,
+                    model=model.ref,
+                    effort=effort,
+                    json=json_mode,
+                    system=system,
+                    messages=[{"role": turn.role, "content": turn.content} for turn in turns],
+                    images=image_count,
+                ))
             try:
                 counts = _usage(None)
                 at = datetime.now(UTC).replace(tzinfo=None)
@@ -325,8 +321,6 @@ class ModelGateway:
                     # An empty answer that did not run out of room is asked for once more.
                     emptied = True
                     logger.info("%s returned an empty answer, asking again", model.ref)
-                    if admit := REQUEST_ADMISSION.get():
-                        admit()
                     continue
                 break
             except openai.BadRequestError as error:
@@ -336,26 +330,18 @@ class ModelGateway:
                     send_usage = False
                     with self._lock:
                         self._without_usage.add(model.ref)
-                    if admit := REQUEST_ADMISSION.get():
-                        admit()
                     continue
                 # A setting this server does not know: once without it, and say so.
                 if send_effort.body or send_effort.reasoning_effort:
                     logger.info("%s refused the effort setting: %s", model.ref, error)
                     send_effort, applied = Params(), None
                     notes.append(f"{model.label} refused the effort setting; used its default.")
-                    if admit := REQUEST_ADMISSION.get():
-                        admit()
                     continue
                 if send_json:
                     send_json = False
-                    if admit := REQUEST_ADMISSION.get():
-                        admit()
                     continue
                 if send_usage:
                     send_usage = False
-                    if admit := REQUEST_ADMISSION.get():
-                        admit()
                     continue
                 raise ModelError(
                     f"{model.provider_name} refused the request: {_detail(error)}"
@@ -368,8 +354,6 @@ class ModelGateway:
                 if on_text is None and not broke:
                     broke = True
                     logger.info("%s: the connection broke, sending again: %s", model.ref, error)
-                    if admit := REQUEST_ADMISSION.get():
-                        admit()
                     continue
                 what = str(error) or type(error).__name__
                 raise ModelError(
@@ -381,7 +365,7 @@ class ModelGateway:
                 if finish == "length"
                 else f"{model.display} returned an empty answer."
             )
-        return Completion(
+        completion = Completion(
             text=text.strip(),
             model=model,
             reasoning=reasoning or None,
@@ -389,6 +373,15 @@ class ModelGateway:
             effort_applied=applied,
             notes=tuple(notes),
         )
+        if call is not None:
+            trace.update(
+                call,
+                reply=completion.text,
+                reasoning=completion.reasoning,
+                effortApplied=completion.effort_applied,
+                notes=list(completion.notes),
+            )
+        return completion
 
     def complete_json(
         self,

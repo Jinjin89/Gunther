@@ -15,7 +15,7 @@ from pydantic import Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from gunther import listen_copy, speech_registry, usage
-from gunther.answer_runs import AnswerRun, AnswerRuns, Stopped
+from gunther.answer_runs import AnswerRun, AnswerRuns, Stopped, check_stop, stopping_on
 from gunther.artifact_read import ArtifactIntegrityError
 from gunther.artifact_versions import ArtifactConflictError
 from gunther.asset_service import (
@@ -1579,8 +1579,7 @@ def _output_run(
 
             def hear(event: dict) -> None:
                 nonlocal sections
-                if run.stop_requested.is_set():
-                    raise Stopped
+                check_stop()
                 if event["type"] == "action" and event.get("state") == "running":
                     tracked.update(detail=event.get("label") or "Working")
                 elif event["type"] == "stage" and event.get("state") == "running":
@@ -1609,7 +1608,8 @@ def _output_run(
                 tracked.failed(failed_word, detail)
 
             try:
-                artifact = call(hear)
+                with stopping_on(run.stop_requested):
+                    artifact = call(hear)
                 run.publish("done", shaped(artifact))
                 tracked.done(done_word)
             except Stopped:

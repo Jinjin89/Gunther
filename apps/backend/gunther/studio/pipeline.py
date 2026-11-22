@@ -62,6 +62,7 @@ from gunther.studio import prompts as P
 from gunther.studio import science as S
 from gunther.studio.look import look, vision_model
 from gunther.studio.reference import DECK_FORMAT, READ_NOTE, REPORT_FORMAT, STUDY_DECK_FORMAT
+from gunther.studio.stages import Checkpoint, checkpoint_stage, stage_event
 
 logger = logging.getLogger(__name__)
 
@@ -332,9 +333,7 @@ class StudioAgents(OutputAgents):
     # Plumbing -----------------------------------------------------------------------------
 
     def _stage(self, emit: Events, step: str, label: str, state: str, detail: str = "") -> None:
-        event: dict[str, Any] = {"type": "stage", "id": step, "label": label, "state": state}
-        if detail:
-            event["detail"] = detail
+        event = stage_event(step, label, state, detail or None)
         if state == "running":
             self._started[step] = time.monotonic()
             self._active_stages.append(step)
@@ -361,7 +360,7 @@ class StudioAgents(OutputAgents):
     def _progress(self, emit: Events, step: str, label: str, detail: str) -> None:
         """What a running stage is doing now, shown beside its label; its clock keeps going."""
 
-        emit({"type": "stage", "id": step, "label": label, "state": "running", "detail": detail})
+        emit(stage_event(step, label, "running", detail))
 
     def _count_model_call(self, stage: str | None = None) -> None:
         stage = stage or (self._active_stages[-1] if self._active_stages else None)
@@ -1941,13 +1940,11 @@ class StudioAgents(OutputAgents):
             out.append(piece if source_images_kept(draft.text, piece) else draft.text)
         return out
 
-    def _checked(
-        self, model, effort, run: Run, text: str, pool: Pool, material: str, emit: Events
+    def _fit_checked(
+        self, model, effort, run: Run, drafts: list[Draft], pool: Pool, material: str,
     ) -> list[Draft]:
-        """The written deck's slides with every claim checked, refitted, and (for a scientific
-        deck) its images repaired and what code still finds recorded as open problems."""
+        """Refit verified slides and record any remaining scientific problems."""
 
-        drafts = self.verify(model, run, fmt.split_slides(text), pool, emit, material)
         if not run.study:
             # The subtitle restates what the action titles claim; a scientific deck's
             # titles may name topics, so its subtitle stays as written and reviewed.
@@ -1973,6 +1970,15 @@ class StudioAgents(OutputAgents):
                 if run.review_status == "ready":
                     run.review_status = "open_problems"
         return healed
+
+    @staticmethod
+    def _checked_progress(run: Run, drafts: list[Draft], *, refit_pending: bool) -> dict[str, Any]:
+        return {
+            "slides": [{"text": draft.text, "verdicts": draft.verdicts} for draft in drafts],
+            "limitations": list(run.limitations or []),
+            "review_status": run.review_status,
+            **({"refit_pending": True} if refit_pending else {}),
+        }
 
     # 4. Designing -------------------------------------------------------------------------
 
@@ -2040,7 +2046,7 @@ class StudioAgents(OutputAgents):
         scope: Mapping[str, Any] | None = None,
         web: bool = False,
         resume: dict[str, Any] | None = None,
-        checkpoint: Any = None,
+        checkpoint: Checkpoint | None = None,
     ) -> tuple[Run, str, dict[str, Any], dict[str, Any]]:
         """Read and understand the material for a build or a standalone Understand."""
 
@@ -2082,90 +2088,86 @@ class StudioAgents(OutputAgents):
         }
         # The purpose is the model's decision, from the brief and a short look at the material.
         if spec.kind == "slides":
-            if purpose in ("explain_study", "general"):
-                run.purpose = S.Purpose(purpose=purpose, reason="Kept the saved purpose")
-            elif saved.get("purpose"):
-                run.purpose = S.Purpose.model_validate(saved["purpose"])
-            else:
-                self._stage(emit, "purpose", "Understanding the request", "running")
-                run.purpose = self._json(
-                    model,
-                    S.Purpose,
-                    P.PURPOSE,
-                    f"Brief: {spec.brief or '(none)'}\nThis deck's purpose so far: "
-                    + json.dumps((resume or {}).get("previous_purpose"))
-                    + "\nMaterial overview:\n"
-                    + S.overview(pool.items),
-                    "low",
-                )
-                self._stage(
-                    emit, "purpose", "Understanding the request", "done", run.purpose.reason
-                )
-            state["purpose"] = run.purpose.model_dump()
+            with checkpoint_stage(emit, state, checkpoint, "purpose") as publish:
+                if purpose in ("explain_study", "general"):
+                    run.purpose = S.Purpose(purpose=purpose, reason="Kept the saved purpose")
+                elif saved.get("purpose"):
+                    run.purpose = S.Purpose.model_validate(saved["purpose"])
+                else:
+                    self._stage(publish, "purpose", "Understanding the request", "running")
+                    run.purpose = self._json(
+                        model,
+                        S.Purpose,
+                        P.PURPOSE,
+                        f"Brief: {spec.brief or '(none)'}\nThis deck's purpose so far: "
+                        + json.dumps(resumed.get("previous_purpose"))
+                        + "\nMaterial overview:\n"
+                        + S.overview(pool.items),
+                        "low",
+                    )
+                    self._stage(
+                        publish, "purpose", "Understanding the request", "done", run.purpose.reason,
+                    )
+                state["purpose"] = run.purpose.model_dump()
             emit({"type": "purpose", **state["purpose"]})
-            if checkpoint:
-                checkpoint(dict(state))
-        material = self.read(model, run, pool, notes, emit, kept=saved.get("read"))
-        if run.read_digest:
-            state["read"] = {"notes": self._notes_text(notes), "digest": run.read_digest}
-            if checkpoint:
-                checkpoint(dict(state))
+        with checkpoint_stage(emit, state, checkpoint, "read") as publish:
+            material = self.read(model, run, pool, notes, publish, kept=saved.get("read"))
+            if run.read_digest:
+                state["read"] = {"notes": self._notes_text(notes), "digest": run.read_digest}
         if run.purpose and run.purpose.purpose == "explain_study":
             run.limitations = []
-            kept = (
-                S.StudyMap.model_validate(studied["study_map"])
-                if studied.get("study_map")
-                else None
-            )
-            if kept and not S.map_problems(kept, pool.items):
-                run.study = kept
-            else:
-                run.study = self.study_map(model, effort, run, pool, material, emit)
-            state["study_map"] = run.study.model_dump()
-            if checkpoint:
-                checkpoint(dict(state))
-            run.figure_readings = self.read_figures(model, effort, run, pool, emit)
-            warned = [item.ref for item in pool.items if S.warnings_of(item)]
-            if warned:
-                self._science_limit(
-                    run,
-                    f"{len(warned)} passages have extraction warnings; a value from them is "
-                    "stated only when clean text or a figure reading confirms it.",
+            with checkpoint_stage(emit, state, checkpoint, "study") as publish:
+                kept = (
+                    S.StudyMap.model_validate(studied["study_map"])
+                    if studied.get("study_map")
+                    else None
                 )
-            state["figure_readings"] = [r.model_dump() for r in run.figure_readings]
-            state["limitations"] = run.limitations
+                if kept and not S.map_problems(kept, pool.items):
+                    run.study = kept
+                else:
+                    run.study = self.study_map(model, effort, run, pool, material, publish)
+                state["study_map"] = run.study.model_dump()
+            with checkpoint_stage(emit, state, checkpoint, "figures") as publish:
+                run.figure_readings = self.read_figures(model, effort, run, pool, publish)
+                warned = [item.ref for item in pool.items if S.warnings_of(item)]
+                if warned:
+                    self._science_limit(
+                        run,
+                        f"{len(warned)} passages have extraction warnings; a value from them is "
+                        "stated only when clean text or a figure reading confirms it.",
+                    )
+                state["figure_readings"] = [r.model_dump() for r in run.figure_readings]
+                state["limitations"] = run.limitations
             coverage_key = state["coverage_key"] = digest(self._study_text(run))
-            kept_plan = (
-                S.CoveragePlan.model_validate(studied["coverage_plan"])
-                if studied.get("coverage_plan") and studied.get("coverage_key") == coverage_key
-                else None
-            )
-            if kept_plan and not S.coverage_problems(kept_plan, pool.items):
-                run.coverage_plan = kept_plan
-                self._stage(
-                    emit, "coverage", "Planning source coverage", "done", "kept from before"
+            with checkpoint_stage(emit, state, checkpoint, "coverage") as publish:
+                kept_plan = (
+                    S.CoveragePlan.model_validate(studied["coverage_plan"])
+                    if studied.get("coverage_plan") and studied.get("coverage_key") == coverage_key
+                    else None
                 )
-            else:
-                run.coverage_plan = self.coverage_plan(
-                    model, effort, run, pool, material, emit
-                )
-            state["coverage_plan"] = run.coverage_plan.model_dump()
+                if kept_plan and not S.coverage_problems(kept_plan, pool.items):
+                    run.coverage_plan = kept_plan
+                    self._stage(
+                        publish, "coverage", "Planning source coverage", "done", "kept from before"
+                    )
+                else:
+                    run.coverage_plan = self.coverage_plan(
+                        model, effort, run, pool, material, publish
+                    )
+                state["coverage_plan"] = run.coverage_plan.model_dump()
             self.scientific_context = {**state, "purpose": "explain_study"}
-            if checkpoint:
-                checkpoint(dict(state))
             if run.study.language:
                 run.language = run.study.language
         else:
-            if saved.get("memo"):
-                run.memo = Memo.model_validate(saved["memo"])
-                self._stage(
-                    emit, "memo", "Finding what is worth saying", "done", "kept from before"
-                )
-            else:
-                run.memo = self.memo(model, effort, run, material, emit)
-            state["memo"] = run.memo.model_dump()
-            if checkpoint:
-                checkpoint(dict(state))
+            with checkpoint_stage(emit, state, checkpoint, "memo") as publish:
+                if saved.get("memo"):
+                    run.memo = Memo.model_validate(saved["memo"])
+                    self._stage(
+                        publish, "memo", "Finding what is worth saying", "done", "kept from before"
+                    )
+                else:
+                    run.memo = self.memo(model, effort, run, material, publish)
+                state["memo"] = run.memo.model_dump()
             if run.memo.language:
                 run.language = run.memo.language
         return run, material, state, saved
@@ -2185,7 +2187,7 @@ class StudioAgents(OutputAgents):
         scope: Mapping[str, Any] | None = None,
         web: bool = False,
         resume: dict[str, Any] | None = None,
-        checkpoint: Any = None,
+        checkpoint: Checkpoint | None = None,
         **_ignored: Any,
     ) -> BuiltOutput:
         """Reuse completed stages only when their material and request still match."""
@@ -2204,110 +2206,110 @@ class StudioAgents(OutputAgents):
             saved.get("storyline")
             and (same_science if run.study else saved.get("memo") == state.get("memo"))
         )
-        if reuse_story:
-            schema = DeckStory if spec.kind == "slides" else ReportStory
-            run.story = schema.model_validate(saved["storyline"])
-            _validate_storyline(run, run.story)
-            self._stage(emit, "story", "Planning the storyline", "done", "kept from before")
-        else:
-            run.story = self.storyline(model, effort, run, material, emit)
-        state["storyline"] = run.story.model_dump()
-        if checkpoint:
-            checkpoint(dict(state))
+        with checkpoint_stage(emit, state, checkpoint, "story") as publish:
+            if reuse_story:
+                schema = DeckStory if spec.kind == "slides" else ReportStory
+                run.story = schema.model_validate(saved["storyline"])
+                _validate_storyline(run, run.story)
+                self._stage(publish, "story", "Planning the storyline", "done", "kept from before")
+            else:
+                run.story = self.storyline(model, effort, run, material, publish)
+            state["storyline"] = run.story.model_dump()
         looked: dict[str, Any] | None = None
         snapshot: dict[str, Any] | None = None
         if spec.kind == "slides":
             reused_draft = bool(run.study and reuse_story and saved.get("draft"))
-            if reused_draft:
-                text = saved["draft"]
-                run.limitations = state["limitations"] = list(saved.get("limitations") or [])
-                run.review_status = saved.get("review_status") or "unavailable"
-                run.reviews = []
-                kinds = {
-                    "scientific": S.ScientificReview,
-                    "learner": S.LearnerReview,
-                    "coverage": S.CoverageReview,
-                }
-                for saved_review in saved.get("reviews") or []:
-                    kind = kinds.get(saved_review.get("kind"))
-                    if kind is not None and saved_review.get("review") is not None:
-                        run.reviews.append(kind.model_validate(saved_review["review"]))
-                self._stage(emit, "write", "Writing the slides", "done", "kept from before")
-                self._stage(
-                    emit,
-                    "science",
-                    "Reviewing the scientific explanation",
-                    "done",
-                    "kept from before",
-                )
-            else:
-                text = self.write_deck(model, effort, run, pool, material, emit)
-                text = self.fix_format(model, effort, run, text, emit)
-                if run.study:
-                    # Content is settled before claim checking and visual design.
-                    text = self.scientific_gate(model, effort, run, text, pool, material, emit)
-            if run.study:
-                state["draft"] = text
-                state["reviews"] = []
-                for review in run.reviews or []:
-                    kind = (
-                        "scientific"
-                        if isinstance(review, S.ScientificReview)
-                        else "learner"
-                        if isinstance(review, S.LearnerReview)
-                        else "coverage"
-                    )
-                    state["reviews"].append({"kind": kind, "review": review.model_dump()})
-                state["review_status"] = run.review_status
-                self.scientific_context.update(
-                    {
-                        "coverage_plan": run.coverage_plan.model_dump()
-                        if run.coverage_plan
-                        else None,
-                        "reviews": state["reviews"],
-                        "review_status": run.review_status,
+            with checkpoint_stage(emit, state, checkpoint, "write", "science") as publish:
+                if reused_draft:
+                    text = saved["draft"]
+                    run.limitations = state["limitations"] = list(saved.get("limitations") or [])
+                    run.review_status = saved.get("review_status") or "unavailable"
+                    run.reviews = []
+                    kinds = {
+                        "scientific": S.ScientificReview,
+                        "learner": S.LearnerReview,
+                        "coverage": S.CoverageReview,
                     }
-                )
-                if checkpoint:
-                    checkpoint(dict(state))
+                    for saved_review in saved.get("reviews") or []:
+                        kind = kinds.get(saved_review.get("kind"))
+                        if kind is not None and saved_review.get("review") is not None:
+                            run.reviews.append(kind.model_validate(saved_review["review"]))
+                    self._stage(publish, "write", "Writing the slides", "done", "kept from before")
+                    self._stage(
+                        publish,
+                        "science",
+                        "Reviewing the scientific explanation",
+                        "done",
+                        "kept from before",
+                    )
+                else:
+                    text = self.write_deck(model, effort, run, pool, material, emit)
+                    text = self.fix_format(model, effort, run, text, emit)
+                    if run.study:
+                        # A resumable draft includes the scientific review of its source content.
+                        text = self.scientific_gate(
+                            model, effort, run, text, pool, material, publish,
+                        )
+                if run.study:
+                    state["draft"] = text
+                    state["reviews"] = []
+                    for review in run.reviews or []:
+                        kind = (
+                            "scientific"
+                            if isinstance(review, S.ScientificReview)
+                            else "learner"
+                            if isinstance(review, S.LearnerReview)
+                            else "coverage"
+                        )
+                        state["reviews"].append({"kind": kind, "review": review.model_dump()})
+                    state["review_status"] = run.review_status
+                    self.scientific_context.update(
+                        {
+                            "coverage_plan": run.coverage_plan.model_dump()
+                            if run.coverage_plan
+                            else None,
+                            "reviews": state["reviews"],
+                            "review_status": run.review_status,
+                        }
+                    )
             checked = saved.get("checked") if reused_draft else None
-            if checked:
-                # The claims of this same draft were checked before the run stopped.
-                drafts = [
-                    Draft(
-                        row["text"],
-                        read_verdicts(row, _marked(row["text"]).body)
-                        if row.get("verdicts") is not None or row.get("issues") is not None
-                        else None,
+            needs_refit = not checked or checked.get("refit_pending", False)
+            verify_checkpoint = checkpoint if run.study else None
+            with checkpoint_stage(emit, state, verify_checkpoint, "verify") as publish:
+                if checked:
+                    # The claims of this same draft were checked before the run stopped.
+                    drafts = [
+                        Draft(
+                            row["text"],
+                            read_verdicts(row, _marked(row["text"]).body)
+                            if row.get("verdicts") is not None or row.get("issues") is not None
+                            else None,
+                        )
+                        for row in checked["slides"]
+                    ]
+                    run.limitations = list(checked.get("limitations") or [])
+                    state["limitations"] = run.limitations
+                    run.review_status = checked.get("review_status") or run.review_status
+                    self._stage(
+                        publish,
+                        "verify",
+                        "Checking every claim against its source",
+                        "done",
+                        "kept from before",
                     )
-                    for row in checked["slides"]
-                ]
-                run.limitations = list(checked.get("limitations") or [])
-                state["limitations"] = run.limitations
-                run.review_status = checked.get("review_status") or run.review_status
-                self._stage(
-                    emit,
-                    "verify",
-                    "Checking every claim against its source",
-                    "done",
-                    "kept from before",
-                )
-            else:
-                drafts = self._checked(model, effort, run, text, pool, material, emit)
+                else:
+                    drafts = self.verify(
+                        model, run, fmt.split_slides(text), pool, publish, material,
+                    )
                 if run.study:
-                    state["checked"] = {
-                        "slides": [
-                            {
-                                "text": d.text,
-                                "verdicts": d.verdicts,
-                            }
-                            for d in drafts
-                        ],
-                        "limitations": list(run.limitations or []),
-                        "review_status": run.review_status,
-                    }
-                    if checkpoint:
-                        checkpoint(dict(state))
+                    state["checked"] = self._checked_progress(
+                        run, drafts, refit_pending=needs_refit,
+                    )
+            if needs_refit:
+                with checkpoint_stage(emit, state, verify_checkpoint):
+                    drafts = self._fit_checked(model, effort, run, drafts, pool, material)
+                    if run.study:
+                        state["checked"] = self._checked_progress(run, drafts, refit_pending=False)
             checked = [self._chart_fallback(d, i) for i, d in enumerate(drafts)]
             if self.design and checked:
                 only = [i for i, draft in enumerate(drafts) if draft is checked[i]]
@@ -2332,36 +2334,40 @@ class StudioAgents(OutputAgents):
                     ]
                 return assemble_output(spec, title, "", parts, pool, planned, model, effort)
 
-            built = assemble_deck(drafts)
-            try:
-                built, looked, snapshot = look(
-                    self, built, drafts, model=model, effort=effort, use=run.use, pool=pool,
-                    assemble=assemble_deck, emit=emit, unfence=_unfence, material=material,
-                )  # fmt: skip
-            except Exception:  # noqa: BLE001 - looking never fails a build
-                logger.exception("The look at the slides failed")
-                reason = "The slide review did not finish."
-                self.skipped.append(
-                    {"step": "look", "label": "Slide review unavailable", "reason": reason}
-                )
-                self._stage(emit, "look", "Looking at the slides", "failed", reason)
+            with checkpoint_stage(emit, state, None):
+                built = assemble_deck(drafts)
+                try:
+                    built, looked, snapshot = look(
+                        self, built, drafts, model=model, effort=effort, use=run.use, pool=pool,
+                        assemble=assemble_deck, emit=emit, unfence=_unfence, material=material,
+                    )  # fmt: skip
+                except Exception:  # noqa: BLE001 - looking never fails a build
+                    logger.exception("The look at the slides failed")
+                    reason = "The slide review did not finish."
+                    self.skipped.append(
+                        {"step": "look", "label": "Slide review unavailable", "reason": reason}
+                    )
+                    self._stage(emit, "look", "Looking at the slides", "failed", reason)
             self._record_slide_format(run, built)
         else:
             text = self.write_report(model, effort, run, pool, material, emit)
             preamble, sections = split_document(text, "report")
             if not sections:
                 raise ModelError("The report came back without sections.")
-            drafts = self.verify(model, run, sections, pool, emit, material)
-            drafts = [self._chart_fallback(d, i) for i, d in enumerate(drafts)]
-            outline = list(plan) or [
-                Planned(re.sub(r"^##\s*", "", d.text.splitlines()[0]).strip()[:160]) for d in drafts
-            ]
-            title = run.story.title or fallback_title
-            built = assemble_output(spec, title, preamble, drafts, pool, outline, model, effort)
-            count = len(split_document(built.content, "report")[1])
-            _validate_count(run.story, count, "assembled report")
-            if count != len(outline):
-                raise ModelError("The assembled report does not match its outline.")
+            with checkpoint_stage(emit, state, None, "verify") as publish:
+                drafts = self.verify(model, run, sections, pool, publish, material)
+            with checkpoint_stage(emit, state, None):
+                drafts = [self._chart_fallback(d, i) for i, d in enumerate(drafts)]
+                outline = list(plan) or [
+                    Planned(re.sub(r"^##\s*", "", d.text.splitlines()[0]).strip()[:160])
+                    for d in drafts
+                ]
+                title = run.story.title or fallback_title
+                built = assemble_output(spec, title, preamble, drafts, pool, outline, model, effort)
+                count = len(split_document(built.content, "report")[1])
+                _validate_count(run.story, count, "assembled report")
+                if count != len(outline):
+                    raise ModelError("The assembled report does not match its outline.")
         return replace(
             built,
             approach=self._saved_approach(run, pool, len(drafts)) | {

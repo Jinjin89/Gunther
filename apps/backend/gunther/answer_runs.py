@@ -14,16 +14,33 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
 # Events that end an answer's stream: the saved turn, an error, or a stop.
 FINAL = frozenset({"done", "error", "stopped"})
+_stop_requested: ContextVar[threading.Event | None] = ContextVar("gunther_stop", default=None)
 
 
 class Stopped(Exception):
     """Someone pressed Stop; the answer is dropped and the question kept, marked."""
+
+
+@contextmanager
+def stopping_on(requested: threading.Event) -> Iterator[None]:
+    token = _stop_requested.set(requested)
+    try:
+        yield
+    finally:
+        _stop_requested.reset(token)
+
+
+def check_stop() -> None:
+    if (requested := _stop_requested.get()) is not None and requested.is_set():
+        raise Stopped
 
 
 @dataclass

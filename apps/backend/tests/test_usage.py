@@ -24,6 +24,7 @@ from gunther.llm import REQUEST_ADMISSION, ModelError, ModelGateway, _openai_cli
 from gunther.main import create_app
 from gunther.migrations import MIGRATIONS, get_schema_version, run_migrations
 from gunther.models import ModelUsage
+from gunther.run_budget import BudgetedGateway, RunBudget
 from gunther.studio.pipeline import _in_context
 
 COUNTS = {"prompt_tokens": 100, "completion_tokens": 40, "total_tokens": 140}
@@ -176,10 +177,32 @@ def test_empty_and_json_repair_retries_and_trace_keep_every_request():
     assert all(r["job"] == "ask" and r["ref"] == "conversation" for r in records)
     assert sum(r["input"] for r in records) == 300
     assert all(r["ms"] >= 0 and r["at"].tzinfo is None for r in records)
+    assert [len(step["usageAttempts"]) for step in kept.steps] == [2, 1]
     attempts = [r for step in kept.steps for r in step["usageAttempts"]]
     assert [r["id"] for r in attempts] == [r["id"] for r in records]
     assert kept.steps[-1]["usage"]["cached"] == 60
     assert kept.steps[-1]["usage"]["reasoning"] == 20
+
+
+def test_budget_denied_json_correction_leaves_only_the_admitted_trace_entry():
+    class Answer(BaseModel):
+        answer: str
+
+    fake = FakeProvider("not json", '{"answer": "yes"}')
+    records = []
+    models = gateway(fake, records.append)
+    budget = RunBudget(1, 1, 1, 1)
+    kept = trace.Trace()
+
+    with trace.tracing(kept), pytest.raises(ModelError, match="budget"):
+        BudgetedGateway(models, budget).complete_json(
+            models.models[0], Answer, system="", prompt="?",
+        )
+
+    assert budget.model_calls == len(fake.requests) == len(records) == 1
+    [entry] = kept.steps
+    assert entry["kind"] == "model" and entry["reply"] == "not json"
+    assert [attempt["id"] for attempt in entry["usageAttempts"]] == [records[0]["id"]]
 
 
 @pytest.mark.parametrize("streaming", [False, True])
@@ -218,24 +241,36 @@ def test_unreported_and_failed_requests_do_not_invent_counts():
     assert all(r["job"] == "other" and r["input"] is None for r in records)
 
 
-def test_rejected_admission_is_not_a_request():
+@pytest.mark.parametrize("allowed", [0, 1, 2])
+def test_admission_and_usage_count_only_sent_attempts(allowed):
     records = []
-    fake = FakeProvider("")
+    fake = FakeProvider("", "Done")
+    kept = trace.Trace()
     calls = 0
 
     def admit():
         nonlocal calls
         calls += 1
-        if calls > 1:
+        if calls > allowed:
             raise ModelError("budget")
 
     token = REQUEST_ADMISSION.set(admit)
     try:
-        with pytest.raises(ModelError, match="budget"):
-            ask(gateway(fake, records.append))
+        models = gateway(fake, records.append)
+        with trace.tracing(kept):
+            if allowed == 2:
+                assert ask(models).text == "Done"
+            else:
+                with pytest.raises(ModelError, match="budget"):
+                    ask(models)
     finally:
         REQUEST_ADMISSION.reset(token)
-    assert len(fake.requests) == len(records) == 1
+    assert len(fake.requests) == len(records) == allowed
+    assert calls == min(2, allowed + 1)
+    assert len(kept.steps) == min(1, allowed)
+    assert [attempt["id"] for entry in kept.steps for attempt in entry["usageAttempts"]] == [
+        record["id"] for record in records
+    ]
 
 
 def test_recording_failure_never_fails_an_answer(caplog):

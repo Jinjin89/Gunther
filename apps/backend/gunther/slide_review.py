@@ -35,6 +35,7 @@ from gunther.slide_scene import (
     with_scene,
     without_scene_line,
 )
+from gunther.studio.stages import stage_event
 
 
 class ReviewModel(BaseModel):
@@ -285,13 +286,9 @@ def review_deck(
 
     try:
         emit(
-            {
-                "type": "stage",
-                "id": "visual_review",
-                "label": "Review rendered slides",
-                "state": "running",
-                "detail": "Capturing the assembled deck",
-            }
+            stage_event(
+                "visual_review", "Review rendered slides", "running", "Capturing the assembled deck"
+            )
         )
         if renderer is None:
             raise RenderError("Rendered-slide review is not configured for this installation.")
@@ -429,13 +426,12 @@ def review_deck(
     else:
         render["reason"] = record.get("reason", "Capture incomplete.")
     emit(
-        {
-            "type": "stage",
-            "id": "visual_review",
-            "label": "Review rendered slides",
-            "state": "done" if record["status"] in {"clean", "repaired"} else "failed",
-            "detail": record.get("reason", f"Visual review: {record['status']}"),
-        }
+        stage_event(
+            "visual_review",
+            "Review rendered slides",
+            "done" if record["status"] in {"clean", "repaired"} else "failed",
+            record.get("reason", f"Visual review: {record['status']}"),
+        )
     )
     return replace(
         built, skill={**(built.skill or {}), "renderCheck": render, "visualReview": record}

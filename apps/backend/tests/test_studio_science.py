@@ -1316,9 +1316,53 @@ class _Stopped(Exception):
     pass
 
 
-def _stop_at_design(event):
-    if event.get("type") == "stage" and event["id"] == "design" and event["state"] == "running":
+def _stop_after_verify(event):
+    if event.get("type") == "stage" and event["id"] == "verify" and event["state"] == "done":
         raise _Stopped
+
+
+@pytest.mark.parametrize("save_checkpoint", [True, False])
+def test_stop_at_last_verification_progress_prevents_refit(tmp_path, monkeypatch, save_checkpoint):
+    from threading import Event
+
+    from gunther.answer_runs import Stopped, stopping_on
+
+    fake = FakeProvider(science_router())
+    agents = StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path))
+    stopped = Event()
+    checkpoint = {}
+    events = []
+    refits = []
+    requests_at_stop = []
+    refit = agents._refit
+
+    def record_refit(*args, **kwargs):
+        refits.append(True)
+        return refit(*args, **kwargs)
+
+    monkeypatch.setattr(agents, "_refit", record_refit)
+
+    def hear(event):
+        events.append(event)
+        if event.get("id") == "verify" and re.fullmatch(
+            r"(\d+) of \1 slides checked", event.get("detail", "")
+        ):
+            requests_at_stop.append(len(fake.requests))
+            stopped.set()
+
+    spec = Spec("slides", "Readers", brief="Explain the study")
+    with stopping_on(stopped), pytest.raises(Stopped):
+        agents.make(
+            model(), "low", spec, science_pool(), Notes(), hear,
+            checkpoint=checkpoint.update if save_checkpoint else None,
+        )
+
+    assert requests_at_stop == [len(fake.requests)]
+    assert refits == []
+    if save_checkpoint:
+        assert checkpoint["checked"]["slides"]
+        assert checkpoint["checked"]["refit_pending"]
+    assert not any(e.get("id") == "verify" and e.get("state") == "done" for e in events)
 
 
 def test_a_stopped_build_carries_on_where_it_stopped(tmp_path):
@@ -1327,14 +1371,25 @@ def test_a_stopped_build_carries_on_where_it_stopped(tmp_path):
     saved: dict = {}
     with pytest.raises(_Stopped):
         StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)).make(
-            model(), "low", spec, science_pool(), Notes(), _stop_at_design, checkpoint=saved.update
+            model(), "low", spec, science_pool(), Notes(), _stop_after_verify,
+            checkpoint=saved.update,
         )
     assert saved["checked"]["slides"]
     before = len(fake.requests)
+    next_checkpoint: dict = {}
+    with pytest.raises(_Stopped):
+        StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)).make(
+            model(), "low", spec, science_pool(), Notes(), _stop_after_verify, resume=saved,
+            checkpoint=next_checkpoint.update,
+        )
+    assert next_checkpoint["checked"] == saved["checked"]
     events: list[dict] = []
+    completed: dict = {}
     built = StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)).make(
-        model(), "low", spec, science_pool(), Notes(), events.append, resume=saved
+        model(), "low", spec, science_pool(), Notes(), events.append, resume=next_checkpoint,
+        checkpoint=completed.update,
     )
+    assert "refit_pending" not in completed["checked"]
     redone = _tasks(fake.requests[before:])
     assert not any(
         t.startswith(
@@ -1349,6 +1404,7 @@ def test_a_stopped_build_carries_on_where_it_stopped(tmp_path):
         )
         for t in redone
     ), redone
+    assert not any("checking step" in task for task in redone)
     kept = {
         e["id"]
         for e in events
