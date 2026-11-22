@@ -12,44 +12,56 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-SPEC = importlib.util.spec_from_file_location(
-    "parser_build", ROOT / "scripts/build-document-parser.py"
-)
-builder = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(builder)
+
+
+def load_script(name):
+    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+builder = load_script("build-document-parser")
 
 
 class ParserPackagingTests(unittest.TestCase):
+    def test_sha256_hashes_the_whole_file_in_each_packaging_script(self):
+        digest_functions = (
+            builder.sha256_file,
+            load_script("fetch_embedding_model").sha256,
+            load_script("fetch_vad_model").sha256,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "input.bin"
+            for content in (b"", bytes(range(256)) * (32 * 1024) + b"last bytes"):
+                path.write_bytes(content)
+                expected = hashlib.sha256(content).hexdigest()
+                for digest in digest_functions:
+                    self.assertEqual(digest(path), expected)
+
     def test_sidecar_preflight_rejects_a_parser_built_with_a_different_lock(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             script = root / "scripts/build-backend-sidecar.mjs"
             script.parent.mkdir()
-            shutil.copyfile(ROOT / "scripts" / script.name, script)
+            for name in (script.name, "build-step.mjs", "parser-inputs.mjs"):
+                shutil.copyfile(ROOT / "scripts" / name, script.parent / name)
             # Exercise the release preflight with a cached helper and no external build.
             script.with_name("build-slide-renderer.mjs").write_text("", encoding="utf-8")
-            lock = root / "tools/document-parser/uv.lock"
-            bundle = lock.parent / ".build/bundle"
+            spec_path = Path("tools/document-parser/manifest-inputs.json")
+            spec = json.loads((ROOT / spec_path).read_text(encoding="utf-8"))
+            lock = root / spec["lockfile"]
+            bundle = root / spec_path.parent / ".build/bundle"
             bundle.mkdir(parents=True)
+            shutil.copyfile(ROOT / spec_path, root / spec_path)
             lock.write_text("version = 1\n", encoding="utf-8")
-            sources = (
-                "apps/backend/gunther/document_parser.py",
-                "apps/backend/gunther/document_structure.py",
-                "apps/backend/gunther/pdf_native.py",
-                "apps/backend/gunther/pdf_glyphs.py",
-                "tools/document-parser/helper.py",
-                "scripts/build-document-parser.py",
-            )
-            source_hashes = {}
-            for name in sources:
+            for name in spec["sources"]:
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes((ROOT / name).read_bytes())
-                source_hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
-            (bundle / "manifest.json").write_text(json.dumps({
-                "lockHash": hashlib.sha256(lock.read_bytes()).hexdigest(),
-                "sourceHashes": source_hashes,
-            }), encoding="utf-8")
+            (bundle / "manifest.json").write_text(
+                json.dumps(builder.parser_input_hashes(root)), encoding="utf-8",
+            )
             build = root / "apps/backend/.pyinstaller"
             output = "GuntherBackend.app" if sys.platform == "darwin" else "gunther-backend"
             (build / "dist" / output).mkdir(parents=True)

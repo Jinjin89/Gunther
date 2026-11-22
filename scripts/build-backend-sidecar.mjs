@@ -1,9 +1,10 @@
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdirSync, statSync, mkdirSync, chmodSync, existsSync, readFileSync, writeFileSync, cpSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { runBuildStep } from "./build-step.mjs";
+import { parserManifestIsCurrent } from "./parser-inputs.mjs";
 
 // A folder, not --onefile: one-file helpers unpack ~200 MB on every launch.
 const root = resolve(import.meta.dirname, "..");
@@ -11,16 +12,14 @@ const backendRoot = join(root, "apps", "backend");
 // Compile the exact shared slide renderer before freezing the helper. The worker speaks
 // CDP directly, so the installed application never needs Node, Vite or Playwright.
 if (!process.argv.includes("--if-missing")) {
-  const renderBuild = spawnSync(process.execPath, [join(root, "scripts/build-slide-renderer.mjs")], { cwd: root, stdio: "inherit" });
-  if (renderBuild.status !== 0) process.exit(renderBuild.status ?? 1);
+  runBuildStep(process.execPath, [join(root, "scripts/build-slide-renderer.mjs")], { cwd: root });
 }
 const renderDir = join(root, "apps/desktop/render-dist");
 const slideBrowserDir = join(root, "tools/slide-browser/.cache");
 const withSlideBrowser = !process.argv.includes("--without-slide-browser")
   && (!process.argv.includes("--if-missing") || existsSync(join(slideBrowserDir, "manifest.json")));
 if (withSlideBrowser && !existsSync(join(slideBrowserDir, "manifest.json"))) {
-  const prepared = spawnSync(process.execPath, [join(root, "scripts/prepare-slide-browser.mjs")], { cwd: root, stdio: "inherit" });
-  if (prepared.status !== 0) process.exit(prepared.status ?? 1);
+  runBuildStep(process.execPath, [join(root, "scripts/prepare-slide-browser.mjs")], { cwd: root });
 }
 const pyinstallerRoot = join(backendRoot, ".pyinstaller");
 const isMac = process.platform === "darwin";
@@ -61,6 +60,8 @@ const inputs = [
   modelDir,
   ...(withParser ? [parserDir, join(root, "tools", "document-parser")] : []),
   fileURLToPath(import.meta.url),
+  join(root, "scripts/build-step.mjs"),
+  join(root, "scripts/parser-inputs.mjs"),
 ];
 if (withParser && !existsSync(join(parserDir, "manifest.json"))) {
   process.stderr.write("Release builds require the pinned layout parser. Run uv run --frozen --project tools/document-parser scripts/build-document-parser.py first, or explicitly use --without-document-parser for a reduced build.\n");
@@ -68,12 +69,7 @@ if (withParser && !existsSync(join(parserDir, "manifest.json"))) {
 }
 if (withParser && !process.argv.includes("--if-missing")) {
   const manifest = JSON.parse(readFileSync(join(parserDir, "manifest.json"), "utf8"));
-  const sources = ["apps/backend/gunther/document_parser.py", "apps/backend/gunther/document_structure.py", "apps/backend/gunther/pdf_native.py", "apps/backend/gunther/pdf_glyphs.py", "tools/document-parser/helper.py", "scripts/build-document-parser.py"];
-  const hashInput = (name) => createHash("sha256").update(readFileSync(join(root, name))).digest("hex");
-  if (
-    manifest.lockHash !== hashInput("tools/document-parser/uv.lock")
-    || sources.some((name) => manifest.sourceHashes?.[name] !== hashInput(name))
-  ) {
+  if (!parserManifestIsCurrent(root, manifest)) {
     process.stderr.write("The parser runtime is stale. Rebuild it with scripts/build-document-parser.py before packaging.\n");
     process.exit(1);
   }
@@ -106,22 +102,17 @@ const models = [
 ];
 for (const model of models) {
   if (model.present) continue;
-  const fetched = spawnSync("uv", [
+  runBuildStep("uv", [
     "run",
     "--project", backendRoot,
     "python", join(root, "scripts", model.script),
-  ], {
-    cwd: root,
-    env: uvEnv,
-    stdio: "inherit",
-  });
-  if (fetched.status !== 0) process.exit(fetched.status ?? 1);
+  ], { cwd: root, env: uvEnv });
 }
 
 mkdirSync(pyinstallerRoot, { recursive: true });
 if (isMac) {
   mkdirSync(visionBuildDir, { recursive: true });
-  const visionResult = spawnSync("xcrun", [
+  runBuildStep("xcrun", [
     "clang",
     "-fobjc-arc",
     "-fblocks",
@@ -133,14 +124,10 @@ if (isMac) {
     "-framework", "Vision",
     visionSource,
     "-o", visionBinary,
-  ], {
-    cwd: root,
-    stdio: "inherit",
-  });
-  if (visionResult.status !== 0) process.exit(visionResult.status ?? 1);
+  ], { cwd: root });
   chmodSync(visionBinary, 0o755);
 }
-const result = spawnSync("uv", [
+runBuildStep("uv", [
   "run",
   "--project", backendRoot,
   "pyinstaller",
@@ -183,10 +170,8 @@ const result = spawnSync("uv", [
     ...uvEnv,
     PYINSTALLER_CONFIG_DIR: join(pyinstallerRoot, "cache"),
   },
-  stdio: "inherit",
 });
 
-if (result.status !== 0) process.exit(result.status ?? 1);
 // Chromium is an independent runtime: PyInstaller must not rewrite its dylib install
 // names/rpaths. Ship it as a separate resource and sign it in place after collection.
 if (withSlideBrowser) {
@@ -204,10 +189,9 @@ if (withSlideBrowser) {
         if (entry.isDirectory()) { signTree(path); continue; }
         const magic = readFileSync(path).subarray(0,4).toString("hex");
         if (!["cffaedfe", "cefaedfe", "cafebabe", "bebafeca"].includes(magic)) continue;
-        const signed = spawnSync("codesign", ["--force", "--sign", signingIdentity || "-",
+        runBuildStep("codesign", ["--force", "--sign", signingIdentity || "-",
           ...(signingIdentity ? ["--options", "runtime", "--timestamp", "--entitlements", helperEntitlements] : []),
-          path], { stdio: "inherit" });
-        if (signed.status !== 0) process.exit(signed.status ?? 1);
+          path]);
       }
     };
     signTree(browserDestination);
@@ -215,10 +199,9 @@ if (withSlideBrowser) {
   manifest.sha256 = createHash("sha256").update(readFileSync(join(browserDestination, manifest.executable))).digest("hex");
   writeFileSync(join(browserDestination, "manifest.json"), JSON.stringify(manifest, null, 2));
   if (isMac) {
-    const signed = spawnSync("codesign", ["--force", "--sign", signingIdentity || "-",
+    runBuildStep("codesign", ["--force", "--sign", signingIdentity || "-",
       ...(signingIdentity ? ["--options", "runtime", "--timestamp", "--entitlements", helperEntitlements] : []),
-      completedOutput], { stdio: "inherit" });
-    if (signed.status !== 0) process.exit(signed.status ?? 1);
+      completedOutput]);
   }
 }
 writeFileSync(variantFile, variant);

@@ -67,6 +67,21 @@ def copy_runtime(source: Path, destination: Path) -> None:
     shutil.copytree(source, destination, symlinks=True)
 
 
+def sha256_file(path: Path) -> str:
+    with path.open("rb") as content:
+        return hashlib.file_digest(content, "sha256").hexdigest()
+
+
+def parser_input_hashes(root: Path) -> dict[str, str | dict[str, str]]:
+    spec = json.loads(
+        (root / "tools/document-parser/manifest-inputs.json").read_text(encoding="utf-8")
+    )
+    return {
+        "lockHash": sha256_file(root / spec["lockfile"]),
+        "sourceHashes": {name: sha256_file(root / name) for name in spec["sources"]},
+    }
+
+
 def build() -> None:
     root = Path(__file__).resolve().parents[1]
     project = root / "tools" / "document-parser"
@@ -155,11 +170,7 @@ def build() -> None:
     for path in sorted(bundle.rglob("*")):
         if not path.is_file() or path.name == "manifest.json":
             continue
-        digest = hashlib.sha256()
-        with path.open("rb") as content:
-            for part in iter(lambda: content.read(8 * 1024 * 1024), b""):
-                digest.update(part)
-        files[path.relative_to(bundle).as_posix()] = digest.hexdigest()
+        files[path.relative_to(bundle).as_posix()] = sha256_file(path)
     manifest = {
         "schema": 1,
         "platform": sys.platform,
@@ -168,18 +179,7 @@ def build() -> None:
         "modelProfile": MODEL_PROFILE,
         "python": platform.python_version(),
         "files": files,
-        "lockHash": hashlib.sha256((project / "uv.lock").read_bytes()).hexdigest(),
-        "sourceHashes": {
-            name: hashlib.sha256((root / name).read_bytes()).hexdigest()
-            for name in (
-                "apps/backend/gunther/document_parser.py",
-                "apps/backend/gunther/document_structure.py",
-                "apps/backend/gunther/pdf_native.py",
-                "apps/backend/gunther/pdf_glyphs.py",
-                "tools/document-parser/helper.py",
-                "scripts/build-document-parser.py",
-            )
-        },
+        **parser_input_hashes(root),
         "packages": {
             dist.metadata["Name"]: dist.version
             for dist in distributions()
