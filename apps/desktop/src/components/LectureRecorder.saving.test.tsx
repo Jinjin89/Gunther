@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { knowledgeApi, recordingAssetUrl } from "../api";
 import { renderTranscript, transcriptFromText } from "../services/liveTranscript";
-import type { RecordingSpoolChunk } from "../services/recordingSpool";
+import { assertRecordingSpoolAvailable, spoolRecordingChunk, type RecordingSpoolChunk } from "../services/recordingSpool";
 import * as pcm from "../services/pcm";
 import { CaptureSheet } from "./AtlasUtilities";
 import { loadRecordingDrafts } from "./LectureRecorder";
@@ -13,11 +13,14 @@ const spool = vi.hoisted(() => new Map<number, RecordingSpoolChunk>());
 vi.mock("../services/recordingSpool", () => ({
   assertRecordingSpoolAvailable: vi.fn().mockResolvedValue(undefined),
   bindRecordingSpoolWorkspace: vi.fn().mockResolvedValue(undefined),
-  spoolRecordingChunk: vi.fn(async (sessionId: string, sequence: number, blob: Blob, workspaceId: string) => {
+  spoolRecordingChunk: vi.fn(async (
+    sessionId: string, sequence: number, blob: Blob, workspaceId: string,
+    source: RecordingSpoolChunk["source"] = "live",
+  ) => {
     spool.set(sequence, {
       key: `${sessionId}:${sequence}`, sessionId, sequence, blob, workspaceId,
       mimeType: blob.type, sizeBytes: blob.size, checksum: "a".repeat(64),
-      source: "live", createdAt: new Date().toISOString(),
+      source, createdAt: new Date().toISOString(),
     });
   }),
   listRecordingSpool: vi.fn(async () => [...spool.values()]),
@@ -97,12 +100,29 @@ function fixture(): RecordingSession {
   };
 }
 
-async function startCapture(checks = true, grouping = true) {
-  const onCaptured = vi.fn().mockResolvedValue(undefined);
-  const view = render(<CaptureSheet
+function recordingSheet(onCaptured = vi.fn().mockResolvedValue(undefined)) {
+  return render(<CaptureSheet
     open surface="window" bases={[]} workspaceId="wsp_primary" initialKind="recording"
     onClose={vi.fn()} onCaptured={onCaptured} onAssetCaptured={vi.fn()}
   />);
+}
+
+async function importRecording(file: File) {
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL = () => "blob:imported-recording";
+    static revokeObjectURL = () => undefined;
+  });
+  const view = recordingSheet();
+  await act(async () => {
+    fireEvent.change(screen.getByLabelText("Import audio"), { target: { files: [file] } });
+  });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
+  return view;
+}
+
+async function startCapture(checks = true, grouping = true) {
+  const onCaptured = vi.fn().mockResolvedValue(undefined);
+  const view = recordingSheet(onCaptured);
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start recording" })); });
   const socket = RecordingSocket.latest;
   await act(async () => socket.receive({ type: "service.ready", check_again: checks, group_paragraphs: grouping }));
@@ -118,6 +138,7 @@ describe("saving a recording independently of transcript processing", () => {
     vi.useFakeTimers();
     window.localStorage.clear();
     spool.clear();
+    vi.mocked(assertRecordingSpoolAvailable).mockResolvedValue(undefined);
     server = fixture();
     vi.stubGlobal("WebSocket", RecordingSocket);
     vi.stubGlobal("MediaRecorder", AudioRecorder);
@@ -200,30 +221,189 @@ describe("saving a recording independently of transcript processing", () => {
     expect(onCaptured).not.toHaveBeenCalled();
   });
 
-  it("recovers audio and saves the transcript of a draft without a grouping field", async () => {
+  it("finishes an acknowledged import when the local spool becomes read-only", async () => {
+    vi.mocked(assertRecordingSpoolAvailable).mockImplementation(async () => {
+      if (server.nextExpectedSequence > 0 && server.checkpointRevision > 0) {
+        throw new Error("The local recording spool is read-only");
+      }
+    });
+    const file = new File(["existing audio"], "Field audio.webm", { type: "audio/webm" });
+    await importRecording(file);
+
+    expect(knowledgeApi.checkpointRecordingSession).toHaveBeenCalledBefore(
+      vi.mocked(knowledgeApi.completeRecordingSession),
+    );
+    expect(knowledgeApi.completeRecordingSession).toHaveBeenCalledExactlyOnceWith(server.id, "wsp_primary");
+    expect(server.sizeBytes).toBe(file.size);
+    expect(screen.getByRole("button", { name: /Save recording/ })).toBeEnabled();
+  });
+
+  it("reopens completed audio with the local transcript edit after a lost finish reply", async () => {
+    vi.mocked(knowledgeApi.completeRecordingSession).mockImplementationOnce(async () => {
+      server = {
+        ...server, status: "completed",
+        recovery: { ...server.recovery, canResume: false, audioAvailable: true },
+      };
+      throw new Error("Connection lost after completion");
+    });
+    const first = await startCapture();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Finish" })); });
+    expect(screen.getByText(/could not finish yet: Connection lost after completion/)).toBeVisible();
+    expect(screen.getByRole("button", { name: /Save recording/ })).toBeDisabled();
+
+    vi.mocked(knowledgeApi.checkpointRecordingSession).mockRejectedValue(new Error("Checkpoint temporarily unavailable"));
+    const edit = "Transcript edited while recovering.";
+    fireEvent.change(screen.getByPlaceholderText(/Paste or type a transcript|Your words will appear/), {
+      target: { value: edit },
+    });
+    const [draft] = loadRecordingDrafts();
+    expect(draft?.transcript).toBe(edit);
+    first.unmount();
+
+    const onCaptured = vi.fn().mockResolvedValue(undefined);
+    recordingSheet(onCaptured);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: new RegExp(draft!.title) })); });
+    expect(screen.getByRole("button", { name: /Save recording/ })).toBeEnabled();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Save recording/ })); });
+    expect(onCaptured.mock.calls[0]?.[2]).toContain(edit);
+    expect(knowledgeApi.appendRecordingChunk).toHaveBeenCalledOnce();
+    expect(knowledgeApi.completeRecordingSession).toHaveBeenCalledOnce();
+  });
+
+  it("restores an import from the server offset after a committed chunk loses its reply", async () => {
+    vi.mocked(knowledgeApi.appendRecordingChunk).mockImplementationOnce(async (_id, blob, sequence) => {
+      server = { ...server, sizeBytes: blob.size, nextExpectedSequence: sequence + 1 };
+      throw new Error("Connection lost after the append");
+    });
+    const file = new File([new Uint8Array(8 * 1024 * 1024 + 1)], "Field audio.webm", {
+      type: "audio/webm",
+    });
+    const first = await importRecording(file);
+    expect(screen.getByText(/complete durable copy remains bound/)).toBeVisible();
+    expect(loadRecordingDrafts()[0]?.importedAudio?.phase).toBe("uploading");
+    expect([...spool.keys()]).toEqual([0, 1]);
+    expect(knowledgeApi.completeRecordingSession).not.toHaveBeenCalled();
+    first.unmount();
+
+    recordingSheet();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Field audio/ })); });
+    const appends = vi.mocked(knowledgeApi.appendRecordingChunk);
+    expect(appends.mock.calls.map(([id, blob, sequence, workspaceId, checksum]) => (
+      [id, blob.size, sequence, workspaceId, checksum]
+    ))).toEqual([
+      [server.id, file.size - 1, 0, "wsp_primary", "a".repeat(64)],
+      [server.id, 1, 1, "wsp_primary", "a".repeat(64)],
+    ]);
+    expect(knowledgeApi.startRecordingSession).toHaveBeenCalledExactlyOnceWith(
+      "Field audio", "audio/webm", "wsp_primary",
+    );
+    expect(knowledgeApi.completeRecordingSession).toHaveBeenCalledExactlyOnceWith(server.id, "wsp_primary");
+    expect(knowledgeApi.checkpointRecordingSession).toHaveBeenCalledBefore(
+      vi.mocked(knowledgeApi.completeRecordingSession),
+    );
+    expect(loadRecordingDrafts()[0]?.importedAudio?.phase).toBe("complete");
+    expect(spool.size).toBe(0);
+    expect(screen.getByRole("button", { name: /Save recording/ })).toBeEnabled();
+  });
+
+  it("cleans the acknowledged prefix when a later import chunk fails", async () => {
+    const append = vi.mocked(knowledgeApi.appendRecordingChunk);
+    append.mockImplementationOnce(append.getMockImplementation()!)
+      .mockRejectedValueOnce(new Error("Second chunk interrupted"));
+    const file = new File([new Uint8Array(8 * 1024 * 1024 + 1)], "Field audio.webm", {
+      type: "audio/webm",
+    });
+    await importRecording(file);
+
+    expect(screen.getByText(/Second chunk interrupted/)).toBeVisible();
+    expect(server.nextExpectedSequence).toBe(1);
+    expect([...spool.keys()]).toEqual([1]);
+    expect(knowledgeApi.completeRecordingSession).not.toHaveBeenCalled();
+  });
+
+  it("preserves an incomplete import without uploading its partial draft on restore", async () => {
+    await spoolRecordingChunk(
+      server.id, 0, new Blob(["a"], { type: "audio/webm" }), "wsp_primary", "import",
+    );
+    const importedAudio = {
+      fileName: "partial.webm", contentType: "audio/webm", sizeBytes: 2,
+      chunkSizeBytes: 1, chunkCount: 2, stagedChunkCount: 1, checksumAlgorithm: "SHA-256", phase: "staging",
+    };
+    window.localStorage.setItem("gunther:recording-drafts", JSON.stringify([{
+      id: server.id, formatVersion: 3, title: "Partial recording", transcript: "",
+      summary: null, seconds: 0, recording: server, moments: [], recordingContext: "lecture",
+      knowledgeBaseId: "", workspaceId: "wsp_primary", updatedAt: server.updatedAt, importedAudio,
+    }]));
+    recordingSheet();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Partial recording/ })); });
+
+    expect(screen.getByText(/initial app-owned copy was interrupted/)).toBeVisible();
+    expect(knowledgeApi.appendRecordingChunk).not.toHaveBeenCalled();
+    expect(knowledgeApi.completeRecordingSession).not.toHaveBeenCalled();
+    expect(loadRecordingDrafts()[0]?.importedAudio).toEqual(importedAudio);
+    expect([...spool.keys()]).toEqual([0]);
+  });
+
+  it.each([
+    { savedFormat: "segments without a grouping field", grouping: { state: "idle" } },
+    { savedFormat: "timed text alone", grouping: { state: "off" } },
+  ])("reopens and saves an accepted draft with $savedFormat when checkpoint writes fail", async ({ grouping }) => {
     const state = transcriptFromText([{ startSeconds: 9, text: "Saved lecture words." }])!;
     const transcript = renderTranscript(state);
-    const segments = { ...state, grouping: undefined };
+    const segments = grouping.state === "idle" ? { ...state, grouping: undefined } : null;
     server = {
       ...server, status: "completed", durationSeconds: 15, sizeBytes: 128, transcript,
-      transcriptSegments: segments,
+      transcriptSegments: segments, checkpointRevision: 2, checkpointedAt: server.updatedAt,
       recovery: { ...server.recovery, canResume: false, audioAvailable: true },
     };
+    vi.mocked(knowledgeApi.checkpointRecordingSession)
+      .mockRejectedValue(new Error("Checkpoint writes unavailable"));
     window.localStorage.setItem("gunther:recording-drafts", JSON.stringify([{
       id: server.id, formatVersion: 3, title: "Preserved lecture", transcript, segments,
       summary: null, seconds: 15, recording: server, moments: [], recordingContext: "lecture",
       knowledgeBaseId: "", workspaceId: "wsp_primary", updatedAt: server.updatedAt,
     }]));
     const onCaptured = vi.fn().mockResolvedValue(undefined);
-    const { container } = render(<CaptureSheet open surface="window" bases={[]} workspaceId="wsp_primary" initialKind="recording"
-      onClose={vi.fn()} onCaptured={onCaptured} onAssetCaptured={vi.fn()}
-    />);
+    const { container } = recordingSheet(onCaptured);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Preserved lecture/ })); });
     expect(container.querySelector("audio")).toHaveAttribute("src", recordingAssetUrl(server.id));
     expect(screen.getByRole("button", { name: "Play from 00:09" })).toBeEnabled();
-    expect(loadRecordingDrafts()[0]?.segments?.grouping).toEqual({ state: "idle" });
+    expect(loadRecordingDrafts()[0]?.segments?.grouping).toEqual(grouping);
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    expect(screen.getByRole("button", { name: /Save recording/ })).toBeEnabled();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Save recording/ })); });
     expect(onCaptured.mock.calls[0]?.[2]).toContain(transcript);
+    expect(knowledgeApi.completeRecordingSession).not.toHaveBeenCalled();
+  });
+
+  it.each(["live", "imported"])("reopens a completed %s recording with a trailing newline despite checkpoint failure", async (kind) => {
+    const transcript = "Saved words with a trailing newline.\n";
+    server = {
+      ...server, status: "completed", durationSeconds: 15, sizeBytes: 128, nextExpectedSequence: 1,
+      transcript, checkpointRevision: 2, checkpointedAt: server.updatedAt,
+      recovery: { ...server.recovery, canResume: false, audioAvailable: true },
+    };
+    const importedAudio = kind === "imported" ? {
+      fileName: server.fileName, contentType: server.contentType, sizeBytes: server.sizeBytes,
+      chunkSizeBytes: 8 * 1024 * 1024, chunkCount: 1, stagedChunkCount: 1,
+      checksumAlgorithm: "SHA-256", phase: "complete",
+    } : null;
+    vi.mocked(knowledgeApi.checkpointRecordingSession).mockRejectedValue(new Error("Checkpoint writes unavailable"));
+    window.localStorage.setItem("gunther:recording-drafts", JSON.stringify([{
+      id: server.id, formatVersion: 3, title: "Saved recording", transcript,
+      summary: null, seconds: server.durationSeconds, recording: server, moments: [], recordingContext: "lecture",
+      knowledgeBaseId: "", workspaceId: "wsp_primary", updatedAt: server.updatedAt, importedAudio,
+    }]));
+
+    const onCaptured = vi.fn().mockResolvedValue(undefined);
+    recordingSheet(onCaptured);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Saved recording/ })); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    expect(screen.getByRole("button", { name: /Save recording/ })).toBeEnabled();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Save recording/ })); });
+    expect(onCaptured.mock.calls[0]?.[2]).toContain(transcript.trimEnd());
+    expect(server.transcript).toBe(transcript);
+    expect(knowledgeApi.completeRecordingSession).not.toHaveBeenCalled();
   });
 
   it("freezes the latest live text and ignores late checks and grouping answers after saving", async () => {

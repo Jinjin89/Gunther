@@ -351,3 +351,11 @@ WHATWG rule for "latin-1". No control-character classifier beyond what that deco
 rejects. Archive member paths from manifests are URL-decoded (`urllib.parse.unquote`)
 before lookup, and the path checks apply to the decoded path. Round 21's evidence order
 stays. These steps are how it is carried out.
+
+# Round 23 — batch 22 scope cut (same pattern as Round 20)
+
+The third review round of batch 22 found another LectureRecorder completion regression
+that 318ad32 didn't have. LectureRecorder.tsx goes back to 318ad32's completion, finish,
+restore and spool logic, apart from the minimal wiring to call the shared upload
+boundary. The checker's completion cases become regression tests. They pass on 318ad32
+and must pass again.

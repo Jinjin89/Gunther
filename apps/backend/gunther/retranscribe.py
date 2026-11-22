@@ -41,6 +41,7 @@ from gunther.realtime import RELISTEN_PAD_MS, ListenError, relisten_audio
 from gunther.recording_metadata import (
     TRANSCRIPT_HEADING,
     RecordingReference,
+    recording_file_paths,
     source_recording_reference,
     with_recording_header,
 )
@@ -781,7 +782,7 @@ class Retranscriber:
                 raise RecordingNotFound(recording_id)
             if recording.status != "completed":
                 raise RetranscribeError("This recording hasn't finished yet.")
-            path = self.recordings_dir / recording.file_name
+            path, _ = recording_file_paths(self.recordings_dir, recording.file_name)
             sources = _sources(session, recording_id)
             terms = []
             source_id = None

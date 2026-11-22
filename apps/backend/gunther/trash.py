@@ -49,7 +49,7 @@ from gunther.models import (
     WebSnapshot,
     utc_now,
 )
-from gunther.recording_metadata import source_recording_id
+from gunther.recording_metadata import recording_file_paths, source_recording_id
 from gunther.schemas import TrashItemKind, TrashItemOut
 
 logger = logging.getLogger(__name__)
@@ -448,8 +448,7 @@ class TrashService:
             )
             recording = None if still_used else session.get(RecordingSession, recording_id)
             if recording is not None and recording.status != "capturing":
-                final_path = self.recordings_dir / recording.file_name
-                files += [final_path, final_path.with_name(f"{final_path.name}.part")]
+                files.extend(recording_file_paths(self.recordings_dir, recording.file_name))
                 # The audio copy kept for listening again goes with the recording.
                 files += list(listen_copy.copy_paths(self.recordings_dir, recording.id))
                 session.delete(recording)

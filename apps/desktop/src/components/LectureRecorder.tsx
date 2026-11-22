@@ -404,6 +404,25 @@ function segmentsPayload(state: TranscriptState): TranscriptState | null {
     : stored;
 }
 
+async function startRecordingUpload(title: string, contentType: string, workspaceId: string) {
+  const session = await knowledgeApi.startRecordingSession(title, contentType, workspaceId);
+  if (session.nextExpectedSequence !== 0 || session.sizeBytes !== 0) {
+    throw new Error("A new recording session did not start with an empty server ledger.");
+  }
+  return session;
+}
+
+async function readBoundSpool(
+  session: RecordingSession, workspaceId: string, acknowledgedSequence?: number,
+) {
+  // Both callers verify the session in this workspace before migrating legacy chunks.
+  await bindRecordingSpoolWorkspace(session.id, workspaceId);
+  if (acknowledgedSequence !== undefined) {
+    await deleteAcknowledgedRecordingSpool(session.id, acknowledgedSequence, workspaceId);
+  }
+  return listRecordingSpool(session.id, workspaceId);
+}
+
 interface LectureRecorderProps {
   title: string;
   knowledgeBaseId: string;
@@ -583,16 +602,8 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
   ): Promise<RecordingSession> => {
     await assertRecordingSpoolAvailable();
     const boundWorkspaceId = requireWorkspaceId();
-    // The server lookup is the authority for the session/workspace relationship.
-    // Only after it succeeds may v1 (previously unbound) spool rows be migrated.
     let latest = await knowledgeApi.recordingMetadata(sessionOverride.id, boundWorkspaceId);
-    await bindRecordingSpoolWorkspace(latest.id, boundWorkspaceId);
-    await deleteAcknowledgedRecordingSpool(
-      latest.id,
-      latest.nextExpectedSequence,
-      boundWorkspaceId,
-    );
-    let chunks = await listRecordingSpool(latest.id, boundWorkspaceId);
+    let chunks = await readBoundSpool(latest, boundWorkspaceId, latest.nextExpectedSequence);
 
     if (latest.status === "failed") {
       throw new Error("The saved recording session is marked as failed.");
@@ -1091,14 +1102,11 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
       });
       URL.revokeObjectURL(previewUrl);
 
-      const session = await knowledgeApi.startRecordingSession(
+      const session = await startRecordingUpload(
         importedTitle,
         contentType,
         boundWorkspaceId,
       );
-      if (session.nextExpectedSequence !== 0 || session.sizeBytes !== 0) {
-        throw new Error("A new import session did not start with an empty server ledger.");
-      }
       recordingSessionRef.current = session;
       checkpointRevisionRef.current = session.checkpointRevision;
       setSavedRecording(session);
@@ -1335,7 +1343,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
 
       if (!session) {
         failureStage = "session";
-        session = await knowledgeApi.startRecordingSession(
+        session = await startRecordingUpload(
           title.trim() || `${recordingLabel[0]?.toUpperCase()}${recordingLabel.slice(1)}`,
           activeAudioType,
           requireWorkspaceId(),
@@ -1744,8 +1752,7 @@ export const LectureRecorder = forwardRef<LectureRecorderHandle, LectureRecorder
       if (restoredImport?.phase === "staging") {
         // A staging marker can lag one synchronous localStorage write behind the
         // final IndexedDB transaction. Promote only an exact, verified manifest.
-        await bindRecordingSpoolWorkspace(metadata.id, boundWorkspaceId);
-        const stagedChunks = await listRecordingSpool(metadata.id, boundWorkspaceId);
+        const stagedChunks = await readBoundSpool(metadata, boundWorkspaceId);
         if (
           metadata.nextExpectedSequence !== 0
           || metadata.sizeBytes !== 0

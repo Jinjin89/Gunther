@@ -1,9 +1,10 @@
-"""References to saved audio and its measured duration, separate from captured text."""
+"""Recording file locations, source references and measured duration."""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 from sqlalchemy import ColumnElement, and_, select
 from sqlalchemy.orm import Session
@@ -19,6 +20,11 @@ _RECORDING_HEADER = re.compile(
 )
 _STANDALONE_REFERENCE = re.compile(rf"^{_REFERENCE}[ \t]*\r?$", re.MULTILINE)
 _DURATION = re.compile(r"^Duration:[ \t]*(?:(\d+(?::\d+){1,2})|(\d+)[ \t]*seconds?)", re.MULTILINE)
+
+
+def recording_file_paths(root: Path, file_name: str) -> tuple[Path, Path]:
+    final_path = root / file_name
+    return final_path, final_path.parent / f"{final_path.name}.part"
 
 
 @dataclass(frozen=True)

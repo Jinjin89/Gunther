@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from gunther.database import session_scope
 from gunther.models import RecordingChunk, RecordingSession, utc_now
+from gunther.recording_metadata import recording_file_paths
 from gunther.schemas import (
     RecordingCheckpointInput,
     RecordingMoment,
@@ -120,8 +121,7 @@ class RecordingService:
     def _paths(self, recording: RecordingSession) -> tuple[Path, Path]:
         if Path(recording.file_name).name != recording.file_name:
             raise RecordingConflictError("The recording path is invalid.")
-        final_path = self.recordings_dir / recording.file_name
-        part_path = final_path.with_name(f"{final_path.name}.part")
+        final_path, part_path = recording_file_paths(self.recordings_dir, recording.file_name)
         self.storage_budget.assert_safe_path(final_path)
         self.storage_budget.assert_safe_path(part_path)
         return final_path, part_path
@@ -334,7 +334,7 @@ class RecordingService:
         recording_id = f"rec_{uuid4().hex[:24]}"
         safe_title = re.sub(r"[^a-zA-Z0-9_-]+", "-", title).strip("-")[:80] or "recording"
         file_name = f"{recording_id}.{safe_title}.{recording_extension(media_type)}"
-        part_path = (self.recordings_dir / file_name).with_name(f"{file_name}.part")
+        _, part_path = recording_file_paths(self.recordings_dir, file_name)
         with self.storage_budget.reserve(self.recordings_dir):
             self.recordings_dir.mkdir(parents=True, exist_ok=True)
             self.storage_budget.assert_safe_path(part_path)

@@ -161,6 +161,8 @@ def test_delete_forever_removes_rows_index_and_only_unused_originals(storage: Pa
         kept_asset.write_bytes(b"%PDF shared")
         audio = storage / "recordings" / f"{RECORDING_ID}.webm"
         audio.write_bytes(b"audio")
+        partial = storage / "recordings" / f"{RECORDING_ID}.webm.part"
+        partial.write_bytes(b"pending audio")
         copies = [
             storage / "recordings" / f"{RECORDING_ID}.listen.pcm",
             storage / "recordings" / f"{RECORDING_ID}.listen.ranges",
@@ -206,6 +208,7 @@ def test_delete_forever_removes_rows_index_and_only_unused_originals(storage: Pa
 
         assert client.get(f"/api/sources/{recording_source}").status_code == 404
         assert not audio.exists()
+        assert not partial.exists()
         assert not any(copy.exists() for copy in copies), "the audio copy goes with the recording"
         assert kept_asset.exists(), "another source still uses this original"
         with session_scope(sessions_of(client)) as session:
