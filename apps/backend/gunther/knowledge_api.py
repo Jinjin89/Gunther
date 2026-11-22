@@ -6,7 +6,7 @@ from sqlalchemy import func, select, update
 
 from gunther import digest, library_topics, papers, vector_index
 from gunther.database import session_scope
-from gunther.knowledge_index import embeddable, enqueue
+from gunther.knowledge_index import embeddable, enqueue_asset_parse
 from gunther.llm import AnalysisNeedsModel, ModelError
 from gunther.models import (
     BlockEmbedding,
@@ -514,11 +514,7 @@ def reprocess(source_id: str, request: Request):
         if not source.asset_id:
             service.index.add_source(session, source)
         else:
-            job = enqueue(session, source.id, "parse_asset", f"parse_asset:{source.id}:v1")
-            session.flush()
-            if job.state not in {"queued", "running"}:
-                job.state, job.attempts, job.error = "queued", 0, None
-                job.available_at = utc_now()
+            enqueue_asset_parse(session, source.id, retry=True)
         if service.index.embedder:
             session.execute(
                 update(ProcessingJob)

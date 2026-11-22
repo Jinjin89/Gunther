@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import hashlib
+import mimetypes
 import os
 import re
 import secrets
 import struct
 import time
+from codecs import (
+    BOM_UTF8,
+    BOM_UTF16_BE,
+    BOM_UTF16_LE,
+    BOM_UTF32_BE,
+    BOM_UTF32_LE,
+    getincrementaldecoder,
+)
 from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -13,6 +22,7 @@ from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from threading import Lock
+from typing import Literal
 from uuid import uuid4
 from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
@@ -26,6 +36,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from gunther.database import session_scope
+from gunther.document_structure import organize_document, pdf_metadata
+from gunther.documents import ParsedDocument, text_document
 from gunther.models import (
     ArtifactAsset,
     Asset,
@@ -38,6 +50,12 @@ from gunther.models import (
 )
 from gunther.ocr import OcrError, OcrPage, OcrProvider, UnavailableOcrProvider
 from gunther.pdf_text import reflow, vocabulary_of
+from gunther.portable_documents import (
+    archive_document,
+    html_document,
+    image_type,
+    pdf_raster_images,
+)
 from gunther.schemas import (
     AssetCaptureOut,
     AssetOut,
@@ -64,6 +82,7 @@ MAX_PDF_CONTENT_STREAMS_PER_PAGE = 128
 MAX_OCR_IMAGE_INPUT_BYTES = 32 * 1024 * 1024
 MAX_OCR_PDF_PAGES = 100
 MAX_OCR_PDF_SECONDS = 60
+ASSET_TYPE_SAMPLE_BYTES = 4_096
 _ZIP_END_RECORD = struct.Struct("<4s4H2LH")
 _ZIP_END_SIGNATURE = b"PK\x05\x06"
 _asset_locks_guard = Lock()
@@ -95,6 +114,16 @@ class AssetTextExtraction:
     ocr_provider: str | None = None
 
 
+type AssetFormat = Literal["pdf", "image", "docx", "epub", "html", "text"]
+
+
+@dataclass(frozen=True)
+class AssetParseResult:
+    asset_format: AssetFormat | None
+    document: ParsedDocument
+    warning: str | None
+
+
 def _asset_lock(content_hash: str) -> Lock:
     with _asset_locks_guard:
         return _asset_locks.setdefault(content_hash, Lock())
@@ -115,18 +144,31 @@ def _safe_name(file_name: str) -> str:
     return f"{stem}{suffix}"
 
 
-def _decode_text(data: bytes) -> str:
-    for encoding in ("utf-8-sig", "utf-16", "utf-16-le", "utf-16-be"):
+def _bom_encoding(data: bytes) -> str | None:
+    if data.startswith((BOM_UTF32_LE, BOM_UTF32_BE)):
+        return "utf-32"
+    if data.startswith((BOM_UTF16_LE, BOM_UTF16_BE)):
+        return "utf-16"
+    if data.startswith(BOM_UTF8):
+        return "utf-8-sig"
+    return None
+
+
+def _decode_text(data: bytes, *, final: bool = True) -> tuple[str, str | None]:
+    encoding = _bom_encoding(data)
+    if encoding is None:
         try:
-            decoded = data.decode(encoding)
+            return getincrementaldecoder("utf-8")().decode(data, final=final), None
         except UnicodeDecodeError:
-            continue
-        if "\x00" not in decoded:
-            return decoded
-    utf8_prefix = data.decode("utf-8-sig", errors="ignore")
-    if utf8_prefix and "\x00" not in utf8_prefix:
-        return utf8_prefix
-    return data.decode("latin-1", errors="replace")
+            encoding = "windows-1252"
+    decoder = getincrementaldecoder(encoding)
+    try:
+        return decoder().decode(data, final=final), None
+    except UnicodeDecodeError:
+        return (
+            decoder(errors="replace").decode(data, final=final),
+            "Some undecodable characters were replaced.",
+        )
 
 
 def _combine_limitations(*limitations: str | None) -> str | None:
@@ -215,7 +257,7 @@ def _read_archive_member(archive: ZipFile, name: str, remaining_budget: int) -> 
             f"archive member exceeds the {_display_bytes(allowed)} extraction budget"
         )
     with archive.open(info) as member:
-        data = member.read(allowed + 1)
+        data = member.read(info.file_size + 1)
     if len(data) > allowed or len(data) > info.file_size:
         raise _ExtractionLimitError("archive member expanded beyond its declared safe size")
     return data
@@ -251,9 +293,9 @@ class _ReadableHtml(HTMLParser):
         )
 
 
-def _html_text(data: bytes) -> str:
+def _html_text(html: str) -> str:
     parser = _ReadableHtml()
-    parser.feed(_decode_text(data))
+    parser.feed(html)
     return parser.text()
 
 
@@ -274,57 +316,6 @@ def _docx_text(path: Path) -> tuple[str, str | None]:
         if text:
             paragraphs.append(text)
     return _character_limited("\n\n".join(paragraphs))
-
-
-def _epub_text(path: Path) -> tuple[str, str | None]:
-    _preflight_archive(path)
-    sections: list[str] = []
-    extracted_bytes = 0
-    extracted_characters = 0
-    limitation: str | None = None
-    with ZipFile(path) as archive:
-        names = sorted(
-            name
-            for name in archive.namelist()
-            if name.lower().endswith((".xhtml", ".html", ".htm"))
-        )
-        if len(names) > MAX_EPUB_DOCUMENTS:
-            raise _ExtractionLimitError(
-                f"EPUB contains more than {MAX_EPUB_DOCUMENTS:,} readable documents"
-            )
-        declared_bytes = sum(archive.getinfo(name).file_size for name in names)
-        if declared_bytes > MAX_ARCHIVE_TOTAL_EXTRACTED_BYTES:
-            raise _ExtractionLimitError(
-                "EPUB readable documents exceed the cumulative decompression budget"
-            )
-        for name in names:
-            data = _read_archive_member(
-                archive,
-                name,
-                MAX_ARCHIVE_TOTAL_EXTRACTED_BYTES - extracted_bytes,
-            )
-            extracted_bytes += len(data)
-            section = _html_text(data)
-            if section:
-                block = f"## {Path(name).stem}\n\n{section}"
-                separator_size = 2 if sections else 0
-                remaining = MAX_EXTRACTED_CHARACTERS - extracted_characters - separator_size
-                if remaining <= 0:
-                    limitation = (
-                        f"Text extraction was limited to {MAX_EXTRACTED_CHARACTERS:,} "
-                        "characters; the complete original remains available."
-                    )
-                    break
-                if len(block) > remaining:
-                    sections.append(block[:remaining])
-                    limitation = (
-                        f"Text extraction was limited to {MAX_EXTRACTED_CHARACTERS:,} "
-                        "characters; the complete original remains available."
-                    )
-                    break
-                sections.append(block)
-                extracted_characters += separator_size + len(block)
-    return "\n\n".join(sections), limitation
 
 
 @contextmanager
@@ -505,16 +496,6 @@ def _pdf_text(path: Path, ocr_provider: OcrProvider) -> AssetTextExtraction:
 
 
 def _image_text(path: Path, ocr_provider: OcrProvider) -> AssetTextExtraction:
-    if path.stat().st_size > MAX_OCR_IMAGE_INPUT_BYTES:
-        return AssetTextExtraction(
-            text="",
-            limitation=(
-                f"OCR was skipped because the image exceeds the "
-                f"{_display_bytes(MAX_OCR_IMAGE_INPUT_BYTES)} processing limit; "
-                "the complete original remains available."
-            ),
-            ocr_status="degraded",
-        )
     try:
         page = ocr_provider.recognize_image(path, page_number=1)
     except OcrError as error:
@@ -530,78 +511,151 @@ def _image_text(path: Path, ocr_provider: OcrProvider) -> AssetTextExtraction:
     )
 
 
-def extract_asset_content(
-    path: Path,
-    file_name: str,
-    media_type: str,
-    ocr_provider: OcrProvider | None = None,
-) -> AssetTextExtraction:
-    """Extract bounded content while retaining structured OCR processing state."""
+def _text_format(media_type: str) -> AssetFormat | None:
+    if media_type in {"text/html", "application/xhtml+xml"}:
+        return "html"
+    if media_type.startswith("text/") or media_type in {"application/json", "application/xml"}:
+        return "text"
+    return None
 
-    provider = ocr_provider or UnavailableOcrProvider()
-    suffix = Path(file_name).suffix.casefold()
-    image_suffixes = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
+
+def _asset_format(path: Path, file_name: str, media_type: str) -> AssetFormat | None:
+    """Check binary formats before choosing a reader for text."""
+    with path.open("rb") as source:
+        sample = source.read(ASSET_TYPE_SAMPLE_BYTES)
+    if sample.lstrip().startswith(b"%PDF-"):
+        return "pdf"
+    if sample.startswith((b"PK\x03\x04", _ZIP_END_SIGNATURE)):
+        _preflight_archive(path)
+        with ZipFile(path) as archive:
+            names = set(archive.namelist())
+            if "word/document.xml" in names:
+                return "docx"
+            if "META-INF/container.xml" in names:
+                return "epub"
+            mime = b"application/epub+zip"
+            if (
+                "mimetype" in names and archive.getinfo("mimetype").file_size == len(mime)
+                and _read_archive_member(archive, "mimetype", len(mime)) == mime
+            ):
+                return "epub"
+        return None
+
+    media_type = media_type.partition(";")[0].strip().casefold()
+    name_type, _ = mimetypes.guess_type(file_name, strict=False)
+    text_format = _text_format(name_type or "")
+    if text_format is None and (media_type.startswith("text/") or _bom_encoding(sample)):
+        text_format = _text_format(media_type) or "text"
+    if path.stat().st_size <= MAX_OCR_IMAGE_INPUT_BYTES:
+        if image_type(path):
+            return "image"
+    elif not text_format and (
+        (name_type or "").startswith("image/") or media_type.startswith("image/")
+    ):
+        raise _ExtractionLimitError(
+            f"image verification exceeds the {_display_bytes(MAX_OCR_IMAGE_INPUT_BYTES)} limit"
+        )
+    return text_format
+
+
+def _bounded_document(document: ParsedDocument) -> ParsedDocument:
+    if sum(len(element.text) for element in document.elements) > MAX_EXTRACTED_CHARACTERS:
+        raise _ExtractionLimitError("structured text exceeds the extraction limit")
+    return document
+
+
+def _read_archive_asset(path: Path, asset_format: AssetFormat) -> tuple[ParsedDocument, str | None]:
     try:
-        if suffix == ".pdf" or media_type == "application/pdf":
-            return _pdf_text(path, provider)
-        if suffix in image_suffixes or media_type.startswith("image/"):
-            return _image_text(path, provider)
-        if suffix == ".docx":
-            text, limitation = _docx_text(path)
-            return AssetTextExtraction(text, limitation)
-        if suffix == ".epub":
-            text, limitation = _epub_text(path)
-            return AssetTextExtraction(text, limitation)
-        if suffix in {".html", ".htm"} or media_type.startswith("text/html"):
-            data, truncated = _read_text_prefix(path)
-            text, limitation = _character_limited(
-                _html_text(data),
-                (
-                    f"HTML extraction was limited to the first "
-                    f"{_display_bytes(MAX_TEXT_INPUT_BYTES)}; the complete original "
-                    "remains available."
-                    if truncated
-                    else None
-                ),
-            )
-            return AssetTextExtraction(text, limitation)
-        if (
-            suffix in {".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".xml"}
-            or media_type.startswith("text/")
-        ):
-            data, truncated = _read_text_prefix(path)
-            text, limitation = _character_limited(
-                _decode_text(data),
-                (
-                    f"Text extraction was limited to the first "
-                    f"{_display_bytes(MAX_TEXT_INPUT_BYTES)}; the complete original "
-                    "remains available."
-                    if truncated
-                    else None
-                ),
-            )
-            return AssetTextExtraction(text, limitation)
-    except _ExtractionLimitError as error:
-        return AssetTextExtraction(
-            "",
-            "Text extraction was skipped to protect device resources "
-            f"({error}); the complete original remains available.",
-        )
-    except (BadZipFile, ElementTree.ParseError, KeyError, OSError, PdfReadError, ValueError):
-        return AssetTextExtraction(
-            "",
-            "Text extraction failed safely; the complete original remains available.",
-        )
+        document = archive_document(path, f".{asset_format}")
+        if asset_format == "docx":
+            _bounded_document(document)
     except Exception as error:
-        return AssetTextExtraction(
-            "",
-            f"Text extraction failed safely ({type(error).__name__}); "
-            "the complete original remains available.",
+        if asset_format != "docx":
+            raise
+        text, warning = _docx_text(path)
+        return text_document(text), _combine_limitations(
+            warning, f"Structured import unavailable ({type(error).__name__}); text retained."
         )
-    return AssetTextExtraction(
-        "",
-        "The original is preserved; this file type does not expose readable text yet.",
+    warning = document.manifest.get("warning")
+    return document, warning if isinstance(warning, str) else None
+
+
+def _read_text_asset(path: Path, *, html: bool) -> tuple[ParsedDocument, str | None]:
+    data, truncated = _read_text_prefix(path)
+    label = "HTML" if html else "Text"
+    warning = (
+        f"{label} extraction was limited to the first {_display_bytes(MAX_TEXT_INPUT_BYTES)}; "
+        "the complete original remains available."
+        if truncated else None
     )
+    text, decoding_warning = _decode_text(data, final=not truncated)
+    warning = _combine_limitations(warning, decoding_warning)
+    fallback_warning = None
+    if html:
+        try:
+            return _bounded_document(html_document(text)), warning
+        except Exception as error:
+            text = _html_text(text)
+            fallback_warning = (
+                f"Structured import unavailable ({type(error).__name__}); text retained."
+            )
+    text, warning = _character_limited(text, warning)
+    return text_document(text), _combine_limitations(warning, fallback_warning)
+
+
+def read_initial_asset(
+    path: Path, media_type: str, ocr_provider: OcrProvider, *, file_name: str | None = None,
+) -> AssetParseResult:
+    """Read the original once by format, with a bounded fallback for failed structure."""
+
+    asset_format = None
+    try:
+        asset_format = _asset_format(path, file_name or path.name, media_type)
+        if asset_format in {"pdf", "image"}:
+            extract = _pdf_text if asset_format == "pdf" else _image_text
+            extracted = extract(path, ocr_provider)
+            document = text_document(extracted.text)
+            if extracted.ocr_status != "not_needed":
+                document.manifest.update(
+                    ocrStatus=extracted.ocr_status, ocrProvider=extracted.ocr_provider
+                )
+            warning = extracted.limitation
+        elif asset_format in {"epub", "docx"}:
+            document, warning = _read_archive_asset(path, asset_format)
+        elif asset_format in {"text", "html"}:
+            document, warning = _read_text_asset(path, html=asset_format == "html")
+        else:
+            document = text_document("")
+            warning = "The original is preserved; this file type does not expose readable text yet."
+    except _ExtractionLimitError as error:
+        document = text_document("")
+        warning = ("Text extraction was skipped to protect device resources "
+                   f"({error}); the complete original remains available.")
+    except (BadZipFile, ElementTree.ParseError, KeyError, OSError, PdfReadError, ValueError):
+        document = text_document("")
+        warning = "Text extraction failed safely; the complete original remains available."
+    except Exception as error:
+        document = text_document("")
+        warning = (f"Text extraction failed safely ({type(error).__name__}); "
+                   "the complete original remains available.")
+
+    if asset_format == "pdf":
+        try:
+            pdf_raster_images(path, document)
+        except Exception as error:
+            document.manifest["images"] = "partial"
+            warning = (warning or "") + (
+                f" Some images could not be extracted ({type(error).__name__})."
+            )
+        warning = (warning or "") + (
+            " Layout has not been read yet; heading hierarchy, vector figures "
+            "and table structure may be incomplete. The original PDF is retained."
+        )
+        try:
+            organize_document(document, pdf_metadata(path))
+        except Exception:
+            organize_document(document)
+    return AssetParseResult(asset_format, document, warning)
 
 
 class AssetService:
@@ -905,15 +959,11 @@ class AssetService:
         finally:
             temporary.unlink(missing_ok=True)
 
-        from gunther.knowledge_index import LEGACY_ASSET_PARSER, enqueue
+        from gunther.knowledge_index import LEGACY_ASSET_PARSER
 
         content = self._source_content(asset, notes)
         upload_name = _safe_name(file_name)
         upload_type = media_type[:160] or "application/octet-stream"
-
-        def initialize(session: Session, source: Source) -> None:
-            source.asset_id = asset.id
-            enqueue(session, source.id, "parse_asset", f"parse_asset:{source.id}:v1")
 
         def find_earlier_queued_source(session: Session) -> Source | None:
             # The earlier queued writer hashed the submitted metadata as source text.
@@ -945,13 +995,12 @@ class AssetService:
                 content=content,
                 knowledge_base_id=knowledge_base_id,
             ),
-            initialize_source=initialize,
+            asset_id=asset.id,
             fingerprint=asset_capture_fingerprint(
                 title, kind, notes, file_name=upload_name, media_type=upload_type,
                 content_hash=content_hash,
             ),
             find_existing_capture=find_earlier_queued_source,
-            defer_processing=True,
         )
         return AssetCaptureOut(asset=self._out(asset), import_result=imported)
 

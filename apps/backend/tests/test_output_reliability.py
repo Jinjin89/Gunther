@@ -440,7 +440,7 @@ def test_chart_requires_complete_verification_even_when_its_values_are_cited(cov
 
 def test_output_retains_its_figure_when_the_original_source_is_deleted(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "gunther.processing.extract_asset_content",
+        "gunther.asset_service._pdf_text",
         lambda *args: AssetTextExtraction("CD3D marks T cells [1]."),
     )
     image_ids = []

@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 import math
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -18,19 +18,16 @@ from threading import Event, Thread
 from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, or_, select, update
+from sqlalchemy.orm import Session
 
 from gunther import digest, papers, vector_index
-from gunther.asset_service import (
-    AssetService,
-    _decode_text,
-    _read_text_prefix,
-    extract_asset_content,
-)
+from gunther.asset_service import AssetService, read_initial_asset
 from gunther.audio_decode import audio_duration_ms
+from gunther.content import ParsedBlock
 from gunther.database import session_scope
 from gunther.document_parser import DoclingError, DoclingParser
-from gunther.document_structure import organize_document, pdf_metadata
-from gunther.documents import ParsedDocument, text_document
+from gunther.document_structure import organize_document
+from gunther.documents import ParsedDocument
 from gunther.extraction import analysis_job_key
 from gunther.knowledge_index import ASSET_PARSER, KnowledgeIndex, embeddable, new_id
 from gunther.llm import AnalysisNeedsModel
@@ -45,7 +42,6 @@ from gunther.models import (
     SourceRevision,
     utc_now,
 )
-from gunther.portable_documents import archive_document, html_document, pdf_raster_images
 from gunther.recording_service import RecordingService
 
 if TYPE_CHECKING:
@@ -146,6 +142,20 @@ def reconcile_fallback(structured: ParsedDocument, fallback: ParsedDocument) -> 
             fallbackOrder="page; position within partial pages uncertain",
         )
     return recovered
+
+
+@dataclass(frozen=True)
+class AssetRevisionDraft:
+    document: ParsedDocument
+    blocks: list[ParsedBlock]
+    parser: str
+    warning: str | None
+
+
+def _finish_job(job: ProcessingJob, state: str = "completed", error: str | None = None) -> None:
+    job.state, job.error = state, error
+    job.lease_token, job.lease_until = None, None
+    job.updated_at = utc_now()
 
 
 class ProcessingWorker:
@@ -250,7 +260,10 @@ class ProcessingWorker:
             finished.set()
             heartbeat.join()
 
-    def _retain_images(self, document: ParsedDocument, job_id: str, token: str) -> None:
+    def _stage_reading(
+        self, document: ParsedDocument, job_id: str, token: str, *,
+        parser: str, warning: str | None,
+    ) -> AssetRevisionDraft:
         for image in document.assets:
             retained = asyncio.run(
                 self.assets.preserve_bytes(
@@ -261,30 +274,55 @@ class ProcessingWorker:
             for element in document.elements:
                 if element.payload.get("imageKey") == image.key:
                     element.payload["imageAssetId"] = retained.id
+        document.manifest.update(parser=parser, warning=warning)
+        return AssetRevisionDraft(document, document.chunks(), parser, warning)
 
-    def _publish_initial_pdf(
-        self, source_id: str, document: ParsedDocument, warning: str | None,
-        job_id: str, token: str,
-    ) -> bool:
-        """Commit readable native content while its layout job remains running."""
-        with session_scope(self.sessions) as session:
-            owned = session.execute(
-                update(ProcessingJob)
-                .where(
-                    ProcessingJob.id == job_id, ProcessingJob.lease_token == token,
-                    ProcessingJob.state == "running", ProcessingJob.lease_until > utc_now(),
-                )
-                .values(updated_at=utc_now())
-            ).rowcount
-            if not owned or self.stopping.is_set():
-                return False
-            # Reprocessing never replaces an existing revision with a temporary fallback.
-            if session.get(SourceIndexHead, source_id) is None:
-                self.index.publish(
-                    session, session.get(Source, source_id), document.chunks(),
-                    parser=ASSET_PARSER, warning=warning, document=document,
-                )
-        return True
+    def _publication_job(self, session: Session, job_id: str, token: str) -> ProcessingJob | None:
+        now = utc_now()
+        job = session.scalars(
+            update(ProcessingJob)
+            .where(
+                ProcessingJob.id == job_id, ProcessingJob.lease_token == token,
+                ProcessingJob.state == "running", ProcessingJob.lease_until > now,
+            )
+            .values(updated_at=now)
+            .returning(ProcessingJob)
+        ).one_or_none()
+        return None if self.stopping.is_set() else job
+
+    def _publish_reading(
+        self, session: Session, job: ProcessingJob, draft: AssetRevisionDraft, *,
+        asset_id: str, expected_head: str | None, initial: bool = False,
+    ) -> str | None:
+        source = session.get(Source, job.source_id)
+        head = session.get(SourceIndexHead, job.source_id)
+        current_head = head.revision_id if head else None
+        if source is None or source.asset_id != asset_id or current_head != expected_head:
+            _finish_job(job, "cancelled")
+            return None
+        # Reprocessing never replaces an existing head with a temporary reading.
+        if initial and current_head is not None:
+            return current_head
+        previous = session.get(SourceRevision, current_head) if current_head else None
+        if (
+            previous and json.loads(previous.manifest_json).get("method") == "docling"
+            and draft.document.manifest.get("method") != "docling"
+        ):
+            _finish_job(
+                job, "failed",
+                "Structured parsing failed; the previous document revision was retained.",
+            )
+            return None
+        if previous and not draft.blocks and session.scalar(
+            select(ContentBlock.id).where(ContentBlock.revision_id == previous.id).limit(1)
+        ) is not None:
+            warning = draft.warning or "No readable content was extracted."
+            _finish_job(job, "failed", f"{warning} The previous document revision was retained.")
+            return None
+        return self.index.publish(
+            session, source, draft.blocks, parser=draft.parser,
+            warning=draft.warning, document=draft.document,
+        ).id
 
     def _process(self, job_id: str, token: str, lease_lost: Event) -> None:
         layout_started = False
@@ -297,8 +335,10 @@ class ProcessingWorker:
                 if kind == "parse_asset":
                     if not asset:
                         raise ValueError("Original file is unavailable")
-                    path, _, _ = self.assets.download(asset.id)
-                    file_name, media_type = asset.original_name, asset.media_type
+                    path, media_type, file_name = self.assets.download(asset.id)
+                    asset_id = asset.id
+                    head = session.get(SourceIndexHead, source_id)
+                    asset_head = head.revision_id if head else None
                 elif kind == "digest":
                     image_path = (
                         self.assets.download(asset.id)[0]
@@ -352,58 +392,29 @@ class ProcessingWorker:
                         )
                     )
             if kind == "parse_asset":
-                suffix = Path(file_name).suffix.lower()
-                is_pdf = media_type == "application/pdf" or suffix == ".pdf"
-                extracted = extract_asset_content(
-                    path, file_name, media_type, self.assets.ocr_provider
-                )
                 # Metadata and user context are retained, but not indexed as file evidence.
-                document = text_document(extracted.text)
-                if extracted.ocr_status != "not_needed":
-                    document.manifest.update(
-                        ocrStatus=extracted.ocr_status, ocrProvider=extracted.ocr_provider
-                    )
-                warning = extracted.limitation
+                initial = read_initial_asset(
+                    path, media_type, self.assets.ocr_provider, file_name=file_name,
+                )
+                document, warning = initial.document, initial.warning
                 parser = ASSET_PARSER
-                if suffix in {".docx", ".epub", ".html", ".htm"}:
-                    try:
-                        document = (
-                            archive_document(path, suffix)
-                            if suffix in {".docx", ".epub"}
-                            else html_document(_decode_text(_read_text_prefix(path)[0]))
-                        )
-                    except Exception as error:
-                        warning = (
-                            (warning or "")
-                            + f" Structured import unavailable ({type(error).__name__}); "
-                            "text retained."
-                        )
-                if is_pdf:
-                    try:
-                        pdf_raster_images(path, document)
-                    except Exception as error:
-                        document.manifest["images"] = "partial"
-                        warning = (
-                            warning or ""
-                        ) + f" Some images could not be extracted ({type(error).__name__})."
-                    warning = (warning or "") + (
-                        " Layout has not been read yet; heading hierarchy, vector figures "
-                        "and table structure may be incomplete. The original PDF is retained."
+                if initial.asset_format == "pdf":
+                    draft = self._stage_reading(
+                        document, job_id, token, parser=parser, warning=warning,
                     )
-                    try:
-                        organize_document(document, pdf_metadata(path))
-                    except Exception:
-                        organize_document(document)
-                    document.manifest.update(parser=parser, warning=warning)
-                    self._retain_images(document, job_id, token)
-                    if not self._publish_initial_pdf(
-                        source_id, document, warning, job_id, token,
-                    ):
-                        return
+                    with session_scope(self.sessions) as session:
+                        job = self._publication_job(session, job_id, token)
+                        if job is None:
+                            return
+                        asset_head = self._publish_reading(
+                            session, job, draft, asset_id=asset_id, expected_head=asset_head,
+                            initial=True,
+                        )
+                        if asset_head is None:
+                            return
                     layout_started = True
                     if not self.document_parser:
                         raise DoclingError("The offline layout parser is unavailable")
-                if self.document_parser and is_pdf:
                     result = (
                         self.document_parser.parse(
                             path,
@@ -467,10 +478,7 @@ class ProcessingWorker:
                 if document.manifest.get("schema") != 2:
                     # A schema-2 document was organized by its plan; nothing re-decides it.
                     organize_document(document)
-                self._retain_images(document, job_id, token)
-                document.manifest.update(parser=parser, warning=warning)
-                parsed = document.chunks()
-                vectors = []
+                draft = self._stage_reading(document, job_id, token, parser=parser, warning=warning)
             elif kind == "embed" and self.index.embedder:
                 if model_id != self.index.embedder.model_id:
                     raise ValueError("Embedding model changed; job must retain its model identity")
@@ -526,38 +534,15 @@ class ProcessingWorker:
                 raise ValueError("Processing provider is not configured")
 
             with session_scope(self.sessions) as session:
-                owned = session.execute(
-                    update(ProcessingJob)
-                    .where(
-                        ProcessingJob.id == job_id,
-                        ProcessingJob.lease_token == token,
-                        ProcessingJob.state == "running",
-                        ProcessingJob.lease_until > utc_now(),
-                    )
-                    .values(updated_at=utc_now())
-                ).rowcount
-                if not owned or self.stopping.is_set():
+                job = self._publication_job(session, job_id, token)
+                if job is None:
                     return
                 source = session.get(Source, source_id)
                 if kind == "parse_asset":
-                    head = session.get(SourceIndexHead, source_id)
-                    previous = session.get(SourceRevision, head.revision_id) if head else None
-                    if (
-                        previous
-                        and json.loads(previous.manifest_json).get("method") == "docling"
-                        and document.manifest.get("method") != "docling"
-                    ):
-                        job = session.get(ProcessingJob, job_id)
-                        job.state, job.error = (
-                            "failed",
-                            "Structured parsing failed; the previous document revision "
-                            "was retained.",
-                        )
-                        job.lease_token, job.lease_until = None, None
+                    if self._publish_reading(
+                        session, job, draft, asset_id=asset_id, expected_head=asset_head,
+                    ) is None:
                         return
-                    self.index.publish(
-                        session, source, parsed, parser=parser, warning=warning, document=document
-                    )
                 elif kind == "digest":
                     digest.publish(session, source, request, result)
                 elif kind == "extract_assertions":
@@ -565,8 +550,7 @@ class ProcessingWorker:
                         extraction is None or source.trashed_at is not None
                         or source.content_hash != source_hash
                     ):
-                        job = session.get(ProcessingJob, job_id)
-                        job.state, job.lease_token, job.lease_until = "cancelled", None, None
+                        _finish_job(job, "cancelled")
                         return
                     self.assets.knowledge_service.replace_source_analysis(
                         session, source, extraction
@@ -584,10 +568,7 @@ class ProcessingWorker:
                     head = session.get(SourceIndexHead, source_id)
                     if head is None or head.revision_id != revision_id:
                         # Read again since: the card describes the revision the reader shows.
-                        job = session.get(ProcessingJob, job_id)
-                        job.state, job.error = "completed", None
-                        job.lease_token, job.lease_until = None, None
-                        job.updated_at = utc_now()
+                        _finish_job(job)
                         return
                     papers.publish(
                         session,
@@ -624,10 +605,7 @@ class ProcessingWorker:
                                     vector_json="",
                                 )
                             )
-                job = session.get(ProcessingJob, job_id)
-                job.state, job.error = "completed", None
-                job.lease_token, job.lease_until = None, None
-                job.updated_at = utc_now()
+                _finish_job(job)
         except Exception as error:
             if layout_started and self.stopping.is_set():
                 # Shutdown is resumable: the next worker reclaims this lease on expiry.

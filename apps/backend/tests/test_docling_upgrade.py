@@ -42,7 +42,7 @@ def test_native_revision_is_readable_during_layout_and_lease_is_renewed(tmp_path
     entered, finish, renewed = Event(), Event(), Event()
     monkeypatch.setattr("gunther.processing.HEARTBEAT_SECONDS", 0.02)
     monkeypatch.setattr(
-        "gunther.processing.extract_asset_content",
+        "gunther.asset_service._pdf_text",
         lambda *args: AssetTextExtraction("Native evidence is available immediately."),
     )
     with client_for(tmp_path) as client:
@@ -95,7 +95,7 @@ def test_native_revision_is_readable_during_layout_and_lease_is_renewed(tmp_path
 @pytest.mark.parametrize("error", [RuntimeError("secret /local/path"), TimeoutError(), None])
 def test_failed_upgrade_keeps_native_revision_and_can_retry(tmp_path, monkeypatch, error):
     monkeypatch.setattr(
-        "gunther.processing.extract_asset_content",
+        "gunther.asset_service._pdf_text",
         lambda *args: AssetTextExtraction("Readable native evidence."),
     )
     with client_for(tmp_path) as client:
@@ -214,7 +214,7 @@ def test_pdf_upload_acknowledges_the_original_before_reading(tmp_path):
 
 def test_failed_conversion_with_residual_content_does_not_replace_native(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "gunther.processing.extract_asset_content",
+        "gunther.asset_service._pdf_text",
         lambda *args: AssetTextExtraction("Complete native paragraph."),
     )
     with client_for(tmp_path) as client:
@@ -237,7 +237,7 @@ def test_failed_conversion_with_residual_content_does_not_replace_native(tmp_pat
 
 def test_shutdown_leaves_layout_resumable_without_losing_native_revision(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "gunther.processing.extract_asset_content",
+        "gunther.asset_service._pdf_text",
         lambda *args: AssetTextExtraction("Readable across a restart."),
     )
     with client_for(tmp_path) as client:

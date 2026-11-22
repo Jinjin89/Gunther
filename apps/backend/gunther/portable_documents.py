@@ -4,30 +4,34 @@ from __future__ import annotations
 
 import posixpath
 import re
+from collections import Counter
 from html.parser import HTMLParser
+from io import BytesIO
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import unquote, urljoin, urlsplit
 from xml.etree import ElementTree as ET
-from zipfile import ZipFile
+from zipfile import BadZipFile, ZipFile
+from zlib import error as ZlibError
+
+from PIL import Image
 
 from gunther.content import ParsedBlock
-from gunther.documents import DocumentAsset, ParsedDocument, split_reference_entries
+from gunther.documents import MAX_ELEMENTS, DocumentAsset, ParsedDocument, split_reference_entries
 from gunther.pdf_text import REFERENCE_SECTIONS, section_name
 
 IMAGE_LIMIT = 16 * 1024 * 1024
 IMAGE_TOTAL = 32 * 1024 * 1024
+MAX_HTML_INPUT_CHARACTERS = 8 * 1024 * 1024
 
 
-def image_type(data: bytes) -> str | None:
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if data.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if data.startswith((b"GIF87a", b"GIF89a")):
-        return "image/gif"
-    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
-        return "image/webp"
-    return None
+def image_type(source: bytes | Path) -> str | None:
+    try:
+        with Image.open(BytesIO(source) if isinstance(source, bytes) else source) as image:
+            media_type = image.get_format_mimetype()
+            image.verify()
+            return media_type or "application/octet-stream"
+    except (OSError, SyntaxError, ValueError, EOFError, Image.DecompressionBombError):
+        return None
 
 
 class HtmlDocument(HTMLParser):
@@ -216,7 +220,7 @@ class HtmlDocument(HTMLParser):
 
 def html_document(html: str, base_url: str = "") -> ParsedDocument:
     parser = HtmlDocument(base_url)
-    parser.feed(html[: 8 * 1024 * 1024])
+    parser.feed(html[:MAX_HTML_INPUT_CHARACTERS])
     parser.flush()
     split_reference_entries(parser.elements)
     document = ParsedDocument(
@@ -226,33 +230,63 @@ def html_document(html: str, base_url: str = "") -> ParsedDocument:
     return document
 
 
-def epub_order(archive: ZipFile) -> list[str]:
+def _epub_member_path(reference: str, directory: str = "") -> str | None:
+    try:
+        url = urlsplit(reference)
+    except ValueError:
+        return None
+    path = unquote(url.path)
+    name = posixpath.normpath(posixpath.join(directory, path))
+    if (
+        url.scheme or url.netloc or not path or "\\" in path or "\x00" in path
+        or name in {".", ".."} or name.startswith(("../", "/"))
+    ):
+        return None
+    return name
+
+
+def epub_order(archive: ZipFile) -> tuple[list[str], int]:
     from gunther.asset_service import _read_archive_member
 
     container = ET.fromstring(_read_archive_member(archive, "META-INF/container.xml", IMAGE_TOTAL))
     root = next(node for node in container.iter() if node.tag.endswith("}rootfile"))
-    package_path = root.attrib["full-path"]
+    package_path = _epub_member_path(root.attrib["full-path"])
+    if package_path is None:
+        raise ValueError("Invalid EPUB package path")
     package = ET.fromstring(_read_archive_member(archive, package_path, IMAGE_TOTAL))
     manifest = {
         node.attrib.get("id"): node.attrib.get("href", "")
         for node in package.iter()
         if node.tag.endswith("}item")
     }
-    names = [
-        posixpath.normpath(
-            posixpath.join(posixpath.dirname(package_path), manifest[node.attrib["idref"]])
-        )
+    spine = [
+        node.attrib.get("idref")
         for node in package.iter()
-        if node.tag.endswith("}itemref") and node.attrib.get("idref") in manifest
+        if node.tag.endswith("}itemref")
     ]
-    if not names or any(name.startswith(("../", "/")) for name in names):
+    if not spine:
         raise ValueError("Invalid EPUB reading order")
-    return list(dict.fromkeys(names))
+    names, missing = [], 0
+    directory = posixpath.dirname(package_path)
+    for reference in spine:
+        href = manifest.get(reference)
+        name = _epub_member_path(href, directory) if href else None
+        if name is None:
+            missing += 1
+        else:
+            names.append(name)
+    return list(dict.fromkeys(names)), missing
 
 
 def archive_document(path: Path, suffix: str) -> ParsedDocument:
     from gunther.asset_service import (
+        MAX_ARCHIVE_MEMBER_BYTES,
         MAX_ARCHIVE_TOTAL_EXTRACTED_BYTES,
+        MAX_EPUB_DOCUMENTS,
+        MAX_EXTRACTED_CHARACTERS,
+        _decode_text,
+        _ExtractionLimitError,
+        _html_text,
         _preflight_archive,
         _read_archive_member,
     )
@@ -261,44 +295,125 @@ def archive_document(path: Path, suffix: str) -> ParsedDocument:
     document = ParsedDocument(
         [], manifest={"schema": 1, "method": "local" + suffix, "images": "preserved"}
     )
+    warnings = []
+    skipped: Counter[tuple[str, str]] = Counter()
     used = 0
     with ZipFile(path) as archive:
+        archive_names = archive.namelist()
 
         def member(name: str) -> bytes:
             nonlocal used
-            data = _read_archive_member(archive, name, MAX_ARCHIVE_TOTAL_EXTRACTED_BYTES - used)
-            used += len(data)
-            return data
+            size = archive.getinfo(name).file_size
+            remaining = MAX_ARCHIVE_TOTAL_EXTRACTED_BYTES - used
+            if size > remaining:
+                raise _ExtractionLimitError("cumulative decompression budget")
+            if size <= MAX_ARCHIVE_MEMBER_BYTES:
+                # Charge an attempted read even if the member fails to decompress.
+                used += size
+            return _read_archive_member(archive, name, remaining)
+
+        def optional_member(name: str, kind: str) -> bytes | None:
+            try:
+                return member(name)
+            except KeyError:
+                skipped[kind, "missing archive member"] += 1
+            except _ExtractionLimitError as error:
+                skipped[kind, str(error)] += 1
+            except (BadZipFile, OSError, RuntimeError, ValueError, EOFError, ZlibError):
+                skipped[kind, "unreadable archive member"] += 1
+            return None
 
         def image(name: str) -> str | None:
-            if name not in archive.namelist() or name.startswith(("../", "/")):
+            if name.startswith(("../", "/")):
+                skipped["image", "invalid archive path"] += 1
                 return None
             if any(asset.key == name for asset in document.assets):
                 return name
-            data = member(name)
+            data = optional_member(name, "image")
+            if data is None:
+                return None
+            if len(data) > IMAGE_LIMIT:
+                skipped["image", "image size limit"] += 1
+                return None
             media = image_type(data)
-            if not media or len(data) > IMAGE_LIMIT:
+            if not media:
+                skipped["image", "unreadable image"] += 1
                 return None
             document.assets.append(DocumentAsset(name, data, media, Path(name).name))
             return name
 
         if suffix == ".epub":
-            for name in epub_order(archive)[:512]:
-                parsed = html_document(member(name).decode("utf-8", errors="replace"), name)
+            try:
+                names, missing = epub_order(archive)
+            except (ET.ParseError, KeyError, StopIteration, ValueError, BadZipFile, ZlibError):
+                names = [
+                    n for n in archive_names if n.lower().endswith((".xhtml", ".html", ".htm"))
+                ]
+                warnings.append("EPUB spine unavailable. Readable chapters use archive order.")
+            else:
+                if missing:
+                    skipped["chapter", "missing or invalid spine reference"] += missing
+            if len(names) > MAX_EPUB_DOCUMENTS:
+                skipped["chapter", f"chapter limit of {MAX_EPUB_DOCUMENTS:,}"] += (
+                    len(names) - MAX_EPUB_DOCUMENTS
+                )
+            remaining_chars = MAX_EXTRACTED_CHARACTERS
+            for name in names[:MAX_EPUB_DOCUMENTS]:
+                if remaining_chars <= 0 or len(document.elements) == MAX_ELEMENTS:
+                    skipped["chapter", "document representation budget"] += 1
+                    continue
+                if name.startswith(("../", "/")):
+                    skipped["chapter", "invalid archive path"] += 1
+                    continue
+                data = optional_member(name, "chapter")
+                if data is None:
+                    continue
+                markup, decoding_warning = _decode_text(data)
+                if decoding_warning and decoding_warning not in warnings:
+                    warnings.append(decoding_warning)
+                if len(markup) > MAX_HTML_INPUT_CHARACTERS:
+                    markup = markup[:MAX_HTML_INPUT_CHARACTERS]
+                    skipped["chapter remainder", "HTML input budget"] += 1
+                try:
+                    elements = html_document(markup, name).elements
+                except (AssertionError, ValueError):
+                    try:
+                        elements = [ParsedBlock(_html_text(markup))]
+                    except (AssertionError, ValueError):
+                        skipped["chapter", "unreadable HTML"] += 1
+                        continue
+                    warnings.append("A chapter's structure could not be read. Text retained.")
                 offset = len(document.elements)
-                for element in parsed.elements:
+                truncated = False
+                for element in elements:
+                    if remaining_chars <= 0 or len(document.elements) == MAX_ELEMENTS:
+                        truncated = True
+                        break
                     if element.parent is not None:
                         element.parent += offset
+                    if len(element.text) > remaining_chars:
+                        document.elements.append(ParsedBlock(
+                            element.text[:remaining_chars], parent=element.parent,
+                            headings=element.headings, locator=element.locator,
+                        ))
+                        remaining_chars = 0
+                        truncated = True
+                        break
                     if element.kind == "figure":
-                        key = image(posixpath.normpath(str(element.payload["imageUrl"])))
-                        if key:
+                        image_name = _epub_member_path(str(element.payload["imageUrl"]))
+                        if image_name is None:
+                            skipped["image", "invalid archive path"] += 1
+                        elif key := image(image_name):
                             element.payload["imageKey"] = key
                     document.elements.append(element)
+                    remaining_chars -= len(element.text)
+                if truncated:
+                    skipped["chapter remainder", "document representation budget"] += 1
         else:
             ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
             rel_ns = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
             relations = {}
-            if "word/_rels/document.xml.rels" in archive.namelist():
+            if "word/_rels/document.xml.rels" in archive_names:
                 relations = {
                     node.attrib["Id"]: posixpath.normpath("word/" + node.attrib["Target"])
                     for node in ET.fromstring(member("word/_rels/document.xml.rels"))
@@ -394,7 +509,15 @@ def archive_document(path: Path, suffix: str) -> ParsedDocument:
                             },
                         )
                     )
-    split_reference_entries(document.elements)
+            split_reference_entries(document.elements)
+    if any(kind == "image" for kind, _ in skipped):
+        document.manifest["images"] = "partial"
+    warnings.extend(
+        f"Skipped {count:,} {kind}{'s' if count != 1 else ''} ({reason})."
+        for (kind, reason), count in skipped.items()
+    )
+    if warnings:
+        document.manifest["warning"] = " ".join(warnings)
     document.validate()
     return document
 
@@ -424,8 +547,10 @@ def pdf_raster_images(path: Path, document: ParsedDocument) -> None:
                     continue
                 exported = page.images[name]
                 data = exported.data
+                if len(data) > IMAGE_LIMIT or used + len(data) > IMAGE_TOTAL:
+                    continue
                 media = image_type(data)
-                if not media or len(data) > IMAGE_LIMIT or used + len(data) > IMAGE_TOTAL:
+                if not media:
                     continue
                 used += len(data)
                 key = f"page-{page_number}:{name}"

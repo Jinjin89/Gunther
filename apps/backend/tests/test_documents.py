@@ -10,7 +10,7 @@ from zipfile import ZipFile
 from sqlalchemy import func, select
 from test_structured_knowledge import base, client_for, source
 
-from gunther.asset_service import AssetTextExtraction
+from gunther.asset_service import AssetTextExtraction, _read_archive_member, read_initial_asset
 from gunther.content import ParsedBlock
 from gunther.database import session_scope
 from gunther.document_parser import docling_document
@@ -21,10 +21,12 @@ from gunther.models import (
     ElementAsset,
     ProcessingAsset,
     ProcessingJob,
+    Source,
     SourceIndexHead,
     SourceRevision,
     utc_now,
 )
+from gunther.ocr import UnavailableOcrProvider
 from gunther.portable_documents import archive_document, html_document, pdf_raster_images
 from gunther.processing import reconcile_fallback
 
@@ -163,8 +165,8 @@ def test_fallback_never_restores_a_page_whose_blocks_the_plan_dropped():
     assert [e.anchor["page"] for e in reconcile_fallback(structured, fallback)] == [3]
 
 
-def test_epub_uses_spine_order_and_preserves_relative_embedded_image(tmp_path):
-    path = tmp_path / "book.epub"
+def test_epub_uses_spine_order_and_preserves_relative_embedded_image(tmp_path, monkeypatch):
+    path = tmp_path / "book.bin"
     with ZipFile(path, "w") as archive:
         archive.writestr(
             "META-INF/container.xml",
@@ -192,7 +194,18 @@ def test_epub_uses_spine_order_and_preserves_relative_embedded_image(tmp_path):
         )
         archive.writestr("OPS/a.html", "<h1>Last</h1><p>Conclusion.</p>")
         archive.writestr("OPS/images/chart.png", png())
-    document = archive_document(path, ".epub")
+    reads = []
+
+    def inspect_read(archive, name, remaining):
+        reads.append(name)
+        return _read_archive_member(archive, name, remaining)
+
+    monkeypatch.setattr("gunther.asset_service._read_archive_member", inspect_read)
+    result = read_initial_asset(path, "application/octet-stream", UnavailableOcrProvider())
+    assert result.asset_format == "epub"
+    assert result.warning is None
+    assert [name for name in reads if name.endswith(".html")] == ["OPS/z.html", "OPS/a.html"]
+    document = result.document
     assert [e.text for e in document.elements if e.kind == "heading"] == ["First", "Last"]
     assert document.assets[0].data == png()
     assert (
@@ -320,7 +333,7 @@ class FigureParser:
 
 def test_reparse_is_idempotent_and_figures_references_survive_restart(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "gunther.processing.extract_asset_content",
+        "gunther.asset_service._pdf_text",
         lambda *args: AssetTextExtraction("Evidence [1]."),
     )
     with client_for(tmp_path) as client:
@@ -329,12 +342,15 @@ def test_reparse_is_idempotent_and_figures_references_survive_restart(tmp_path, 
         worker.document_parser = FigureParser()
         assert worker.run_once()
         document = client.get(f"/api/sources/{saved}/document").json()
+        job_id = document["processing"]["jobId"]
         image_id = next(e for e in document["elements"] if e["kind"] == "figure")["payload"][
             "imageAssetId"
         ]
         assert client.get(f"/api/assets/{image_id}").content == png()
         assert document["references"][0]["raw"] == "[1] Smith 2020."
-        assert client.post(f"/api/sources/{saved}/reprocess").status_code == 202
+        retry = client.post(f"/api/sources/{saved}/reprocess")
+        assert retry.status_code == 202
+        assert retry.json()["jobId"] == job_id
         while worker.run_once():
             pass
         with session_scope(worker.sessions) as session:
@@ -364,7 +380,7 @@ def test_reparse_is_idempotent_and_figures_references_survive_restart(tmp_path, 
 
 def test_cancelled_import_releases_derived_assets_and_cannot_publish(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "gunther.processing.extract_asset_content", lambda *args: AssetTextExtraction("Evidence.")
+        "gunther.asset_service._pdf_text", lambda *args: AssetTextExtraction("Evidence.")
     )
     with client_for(tmp_path) as client:
         saved = capture_pdf(client, base(client))
@@ -403,9 +419,37 @@ def test_reclaimed_lease_collects_abandoned_images_safely(tmp_path):
             assert session.scalar(select(func.count()).select_from(ProcessingAsset)) == 0
 
 
+def test_layout_for_a_superseded_head_releases_its_staged_images(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "gunther.asset_service._pdf_text", lambda *args: AssetTextExtraction("Native reading."),
+    )
+    with client_for(tmp_path) as client:
+        saved = capture_pdf(client, base(client))
+        worker = client.app.state.processing_worker
+
+        class SupersededParser(FigureParser):
+            def parse(self, path):
+                with session_scope(worker.sessions) as session:
+                    source_row = session.get(Source, saved)
+                    document = text_document("A newer reading was published.")
+                    worker.index.publish(session, source_row, document.chunks(), document=document)
+                return super().parse(path)
+
+        worker.document_parser = SupersededParser()
+        assert worker.run_once()
+        document = client.get(f"/api/sources/{saved}/document").raise_for_status().json()
+        assert [e["content"] for e in document["elements"]] == ["A newer reading was published."]
+        with session_scope(worker.sessions) as session:
+            assert session.scalar(select(func.count()).select_from(Asset)) == 1
+            assert session.scalar(select(func.count()).select_from(ProcessingAsset)) == 0
+            job = session.get(ProcessingJob, document["processing"]["jobId"])
+            assert job.state == "cancelled"
+            assert job.lease_token is None
+
+
 def test_parser_failure_retains_a_richer_existing_revision(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "gunther.processing.extract_asset_content",
+        "gunther.asset_service._pdf_text",
         lambda *args: AssetTextExtraction("Evidence [1]."),
     )
     with client_for(tmp_path) as client:

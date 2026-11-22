@@ -63,7 +63,7 @@ from gunther.extraction import (
     analysis_job_key,
     normalize_predicate,
 )
-from gunther.knowledge_index import KnowledgeIndex, enqueue
+from gunther.knowledge_index import KnowledgeIndex, enqueue, enqueue_asset_parse
 from gunther.llm import AnalysisNeedsModel, ModelError, ModelGateway, ModelInfo, Turn
 from gunther.model_profiles import Effort
 from gunther.models import (
@@ -880,7 +880,7 @@ class KnowledgeService:
         initialize_source: Callable[[Session, Source], None] | None = None,
         fingerprint: str | None = None,
         find_existing_capture: Callable[[Session], Source | None] | None = None,
-        defer_processing: bool = False,
+        asset_id: str | None = None,
     ) -> ImportResultOut:
         content = payload.content.strip()
         content_hash = fingerprint or source_fingerprint(payload.title, payload.kind, content)
@@ -892,7 +892,7 @@ class KnowledgeService:
                 content_hash,
                 initialize_source=initialize_source,
                 find_existing_capture=find_existing_capture,
-                defer_processing=defer_processing,
+                asset_id=asset_id,
             )
 
     def _import_source(
@@ -903,7 +903,7 @@ class KnowledgeService:
         *,
         initialize_source: Callable[[Session, Source], None] | None = None,
         find_existing_capture: Callable[[Session], Source | None] | None = None,
-        defer_processing: bool = False,
+        asset_id: str | None = None,
     ) -> ImportResultOut:
 
         with session_scope(self.sessions) as session:
@@ -930,6 +930,7 @@ class KnowledgeService:
                     kind=payload.kind,
                     content=content,
                     content_hash=content_hash,
+                    asset_id=asset_id,
                 )
                 session.add(source)
                 session.flush()
@@ -939,18 +940,19 @@ class KnowledgeService:
                 if payload.knowledge_base_id:
                     self._ensure_source_memberships(session, payload.knowledge_base_id, [source.id])
 
-                if not defer_processing and session.get(SourceIndexHead, source.id) is None:
-                    self.index.add_source(session, source)
-
-                if not defer_processing and content:
-                    # Commit the source, its readable index and the analysis job together.
-                    # Saving a capture must never wait for a model over the network.
-                    job = enqueue(
-                        session, source.id, "extract_assertions",
-                        analysis_job_key(source.id, source.content_hash),
-                    )
-                    if self.extractor is None:
-                        job.state, job.error = "needs_model", str(AnalysisNeedsModel())
+                if asset_id is not None:
+                    enqueue_asset_parse(session, source.id)
+                else:
+                    if session.get(SourceIndexHead, source.id) is None:
+                        self.index.add_source(session, source)
+                    if content:
+                        # Commit the readable index and analysis job with the source.
+                        job = enqueue(
+                            session, source.id, "extract_assertions",
+                            analysis_job_key(source.id, source.content_hash),
+                        )
+                        if self.extractor is None:
+                            job.state, job.error = "needs_model", str(AnalysisNeedsModel())
                 session.flush()
                 return ImportResultOut(
                     source=self._source_summary(session, source),

@@ -507,7 +507,7 @@ def _decode_response(data: bytes, content_type: str) -> str:
         else:
             if "\x00" not in decoded:
                 return decoded
-    return _decode_text(data)
+    return _decode_text(data)[0]
 
 
 def _readable_page(data: bytes, content_type: str) -> tuple[str, str | None]:
@@ -829,13 +829,14 @@ class WebCaptureService:
                     _, fetched = await asyncio.wait_for(
                         self._fetch(url), timeout=max(0.1, deadline - time.monotonic())
                     )
-                    media = image_type(fetched.body)
                     if (
                         not 200 <= fetched.status < 300
-                        or not media
                         or len(fetched.body) > IMAGE_LIMIT
                         or total + len(fetched.body) > IMAGE_LIMIT
                     ):
+                        continue
+                    media = await asyncio.to_thread(image_type, fetched.body)
+                    if not media:
                         continue
                     total += len(fetched.body)
                     retained = await self.assets.preserve_bytes(

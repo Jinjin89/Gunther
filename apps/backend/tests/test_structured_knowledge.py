@@ -169,7 +169,7 @@ def test_pdf_figure_only_pages_retain_ocr_fallback_text(tmp_path, monkeypatch):
             ]
 
     monkeypatch.setattr(
-        "gunther.processing.extract_asset_content",
+        "gunther.asset_service._pdf_text",
         lambda *args: AssetTextExtraction(
             "<!-- gunther:page=2 -->\nGenome quality from scanned page."
         ),

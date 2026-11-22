@@ -331,3 +331,23 @@ detach, Stop. Library Ask's startup and selection code (remembered session, Acti
 destination, StrictMode replay, archived sessions) goes back to a447bb5's logic,
 apart from the wiring it needs to call the hook. The round-1 listener fixes stay. Shared
 startup selection is not part of this cleanup.
+
+# Round 21 — file type evidence and partial reads (batch 20)
+
+"Never by names" means no particular document, publisher or example names. A file
+extension is a standard type signal. The evidence order is one rule. Magic bytes or a
+BOM decide binary formats and text encoding. For text content, the extension (looked up
+in the standard mimetypes table) picks the text format. A declared media type is used
+only when it agrees with the content class. Readers keep every part they could read
+within the existing budgets and report what they skipped (missing members, parts over
+the cap). They never drop the whole reading.
+
+# Round 22 — the decoder decides (batch 20)
+
+No hand-written signature tables for formats a library we already ship can open. Images
+are an image when Pillow's `Image.open` + `verify` accepts them, which covers every TIFF
+variant Pillow reads. Text is UTF-8 (or what its BOM says), otherwise windows-1252, the
+WHATWG rule for "latin-1". No control-character classifier beyond what that decode
+rejects. Archive member paths from manifests are URL-decoded (`urllib.parse.unquote`)
+before lookup, and the path checks apply to the decoded path. Round 21's evidence order
+stays. These steps are how it is carried out.

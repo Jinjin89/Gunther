@@ -33,6 +33,7 @@ from gunther.models import (
     SourceIndexHead,
     SourcePaper,
     SourceRevision,
+    utc_now,
 )
 from gunther.recording_metadata import recording_measurement_eligible, source_recording_id
 
@@ -92,6 +93,18 @@ def enqueue(
         model_id=model_id,
     )
     session.add(job)
+    return job
+
+
+def enqueue_asset_parse(
+    session: Session, source_id: str, *, version: str = "v1", retry: bool = False,
+) -> ProcessingJob:
+    job = enqueue(session, source_id, "parse_asset", f"parse_asset:{source_id}:{version}")
+    if retry:
+        session.flush()
+        if job.state not in {"queued", "running"}:
+            job.state, job.attempts, job.error = "queued", 0, None
+            job.available_at = utc_now()
     return job
 
 
@@ -330,7 +343,7 @@ class KnowledgeIndex:
                 )
                 .limit(limit)
             ).all():
-                enqueue(session, source_id, "parse_asset", f"parse_asset:{source_id}:v2")
+                enqueue_asset_parse(session, source_id, version="v2")
             if self.embedder:
                 heads = session.scalars(
                     select(SourceIndexHead)
