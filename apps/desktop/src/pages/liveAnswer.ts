@@ -1,5 +1,4 @@
 import type { AgentStep, ResearchUsed } from "@gunther/contracts";
-import { useCallback, useState } from "react";
 import type { AnswerEvent } from "../api";
 
 export interface LiveStep extends AgentStep {
@@ -19,8 +18,6 @@ export interface LiveAnswerState {
   };
 }
 
-const EMPTY: LiveAnswerState = { steps: [], text: "" };
-
 export function applyAnswerEvent(state: LiveAnswerState, event: AnswerEvent): LiveAnswerState {
   if (event.type === "text") return { ...state, text: state.text + event.text };
   if (event.type === "resumed") return state;
@@ -39,13 +36,4 @@ export function applyAnswerEvent(state: LiveAnswerState, event: AnswerEvent): Li
   const steps = at === -1 ? [...state.steps, step] : state.steps.map((item, index) => index === at ? step : item);
   const research = event.used && state.research ? { ...state.research, used: event.used } : state.research;
   return { ...state, steps, ...(research ? { research } : {}) };
-}
-
-/** Live progress for one question at a time: `start()`, feed `hear`, then `stop()`. */
-export function useLiveAnswer() {
-  const [live, setLive] = useState<LiveAnswerState | null>(null);
-  const start = useCallback(() => setLive(EMPTY), []);
-  const stop = useCallback(() => setLive(null), []);
-  const hear = useCallback((event: AnswerEvent) => setLive((current) => applyAnswerEvent(current ?? EMPTY, event)), []);
-  return { live, start, stop, hear };
 }

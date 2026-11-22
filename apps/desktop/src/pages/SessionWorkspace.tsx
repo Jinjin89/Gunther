@@ -5,7 +5,6 @@ import type {
   ConversationBriefInput,
   ConversationCitation,
   ConversationContext,
-  ConversationTurn,
   KnowledgeSession,
   KnowledgeSessionSummary,
   KnowledgeTopic,
@@ -53,21 +52,21 @@ import { useAutosize } from "../services/useAutosize";
 import { BriefPanel } from "./ConversationBrief";
 import { SkillChip, useAskSkills, useSkillMenu, type SkillBudget } from "../components/search/skills";
 import { withoutTrigger } from "../components/search/TriggerMenu";
-import { InterruptedNote, hasSavedQuestion, isInterrupted } from "./interrupted";
+import { InterruptedNote, isInterrupted } from "./interrupted";
 import { DictationStatus, MicGlyph } from "../components/Dictation";
 import { useDragWidth } from "../hooks/useDragWidth";
 import { useDictatedField } from "../services/useDictatedField";
 import { withShortcut } from "../shortcuts/shortcuts";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import type { KnowledgeBase } from "../atlas";
-import { AnswerStoppedError, ServiceUnavailableError, knowledgeApi } from "../api";
+import { ServiceUnavailableError, knowledgeApi } from "../api";
 import { AnswerTrace } from "../developer/AnswerTrace";
 import { useTraces } from "../developer/useTraces";
 import { lastAnswerChoice, MODELS_CHANGED_EVENT, readAnswerStyle, usableChoice, useDeviceChoice, useModelMenu, useWebSearch, type AskChoice } from "../models/askModel";
 import { SpeakerButton } from "../speech/SpeakerButton";
 import { readAloud } from "../speech/readAloud";
 import { AgentSteps, AnswerBody, LiveAnswer, ResearchPlan, citationNumbers, usedSkill } from "./AnswerBody";
-import { useLiveAnswer } from "./liveAnswer";
+import { useAnswerRun } from "./useAnswerRun";
 import { useSavedAnswers } from "./savedAnswers";
 import { ModelPicker } from "../models/ModelPicker";
 import { BrandMark } from "../design/BrandMark";
@@ -535,12 +534,9 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
   const [skill, setSkill] = useState<string | null>(null);
   // How deep a skill that has budgets (research) goes; Standard unless the reader says Deep.
   const [budget, setBudget] = useState<SkillBudget>("standard");
-  // The skill of the question being answered: research is stopped differently.
-  const [answeringSkill, setAnsweringSkill] = useState<string | null>(null);
   const askSkills = useAskSkills();
   const [sessionQuery, setSessionQuery] = useState("");
   const [sourceQuery, setSourceQuery] = useState("");
-  const [sending, setSending] = useState(false);
   const [branchingMessageId, setBranchingMessageId] = useState<string | null>(null);
   const [reads, setReads] = useState<Partial<Record<StartupRead, { pending: boolean; error: Error | null }>>>({});
   const inFlightReads = useRef(new Map<StartupRead, { refreshPending: boolean }>());
@@ -562,8 +558,6 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
     if (window.innerWidth <= 980) return;
     try { persistentStorage.setItem("gunther:inspector-collapsed", inspectorCollapsed ? "1" : "0"); } catch { /* the choice just is not remembered */ }
   }, [inspectorCollapsed]);
-  // The question just sent, shown in the conversation while it is being answered.
-  const [asking, setAsking] = useState<string | null>(null);
   const [briefBusy, setBriefBusy] = useState<string | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -576,17 +570,12 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
   const scrollPane = useRef<HTMLDivElement>(null);
   /** Whether the reader is at the bottom; only then does new text pull the view along. */
   const followTail = useRef(true);
-  const responseController = useRef<AbortController | null>(null);
-  // The conversation on screen; an answer finishing elsewhere must not pull the view back to it.
-  const shownId = useRef<string | null>(null);
-  const pendingQuestion = useRef("");
   const [evidence, setEvidence] = useState<{ citation: ConversationCitation; index?: number } | null>(null);
   // Which model answers next, and how hard it thinks: what this conversation picked,
   // else the model of its last answer, else this device's last choice, else the Ask default.
   const { menu: modelMenu, reload: reloadModelMenu } = useModelMenu({ autoLoad: false });
   const { reload: reloadWebSearch, ...webSearch } = useWebSearch({ autoLoad: false });
   const inspectorWidth = useDragWidth({ storageKey: "gunther:inspector-width", min: INSPECTOR_MIN, max: inspectorMax, fallback: INSPECTOR_DEFAULT, observe: () => document.querySelector(".session-workspace") });
-  const liveAnswer = useLiveAnswer();
   const [deviceChoice, setDeviceChoice] = useDeviceChoice();
   const [pickedChoices, setPickedChoices] = useState<Record<string, AskChoice>>({});
   const askChoice = usableChoice(
@@ -604,6 +593,33 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
   const finishRead = useCallback((read: StartupRead, error: Error | null) => {
     if (mounted.current) setReads((current) => ({ ...current, [read]: { pending: false, error } }));
   }, []);
+
+  const { pending, live, follow, detach, send: sendAnswer, cancel: stopResponse } = useAnswerRun({
+    readSession: knowledgeApi.session,
+    onStart() { followTail.current = true; },
+    onSaved(id, turn) {
+      if (!turn) return;
+      setSessions((current) => sortSessions(current.map((item) => item.id === id ? turn.session : item)));
+      setActiveSession((current) => current?.id === id
+        ? { ...current, ...turn.session, messages: [...current.messages, turn.userMessage, turn.assistantMessage] }
+        : current);
+      setSelectedMessageId(turn.assistantMessage.id);
+      setInspectorTab("context");
+      void refreshBrief(id);
+    },
+    onFailure({ question, fresh, readError, stopped, message }) {
+      if (readError instanceof ServiceUnavailableError) finishRead("history", readError);
+      if (fresh) setActiveSession((current) => current?.id === fresh.id
+        ? { ...current, messages: fresh.messages, messageCount: fresh.messageCount } : current);
+      if (stopped) onNotify(stopped.message);
+      if (message) {
+        setDraft((current) => current || question);
+        setError(message);
+      }
+    },
+  });
+  const sending = pending !== null;
+  const asking = pending?.question;
 
   const loadSession = useCallback(async (id: string) => {
     setActiveId(id);
@@ -713,7 +729,7 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
   useEffect(() => {
     const pane = scrollPane.current;
     if (pane && followTail.current) pane.scrollTop = pane.scrollHeight;
-  }, [activeSession?.messages.length, sending, asking, liveAnswer.live?.steps.length, liveAnswer.live?.text.length]);
+  }, [activeSession?.messages.length, sending, asking, live?.steps.length, live?.text.length]);
   useEffect(() => { followTail.current = true; }, [activeId]);
   useEffect(() => {
     let wasNarrow = window.innerWidth <= 980;
@@ -726,10 +742,6 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
-  useEffect(() => () => {
-    responseController.current?.abort();
-  }, []);
-
   const createSession = async () => {
     if (!online || loading) return;
     setError(null);
@@ -819,121 +831,29 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
     }
   };
 
-  /** Show a finished answer, but only if its conversation is still the one on screen. */
-  const showTurn = (sessionId: string, turn: ConversationTurn) => {
-    setSessions((current) => sortSessions(current.map((item) => item.id === sessionId ? turn.session : item)));
-    if (shownId.current !== sessionId) return;
-    setActiveSession((current) => current && current.id === sessionId ? { ...current, ...turn.session, messages: [...current.messages, turn.userMessage, turn.assistantMessage] } : current);
-    setSelectedMessageId(turn.assistantMessage.id);
-    setInspectorTab("context");
-    void readAloud.auto(turn.assistantMessage);
-  };
-
-  /** Listen to an answer until it is saved, fails or is stopped. Leaving the conversation only stops listening. */
-  const watchAnswer = async (sessionId: string, question: string, controller: AbortController, listen: () => Promise<ConversationTurn | null>) => {
-    try {
-      const turn = await listen();
-      if (turn) {
-        showTurn(sessionId, turn);
-        void refreshBrief(sessionId);
-      }
-      pendingQuestion.current = "";
-    } catch (reason) {
-      if (controller.signal.aborted) return;
-      if (responseController.current === controller) responseController.current = null;
-      if (shownId.current !== sessionId || responseController.current) return;
-      const asked = question || pendingQuestion.current;
-      const { fresh, readError } = await knowledgeApi.session(sessionId).then(
-        (fresh) => ({ fresh, readError: null }),
-        (readError: unknown) => ({ fresh: null, readError }),
-      );
-      if (controller.signal.aborted || shownId.current !== sessionId || responseController.current) return;
-      if (readError instanceof ServiceUnavailableError) finishRead("history", readError);
-      if (fresh) {
-        setActiveSession((current) => current?.id === fresh.id ? { ...current, messages: fresh.messages, messageCount: fresh.messageCount } : current);
-      }
-      if (reason instanceof AnswerStoppedError) {
-        onNotify(reason.message);
-        return;
-      }
-      // The service keeps a question it could not answer in the history; only one it refused goes back to the composer.
-      if (!hasSavedQuestion(fresh?.messages, reason)) {
-        setDraft((current) => current || asked);
-        setError(reason instanceof Error ? reason.message : "The answer could not be generated");
-      }
-    } finally {
-      // A conversation left behind cleared these already; another may be answering on screen now.
-      if (!controller.signal.aborted && (responseController.current === controller || responseController.current === null)) {
-        responseController.current = null;
-        liveAnswer.stop();
-        setSending(false);
-        setAsking(null);
-      }
-    }
-  };
-
   const send = async (again?: string, retry?: AskRetryOptions) => {
     const question = (again ?? draft).trim();
     if (!question || !ready || !activeSession || activeSession.archived || sending) return;
     const skillUsed = again === undefined ? skill : retry?.skill ?? null;
     const budgeted = skillUsed !== null && (askSkills.find((item) => item.command === skillUsed)?.budgets.length ?? 0) > 1;
     if (again === undefined) { setDraft(""); setSkill(null); setBudget("standard"); }
-    setAnsweringSkill(skillUsed);
-    setSending(true);
-    setAsking(question);
-    followTail.current = true;
     setError(null);
-    pendingQuestion.current = question;
-    const controller = new AbortController();
-    responseController.current = controller;
     const session = activeSession;
     const chosen = askChoice.model && modelMenu?.models.length ? { model: askChoice.model, effort: askChoice.effort } : {};
-    liveAnswer.start();
     const options = retry ?? { style: readAnswerStyle(), ...(webSearch.enabled ? { web: true } : {}), ...(skillUsed ? { skill: skillUsed } : {}), ...(budgeted ? { budget } : {}) };
-    await watchAnswer(session.id, question, controller, () => knowledgeApi.sendMessageStream(session.id, { content: question, selectedSourceIds: session.selectedSourceIds, focusChapterId: session.focusChapterId, ...chosen, ...options }, liveAnswer.hear, controller.signal));
+    await sendAnswer(session.id, { content: question, selectedSourceIds: session.selectedSourceIds, focusChapterId: session.focusChapterId, ...chosen, ...options });
   };
 
   // Reading aloud goes on while its conversation is open, and stops when another one is.
   useEffect(() => { if (activeId) readAloud.focusSession(activeId); }, [activeId]);
 
-  // Opening a conversation that is still being answered follows the answer again, from the start.
-  useEffect(() => {
-    shownId.current = activeId;
-    if (!activeId || !online) return undefined;
-    const controller = new AbortController();
-    let following = false;
-    const follow = () => knowledgeApi.followAnswer(activeId, (event) => {
-      if (event.type === "resumed") {
-        // A question just sent from here is already being listened to.
-        if (responseController.current) { controller.abort(); return; }
-        following = true;
-        responseController.current = controller;
-        pendingQuestion.current = event.question;
-        followTail.current = true;
-        setSending(true);
-        setAsking(event.question);
-        liveAnswer.start();
-        return;
-      }
-      if (following) liveAnswer.hear(event);
-    }, controller.signal);
-    // Nothing to follow, or the service is away: say nothing unless an answer was on screen.
-    void watchAnswer(activeId, "", controller, () => follow().catch((reason: unknown) => {
-      if (following) throw reason;
-      return null;
-    }));
-    return () => {
-      // Leaving: stop listening only. The answer is still written and saved.
-      controller.abort();
-      const current = responseController.current;
-      if (current && current !== controller) current.abort();
-      responseController.current = null;
-      pendingQuestion.current = "";
-      liveAnswer.stop();
-      setSending(false);
-      setAsking(null);
-    };
-  }, [activeId, online]);
+  // Keep listening until the selected conversation has loaded.
+  const loadedSessionId = activeSession?.id ?? null;
+  useLayoutEffect(() => {
+    if (loadedSessionId !== activeId) return;
+    if (activeId && online) follow(activeId);
+    else detach();
+  }, [activeId, loadedSessionId, online, follow, detach]);
 
   // Research that asked the reader something first: the next message goes back to it, at the same depth.
   const lastMessage = activeSession?.messages.at(-1);
@@ -945,22 +865,8 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
   }, [lastMessage?.id]);
 
   // While research is still gathering, Stop writes the answer from what it found; once writing, it stops.
-  const researching = sending && (answeringSkill === "research" || Boolean(liveAnswer.live?.research));
-  const stopLabel = researching && !liveAnswer.live?.text ? "Stop and write" : "Stop";
-
-  const stopResponse = () => {
-    if (!activeId || !responseController.current) return;
-    const controller = responseController.current;
-    // The answer ends where it is; its stream then reports it stopped, and the saved question is shown.
-    knowledgeApi.stopAnswer(activeId).catch(() => {
-      // The service is unreachable: at least stop listening, so the composer is free again.
-      controller.abort();
-      if (responseController.current === controller) responseController.current = null;
-      liveAnswer.stop();
-      setSending(false);
-      setAsking(null);
-    });
-  };
+  const researching = sending && (pending?.skill === "research" || Boolean(live?.research));
+  const stopLabel = researching && !live?.text ? "Stop and write" : "Stop";
   const toggleSource = async (id: string) => {
     if (!activeSession) return;
     const next = activeSession.selectedSourceIds.includes(id) ? activeSession.selectedSourceIds.filter((item) => item !== id) : [...activeSession.selectedSourceIds, id];
@@ -1118,7 +1024,7 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
           {online && !loading && activeSession?.messages.length === 0 ? <WelcomePanel base={base} onPrompt={setDraft} /> : <h1 className="gx-sr-only">Ask {base.title}</h1>}
           {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} retryDisabled={!ready || sending || Boolean(activeSession?.archived)} onRetry={() => void send(message.content, message.context.askFailure?.options)} onEdit={() => setDraft(message.content)} onCite={(citation, index) => setEvidence({ citation, index })} selected={selectedMessageId === message.id} saveAvailable={readReady("proposals")} promoting={answers.busyId === message.id} promoted={answers.isSaved(message.id)} branching={branchingMessageId === message.id} onSelect={() => { setSelectedMessageId(message.id); setInspectorTab((current) => current === "trace" ? "trace" : "context"); setInspectorCollapsed(false); }} onCopy={() => void copyMessage(message)} onPromote={() => void answers.save(activeSession, message)} onRemove={() => void answers.remove(message)} onBranch={() => void branchFromMessage(message)} onMakeReport={onMakeReport ? () => onMakeReport(activeSession.id) : undefined} />)}
           {sending && asking && <article className="conversation-message role-user"><div className="message-author"><span className="user-mark"><UserRound size={13} /></span><span>You</span></div><div className="message-body"><MessageContent content={asking} /></div></article>}
-          {sending && (liveAnswer.live ? <LiveAnswer state={liveAnswer.live} /> : <div className="thinking-row"><span className="assistant-mark"><BrandMark size={14} busy /></span><span><i /><i /><i /></span><small>Working out what to look up…</small></div>)}
+          {sending && (live ? <LiveAnswer state={live} /> : <div className="thinking-row"><span className="assistant-mark"><BrandMark size={14} busy /></span><span><i /><i /><i /></span><small>Working out what to look up…</small></div>)}
         </div>
         <Composer picker={<ModelPicker menu={modelMenu} choice={askChoice} onChange={chooseModel} disabled={sending || Boolean(activeSession?.archived)} />} web={{ available: webSearch.available, enabled: webSearch.enabled, onChange: webSearch.setEnabled }} value={draft} sending={sending} sourceCount={activeSession?.selectedSourceIds.length ?? 0} chapterTitle={focusedChapter?.title} readOnly={Boolean(activeSession?.archived)} ready={ready} allowDraft={activeSession !== null} offline={!online} skill={skill} onSkillChange={setSkill} budget={budget} onBudgetChange={setBudget} stopLabel={stopLabel} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={() => { setInspectorTab("sources"); setInspectorCollapsed(false); }} />
       </section>

@@ -322,3 +322,12 @@ stands: one owner commits version, workspace and conversation together, only on 
 Accepted no-go (batch 18). The desktop targets Safari 13 / macOS 11, and Query v5 supports
 Safari 15+. The gain is about 11 components. Batch 19b keeps REST reads as inputs to its
 shared hook. Revisit if the minimum macOS rises.
+
+# Round 20 — batch 19 scope cut
+
+Each review round of batch 19 found another startup-selection regression that the base
+commit didn't have. The 19b hook owns only the live answer listener: attach, swap,
+detach, Stop. Library Ask's startup and selection code (remembered session, Activity
+destination, StrictMode replay, archived sessions) goes back to a447bb5's logic,
+apart from the wiring it needs to call the hook. The round-1 listener fixes stay. Shared
+startup selection is not part of this cleanup.

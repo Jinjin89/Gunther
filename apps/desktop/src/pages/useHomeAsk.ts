@@ -2,9 +2,8 @@ import { persistentStorage } from "../persistentStorage";
 import type { CreateSessionMessageInput, KnowledgeSession, KnowledgeSessionSummary, SessionMessage } from "@gunther/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { readAloud } from "../speech/readAloud";
-import { AnswerStoppedError, knowledgeApi } from "../api";
-import { useLiveAnswer } from "./liveAnswer";
-import { hasSavedQuestion } from "./interrupted";
+import { knowledgeApi } from "../api";
+import { useAnswerRun } from "./useAnswerRun";
 
 /** Home's conversations belong to no library; the service files them under this id. */
 const HOME_SCOPE = "@home";
@@ -37,14 +36,10 @@ const remember = (id: string | null) => {
 export function useHomeAsk() {
   const [session, setSession] = useState<KnowledgeSession | null>(null);
   const [recent, setRecent] = useState<KnowledgeSessionSummary[]>([]);
-  const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Whether the conversation is on screen; closing it leaves it saved under Recent.
   const [shown, setShown] = useState(false);
-  const { live, start, stop, hear } = useLiveAnswer();
-  const controller = useRef<AbortController | null>(null);
-  // The conversation whose answer is being listened to, for Stop.
-  const answeringId = useRef<string | null>(null);
+  const navigation = useRef(0);
 
   const reloadRecent = useCallback(() => {
     void Promise.resolve()
@@ -53,132 +48,66 @@ export function useHomeAsk() {
       .catch(() => undefined);
   }, []);
 
-  /** Follow an answer still being written in a Home conversation, e.g. after closing and reopening it. */
-  const follow = useCallback((id: string) => {
-    if (controller.current) return;
-    const abort = new AbortController();
-    let following = false;
-    void knowledgeApi.followAnswer(id, (event) => {
-      if (event.type === "resumed") {
-        if (controller.current) { abort.abort(); return; }
-        following = true;
-        controller.current = abort;
-        answeringId.current = id;
-        setPending(event.question);
-        start();
-        return;
-      }
-      if (following) hear(event);
-    }, abort.signal).then(async (turn) => {
-      if (!following) return;
-      controller.current = null;
-      setSession(await knowledgeApi.session(id));
+  const { pending, live, follow, send, cancel, detach } = useAnswerRun({
+    readSession: knowledgeApi.session,
+    refreshAfterFollow: true,
+    onSaved(id, turn, fresh) {
+      if (fresh) setSession(fresh);
+      else if (turn) setSession((current) => current?.id === id
+        ? { ...current, ...turn.session, messages: [...current.messages, turn.userMessage, turn.assistantMessage] }
+        : current);
       reloadRecent();
-      if (turn) void readAloud.auto(turn.assistantMessage);
-    }).catch(async (reason: unknown) => {
-      if (!following || abort.signal.aborted) return;
-      const fresh = await knowledgeApi.session(id).catch(() => null);
-      if (abort.signal.aborted) return;
+    },
+    onFailure({ fresh, message }) {
       if (fresh) { setSession(fresh); reloadRecent(); }
-      if (!(reason instanceof AnswerStoppedError) && !hasSavedQuestion(fresh?.messages, reason)) {
-        setError(reason instanceof Error ? reason.message : "The answer could not be written.");
-      }
-    }).finally(() => {
-      if (!following || abort.signal.aborted) return;
-      if (controller.current === abort) controller.current = null;
-      stop();
-      setPending(null);
-    });
-  }, [hear, reloadRecent, start, stop]);
+      if (message) setError(message);
+    },
+  });
 
   useEffect(() => {
     reloadRecent();
     // Activity asked for a particular conversation: that one opens instead (see below).
-    if (persistentStorage.getItem(OPEN_HOME_SESSION_KEY)) return;
-    const id = remembered();
-    if (!id) return;
-    void Promise.resolve()
-      .then(() => knowledgeApi.session(id))
-      .then((loaded) => {
-        if (loaded.knowledgeBaseId !== HOME_SCOPE) { remember(null); return; }
-        setSession(loaded);
-        follow(loaded.id);
-      })
-      .catch(() => remember(null));
+    const id = persistentStorage.getItem(OPEN_HOME_SESSION_KEY) ? null : remembered();
+    const version = navigation.current;
+    if (id) {
+      void Promise.resolve()
+        .then(() => knowledgeApi.session(id))
+        .then((loaded) => {
+          if (version !== navigation.current) return;
+          if (loaded.knowledgeBaseId !== HOME_SCOPE) { remember(null); return; }
+          setSession(loaded);
+          follow(loaded.id);
+        })
+        .catch(() => { if (version === navigation.current) remember(null); });
+    }
+    return () => { navigation.current += 1; };
   }, [follow, reloadRecent]);
 
   const ask = useCallback(async (question: string, options: AskOptions = {}) => {
     const content = question.trim();
-    if (!content || pending !== null) return;
+    if (!content || pending) return;
+    navigation.current += 1;
     setError(null);
-    setPending(content);
     setShown(true);
-    start();
-    const abort = new AbortController();
-    controller.current = abort;
-    let current = session;
-    /** The saved conversation, where the service kept a question it did not answer. */
-    const reload = async () => {
-      if (!current) return null;
-      try {
-        const fresh = await knowledgeApi.session(current.id);
-        if (abort.signal.aborted) return null;
-        setSession(fresh);
-        reloadRecent();
-        return fresh;
-      } catch {
-        return null;
+    await send(session?.id ?? (async (signal) => {
+      const created = await knowledgeApi.createSession(HOME_SCOPE, { selectedSourceIds: [] });
+      if (!signal.aborted) {
+        remember(created.id);
+        setSession(created);
       }
-    };
-    try {
-      if (!current) {
-        current = await knowledgeApi.createSession(HOME_SCOPE, { selectedSourceIds: [] });
-        remember(current.id);
-      }
-      answeringId.current = current.id;
-      const turn = await knowledgeApi.sendMessageStream(current.id, { content, ...options }, hear, abort.signal);
-      setSession({ ...current, ...turn.session, messages: [...current.messages, turn.userMessage, turn.assistantMessage] });
-      reloadRecent();
-      void readAloud.auto(turn.assistantMessage);
-    } catch (reason) {
-      // Closed or started afresh: only the listening stopped. The answer is still saved.
-      if (abort.signal.aborted) return;
-      const fresh = await reload();
-      if (!abort.signal.aborted && !(reason instanceof AnswerStoppedError) && !hasSavedQuestion(fresh?.messages, reason)) {
-        setError(reason instanceof Error ? reason.message : "The answer could not be written.");
-      }
-    } finally {
-      if (controller.current === abort) controller.current = null;
-      if (!abort.signal.aborted) {
-        stop();
-        setPending(null);
-      }
-    }
-  }, [hear, pending, reloadRecent, session, start, stop]);
-
-  /** Stop the answer where it is; the question stays in the conversation, marked. */
-  const cancel = useCallback(() => {
-    const id = answeringId.current;
-    const listening = controller.current;
-    if (!id || !listening) return;
-    knowledgeApi.stopAnswer(id).catch(() => listening.abort());
-  }, []);
-
-  /** Put the conversation away. An answer being written goes on and is there when it is opened again. */
-  const detach = useCallback(() => {
-    controller.current?.abort();
-    controller.current = null;
-    stop();
-    setPending(null);
-  }, [stop]);
+      return created.id;
+    }), { content, ...options });
+  }, [pending, send, session]);
 
   const close = useCallback(() => {
+    navigation.current += 1;
     detach();
     setShown(false);
     setError(null);
   }, [detach]);
 
   const fresh = useCallback(() => {
+    navigation.current += 1;
     detach();
     remember(null);
     setSession(null);
@@ -187,15 +116,19 @@ export function useHomeAsk() {
   }, [detach]);
 
   const open = useCallback(async (id: string) => {
-    setError(null);
+    const version = ++navigation.current;
     try {
       const loaded = await knowledgeApi.session(id);
+      if (version !== navigation.current) return;
+      setError(null);
       remember(loaded.id);
       setSession(loaded);
       setShown(true);
       follow(loaded.id);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "That conversation could not be opened.");
+      if (version === navigation.current) {
+        setError(reason instanceof Error ? reason.message : "That conversation could not be opened.");
+      }
     }
   }, [follow]);
   // Activity opens a conversation: from a key left for a Home that was not on screen, or an event.
@@ -230,5 +163,5 @@ export function useHomeAsk() {
   useEffect(() => { if (shownId) readAloud.focusSession(shownId); }, [shownId]);
 
   const messages: SessionMessage[] = session?.messages ?? [];
-  return { session, messages, recent, pending, live, error, shown, ask, cancel, close, fresh, open, file };
+  return { session, messages, recent, pending: pending?.question ?? null, live, error, shown, ask, cancel, close, fresh, open, file };
 }

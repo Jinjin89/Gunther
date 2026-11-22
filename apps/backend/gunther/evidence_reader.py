@@ -1,12 +1,13 @@
 """Read passages and their figures within the revision that supplied the evidence."""
 
 import json
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from gunther.agent import ReadResult, ToolFailure
+from gunther.agent import Evidence, ReadResult, ToolFailure
 from gunther.document_structure import evidence_eligible
 from gunther.models import (
     Asset,
@@ -31,8 +32,8 @@ def pinned_revision(session: Session, source_id: str, revision_id: str) -> Sourc
     )
 
 
-def readable_blocks(revision_id: str):
-    return (
+def readable_blocks(revision_id: str, block_ids: Collection[str] | None = None):
+    query = (
         select(ContentBlock)
         .where(
             ContentBlock.revision_id == revision_id,
@@ -40,9 +41,12 @@ def readable_blocks(revision_id: str):
         )
         .order_by(ContentBlock.ordinal)
     )
+    return query if block_ids is None else query.where(ContentBlock.id.in_(block_ids))
 
 
-def passage_block(session: Session, citation: ConversationCitationOut) -> ContentBlock | None:
+def passage_block(
+    session: Session, citation: ConversationCitationOut, block_ids: Collection[str] | None = None,
+) -> ContentBlock | None:
     """Resolve a saved citation's anchor. Older citations may have only a quote."""
 
     revision_id = citation.source_revision_id or session.scalar(
@@ -51,10 +55,12 @@ def passage_block(session: Session, citation: ConversationCitationOut) -> Conten
     if not revision_id or pinned_revision(session, citation.source_id, revision_id) is None:
         return None
     if citation.block_id:
+        if block_ids is not None and citation.block_id not in block_ids:
+            return None
         block = session.get(ContentBlock, citation.block_id)
         return block if block and block.revision_id == revision_id else None
 
-    query = readable_blocks(revision_id)
+    query = readable_blocks(revision_id, block_ids)
     exact = session.scalar(query.where(ContentBlock.content == citation.quote).limit(1))
     if exact is not None:
         return exact
@@ -68,20 +74,24 @@ def passage_block(session: Session, citation: ConversationCitationOut) -> Conten
     return None
 
 
-def section_blocks(session: Session, block: ContentBlock) -> list[ContentBlock]:
+def section_blocks(
+    session: Session, block: ContentBlock, block_ids: Collection[str] | None = None,
+) -> list[ContentBlock]:
     """Grow around the passage within its heading, or within three blocks on each side."""
 
     if not evidence_eligible(block.kind, block.payload_json, include_headings=True):
         return []
-    query = readable_blocks(block.revision_id)
+    query = readable_blocks(block.revision_id, block_ids)
     if block.heading_path_json and block.heading_path_json != "[]":
         query = query.where(ContentBlock.heading_path_json == block.heading_path_json)
     else:
         query = query.where(ContentBlock.ordinal.between(block.ordinal - 3, block.ordinal + 3))
     blocks = list(session.scalars(query))
-    at = next((i for i, item in enumerate(blocks) if item.id == block.id), 0)
+    at = next((i for i, item in enumerate(blocks) if item.id == block.id), None)
+    if at is None:
+        return []
     low = high = at
-    size = len(blocks[at].content) if blocks else 0
+    size = len(blocks[at].content)
     turn = 0
     while size < SECTION_CHARS:
         if turn % 2 == 0 and high + 1 < len(blocks):
@@ -127,17 +137,38 @@ def read_snapshot(blocks: Iterable[ContentBlock], limit: int = SECTION_CHARS) ->
 
 
 def read_passage(
-    session: Session, citation: ConversationCitationOut, *, adjacent: bool = False,
-) -> ReadResult:
-    block = passage_block(session, citation)
+    session: Session,
+    item: Evidence,
+    *,
+    window: Literal["section", "adjacent"],
+    source_ids: Collection[str] | None = None,
+    block_ids: Collection[str] | None = None,
+    pinned_keys: Collection[tuple[str, str, str]] = (),
+) -> tuple[ConversationCitationOut, ReadResult]:
+    """Expand eligible pool evidence inside the caller's scope and its pinned revision."""
+
+    citation = item.payload[0] if isinstance(item.payload, tuple) and item.payload else None
+    if (
+        item.kind != "library"
+        or not isinstance(citation, ConversationCitationOut)
+        or not citation.source_id
+    ):
+        raise ToolFailure("Only a passage from the library can be read further.")
+    if (
+        source_ids is not None
+        and citation.source_id not in source_ids
+        and item.key not in pinned_keys
+    ):
+        raise ToolFailure("That passage is outside the current source selection.")
+    block = passage_block(session, citation, block_ids)
     if block is None:
         raise ToolFailure("That passage is no longer in its source.")
-    if adjacent:
-        around = readable_blocks(block.revision_id).where(
+    if window == "adjacent":
+        around = readable_blocks(block.revision_id, block_ids).where(
             ContentBlock.ordinal.between(block.ordinal - 2, block.ordinal + 2)
         )
-        return read_snapshot(session.scalars(around), ADJACENT_CHARS)
-    return read_snapshot(section_blocks(session, block))
+        return citation, read_snapshot(session.scalars(around), ADJACENT_CHARS)
+    return citation, read_snapshot(section_blocks(session, block, block_ids))
 
 
 def element_positions(revision_id: str):

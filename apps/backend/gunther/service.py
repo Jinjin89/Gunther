@@ -5,7 +5,7 @@ import json
 import logging
 import re
 from collections import Counter
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -2478,7 +2478,7 @@ class KnowledgeService:
             toolbox = Toolbox(
                 tuple(offered),
                 tuple(notes),
-                reader=self._ask_reader(session, web_tool is not None),
+                reader=self._ask_reader(session, web_tool is not None, scope),
             )
             history = conversation_history(knowledge_session.messages)
             stored = briefs.load(knowledge_session.brief_json)
@@ -3669,16 +3669,22 @@ class KnowledgeService:
             "use": provenance.get("use"),
         }
 
-    def _ask_reader(self, session: Session, web_on: bool) -> Callable[[Evidence], str | ReadResult]:
+    def _ask_reader(
+        self, session: Session, web_on: bool, scope: _LibraryScope | None = None,
+    ) -> Callable[[Evidence], str | ReadResult]:
         """Reading more of a source in Ask's pool (read_source): the section around a library
         passage, or the whole web page. Only a source already in the pool is read, and a web
         page only with the Web switch on, through the same rules as capturing a page; the
         address is the one the search result gave, never one the model wrote."""
 
         def read(item: Evidence) -> str | ReadResult:
-            citation = item.payload[0] if isinstance(item.payload, tuple) else None
-            if item.kind == "library" and citation is not None and citation.source_id:
-                return read_passage(session, citation)
+            if item.kind == "library":
+                _, snapshot = read_passage(
+                    session, item, window="section",
+                    source_ids=scope.source_ids if scope else None,
+                    block_ids=scope.block_scope if scope else None,
+                )
+                return snapshot
             if item.kind == "web" and item.url:
                 if not web_on:
                     raise ToolFailure("The web is off for this message")
@@ -3697,15 +3703,16 @@ class KnowledgeService:
 
         return read
 
-    def _source_reader(self, session: Session):
-        """Reading more of a library source around one of its passages (a skill's
-        read_source): the passage and the two blocks on each side, as a new passage."""
+    def _source_reader(
+        self, session: Session, source_ids: Collection[str] | None = None, *,
+        pinned_keys: Collection[tuple[str, str, str]] = (),
+    ) -> Callable[[Evidence], Evidence | None]:
+        """Offer the neighboring blocks as a new Artifacts passage."""
 
         def read(item: Evidence) -> Evidence | None:
-            citation = item.payload[0] if isinstance(item.payload, tuple) else None
-            if item.kind != "library" or citation is None or not citation.source_id:
-                raise ToolFailure("Only a passage from the library can be read further.")
-            snapshot = read_passage(session, citation, adjacent=True)
+            citation, snapshot = read_passage(
+                session, item, window="adjacent", source_ids=source_ids, pinned_keys=pinned_keys,
+            )
             text = snapshot.text
             if text.strip() == citation.quote.strip():
                 return None
@@ -4852,7 +4859,10 @@ class KnowledgeService:
                 session, list(material.source_revisions), f"{library.title}: {library.question}"
             )
             web, web_reason = self._web_tool(payload.web)
-            reader = self._source_reader(session)
+            pinned_keys = {item.key for item in material.seeds}
+            reader = self._source_reader(
+                session, material.source_revisions, pinned_keys=pinned_keys,
+            )
             versions: dict[str, int] = {}
             saved: dict[str, str] = {}
             heads: dict[str, str] = {}
@@ -4893,8 +4903,6 @@ class KnowledgeService:
                     asset_reader=self.asset_reader,
                     reusable_figures=self._reusable_figure_readings(session, base_id),
                 )
-
-            pinned_keys = {item.key for item in material.seeds}
 
             def evidence_allowed(item: Evidence) -> bool:
                 return self._output_evidence_in_scope(

@@ -1,8 +1,8 @@
-import type { KnowledgeProposal, KnowledgeSession, KnowledgeUnit, SessionMessage, SourceSummary } from "@gunther/contracts";
+import type { ConversationTurn, KnowledgeProposal, KnowledgeSession, KnowledgeUnit, SessionMessage, SourceSummary } from "@gunther/contracts";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { ServiceUnavailableError, knowledgeApi } from "../api";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AnswerStoppedError, ServiceUnavailableError, knowledgeApi, type AnswerEvent } from "../api";
 import { WEB_PREFERENCE_KEY } from "../models/askModel";
 import { persistentStorage } from "../persistentStorage";
 import { makeBase, makeSource } from "../test/fixtures";
@@ -85,16 +85,103 @@ const sessionWithAnswer = (knowledgeBaseId: string): KnowledgeSession => ({
   messages: [answer],
 });
 
-function renderWorkspace(base: ReturnType<typeof makeBase>) {
+function renderWorkspace(base: ReturnType<typeof makeBase>, reactStrictMode = false) {
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
-  render(<SessionWorkspace base={base} onAdd={vi.fn()} onNotify={vi.fn()} />);
+  return render(<SessionWorkspace base={base} onAdd={vi.fn()} onNotify={vi.fn()} />, { reactStrictMode });
 }
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
-  return { promise, resolve };
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
 }
+
+describe("Library Ask startup selection", () => {
+  beforeEach(() => {
+    vi.spyOn(knowledgeApi, "followAnswer").mockResolvedValue(null);
+    vi.spyOn(knowledgeApi, "modelMenu").mockResolvedValue({ models: [], default: null, efforts: [] });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
+  });
+
+  it("opens saved history when StrictMode replays a pending startup read", async () => {
+    const base = makeBase({ id: "strict-library" });
+    const first = sessionWithAnswer(base.id);
+    const remembered = { ...first, id: "remembered", title: "Remembered discussion", messages: [] };
+    const history = deferred<KnowledgeSession[]>();
+    vi.spyOn(knowledgeApi, "sessions").mockReturnValue(history.promise);
+    vi.spyOn(knowledgeApi, "session").mockImplementation(async (id) => id === first.id ? first : remembered);
+    persistentStorage.setItem(`gunther:active-session:${base.id}`, remembered.id);
+    persistentStorage.setItem(`gunther:ask-draft:${base.id}`, "Continue our discussion.");
+
+    renderWorkspace(base, true);
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    await act(async () => history.resolve([first, remembered]));
+    expect(await screen.findByText(remembered.title)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  });
+
+  it("opens the first session if an Activity lookup fails during startup", async () => {
+    const base = makeBase({ id: "activity-library" });
+    const first = sessionWithAnswer(base.id);
+    const history = deferred<KnowledgeSession[]>();
+    vi.spyOn(knowledgeApi, "sessions").mockReturnValue(history.promise);
+    const detail = vi.spyOn(knowledgeApi, "session").mockImplementation(async (id) => {
+      if (id === first.id) return first;
+      throw new Error("Conversation unavailable");
+    });
+
+    renderWorkspace(base);
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent("gunther:open-session", { detail: { libraryId: base.id, sessionId: "missing" } }));
+    });
+    expect(detail.mock.calls.map(([id]) => id)).toContain("missing");
+    await act(async () => history.resolve([first]));
+    expect(await screen.findByText(first.title)).toBeVisible();
+  });
+
+  it("skips a remembered archived session when opening Library Ask", async () => {
+    const base = makeBase({ id: "archived-library" });
+    const first = sessionWithAnswer(base.id);
+    const archived = { ...first, id: "archived", title: "Archived discussion", archived: true, messages: [] };
+    vi.spyOn(knowledgeApi, "sessions").mockResolvedValue([first]);
+    const detail = vi.spyOn(knowledgeApi, "session").mockImplementation(async (id) => id === archived.id ? archived : first);
+    persistentStorage.setItem(`gunther:active-session:${base.id}`, archived.id);
+
+    renderWorkspace(base);
+    expect(await screen.findByText(first.title)).toBeVisible();
+    expect(detail.mock.calls.map(([id]) => id)).toEqual([first.id]);
+    expect(screen.getByRole("textbox", { name: "Message Gunther" })).toBeEnabled();
+  });
+
+  it("opens a later Home selection after leaving a pending Activity lookup", async () => {
+    const base = makeBase({ id: "home-selection-library" });
+    const first = sessionWithAnswer(base.id);
+    const later = { ...first, id: "from-home", title: "Selected from Home", messages: [] };
+    const activity = { ...first, id: "activity", title: "Activity discussion", messages: [] };
+    const pending = deferred<KnowledgeSession>();
+    const activeKey = `gunther:active-session:${base.id}`;
+    vi.spyOn(knowledgeApi, "sessions").mockResolvedValue([first, later, activity]);
+    const detail = vi.spyOn(knowledgeApi, "session").mockImplementation(async (id) => {
+      if (id === activity.id) return pending.promise;
+      return id === later.id ? later : first;
+    });
+
+    const view = renderWorkspace(base);
+    await screen.findByText(first.title);
+    act(() => {
+      window.dispatchEvent(new CustomEvent("gunther:open-session", { detail: { libraryId: base.id, sessionId: activity.id } }));
+    });
+    expect(detail.mock.calls.map(([id]) => id)).toContain(activity.id);
+    view.unmount();
+
+    persistentStorage.setItem(activeKey, later.id);
+    renderWorkspace(base);
+    await act(async () => pending.resolve(activity));
+    expect(await screen.findByText(later.title)).toBeVisible();
+    expect(persistentStorage.getItem(activeKey)).toBe(later.id);
+  });
+});
 
 it("keeps an offline draft editable and opens saved history on reconnect", async () => {
   const user = userEvent.setup();
@@ -323,6 +410,94 @@ it("shows a same-question retry's HTTP 409 and restores the composer draft", asy
   await userEvent.setup().click(await screen.findByRole("button", { name: "Retry" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(detail);
   expect(screen.getByRole("textbox", { name: "Message Gunther" })).toHaveValue(question);
+});
+
+it("keeps listening when Research is asked to write and when it is asked to stop", async () => {
+  const base = makeBase();
+  const question: SessionMessage = {
+    ...answer, role: "user", content: "Find the evidence", citations: [], context: {
+      ...answer.context, interrupted: "failed",
+      askFailure: { needsModel: false, hasTrace: false, options: { skill: "research", budget: "deep" } },
+    },
+  };
+  const session = { ...sessionWithAnswer(base.id), messages: [question] };
+  const stopped = { ...question, context: { ...question.context, interrupted: "stopped" as const } };
+  const turn = deferred<ConversationTurn>();
+  let hear!: (event: AnswerEvent) => void;
+  vi.spyOn(knowledgeApi, "sessions").mockResolvedValue([session]);
+  vi.spyOn(knowledgeApi, "session").mockResolvedValueOnce(session)
+    .mockResolvedValue({ ...session, messages: [stopped] });
+  vi.spyOn(knowledgeApi, "followAnswer").mockResolvedValue(null);
+  vi.spyOn(knowledgeApi, "modelMenu").mockResolvedValue({ models: [], default: null, efforts: [] });
+  const send = vi.spyOn(knowledgeApi, "sendMessageStream").mockImplementation((_id, _body, onEvent) => {
+    hear = onEvent;
+    return turn.promise;
+  });
+  const stop = vi.spyOn(knowledgeApi, "stopAnswer").mockResolvedValue(undefined);
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
+
+  renderWorkspace(base);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Retry" }));
+  await user.click(await screen.findByRole("button", { name: "Stop and write" }));
+  expect(stop).toHaveBeenCalledWith(session.id);
+  expect(send.mock.calls[0]?.[3]?.aborted).toBe(false);
+
+  act(() => hear({ type: "text", text: "Writing from what was found" }));
+  await user.click(await screen.findByRole("button", { name: "Stop waiting for response" }));
+  expect(stop.mock.calls).toEqual([[session.id], [session.id]]);
+  expect(send.mock.calls[0]?.[3]?.aborted).toBe(false);
+
+  await act(async () => { turn.reject(new AnswerStoppedError()); });
+  expect(await screen.findByRole("button", { name: "Ask again" })).toBeVisible();
+  expect(screen.queryByText("Writing from what was found")).not.toBeInTheDocument();
+});
+
+it("detaches the previous Library session when Activity opens another answer", async () => {
+  const base = makeBase();
+  const first = sessionWithAnswer(base.id);
+  const second = { ...first, id: "ses_other", title: "Later discussion", messages: [] };
+  const replacement = deferred<KnowledgeSession>();
+  const old = deferred<ConversationTurn | null>();
+  const selected = deferred<ConversationTurn | null>();
+  let oldEvent!: (event: AnswerEvent) => void;
+  vi.spyOn(knowledgeApi, "sessions").mockResolvedValue([first, second]);
+  vi.spyOn(knowledgeApi, "session").mockImplementation(async (id) => id === first.id ? first : replacement.promise);
+  const follow = vi.spyOn(knowledgeApi, "followAnswer").mockImplementation((id, hear) => {
+    if (id === first.id) {
+      oldEvent = hear;
+      hear({ type: "resumed", question: "Question from the first session", startedAt: 1 });
+      return old.promise;
+    }
+    hear({ type: "resumed", question: "Question from Activity", startedAt: 2 });
+    return selected.promise;
+  });
+  const stop = vi.spyOn(knowledgeApi, "stopAnswer").mockResolvedValue(undefined);
+  vi.spyOn(knowledgeApi, "modelMenu").mockResolvedValue({ models: [], default: null, efforts: [] });
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
+
+  renderWorkspace(base);
+  await screen.findByText("Question from the first session");
+  await act(async () => {
+    window.dispatchEvent(new CustomEvent("gunther:open-session", { detail: { libraryId: base.id, sessionId: second.id } }));
+  });
+  expect(follow.mock.calls[0]?.[2]?.aborted).toBe(false);
+  expect(screen.getByText("Question from the first session")).toBeVisible();
+  expect(follow).toHaveBeenCalledTimes(1);
+  act(() => oldEvent({ type: "text", text: "Progress while loading" }));
+  expect(screen.getByText("Progress while loading")).toBeVisible();
+  await act(async () => { replacement.resolve(second); });
+  expect(follow.mock.calls[0]?.[2]?.aborted).toBe(true);
+  await screen.findByText("Question from Activity");
+
+  await act(async () => {
+    oldEvent({ type: "text", text: "Late progress" });
+    old.reject(new AnswerStoppedError());
+  });
+  expect(screen.queryByText("Late progress")).not.toBeInTheDocument();
+  expect(stop).not.toHaveBeenCalled();
+  await userEvent.setup().click(screen.getByRole("button", { name: "Stop waiting for response" }));
+  expect(stop).toHaveBeenCalledExactlyOnceWith(second.id);
 });
 
 const proposal = (status: KnowledgeProposal["status"]): KnowledgeProposal => ({

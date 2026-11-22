@@ -28,6 +28,7 @@ from fake_models import (
     is_sentence_checking,
 )
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from evals.sse import AnswerStreamError, ask_turn, read_events
 from gunther import online_search, trace
@@ -51,7 +52,7 @@ from gunther.config import Settings
 from gunther.database import session_scope
 from gunther.llm import Turn
 from gunther.main import create_app
-from gunther.models import SessionMessage
+from gunther.models import ContentBlock, SessionMessage, SourceIndexHead
 from gunther.schemas import CreateSessionMessageInput
 from gunther.service import conversation_history
 from gunther.skillbook import ask_skills
@@ -1577,7 +1578,9 @@ def test_a_page_read_for_ask_follows_the_capture_rules() -> None:
         raise AssertionError("an oversized page was read")
 
 
-def read_note(tmp_path: Path, content: str, query: str) -> tuple[str, dict]:
+def read_note(
+    tmp_path: Path, content: str, query: str, *, linked_passage: str | None = None,
+) -> tuple[str, dict]:
     """Ask once over a library holding one note: it searches, then reads source 1."""
 
     fake = FakeProvider(
@@ -1594,13 +1597,33 @@ def read_note(tmp_path: Path, content: str, query: str) -> tuple[str, dict]:
             headers=SIDECAR,
             json={"title": "Trial", "question": "What happened?", "description": "A trial."},
         ).json()["id"]
-        client.post(
+        source = client.post(
             "/api/sources",
             headers=SIDECAR,
             json={"title": "Trial", "kind": "note", "knowledgeBaseId": base_id, "content": content},
-        )
+        ).json()["source"]
+        focus = {}
+        if linked_passage is not None:
+            topics = f"/api/knowledge-bases/{base_id}/topics"
+            topic = client.post(topics, headers=SIDECAR, json={"title": "Selected reading"})
+            assert topic.status_code == 201, topic.text
+            topic_id = topic.json()["id"]
+            with session_scope(client.app.state.knowledge_service.sessions) as session:
+                [block_id] = session.scalars(
+                    select(ContentBlock.id)
+                    .join(SourceIndexHead, ContentBlock.revision_id == SourceIndexHead.revision_id)
+                    .where(
+                        SourceIndexHead.source_id == source["id"],
+                        ContentBlock.content == linked_passage,
+                    )
+                )
+            linked = client.post(
+                f"{topics}/{topic_id}/evidence", headers=SIDECAR, json={"blockId": block_id},
+            )
+            assert linked.is_success, linked.text
+            focus = {"focusChapterId": topic_id}
         session_id = client.post(
-            f"/api/knowledge-bases/{base_id}/sessions", headers=SIDECAR, json={}
+            f"/api/knowledge-bases/{base_id}/sessions", headers=SIDECAR, json=focus,
         ).json()["id"]
         reply = ask_turn(
             client, session_id, {"content": "What?"}, headers=SIDECAR,
@@ -1636,6 +1659,21 @@ def test_read_source_without_heading_paths_reads_nearby_blocks(tmp_path: Path) -
     for n in (2, 3, 4, 6, 7, 8):
         assert f"Paragraph {n}." in prompt
     assert "Paragraph 1." not in prompt and "Paragraph 9." not in prompt
+
+
+def test_read_source_stays_inside_the_topic_passages(tmp_path: Path) -> None:
+    passage = "The trial measured the reflectance."
+    outside = "The panels were cleaned monthly."
+    prompt, reply = read_note(
+        tmp_path, f"## Method\n\n{passage}\n\n{outside}", "measured the reflectance",
+        linked_passage=passage,
+    )
+    assert passage in prompt and outside not in prompt
+    [citation] = reply["citations"]
+    [span] = citation["supportSpans"]
+    assert span["blockId"] == citation["blockId"]
+    assert span["revisionId"] == citation["sourceRevisionId"]
+    assert citation["quote"] == citation["supportText"] == passage
 
 
 def test_a_saved_answer_keeps_what_each_source_said(tmp_path: Path) -> None:

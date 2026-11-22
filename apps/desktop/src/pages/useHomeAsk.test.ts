@@ -20,6 +20,13 @@ const { AnswerStoppedError } = await import("../api");
 
 const home = (patch: Partial<KnowledgeSession> = {}) => ({ id: "ses_home", knowledgeBaseId: "@home", messages: [], messageCount: 0, ...patch }) as unknown as KnowledgeSession;
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
 /** A stream that waits until the test ends it, as a real answer being written does. */
 function held() {
   let finish!: (value: unknown) => void;
@@ -92,6 +99,109 @@ describe("asking from Home", () => {
     await act(async () => { finish({ assistantMessage: { id: "a1" } }); });
     await waitFor(() => expect(result.current.pending).toBeNull());
     expect(result.current.session?.messageCount).toBe(2);
+  });
+
+  it("replaces the Home listener only when the selected conversation loads", async () => {
+    const stream = held();
+    const missing = deferred<KnowledgeSession>();
+    const superseded = deferred<KnowledgeSession>();
+    const replacement = deferred<KnowledgeSession>();
+    api.session.mockReturnValueOnce(missing.promise).mockReturnValueOnce(superseded.promise)
+      .mockReturnValueOnce(replacement.promise);
+    const { result } = renderHook(() => useHomeAsk());
+    act(() => { void result.current.ask("Keep this answer going"); });
+    await waitFor(() => expect(api.sendMessageStream).toHaveBeenCalled());
+
+    act(() => { void result.current.open("ses_missing"); });
+    expect(stream.aborted()).toBe(false);
+    await act(async () => { missing.reject(new Error("Conversation was removed")); });
+    expect(result.current.error).toBe("Conversation was removed");
+    expect(result.current.session?.id).toBe("ses_home");
+    expect(result.current.pending).toBe("Keep this answer going");
+    expect(stream.aborted()).toBe(false);
+
+    act(() => {
+      void result.current.open("ses_earlier");
+      void result.current.open("ses_other");
+    });
+    await act(async () => { superseded.resolve(home({ id: "ses_earlier" })); });
+    expect(result.current.session?.id).toBe("ses_home");
+    expect(stream.aborted()).toBe(false);
+    expect(api.followAnswer).not.toHaveBeenCalled();
+    await act(async () => { replacement.resolve(home({ id: "ses_other" })); });
+    expect(result.current.session?.id).toBe("ses_other");
+    expect(stream.aborted()).toBe(true);
+    expect(api.followAnswer).toHaveBeenCalledWith("ses_other", expect.any(Function), expect.any(AbortSignal));
+  });
+
+  it("keeps the saved answer when Stop fails during the follow history refresh", async () => {
+    const stop = deferred<void>();
+    const turn = deferred<unknown>();
+    const history = deferred<KnowledgeSession>();
+    api.stopAnswer.mockReturnValueOnce(stop.promise);
+    api.session.mockResolvedValueOnce(home()).mockReturnValueOnce(history.promise);
+    api.followAnswer.mockImplementationOnce((_id: string, hear: (event: AnswerEvent) => void) => {
+      hear({ type: "resumed", question: "What was saved?", startedAt: 1 });
+      return turn.promise;
+    });
+    const { result } = renderHook(() => useHomeAsk());
+    await act(async () => { await result.current.open("ses_home"); });
+    act(() => result.current.cancel());
+    expect(api.stopAnswer).toHaveBeenCalledWith("ses_home");
+
+    const assistantMessage = { id: "ans_saved", role: "assistant", content: "The saved answer" } as KnowledgeSession["messages"][number];
+    await act(async () => { turn.resolve({ assistantMessage }); });
+    expect(api.session).toHaveBeenCalledTimes(2);
+    await act(async () => { stop.reject(new Error("Stop request failed")); });
+    const signal = api.followAnswer.mock.calls[0]?.[2] as AbortSignal;
+    expect(signal.aborted).toBe(false);
+
+    await act(async () => { history.resolve(home({ messageCount: 1, messages: [assistantMessage] })); });
+    expect(result.current.messages).toEqual([assistantMessage]);
+    expect(result.current.pending).toBeNull();
+  });
+
+  it("ignores a previous follow's delayed history when another conversation is answering", async () => {
+    let complete!: (turn: unknown) => void;
+    let reload!: (session: KnowledgeSession) => void;
+    const history = new Promise<KnowledgeSession>((resolve) => { reload = resolve; });
+    api.session.mockResolvedValueOnce(home()).mockReturnValueOnce(history)
+      .mockResolvedValueOnce(home({ id: "ses_other" }));
+    api.followAnswer.mockImplementationOnce((_id, hear: (event: AnswerEvent) => void) => {
+      hear({ type: "resumed", question: "The old question", startedAt: 1 });
+      return new Promise((resolve) => { complete = resolve; });
+    });
+    const { result } = renderHook(() => useHomeAsk());
+    await act(async () => { await result.current.open("ses_home"); });
+    await act(async () => { complete({ assistantMessage: { id: "old_answer" } }); });
+    expect(api.session).toHaveBeenCalledTimes(2);
+    const following = api.followAnswer.mock.calls[0]?.[2] as AbortSignal;
+    act(() => result.current.cancel());
+    expect(api.stopAnswer).not.toHaveBeenCalled();
+
+    await act(async () => { await result.current.open("ses_other"); });
+    expect(following.aborted).toBe(true);
+    held();
+    act(() => { void result.current.ask("The new question"); });
+    await act(async () => { reload(home({ messageCount: 2 })); });
+    expect(result.current.session?.id).toBe("ses_other");
+    expect(result.current.pending).toBe("The new question");
+    expect(reading.auto).not.toHaveBeenCalled();
+    expect(api.stopAnswer).not.toHaveBeenCalled();
+    act(() => result.current.cancel());
+    expect(api.stopAnswer).toHaveBeenCalledWith("ses_other");
+  });
+
+  it("releases Home's listener when the Stop request fails", async () => {
+    const stream = held();
+    api.stopAnswer.mockRejectedValueOnce(new Error("Service unavailable"));
+    const { result } = renderHook(() => useHomeAsk());
+    act(() => { void result.current.ask("Stop me?"); });
+    await waitFor(() => expect(api.sendMessageStream).toHaveBeenCalled());
+    await act(async () => { result.current.cancel(); });
+    expect(stream.aborted()).toBe(true);
+    expect(result.current.pending).toBeNull();
+    expect(result.current.error).toBeNull();
   });
 
   it("shows the saved failed question and retries its request in the same conversation", async () => {

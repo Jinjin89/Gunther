@@ -10,7 +10,7 @@ from fake_models import FakeProvider, gateway, model
 from PIL import Image, ImageDraw
 from test_studio_pipeline import request_text, router
 
-from gunther.agent import Evidence
+from gunther.agent import Evidence, ToolFailure
 from gunther.llm import ModelError
 from gunther.outputs import Notes, Pool, Spec
 from gunther.schemas import ConversationCitationOut
@@ -875,6 +875,11 @@ def test_selected_revision_figures_quality_and_withheld_formulas_reach_evidence(
         assert {span["revisionId"] for span in ask.spans} == {"rev_selected"}
         more = service._source_reader(session)(evidence)
         assert more and more.payload[0].support_spans[0]["revisionId"] == "rev_selected"
+        other_scope = {"src_excluded"}
+        with pytest.raises(ToolFailure, match="outside the current source selection"):
+            service._source_reader(session, other_scope)(evidence)
+        pinned = service._source_reader(session, other_scope, pinned_keys={evidence.key})(evidence)
+        assert pinned and pinned.text == more.text
         figure = figures_of(evidence)[0]
         assert figure["assetId"] == "ast_selected" and figure["caption"] == "Panels A and B"
         assert figure["revisionId"] == "rev_selected" and figure["region"] == [10, 20, 300, 200]
