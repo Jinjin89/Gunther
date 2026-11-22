@@ -38,6 +38,7 @@ from gunther.checks import coverage_of, read_verdicts
 from gunther.database import session_scope
 from gunther.llm import ModelError
 from gunther.models import Artifact, ArtifactAsset, ArtifactCheck, Asset
+from gunther.output_document import assemble_output
 from gunther.outputs import Draft, OutputAgents, Planned, Pool, Spec, section_hash, split_document
 from gunther.schemas import ArtifactOut, ConversationCitationOut
 from gunther.studio.pipeline import StudioAgents
@@ -404,6 +405,9 @@ def test_revision_appends_used_sources_and_keeps_parent_numbers(tmp_path, monkey
         (3, "The trial includes a follow-up.")
     ]
     assert "The trial includes a follow-up [3]." in second["content"]
+    assert split_document(second["content"], "report")[1][1:] == (
+        split_document(first["content"], "report")[1][1:]
+    )
     assert any(claim["refs"] == [3] for claim in second["sections"][0]["coverage"]["claims"])
     assert second["sections"][1] == first["sections"][1]
 
@@ -418,7 +422,7 @@ def test_chart_requires_complete_verification_even_when_its_values_are_cited(cov
     state = read_verdicts({"coverage": coverage}, chart) if coverage is not None else None
 
     with pytest.raises(ModelError, match="verification is incomplete"):
-        OutputAgents(chosen).assemble(
+        assemble_output(
             Spec("slides", "scientist"),
             "Cohort rate",
             "",

@@ -38,9 +38,9 @@ from gunther.config import Settings
 from gunther.llm import ModelError
 from gunther.main import create_app
 from gunther.models import Artifact, ArtifactCheck, ArtifactUnitBinding, Source
+from gunther.output_document import assemble_output
 from gunther.outputs import (
     Draft,
-    OutputAgents,
     OutputLimits,
     Planned,
     Pool,
@@ -57,7 +57,7 @@ from gunther.outputs import (
     unsource,
     with_layout,
 )
-from gunther.schemas import BuildOutputInput, ReviseOutputInput
+from gunther.schemas import BuildOutputInput, OutputScope, ReviseOutputInput
 from gunther.studio.work import StudioWorkAgents
 
 SIDECAR_TOKEN = "sidecar-token-with-at-least-256-bits-000000000000000000000000"
@@ -206,7 +206,7 @@ def saved_output(client, base_id, outline=None, written=None, *, approach=None, 
         limits = OutputLimits()
         material = service._output_material(session, base_id, payload.scope, allow_empty=True)
         pool = service._output_pool(material.seeds, limits)
-        service._studio_reading(session, material.source_ids, pool, pinned=material.seeds)
+        service._studio_reading(session, material.source_revisions, pool, pinned=material.seeds)
     plans, drafts = [], []
     for index, (row, part) in enumerate(zip(outline["sections"], written, strict=True)):
         layout = row.get("layout", "") if deck and approach else ""
@@ -225,7 +225,7 @@ def saved_output(client, base_id, outline=None, written=None, *, approach=None, 
     if preamble and payload.brief:
         preamble += f"\n\n_{payload.brief}_"
     model, effort = service._output_model(payload.model, payload.effort)
-    version = OutputAgents(service.models).assemble(
+    version = assemble_output(
         spec, title, preamble, drafts, pool, plans, model, effort
     )
     provenance = {"conversation_id": payload.conversation_id,
@@ -813,6 +813,43 @@ def test_a_discussion_seeds_the_pool_too(tmp_path: Path) -> None:
     assert artifact["citations"][0]["sourceRevisionId"] == pinned["sourceRevisionId"]
     assert artifact["citations"][0]["quote"] == pinned["quote"]
     assert artifact["acceptedUnitIds"] == []
+
+
+def test_delete_forever_drops_cached_passage_before_grouped_read(tmp_path: Path) -> None:
+    fake = FakeProvider(agent_replies(
+        "CD19 marks B cells [1].",
+        {"action": "search_library", "query": "CD19"},
+        {"action": "answer"},
+    ))
+    with app_for(tmp_path, fake) as client:
+        base_id, ids = library(client)
+        source_id = ids["Markers"]
+        discussion = client.post(
+            f"/api/knowledge-bases/{base_id}/sessions", headers=SIDECAR, json={},
+        ).raise_for_status().json()["id"]
+        ask_turn(client, discussion, {"content": "CD19?"}, headers=SIDECAR)
+        service = client.app.state.knowledge_service
+        with service.sessions() as session:
+            scope = OutputScope(mode="selection", source_ids=[source_id], session_ids=[discussion])
+            material = service._output_material(session, base_id, scope)
+            [seed] = material.seeds
+            assert seed.payload[0].source_id == ids["Receptors"]
+            pool = service._output_pool(material.seeds, OutputLimits())
+            assert service._studio_reading(
+                session, material.source_revisions, pool, pinned=material.seeds,
+            ) == []
+            [cached] = [item for item in pool.items if item.payload[0].source_id == source_id]
+
+        client.post(f"/api/sources/{source_id}/trash", headers=SIDECAR).raise_for_status()
+        client.delete(f"/api/trash/source/{source_id}", headers=SIDECAR).raise_for_status()
+        with service.sessions() as session:
+            gaps = service._studio_reading(
+                session, material.source_revisions, pool, pinned=material.seeds,
+            )
+
+    assert gaps == [f"Source {source_id} is selected but unavailable, so it was not read."]
+    assert cached.ref not in pool.by_ref()
+    assert set(pool.known) == {seed.key}
 
 
 def test_the_studio_report_can_record_an_unsupported_claim(tmp_path: Path) -> None:

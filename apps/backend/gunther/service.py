@@ -46,7 +46,16 @@ from gunther.artifact_versions import (
 from gunther.artifact_workspace import evidence_from_citation
 from gunther.checks import complete, merge_verdicts
 from gunther.database import session_scope
-from gunther.document_structure import evidence_eligible
+from gunther.evidence_reader import (
+    FIGURE_DISTANCE,
+    element_positions,
+    figure_reference,
+    nearby_figures,
+    pinned_revision,
+    read_passage,
+    read_snapshot,
+    readable_blocks,
+)
 from gunther.extraction import (
     CandidateAssertion,
     ExtractionPayload,
@@ -64,7 +73,6 @@ from gunther.models import (
     ArtifactMessage,
     Assertion,
     Asset,
-    BlockElementMap,
     ContentBlock,
     DocumentElement,
     Entity,
@@ -209,8 +217,7 @@ HOME_SCOPE = "@home"
 # Libraries at least this large also get paper-level answers (abstracts).
 PAPER_OVERVIEW_MIN_SOURCES = 12
 PAPER_OVERVIEWS = 4
-# How much of a source Ask reads when it reads further: a library section, a web page.
-READ_SECTION_CHARS = 6000
+# How much of a web page Ask reads when it reads further.
 READ_PAGE_CHARS = 8000
 
 
@@ -290,7 +297,7 @@ class _OutputScope:
 
 @dataclass
 class _OutputMaterial:
-    source_ids: list[str]
+    source_revisions: dict[str, str | None]
     notes: Notes
     seeds: list[Evidence]
     inputs: dict[str, list[dict[str, object]]]
@@ -2310,7 +2317,7 @@ class KnowledgeService:
                     citation.work_identifier = (
                         f"doi:{paper.doi.casefold()}" if paper.doi else f"arxiv:{paper.arxiv_id}"
                     )
-                citation.figures = self._nearby_figures(session, citation)
+                citation.figures = nearby_figures(session, citation)
                 found.append(
                     Evidence(
                         kind="library",
@@ -2350,52 +2357,6 @@ class KnowledgeService:
             return found
 
         return replace(tool, run=search)
-
-    @staticmethod
-    def _nearby_figures(session: Session, citation: ConversationCitationOut) -> list[dict]:
-        if not citation.block_id or not citation.source_revision_id:
-            return []
-        element = session.scalar(
-            select(DocumentElement)
-            .join(BlockElementMap)
-            .where(
-                BlockElementMap.block_id == citation.block_id,
-                DocumentElement.revision_id == citation.source_revision_id,
-            )
-        )
-        if element is None:
-            return []
-        figures = []
-        for figure in session.scalars(
-            select(DocumentElement)
-            .where(
-                DocumentElement.revision_id == element.revision_id,
-                DocumentElement.kind == "figure",
-                DocumentElement.ordinal.between(element.ordinal - 4, element.ordinal + 4),
-            )
-            .order_by(DocumentElement.ordinal)
-            .limit(4)
-        ):
-            payload, anchor = json.loads(figure.payload_json), json.loads(figure.anchor_json)
-            asset_id = payload.get("imageAssetId")
-            if not asset_id or session.get(Asset, asset_id) is None:
-                continue
-            if (
-                anchor.get("page")
-                and citation.anchor.get("page")
-                and anchor["page"] != citation.anchor["page"]
-            ):
-                continue
-            figures.append(
-                {
-                    "assetId": asset_id,
-                    "elementId": figure.id,
-                    "caption": payload.get("caption") or figure.content,
-                    "page": anchor.get("page"),
-                    "revisionId": element.revision_id,
-                }
-            )
-        return figures
 
     def create_session_turn(
         self,
@@ -3248,7 +3209,8 @@ class KnowledgeService:
             "units": [{"id": item.unit_id, "revisionId": item.revision_id} for item in snapshots],
             "sessions": session_inputs,
         }
-        return _OutputMaterial(resolved.source_ids, notes, seeds, inputs, snapshots)
+        revisions = {source_id: heads.get(source_id) for source_id in resolved.source_ids}
+        return _OutputMaterial(revisions, notes, seeds, inputs, snapshots)
 
     @staticmethod
     def _studio_metadata(
@@ -3263,7 +3225,7 @@ class KnowledgeService:
         page (a figure sits between paragraphs). Warnings come from the passage's own text
         only: uncertain glyphs (shown as U+FFFD), glyphs the check could not verify (their
         numbers cannot be trusted) and equations withheld from the text. The caller passes
-        only the selected source's current revision; captions are not interpreted here.
+        only the selected source's pinned revision; captions are not interpreted here.
         """
         from gunther.studio.format import numbers_in
 
@@ -3280,7 +3242,7 @@ class KnowledgeService:
                     continue
                 anchor = json.loads(element.anchor_json or "{}")
                 if (
-                    low - 4 <= element.ordinal <= high + 4
+                    low - FIGURE_DISTANCE <= element.ordinal <= high + FIGURE_DISTANCE
                     and (not pages or anchor.get("page") in pages)
                     and (
                         element.heading_path_json in paths
@@ -3291,29 +3253,17 @@ class KnowledgeService:
         figures: list[dict] = []
         warnings: dict[tuple, dict] = {}
         for node in [*group, *own, *nearby]:
+            if node.kind == "figure" and isinstance(node, DocumentElement):
+                figure = figure_reference(session, node, detailed=True)
+                if figure is not None:
+                    figures.append(figure)
+                continue
+            if node in nearby:
+                continue
             payload = json.loads(node.payload_json or "{}")
             anchor = json.loads(node.anchor_json or "{}")
             provenance = {"revisionId": node.revision_id, "page": anchor.get("page")}
             provenance["elementId" if isinstance(node, DocumentElement) else "blockId"] = node.id
-            if node.kind == "figure" and isinstance(node, DocumentElement):
-                asset_id = payload.get("imageAssetId")
-                if asset_id and session.get(Asset, asset_id) is not None:
-                    figures.append(
-                        {
-                            **provenance,
-                            "assetId": asset_id,
-                            "caption": payload.get("caption") or node.content,
-                            "region": anchor.get("bbox") or anchor.get("bboxPpm"),
-                            "quality": {
-                                key: payload[key]
-                                for key in ("cropCheck", "glyphCheck")
-                                if key in payload
-                            },
-                        }
-                    )
-                continue
-            if node in nearby:
-                continue
             page = anchor.get("page")
             if "\ufffd" in node.content or any(
                 span.get("mark") == "uncertain" for span in payload.get("inlineSpans", [])
@@ -3342,7 +3292,7 @@ class KnowledgeService:
 
     @staticmethod
     def _output_evidence_in_scope(
-        item: Evidence, heads: Mapping[str, str], pinned_keys: set[tuple[str, str, str]], *,
+        item: Evidence, heads: Mapping[str, str | None], pinned_keys: set[tuple[str, str, str]], *,
         web: bool = True,
     ) -> bool:
         if item.key in pinned_keys:
@@ -3350,11 +3300,12 @@ class KnowledgeService:
         if item.kind != "library":
             return item.kind != "web" or web
         citation = item.payload[0] if isinstance(item.payload, tuple) and item.payload else None
-        source = getattr(citation, "source_id", None)
-        return source in heads and citation.source_revision_id == heads[source]
+        source = getattr(citation, "source_id", "")
+        revision = heads.get(source) if source else None
+        return revision is not None and citation.source_revision_id == revision
 
     def _studio_reading(
-        self, session: Session, source_ids: list[str], pool: Pool, *,
+        self, session: Session, revisions: Mapping[str, str | None], pool: Pool, *,
         pinned: Sequence[Evidence] = (), most: int = 900,
     ) -> list[str]:
         """Every selected source read whole into the pool, in its own order, as passages of
@@ -3362,54 +3313,48 @@ class KnowledgeService:
         the material, not search results; each passage stays citable like a search hit."""
 
         target = 1400
-        wanted_sources = set(source_ids)
-        sources = list(session.scalars(select(Source).where(Source.id.in_(source_ids))))
-        found_sources = {source.id for source in sources}
-        paper_rows = session.scalars(
-            select(SourcePaper).where(SourcePaper.source_id.in_(source_ids))
+        source_ids = list(revisions)
+        sources = sorted(
+            session.scalars(select(Source).where(Source.id.in_(source_ids))),
+            key=lambda source: source.created_at,
         )
-        papers = {
-            row.source_id: row
-            for row in paper_rows
-        }
+        found_sources = {source.id for source in sources}
         gaps = [
             f"Source {source_id} is selected but unavailable, so it was not read."
-            for source_id in sorted(wanted_sources - found_sources)
+            for source_id in sorted(revisions.keys() - found_sources)
         ]
-        heads = dict(
-            session.execute(
-                select(SourceIndexHead.source_id, SourceIndexHead.revision_id).where(
-                    SourceIndexHead.source_id.in_(source_ids)
-                )
-            ).all()
-        )
-        # Pinned evidence comes from the selected notes and discussions in the live library.
-        pinned_keys = {item.key for item in pinned}
-        scoped = [
-            item for item in pool.items if self._output_evidence_in_scope(item, heads, pinned_keys)
-        ]
-        pool.items = scoped
-        pool.known = {item.key: item for item in scoped}
-        for source in sorted(sources, key=lambda item: item.created_at):
-            revision_id = heads.get(source.id)
+        verified: dict[str, str] = {}
+        for source in sources:
+            revision_id = revisions[source.id]
             if not revision_id:
                 gaps.append(
                     f"Source {source.title} has no indexed revision, so its main content "
                     "was not read."
                 )
-                continue
-            blocks = list(
-                session.scalars(
-                    select(ContentBlock)
-                    .where(
-                        ContentBlock.revision_id == revision_id,
-                        evidence_eligible(
-                            ContentBlock.kind, ContentBlock.payload_json, include_headings=True
-                        ),
-                    )
-                    .order_by(ContentBlock.ordinal)
-                )
+            elif pinned_revision(session, source.id, revision_id) is None:
+                gaps.append(f"The selected revision of {source.title} could not be read.")
+            else:
+                verified[source.id] = revision_id
+
+        # Pinned evidence comes from the selected notes and discussions in the live library.
+        pinned_keys = {item.key for item in pinned}
+        scoped = [
+            item
+            for item in pool.items
+            if self._output_evidence_in_scope(item, verified, pinned_keys)
+        ]
+        pool.items = scoped
+        pool.known = {item.key: item for item in scoped}
+        papers = {
+            row.source_id: row for row in session.scalars(
+                select(SourcePaper).where(SourcePaper.source_id.in_(list(verified)))
             )
+        }
+        for source in sources:
+            revision_id = verified.get(source.id)
+            if revision_id is None:
+                continue
+            blocks = list(session.scalars(readable_blocks(revision_id)))
             elements = list(
                 session.scalars(
                     select(DocumentElement)
@@ -3418,11 +3363,7 @@ class KnowledgeService:
                 )
             )
             mapped: dict[str, list[int]] = {}
-            for block_id, ordinal in session.execute(
-                select(BlockElementMap.block_id, DocumentElement.ordinal)
-                .join(DocumentElement, DocumentElement.id == BlockElementMap.element_id)
-                .where(DocumentElement.revision_id == revision_id)
-            ):
+            for block_id, ordinal in session.execute(element_positions(revision_id)):
                 mapped.setdefault(block_id, []).append(ordinal)
             groups: list[list[ContentBlock]] = []
             size = 0
@@ -3448,7 +3389,7 @@ class KnowledgeService:
                         f"{source.title}; the remaining groups were not read."
                     )
                     return gaps
-                snapshot = self._read_snapshot(group, 6000)
+                snapshot = read_snapshot(group)
                 if not snapshot.text.strip():
                     continue
                 path = json.loads(group[0].heading_path_json or "[]")
@@ -3465,7 +3406,7 @@ class KnowledgeService:
                         }.items()
                         if value not in (None, "")
                     }
-                    if paper is not None
+                    if paper is not None and paper.revision_id == revision_id
                     else {}
                 )
                 citation = ConversationCitationOut(
@@ -3637,7 +3578,7 @@ class KnowledgeService:
                     deck_style=cover.attrs.get("style"),
                 )
             reading_gaps = self._studio_reading(
-                session, material.source_ids, pool, pinned=material.seeds
+                session, material.source_revisions, pool, pinned=material.seeds
             )
             notes = replace(material.notes, extraction_gaps=tuple(reading_gaps))
             studio = StudioAgents(
@@ -3728,123 +3669,6 @@ class KnowledgeService:
             "use": provenance.get("use"),
         }
 
-    @staticmethod
-    def _passage_block(session: Session, citation: ConversationCitationOut) -> ContentBlock | None:
-        """The block a library citation quotes, in the revision it was taken from."""
-
-        revision_id = citation.source_revision_id or session.scalar(
-            select(SourceIndexHead.revision_id).where(
-                SourceIndexHead.source_id == citation.source_id
-            )
-        )
-        if not revision_id:
-            return None
-        if citation.block_id:
-            block = session.get(ContentBlock, citation.block_id)
-            revision = session.get(SourceRevision, revision_id)
-            if (
-                block
-                and revision
-                and revision.source_id == citation.source_id
-                and block.revision_id == revision_id
-            ):
-                return block
-            return None
-        exact = session.scalar(
-            select(ContentBlock)
-            .where(
-                ContentBlock.revision_id == revision_id,
-                ContentBlock.content == citation.quote,
-            )
-            .limit(1)
-        )
-        if exact is not None:
-            return exact
-        # A search passage is often a piece of a block, or runs over several: the block it
-        # starts in.
-        quote = " ".join(citation.quote.split())
-        if len(quote) < 20:
-            return None
-        blocks = session.scalars(
-            select(ContentBlock)
-            .where(ContentBlock.revision_id == revision_id)
-            .order_by(ContentBlock.ordinal)
-        )
-        for block in blocks:
-            text = " ".join(block.content.split())
-            if quote[:60] in text or (len(text) >= 40 and quote.startswith(text[:60])):
-                return block
-        return None
-
-    @staticmethod
-    def _section_blocks(session: Session, block: ContentBlock) -> list[ContentBlock]:
-        """The section a passage sits in: the blocks under the same heading, or the three
-        on each side when it has none. It grows outward from the passage, one block each
-        way in turn, until it is as long as a source is read."""
-
-        if not evidence_eligible(block.kind, block.payload_json, include_headings=True):
-            return []
-        query = select(ContentBlock).where(
-            ContentBlock.revision_id == block.revision_id,
-            evidence_eligible(ContentBlock.kind, ContentBlock.payload_json, include_headings=True),
-        )
-        if block.heading_path_json and block.heading_path_json != "[]":
-            query = query.where(ContentBlock.heading_path_json == block.heading_path_json)
-        else:
-            query = query.where(ContentBlock.ordinal.between(block.ordinal - 3, block.ordinal + 3))
-        blocks = list(session.scalars(query.order_by(ContentBlock.ordinal)))
-        at = next((i for i, item in enumerate(blocks) if item.id == block.id), 0)
-        low = high = at
-        size = len(blocks[at].content) if blocks else 0
-        turn = 0
-        while size < READ_SECTION_CHARS:
-            if turn % 2 == 0 and high + 1 < len(blocks):
-                step, edge = 1, high + 1
-            elif low > 0:
-                step, edge = -1, low - 1
-            elif high + 1 < len(blocks):
-                step, edge = 1, high + 1
-            else:
-                break
-            if size + len(blocks[edge].content) + 2 > READ_SECTION_CHARS:
-                break
-            size += len(blocks[edge].content) + 2
-            if step > 0:
-                high = edge
-            else:
-                low = edge
-            turn += 1
-        return blocks[low : high + 1]
-
-    @staticmethod
-    def _read_section(session: Session, block: ContentBlock) -> str:
-        return "\n\n".join(
-            item.content for item in KnowledgeService._section_blocks(session, block)
-        )[:READ_SECTION_CHARS]
-
-    @staticmethod
-    def _read_snapshot(blocks: list[ContentBlock], limit: int = READ_SECTION_CHARS) -> ReadResult:
-        pieces: list[str] = []
-        spans: list[dict[str, object]] = []
-        size = 0
-        for block in blocks:
-            remaining = limit - size - (2 if pieces else 0)
-            if remaining <= 0:
-                break
-            piece = block.content[:remaining]
-            pieces.append(piece)
-            size += len(piece) + (2 if len(pieces) > 1 else 0)
-            spans.append(
-                {
-                    "blockId": block.id,
-                    "revisionId": block.revision_id,
-                    "start": 0,
-                    "end": len(piece),
-                    "anchor": json.loads(block.anchor_json),
-                }
-            )
-        return ReadResult("\n\n".join(pieces), spans)
-
     def _ask_reader(self, session: Session, web_on: bool) -> Callable[[Evidence], str | ReadResult]:
         """Reading more of a source in Ask's pool (read_source): the section around a library
         passage, or the whole web page. Only a source already in the pool is read, and a web
@@ -3854,10 +3678,7 @@ class KnowledgeService:
         def read(item: Evidence) -> str | ReadResult:
             citation = item.payload[0] if isinstance(item.payload, tuple) else None
             if item.kind == "library" and citation is not None and citation.source_id:
-                block = self._passage_block(session, citation)
-                if block is None:
-                    raise ToolFailure("That passage is no longer in its source.")
-                return self._read_snapshot(self._section_blocks(session, block))
+                return read_passage(session, citation)
             if item.kind == "web" and item.url:
                 if not web_on:
                     raise ToolFailure("The web is off for this message")
@@ -3884,21 +3705,7 @@ class KnowledgeService:
             citation = item.payload[0] if isinstance(item.payload, tuple) else None
             if item.kind != "library" or citation is None or not citation.source_id:
                 raise ToolFailure("Only a passage from the library can be read further.")
-            block = self._passage_block(session, citation)
-            if block is None:
-                raise ToolFailure("That passage is no longer in its source.")
-            around = session.scalars(
-                select(ContentBlock)
-                .where(
-                    ContentBlock.revision_id == block.revision_id,
-                    ContentBlock.ordinal.between(block.ordinal - 2, block.ordinal + 2),
-                    evidence_eligible(
-                        ContentBlock.kind, ContentBlock.payload_json, include_headings=True
-                    ),
-                )
-                .order_by(ContentBlock.ordinal)
-            )
-            snapshot = self._read_snapshot(list(around), 4000)
+            snapshot = read_passage(session, citation, adjacent=True)
             text = snapshot.text
             if text.strip() == citation.quote.strip():
                 return None
@@ -3993,7 +3800,7 @@ class KnowledgeService:
                 ]
             )
             tool = self._output_search_tool(
-                session, material.source_ids, f"{library.title}: {library.question}"
+                session, list(material.source_revisions), f"{library.title}: {library.question}"
             )
             made_by = self._made_by(parent) or {}
             agents = StudioWorkAgents(self.models, parent.kind, limits)
@@ -5034,7 +4841,7 @@ class KnowledgeService:
             scope = self._conversation_scope(row)
             material = self._output_material(session, base_id, scope, strict=False)
             tool = self._output_search_tool(
-                session, material.source_ids, f"{library.title}: {library.question}"
+                session, list(material.source_revisions), f"{library.title}: {library.question}"
             )
             web, web_reason = self._web_tool(payload.web)
             reader = self._source_reader(session)
@@ -5079,20 +4886,16 @@ class KnowledgeService:
                     reusable_figures=self._reusable_figure_readings(session, base_id),
                 )
 
-            selected_heads = {
-                str(source["id"]): str(source["revisionId"])
-                for source in material.inputs["sources"] if source.get("revisionId")
-            }
             pinned_keys = {item.key for item in material.seeds}
 
             def evidence_allowed(item: Evidence) -> bool:
                 return self._output_evidence_in_scope(
-                    item, selected_heads, pinned_keys, web=web is not None,
+                    item, material.source_revisions, pinned_keys, web=web is not None,
                 )
 
             def studio_reading(made: Pool) -> Notes:
                 reading_gaps = self._studio_reading(
-                    session, material.source_ids, made, pinned=material.seeds
+                    session, material.source_revisions, made, pinned=material.seeds
                 )
                 return replace(material.notes, extraction_gaps=tuple(reading_gaps))
 

@@ -22,7 +22,6 @@ from gunther.agent import (
     Step,
     Tool,
     ToolFailure,
-    check_citations,
     check_claims,
     check_evidence_hash,
     leads_in,
@@ -46,7 +45,6 @@ from gunther.llm import ModelError, ModelGateway, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.schemas import ConversationCitationOut
 from gunther.skill_checks import (
-    CHARTS,
     Context,
     Page,
     chart_numbers_cited,
@@ -58,7 +56,6 @@ from gunther.slide_scene import (
     SCENE_HEADER,
     SceneEnvelope,
     decode_scene,
-    rebind_graphics_hash,
 )
 from gunther.studio.format import design_of, without_design
 
@@ -985,79 +982,6 @@ class OutputAgents:
                     row.get("reason") or "The claim was not fully supported.",
                 ).out()
         return stages | checked
-
-    # Assembling -----------------------------------------------------------------------------
-
-    def assemble(
-        self,
-        spec: Spec,
-        title: str,
-        preamble: str,
-        drafts: Sequence[Draft],
-        pool: Pool,
-        outline: Sequence[Planned],
-        model: ModelInfo,
-        effort: Effort | None,
-        notes: Sequence[str] = (),
-    ) -> BuiltOutput:
-        """One document, with the passages it cites numbered 1, 2, 3 in reading order."""
-
-        by_ref = pool.by_ref()
-        for index, (draft, plan) in enumerate(zip(drafts, outline, strict=True)):
-            # A chart is judged by how the slide is drawn: its marker's layout, else the
-            # plan's. One that could not be verified is drawn as a table (check_built).
-            drawn = (layout_of(draft.text)[0] if spec.kind == "slides" else None) or plan.layout
-            if drawn not in CHARTS:
-                continue
-            _, reason = chart_unverified(
-                with_layout(unmarked(draft.text, spec), drawn),
-                draft.issues,
-                draft.coverage,
-                by_ref,
-                index,
-            )
-            if reason is not None:
-                raise ModelError("Chart values must be verified before saving. " + reason)
-        raw = join_document(preamble, [draft.text for draft in drafts], spec.kind)
-        _, used = check_citations(raw, set(by_ref))
-        numbers = {ref: number for number, ref in enumerate(used, start=1)}
-        final = []
-        for draft in drafts:
-            text, _ = check_citations(draft.text, set(by_ref))
-            renumbered = renumber_citations(text, used)
-            final.append(
-                rebind_graphics_hash(
-                    text,
-                    renumbered,
-                    numbers,
-                )
-            )
-        content = join_document(preamble, final, spec.kind)
-        citations = [
-            by_ref[ref].payload[0].model_copy(update={"ref": number})
-            for number, ref in enumerate(used, start=1)
-        ]
-        checks = [
-            numbered_check(draft, text, numbers)
-            for text, draft in zip(final, drafts, strict=True)
-            if draft.issues is not None
-        ]
-        return BuiltOutput(
-            title=title_of(content) or title,
-            content=content,
-            outline=[
-                {"heading": item.heading, "goal": item.goal}
-                | ({"id": item.id} if item.id else {})
-                | ({"layout": item.layout} if item.layout else {})
-                for item in outline
-            ],
-            citations=citations,
-            checks=checks,
-            model=model,
-            effort=effort,
-            notes=tuple(notes),
-            pool_refs=tuple(used),
-        )
 
     # Whole runs ----------------------------------------------------------------------------
 

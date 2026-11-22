@@ -724,6 +724,7 @@ def test_selected_revision_figures_quality_and_withheld_formulas_reach_evidence(
 
     from gunther.artifact_workspace import evidence_from_citation
     from gunther.database import Base
+    from gunther.evidence_reader import nearby_figures, passage_block
     from gunther.models import (
         Asset,
         BlockElementMap,
@@ -731,6 +732,7 @@ def test_selected_revision_figures_quality_and_withheld_formulas_reach_evidence(
         DocumentElement,
         Source,
         SourceIndexHead,
+        SourcePaper,
         SourceRevision,
     )
     from gunther.service import KnowledgeService
@@ -843,12 +845,36 @@ def test_selected_revision_figures_quality_and_withheld_formulas_reach_evidence(
         session.flush()
         pool = Pool(50)
         service = KnowledgeService.__new__(KnowledgeService)
-        service._studio_reading(session, ["src_excluded"], pool)
+        service._studio_reading(session, {"src_excluded": "rev_excluded"}, pool)
         assert figures_of(pool.items[0])[0]["assetId"] == "ast_excluded"
-        # Earlier conversation evidence cannot leak into a narrowed build scope.
-        service._studio_reading(session, ["src_selected"], pool)
+        # A new head is published after material preparation pins the previous revision.
+        revisions = {"src_selected": "rev_selected"}
+        session.add(SourceRevision(
+            id="rev_new", source_id="src_selected", fingerprint="new", parser="synthetic",
+        ))
+        session.add(ContentBlock(
+            id="b_new", revision_id="rev_new", ordinal=1, kind="paragraph",
+            content="A different reading after republication.", locator="p. 2",
+        ))
+        session.add(SourcePaper(source_id="src_selected", revision_id="rev_new", title="New title"))
+        session.flush()
+        session.get(SourceIndexHead, "src_selected").revision_id = "rev_new"
+        session.flush()
+        service._studio_reading(session, revisions, pool)
         assert pool.items and {e.title for e in pool.items} == {"selected"}
         evidence = pool.items[0]
+        citation = evidence.payload[0]
+        assert citation.source_revision_id == "rev_selected"
+        assert "after republication" not in evidence.text
+        assert citation.source_metadata == {}
+        [nearby] = nearby_figures(session, citation)
+        assert nearby["assetId"] == "ast_selected" and nearby["revisionId"] == "rev_selected"
+        foreign = citation.model_copy(update={"source_id": "src_excluded"})
+        assert passage_block(session, foreign) is None and nearby_figures(session, foreign) == []
+        ask = service._ask_reader(session, False)(evidence)
+        assert {span["revisionId"] for span in ask.spans} == {"rev_selected"}
+        more = service._source_reader(session)(evidence)
+        assert more and more.payload[0].support_spans[0]["revisionId"] == "rev_selected"
         figure = figures_of(evidence)[0]
         assert figure["assetId"] == "ast_selected" and figure["caption"] == "Panels A and B"
         assert figure["revisionId"] == "rev_selected" and figure["region"] == [10, 20, 300, 200]

@@ -17,7 +17,8 @@ from test_outputs import (
 )
 
 from gunther.agent import Evidence
-from gunther.outputs import Draft, OutputAgents, Planned, Pool, Spec, split_document
+from gunther.output_document import assemble_output
+from gunther.outputs import Draft, Planned, Pool, Spec, split_document
 from gunther.schemas import ConversationCitationOut
 from gunther.slide_scene import (
     SceneEnvelope,
@@ -100,7 +101,7 @@ def saved_skill_output(client, base_id, *, kind="report", written=None, **fields
 
 def test_assemble_citation_renumbering_keeps_the_scene_source_fingerprint() -> None:
     fake = FakeProvider()
-    agents = OutputAgents(gateway(fake))
+    model = gateway(fake).models[0]
     pool = Pool(10)
     evidence = []
     for number in range(1, 4):
@@ -152,14 +153,14 @@ def test_assemble_citation_renumbering_keeps_the_scene_source_fingerprint() -> N
         {},
     )
 
-    built = agents.assemble(
+    built = assemble_output(
         Spec("slides", "scientist"),
         "Markers",
         "",
         [draft],
         pool,
-        [Planned("The sample reports a 72% measure", layout="composed")],
-        agents.gateway.models[0],
+        [Planned("The sample reports a 72% measure", id="p7", layout="composed")],
+        model,
         "off",
     )
 
@@ -167,6 +168,10 @@ def test_assemble_citation_renumbering_keeps_the_scene_source_fingerprint() -> N
     assert "[1]" in final_page and "[3]" not in final_page
     final_scene = decode_scene(scene_marker(final_page)[1])
     assert final_scene is not None
+    assert built.outline == [{
+        "id": "p7", "heading": "The sample reports a 72% measure", "goal": "", "layout": "composed",
+    }]
+    assert final_scene.root == root
     assert final_scene.source_hash == source_hash(final_page)
     assert final_scene.graphics == {"b1": "bar_chart"}
     assert final_scene.graphics_hash == graphics_hash(final_page)

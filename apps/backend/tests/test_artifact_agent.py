@@ -2289,6 +2289,7 @@ ROW = "| Marker | CD3D [1] | CD19 [2] |"
 def test_a_search_passage_without_its_block_is_found_in_the_block_it_starts_in(
     tmp_path: Path,
 ) -> None:
+    from gunther.evidence_reader import passage_block
     from gunther.models import ContentBlock, SourceRevision
     from gunther.schemas import ConversationCitationOut
 
@@ -2303,9 +2304,9 @@ def test_a_search_passage_without_its_block_is_found_in_the_block_it_starts_in(
             piece = ConversationCitationOut.model_construct(
                 source_id=source_id, source_revision_id=None, block_id=None, quote=words[3:]
             )
-            found = KnowledgeService._passage_block(session, piece)
+            found = passage_block(session, piece)
             assert found is not None and found.id == block.id
             short = ConversationCitationOut.model_construct(
                 source_id=source_id, source_revision_id=None, block_id=None, quote="too short"
             )
-            assert KnowledgeService._passage_block(session, short) is None
+            assert passage_block(session, short) is None

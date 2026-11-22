@@ -14,7 +14,6 @@ from gunther.agent import (
     Evidence,
     check_citations,
     checker_inventory,
-    renumber_citations,
 )
 from gunther.artifact_workspace import (
     CardRec,
@@ -39,6 +38,7 @@ from gunther.checks import (
     verdicts_of,
 )
 from gunther.llm import ModelError
+from gunther.output_document import number_output_citations, number_output_part
 from gunther.outputs import (
     COMPOSITION_LAYOUTS,
     UNCHANGED,
@@ -605,21 +605,14 @@ class StudioWorkAgents(StudioAgents):
                 plans[index]["layout"] = fmt.parse_slide(parts[index]).layout
             emit({"type": "section", "index": index, "state": "done"})
 
-        numbers = {ref: ref for ref in saved}
-        citations = [item.payload[0] for item in saved.values()]
-        next_ref = max(numbers, default=0)
-        for draft in changed.values():
-            _, used = check_citations(draft.text, set(by_ref))
-            for ref in used:
-                if ref not in numbers:
-                    next_ref += 1
-                    numbers[ref] = next_ref
-                    citations.append(by_ref[ref].payload[0].model_copy(update={"ref": next_ref}))
+        numbers, citations = number_output_citations(
+            (draft.text for draft in changed.values()), by_ref, saved=saved,
+        )
         checks = []
         for index, part in enumerate(parts):
             if index in changed:
                 draft = changed[index]
-                parts[index] = renumber_citations(draft.text, numbers)
+                parts[index] = number_output_part(draft.text, numbers)
                 checks.append(numbered_check(draft, parts[index], numbers))
                 continue
             record = records.get(section_hash(part))

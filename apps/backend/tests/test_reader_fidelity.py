@@ -6,6 +6,8 @@ from gunther.content import ParsedBlock
 from gunther.document_parser import attach_document_images, docling_document
 from gunther.document_structure import evidence_eligible, organize_document
 from gunther.documents import ParsedDocument
+from gunther.evidence_reader import read_snapshot
+from gunther.models import ContentBlock
 from gunther.pdf_native import SYMBOL_ENCODING, _native_text, _owned
 
 
@@ -17,6 +19,19 @@ def region(x, y, width, height, page=1):
 
 def text(label, content, size, box):
     return {"label": label, "text": content, "gunther_font_size": size, "prov": region(*box)}
+
+
+def test_passage_window_keeps_spans_at_the_character_bound():
+    blocks = [
+        ContentBlock(id="one", revision_id="saved", content="First", anchor_json='{"page":1}'),
+        ContentBlock(id="two", revision_id="saved", content="Second", anchor_json='{"page":2}'),
+    ]
+    read = read_snapshot(blocks, 10)
+    assert read.text == "First\n\nSec"
+    assert read.spans == [
+        {"blockId": "one", "revisionId": "saved", "start": 0, "end": 5, "anchor": {"page": 1}},
+        {"blockId": "two", "revisionId": "saved", "start": 0, "end": 3, "anchor": {"page": 2}},
+    ]
 
 
 def test_formula_without_transcription_survives_and_renders_from_page(tmp_path):

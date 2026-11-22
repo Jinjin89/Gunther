@@ -37,6 +37,7 @@ from gunther.artifact_workspace import (
 )
 from gunther.llm import ModelInfo
 from gunther.model_profiles import Effort
+from gunther.output_document import assemble_output, project_outline
 from gunther.outputs import (
     ACCENTS,
     CITATION_GROUP,
@@ -258,12 +259,7 @@ class WorkSteps:
             {
                 "type": "outline",
                 "title": self.work.title,
-                "sections": [
-                    {"heading": item.heading, "goal": item.goal}
-                    | ({"id": item.id} if self._deck else {})
-                    | ({"layout": item.layout} if item.layout else {})
-                    for item in self.work.outline
-                ],
+                "sections": project_outline(self._planned(), include_ids=self._deck),
             }
         )
 
@@ -944,7 +940,7 @@ class WorkSteps:
             preamble = f"# {title}" + (f"\n\n_{goal}_" if goal else "")
             if self.report_v2:
                 preamble = "<!-- report: v2 -->\n" + preamble
-        built = agents.assemble(
+        built = assemble_output(
             spec, title, preamble, drafts, self.pool, planned, self.model, self.effort
         )
         built = replace(

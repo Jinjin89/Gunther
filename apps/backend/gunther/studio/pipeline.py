@@ -24,11 +24,18 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from gunther import usage
-from gunther.agent import CITATION_GROUP, MARKDOWN_TABLE, Evidence, collapse_citations
+from gunther.agent import (
+    CITATION_GROUP,
+    MARKDOWN_TABLE,
+    Evidence,
+    check_citations,
+    collapse_citations,
+)
 from gunther.checks import Verdicts, finding, read_verdicts, verdicts_of
 from gunther.llm import Image, ModelError, ModelInfo
 from gunther.llm import unfence as _unfence
 from gunther.model_profiles import Effort
+from gunther.output_document import assemble_output, project_outline
 from gunther.outputs import (
     STYLES,
     BuiltOutput,
@@ -41,7 +48,6 @@ from gunther.outputs import (
     Pool,
     Spec,
     _marked,
-    check_citations,
     check_heading_refs,
     figure_lines,
     heading_of,
@@ -1297,7 +1303,7 @@ class StudioAgents(OutputAgents):
             + [{"heading": s.heading, "goal": s.job} for s in story.sections]
         )
         if run.plan:
-            planned = [{"heading": p.heading, "goal": p.goal} for p in run.plan]
+            planned = project_outline(run.plan, include_ids=False, include_layout=False)
         emit({"type": "outline", "title": story.title, "sections": planned})
         return story
 
@@ -2306,31 +2312,24 @@ class StudioAgents(OutputAgents):
                 only = [i for i, draft in enumerate(drafts) if draft is checked[i]]
                 checked = self.design_deck(model, run, checked, emit, only=only)
             drafts = checked
-            outline = [
-                Planned(
-                    fmt.parse_slide(d.text).title or f"Slide {n}",
-                    layout=fmt.parse_slide(d.text).layout,
-                )
-                for n, d in enumerate(drafts, 1)
-            ]
-            title = outline[0].heading if outline else (run.story.title or fallback_title)
+            title = (
+                (fmt.parse_slide(drafts[0].text).title or "Slide 1")
+                if drafts else (run.story.title or fallback_title)
+            )
 
             def assemble_deck(parts: list[Draft]) -> BuiltOutput:
                 _validate_count(run.story, len(parts), "assembled deck")
                 if not _matches_plan(run, [d.text for d in parts]):
                     raise ModelError("The deck no longer follows the approved outline.")
                 planned = [
-                    Planned(
-                        fmt.parse_slide(d.text).title or f"Slide {n}",
-                        layout=fmt.parse_slide(d.text).layout,
-                    )
-                    for n, d in enumerate(parts, 1)
+                    Planned(slide.title or f"Slide {n}", layout=slide.layout)
+                    for n, slide in enumerate((fmt.parse_slide(d.text) for d in parts), 1)
                 ]
                 if plan:
                     planned = [
                         replace(p, layout=s.layout) for p, s in zip(plan, planned, strict=True)
                     ]
-                return self.assemble(spec, title, "", parts, pool, planned, model, effort)
+                return assemble_output(spec, title, "", parts, pool, planned, model, effort)
 
             built = assemble_deck(drafts)
             try:
@@ -2357,7 +2356,7 @@ class StudioAgents(OutputAgents):
                 Planned(re.sub(r"^##\s*", "", d.text.splitlines()[0]).strip()[:160]) for d in drafts
             ]
             title = run.story.title or fallback_title
-            built = self.assemble(spec, title, preamble, drafts, pool, outline, model, effort)
+            built = assemble_output(spec, title, preamble, drafts, pool, outline, model, effort)
             count = len(split_document(built.content, "report")[1])
             _validate_count(run.story, count, "assembled report")
             if count != len(outline):

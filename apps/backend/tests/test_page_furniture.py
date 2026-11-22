@@ -10,6 +10,7 @@ from gunther.content import ParsedBlock
 from gunther.database import Base, create_database_engine, create_session_factory, session_scope
 from gunther.document_parser import docling_document
 from gunther.document_structure import evidence_eligible
+from gunther.evidence_reader import section_blocks
 from gunther.knowledge_index import embeddable
 from gunther.migrations import run_migrations
 from gunther.models import ContentBlock, DocumentElement, Source, SourcePaper
@@ -186,13 +187,13 @@ def test_consumers_share_policy_and_keep_canonical_elements(service, monkeypatch
         assert [p.block_id for p in request.passages] == [b.id for b in (blocks[1], *blocks[-2:])]
 
         pool = Pool(50)
-        service._studio_reading(session, [source_id], pool)
+        service._studio_reading(session, {source_id: revision.id}, pool)
         assert pool.items and all("Furniturezircon" not in e.text for e in pool.items)
         assert "Bodyquartz" in " ".join(e.text for e in pool.items)
-        expanded = service._section_blocks(session, blocks[1])
+        expanded = section_blocks(session, blocks[1])
         assert blocks[1] in expanded
         assert all("Furniturezircon" not in b.content for b in expanded)
-        assert service._section_blocks(session, blocks[2]) == []
+        assert section_blocks(session, blocks[2]) == []
         assert "Furniturezircon" not in service._ask_reader(session, False)(pool.items[0]).text
         extra = service._source_reader(session)(pool.items[0])
         assert extra is None or "Furniturezircon" not in extra.text
