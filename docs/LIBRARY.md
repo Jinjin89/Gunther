@@ -23,6 +23,8 @@ Analysis can keep up to five findings from a saved answer or output. Each result
 
 Long lists start collapsed. Filter contents searches the sentences. Select a result to open Evidence and read the source, locator and quote. The passage picker in Evidence switches between the passages in the currently usable evidence groups.
 
+Chat searches key results during library lookup, and Studio searches them while preparing a build. A result can help the model find and frame evidence within the current scope. The model cites the numbered passages from the source reading. [Ask evidence](ASK.md#evidence-and-checking) · [Build in Studio](OUTPUTS.md#build-in-studio)
+
 Remove takes one sentence out of the list. Undo in the toast restores it. The kept count under an answer or output has its own Undo, which removes that origin's contribution and preserves other origins' evidence on their results. Failed jobs offer Retry and appear in Activity. Setting up an Analysis model resumes jobs that were waiting for one.
 
 While trusted saved answers await checking, Sources offers a read-only link to view them. Each can contribute once. Their stored revisions remain available to the output versions that pinned them.

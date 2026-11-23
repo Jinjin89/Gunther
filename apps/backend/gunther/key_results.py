@@ -14,10 +14,12 @@ from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session, aliased
 
 from gunther import key_result_index
+from gunther.artifact_workspace import evidence_from_citation
 from gunther.content import search_tokens
 from gunther.document_structure import evidence_eligible
-from gunther.evidence import Evidence
-from gunther.knowledge_index import new_id
+from gunther.evidence import Evidence, KeyResultMatch
+from gunther.evidence_reader import nearby_figures, read_snapshot
+from gunther.knowledge_index import Embedder, new_id
 from gunther.models import (
     Artifact,
     ContentBlock,
@@ -35,15 +37,18 @@ from gunther.models import (
     utc_now,
 )
 from gunther.schemas import (
+    ConversationCitationOut,
     KeyResultEvidenceOut,
     KeyResultJobOut,
     KeyResultOriginKind,
     KeyResultOriginOut,
     KeyResultOut,
 )
-from gunther.service_records import _timestamp
+from gunther.service_records import _id, _timestamp
 
 INTERRUPTED = "Key results were interrupted. Retry to resume."
+# Keep orientation short enough to accompany the actual passages in the model's context.
+KEY_RESULTS_PER_SEARCH = 8
 
 
 class Original(NamedTuple):
@@ -195,16 +200,21 @@ def _ids(values: Collection[str]):
     return select(func.json_each(json.dumps(list(values))).table_valued("value").c.value)
 
 
-def usable_links(*conditions, source_ids: Collection[str] | None = None):
+def usable_links(
+    *conditions,
+    source_ids: Collection[str] | None = None,
+    block_ids: Collection[str] | None = None,
+):
     """The evidence of complete, usable origin groups. Conditions scope whole groups."""
     link = KeyResultEvidence
     original = case(
         (link.source_asset_id.is_not(None), Source.asset_id == link.source_asset_id),
         else_=and_(Source.asset_id.is_(None), Source.content_hash == link.source_content_hash),
     )
-    in_scope = Source.id.in_(_ids(source_ids)) if source_ids is not None else literal(True)
+    sources = Source.id.in_(_ids(source_ids)) if source_ids is not None else literal(True)
+    blocks = ContentBlock.id.in_(_ids(block_ids)) if block_ids is not None else literal(True)
     usable = and_(
-        Source.trashed_at.is_(None), KnowledgeBaseSource.id.is_not(None), in_scope,
+        Source.trashed_at.is_(None), KnowledgeBaseSource.id.is_not(None), sources, blocks,
         evidence_eligible(ContentBlock.kind, ContentBlock.payload_json), original,
     )
     checked = (
@@ -262,6 +272,73 @@ def _fuse(first: Sequence[str], second: Sequence[str], limit: int) -> list[str]:
     return sorted(scores, key=scores.__getitem__, reverse=True)[:limit]
 
 
+def _rank_kept(
+    session: Session, query: key_result_index.Query, ids: list[str], limit: int,
+) -> list[str]:
+    return _fuse(
+        key_result_index.keyword(session, query.terms, ids),
+        key_result_index.semantic(session, query, ids),
+        limit,
+    )
+
+
+def retrieve(
+    session: Session, base_id: str, source_ids: Collection[str], query: str, *,
+    block_ids: Collection[str] | None = None, embedder: Embedder | None = None,
+) -> list[KeyResultMatch]:
+    """Find checked sentences and their original passages within the current scope."""
+    if not source_ids or not query.strip():
+        return []
+    links = usable_links(
+        KeyResult.knowledge_base_id == base_id, KeyResult.status == "kept",
+        source_ids=source_ids, block_ids=block_ids,
+    )
+    ids = list(session.scalars(
+        select(links.c.key_result_id).distinct().order_by(links.c.key_result_id),
+    ))
+    if not ids:
+        return []
+    ranked = _rank_kept(
+        session, key_result_index.prepare_query(query, embedder, ()), ids, KEY_RESULTS_PER_SEARCH,
+    )
+    if not ranked:
+        return []
+
+    groups: dict[str, dict[tuple[str, str], list[Evidence]]] = defaultdict(
+        lambda: defaultdict(list),
+    )
+    sentences: dict[str, str] = {}
+    for result_id, sentence, link, block, title in session.execute(
+        select(KeyResult.id, KeyResult.text, KeyResultEvidence, ContentBlock, Source.title)
+        .select_from(KeyResult)
+        .join(KeyResultEvidence, KeyResultEvidence.key_result_id == KeyResult.id)
+        .join(links, links.c.id == KeyResultEvidence.id)
+        .join(ContentBlock, ContentBlock.id == KeyResultEvidence.block_id)
+        .join(Source, Source.id == KeyResultEvidence.source_id)
+        .where(KeyResult.id.in_(ranked))
+        .order_by(KeyResultEvidence.created_at, KeyResultEvidence.id)
+    ):
+        snapshot = read_snapshot([block])
+        citation = ConversationCitationOut(
+            id=_id("cit"), source_id=link.source_id, source_title=title,
+            source_revision_id=block.revision_id, block_id=block.id,
+            quote=link.quote, locator=block.locator, status="provisional", confidence=0.0,
+            anchor=json.loads(block.anchor_json), support_text=snapshot.text,
+            support_spans=snapshot.spans, source_origin="selected",
+        )
+        citation.figures = nearby_figures(session, citation)
+        origin = (link.origin_kind, link.origin_id)
+        groups[result_id][origin].append(evidence_from_citation(citation))
+        sentences[result_id] = sentence
+    return [
+        KeyResultMatch(
+            result_id, sentences[result_id],
+            tuple(tuple(group) for group in groups[result_id].values()),
+        )
+        for result_id in ranked if result_id in groups
+    ]
+
+
 def related_results(
     session: Session, base_id: str, source_ids: Collection[str],
 ) -> list[KeyResult]:
@@ -273,11 +350,7 @@ def related_results(
         _related(base_id, source_ids).where(KeyResult.status == "kept")
         .with_only_columns(KeyResult.id).order_by(KeyResult.id)
     ))
-    kept = _fuse(
-        key_result_index.keyword(session, query.terms, kept_ids),
-        key_result_index.semantic(session, query, kept_ids),
-        25,
-    )
+    kept = _rank_kept(session, query, kept_ids, 25)
     removed = related_removed(session, base_id, source_ids)
     terms = set(query.terms)
     lexical = [(k, len(terms.intersection(search_tokens(sentence)))) for k, sentence in removed]

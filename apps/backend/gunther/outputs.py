@@ -16,7 +16,7 @@ from gunther.checks import (
     map_refs,
 )
 from gunther.citations import CITATION_GROUP, SENTENCE_END, UNSOURCED, renumber_citations
-from gunther.evidence import Evidence, Step, Tool, ToolFailure
+from gunther.evidence import Evidence, Step, Tool, ToolFailure, key_result_block
 from gunther.llm import ModelGateway, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.output_types import OutputLength
@@ -161,7 +161,7 @@ class OutputLimits:
     results: int = 40  # search results one section grades
     per_section: int = 8  # new passages per section
     pool: int = 120  # passages in the whole build
-    seed: int = 40  # of those, from saved knowledge and discussions
+    seed: int = 40  # seed passages from earlier work
     leads: int = 2  # [?] claims looked up per section
     shown: int = 30  # passages a writer sees
     sentences: int = 40  # cited sentences one support check looks at
@@ -491,7 +491,7 @@ class Spec:
 
 @dataclass(frozen=True)
 class Notes:
-    """The person's own earlier work, for the planner and writer. Never cited."""
+    """Orientation and the person's earlier work, for the planner and writer. Never cited."""
 
     knowledge: tuple[tuple[str, str], ...] = ()  # (title, text)
     discussions: tuple[tuple[str, str], ...] = ()  # (title, summary)
@@ -499,6 +499,7 @@ class Notes:
     sources: tuple[tuple[str, str], ...] = ()
     # Selected-source access/extraction gaps; context for the planner, never citations.
     extraction_gaps: tuple[str, ...] = ()
+    key_results: tuple[str, ...] = ()  # orientation lines using this pool's numbers
 
 
 @dataclass(frozen=True)
@@ -559,7 +560,7 @@ def _origin(item: Evidence) -> str:
 
 
 def _notes_block(notes: Notes) -> list[str]:
-    lines: list[str] = []
+    lines = ["", *key_result_block(notes.key_results)] if notes.key_results else []
     # Their own numbers and markers belong to the conversation they came from, not to this
     # pool, so they are left out: a writer must not copy one as if it were a citation.
     if notes.knowledge:

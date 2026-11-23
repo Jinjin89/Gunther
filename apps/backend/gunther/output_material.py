@@ -37,9 +37,7 @@ from gunther.outputs import Notes, Pool
 from gunther.schemas import ArtifactUnitSnapshotOut, ConversationCitationOut, OutputScope
 from gunther.service_records import _id
 
-NOTHING_TO_BUILD_FROM = (
-    "There is nothing to build from yet. Add sources, or save an answer as knowledge."
-)
+NOTHING_TO_BUILD_FROM = "There is nothing to build from yet. Add sources."
 
 
 @dataclass
@@ -67,9 +65,10 @@ class OutputMaterialService:
     def _resolve_output_scope(
         self, session: Session, base_id: str, scope: OutputScope, *, strict: bool = True
     ) -> _OutputScope:
-        """What an output may be built from. The whole library is every live source and every
-        saved answer; a selection is what was picked. With ``strict``, a pick that is not
-        in this library (or was removed since) is an error; otherwise it is left out."""
+        """Resolve live sources and any explicitly named saved answers or discussions.
+
+        With ``strict``, a pick outside this library or since removed is an error.
+        """
 
         members = list(
             session.scalars(
@@ -82,14 +81,13 @@ class OutputMaterialService:
                 .order_by(Source.created_at.desc())
             )
         )
+        if scope.mode == "library":
+            return _OutputScope(members, members, [], [])
         units = (
             select(KnowledgeUnit)
             .options(selectinload(KnowledgeUnit.revisions))
             .where(KnowledgeUnit.knowledge_base_id == base_id, KnowledgeUnit.status == "trusted")
         )
-        if scope.mode == "library":
-            found = list(session.scalars(units.order_by(KnowledgeUnit.updated_at.desc())))
-            return _OutputScope(members, members, found, [])
         in_library = set(members)
         found_units = {
             unit.id: unit

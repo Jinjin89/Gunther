@@ -725,7 +725,9 @@ class AskTurns:
             offered = []
             notes = []
             if scoped_source_ids:
-                offered.append(self._library_tool(scope, about))
+                offered.append(
+                    self._library_tool(scope, about, base_id=library.id if library else None)
+                )
             else:
                 notes.append("there is no library to search here")
             if web_tool:

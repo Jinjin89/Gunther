@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -65,6 +65,40 @@ class Evidence:
 
 
 @dataclass(frozen=True)
+class KeyResultMatch:
+    id: str
+    sentence: str
+    groups: tuple[tuple[Evidence, ...], ...]
+
+
+def key_result_lines(
+    matches: Iterable[KeyResultMatch], pool: Sequence[Evidence],
+) -> tuple[str, ...]:
+    """Point to complete evidence groups that made it into the numbered pool."""
+    numbered = {item.key: item.ref for item in pool if item.ref is not None}
+    lines = []
+    for match in matches:
+        refs = dict.fromkeys(
+            numbered[item.key]
+            for group in match.groups if all(item.key in numbered for item in group)
+            for item in group
+        )
+        if refs:
+            pointers = ", ".join(f"[{ref}]" for ref in refs)
+            lines.append(f"- {match.sentence} See {pointers}.")
+    return tuple(lines)
+
+
+def key_result_block(lines: Sequence[str]) -> list[str]:
+    if not lines:
+        return []
+    return [
+        "Key results already checked in this library (orientation only; cite the passages):",
+        *lines,
+    ]
+
+
+@dataclass(frozen=True)
 class ReadResult:
     text: str
     spans: list[dict[str, object]] = field(default_factory=list)
@@ -84,6 +118,8 @@ class Tool:
     where: str  # "your library", "the web": how steps are worded
     # Whether a model judges the results' relevance before they are used.
     grade: bool = False
+    # Checked library findings that can lead Ask to other original passages.
+    key_results: Callable[[str], list[KeyResultMatch]] | None = None
 
 
 @dataclass(frozen=True)

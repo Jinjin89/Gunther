@@ -41,6 +41,8 @@ The Analysis lane claims durable key results jobs by origin. The database allows
 
 Distillation searches for related sentences within the library and with overlapping sources. Full-text indexing commits with kept results. When local embeddings are available, the local processing lane encodes kept sentences outside the write transaction, then checks that they are still kept before storing their vectors. Removed sentences can inform deduplication and stay out of both indexes. The API, deduplication and the library folder share the same evidence eligibility check. Permanent source deletion drops the affected groups and their index entries. Kept sentences with other evidence groups are indexed again.
 
+Ask and Studio use the same key result lookup in a read session. It applies library, source and passage scope before ranking kept results. Both pools deduplicate original readings by source, revision and block. The orientation block is rendered after numbering and refers to complete evidence groups present in the pool. Rebuild resolves the scope from the output's lineage, including legacy saved answers listed in that scope.
+
 Trash marks all versions of an output lineage in one transaction. Conversation batches use ownership from the sealed version provenance. The run registry guards those writes against active turns. Permanent deletion removes versions leaf-first, then their conversations, and releases files after commit once the last reference is gone. [Trash service](../apps/backend/gunther/trash.py)
 
 - [models.py](../apps/backend/gunther/models.py) contains the SQLite records. [database.py](../apps/backend/gunther/database.py) enables WAL and foreign keys. [migrations.py](../apps/backend/gunther/migrations.py) applies ordered migrations at startup.

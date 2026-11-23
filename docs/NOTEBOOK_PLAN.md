@@ -1,6 +1,6 @@
 # One library screen, Studio types and key results
 
-Status: agreed and final (2026-11-23). Phases 1a, 1b, 2a, 2b and 3a are built; the rest is unbuilt. Read [AGENTS.md](../AGENTS.md) first. When a phase ships, move
+Status: agreed and final (2026-11-23). Phases 1a, 1b, 2a, 2b, 3a and 3b are built; the rest is unbuilt. Read [AGENTS.md](../AGENTS.md) first. When a phase ships, move
 what it built into the shipped docs ([Outputs](OUTPUTS.md), [Ask](ASK.md), [Library](LIBRARY.md),
 [Studio format](STUDIO_FORMAT.md)) and delete that phase from this file.
 
@@ -150,20 +150,6 @@ Why: removing T shifted cells toward the white-cell lineage [1].
 
 The builder may split a phase into batches. Each batch keeps every test green and is reviewed on
 its own. Codex builds; Claude and the checker review each diff.
-
-### Phase 3b — Key results retrieval and exports
-**Adds:**
-- `key_results_fts` and `key_result_vectors_<dim>` indexes with `TrashService._delete_batch` cleanup.
-- Two-line eligibility rule (§3.3) checking source scope/liveness, `evidence_eligible()`, and `asset_id`/`content_hash`.
-- Ask and Studio retrieval adopting usable backing `Evidence` passages plus non-citable orientation notes.
-- Hybrid top-K (25 kept + 15 removed) dedupe retrieval inside the distiller.
-- `Libraries/<library>/Key results.md` in `library_folders.py` and `keyResults` in workbook JSON export.
-
-**Removes:**
-- Nothing (keep `KnowledgeUnit` note injection for old saved output scopes that list `unit_ids`; new selection of saved answers was already removed in Phase 3a).
-
-**Tests (no live model calls):**
-- Backend tests: Docling re-read keeps results, note edit drops them, unticking one source of a two-source claim hides it while a single-source origin keeps it, Trash purges FTS/vectors, Ask/Studio cite original `[n]` passages only, old output scopes with `unit_ids` still rebuild with those notes, and `Key results.md` + JSON export match kept results.
 
 ### Phase 4 — Cards (`flashcards` and `quiz`)
 **Adds:**

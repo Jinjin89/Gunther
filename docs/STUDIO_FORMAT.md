@@ -261,6 +261,8 @@ A city budgeting on 18% would overestimate savings by half [2].
 
 Report and Briefing doc headings state claims. Sub-headings use `###`. Source citations use `[n]`.
 
+Each number identifies a passage from the evidence pool. Studio can use checked key results to locate those passages and frame the draft. The saved citation identifies the original source revision and block. [Build in Studio](OUTPUTS.md#build-in-studio)
+
 ## 3. Exports (desktop)
 
 - **PPTX** uses editable text and tables, native charts for template slides, and speaker

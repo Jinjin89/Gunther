@@ -6,6 +6,8 @@ Studio makes saved reports and slide decks in a library. Click a tile to start a
 
 Studio prepares a verified evidence pool, reads the material, writes a memo or study map, plans the storyline and drafts the report or slides. Slide building adds format repair, factual verification, fitting, design, and optional rendered review. For scientific decks it plans coverage of the study and figures, reads supplied pixels when it can, and records limitations and review status. The study workflow ties the explanation of methods, results and figures to their passages.
 
+Studio searches checked key results using the build brief and source selection. A usable result brings its passages into the evidence pool from the original reading. Studio sees the result sentence as orientation with pointers to those passages. Citations and checks use the original passages. Rebuilding an older output with saved answers in its scope keeps those answers as notes. [Key results](LIBRARY.md#key-results)
+
 Each output type has a recipe for what to write and how to organize it. Choose the type on its Studio tile.
 
 | Output type | ID | Submitted outline limit |

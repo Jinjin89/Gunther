@@ -11,7 +11,8 @@ from urllib.parse import urlsplit
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from gunther.evidence import Evidence, ReadResult, Tool, ToolFailure
+from gunther import key_results
+from gunther.evidence import Evidence, KeyResultMatch, ReadResult, Tool, ToolFailure
 from gunther.evidence_reader import nearby_figures, read_passage
 from gunther.models import (
     Assertion,
@@ -245,7 +246,9 @@ class EvidenceService:
             }
         return _LibraryScope(source_ids, assertions, block_scope, topic_evidence)
 
-    def _library_tool(self, scope: _LibraryScope, about: str) -> Tool:
+    def _library_tool(
+        self, scope: _LibraryScope, about: str, *, base_id: str | None = None,
+    ) -> Tool:
         """Searching the library as a tool. Whoever uses it numbers what it finds."""
 
         def search_library(query: str) -> list[Evidence]:
@@ -380,12 +383,21 @@ class EvidenceService:
                     )
                 return found
 
+        def find_key_results(query: str) -> list[KeyResultMatch]:
+            assert base_id is not None
+            with self.sessions() as session:
+                return key_results.retrieve(
+                    session, base_id, scope.source_ids, query,
+                    block_ids=scope.block_scope, embedder=self.index.embedder,
+                )
+
         return Tool(
             "search_library",
             f"the user's library ({about}), {len(scope.source_ids)} sources",
             search_library,
             "your library",
             grade=True,
+            key_results=find_key_results if base_id is not None else None,
         )
 
     def _output_search_tool(

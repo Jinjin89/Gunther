@@ -673,8 +673,7 @@ def test_an_empty_library_is_not_built_from(tmp_path: Path) -> None:
             "error",
             {
                 "status": 400,
-                "detail": "There is nothing to build from yet. Add sources, or save an answer "
-                "as knowledge.",
+                "detail": "There is nothing to build from yet. Add sources.",
             },
         )
     ]

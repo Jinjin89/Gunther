@@ -263,8 +263,11 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
         printed = S.pool_print(pool.items)
         resumed = resume or {}
         eye = vision_model(self.gateway, model, effort) if spec.kind == "slides" else None
+        note_inputs = asdict(notes)
+        if not notes.key_results:
+            note_inputs.pop("key_results")  # preserve checkpoints made before key results
         material_key = digest([
-            printed, scope, asdict(notes), model.ref, effort, web, spec.kind,
+            printed, scope, note_inputs, model.ref, effort, web, spec.kind,
             [eye[0].ref, eye[1]] if eye else None,
         ])
         request_key = digest([

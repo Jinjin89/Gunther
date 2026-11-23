@@ -11,7 +11,7 @@ from datetime import timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from gunther import artifact_agent, usage
+from gunther import artifact_agent, key_results, usage
 from gunther import artifact_workspace as workspaces
 from gunther.answer_runs import Stopped
 from gunther.artifact_read import artifact_detail, latest_check_records, live_artifact_message
@@ -25,7 +25,7 @@ from gunther.artifact_versions import (
     output_version,
 )
 from gunther.database import session_scope
-from gunther.evidence import Evidence
+from gunther.evidence import Evidence, key_result_lines
 from gunther.llm import ModelError, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.models import ArtifactConversation, ArtifactMessage, utc_now
@@ -272,6 +272,7 @@ class ArtifactTurns:
         with self.sessions() as session:
             library = output_library(session, workspace_id, base_id)
             library_title = library.title
+            library_question = library.question
             row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
             workspace, brief = self._visible_workspace(session, row)
             began = (
@@ -282,6 +283,13 @@ class ArtifactTurns:
             saved: dict[str, str] = {}
             heads: dict[str, str] = {}
             target = payload.target_lineage_id
+            if payload.rebuild is not None:
+                parent = output_version(
+                    session, workspace_id, base_id, payload.rebuild.artifact_id, latest=True,
+                )
+                if target is not None and target != parent.lineage_id:
+                    raise LookupError("This artifact was not found in the targeted output.")
+                target, expected_parent = parent.lineage_id, parent.id
             target_scope = None
             reuse_plan = False
             works: dict[str, workspaces.Work | None] = {
@@ -362,18 +370,40 @@ class ArtifactTurns:
                     item, material.source_revisions, pinned_keys, web=web is not None,
                 )
 
-            def studio_reading(made: Pool) -> Notes:
+            def studio_reading(made: Pool, query: str = "") -> Notes:
                 with self.sessions() as session:
-                    reading_gaps = self._studio_reading(
-                        session, material.source_revisions, made, pinned=material.seeds
+                    matches = key_results.retrieve(
+                        session, base_id, material.source_revisions.keys(), query,
+                        embedder=self.index.embedder,
                     )
-                return replace(material.notes, extraction_gaps=tuple(reading_gaps))
+                    pinned = {item.key: item for item in material.seeds}
+                    remaining = max(0, limits.seed - len(pinned))
+                    for match in matches:
+                        for group in match.groups:
+                            fresh = {item.key: item for item in group if item.key not in pinned}
+                            if len(fresh) > remaining:
+                                continue
+                            for item in group:
+                                made.adopt(item)
+                            pinned.update(fresh)
+                            # Later steps of this turn read and cite these pinned readings too.
+                            pinned_keys.update(fresh)
+                            remaining -= len(fresh)
+                    reading_gaps = self._studio_reading(
+                        session, material.source_revisions, made, pinned=list(pinned.values()),
+                    )
+                return replace(
+                    material.notes, extraction_gaps=tuple(reading_gaps),
+                    key_results=key_result_lines(matches, made.items),
+                )
 
             def studio(
                 spec: Spec, made: Pool, use: str | None, resume=None, checkpoint=None,
                 *, purpose=None, fixed_outline=None,
             ) -> BuiltOutput:
-                scoped_notes = studio_reading(made)
+                scoped_notes = studio_reading(
+                    made, spec.brief or spec.title or library_question or library_title,
+                )
                 agents = StudioAgents(
                     gateway,
                     limits,
@@ -457,14 +487,8 @@ class ArtifactTurns:
                     result = agent.run()
                 else:
                     action = payload.rebuild
-                    with self.sessions() as session:
-                        parent = output_version(
-                            session, workspace_id, base_id, action.artifact_id, latest=True,
-                        )
-                        owner = json.loads(parent.provenance_json).get("conversation_id")
-                        lineage = parent.lineage_id
-                    work = next((w for w in workspace.works if w.key == lineage), None)
-                    if work is None or (owner and owner != conversation_id):
+                    work = next((w for w in workspace.works if w.key == target), None)
+                    if work is None:
                         raise LookupError("This artifact was not found in this conversation.")
                     result = agent.rebuild(
                         work, [Planned(i.heading, i.goal, id=i.id) for i in action.outline],

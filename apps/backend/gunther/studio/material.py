@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from gunther.evidence import Evidence
+from gunther.evidence import Evidence, key_result_block
 from gunther.llm import ModelError
 from gunther.outputs import Events, Notes, Pool, figure_lines
 from gunther.skill_checks import figures_of
@@ -151,7 +151,7 @@ class StudioMaterial:
 
     @staticmethod
     def _notes_text(notes: Notes) -> str:
-        lines = []
+        lines = key_result_block(notes.key_results)
         if notes.knowledge:
             lines.append("The person's saved notes (context, never cited):")
             lines += [f"- {title}: {text[:600]}" for title, text in notes.knowledge]

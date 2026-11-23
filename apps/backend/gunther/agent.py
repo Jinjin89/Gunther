@@ -61,11 +61,14 @@ from gunther.evidence import (
     EVIDENCE_CHARS,
     Events,
     Evidence,
+    KeyResultMatch,
     ReadResult,
     Step,
     Tool,
     Toolbox,
     ToolFailure,
+    key_result_block,
+    key_result_lines,
 )
 from gunther.llm import Completion, ModelError, ModelGateway, ModelInfo, Turn
 from gunther.model_profiles import Effort
@@ -317,6 +320,7 @@ def _write_prompt(
     rework: bool = False,
     brief: str = "",
     research: Notes | None = None,
+    orientation: Sequence[str] = (),
 ) -> str:
     lines = [*_brief_lines(brief), f"Latest message:\n{question}", ""]
     if rework:
@@ -330,6 +334,8 @@ def _write_prompt(
             outcome = f"failed: {step.error}" if step.error else f"{step.found} results"
             lines.append(f"- {step.label}: {outcome}")
     lines += [f"Note: {note}" for note in toolbox.notes]
+    if orientation:
+        lines += ["", *key_result_block(orientation)]
     lines.append("")
     if pool:
         lines.append("The pool:")
@@ -486,6 +492,7 @@ class AskAgent(ClaimChecks, AskResearch):
         done: list[str] = []
         notes: list[str] = []
         seen: set[tuple[str, str]] = set()
+        matches: dict[str, KeyResultMatch] = {}
         added = 0
         researching = stopped = False
 
@@ -526,12 +533,21 @@ class AskAgent(ClaimChecks, AskResearch):
             emit({"type": "step", "state": "running", "tool": tool.name, "label": label})
             try:
                 found = tool.run(query)
+                checked = tool.key_results(query) if tool.key_results else []
             except ToolFailure as error:
                 trace.note("search", label, tool=tool.name, query=query, error=str(error))
                 steps.append(Step(tool.name, label, query, 0, str(error)))
                 emit({"type": "step", "state": "done", **steps[-1].out()})
                 done.append(f"- {tool.name}({query!r}) failed: {error}")
                 return True
+            if checked:
+                passages = {item.key: item for item in found}
+                for match in checked:
+                    matches[match.id] = match
+                    for group in match.groups:
+                        for item in group:
+                            passages.setdefault(item.key, item)
+                found = list(passages.values())
             trace.note("search", label, tool=tool.name, query=query, results=_traced(found))
             results.append((tool, query, found))
             return True
@@ -794,7 +810,8 @@ class AskAgent(ClaimChecks, AskResearch):
         if accounting:
             accounting.phase = "finalize"
         written = _write_prompt(
-            question, toolbox, held, steps, rework, brief, work if researching else None
+            question, toolbox, held, steps, rework, brief, work if researching else None,
+            orientation=key_result_lines(matches.values(), held),
         )
         turns = [*recent, Turn("user", written)]
         try:
