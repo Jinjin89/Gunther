@@ -7,39 +7,26 @@ import type {
   ConversationContext,
   KnowledgeSession,
   KnowledgeSessionSummary,
-  KnowledgeTopic,
-  KnowledgeUnit,
   SessionMessage,
-  SourceSummary,
 } from "@gunther/contracts";
 import {
   Archive,
   ArrowRight,
   ArrowUp,
-  BookOpen,
   Check,
   ChevronDown,
   ChevronRight,
   CircleAlert,
   Copy,
   Download,
-  FileSearch,
   FileText,
-  Filter,
   FolderOpen,
   GitBranch,
   Globe2,
-  Info,
   Library,
   MessageSquareText,
   MoreHorizontal,
-  PanelLeftClose,
-  PanelLeftOpen,
-  PanelRightClose,
-  PanelRightOpen,
   Pin,
-  Plus,
-  Quote,
   Search,
   ShieldCheck,
   Sparkles,
@@ -54,10 +41,9 @@ import { SkillChip, useAskSkills, useSkillMenu, type SkillBudget } from "../comp
 import { withoutTrigger } from "../components/search/TriggerMenu";
 import { InterruptedNote, isInterrupted } from "./interrupted";
 import { DictationStatus, MicGlyph } from "../components/Dictation";
-import { useDragWidth } from "../hooks/useDragWidth";
 import { useDictatedField } from "../services/useDictatedField";
 import { withShortcut } from "../shortcuts/shortcuts";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import type { KnowledgeBase } from "../atlas";
 import { ServiceUnavailableError, knowledgeApi } from "../api";
 import { AnswerTrace } from "../developer/AnswerTrace";
@@ -70,21 +56,22 @@ import { useAnswerRun } from "./useAnswerRun";
 import { useSavedAnswers } from "./savedAnswers";
 import { ModelPicker } from "../models/ModelPicker";
 import { BrandMark } from "../design/BrandMark";
-import { LibraryGlyph } from "../design/LibraryGlyph";
+import { createPortal } from "react-dom";
 import { EvidencePanel } from "../components/evidence/EvidencePanel";
 import "../session.css";
 
 interface SessionWorkspaceProps {
   base: KnowledgeBase;
-  onAdd: () => void;
+  sourceIds?: string[];
+  sourceScopeEmpty?: boolean;
+  visible?: boolean;
+  onFocusSources?: () => void;
   onNotify: (message: string) => void;
   /** Open a source on its own page. */
   onOpenSource?: (sourceId: string) => void;
   /** Open Outputs with a conversation chosen as material (from a research answer). */
   onMakeReport?: (sessionId: string) => void;
 }
-
-type InspectorTab = "context" | "sources" | "trace";
 
 function relativeTime(value: string) {
   const elapsed = Date.now() - new Date(value).getTime();
@@ -206,22 +193,13 @@ function SessionsSidebar({
   );
 }
 
-function WelcomePanel({ base, onPrompt }: { base: KnowledgeBase; onPrompt: (value: string) => void }) {
-  const prompts = [
-    { icon: FileSearch, label: "Synthesize", value: `What are the strongest claims in ${base.title}, and what evidence supports them?` },
-    { icon: GitBranch, label: "Find tensions", value: "Where do the current sources disagree or leave important gaps?" },
-    { icon: ShieldCheck, label: "Audit", value: "Which conclusions are provisional, and what should I verify next?" },
-  ];
-  return (
-    <div className="chat-welcome">
-      <div className="welcome-glyph"><LibraryGlyph base={base} size="lg" /></div>
-      <span className="welcome-eyebrow"><Sparkles size={12} />New grounded session</span>
-      <h1>Ask the knowledge,<br />not just the model.</h1>
-      <p>{base.question}</p>
-      <div className="welcome-prompts">{prompts.map(({ icon: Icon, label, value }) => <button key={label} onClick={() => onPrompt(value)}><Icon size={15} /><span><strong>{label}</strong><small>{value}</small></span><ArrowUp size={13} /></button>)}</div>
-      <div className="grounding-promise"><ShieldCheck size={13} /><span>Answers stay inside the chosen source scope. Missing evidence remains visible.</span></div>
-    </div>
-  );
+function WelcomePanel({ base, sourceCount }: { base: KnowledgeBase; sourceCount: number }) {
+  return <div className="chat-welcome">
+    <h1>{base.title}</h1>
+    <p>{base.question}</p>
+    {base.description && <p>{base.description}</p>}
+    <small>{sourceCount.toLocaleString()} {sourceCount === 1 ? "source" : "sources"}</small>
+  </div>;
 }
 
 /** Which model wrote an answer, at what effort, and anything it has to admit. */
@@ -239,10 +217,15 @@ function AnswerModel({ context }: { context: ConversationContext }) {
   </span>;
 }
 
-export function ConversationMessage({ message, retryDisabled, onRetry, onEdit, onCite, selected, saveAvailable = true, promoting, promoted, branching, onSelect, onCopy, onPromote, onRemove, onBranch, onMakeReport }: { message: SessionMessage; retryDisabled: boolean; onRetry: () => void; onEdit: () => void; onCite: (citation: ConversationCitation, index: number) => void; selected: boolean; saveAvailable?: boolean; promoting: boolean; promoted: boolean; branching: boolean; onSelect: () => void; onCopy: () => void; onPromote: () => void; onRemove: () => void; onBranch: () => void; /** Open Outputs with this conversation chosen as material; offered under a research answer. */ onMakeReport?: (() => void) | undefined }) {
+export function ConversationMessage({ message, retryDisabled, onRetry, onEdit, onCite, selected, saveAvailable = true, promoting, promoted, branching, onSelect, onCopy, onPromote, onRemove, onBranch, onMakeReport, onTrace }: { message: SessionMessage; retryDisabled: boolean; onRetry: () => void; onEdit: () => void; onCite: (citation: ConversationCitation, index: number) => void; selected: boolean; saveAvailable?: boolean; promoting: boolean; promoted: boolean; branching: boolean; onSelect: () => void; onCopy: () => void; onPromote: () => void; onRemove: () => void; onBranch: () => void; /** Open Outputs with this conversation chosen as material; offered under a research answer. */ onMakeReport?: (() => void) | undefined; onTrace?: (() => void) | undefined }) {
   const isAssistant = message.role === "assistant";
   // Small talk and follow-ups on the conversation itself need no sources.
   const conversational = noSourcesNeeded(message.context);
+  const sources = new Map<string, number>();
+  message.citations.forEach((citation, index) => {
+    const key = citation.sourceId || citation.url || citation.id;
+    if (!sources.has(key)) sources.set(key, index);
+  });
   return (
     <article className={`conversation-message role-${message.role} ${selected ? "is-selected" : ""} ${isInterrupted(message) ? "is-interrupted" : ""}`} onClick={isAssistant ? onSelect : undefined}>
       <div className="message-author">{isAssistant ? <span className="assistant-mark"><BrandMark size={14} /></span> : <span className="user-mark"><UserRound size={13} /></span>}<span>{isAssistant ? "Gunther" : "You"}</span><time>{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(message.createdAt))}</time></div>
@@ -253,7 +236,15 @@ export function ConversationMessage({ message, retryDisabled, onRetry, onEdit, o
       {isAssistant && message.context.modelError && <p className="message-model-error" role="note"><CircleAlert size={13} /><span>{message.context.modelError}{message.citations.length > 0 && " The quotes stand in for its answer."}</span></p>}
       {isAssistant && message.context.reasoning && <details className="message-thinking" onClick={(event) => event.stopPropagation()}><summary><ChevronRight size={12} />Thinking</summary><pre>{message.context.reasoning}</pre></details>}
       {isAssistant && <footer className="message-footer">
-        <div className="message-actions">{message.citations.length > 0 ? <button className="citation-count" onClick={(event) => { event.stopPropagation(); onSelect(); }}><Quote size={12} />{message.citations.length} {message.citations.length === 1 ? "source" : "sources"}</button> : conversational ? null : <span className="no-citation-state"><CircleAlert size={12} />Not from your sources</span>}<button className="copy-answer" onClick={(event) => { event.stopPropagation(); onCopy(); }}><Copy size={12} />Copy</button><SpeakerButton message={message} /><button className="branch-answer" disabled={branching} onClick={(event) => { event.stopPropagation(); onBranch(); }}><GitBranch size={12} />{branching ? "Branching…" : "Branch"}</button>{onMakeReport && message.context.research && message.context.research.state !== "asking" && message.content && <button className="make-report" onClick={(event) => { event.stopPropagation(); onMakeReport(); }}><FileText size={12} />Make a report from this</button>}{saveAvailable && !(conversational && message.citations.length === 0) && <><button className={`promote-answer ${promoted ? "is-promoted" : ""}`} disabled={promoting || promoted || message.citations.length === 0} title={message.citations.length === 0 ? "Add or retrieve supporting evidence before saving this answer as knowledge." : undefined} onClick={(event) => { event.stopPropagation(); onPromote(); }}><Sparkles size={12} />{promoting && !promoted ? "Saving…" : promoted ? "Saved as knowledge" : message.citations.length === 0 ? "Needs evidence" : "Save as knowledge"}</button>{promoted && <button className="remove-answer" disabled={promoting} title="Take this answer out of your knowledge." onClick={(event) => { event.stopPropagation(); onRemove(); }}>{promoting ? "Removing…" : "Remove"}</button>}</>}</div>
+        <div className="message-actions">{sources.size > 0 ? <details className="message-sources" onClick={(event) => event.stopPropagation()}>
+          <summary>{sources.size} {sources.size === 1 ? "source" : "sources"}</summary>
+          <ul>{[...sources.values()].map((index) => {
+            const citation = message.citations[index]!;
+            return <li key={citation.id}><button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" data-opens-evidence onClick={() => { onSelect(); onCite(citation, index); }}>{citation.sourceTitle}</button></li>;
+          })}</ul>
+        </details> : conversational ? null : <span className="no-citation-state"><CircleAlert size={12} />Not from your sources</span>}
+        {onTrace && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={(event) => { event.stopPropagation(); onTrace(); }}>Trace</button>}
+        <button className="copy-answer" onClick={(event) => { event.stopPropagation(); onCopy(); }}><Copy size={12} />Copy</button><SpeakerButton message={message} /><button className="branch-answer" disabled={branching} onClick={(event) => { event.stopPropagation(); onBranch(); }}><GitBranch size={12} />{branching ? "Branching…" : "Branch"}</button>{onMakeReport && message.context.research && message.context.research.state !== "asking" && message.content && <button className="make-report" onClick={(event) => { event.stopPropagation(); onMakeReport(); }}><FileText size={12} />Make a report from this</button>}{saveAvailable && !(conversational && message.citations.length === 0) && <><button className={`promote-answer ${promoted ? "is-promoted" : ""}`} disabled={promoting || promoted || message.citations.length === 0} title={message.citations.length === 0 ? "Add or retrieve supporting evidence before saving this answer as knowledge." : undefined} onClick={(event) => { event.stopPropagation(); onPromote(); }}><Sparkles size={12} />{promoting && !promoted ? "Saving…" : promoted ? "Saved as knowledge" : message.citations.length === 0 ? "Needs evidence" : "Save as knowledge"}</button>{promoted && <button className="remove-answer" disabled={promoting} title="Take this answer out of your knowledge." onClick={(event) => { event.stopPropagation(); onRemove(); }}>{promoting ? "Removing…" : "Remove"}</button>}</>}</div>
         <AnswerModel context={message.context} />
       </footer>}
     </article>
@@ -266,7 +257,7 @@ export function Composer({
   value,
   sending,
   sourceCount,
-  chapterTitle,
+  sourceScopeEmpty = false,
   onChange,
   onSend,
   onStop,
@@ -296,17 +287,17 @@ export function Composer({
   value: string;
   sending: boolean;
   sourceCount: number;
-  chapterTitle: string | undefined;
+  sourceScopeEmpty?: boolean;
   onChange: (value: string) => void;
   onSend: () => void;
   onStop: () => void;
-  onSources: () => void;
+  onSources?: (() => void) | undefined;
   readOnly: boolean;
   ready: boolean;
   allowDraft?: boolean;
   offline?: boolean;
 }) {
-  const canSend = ready && !readOnly;
+  const canSend = ready && !readOnly && !sourceScopeEmpty;
   const composerDisabled = (!ready && !allowDraft && !offline) || readOnly;
   const dictation = useDictatedField(value, onChange, { enabled: canSend });
   const field = useRef<HTMLTextAreaElement>(null);
@@ -348,7 +339,9 @@ export function Composer({
         {skill && <div className="composer-skill"><SkillChip command={skill} {...(budget ? { budget } : {})} {...(onBudgetChange ? { onBudgetChange } : {})} onRemove={() => { onSkillChange?.(null); field.current?.focus(); }} /></div>}
         <textarea ref={field} value={value} rows={1} disabled={composerDisabled} onChange={(event) => { onChange(event.target.value); setCaret(event.target.selectionStart ?? event.target.value.length); }} onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? 0)} onKeyDown={onKeyDown} onBlur={slash.dismiss} aria-autocomplete="list" aria-controls={slash.open ? slash.listId : undefined} aria-activedescendant={slash.activeId} placeholder={readOnly ? "Restore this session to continue the conversation." : (offline || (allowDraft && !ready)) ? "Draft a question…" : !ready ? "Opening a durable session…" : "Ask, compare, challenge, or trace a claim…"} aria-label="Message Gunther" onFocus={() => { dictation.claim(); slash.reset(); }} />
         <div className="composer-toolbar">
-          <div className="composer-options"><button className="scope-chip" onClick={onSources}><FolderOpen size={13} /><span>{sourceCount ? `${sourceCount} selected` : "All sources"}</span><ChevronDown size={11} /></button>{chapterTitle && <span className="chapter-chip" title={chapterTitle}><BookOpen size={12} /><span>{chapterTitle}</span></span>}{picker}{web && <button type="button" className={`web-toggle ${web.enabled ? "is-on" : ""}`} disabled={!web.available} aria-pressed={web.enabled} onClick={() => web.onChange(!web.enabled)} title={web.available ? (web.enabled ? "Ask may search the web. Click to keep it to your library." : "Ask is limited to your library. Click to let it search the web.") : "Web search is not set up. Add a Tavily key in Settings."}><Globe2 size={13} /><span>Web</span></button>}</div>
+          <div className="composer-options">{onSources && <button className="scope-chip" onClick={onSources} aria-describedby={sourceScopeEmpty ? "empty-source-scope" : undefined}>
+            <FolderOpen size={13} /><span>{sourceScopeEmpty || sourceCount ? `${sourceCount} selected` : "All sources"}</span>
+          </button>}{picker}{web && <button type="button" className={`web-toggle ${web.enabled ? "is-on" : ""}`} disabled={!web.available} aria-pressed={web.enabled} onClick={() => web.onChange(!web.enabled)} title={web.available ? (web.enabled ? "Ask may search the web. Click to keep it to your library." : "Ask is limited to your library. Click to let it search the web.") : "Web search is not set up. Add a Tavily key in Settings."}><Globe2 size={13} /><span>Web</span></button>}</div>
           <div className="composer-actions"><button type="button" className={`mic-button ${dictation.dictating ? "is-on" : ""} is-${dictation.state}`} disabled={!canSend || sending} onClick={dictation.toggle} aria-pressed={dictation.listening} aria-label={dictation.listening ? "Stop voice input" : "Voice input"} title={dictation.error ?? withShortcut(dictation.listening ? "Stop voice input" : "Speak instead of typing", "dictate")}><MicGlyph state={dictation.state} /></button><button className={`send-button ${sending ? "is-stop" : ""} ${sending && stopLabel !== "Stop" ? "has-label" : ""}`} disabled={!sending && (!canSend || !value.trim() || dictation.dictating)} onClick={sending ? onStop : submit} aria-label={sending ? (stopLabel === "Stop" ? "Stop waiting for response" : stopLabel) : "Send message"}>{sending ? <><Square size={12} fill="currentColor" />{stopLabel !== "Stop" && <span>{stopLabel}</span>}</> : <ArrowUp size={16} />}</button></div>
         </div>
         {slash.menu}
@@ -358,176 +351,21 @@ export function Composer({
   );
 }
 
-function CitationCard({ citation, index, onOpen }: { citation: ConversationCitation; index: number; onOpen: () => void }) {
-  const web = citation.kind === "web";
-  return (
-    <button className={`citation-card ${web ? "is-web" : ""}`} onClick={onOpen} aria-label={`Show evidence: ${citation.sourceTitle}`}>
-      <header><span>{String(index + 1).padStart(2, "0")}</span><small>{web ? "web" : citation.status}</small><strong>{web ? citation.locator : citation.assertionId ? `${Math.round(citation.confidence * 100)}%` : "Source"}</strong></header>
-      <h3>{citation.sourceTitle}</h3>
-      <blockquote>“{citation.quote}”</blockquote>
-      {web
-        ? <footer><span><Globe2 size={11} />Outside your library</span><span className="citation-status"><i />Show passage</span></footer>
-        : <footer><span><FileText size={11} />{citation.locator}</span><span className={`citation-status is-${citation.status}`}><i />{citation.status === "verified" ? "Trusted" : "Review"}</span></footer>}
-    </button>
-  );
-}
-
-const INSPECTOR_MIN = 280;
-const INSPECTOR_DEFAULT = 326;
-const CHAT_MIN = 440;
-/**
- * The right panel may grow until the conversation (at least CHAT_MIN) and the history list, when it
- * is docked, would be squeezed: measured on the workspace itself, not the window, which also holds
- * the app's own sidebar.
- */
-const inspectorMax = () => {
-  const workspace = document.querySelector<HTMLElement>(".session-workspace");
-  const list = document.querySelector<HTMLElement>(".session-workspace > .sessions-sidebar");
-  const room = (workspace?.clientWidth ?? window.innerWidth) - (list?.offsetWidth ?? 0) - CHAT_MIN;
-  return Math.min(960, Math.max(INSPECTOR_MIN, room));
-};
-
-/** The sources a conversation has cited so far, each once (by the id it keeps in the conversation, not the number an answer shows). */
-export function conversationSources(session: KnowledgeSession | null): ConversationCitation[] {
-  const held = new Map<number, ConversationCitation>();
-  for (const message of session?.messages ?? []) {
-    for (const citation of message.citations) {
-      if (citation.ref != null && !held.has(citation.ref)) held.set(citation.ref, citation);
-    }
-  }
-  return [...held.values()].sort((a, b) => (a.ref ?? 0) - (b.ref ?? 0));
-}
-
-function ContextInspector({
-  resize,
-  base,
-  sources,
-  session,
-  knowledgeUnits,
-  selectedMessage,
-  tab,
-  sourceQuery,
-  collapsed,
-  onTab,
-  onSourceQuery,
-  onToggleSource,
-  onUseAll,
-  onAdd,
-  onOpenSource,
-  onOpenUnit,
-  onCollapse,
-  readOnly,
-  traceOn,
-  briefUpdating,
-  onBriefSave,
-  onBriefRetry,
-  onCopy,
-}: {
-  /** The panel's width and the handle on its left edge that drags it. */
-  resize: ReturnType<typeof useDragWidth>;
-  base: KnowledgeBase;
-  sources: SourceSummary[];
-  session: KnowledgeSession | null;
-  knowledgeUnits: KnowledgeUnit[];
-  selectedMessage: SessionMessage | null;
-  tab: InspectorTab;
-  sourceQuery: string;
-  collapsed: boolean;
-  onTab: (tab: InspectorTab) => void;
-  onSourceQuery: (value: string) => void;
-  onToggleSource: (id: string) => void;
-  onUseAll: () => void;
-  onAdd: () => void;
-  onOpenSource: (id: string, citation?: ConversationCitation) => void;
-  onOpenUnit: (unit: KnowledgeUnit) => void;
-  onCollapse: () => void;
-  readOnly: boolean;
-  /** Settings → Developer keeps how answers are made: a Trace tab shows it. */
-  traceOn: boolean;
-  /** The conversation's brief is being brought up to date. */
-  briefUpdating: boolean;
-  onBriefSave: (brief: ConversationBriefInput) => void;
-  onBriefRetry: () => void;
-  onCopy: (label: string, value: string) => void;
-}) {
-  if (collapsed) return <button className="inspector-reopen" onClick={onCollapse} aria-label="Open context panel"><PanelRightOpen size={16} /></button>;
-  const selectedIds = session?.selectedSourceIds ?? [];
-  const pooledSources = conversationSources(session);
-  const filteredSources = sources.filter((source) => `${source.title} ${source.kind}`.toLowerCase().includes(sourceQuery.toLowerCase()));
-  const context = selectedMessage?.context;
-  return (
-    <aside className="context-inspector" aria-label="Session evidence and sources">
-      <div className="gx-panel-resize" role="separator" aria-orientation="vertical" aria-label="Resize panel" aria-valuenow={resize.width} aria-valuemin={INSPECTOR_MIN} aria-valuemax={inspectorMax()} tabIndex={0} title="Drag to resize · double-click to reset" {...resize.handle} />
-      <header className="inspector-heading"><span><small>Session intelligence</small><strong>{tab === "context" ? "Evidence context" : tab === "trace" ? "How it was made" : "Source scope"}</strong></span><button onClick={onCollapse} aria-label="Close context panel"><PanelRightClose size={15} /></button></header>
-      <nav className="inspector-tabs"><button className={tab === "context" ? "is-active" : ""} onClick={() => onTab("context")}>Context</button><button className={tab === "sources" ? "is-active" : ""} onClick={() => onTab("sources")}>Sources <span>{selectedIds.length || sources.length}</span></button>{traceOn && selectedMessage && session && <button className={tab === "trace" ? "is-active" : ""} onClick={() => onTab("trace")}>Trace</button>}</nav>
-      {tab === "trace" && selectedMessage && session ? <div className="inspector-scroll">
-        <AnswerTrace sessionId={session.id} messageId={selectedMessage.id} onCopy={onCopy} />
-      </div> : tab === "context" || tab === "trace" ? <div className="inspector-scroll">
-        {session && <BriefPanel brief={session.brief} updating={briefUpdating} readOnly={readOnly} hasMessages={session.messages.length > 0} citations={selectedMessage?.citations ?? []} onSave={onBriefSave} onRetry={onBriefRetry} onOpenCitation={(citation) => onOpenSource(citation.sourceId, citation)} />}
-        {selectedMessage && context ? <>
-          <section className="answer-scope"><span className="section-label">Answer scope</span><div className="scope-metrics"><span><strong>{context.assertionsConsidered}</strong><small>claims scanned</small></span><span><strong>{context.sourcesConsidered}</strong><small>sources searched</small></span><span><strong>{context.verifiedAssertions}</strong><small>trusted scanned</small></span></div><p><Info size={12} />This is the retrieval snapshot for the selected answer—not the current library state.</p></section>
-          <section className="citation-section"><header><span className="section-label">Sources cited</span><small>{selectedMessage.citations.length} {selectedMessage.citations.length === 1 ? "source" : "sources"}</small></header>{selectedMessage.citations.length ? selectedMessage.citations.map((citation, index) => <CitationCard key={citation.id} citation={citation} index={index} onOpen={() => onOpenSource(citation.sourceId, citation)} />) : <div className="empty-citations"><CircleAlert size={20} /><strong>{noSourcesNeeded(context) ? "No sources needed" : "Nothing cited"}</strong><span>{noSourcesNeeded(context) ? "This reply came from the conversation itself." : "Nothing in the searches supported a citation, so this answer is not grounded."}</span></div>}</section>
-          {pooledSources.length > selectedMessage.citations.length && <section className="conversation-sources"><header><span className="section-label">All sources in this conversation</span><small>{pooledSources.length}</small></header><ol>{pooledSources.map((citation) => <li key={citation.id} className={selectedMessage.citations.some((item) => item.ref === citation.ref) ? "is-cited" : ""}><i aria-hidden>•</i><button type="button" onClick={() => onOpenSource(citation.sourceId, citation)} title={citation.quote}>{citation.kind === "web" && <Globe2 size={11} />}<span>{citation.sourceTitle}</span></button></li>)}</ol></section>}
-        </> : <>
-          <section className="context-overview"><div className="context-glyph"><LibraryGlyph base={base} size="lg" /></div><span className="section-label">Current library</span><h2>{base.title}</h2><p>{base.description}</p></section>
-          {knowledgeUnits.length > 0 && <section className="accepted-units"><header><span className="section-label">Knowledge units</span><small>{knowledgeUnits.length} {knowledgeUnits.length === 1 ? "unit" : "units"}</small></header>{knowledgeUnits.slice(0, 3).map((unit) => <button className="unit-origin" key={unit.id} onClick={() => onOpenUnit(unit)} aria-label={`Open source session for ${unit.title}`}><span><ShieldCheck size={12} /><strong>{unit.title}</strong><small>{unit.evidenceCount} {unit.evidenceCount === 1 ? "citation" : "citations"} · {unit.revisionCount} {unit.revisionCount === 1 ? "revision" : "revisions"} · {unit.status}</small></span><p>{unit.content.replace(/\*\*/g, "").replace(/\s+/g, " ")}</p><ArrowRight size={11} /></button>)}</section>}
-          <div className="inspector-tip"><Sparkles size={14} /><span><strong>Inspect any answer</strong><small>Select a response to see exactly what Gunther searched and cited.</small></span></div>
-        </>}
-      </div> : <div className="inspector-scroll source-scope-panel">
-        <div className="scope-policy"><ShieldCheck size={15} /><span><strong>Retrieval boundary</strong><small>Choose all sources for discovery, or isolate a smaller evidence set for careful comparison.</small></span></div>
-        <button className={`all-sources-option ${selectedIds.length === 0 ? "is-active" : ""}`} disabled={readOnly} onClick={onUseAll}><span><Library size={14} /></span><span><strong>Use all sources</strong><small>{sources.length} in this library</small></span>{selectedIds.length === 0 && <Check size={14} />}</button>
-        <label className="source-filter"><Filter size={12} /><input value={sourceQuery} onChange={(event) => onSourceQuery(event.target.value)} placeholder="Filter sources" aria-label="Filter session sources" /></label>
-        <div className="scope-source-list">{filteredSources.map((source) => {
-          const selected = selectedIds.includes(source.id);
-          return <button key={source.id} className={selected ? "is-selected" : ""} disabled={readOnly} onClick={() => onToggleSource(source.id)}><span className="source-check">{selected && <Check size={11} />}</span><span><small>{source.kind}</small><strong>{source.title}</strong><em>{source.assertionCount} extracted claims · {source.entityCount} connected entities</em></span></button>;
-        })}</div>
-        <button className="add-source-inline" onClick={() => onAdd()}><Plus size={13} />Add a new source</button>
-      </div>}
-    </aside>
-  );
-}
-
-const DOCK_QUERY = "(min-width: 1100px)";
 const readLabels = {
   history: "session history", models: "models", settings: "Ask settings", proposals: "saved answers",
-  units: "knowledge units", sources: "sources", sections: "sections",
+  units: "knowledge units",
 };
 type StartupRead = keyof typeof readLabels;
 const startupReads = Object.keys(readLabels) as StartupRead[];
-// The current session supplies the durable destination and source scope for a send.
+// The current session supplies the durable destination for a send.
 const sendReads = ["history", "models", "settings"] as const;
 
-const HISTORY_CHOICE_KEY = "gunther:ask-history";
-
-function readHistoryChoice(): "open" | "closed" | null {
-  try {
-    const stored = persistentStorage.getItem(HISTORY_CHOICE_KEY);
-    return stored === "open" || stored === "closed" ? stored : null;
-  } catch {
-    return null;
-  }
-}
-
-function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
-  useEffect(() => {
-    const list = window.matchMedia(query);
-    const update = () => setMatches(list.matches);
-    update();
-    list.addEventListener("change", update);
-    return () => list.removeEventListener("change", update);
-  }, [query]);
-  return matches;
-}
-
-export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeReport }: SessionWorkspaceProps) {
+export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = false, visible = true, onFocusSources, onNotify, onOpenSource, onMakeReport }: SessionWorkspaceProps) {
   const [sessions, setSessions] = useState<KnowledgeSessionSummary[]>([]);
   const [archivedSessions, setArchivedSessions] = useState<KnowledgeSessionSummary[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeSession, setActiveSession] = useState<KnowledgeSession | null>(null);
-  const [indexedSources, setIndexedSources] = useState<SourceSummary[]>([]);
-  const [sections, setSections] = useState<KnowledgeTopic[]>([]);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   // The skill chosen with `/`; it applies to the next message only.
@@ -536,7 +374,6 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
   const [budget, setBudget] = useState<SkillBudget>("standard");
   const askSkills = useAskSkills();
   const [sessionQuery, setSessionQuery] = useState("");
-  const [sourceQuery, setSourceQuery] = useState("");
   const [branchingMessageId, setBranchingMessageId] = useState<string | null>(null);
   const [reads, setReads] = useState<Partial<Record<StartupRead, { pending: boolean; error: Error | null }>>>({});
   const inFlightReads = useRef(new Map<StartupRead, { refreshPending: boolean }>());
@@ -547,35 +384,22 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
   const ready = activeSession !== null && activeSession.id === activeId && sendReads.every(readReady);
   const [error, setError] = useState<string | null>(null);
   const { reloadProposals, reloadUnits, ...answers } = useSavedAnswers(base.id, onNotify, setError, { loadOnMount: false });
-  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("context");
   const traces = useTraces();
-  // Open by default so the sources behind an answer are in view; the reader's choice is kept.
-  const [inspectorCollapsed, setInspectorCollapsed] = useState(() => {
-    if (window.innerWidth <= 980) return true;
-    try { return persistentStorage.getItem("gunther:inspector-collapsed") === "1"; } catch { return false; }
-  });
-  useEffect(() => {
-    if (window.innerWidth <= 980) return;
-    try { persistentStorage.setItem("gunther:inspector-collapsed", inspectorCollapsed ? "1" : "0"); } catch { /* the choice just is not remembered */ }
-  }, [inspectorCollapsed]);
+  const [trace, setTrace] = useState<{ sessionId: string; messageId: string } | null>(null);
   const [briefBusy, setBriefBusy] = useState<string | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [sessionOptionsOpen, setSessionOptionsOpen] = useState(false);
   const [mobileSessionsOpen, setMobileSessionsOpen] = useState(false);
-  // The conversation list docks beside the chat when there is room and something to list;
-  // someone's own fold or expand always wins.
-  const roomForHistory = useMediaQuery(DOCK_QUERY);
-  const [historyChoice, setHistoryChoice] = useState<"open" | "closed" | null>(readHistoryChoice);
   const scrollPane = useRef<HTMLDivElement>(null);
   /** Whether the reader is at the bottom; only then does new text pull the view along. */
   const followTail = useRef(true);
+  const scrollOffset = useRef(0);
   const [evidence, setEvidence] = useState<{ citation: ConversationCitation; index?: number } | null>(null);
   // Which model answers next, and how hard it thinks: what this conversation picked,
   // else the model of its last answer, else this device's last choice, else the Ask default.
   const { menu: modelMenu, reload: reloadModelMenu } = useModelMenu({ autoLoad: false });
   const { reload: reloadWebSearch, ...webSearch } = useWebSearch({ autoLoad: false });
-  const inspectorWidth = useDragWidth({ storageKey: "gunther:inspector-width", min: INSPECTOR_MIN, max: inspectorMax, fallback: INSPECTOR_DEFAULT, observe: () => document.querySelector(".session-workspace") });
   const [deviceChoice, setDeviceChoice] = useDeviceChoice();
   const [pickedChoices, setPickedChoices] = useState<Record<string, AskChoice>>({});
   const askChoice = usableChoice(
@@ -604,7 +428,6 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
         ? { ...current, ...turn.session, messages: [...current.messages, turn.userMessage, turn.assistantMessage] }
         : current);
       setSelectedMessageId(turn.assistantMessage.id);
-      setInspectorTab("context");
       void refreshBrief(id);
     },
     onFailure({ question, fresh, readError, stopped, message }) {
@@ -636,7 +459,7 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
     }
   }, [finishRead]);
 
-  // Activity can ask for a conversation while this tab is already open.
+  // Activity can ask for a conversation while the library is already open.
   useEffect(() => {
     const heard = (event: Event) => {
       const detail = (event as CustomEvent<{ libraryId?: string; sessionId?: string }>).detail;
@@ -673,8 +496,6 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
       settings: reloadWebSearch,
       proposals: reloadProposals,
       units: reloadUnits,
-      sources: async () => setIndexedSources(await knowledgeApi.sources(base.id)),
-      sections: async () => setSections(await knowledgeApi.topics(base.id)),
     };
     for (const read of requested.length ? requested : startupReads) {
       if (inFlightReads.current.has(read)) continue;
@@ -707,16 +528,10 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
         else loadWorkspace(read);
       }
     };
-    const loadSources = () => refreshReads("sources");
-    const loadSections = () => refreshReads("sections");
     const loadSettings = () => refreshReads("models", "settings");
-    window.addEventListener("gunther:sources-updated", loadSources);
-    window.addEventListener("gunther:topics-updated", loadSections);
     window.addEventListener(MODELS_CHANGED_EVENT, loadSettings);
     return () => {
       mounted.current = false;
-      window.removeEventListener("gunther:sources-updated", loadSources);
-      window.removeEventListener("gunther:topics-updated", loadSections);
       window.removeEventListener(MODELS_CHANGED_EVENT, loadSettings);
     };
   }, [base.id, loadWorkspace]);
@@ -728,20 +543,12 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
   // while the reader is at the bottom, so reading earlier messages is never yanked away.
   useEffect(() => {
     const pane = scrollPane.current;
-    if (pane && followTail.current) pane.scrollTop = pane.scrollHeight;
-  }, [activeSession?.messages.length, sending, asking, live?.steps.length, live?.text.length]);
-  useEffect(() => { followTail.current = true; }, [activeId]);
+    if (visible && pane && followTail.current) pane.scrollTop = pane.scrollHeight;
+  }, [activeSession?.messages.length, sending, asking, live?.steps.length, live?.text.length, visible]);
   useEffect(() => {
-    let wasNarrow = window.innerWidth <= 980;
-    const onResize = () => {
-      const isNarrow = window.innerWidth <= 980;
-      if (isNarrow && !wasNarrow) setInspectorCollapsed(true);
-      if (!isNarrow) setMobileSessionsOpen(false);
-      wasNarrow = isNarrow;
-    };
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
+    if (visible && scrollPane.current && !followTail.current) scrollPane.current.scrollTop = scrollOffset.current;
+  }, [visible]);
+  useEffect(() => { followTail.current = true; }, [activeId]);
   const createSession = async () => {
     if (!online || loading) return;
     setError(null);
@@ -762,7 +569,7 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
     return () => window.removeEventListener("gunther:new-session", onNewSession);
   });
 
-  const patchSession = async (id: string, patch: Partial<Pick<KnowledgeSessionSummary, "title" | "pinned" | "archived" | "selectedSourceIds" | "focusChapterId">>) => {
+  const patchSession = async (id: string, patch: Partial<Pick<KnowledgeSessionSummary, "title" | "pinned" | "archived">>) => {
     const updated = await knowledgeApi.updateSession(id, patch);
     setSessions((current) => sortSessions(current.map((item) => item.id === id ? updated : item).filter((item) => !item.archived)));
     setActiveSession((current) => current?.id === id ? { ...current, ...updated } : current);
@@ -833,7 +640,7 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
 
   const send = async (again?: string, retry?: AskRetryOptions) => {
     const question = (again ?? draft).trim();
-    if (!question || !ready || !activeSession || activeSession.archived || sending) return;
+    if (!question || !ready || !activeSession || activeSession.archived || sending || sourceScopeEmpty) return;
     const skillUsed = again === undefined ? skill : retry?.skill ?? null;
     const budgeted = skillUsed !== null && (askSkills.find((item) => item.command === skillUsed)?.budgets.length ?? 0) > 1;
     if (again === undefined) { setDraft(""); setSkill(null); setBudget("standard"); }
@@ -841,7 +648,7 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
     const session = activeSession;
     const chosen = askChoice.model && modelMenu?.models.length ? { model: askChoice.model, effort: askChoice.effort } : {};
     const options = retry ?? { style: readAnswerStyle(), ...(webSearch.enabled ? { web: true } : {}), ...(skillUsed ? { skill: skillUsed } : {}), ...(budgeted ? { budget } : {}) };
-    await sendAnswer(session.id, { content: question, selectedSourceIds: session.selectedSourceIds, focusChapterId: session.focusChapterId, ...chosen, ...options });
+    await sendAnswer(session.id, { content: question, ...chosen, ...options, selectedSourceIds: sourceIds, focusChapterId: null });
   };
 
   // Reading aloud goes on while its conversation is open, and stops when another one is.
@@ -867,12 +674,6 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
   // While research is still gathering, Stop writes the answer from what it found; once writing, it stops.
   const researching = sending && (pending?.skill === "research" || Boolean(live?.research));
   const stopLabel = researching && !live?.text ? "Stop and write" : "Stop";
-  const toggleSource = async (id: string) => {
-    if (!activeSession) return;
-    const next = activeSession.selectedSourceIds.includes(id) ? activeSession.selectedSourceIds.filter((item) => item !== id) : [...activeSession.selectedSourceIds, id];
-    try { await patchSession(activeSession.id, { selectedSourceIds: next }); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not update source scope"); }
-  };
-
   const branchFromMessage = async (message: SessionMessage) => {
     if (!activeSession || !online) {
       onNotify("Reconnect the knowledge service to create a durable branch.");
@@ -904,51 +705,24 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
     }
   };
 
-  const openSourceDetail = async (sourceId: string, citation?: ConversationCitation) => {
-    if (citation) {
-      const index = selectedMessage?.citations.findIndex((item) => item.id === citation.id) ?? -1;
-      setEvidence(index >= 0 ? { citation, index } : { citation });
-      return;
-    }
-    try {
-      const source = await knowledgeApi.source(sourceId);
-      setEvidence({ citation: { id: `open-${sourceId}`, kind: "library", sourceId, sourceTitle: source.title, assertionId: null, quote: "", locator: "Source", status: "verified", confidence: 1 } });
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not open the source");
-    }
-  };
-
-  const openKnowledgeUnitOrigin = async (unit: KnowledgeUnit) => {
-    await loadSession(unit.sourceSessionId);
-    setSelectedMessageId(unit.sourceMessageId);
-    setInspectorTab("context");
-    setInspectorCollapsed(false);
-    onNotify("Opened the session and evidence snapshot that created this Knowledge Unit.");
-  };
-
   useEffect(() => {
-    const sourceKey = `gunther:open-source:${base.id}`;
-    const sourceId = persistentStorage.getItem(sourceKey);
-    if (!sourceId) return;
-    persistentStorage.removeItem(sourceKey);
-    void openSourceDetail(sourceId);
-  }, [base.id]);
-
-  useEffect(() => {
-    if (!mobileSessionsOpen && !sessionOptionsOpen && !renameOpen) return;
+    if (!trace && !mobileSessionsOpen && !sessionOptionsOpen && !renameOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (mobileSessionsOpen) setMobileSessionsOpen(false);
+      if (trace) setTrace(null);
+      else if (mobileSessionsOpen) setMobileSessionsOpen(false);
       else if (sessionOptionsOpen) setSessionOptionsOpen(false);
       else if (renameOpen) setRenameOpen(false);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [mobileSessionsOpen, renameOpen, sessionOptionsOpen]);
+  }, [trace, mobileSessionsOpen, renameOpen, sessionOptionsOpen]);
 
-  const exportSession = () => {
+  const exportSession = async () => {
     if (!activeSession) return;
-    const chapter = sections.find((item) => item.id === activeSession.focusChapterId);
+    const chapter = activeSession.focusChapterId
+      ? (await knowledgeApi.topics(base.id).catch(() => [])).find((item) => item.id === activeSession.focusChapterId)
+      : undefined;
     const scope = activeSession.selectedSourceIds.length
       ? `${activeSession.selectedSourceIds.length} explicitly selected sources`
       : "All indexed knowledge-base sources";
@@ -972,36 +746,28 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
     onNotify("Session exported with its citation trail.");
   };
 
-  // A list of one conversation is not worth the room; two or more are.
-  const historyDocked = roomForHistory && (historyChoice ? historyChoice === "open" : sessions.length >= 2);
-  const toggleHistory = () => {
-    if (!roomForHistory) {
-      setMobileSessionsOpen(true);
-      return;
-    }
-    const next = historyDocked ? "closed" : "open";
-    setHistoryChoice(next);
-    try {
-      persistentStorage.setItem(HISTORY_CHOICE_KEY, next);
-    } catch {
-      // The choice still holds while this page is open.
-    }
-  };
-
-  const selectedMessage = activeSession?.messages.find((message) => message.id === selectedMessageId && message.role === "assistant") ?? null;
-  const focusedChapter = sections.find((chapter) => chapter.id === activeSession?.focusChapterId);
+  const selectedMessage = activeSession?.messages.find((message) => message.id === selectedMessageId) ?? null;
+  const cite = (citation: ConversationCitation, index?: number) => setEvidence({ citation, ...(index === undefined ? {} : { index }) });
 
   return (
-    <div className={`session-workspace page-enter ${historyDocked ? "history-is-docked" : "history-is-drawer"} ${inspectorCollapsed ? "inspector-is-collapsed" : ""}`} style={{ "--inspector-w": `${inspectorWidth.width}px` } as CSSProperties}>
-      {historyDocked && <SessionsSidebar base={base} online={online} sessions={sessions} archivedSessions={archivedSessions} showArchived={showArchived} activeId={activeId} loading={loading} query={sessionQuery} onQuery={setSessionQuery} onNew={() => void createSession()} onOpen={(id) => void loadSession(id)} onPin={(session) => void patchSession(session.id, { pinned: !session.pinned })} onArchive={(session) => void archiveSession(session)} onToggleArchived={() => void toggleArchived()} onRestore={(session) => void restoreSession(session)} />}
+    <div className="session-workspace">
       <section className="conversation-pane" aria-label="Conversation">
         <header className="conversation-header">
-          <button className="mobile-session-toggle" onClick={toggleHistory} aria-label={historyDocked ? "Hide conversations" : "Show conversations"} aria-pressed={historyDocked} title={historyDocked ? "Hide conversations" : "Show conversations"}>{!roomForHistory ? <MessageSquareText size={15} /> : historyDocked ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}</button>
+          <button className="mobile-session-toggle" onClick={() => setMobileSessionsOpen(true)} aria-label="Show conversations" title="Show conversations"><MessageSquareText size={15} /></button>
           <div className="conversation-title">
             {renameOpen ? <form onSubmit={(event) => { event.preventDefault(); if (activeSession && renameValue.trim()) void patchSession(activeSession.id, { title: renameValue.trim() }).then(() => setRenameOpen(false)); }}><input autoFocus value={renameValue} onChange={(event) => setRenameValue(event.target.value)} aria-label="Session title" /><button type="submit" aria-label="Save session title"><Check size={13} /></button><button type="button" onClick={() => setRenameOpen(false)} aria-label="Cancel renaming"><X size={13} /></button></form> : <button onClick={() => { if (activeSession) { setRenameValue(activeSession.title); setRenameOpen(true); } }} aria-label="Rename session"><strong>{activeSession?.title ?? (loading ? "Opening session…" : "Conversation unavailable")}</strong><SquarePen size={12} /></button>}
             <span><i className={online ? "is-online" : "is-offline"} />{!online ? "Knowledge service unavailable" : activeSession?.archived ? "Archived session · read only" : activeSession ? "Saved to local knowledge service" : ""}{activeSession?.parentSessionId && <><b>·</b><GitBranch size={10} />Branch lineage preserved</>}</span>
           </div>
           <div className="conversation-actions">
+            {activeSession && <details className="ask-brief" onKeyDown={(event) => { if (event.key === "Escape") event.currentTarget.open = false; }}>
+              <summary className="gx-btn gx-btn-quiet gx-btn-sm">Brief</summary>
+              <div className="ask-brief-panel">
+                <BriefPanel brief={activeSession.brief} updating={briefBusy === activeId} readOnly={!online || activeSession.archived}
+                  hasMessages={activeSession.messages.length > 0} citations={selectedMessage?.citations ?? []}
+                  onSave={(brief) => void saveBrief(brief)} onRetry={() => void refreshBrief(activeSession.id)} onOpenCitation={cite} />
+              </div>
+            </details>}
+
             <button title="Session options" aria-label="Session options" aria-expanded={sessionOptionsOpen} aria-haspopup="menu" onClick={() => setSessionOptionsOpen((value) => !value)}><MoreHorizontal size={15} /></button>
             {sessionOptionsOpen && activeSession && <div className="conversation-options-menu" role="menu" onMouseLeave={() => setSessionOptionsOpen(false)}>
               <button role="menuitem" onClick={() => { void patchSession(activeSession.id, { pinned: !activeSession.pinned }); setSessionOptionsOpen(false); }}><Pin size={12} />{activeSession.pinned ? "Unpin session" : "Pin session"}</button>
@@ -1010,7 +776,12 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
             </div>}
           </div>
         </header>
-        <div className="conversation-scroll" ref={scrollPane} onScroll={(event) => { const pane = event.currentTarget; followTail.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 80; }}>
+        <div className="conversation-scroll" ref={scrollPane} onScroll={(event) => {
+          if (!visible) return;
+          const pane = event.currentTarget;
+          scrollOffset.current = pane.scrollTop;
+          followTail.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 80;
+        }}>
           {!online && <div className="conversation-error" role="status"><CircleAlert size={14} /><span>Reconnect to the knowledge service to continue.</span><button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={sendReads.some((read) => reads[read]?.pending)} onClick={() => { setError(null); loadWorkspace(); }}>Reconnect</button></div>}
           {startupReads.map((read) => {
             const status = reads[read];
@@ -1021,15 +792,20 @@ export function SessionWorkspace({ base, onAdd, onNotify, onOpenSource, onMakeRe
             </div>;
           })}
           {error && <div className="conversation-error" role="alert"><CircleAlert size={14} /><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError(null)}><X size={12} /></button></div>}
-          {online && !loading && activeSession?.messages.length === 0 ? <WelcomePanel base={base} onPrompt={setDraft} /> : <h1 className="gx-sr-only">Ask {base.title}</h1>}
-          {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} retryDisabled={!ready || sending || Boolean(activeSession?.archived)} onRetry={() => void send(message.content, message.context.askFailure?.options)} onEdit={() => setDraft(message.content)} onCite={(citation, index) => setEvidence({ citation, index })} selected={selectedMessageId === message.id} saveAvailable={readReady("proposals")} promoting={answers.busyId === message.id} promoted={answers.isSaved(message.id)} branching={branchingMessageId === message.id} onSelect={() => { setSelectedMessageId(message.id); setInspectorTab((current) => current === "trace" ? "trace" : "context"); setInspectorCollapsed(false); }} onCopy={() => void copyMessage(message)} onPromote={() => void answers.save(activeSession, message)} onRemove={() => void answers.remove(message)} onBranch={() => void branchFromMessage(message)} onMakeReport={onMakeReport ? () => onMakeReport(activeSession.id) : undefined} />)}
+          {online && !loading && activeSession?.messages.length === 0 ? <WelcomePanel base={base} sourceCount={base.sourceCount} /> : <h1 className="gx-sr-only">Ask {base.title}</h1>}
+          {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} retryDisabled={!ready || sending || sourceScopeEmpty || Boolean(activeSession?.archived)} onRetry={() => void send(message.content, message.context.askFailure?.options)} onEdit={() => setDraft(message.content)} onCite={(citation, index) => setEvidence({ citation, index })} selected={selectedMessageId === message.id} saveAvailable={readReady("proposals")} promoting={answers.busyId === message.id} promoted={answers.isSaved(message.id)} branching={branchingMessageId === message.id} onSelect={() => setSelectedMessageId(message.id)} onCopy={() => void copyMessage(message)} onPromote={() => void answers.save(activeSession, message)} onRemove={() => void answers.remove(message)} onBranch={() => void branchFromMessage(message)} onMakeReport={onMakeReport ? () => onMakeReport(activeSession.id) : undefined} onTrace={traces.on ? () => setTrace({ sessionId: activeSession.id, messageId: message.id }) : undefined} />)}
           {sending && asking && <article className="conversation-message role-user"><div className="message-author"><span className="user-mark"><UserRound size={13} /></span><span>You</span></div><div className="message-body"><MessageContent content={asking} /></div></article>}
           {sending && (live ? <LiveAnswer state={live} /> : <div className="thinking-row"><span className="assistant-mark"><BrandMark size={14} busy /></span><span><i /><i /><i /></span><small>Working out what to look up…</small></div>)}
         </div>
-        <Composer picker={<ModelPicker menu={modelMenu} choice={askChoice} onChange={chooseModel} disabled={sending || Boolean(activeSession?.archived)} />} web={{ available: webSearch.available, enabled: webSearch.enabled, onChange: webSearch.setEnabled }} value={draft} sending={sending} sourceCount={activeSession?.selectedSourceIds.length ?? 0} chapterTitle={focusedChapter?.title} readOnly={Boolean(activeSession?.archived)} ready={ready} allowDraft={activeSession !== null} offline={!online} skill={skill} onSkillChange={setSkill} budget={budget} onBudgetChange={setBudget} stopLabel={stopLabel} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={() => { setInspectorTab("sources"); setInspectorCollapsed(false); }} />
+        <Composer picker={<ModelPicker menu={modelMenu} choice={askChoice} onChange={chooseModel} disabled={sending || Boolean(activeSession?.archived)} />} web={{ available: webSearch.available, enabled: webSearch.enabled, onChange: webSearch.setEnabled }} value={draft} sending={sending} sourceCount={sourceIds.length} sourceScopeEmpty={sourceScopeEmpty} readOnly={Boolean(activeSession?.archived)} ready={ready} allowDraft={activeSession !== null} offline={!online} skill={skill} onSkillChange={setSkill} budget={budget} onBudgetChange={setBudget} stopLabel={stopLabel} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={onFocusSources} />
       </section>
-      <ContextInspector resize={inspectorWidth} base={base} sources={indexedSources} session={activeSession} knowledgeUnits={answers.units} selectedMessage={selectedMessage} tab={inspectorTab} sourceQuery={sourceQuery} collapsed={inspectorCollapsed} readOnly={!online || !activeSession || activeSession.archived} onTab={setInspectorTab} onSourceQuery={setSourceQuery} onToggleSource={(id) => void toggleSource(id)} onUseAll={() => { if (activeSession) void patchSession(activeSession.id, { selectedSourceIds: [] }); }} onAdd={onAdd} onOpenSource={(id, citation) => void openSourceDetail(id, citation)} onOpenUnit={(unit) => void openKnowledgeUnitOrigin(unit)} onCollapse={() => setInspectorCollapsed((value) => !value)} traceOn={traces.on} briefUpdating={briefBusy === activeSession?.id} onBriefSave={(brief) => void saveBrief(brief)} onBriefRetry={() => { if (activeSession) void refreshBrief(activeSession.id); }} onCopy={(label, value) => void navigator.clipboard.writeText(value).then(() => onNotify(`${label} copied.`)).catch(() => onNotify(`${label} could not be copied.`))} />
-      {evidence && <EvidencePanel citation={evidence.citation} index={evidence.index} onClose={() => setEvidence(null)} onOpenSource={onOpenSource ? (id) => { setEvidence(null); onOpenSource(id); } : undefined} />}
+      {trace && visible && createPortal(<div className="ask-trace-overlay" role="dialog" aria-modal="true" aria-label="Trace" onClick={() => setTrace(null)}>
+        <aside className="ask-trace-sheet" onClick={(event) => event.stopPropagation()}>
+          <header><strong>Trace</strong><button type="button" className="gx-icon-button" autoFocus aria-label="Close trace" onClick={() => setTrace(null)}><X size={16} /></button></header>
+          <AnswerTrace {...trace} onCopy={(label, value) => void navigator.clipboard.writeText(value).then(() => onNotify(`${label} copied.`), () => onNotify(`${label} could not be copied.`))} />
+        </aside>
+      </div>, document.body)}
+      {visible && evidence && <EvidencePanel citation={evidence.citation} index={evidence.index} onClose={() => setEvidence(null)} onOpenSource={onOpenSource ? (id) => { setEvidence(null); onOpenSource(id); } : undefined} />}
       {mobileSessionsOpen && <div className="mobile-session-drawer" role="dialog" aria-modal="true" aria-label="Session history"><button className="mobile-session-scrim" onClick={() => setMobileSessionsOpen(false)} aria-label="Close session history" /><div className="mobile-session-sheet"><button className="mobile-session-close" autoFocus onClick={() => setMobileSessionsOpen(false)} aria-label="Close session history"><X size={15} /></button><SessionsSidebar base={base} online={online} sessions={sessions} archivedSessions={archivedSessions} showArchived={showArchived} activeId={activeId} loading={loading} query={sessionQuery} onQuery={setSessionQuery} onNew={() => { setMobileSessionsOpen(false); void createSession(); }} onOpen={(id) => { setMobileSessionsOpen(false); void loadSession(id); }} onPin={(session) => void patchSession(session.id, { pinned: !session.pinned })} onArchive={(session) => void archiveSession(session)} onToggleArchived={() => void toggleArchived()} onRestore={(session) => void restoreSession(session)} /></div></div>}
     </div>
   );

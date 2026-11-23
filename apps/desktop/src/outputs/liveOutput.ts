@@ -1,156 +1,44 @@
-import type { ArtifactBriefState, OutlineItem, OutputApproach, StudioMemo, StudioReview } from "@gunther/contracts";
+import type { BuildTurnInput } from "@gunther/contracts";
 import { useCallback, useRef, useState } from "react";
 import type { ArtifactTurnEvent, OutputEvent } from "../api";
-import type { LiveStep } from "../pages/liveAnswer";
 
-export type SectionState = "waiting" | "researching" | "writing" | "checking" | "revising" | "done";
+type SectionEvent = Extract<OutputEvent, { type: "section" }>;
+type Running = { kind: "stage" | "action" | "section" | "step"; id: string; label: string };
 
-/** A step of the skill an output follows, as it goes. */
-export interface LiveStage {
-  id: string;
-  label: string;
-  state: "running" | "done" | "failed";
-  detail: string | null;
-  /** How long it took, once finished. */
-  seconds: number | null;
-}
-
-/** One section (or slide) of an output being built: where it is and what it says so far. */
-export interface LiveSection {
-  heading: string;
-  goal: string;
-  state: SectionState;
-  /** As written, with the model's own numbers: they are not final until the whole text is saved. */
-  text: string;
-  steps: LiveStep[];
-}
-
-/** One thing the Artifacts agent does in a turn (a search, writing a slide, a check), as it goes. */
-export interface LiveAction {
-  id: string;
-  /** What kind of action it is: search_library, write, edit, … (known from the decision that listed it). */
-  action: string;
-  label: string;
-  note: string;
-  state: "waiting" | "running" | "done" | "failed" | "skipped";
-}
-
-/** An output being worked out: the plan, then each section as it is researched, written and checked. */
-export interface LiveOutputState {
-  /** What it was asked, when following a build again after leaving. */
-  question: string | null;
+interface LiveOutputState {
   title: string | null;
-  sections: LiveSection[];
-  /** Searches that belong to no one section (a revision of the whole output, or reading the material). */
-  steps: LiveStep[];
-  /** The skill's steps so far, in order (none when no skill is followed). */
-  stages: LiveStage[];
-  /** What the skill decided before planning. */
-  approach: OutputApproach | null;
-  /** The studio's insight memo, when it arrives. */
-  memo: StudioMemo | null;
-  /** The critic's looks at the storyline, one per round. */
-  reviews: StudioReview[];
-  /** A turn of the Artifacts agent: the actions it decided on so far, in order. */
-  actions: LiveAction[];
-  /** The text of an answer or reply as it is written. */
+  headings: string[];
+  running: Running[];
   reply: string;
-  /** The question the agent asked: it ends the turn. */
-  asking: { text: string; options: string[] } | null;
-  /** The brief, when the turn changed it. */
-  brief: ArtifactBriefState | null;
-  /** Which conversation the turn belongs to (told first, so a follower can find it). */
-  turn: { conversationId: string; messageId: string } | null;
 }
 
-export const EMPTY_LIVE: LiveOutputState = { question: null, title: null, sections: [], steps: [], stages: [], approach: null, memo: null, reviews: [], actions: [], reply: "", asking: null, brief: null, turn: null };
+export const EMPTY_LIVE: LiveOutputState = { title: null, headings: [], running: [], reply: "" };
+const sectionLabels: Record<Exclude<SectionEvent["state"], "done">, string> = {
+  researching: "Reading sources", writing: "Writing", checking: "Checking sources", revising: "Revising",
+};
 
-const DOING: Record<SectionState, string> = { waiting: "Waiting", researching: "Reading sources", writing: "Writing", checking: "Checking sources", revising: "Revising", done: "Done" };
-
-/** What the agent is doing now, in one line. Labels come only from stream events. */
-export function outputActivity(live: LiveOutputState | null): string {
-  if (!live) return "Ready";
-  const action = [...live.actions].reverse().find((item) => item.state === "running");
-  if (action) return action.label;
-  const stage = [...live.stages].reverse().find((item) => item.state === "running");
-  const section = [...live.sections].reverse().find((item) => item.state !== "waiting" && item.state !== "done");
-  const step = [...live.steps].reverse().find((item) => item.running);
-  if (stage) return stage.detail ? `${stage.label} · ${stage.detail}` : stage.label;
-  return (section ? `${DOING[section.state]}${section.heading ? ` · ${section.heading}` : ""}` : step?.label) || "Starting…";
-}
-const blank = (): LiveSection => ({ heading: "", goal: "", state: "waiting", text: "", steps: [] });
-
-/** The same step, updated: a running search is replaced by its result. */
-function withStep(steps: LiveStep[], event: Extract<OutputEvent, { type: "step" }>): LiveStep[] {
-  const step: LiveStep = {
-    tool: event.tool,
-    label: event.label,
-    query: event.query ?? "",
-    found: event.found ?? 0,
-    error: event.error ?? null,
-    running: event.state === "running",
-  };
-  const at = steps.findIndex((item) => item.running && item.label === event.label);
-  return at === -1 ? [...steps, step] : steps.map((item, index) => (index === at ? step : item));
-}
-
-/** The sections, grown to hold section `index`. */
-function reaching(sections: LiveSection[], index: number): LiveSection[] {
-  return index < sections.length ? sections : [...sections, ...Array.from({ length: index + 1 - sections.length }, blank)];
-}
-
-/** The action with this id, updated or added. */
-function withAction(actions: LiveAction[], next: Partial<LiveAction> & { id: string }): LiveAction[] {
-  const at = actions.findIndex((item) => item.id === next.id);
-  if (at === -1) return [...actions, { action: "", label: "", note: "", state: "waiting", ...next }];
-  return actions.map((item, index) => (index === at ? { ...item, ...next } : item));
+export function outputActivity(live: LiveOutputState): string {
+  return [...live.running].reverse().find((item) => item.kind === "stage")?.label ?? live.running.at(-1)?.label ?? "Starting…";
 }
 
 export function applyOutputEvent(state: LiveOutputState, event: ArtifactTurnEvent): LiveOutputState {
-  const change = (index: number, edit: (section: LiveSection) => LiveSection): LiveOutputState => ({
-    ...state,
-    sections: reaching(state.sections, index).map((section, at) => (at === index ? edit(section) : section)),
-  });
+  const update = (kind: Running["kind"], id: string, label: string | null): LiveOutputState => {
+    const running = state.running.filter((item) => item.kind !== kind || item.id !== id);
+    return { ...state, running: label ? [...running, { kind, id, label }] : running };
+  };
   switch (event.type) {
-    case "resumed":
-      return { ...state, question: event.question };
     case "outline":
-      return {
-        ...state,
-        title: event.title,
-        sections: event.sections.map((item) => ({ ...blank(), heading: item.heading, goal: item.goal })),
-      };
-    case "section":
-      return change(event.index, (section) => ({ ...section, state: event.state }));
-    case "text":
-      return change(event.section, (section) => ({ ...section, text: section.text + event.text }));
-    case "stage": {
-      const stage: LiveStage = { id: event.id, label: event.label, state: event.state, detail: event.detail ?? null, seconds: event.seconds ?? null };
-      const at = state.stages.findIndex((item) => item.id === event.id);
-      return { ...state, stages: at === -1 ? [...state.stages, stage] : state.stages.map((item, index) => (index === at ? stage : item)) };
-    }
-    case "memo":
-      return { ...state, memo: event.memo };
-    case "review":
-      return { ...state, reviews: [...state.reviews.filter((item) => item.round !== event.round), { round: event.round, verdict: event.verdict, understood: event.understood, problems: event.problems }] };
-    case "approach":
-      return { ...state, approach: event.approach };
-    case "turn":
-      return { ...state, turn: { conversationId: event.conversationId, messageId: event.messageId } };
-    case "brief":
-      return { ...state, brief: { brief: event.brief, spec: event.spec } };
-    case "decision":
-      return { ...state, actions: event.actions.reduce((all, item) => withAction(all, { id: item.id, action: item.do, label: item.label }), state.actions) };
+      return { ...state, title: event.title, headings: event.sections.map((section) => section.heading) };
+    case "stage":
+      return update("stage", event.id, event.state === "running" ? [event.label, event.detail].filter(Boolean).join(" · ") : null);
     case "action":
-      return { ...state, actions: withAction(state.actions, { id: event.id, label: event.label, note: event.note, state: event.state }) };
-    case "question":
-      return { ...state, asking: { text: event.text, options: event.options } };
+      return update("action", event.id, event.state === "running" ? event.label : null);
+    case "section":
+      return update("section", String(event.index), event.state === "done" ? null : [sectionLabels[event.state], state.headings[event.index]].filter(Boolean).join(" · "));
+    case "step":
+      return update("step", `${event.section}:${event.tool}:${event.label}`, event.state === "running" ? event.label : null);
     case "reply":
       return { ...state, reply: state.reply + event.text };
-    case "step":
-      if (event.section === null) return { ...state, steps: withStep(state.steps, event) };
-      return change(event.section, (section) => ({ ...section, steps: withStep(section.steps, event) }));
-    // The studio's storyline arrives again as the outline; any event not known here changes nothing.
     default:
       return state;
   }
@@ -158,8 +46,10 @@ export function applyOutputEvent(state: LiveOutputState, event: ArtifactTurnEven
 
 interface OutputJob {
   kind: "turn" | "version" | "follow";
-  turnId: string;
-  text: string;
+  title?: string | undefined;
+  lineageId?: string | undefined;
+  build?: BuildTurnInput | undefined;
+  startedAt: string;
   stop: () => Promise<void>;
   live: LiveOutputState;
   stopping: boolean;
@@ -172,7 +62,7 @@ export function useLiveOutputs() {
   const publish = useCallback((id: string, job: OutputJob) => {
     setJobs((current) => new Map(current).set(id, job));
   }, []);
-  const watch = useCallback((id: string, info: Omit<OutputJob, "live" | "stopping">) => {
+  const watch = useCallback((id: string, info: Omit<OutputJob, "live" | "stopping" | "startedAt">) => {
     const previous = listeners.current.get(id);
     if (previous?.visible || (previous && info.kind === "follow")) return null;
     previous?.abort.abort();
@@ -181,7 +71,7 @@ export function useLiveOutputs() {
     // A Follow that returns 204 should never show a running job.
     const listener = {
       abort: new AbortController(), ready, visible: info.kind !== "follow",
-      job: { ...info, live: EMPTY_LIVE, stopping: false },
+      job: { ...info, startedAt: new Date().toISOString(), live: EMPTY_LIVE, stopping: false },
     };
     listeners.current.set(id, listener);
     if (listener.visible) publish(id, listener.job);

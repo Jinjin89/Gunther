@@ -1,17 +1,14 @@
 import type { ArtifactChange, ArtifactConversationMessage, ArtifactPending, ArtifactSummary, OutputKind } from "@gunther/contracts";
 import { BookOpen, Check, ChevronRight, CircleAlert, CircleHelp, ClipboardCheck, FilePlus2, Globe2, Library, ListChecks, LoaderCircle, MessageSquare, Minus, PenLine, Save, type LucideIcon } from "lucide-react";
 import { BrandMark } from "../design/BrandMark";
-import { AnswerBody, citationNumbers, withoutMarks } from "../pages/AnswerBody";
-import { LiveSections } from "./LiveSections";
-import { StudioLive } from "./StudioBrief";
-import { outputActivity, type LiveAction, type LiveOutputState } from "./liveOutput";
+import { AnswerBody, citationNumbers } from "../pages/AnswerBody";
 
 /** One line of what the agent did in a turn: a search, a slide written, a check. */
 export interface StepLine {
   id: string;
   /** The kind of action, when it is known (a live turn knows it; a stored one does not). */
   action?: string | undefined;
-  state: LiveAction["state"];
+  state: "waiting" | "running" | "done" | "failed" | "skipped";
   label: string;
   note: string;
 }
@@ -96,7 +93,7 @@ export function aboutOf(payload: Record<string, unknown>, kind: OutputKind | nul
 const USER_WORDS: Record<string, string> = { start: "Just start", continue: "Continue" };
 
 /** The chat of an Artifacts conversation, as the service stored it. */
-export function ArtifactMessageList({ messages, pending, history, citations, kind, busy, onOption, onStart, onContinue, onRetry, onOpenPart, onOpenVersion, onCite, earlier = false }: {
+export function ArtifactMessageList({ messages, pending, history, citations, kind, lineageId, busy, onOption, onStart, onContinue, onRetry, onOpenPart, onOpenVersion, onCite, earlier = false }: {
   messages: ArtifactConversationMessage[];
   /** The question waiting for an answer, if any: only that message offers its options. */
   pending: ArtifactPending | null;
@@ -105,6 +102,7 @@ export function ArtifactMessageList({ messages, pending, history, citations, kin
   citations: unknown[];
   /** What the conversation's artifact is made of (a deck's parts are slides). */
   kind: OutputKind | null;
+  lineageId: string | null;
   busy: boolean;
   onOption: (text: string) => void;
   onStart: () => void;
@@ -151,30 +149,10 @@ export function ArtifactMessageList({ messages, pending, history, citations, kin
       {message.kind === "result" && listed.length > 0 && <ul className="artifact-changes" aria-label="What changed">
         {listed.map((change, index) => <li key={index}><button type="button" className="artifact-change-row" onClick={() => onOpenPart(message.artifactId, change.position)}>{describeChange(change, unit)}<ChevronRight size={11} aria-hidden="true" /></button></li>)}
       </ul>}
-      {message.kind === "result" && version && <button type="button" className="artifact-result-link" onClick={() => onOpenVersion(version)}>Open v{version.versionNumber}<ChevronRight size={12} /></button>}
+      {message.kind === "result" && version && <button type="button" className="artifact-result-link" onClick={() => onOpenVersion(version)}>{version.lineageId !== lineageId && <small>{version.title}</small>}Open v{version.versionNumber}<ChevronRight size={12} /></button>}
       {message.kind === "paused" && mine && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={busy} onClick={onContinue}>Continue</button>}
       {message.kind === "failed" && mine && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={busy} onClick={() => onRetry(message)}>Retry</button>}
     </div></div>;
   })}</div>
-  </>;
-}
-
-/** The turn in progress: what the agent is doing, step by step, and what it has written so far. */
-export function LiveTurn({ live, kind, stopping, onStop, only }: {
-  live: LiveOutputState;
-  kind: OutputKind;
-  stopping: boolean;
-  onStop: () => void;
-  only?: number | null | undefined;
-}) {
-  const waiting = live.actions.length === 0 && !live.reply;
-  return <>
-    <div className="aw-message is-assistant" role="status"><span className="aw-agent-mark"><BrandMark size={17} busy /></span><div className="artifact-reply">
-      {live.actions.length > 0 ? <TurnSteps steps={live.actions} /> : <p>{outputActivity(live)}</p>}
-      <StudioLive state={live} />
-      {live.reply && <AnswerBody content={withoutMarks(live.reply)} numbers={[]} />}
-      {waiting && live.sections.length === 0 && <div className="live-wait"><span><i /><i /><i /></span><small>Working out what to do…</small></div>}
-    </div></div>
-    <details className="artifact-live-details"><summary>Generation details</summary><LiveSections state={live} kind={kind} stopping={stopping} onStop={onStop} only={only} /></details>
   </>;
 }

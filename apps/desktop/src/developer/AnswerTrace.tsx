@@ -83,7 +83,7 @@ function Step({ step }: { step: TraceStep }) {
   </li>;
 }
 
-/** The Trace tab: how the selected answer was made, step by step, with the exact prompts. */
+/** The answer's Trace: how the selected answer was made, step by step, with the exact prompts. */
 export function AnswerTrace({ sessionId, messageId, onCopy }: { sessionId: string; messageId: string; onCopy: (label: string, value: string) => void }) {
   const [trace, setTrace] = useState<Trace | null>(null);
   const [problem, setProblem] = useState<string | null>(null);

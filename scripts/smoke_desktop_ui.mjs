@@ -513,6 +513,12 @@ async function run() {
     const marker = `ui-smoke-${crypto.randomUUID().slice(0, 8)}`;
     const noteTitle = `Capture before organize ${marker}`;
     const libraryTitle = `Bioinformatics ${marker}`;
+    const libraryChatOpen = `Boolean(
+      document.querySelector('.library-workspace .contents[aria-label="Sources"]') &&
+      document.querySelector('.library-workspace .library-chat:not([hidden]) [aria-label="Conversation"]') &&
+      document.querySelector('.library-workspace [aria-label="Studio"]')
+    )`;
+    const libraryWelcome = `${libraryChatOpen} && document.querySelector('.chat-welcome h1')?.textContent.trim() === ${JSON.stringify(libraryTitle)}`;
     if (!await cdp.evaluate(clickExpression("button", "All capture options"))) {
       throw new SmokeFailure("All capture options was not clickable");
     }
@@ -560,12 +566,7 @@ async function run() {
     if (!await cdp.evaluate(clickExpression("button", "Create library"))) {
       throw new SmokeFailure("Create library was not clickable");
     }
-    await waitForEvaluation(cdp, `document.body.innerText.includes(${JSON.stringify(libraryTitle)})`, "created knowledge base workspace");
-    await waitForEvaluation(
-      cdp,
-      `document.querySelector('nav[aria-label="Library views"] button[aria-current="page"]')?.textContent.trim() === 'Ask' && document.body.innerText.includes('Ask the knowledge')`,
-      "new knowledge base default Ask view",
-    );
+    await waitForEvaluation(cdp, libraryWelcome, "new library with Sources, Chat and Studio");
 
     if (!await cdp.evaluate(clickExpression("button", "Inbox"))) {
       throw new SmokeFailure("Inbox navigation was not clickable");
@@ -683,37 +684,27 @@ async function run() {
     if (!await cdp.evaluate(clickExpression("button", libraryTitle))) {
       throw new SmokeFailure("The created knowledge base was not clickable");
     }
-    await waitForEvaluation(
-      cdp,
-      `document.querySelector('[aria-label="Library views"]') !== null && document.body.innerText.includes(${JSON.stringify(libraryTitle)})`,
-      "created knowledge base workspace",
-    );
-    await waitForEvaluation(
-      cdp,
-      `document.querySelector('nav[aria-label="Library views"] button[aria-current="page"]')?.textContent.trim() === 'Ask' && document.body.innerText.includes('Ask the knowledge')`,
-      "reopened knowledge base default Ask view",
-    );
+    await waitForEvaluation(cdp, libraryWelcome, "reopened library with Chat in the middle");
 
-    if (!await cdp.evaluate(clickExpression("button", "Contents"))) {
-      throw new SmokeFailure("Contents view was not clickable");
+    const sourceRow = `.contents[aria-label="Sources"] [data-row=${JSON.stringify(`source:${source.id}`)}]`;
+    const rowOpenButton = `${sourceRow} button[aria-label=${JSON.stringify(`Open ${noteTitle}`)}]`;
+    await waitForEvaluation(
+      cdp,
+      `document.querySelector(${JSON.stringify(`${sourceRow} .contents-source strong`)})?.textContent.trim() === ${JSON.stringify(noteTitle)}
+        && document.querySelector(${JSON.stringify(rowOpenButton)})?.disabled === false`,
+      "filed note and its Open action in the Sources tree",
+    );
+    if (!await cdp.evaluate(clickExpression(`${sourceRow} button.contents-source`, noteTitle))) {
+      throw new SmokeFailure("The filed source summary could not be opened");
     }
     await waitForEvaluation(
       cdp,
-      `document.querySelector('nav[aria-label="Library views"] button[aria-current="page"]')?.textContent.trim() === 'Contents' && [...document.querySelectorAll('button.contents-source strong')].some((item) => item.textContent.trim() === ${JSON.stringify(noteTitle)})`,
-      "filed source in Contents view",
+      `document.querySelector('article[aria-label="Source summary"] h1')?.textContent.trim() === ${JSON.stringify(noteTitle)}
+        && document.querySelector(${JSON.stringify(`${sourceRow} input.contents-check`)})?.checked === true`,
+      "source summary opens with its scope tick intact",
     );
-    const sourceOpenState = await cdp.evaluate(`(() => {
-      const button = [...document.querySelectorAll('button.contents-source')].find((candidate) => candidate.querySelector('strong')?.textContent.trim() === ${JSON.stringify(noteTitle)});
-      if (!button) return { clicked: false, reason: 'missing', rows: [...document.querySelectorAll('button.contents-source')].map((candidate) => candidate.textContent.replace(/\\s+/g, ' ').trim()) };
-      if (button.disabled) return { clicked: false, reason: 'disabled', rows: [button.textContent.replace(/\\s+/g, ' ').trim()] };
-      // A click shows the source in the side panel; its row's ↗ button opens it.
-      const open = button.closest('.contents-row')?.querySelector('button[aria-label^="Open "]');
-      if (!open) return { clicked: false, reason: 'no open button', rows: [button.textContent.replace(/\\s+/g, ' ').trim()] };
-      open.click();
-      return { clicked: true };
-    })()`);
-    if (!sourceOpenState?.clicked) {
-      throw new SmokeFailure(`The filed source could not be opened: ${JSON.stringify(sourceOpenState)}`);
+    if (!await cdp.evaluate(clickExpression('article[aria-label="Source summary"] button', "Open full page"))) {
+      throw new SmokeFailure("Open full page was not clickable");
     }
     // Sources open into their own page with the title, preserved text, and Back.
     await waitForEvaluation(
@@ -728,12 +719,9 @@ async function run() {
       return true;
     })()`);
     if (!wentBack) throw new SmokeFailure("The source page could not go back to its library");
-    await waitForEvaluation(cdp, `document.querySelector('nav[aria-label="Library views"]') !== null`, "library workspace after the source page");
+    await waitForEvaluation(cdp, libraryChatOpen, "library Chat after the source page");
 
     const askReadyStartedAt = Date.now();
-    if (!await cdp.evaluate(clickExpression("button", "Ask"))) {
-      throw new SmokeFailure("Ask view was not clickable");
-    }
     try {
       await waitForEvaluation(
         cdp,
@@ -780,6 +768,55 @@ async function run() {
     if (!await cdp.evaluate(setAriaValueExpression("Message Gunther", question))) {
       throw new SmokeFailure("Ask composer was not editable");
     }
+
+    // Arrange a source under a nested section and change the shared scope from its parent.
+    const makeSection = async (title, parentId, sourceIds = []) => {
+      const response = await fetch(`${backendOrigin}/api/knowledge-bases/${encodeURIComponent(knowledgeBase.id)}/topics`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, description: "", parentId, sourceIds }),
+      });
+      if (!response.ok) throw new SmokeFailure(`Could not arrange library sources (${response.status})`);
+      return response.json();
+    };
+    const course = await makeSection("Course materials", null);
+    await makeSection("Week 1", course.id, sources.map((item) => item.id));
+    await cdp.evaluate("window.dispatchEvent(new Event('gunther:topics-updated'))");
+    const courseTick = 'input[aria-label="Select sources in Course materials"]';
+    await waitForEvaluation(
+      cdp,
+      `document.querySelector('.contents-list')?.textContent.includes('Week 1')
+        && document.querySelector(${JSON.stringify(courseTick)})?.checked === true
+        && document.querySelector('.contents-scope small')?.textContent.trim() === ${JSON.stringify(String(sources.length))}`,
+      "Sources shows the course hierarchy and total",
+    );
+    const courseSelection = (checked) => `(() => {
+      const sourceTicks = [...document.querySelectorAll('.contents-list .contents-source-row input.contents-check')];
+      return document.querySelector(${JSON.stringify(courseTick)})?.checked === ${checked}
+        && document.querySelector('.contents-scope input')?.checked === false
+        && sourceTicks.length === ${sources.length}
+        && sourceTicks.every((input) => input.checked === ${checked})
+        && document.querySelector('.scope-chip')?.textContent.trim() === ${JSON.stringify(`${checked ? sources.length : 0} selected`)};
+    })()`;
+    if (!await cdp.evaluate(clickExpression("input", "Select sources in Course materials"))) {
+      throw new SmokeFailure("The course could not be unticked");
+    }
+    await waitForEvaluation(
+      cdp,
+      `${courseSelection(false)}
+        && document.querySelector('#empty-source-scope')?.textContent.includes('Select at least one source')
+        && document.querySelector('button[aria-label="Send message"]')?.disabled === true
+        && document.querySelector('.studio-tile > button')?.disabled === true`,
+      "empty scope disables Chat Send and Studio builds",
+    );
+    if (!await cdp.evaluate(clickExpression("input", "Select sources in Course materials"))) {
+      throw new SmokeFailure("The course could not be ticked");
+    }
+    await waitForEvaluation(
+      cdp,
+      `${courseSelection(true)} && !document.querySelector('.contents-picker-overlay')
+        && document.querySelector('.studio-tile > button')?.disabled === false`,
+      "section ticks choose its descendants for Chat and Studio",
+    );
+
     await waitForEvaluation(
       cdp,
       `document.querySelector('button[aria-label="Send message"]')?.disabled === false`,
@@ -791,7 +828,7 @@ async function run() {
     try {
       await waitForEvaluation(
         cdp,
-        "document.querySelector('.conversation-message.role-assistant .citation-count') !== null && [...document.querySelectorAll('button.promote-answer')].some((button) => !button.disabled && button.textContent.includes('Save as knowledge'))",
+        "document.querySelector('.conversation-message.role-assistant .message-sources summary') !== null && [...document.querySelectorAll('button.promote-answer')].some((button) => !button.disabled && button.textContent.includes('Save as knowledge'))",
         "grounded answer with a Save as knowledge action",
         20_000,
       );
@@ -802,6 +839,18 @@ async function run() {
         errors: [...document.querySelectorAll('.conversation-error')].map((item) => item.textContent.replace(/\\s+/g, ' ').trim()),
       }))()`);
       throw new SmokeFailure(`${error instanceof Error ? error.message : String(error)}; diagnostics=${JSON.stringify(diagnostics)}`);
+    }
+    if (!await cdp.evaluate(clickExpression(".message-sources summary", "1 source"))
+      || !await cdp.evaluate(clickExpression(".message-sources button[data-opens-evidence]", noteTitle))) {
+      throw new SmokeFailure("The answer's source could not be opened");
+    }
+    await waitForEvaluation(
+      cdp,
+      `document.querySelector('[aria-label="Evidence"] > header strong')?.textContent.trim() === ${JSON.stringify(noteTitle)}`,
+      "answer source opens its evidence",
+    );
+    if (!await cdp.evaluate(clickExpression("button", "Close evidence"))) {
+      throw new SmokeFailure("The evidence panel could not be closed");
     }
     if (!await cdp.evaluate(clickExpression("button", "Save as knowledge"))) {
       throw new SmokeFailure("Grounded answer could not be saved as knowledge");
@@ -831,63 +880,40 @@ async function run() {
     if (!removedProvider.ok) throw new SmokeFailure(`Could not remove the fixture model (${removedProvider.status})`);
 
     if (!await cdp.evaluate(clickExpression("button", "Libraries"))) {
-      throw new SmokeFailure("Library navigation was not clickable before output generation");
+      throw new SmokeFailure("Library navigation was not clickable before checking Studio");
     }
-    await waitForEvaluation(cdp, "document.querySelector('.gx-libraries h1')?.textContent.trim() === 'Libraries'", "Libraries view before output generation");
+    await waitForEvaluation(cdp, "document.querySelector('.gx-libraries h1')?.textContent.trim() === 'Libraries'", "Libraries view before checking Studio");
     if (!await cdp.evaluate(clickExpression("button", libraryTitle))) {
       throw new SmokeFailure("The created knowledge base could not be reopened");
     }
-    await waitForEvaluation(cdp, "document.querySelector('[aria-label=\"Library views\"]') !== null", "knowledge base workspace before output generation");
-    if (!await cdp.evaluate(clickExpression("button", "Artifacts"))) {
-      throw new SmokeFailure("Outputs view was not clickable");
-    }
-    await waitForEvaluation(cdp, `document.querySelector('[aria-label="New conversation"]')?.disabled === false`, "Outputs ready for a new draft");
-    // Outputs read the whole library: the filed source and the saved answer.
-    const trustedCount = units.filter((item) => item.status === "trusted").length;
-    const scopeWords = `${sources.length} ${sources.length === 1 ? "source" : "sources"} · ${trustedCount} saved`;
+    await waitForEvaluation(cdp, `${libraryChatOpen} && ${courseSelection(true)}`, "shared source selection persists after reopening the library");
     await waitForEvaluation(
       cdp,
-      `document.querySelector('.aw-pane-head h1')?.textContent.trim() === 'Conversation' && document.querySelector('.aw-input-context')?.textContent.trim() === ${JSON.stringify(scopeWords)}`,
-      "Outputs counting the library's sources and saved knowledge",
+      "document.querySelector('.message-sources summary') !== null && [...document.querySelectorAll('button.promote-answer')].some((button) => button.textContent.includes('Saved as knowledge'))",
+      "saved answer and sources remain visible after the model is removed",
     );
-    // Artifacts prompts for a model after the fixture provider is removed.
     await waitForEvaluation(
       cdp,
-      "document.querySelector('.outputs-setup-note')?.textContent.includes('Artifacts need a model') && document.querySelector('button[aria-label=\"Send message\"]')?.disabled === true && document.querySelector('[aria-label=\"Conversations\"]') !== null",
-      "Outputs asking for a model instead of building one",
+      `(() => {
+        const studio = document.querySelector('[aria-label="Studio"]');
+        const buttons = [...(studio?.querySelectorAll('.studio-tile button') ?? [])];
+        return studio?.querySelector('.studio-model-note [role="status"]')?.textContent.includes('Studio needs a model')
+          && studio.querySelector('.studio-model-note button')?.disabled === false
+          && buttons.length > 0 && buttons.every((button) => button.disabled);
+      })()`,
+      "Studio shows model setup with its tiles disabled",
     );
 
-    // Output selection follows the same real sections and placements as Contents.
-    const makeSection = async (title, parentId, sourceIds = []) => {
-      const response = await fetch(`${backendOrigin}/api/knowledge-bases/${encodeURIComponent(knowledgeBase.id)}/topics`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, description: "", parentId, sourceIds }),
-      });
-      if (!response.ok) throw new SmokeFailure(`Could not arrange output material (${response.status})`);
-      return response.json();
-    };
-    const course = await makeSection("Course materials", null);
-    await makeSection("Week 1", course.id, sources.map((item) => item.id));
-    await cdp.evaluate("window.dispatchEvent(new Event('gunther:topics-updated'))");
-    await waitForEvaluation(cdp, "document.querySelector('.artifacts-materials .outputs-source-tree')?.textContent.includes('Week 1')", "persistent source selection showing Contents hierarchy");
-    await cdp.evaluate(`(() => {
-      const panel = document.querySelector('.artifacts-materials');
-      const extras = panel.querySelector('.artifacts-other-materials');
-      if (extras) {
-        extras.open = true;
-        for (const input of extras.querySelectorAll('input:checked')) input.click();
-      }
-      const clear = [...panel.querySelectorAll('.outputs-source-group button')].find(button => button.textContent.trim() === 'Clear');
-      if (clear) clear.click();
-    })()`);
-    if (!await cdp.evaluate(clickExpression("input", "Select Course materials"))) throw new SmokeFailure("A whole course could not be selected");
-    await waitForEvaluation(cdp, "[...document.querySelectorAll('.artifacts-materials .outputs-source-row input')].every((input) => input.checked)", "all sources in the selected course");
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: 900, height: 640, deviceScaleFactor: 1, mobile: false });
-    await screenshot("artifacts-sources-900");
-    const sourcesFit = await cdp.evaluate(`(() => { const box = document.querySelector('.artifacts-materials').getBoundingClientRect(); const footer = document.querySelector('.artifacts-materials > footer').getBoundingClientRect(); return box.top >= 0 && box.bottom <= innerHeight + 1 && footer.bottom <= box.bottom + 1 && box.right <= innerWidth; })()`);
+    await waitForEvaluation(cdp, "window.innerWidth === 900", "narrow Sources window");
+    await screenshot("sources-900");
+    const sourcesFit = await cdp.evaluate(`(() => {
+      const tree = document.querySelector('.library-workspace .contents');
+      const box = tree.getBoundingClientRect();
+      const footer = tree.querySelector('.contents-add').getBoundingClientRect();
+      return box.top >= 0 && box.bottom <= innerHeight + 1 && footer.bottom <= box.bottom + 1 && box.right <= innerWidth;
+    })()`);
     if (!sourcesFit) throw new SmokeFailure("Source selection does not fit in a narrow window");
-    if (await cdp.evaluate("Boolean(document.querySelector('.outputs-picker-overlay'))")) throw new SmokeFailure("Source selection still uses a popup");
-    const chosenWords = `${sources.length} ${sources.length === 1 ? "source" : "sources"}`;
-    await waitForEvaluation(cdp, `document.querySelector('.aw-input-context')?.textContent.trim() === ${JSON.stringify(chosenWords)}`, "artifact selection containing only course sources");
     await cdp.send("Emulation.clearDeviceMetricsOverride");
 
     // The answer preference remains available in General Settings and survives reopening.
@@ -978,13 +1004,14 @@ async function run() {
         "note-to-source provenance preserved",
         "filed source written to its readable library folder",
         "successful local retry copy cleared",
-        "source reopened with its preserved content",
-        "grounded Ask answer persisted with citations",
+        "filed note shown in Sources and reopened through its summary with preserved content",
+        "grounded Chat answer persisted with sources that open evidence",
         "answer saved as knowledge with no Inbox review",
         "saved answer became a trusted evidenced unit",
-        "Artifacts counted the library's sources and saved knowledge, and asked for a model instead of building without one",
-        "Ask kept All sources and side-by-side voice/send actions at 900 × 640",
-        "Artifacts selected sources directly in the persistent Contents hierarchy",
+        "Studio showed model setup with disabled tiles after the saved answer was reopened",
+        "Chat kept All sources and side-by-side voice/send actions at 900 × 640",
+        "Sources showed the total and fit at 900 × 640",
+        "section ticks set Chat and Studio scope, blocked empty selection, and persisted on library reopen",
         "Answer style moved to General Settings, persisted and stayed out of Ask/Home composers",
         "capture moved to Trash from Inbox and brought back with Undo",
         "capture restored from the Trash page",

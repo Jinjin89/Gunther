@@ -10,7 +10,7 @@ import { STYLE_LABEL } from "./designStyles";
  * The look of a designed deck: Light, Dark, Bold, and the imported template's colours and fonts when there is one.
  *
  * Picking a style recolours the deck at once (the title marker's `style:` is rewritten and saved; the slides' HTML uses only the
- * style's variables), then OutputsPage asks the backend to draw every slide again in that style (`restyleSlidesStream`),
+ * style's variables), then the reader asks the backend to draw every slide again in that style (`restyleSlidesStream`),
  * which saves the next version. Only the latest pending style is applied after that runs. The template is only ever a recolour (`onTemplate`).
  * A studio deck with no style yet keeps the Theme menu (DeckThemeMenu) instead of this one: its look is the template's.
  */

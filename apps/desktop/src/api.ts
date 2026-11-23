@@ -5,14 +5,12 @@ import type {
   ResearchUsed,
   Artifact,
   ArtifactAgentEvent,
-  ArtifactBriefState,
   ArtifactConversationDetail,
   ArtifactConversationSummary,
   ArtifactSummary,
   ArtifactTurnInput,
   ArtifactTurnOut,
   CreateArtifactConversationRequest,
-  EditArtifactBriefRequest,
   ImportArtifactConversationsRequest,
   UpdateArtifactConversationRequest,
   EditOutputRequest,
@@ -77,7 +75,6 @@ import type {
   RetrievalStatus,
   SourceDigestState,
   SourcePaper,
-  TopicOverview,
   TopicSuggestions,
   StorageStatus,
   ServiceSettings,
@@ -621,11 +618,6 @@ export const knowledgeApi = {
     { method: "DELETE" },
   ),
   topicSuggestions: (baseId: string) => request<TopicSuggestions>(`/knowledge-bases/${encodeURIComponent(baseId)}/topic-suggestions`),
-  topicOverview: (baseId: string, topicId: string) => request<TopicOverview>(`/knowledge-bases/${encodeURIComponent(baseId)}/topics/${encodeURIComponent(topicId)}/overview`),
-  writeTopicOverview: (baseId: string, topicId: string) => request<TopicOverview>(
-    `/knowledge-bases/${encodeURIComponent(baseId)}/topics/${encodeURIComponent(topicId)}/overview`,
-    { method: "POST" },
-  ),
   sourcePaper: (id: string) => request<SourcePaper>(`/sources/${encodeURIComponent(id)}/paper`),
   sourceDigest: (id: string) => request<SourceDigestState>(`/sources/${encodeURIComponent(id)}/digest`),
   writeSourceDigest: (id: string) => request<SourceDigestState>(`/sources/${encodeURIComponent(id)}/digest`, { method: "POST" }),
@@ -920,9 +912,6 @@ export const knowledgeApi = {
   /** Take in the conversations a device kept; ids the service has are skipped. */
   importArtifactConversations: (baseId: string, payload: ImportArtifactConversationsRequest, workspaceId: string) =>
     request<ArtifactConversationSummary[]>(`${outputsPath(baseId)}/artifact-conversations/import`, { method: "POST", body: JSON.stringify(payload) }, workspaceId),
-  /** Set lines of the brief the user typed; the lines set are marked as theirs. */
-  editArtifactBrief: (baseId: string, conversationId: string, payload: EditArtifactBriefRequest, workspaceId: string) =>
-    request<ArtifactBriefState>(`${artifactConversationPath(baseId, conversationId)}/brief`, { method: "PATCH", body: JSON.stringify(payload) }, workspaceId),
   /** Stop the run owned by this conversation. */
   stopArtifactTurn: (baseId: string, conversationId: string, workspaceId: string) =>
     request<void>(`${artifactConversationPath(baseId, conversationId)}/stop`, { method: "POST" }, workspaceId),

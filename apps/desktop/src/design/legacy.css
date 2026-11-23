@@ -164,7 +164,6 @@
 .chat-welcome > p { color: var(--gx-muted); font-family: var(--gx-font-sans); font-style: normal; font-size: calc(14px * var(--gx-fs, 1)); }
 
 /* Library workspace chrome */
-.base-workspace-header { background: color-mix(in srgb, var(--gx-canvas) 92%, transparent); backdrop-filter: saturate(1.4) blur(10px); -webkit-backdrop-filter: saturate(1.4) blur(10px); }
 .base-monogram,
 .welcome-orbit {
   border: 0;
@@ -178,20 +177,6 @@
 .welcome-orbit.color-blue { background: var(--gx-id-blue) !important; }
 .base-monogram.color-clay,
 .welcome-orbit.color-clay { background: var(--gx-id-clay) !important; }
-:root[data-theme="dark"] .base-monogram,
-:root[data-theme="dark"] .welcome-orbit { color: #1a1a18 !important; }
-.welcome-orbit { width: 52px; height: 52px; border-radius: 15px; animation: gx-chip-in 420ms var(--gx-ease-spring) both; }
-.welcome-orbit::before,
-.welcome-orbit::after,
-.welcome-orbit i { display: none; }
-.welcome-orbit span { font-family: var(--gx-font-sans); font-size: calc(16px * var(--gx-fs, 1)); }
-.base-mode-switch { border-color: var(--gx-line); background: var(--gx-hover); }
-.base-mode-switch button { transition: color var(--gx-dur-fast) var(--gx-ease), background-color var(--gx-dur-fast) var(--gx-ease), box-shadow var(--gx-dur-fast) var(--gx-ease); }
-.base-mode-switch button:hover:not(.is-active) { color: var(--gx-ink) !important; }
-.base-mode-switch button.is-active { background: var(--gx-surface); box-shadow: var(--gx-shadow-sm); }
-.welcome-prompts button { border-color: var(--gx-line-2); border-radius: var(--gx-radius-md); transition: border-color var(--gx-dur-fast) var(--gx-ease), box-shadow var(--gx-dur) var(--gx-ease), transform var(--gx-dur) var(--gx-ease); }
-.welcome-prompts button:hover { border-color: var(--gx-line-3); box-shadow: var(--gx-shadow-sm); transform: translateY(-1px); }
-.welcome-prompts button > svg:first-child { color: var(--gx-brand); }
 .studio-control-group label { color: var(--gx-faint); font-size: calc(11px * var(--gx-fs, 1)); font-weight: 600; letter-spacing: 0.06em; }
 .studio-control-group button { border-radius: var(--gx-radius-pill); padding: 0 11px; background: var(--gx-surface); transition: border-color var(--gx-dur-fast) var(--gx-ease), color var(--gx-dur-fast) var(--gx-ease); }
 .studio-control-group button:hover { border-color: var(--gx-line-3); color: var(--gx-ink) !important; }
@@ -284,8 +269,6 @@
 .lecture-clock strong,
 .profile-edit-form textarea,
 .lecture-summary-preview strong,
-.inspector-heading strong,
-.scope-metrics strong,
 .citation-card > header span,
 .citation-card > header strong,
 .empty-citations strong,
@@ -301,8 +284,7 @@
 .recording-dock-time,
 .lecture-clock strong,
 .base-health-stats strong,
-.profile-stats-v2 strong,
-.scope-metrics strong { font-variant-numeric: tabular-nums; font-weight: 600 !important; letter-spacing: -0.02em; }
+.profile-stats-v2 strong { font-variant-numeric: tabular-nums; font-weight: 600 !important; letter-spacing: -0.02em; }
 .composer textarea { font-size: calc(15px * var(--gx-fs, 1)) !important; line-height: 1.5 !important; }
 .material-action-grid strong,
 .material-collection > header strong { font-weight: 600 !important; letter-spacing: -0.005em; }

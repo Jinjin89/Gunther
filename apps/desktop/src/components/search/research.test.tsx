@@ -25,7 +25,7 @@ beforeEach(() => {
 function Session({ initial, onSend, stopLabel, sending = false }: { initial: string | null; onSend: (skill: string | null, budget: SkillBudget) => void; stopLabel?: string; sending?: boolean }) {
   const [skill, setSkill] = useState<string | null>(initial);
   const [budget, setBudget] = useState<SkillBudget>("standard");
-  return <Composer value="Why?" sending={sending} sourceCount={0} chapterTitle={undefined} onChange={vi.fn()} onSend={() => onSend(skill, budget)} onStop={vi.fn()} onSources={vi.fn()} readOnly={false} ready skill={skill} onSkillChange={setSkill} budget={budget} onBudgetChange={setBudget} {...(stopLabel ? { stopLabel } : {})} />;
+  return <Composer value="Why?" sending={sending} sourceCount={0} onChange={vi.fn()} onSend={() => onSend(skill, budget)} onStop={vi.fn()} onSources={vi.fn()} readOnly={false} ready skill={skill} onSkillChange={setSkill} budget={budget} onBudgetChange={setBudget} {...(stopLabel ? { stopLabel } : {})} />;
 }
 
 describe("the research chip", () => {

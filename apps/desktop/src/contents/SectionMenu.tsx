@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowDownAZ, ArrowUpRight, FolderInput, FolderOutput, FolderPlus, MessageSquareText, MoreHorizontal, PenLine, Plus, Trash2, type LucideIcon } from "lucide-react";
+import { ArrowDownAZ, ArrowUpRight, FolderInput, FolderOutput, FolderPlus, MoreHorizontal, PenLine, Plus, Trash2, type LucideIcon } from "lucide-react";
 
 export interface MenuItem {
   label: string;
@@ -40,19 +40,19 @@ export interface SectionActions {
   onAddSources: () => void;
   onSort: () => void;
   onMove: () => void;
-  onAsk: () => void;
+  onEditNote: () => void;
   onDelete: () => void;
 }
 
 /** The ⋯ menu of a section heading. */
-export function SectionMenu({ title, actions, canAsk }: { title: string; actions: SectionActions; canAsk: boolean }) {
+export function SectionMenu({ title, actions }: { title: string; actions: SectionActions }) {
   return <PopMenu label={`Actions for ${title}`} items={[
     { label: "Rename", icon: PenLine, onSelect: actions.onRename },
     { label: "Add sub-section", icon: FolderPlus, onSelect: actions.onAddSubsection },
     { label: "Add sources here…", icon: Plus, onSelect: actions.onAddSources },
     { label: "Sort by name", icon: ArrowDownAZ, onSelect: actions.onSort },
     { label: "Move to…", icon: FolderInput, onSelect: actions.onMove },
-    { label: "Ask this section", icon: MessageSquareText, onSelect: actions.onAsk, disabled: !canAsk, divider: true },
+    { label: "Edit section note", icon: PenLine, onSelect: actions.onEditNote, divider: true },
     { label: "Delete section", icon: Trash2, onSelect: actions.onDelete, danger: true, divider: true },
   ]} />;
 }

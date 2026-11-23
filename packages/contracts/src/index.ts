@@ -688,7 +688,7 @@ export interface TtsSampleInput {
 
 /** Settings → Developer. */
 export interface DeveloperSettings {
-  /** Each answer keeps how it was made, shown in a conversation's Trace tab. */
+  /** Each answer keeps how it was made, available through Trace. */
   traces: boolean;
 }
 
@@ -1243,6 +1243,7 @@ export interface OutputType {
   description: string;
   icon: string;
   options: OutputOption[];
+  partLimit?: number;
 }
 
 /** How a version came about. "legacy" is a version from before agents wrote them. */
@@ -1653,6 +1654,7 @@ export interface ArtifactConversationSummary {
 
 export interface ArtifactConversationDetail extends ArtifactConversationSummary {
   scope: OutputScope;
+  refinementScopes?: Record<string, OutputScope>;
   brief: ArtifactBrief;
   messages: ArtifactConversationMessage[];
   works: ArtifactWork[];
@@ -1673,6 +1675,7 @@ export interface CreateArtifactConversationRequest {
 export interface UpdateArtifactConversationRequest {
   title?: string;
   scope?: OutputScope;
+  targetLineageId?: string;
   archived?: boolean;
 }
 

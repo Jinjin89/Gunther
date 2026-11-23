@@ -77,6 +77,21 @@ def output_library(session: Session, workspace_id: str, base_id: str) -> Knowled
     return library
 
 
+def lineage_head(
+    session: Session, workspace_id: str, base_id: str, lineage_id: str,
+) -> Artifact | None:
+    return session.scalar(
+        select(Artifact)
+        .where(
+            Artifact.lineage_id == lineage_id,
+            Artifact.workspace_id == workspace_id,
+            Artifact.knowledge_base_id == base_id,
+        )
+        .order_by(Artifact.version_number.desc())
+        .limit(1)
+    )
+
+
 def output_version(
     session: Session, workspace_id: str, base_id: str, artifact_id: str, *, latest: bool
 ) -> Artifact:
@@ -93,16 +108,7 @@ def output_version(
     if found is None:
         raise LookupError(f"Artifact {artifact_id} was not found in this Knowledge Base")
     if latest:
-        head = session.scalar(
-            select(Artifact)
-            .where(
-                Artifact.lineage_id == found.lineage_id,
-                Artifact.workspace_id == workspace_id,
-                Artifact.knowledge_base_id == base_id,
-            )
-            .order_by(Artifact.version_number.desc())
-            .limit(1)
-        )
+        head = lineage_head(session, workspace_id, base_id, found.lineage_id)
         if head is None or head.id != found.id:
             raise ArtifactConflictError(
                 "That is not the latest version of this output. Open the latest one."

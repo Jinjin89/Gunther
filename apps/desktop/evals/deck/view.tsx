@@ -8,7 +8,6 @@ import "../../src/design/tokens.css";
 import "../../src/design/primitives.css";
 import "../../src/design/prose.css";
 import "../../src/outputs/outputs.css";
-import "../../src/outputs/workspace.css";
 
 /** Development page: a studio deck in the app's own SlidesView (arrows, thumbnails, notes). Never part of the app. */
 const fixtures = import.meta.glob("../../src/outputs/deck/fixtures/*.md", { query: "?raw", import: "default", eager: true }) as Record<string, string>;

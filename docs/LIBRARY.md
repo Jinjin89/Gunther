@@ -1,12 +1,14 @@
 # Library
 
-Capture goes to Inbox or directly to a library. File or move an item from its detail page. A source can be filed in more than one library. The Contents tree arranges sections and source placements while keeping each source's identity.
+Capture goes to Inbox or directly to a library. File or move an item from its detail page. A source can be filed in more than one library.
 
-## Contents and search
+## Sources, Chat and Studio
 
-- Create, rename and nest sections. Drag or move sources into a section and order its children. A source with no placement remains in the library. Deleting a section clears those placements and keeps the sources. The API uses stable IDs and rejects conflicting orders.
+- The Sources column has the library's sections and sources. Create, rename and nest sections. Drag or move sources into a section and order its children. A source with no placement remains in the library. Deleting a section clears those placements and keeps the sources. The API uses stable IDs and rejects conflicting orders.
+- Tick sources to choose material for Chat and new Studio outputs. A section tick selects its descendant sources, including those under collapsed sections. All sources includes additions to the library. The library remembers its selection across chats. Select at least one source to send a question or start an output from a selection.
+- Click a source title to see its summary and paper details in the middle. Open full page opens the source reader. Back to chat restores the open conversation and draft. Studio tiles start builds, and Studio cards open saved or running outputs. [Output guide](OUTPUTS.md)
 - Home search crosses libraries. Use `@` to narrow it, or use search within a library. Exact text uses SQLite full-text search. The installed local embedding model adds search by meaning with sqlite-vec. Source, section and selected-source scopes restrict eligible passages.
-- Topic suggestions use terms present across the library's documents. Analysis writes the overview when a model is configured. The existing overview is available while an update fails or needs a key. Use Retry after the failure is resolved.
+- Suggest sections groups unplaced papers by shared terms when enough papers are available.
 
 ## Readings and provenance
 

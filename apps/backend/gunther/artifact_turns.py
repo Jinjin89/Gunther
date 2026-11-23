@@ -20,6 +20,7 @@ from gunther.artifact_versions import (
     ArtifactConflictError,
     commit_version,
     earlier_output,
+    lineage_head,
     output_library,
     output_version,
 )
@@ -200,7 +201,8 @@ class ArtifactTurns:
         and does that, in small steps, until it asks, answers, saves a version or replies.
 
         The workspace of the conversation is brought in line with each artifact's newest
-        version first (a hand edit may have changed it). Searches use the conversation's scope.
+        version first (a hand edit may have changed it). A targeted turn reads from the output's
+        scope, including any explicit update for that lineage.
         Whatever ends the turn, the workspace keeps the progress made, except that a version is
         saved only by a turn that ends with one. Sending the same ``clientRequestId`` again
         returns the result of the first try. ``events`` hears the progress and may raise to stop.
@@ -273,21 +275,11 @@ class ArtifactTurns:
                 brief.model_copy(deep=True),
                 {work.key: work.spec.model_copy(deep=True) for work in workspace.works},
             )
-            scope = build_scope if build_scope is not None else self._conversation_scope(row)
-            if material is None:
-                material = self._output_material(session, base_id, scope, strict=build is not None)
-            tool = self._output_search_tool(
-                session, list(material.source_revisions), f"{library.title}: {library.question}"
-            )
-            web, web_reason = self._web_tool(web_enabled)
-            pinned_keys = {item.key for item in material.seeds}
-            reader = self._source_reader(
-                session, material.source_revisions, pinned_keys=pinned_keys,
-            )
             versions: dict[str, int] = {}
             saved: dict[str, str] = {}
             heads: dict[str, str] = {}
             target = payload.target_lineage_id
+            target_scope = None
             reuse_plan = False
             works: dict[str, workspaces.Work | None] = {
                 w.key: w for w in workspace.works if not w.key.startswith("draft_")
@@ -295,13 +287,7 @@ class ArtifactTurns:
             if target is not None:
                 works.setdefault(target, None)
             for lineage, work in works.items():
-                head = session.scalar(
-                    select(Artifact).where(
-                        Artifact.lineage_id == lineage,
-                        Artifact.workspace_id == workspace_id,
-                        Artifact.knowledge_base_id == base_id,
-                    ).order_by(Artifact.version_number.desc()).limit(1)
-                )
+                head = lineage_head(session, workspace_id, base_id, lineage)
                 if lineage == target:
                     prior = json.loads(head.provenance_json) if head else {}
                     owner = prior.get("conversation_id") or conversation_id
@@ -327,6 +313,8 @@ class ArtifactTurns:
                     continue
                 checks = latest_check_records(session, head)
                 shown = artifact_detail(session, head, check_records=checks)
+                if lineage == target:
+                    target_scope = workspace.refinement_scopes.get(lineage) or shown.scope
                 if work is None:
                     workspaces.import_work(shown, checks, workspace, brief)
                 else:
@@ -334,6 +322,17 @@ class ArtifactTurns:
                 versions[lineage], saved[lineage], heads[lineage] = (
                     shown.version_number, shown.content, head.id,
                 )
+            scope = build_scope or target_scope or self._conversation_scope(row)
+            if material is None:
+                material = self._output_material(session, base_id, scope, strict=build is not None)
+            tool = self._output_search_tool(
+                session, list(material.source_revisions), f"{library.title}: {library.question}"
+            )
+            web, web_reason = self._web_tool(web_enabled)
+            pinned_keys = {item.key for item in material.seeds}
+            reader = self._source_reader(
+                session, material.source_revisions, pinned_keys=pinned_keys,
+            )
             history = self._turn_history(session, row.id, agent_limits.history)
             budget = RunBudget(
                 agent_limits.searches,
@@ -693,6 +692,7 @@ class ArtifactTurns:
             asked = utc_now()
             if workspace is not None:
                 stored, now = self._load_workspace(row)
+                workspace.refinement_scopes = stored.refinement_scopes
                 brief = workspaces.keep_edits(began[0], brief, now)
                 theirs = {work.key: work.spec for work in stored.works}
                 for work in workspace.works:

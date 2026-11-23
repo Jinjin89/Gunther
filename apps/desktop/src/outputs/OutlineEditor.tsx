@@ -30,12 +30,12 @@ export function OutlineEditor({ outline, label, max, busy, onRebuild, review }: 
   outline: OutlineItem[];
   /** "sections" or "slides". */
   label: string;
-  max: number;
+  max?: number | undefined;
   busy: boolean;
   onRebuild: (outline: OutlineItem[]) => void;
   review?: SkillRun["outlineReview"];
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(outline);
   useEffect(() => {
@@ -91,7 +91,7 @@ export function OutlineEditor({ outline, label, max, busy, onRebuild, review }: 
         </li>)}
       </ol>
       <footer>
-        <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={draft.length >= max} onClick={() => setDraft((current) => [...current, { ...(label === "slides" ? { id: newOutlineId() } : {}), heading: "", goal: "" }])}><Plus size={13} />Add</button>
+        <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={max !== undefined && draft.length >= max} onClick={() => setDraft((current) => [...current, { ...(label === "slides" ? { id: newOutlineId() } : {}), heading: "", goal: "" }])}><Plus size={13} />Add</button>
         <span>
           <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => { setDraft(outline); setEditing(false); }}>Cancel</button>
           <button type="button" className="gx-btn gx-btn-primary gx-btn-sm" disabled={busy || usable.length === 0} onClick={() => onRebuild(usable.map(({ id, heading, goal }) => ({

@@ -3,16 +3,15 @@ import userEvent from "@testing-library/user-event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AtlasTitlebar } from "./AtlasChrome";
-import { LibraryWorkspaceNavigation } from "./LibraryWorkspaceNavigation";
+import { LibraryActions } from "./LibraryActions";
 
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: vi.fn() }));
 
 function setup() {
-  const onMode = vi.fn();
   const onEdit = vi.fn();
   const onExport = vi.fn();
-  render(<AtlasTitlebar path={[{ label: "Libraries", onClick: vi.fn() }, { label: "Test library" }]} theme="light" onHome={vi.fn()} onSearch={vi.fn()} onCapture={vi.fn()} onTheme={vi.fn()} navigation={<LibraryWorkspaceNavigation mode="contents" onMode={onMode} onEdit={onEdit} onExport={onExport} />} />);
-  return { onMode, onEdit, onExport };
+  render(<AtlasTitlebar path={[{ label: "Libraries", onClick: vi.fn() }, { label: "Test library" }]} theme="light" onHome={vi.fn()} onSearch={vi.fn()} onCapture={vi.fn()} onTheme={vi.fn()} navigation={<LibraryActions onEdit={onEdit} onExport={onExport} />} />);
+  return { onEdit, onExport };
 }
 
 afterEach(() => {
@@ -21,12 +20,9 @@ afterEach(() => {
 });
 
 describe("library titlebar", () => {
-  it("switches library views and keeps library operations accessible", async () => {
+  it("keeps library operations accessible", async () => {
     const user = userEvent.setup();
-    const { onMode, onEdit, onExport } = setup();
-    expect(screen.getByRole("button", { name: "Contents" })).toHaveAttribute("aria-current", "page");
-    await user.click(screen.getByRole("button", { name: "Artifacts" }));
-    expect(onMode).toHaveBeenCalledWith("outputs");
+    const { onEdit, onExport } = setup();
     await user.click(screen.getByRole("button", { name: "Library actions" }));
     await user.click(screen.getByRole("menuitem", { name: "Edit library details" }));
     expect(onEdit).toHaveBeenCalledOnce();
@@ -42,7 +38,6 @@ describe("library titlebar", () => {
     vi.mocked(getCurrentWindow).mockReturnValue({ startDragging: drag } as unknown as ReturnType<typeof getCurrentWindow>);
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
     setup();
-    fireEvent.mouseDown(screen.getByRole("button", { name: "Artifacts" }), { button: 0 });
     fireEvent.mouseDown(screen.getByRole("button", { name: "Library actions" }), { button: 0 });
     expect(drag).not.toHaveBeenCalled();
     fireEvent.mouseDown(screen.getByText("Test library"), { button: 0 });

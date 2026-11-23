@@ -134,7 +134,7 @@ describe("matching skills", () => {
 function Session({ onSend }: { onSend: (value: string, skill: string | null) => void }) {
   const [value, setValue] = useState("");
   const [skill, setSkill] = useState<string | null>(null);
-  return <Composer value={value} sending={false} sourceCount={0} chapterTitle={undefined} onChange={setValue} onSend={() => onSend(value, skill)} onStop={vi.fn()} onSources={vi.fn()} readOnly={false} ready skill={skill} onSkillChange={setSkill} />;
+  return <Composer value={value} sending={false} sourceCount={0} onChange={setValue} onSend={() => onSend(value, skill)} onStop={vi.fn()} onSources={vi.fn()} readOnly={false} ready skill={skill} onSkillChange={setSkill} />;
 }
 
 describe("the / menu in the session composer", () => {

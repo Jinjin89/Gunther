@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { ArrowUpRight, AudioLines, BookOpenText, Camera, ChevronRight, FileText, FolderPlus, Inbox, Link2, NotebookText, Plus, Table2, type LucideIcon } from "lucide-react";
 import type { SourceKind } from "@gunther/contracts";
@@ -55,10 +55,20 @@ export function TitleEditor({ value, label, onSave, onCancel }: { value: string;
     onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} />;
 }
 
+export function ScopeTick({ label, checked, mixed = false, disabled, onCheck }: {
+  label: string; checked: boolean; mixed?: boolean; disabled?: boolean; onCheck: (checked: boolean) => void;
+}) {
+  const box = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (box.current) box.current.indeterminate = mixed; }, [mixed]);
+  return <input ref={box} type="checkbox" className="contents-check" aria-label={label}
+    checked={checked} disabled={disabled} onClick={(event) => event.stopPropagation()}
+    onDoubleClick={(event) => event.stopPropagation()} onChange={(event) => onCheck(event.target.checked)} />;
+}
+
 /** A section heading: toggle, title, its note, a count when closed, then + and ⋯ on hover. */
-export function SectionRow({ row, dragDisabled, drop, current, editing, canAsk, actions, onFocus, onToggle, onSave, onCancel }: CommonProps & {
-  current: boolean; editing: boolean; canAsk: boolean; actions: SectionActions;
-  onFocus: () => void; onToggle: () => void; onSave: (title: string) => void; onCancel: () => void;
+export function SectionRow({ row, dragDisabled, drop, editing, scope, actions, onToggle, onSave, onCancel }: CommonProps & {
+  editing: boolean; scope: { checked: boolean; mixed: boolean; disabled: boolean; onCheck: (checked: boolean) => void };
+  actions: SectionActions; onToggle: () => void; onSave: (title: string) => void; onCancel: () => void;
 }) {
   const { ref, listeners, dragging } = useRowDnd(row, dragDisabled || editing);
   if (row.node?.type !== "section") return null;
@@ -68,16 +78,17 @@ export function SectionRow({ row, dragDisabled, drop, current, editing, canAsk, 
     if (event.key === "F2") { event.preventDefault(); actions.onRename(); }
   };
   return <div ref={ref} {...listeners} role="presentation"
-    className={`contents-row contents-section is-level-${level}${current ? " is-current" : ""}${dragging ? " is-dragging" : ""}${markClass(drop)}`}
-    data-row={row.key} onClick={onFocus} onDoubleClick={editing ? undefined : actions.onRename}>
+    className={`contents-row contents-section is-level-${level}${dragging ? " is-dragging" : ""}${markClass(drop)}`}
+    data-row={row.key}>
     <Guides depth={row.depth} />
     <button type="button" className={`contents-toggle${row.collapsed ? "" : " is-open"}`} aria-expanded={!row.collapsed} aria-label={`${row.collapsed ? "Expand" : "Collapse"} ${section.title}`}
       onClick={(event) => { event.stopPropagation(); onToggle(); }} onDoubleClick={(event) => event.stopPropagation()}><ChevronRight size={14} /></button>
+    <ScopeTick label={`Select sources in ${section.title}`} {...scope} />
     {editing
       ? <TitleEditor value={section.title} label="Section name" onSave={onSave} onCancel={onCancel} />
       : <span className="contents-line">
         <span role="heading" aria-level={level + 1} className="contents-heading">
-          <button type="button" className="contents-main" data-focus={row.key} aria-current={current || undefined} onKeyDown={keys}>{section.title}</button>
+          <button type="button" className="contents-main-btn" data-focus={row.key} onClick={onToggle} onKeyDown={keys}>{section.title}</button>
         </span>
         {section.description && <span className="contents-note">{section.description}</span>}
       </span>}
@@ -87,7 +98,7 @@ export function SectionRow({ row, dragDisabled, drop, current, editing, canAsk, 
         { label: "Sub-section", icon: FolderPlus, onSelect: actions.onAddSubsection },
         { label: "Sources from this library…", icon: FileText, onSelect: actions.onAddSources },
       ]} />
-      <SectionMenu title={section.title} actions={actions} canAsk={canAsk} />
+      <SectionMenu title={section.title} actions={actions} />
     </span>}
   </div>;
 }
@@ -115,34 +126,25 @@ export function EmptyRow({ row, drop, onAddSources, onAddSubsection }: { row: Ro
   </div>;
 }
 
-/**
- * A source: checkbox, kind icon, title and one grey detail. A click shows it in the side
- * panel; a double click, Enter or the ↗ button opens it.
- */
-export function SourceRow({ row, dragDisabled, drop, current, selected, selecting, editing, onClick, onCheck, onOpen, onRename, onSave, onCancel, onMove, onTakeOut }: CommonProps & {
-  current: boolean; selected: boolean; selecting: boolean; editing: boolean;
-  onClick: (event: MouseEvent) => void; onCheck: (shift: boolean) => void; onOpen: () => void;
+export function SourceRow({ row, dragDisabled, drop, current, checked, editing, onSelect, onCheck, onOpen, onRename, onSave, onCancel, onMove, onTakeOut }: CommonProps & {
+  current: boolean; checked: boolean; editing: boolean;
+  onSelect: () => void; onCheck: (checked: boolean) => void; onOpen: () => void;
   onRename: () => void; onSave: (title: string) => void; onCancel: () => void; onMove: () => void; onTakeOut: () => void;
 }) {
   const { ref, listeners, dragging } = useRowDnd(row, dragDisabled || editing);
   const source = row.source;
   if (!source) return null;
   const Icon = kindIcon[source.kind];
-  const keys = (event: KeyboardEvent) => {
-    if (event.key === "Enter") { event.preventDefault(); onOpen(); }
-    if (event.key === "F2") { event.preventDefault(); onRename(); }
-  };
   return <div ref={ref} {...listeners} role="presentation"
-    className={`contents-row contents-source-row${current ? " is-current" : ""}${selected ? " is-selected" : ""}${selecting ? " is-selecting" : ""}${dragging ? " is-dragging" : ""}${markClass(drop)}`}
-    data-row={row.key} onClick={editing ? undefined : onClick} onDoubleClick={editing ? undefined : onOpen}>
+    className={`contents-row contents-source-row${current ? " is-current" : ""}${dragging ? " is-dragging" : ""}${markClass(drop)}`}
+    data-row={row.key}>
     <Guides depth={row.depth} />
-    <input type="checkbox" className="contents-check" aria-label={`Select ${source.title}`} checked={selected}
-      onClick={(event) => { event.stopPropagation(); onCheck(event.shiftKey); }} onDoubleClick={(event) => event.stopPropagation()} onChange={() => undefined} />
+    <ScopeTick label={`Select ${source.title}`} checked={checked} onCheck={onCheck} />
     {editing
       ? <span className="contents-source is-editing"><span className={`gx-kind-icon kind-${source.kind}`}><Icon size={13} /></span><TitleEditor value={source.title} label="Source name" onSave={onSave} onCancel={onCancel} /></span>
-      : <button type="button" className="contents-source" data-focus={row.key} aria-current={current || undefined} onKeyDown={keys}>
+      : <button type="button" className="contents-source" data-focus={row.key} aria-current={current || undefined} onClick={onSelect} onKeyDown={(event) => { if (event.key === "F2") { event.preventDefault(); onRename(); } }}>
         <span className={`gx-kind-icon kind-${source.kind}`}><Icon size={13} /></span>
-        <strong>{source.title}</strong>
+        <strong title={source.title}>{source.title}</strong>
         <span className={`contents-detail${source.processing === "failed" ? " is-failed" : ""}${source.processing === "reading" ? " is-reading" : ""}`}>{rowDetail(source)}</span>
       </button>}
     {!editing && <span className="contents-actions">

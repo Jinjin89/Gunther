@@ -51,7 +51,7 @@ from gunther.outputs import (
     section_hash,
     split_document,
 )
-from gunther.schemas import ArtifactOut, ConversationCitationOut, OutlineItem
+from gunther.schemas import ArtifactOut, ConversationCitationOut, OutlineItem, OutputScope
 from gunther.slide_scene import rebind_graphics_hash
 
 logger = logging.getLogger(__name__)
@@ -235,6 +235,7 @@ class Workspace(BaseModel):
 
     pool: list[dict] = Field(default_factory=list)  # citations; ``ref`` is the pool number
     works: list[Work] = Field(default_factory=list)
+    refinement_scopes: dict[str, OutputScope] = Field(default_factory=dict)
     active: str | None = None  # a work key
     pending: Pending | None = None
     log: list[str] = Field(default_factory=list)  # the change log, oldest first

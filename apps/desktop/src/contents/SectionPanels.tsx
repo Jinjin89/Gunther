@@ -1,8 +1,6 @@
 import { useEffect, useState } from "react";
-import type { TopicOverview, TopicSuggestion, TopicSuggestions } from "@gunther/contracts";
-import { ApiRequestError, knowledgeApi } from "../api";
-import { openSettings } from "../components/SettingsLayout";
-import { MarkdownView } from "../components/markdown/MarkdownView";
+import type { TopicSuggestion, TopicSuggestions } from "@gunther/contracts";
+import { knowledgeApi } from "../api";
 
 const plural = (count: number, word: string) => `${count.toLocaleString()} ${word}${count === 1 ? "" : "s"}`;
 const message = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
@@ -52,60 +50,5 @@ export function SectionSuggestions({ baseId, onCreated, onClose }: { baseId: str
       <ul>{item.examples.map((title) => <li key={title}>{title}</li>)}</ul>
       <button type="button" className="gx-btn gx-btn-primary gx-btn-sm" disabled={creating !== undefined} onClick={() => void create(item)}>{creating === item.key ? "Creating…" : "Create section"}</button>
     </article>)}</div>
-  </section>;
-}
-
-/** A section's saved synthesis and the controls for requesting another version. */
-export function SectionOverview({ baseId, section, paperCount, onOpenSource }: { baseId: string; section: { id: string; title: string }; paperCount: number; onOpenSource?: ((id: string) => void) | undefined }) {
-  const [overview, setOverview] = useState<TopicOverview | null>(null);
-  const [state, setState] = useState<"loading" | "none" | "ready" | "writing">("loading");
-  const [error, setError] = useState<{ message: string; action: "load" | "write" | "settings" }>();
-  const [readAttempt, setReadAttempt] = useState(0);
-
-  useEffect(() => {
-    let active = true;
-    setError(undefined);
-    setState("loading");
-    void knowledgeApi.topicOverview(baseId, section.id).then((next) => {
-      if (active) { setOverview(next); setState("ready"); }
-    }).catch((reason) => {
-      if (!active) return;
-      setState("none");
-      if (!(reason instanceof ApiRequestError && reason.status === 404)) {
-        setError({ message: message(reason, "The overview could not be loaded."), action: "load" });
-      }
-    });
-    return () => { active = false; };
-  }, [baseId, section.id, readAttempt]);
-
-  const write = async () => {
-    setState("writing"); setError(undefined);
-    try {
-      setOverview(await knowledgeApi.writeTopicOverview(baseId, section.id));
-      setState("ready");
-    } catch (reason) {
-      setError({
-        message: message(reason, "The overview could not be written."),
-        action: reason instanceof ApiRequestError && reason.status === 409 ? "settings" : "write",
-      });
-      setState(overview ? "ready" : "none");
-    }
-  };
-
-  const stale = overview !== null && overview.sourceCount !== paperCount;
-  return <section className="contents-overview" aria-label={`Overview of ${section.title}`}>
-    {state === "loading" && <p>Loading overview…</p>}
-    {state === "none" && !error && <p>{paperCount ? "Write a cited synthesis from the abstracts." : "Put papers in this section to write its overview."}</p>}
-    {overview && <>
-      <small>{overview.method === "local" ? "From the papers’ own abstracts" : `Written by ${overview.method.replace(/^deepseek:/, "DeepSeek:").replace(":", " ")} from the abstracts`} · {new Date(overview.createdAt).toLocaleDateString()}{stale ? " · papers changed since" : ""}</small>
-      <MarkdownView source={overview.markdown} headingLevel={3} className="contents-overview-text" />
-      {overview.citations.length > 0 && <ol className="contents-overview-sources">{overview.citations.map((citation) => <li key={citation.number} value={citation.number}>
-        {onOpenSource ? <button type="button" className="contents-link" onClick={() => onOpenSource(citation.sourceId)}>{citation.sourceTitle}</button> : citation.sourceTitle}
-      </li>)}</ol>}
-    </>}
-    {error && <p role="alert">{error.message}</p>}
-    {error?.action === "settings" && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => openSettings("models")}>Open Settings</button>}
-    {error?.action === "load" && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => setReadAttempt((previous) => previous + 1)}>Retry</button>}
-    {state !== "loading" && paperCount > 0 && (!error || error.action === "write") && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={state === "writing"} onClick={() => void write()}>{state === "writing" ? "Writing…" : error ? "Retry" : overview ? "Rewrite overview" : "Write overview"}</button>}
   </section>;
 }

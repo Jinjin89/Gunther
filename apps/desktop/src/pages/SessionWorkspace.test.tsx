@@ -1,4 +1,4 @@
-import type { ConversationTurn, KnowledgeProposal, KnowledgeSession, KnowledgeUnit, SessionMessage, SourceSummary } from "@gunther/contracts";
+import type { ConversationTurn, KnowledgeProposal, KnowledgeSession, KnowledgeUnit, SessionMessage } from "@gunther/contracts";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,7 +19,6 @@ const renderComposer = (ready: boolean) => {
       value="What does this source support?"
       sending={false}
       sourceCount={0}
-      chapterTitle={undefined}
       onChange={onChange}
       onSend={onSend}
       onStop={vi.fn()}
@@ -55,11 +54,11 @@ describe("Session composer durability boundary", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     const { rerender } = render(
-      <Composer value="" sending={false} sourceCount={0} chapterTitle={undefined} onChange={vi.fn()} onSend={vi.fn()} onStop={vi.fn()} onSources={vi.fn()} readOnly={false} ready web={{ available: false, enabled: false, onChange }} />,
+      <Composer value="" sending={false} sourceCount={0} onChange={vi.fn()} onSend={vi.fn()} onStop={vi.fn()} onSources={vi.fn()} readOnly={false} ready web={{ available: false, enabled: false, onChange }} />,
     );
     expect(screen.getByRole("button", { name: "Web" })).toBeDisabled();
     rerender(
-      <Composer value="" sending={false} sourceCount={0} chapterTitle={undefined} onChange={vi.fn()} onSend={vi.fn()} onStop={vi.fn()} onSources={vi.fn()} readOnly={false} ready web={{ available: true, enabled: false, onChange }} />,
+      <Composer value="" sending={false} sourceCount={0} onChange={vi.fn()} onSend={vi.fn()} onStop={vi.fn()} onSources={vi.fn()} readOnly={false} ready web={{ available: true, enabled: false, onChange }} />,
     );
     await user.click(screen.getByRole("button", { name: "Web" }));
     expect(onChange).toHaveBeenCalledWith(true);
@@ -87,7 +86,7 @@ const sessionWithAnswer = (knowledgeBaseId: string): KnowledgeSession => ({
 
 function renderWorkspace(base: ReturnType<typeof makeBase>, reactStrictMode = false) {
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
-  return render(<SessionWorkspace base={base} onAdd={vi.fn()} onNotify={vi.fn()} />, { reactStrictMode });
+  return render(<SessionWorkspace base={base} onNotify={vi.fn()} />, { reactStrictMode });
 }
 
 function deferred<T>() {
@@ -196,7 +195,6 @@ it("keeps an offline draft editable and opens saved history on reconnect", async
   persistentStorage.setItem(`gunther:ask-draft:${base.id}`, "What does this source support?");
   vi.spyOn(knowledgeApi, "sessions").mockRejectedValueOnce(new ServiceUnavailableError()).mockResolvedValue([session]);
   vi.spyOn(knowledgeApi, "session").mockResolvedValue(session);
-  vi.spyOn(knowledgeApi, "topics").mockRejectedValueOnce(new ServiceUnavailableError()).mockResolvedValue([section]);
   const follow = vi.spyOn(knowledgeApi, "followAnswer").mockResolvedValue(null);
   vi.spyOn(knowledgeApi, "modelMenu").mockResolvedValue({ models: [], default: null, efforts: [] });
   const create = vi.spyOn(knowledgeApi, "createSession");
@@ -217,7 +215,6 @@ it("keeps an offline draft editable and opens saved history on reconnect", async
 
   await user.click(reconnect);
   expect(await screen.findByText("Markers")).toBeVisible();
-  expect(await screen.findByText(section.title)).toBeVisible();
   expect(draft).toHaveValue("What does this source support? Cite the relevant passage.");
   expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
   expect(screen.queryByRole("button", { name: "Reconnect" })).not.toBeInTheDocument();
@@ -305,34 +302,6 @@ it("opens saved history and can send when proposals fail, with a retry for just 
   expect(history).toHaveBeenCalledTimes(1);
   expect(units).toHaveBeenCalledTimes(1);
   expect(proposals).toHaveBeenCalledTimes(2);
-});
-
-it("refreshes sources once after capture notifications arrive during a pending read", async () => {
-  const user = userEvent.setup();
-  const base = makeBase({ id: "capture-library", sourceCount: 0 });
-  const session = sessionWithAnswer(base.id);
-  const captured = makeSource({ title: "New field recording" });
-  const firstRead = deferred<SourceSummary[]>();
-  const sources = vi.spyOn(knowledgeApi, "sources").mockReturnValueOnce(firstRead.promise).mockResolvedValue([captured]);
-  vi.spyOn(knowledgeApi, "sessions").mockResolvedValue([session]);
-  vi.spyOn(knowledgeApi, "session").mockResolvedValue(session);
-  vi.spyOn(knowledgeApi, "followAnswer").mockResolvedValue(null);
-  vi.spyOn(knowledgeApi, "modelMenu").mockResolvedValue({ models: [], default: null, efforts: [] });
-  const update = vi.spyOn(knowledgeApi, "updateSession").mockResolvedValue({ ...session, selectedSourceIds: [captured.id] });
-  vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
-
-  renderWorkspace(base);
-  await user.click(screen.getByRole("button", { name: "All sources" }));
-  act(() => {
-    window.dispatchEvent(new CustomEvent("gunther:sources-updated"));
-    window.dispatchEvent(new CustomEvent("gunther:sources-updated"));
-  });
-  expect(sources).toHaveBeenCalledTimes(1);
-
-  await act(async () => firstRead.resolve([]));
-  expect(sources.mock.calls).toEqual([[base.id], [base.id]]);
-  await user.click(await screen.findByRole("button", { name: /New field recording/ }));
-  expect(update).toHaveBeenCalledWith(session.id, { selectedSourceIds: [captured.id] });
 });
 
 it("requires a successful history reload after an early stream close leaves the service unreachable", async () => {

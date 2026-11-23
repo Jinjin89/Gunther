@@ -6,17 +6,24 @@ import { LazySlidesView } from "./LazySlides";
 import { ReportView } from "./ReportView";
 import { restoreUnchangedScenes, withDraft, withoutSceneMarkers } from "./sections";
 
+export function discardOutputEdit(dirty: { current: boolean }): boolean {
+  if (dirty.current && !window.confirm("Discard unsaved changes?")) return false;
+  dirty.current = false;
+  return true;
+}
+
 /**
  * Typing over a version: the Markdown beside a live preview of it. Saving makes the next
  * version exactly as typed; nothing is renumbered or rewritten, and the sections that were
  * typed are marked "not re-checked" until the Checker looks at them again.
  */
-export function EditPane({ artifact, saving, onSave, onCancel, onCite }: {
+export function EditPane({ artifact, saving, onSave, onCancel, onCite, onDirtyChange }: {
   artifact: Artifact;
   saving: boolean;
   onSave: (content: string) => void;
   onCancel: () => void;
   onCite: (citation: ConversationCitation, index: number) => void;
+  onDirtyChange: (dirty: boolean) => void;
 }) {
   const editableOriginal = useMemo(() => artifact.kind === "slides" ? withoutSceneMarkers(artifact.content) : artifact.content, [artifact.content, artifact.kind]);
   const [draft, setDraft] = useState(editableOriginal);
@@ -29,6 +36,7 @@ export function EditPane({ artifact, saving, onSave, onCancel, onCite }: {
   }, [artifact, draft]);
   const preview = useMemo(() => withDraft(artifact, previewContent), [artifact, previewContent]);
   const changed = draft !== editableOriginal;
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
   const typed = preview.sections.filter((section) => !section.checked).length - artifact.sections.filter((section) => !section.checked).length;
   const saveDraft = () => {
     if (artifact.kind !== "slides") { onSave(draft); return; }
@@ -47,7 +55,7 @@ export function EditPane({ artifact, saving, onSave, onCancel, onCite }: {
     </div>
     <div className="outputs-edit-columns">
       <div className="outputs-edit-source">
-        <MarkdownEditor value={draft} onChange={setDraft} ariaLabel={artifact.kind === "slides" ? "Slides, as Markdown" : "Report, as Markdown"} autoFocus maxLength={2_500_000} onEscape={onCancel} onSubmit={() => { if (changed && draft.trim()) saveDraft(); }} />
+        <MarkdownEditor value={draft} onChange={(next) => { setDraft(next); onDirtyChange(next !== editableOriginal); }} ariaLabel={artifact.kind === "slides" ? "Slides, as Markdown" : "Report, as Markdown"} autoFocus maxLength={2_500_000} onEscape={onCancel} onSubmit={() => { if (changed && draft.trim()) saveDraft(); }} />
         {artifact.kind === "slides" && <p className="outputs-edit-hint">A line with only <code>---</code> starts the next slide. A line starting with <code>Note:</code> begins the speaker notes. The comment on a slide's first line, <code>{"<!-- layout: … -->"}</code>, says how it is drawn; keep it with the slide. Scene metadata and a designed slide's drawing are hidden and retained for slides whose source text stays unchanged; a slide whose words you change is drawn by its template again.</p>}
       </div>
       <div className="outputs-edit-preview" aria-label="Preview">

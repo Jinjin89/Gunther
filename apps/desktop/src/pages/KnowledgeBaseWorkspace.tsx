@@ -1,91 +1,105 @@
-import { persistentStorage } from "../persistentStorage";
-import type { OutputActivityOpen } from "@gunther/contracts";
-import { useState } from "react";
+import type { LibraryContents, OutputActivityOpen } from "@gunther/contracts";
 import { ArrowLeft, Camera, FileText, Link2, Mic2, Plus } from "lucide-react";
-import { normalizeAtlasMode, type AtlasMode, type KnowledgeBase } from "../atlas";
-import { knowledgeApi } from "../api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { KnowledgeBase } from "../atlas";
 import { BulkImport } from "../components/BulkImport";
-import { LibraryContents } from "../contents/LibraryContents";
 import { PopMenu } from "../contents/SectionMenu";
-import { LibraryGlyph } from "../design/LibraryGlyph";
-import { LibraryWorkspaceNavigation } from "../components/LibraryWorkspaceNavigation";
-import { OutputsPage } from "../outputs/OutputsPage";
+import { SourceSummary } from "../contents/SourceSummary";
+import { SourceTree } from "../contents/SourceTree";
+import { outputScope, selectedSources, useSourceSelection } from "../contents/sourceScope";
+import { discardOutputEdit } from "../outputs/EditPane";
+import { OpenOutput } from "../outputs/OpenOutput";
+import { StudioColumn } from "../outputs/StudioColumn";
+import { type OutputTarget, useStudio } from "../outputs/useStudio";
+import { persistentStorage } from "../persistentStorage";
 import { SessionWorkspace } from "./SessionWorkspace";
+import "./libraryWorkspace.css";
 
-interface KnowledgeBaseWorkspaceProps {
-  base: KnowledgeBase;
-  workspaceId: string | null;
-  mode: AtlasMode;
-  onMode: (mode: AtlasMode) => void;
-  onBack: () => void;
-  onAdd: (kind?: "note" | "link" | "file" | "image" | "table" | "recording") => void;
-  onRecord: (context: "lecture" | "meeting" | "memo") => void;
-  onExport: () => void;
-  onEdit: () => void;
+type Middle = { kind: "chat" } | { kind: "source"; id: string } | { kind: "output"; target: OutputTarget };
+const chat: Middle = { kind: "chat" };
+const outputKey = (target: OutputTarget) => target.artifactId ? `version:${target.artifactId}`
+  : target.lineageId ? `lineage:${target.lineageId}` : `conversation:${target.conversationId}`;
+
+export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onOpenSource, outputActivity,
+  onOutputActivity, editDirty, onChatVisible }: {
+  base: KnowledgeBase; workspaceId: string | null;
+  onAdd: (kind: "file" | "image" | "link" | "recording") => void;
   onNotify: (message: string) => void;
-  /** Open a source in its own page; `queue` lists this library's sources for J / K. */
-  onOpenSource?: (id: string, queue: string[]) => void;
-  /** The app supplies the navigation in its titlebar; standalone workspaces keep a header. */
-  showHeader?: boolean;
-  previewFocused?: boolean;
-  onPreviewFocus?: (value: boolean) => void;
+  onOpenSource: (id: string, queue: string[]) => void;
   outputActivity?: OutputActivityOpen | null | undefined;
   onOutputActivity?: ((target: OutputActivityOpen) => void) | undefined;
-}
-
-function BaseHeader({ base, mode, onMode, onBack, onExport, onEdit }: Pick<KnowledgeBaseWorkspaceProps, "base" | "mode" | "onMode" | "onBack" | "onExport" | "onEdit">) {
-  return (
-    <header className="base-workspace-header">
-      <button className="base-back" onClick={onBack} aria-label="Back to library"><ArrowLeft size={15} /></button>
-      <LibraryGlyph base={base} size="lg" />
-      <div className="base-title-group">
-        <span>{base.eyebrow}</span>
-        <strong>{base.title}</strong>
-      </div>
-      <LibraryWorkspaceNavigation mode={mode} onMode={onMode} onEdit={onEdit} onExport={onExport} />
-    </header>
-  );
-}
-
-/** The Contents tab: the library's sections and sources as arranged, and a panel about what is chosen. */
-function ContentsView({ base, onAdd, onOpenSource, onAsk, onAskLibrary, onEdit }: Pick<KnowledgeBaseWorkspaceProps, "base" | "onAdd" | "onEdit"> & { onOpenSource: KnowledgeBaseWorkspaceProps["onOpenSource"] | undefined; onAsk: (sectionId: string) => void; onAskLibrary: () => void }) {
-  return <div className="contents-page page-enter">
-    <LibraryContents baseId={base.id} library={{ title: base.title, eyebrow: base.eyebrow, description: base.description }}
-      onOpenSource={(id, queue) => onOpenSource?.(id, queue)} onAsk={onAsk} onAskLibrary={onAskLibrary} onEditLibrary={onEdit}
-      onAddSource={() => onAdd()}
-      toolbarEnd={<>
-        <BulkImport knowledgeBaseId={base.id} compact />
-        <PopMenu label="Add a source" triggerClass="gx-btn gx-btn-primary gx-btn-sm" trigger={<><Plus size={13} />Add source</>} items={[
-          { label: "Document", icon: FileText, onSelect: () => onAdd("file") },
-          { label: "Photo or scan", icon: Camera, onSelect: () => onAdd("image") },
-          { label: "Web page", icon: Link2, onSelect: () => onAdd("link") },
-          { label: "Recording", icon: Mic2, onSelect: () => onAdd("recording") },
-        ]} />
-      </>} />
-  </div>;
-}
-
-export function KnowledgeBaseWorkspace(props: KnowledgeBaseWorkspaceProps) {
-  // The Contents tab replaced Overview and Sources: their old names still open it.
-  const mode = normalizeAtlasMode(props.mode);
-  // A conversation chosen as the material of a new report (from a research answer), used once.
+  editDirty?: { current: boolean };
+  onChatVisible?: (visible: boolean) => void;
+}) {
+  const [contents, setContents] = useState<LibraryContents | null>(null);
+  const [selection, setSelection] = useSourceSelection(base.id);
+  const [middle, setMiddle] = useState<Middle>(() => {
+    const id = persistentStorage.getItem(`gunther:open-source:${base.id}`);
+    return id ? { kind: "source", id } : chat;
+  });
   const [reportFrom, setReportFrom] = useState<string | null>(null);
-  const askSection = async (id: string) => {
-    try {
-      const session = await knowledgeApi.createSession(props.base.id, { focusChapterId: id, selectedSourceIds: [] });
-      persistentStorage.setItem(`gunther:active-session:${props.base.id}`, session.id);
-      props.onMode("ask");
-    } catch (reason) { props.onNotify(reason instanceof Error ? reason.message : "Could not open a conversation about this section."); }
-  };
-  return (
-    <div className={`base-workspace${mode === "outputs" ? " has-outputs-workspace" : ""}`}>
-      {props.showHeader !== false && <BaseHeader {...props} mode={mode} />}
-      <div className="base-workspace-body">
-        {mode === "contents" && <ContentsView base={props.base} onAdd={props.onAdd} onEdit={props.onEdit} onOpenSource={props.onOpenSource} onAsk={(id) => void askSection(id)} onAskLibrary={() => props.onMode("ask")} />}
-        {mode === "ask" && <SessionWorkspace base={props.base} onAdd={props.onAdd} onNotify={props.onNotify} onOpenSource={(id) => props.onOpenSource?.(id, [id])} onMakeReport={(sessionId) => { setReportFrom(sessionId); props.onMode("outputs"); }} />}
-        {mode === "outputs" && <OutputsPage base={props.base} workspaceId={props.workspaceId} focused={props.previewFocused} onFocus={props.onPreviewFocus} onNotify={props.onNotify} onAdd={props.onAdd} onOpenSource={props.onOpenSource} fromDiscussion={reportFrom} onFromDiscussion={() => setReportFrom(null)}
-          outputActivity={props.outputActivity} onOutputActivity={props.onOutputActivity} />}
-      </div>
+  const ownDirty = useRef(false);
+  const dirty = editDirty ?? ownDirty;
+  const sources = contents?.sources ?? [];
+  const sourceIds = selectedSources(selection, sources.map((source) => source.id));
+  const scope = outputScope(selection, sourceIds);
+  const scopeEmpty = selection.mode === "selected" && sourceIds.length === 0;
+  const studio = useStudio(base.id, workspaceId);
+  const tree = useRef<HTMLDivElement>(null);
+  const choose = useCallback((next: Middle) => {
+    if (middle.kind === "output" && next.kind === "output" && outputKey(middle.target) === outputKey(next.target)) return;
+    if (discardOutputEdit(dirty)) setMiddle(next);
+  }, [dirty, middle]);
+  const openOutput = (target: OutputTarget) => choose({ kind: "output", target });
+  const openFullSource = (id: string) => onOpenSource(id, sources.map((source) => source.id));
+
+  useEffect(() => {
+    if (!outputActivity || !workspaceId) return;
+    choose({ kind: "output", target: outputActivity });
+    onOutputActivity?.(outputActivity);
+  }, [choose, onOutputActivity, outputActivity, workspaceId]);
+  useEffect(() => { persistentStorage.removeItem(`gunther:open-source:${base.id}`); }, [base.id]);
+  useEffect(() => {
+    const openChat = (event: Event) => {
+      if ((event as CustomEvent<{ libraryId: string }>).detail?.libraryId === base.id) setMiddle(chat);
+    };
+    window.addEventListener("gunther:open-session", openChat);
+    return () => window.removeEventListener("gunther:open-session", openChat);
+  }, [base.id]);
+  const chatVisible = middle.kind === "chat";
+  useEffect(() => { onChatVisible?.(chatVisible); }, [chatVisible, onChatVisible]);
+
+  const source = middle.kind === "source" ? sources.find((item) => item.id === middle.id) : undefined;
+  const target = middle.kind === "output" ? middle.target : null;
+  return <div className="library-workspace">
+    <div className="library-sources" ref={tree}>
+      <SourceTree baseId={base.id} contents={contents} onContents={setContents} selection={selection} selectedIds={sourceIds}
+        onScope={setSelection} activeSourceId={source?.id ?? null} onSource={(id) => choose({ kind: "source", id })}
+        onOpenSource={onOpenSource} addSource={<>
+          <PopMenu label="Add a source" align="start" triggerClass="gx-btn gx-btn-primary gx-btn-sm" trigger={<><Plus size={14} />Add source</>} items={[
+            { label: "Document", icon: FileText, onSelect: () => onAdd("file") },
+            { label: "Photo or scan", icon: Camera, onSelect: () => onAdd("image") },
+            { label: "Web page", icon: Link2, onSelect: () => onAdd("link") },
+            { label: "Recording", icon: Mic2, onSelect: () => onAdd("recording") },
+          ]} />
+          <BulkImport knowledgeBaseId={base.id} compact />
+        </>} />
     </div>
-  );
+    <section className="library-middle" aria-label="Library workspace">
+      <div className="library-chat" hidden={!chatVisible}>
+        <SessionWorkspace base={contents ? { ...base, sourceCount: sources.length } : base} visible={chatVisible}
+          sourceIds={scope.sourceIds} sourceScopeEmpty={scopeEmpty} onFocusSources={() => tree.current?.querySelector<HTMLInputElement>("input")?.focus()}
+          onNotify={onNotify} onOpenSource={openFullSource} onMakeReport={setReportFrom} />
+      </div>
+      {!chatVisible && <div className="library-middle-page">
+        <div className="library-middle-bar"><button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => choose(chat)}><ArrowLeft size={14} />Back to chat</button></div>
+        {source && <SourceSummary key={source.id} source={source} onOpen={() => openFullSource(source.id)} />}
+        {middle.kind === "source" && !source && <p className="library-reading">{contents ? "Source unavailable." : "Loading source…"}</p>}
+        {target && workspaceId && <OpenOutput key={outputKey(target)} baseId={base.id} workspaceId={workspaceId}
+          target={target} studio={studio} scope={scope} scopeEmpty={scopeEmpty} dirty={dirty} onNotify={onNotify}
+          onOpenSource={openFullSource} onOpen={openOutput} />}
+      </div>}
+    </section>
+    <StudioColumn studio={studio} scope={scope} scopeEmpty={scopeEmpty} disabled={!workspaceId} reportFrom={reportFrom} onReportFrom={() => setReportFrom(null)} onOpen={openOutput} />
+  </div>;
 }

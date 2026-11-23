@@ -68,9 +68,11 @@ it("uses stored metadata and Contents for a library with a former sample ID", as
 
   const libraries = screen.getByRole("region", { name: "Your libraries" });
   await user.click(await within(libraries).findByRole("button", { name: savedLibrary.title }));
-  await user.click(screen.getByRole("button", { name: "Contents" }));
 
   expect(await screen.findByRole("heading", { name: "Autumn field trip" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Sources" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Studio" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Expand Gunther sidebar" })).toBeVisible();
   expect(screen.getByText(savedLibrary.description)).toBeVisible();
   expect(knowledgeApi.contents).toHaveBeenCalledWith(savedLibrary.id);
   expect(screen.queryByText("Single-cell Best Practices · Annotation")).not.toBeInTheDocument();

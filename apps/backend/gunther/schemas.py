@@ -1050,6 +1050,7 @@ class OutputTypeOut(ApiModel):
     description: str
     icon: str
     options: tuple[OutputOption, ...]
+    part_limit: int
 
 
 class OutputRequestInput(ApiModel):
@@ -1343,6 +1344,7 @@ class ArtifactConversationSummaryOut(ApiModel):
 
 class ArtifactConversationOut(ArtifactConversationSummaryOut):
     scope: OutputScope
+    refinement_scopes: dict[str, OutputScope] = Field(default_factory=dict)
     brief: ArtifactBriefOut
     messages: list[ArtifactMessageOut]
     works: list[ArtifactWorkOut]
@@ -1362,6 +1364,7 @@ class CreateArtifactConversationInput(ApiModel):
 class UpdateArtifactConversationInput(ApiModel):
     title: str | None = Field(default=None, min_length=1, max_length=160)
     scope: OutputScope | None = None
+    target_lineage_id: str | None = Field(default=None, min_length=1, max_length=80)
     archived: bool | None = None
 
 

@@ -2,13 +2,11 @@
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { Artifact, KnowledgeSession } from "@gunther/contracts";
-import { knowledgeApi } from "../src/api";
-import type { AtlasMode } from "../src/atlas";
+import { ApiRequestError, knowledgeApi } from "../src/api";
 import { AtlasTitlebar, AtlasRail } from "../src/components/AtlasChrome";
 import { KnowledgeBaseWorkspace } from "../src/pages/KnowledgeBaseWorkspace";
 import { makeBase, makeSource } from "../src/test/fixtures";
-import { OutputsPage } from "../src/outputs/OutputsPage";
-import { LibraryWorkspaceNavigation } from "../src/components/LibraryWorkspaceNavigation";
+import { LibraryActions } from "../src/components/LibraryActions";
 import "../src/atlas.css";
 import "../src/styles.css";
 import "../src/design/tokens.css";
@@ -45,7 +43,7 @@ const report: Artifact = {
   conversationId: "review_study", conversationTitle: "课堂复习与讨论", clientRequestId: "preview_report_request_2", request: "整理一份领导力学习笔记。",
   id: "preview_report_2", workspaceId: "preview_workspace", knowledgeBaseId: base.id,
   lineageId: "preview_report", versionNumber: 2, supersedesArtifactId: "preview_report_1",
-  format: "report", audience: "student", title: "领导力学习笔记",
+  format: "report", audience: "student", outputType: "Report", title: "领导力学习笔记",
   contentHash: "a".repeat(64), manifestHash: "b".repeat(64), acceptedUnitIds: [], unitCount: 0,
   createdAt: "2026-10-13T01:00:00.000Z", kind: "report", style: "overview", origin: "build",
   content: "# 领导力学习笔记\n\n_课堂复习与讨论_\n\n把课程材料整理为可复习、可追问的阅读路径。\n\n## 阅读顺序\n\n1. 从导论建立问题清单。\n2. 对照两段课程，记录类型与情境。\n3. 回到原始转写确认定义和例子。\n\n## 继续追问\n\n哪些观点有明确例子？哪些仍需要更多材料支持？\n\n这是界面预览的示例正文。",
@@ -58,7 +56,7 @@ const report: Artifact = {
   sections: [{ index: 0, heading: "阅读顺序", checked: true, issues: [] }, { index: 1, heading: "继续追问", checked: true, issues: [] }],
 };
 const earlier: Artifact = { ...report, id: "preview_report_1", clientRequestId: "preview_report_request_1", request: "整理课程阅读顺序。", versionNumber: 1, supersedesArtifactId: null, title: "学习笔记初稿" };
-const deck: Artifact = { ...report, id: "preview_slides_1", clientRequestId: "preview_slides_request", request: "再做一份课堂分享的幻灯片。", lineageId: "preview_slides", versionNumber: 1, supersedesArtifactId: null, kind: "slides", format: "slides", style: null, title: "课堂分享", content: "# 领导力与执行力\n\n从课程到问题，再回到证据。\n\n---\n\n## 阅读路径\n\n- 导论\n- 类型比较\n- 回到证据", outline: [], sections: [] };
+const deck: Artifact = { ...report, id: "preview_slides_1", clientRequestId: "preview_slides_request", request: "再做一份课堂分享的幻灯片。", lineageId: "preview_slides", versionNumber: 1, supersedesArtifactId: null, kind: "slides", format: "slides", style: "slides", outputType: "Slides", title: "课堂分享", content: "# 领导力与执行力\n\n从课程到问题，再回到证据。\n\n---\n\n## 阅读路径\n\n- 导论\n- 类型比较\n- 回到证据", outline: [], sections: [] };
 const artifacts = [report, deck, earlier];
 const conversations: KnowledgeSession[] = [];
 const findArtifact = (id: string) => {
@@ -81,6 +79,12 @@ Object.assign(knowledgeApi, {
   topics: async () => [],
   contents: async () => contents,
   artifacts: async () => [...artifacts],
+  outputTypes: async () => [
+    { id: "report", label: "Report", shape: "report", icon: "FileText", options: ["focus", "audience", "length", "language"], partLimit: 8 },
+    { id: "slides", label: "Slides", shape: "slides", icon: "Presentation", options: ["focus", "audience", "length", "language", "use"], partLimit: 14 },
+  ],
+  artifactConversations: async () => [],
+  artifactConversation: async () => { throw new ApiRequestError("Sample conversation unavailable", 404); },
   artifact: async (_base: string, id: string) => findArtifact(id),
   followArtifactTurn: async () => null,
   health: async () => ({ webSearchMode: "off" }),
@@ -101,31 +105,23 @@ Object.assign(knowledgeApi, {
 });
 
 function WorkspacePreview() {
-  const [mode, setMode] = useState<AtlasMode>("outputs");
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [notice, setNotice] = useState("");
-  const [previewFocused, setPreviewFocused] = useState(false);
-  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   const [sidebarPreference, setSidebarPreference] = useState<"expanded" | "collapsed" | null>(() => {
     try { const saved = window.localStorage.getItem("gunther:preview:sidebar"); return saved === "expanded" || saved === "collapsed" ? saved : null; } catch { return null; }
   });
   useEffect(() => {
-    const resized = () => setWindowWidth(window.innerWidth);
-    window.addEventListener("resize", resized); return () => window.removeEventListener("resize", resized);
-  }, []);
-  useEffect(() => {
     try { if (sidebarPreference) window.localStorage.setItem("gunther:preview:sidebar", sidebarPreference); else window.localStorage.removeItem("gunther:preview:sidebar"); } catch { /* The toggle remains usable without storage. */ }
   }, [sidebarPreference]);
-  const sidebarCollapsed = previewFocused || (sidebarPreference ? sidebarPreference === "collapsed" : mode === "outputs" || windowWidth < 1100);
-  const navigate = (next: AtlasMode) => { setPreviewFocused(false); setMode(next); };
+  const sidebarCollapsed = sidebarPreference !== "expanded";
   const inform = () => setNotice("Sample preview · no changes to your library");
-  return <div className={`app-shell atlas-app-shell has-adaptive-sidebar${mode === "outputs" ? " conversation-preview-shell" : ""}${sidebarCollapsed ? " is-sidebar-collapsed" : " is-sidebar-expanded"}`}>
-    <AtlasTitlebar path={[{ label: "Libraries", onClick: () => navigate("contents") }, { label: base.title }]} theme={theme} navigation={<LibraryWorkspaceNavigation mode={mode} onMode={navigate} onEdit={inform} onExport={inform} />} status={<span className="gx-save-state">Sample library</span>} sidebarCollapsed={sidebarCollapsed} onHome={() => navigate("contents")} onSearch={inform} onCapture={inform} onSidebar={() => { setPreviewFocused(false); setSidebarPreference(sidebarCollapsed ? "expanded" : "collapsed"); }}
+  return <div className={`app-shell atlas-app-shell has-adaptive-sidebar${sidebarCollapsed ? " is-sidebar-collapsed" : " is-sidebar-expanded"}`}>
+    <AtlasTitlebar path={[{ label: "Libraries", onClick: inform }, { label: base.title }]} theme={theme} navigation={<LibraryActions onEdit={inform} onExport={inform} />} status={<span className="gx-save-state">Sample library</span>} sidebarCollapsed={sidebarCollapsed} onHome={inform} onSearch={inform} onCapture={inform} onSidebar={() => setSidebarPreference(sidebarCollapsed ? "expanded" : "collapsed")}
       onTheme={() => { const next = theme === "light" ? "dark" : "light"; document.documentElement.dataset.theme = next; setTheme(next); }} />
     <div className="atlas-app-body">
-      <AtlasRail active="base" inboxCount={0} bases={[base, makeBase({ id: "preview_biology", title: "Biology", color: "blue" })]} activeBaseId={base.id} profileName="UI review" onNavigate={() => navigate("contents")} onOpenBase={() => navigate("contents")} onSidebarAuto={() => setSidebarPreference(null)} sidebarAutomatic={sidebarPreference === null} />
+      <AtlasRail active="base" inboxCount={0} bases={[base, makeBase({ id: "preview_biology", title: "Biology", color: "blue" })]} activeBaseId={base.id} profileName="UI review" onNavigate={inform} onOpenBase={inform} onSidebarAuto={() => setSidebarPreference(null)} sidebarAutomatic={sidebarPreference === null} />
       <main className="atlas-workspace">
-        {mode === "outputs" ? <OutputsPage base={base} workspaceId="preview_workspace" onNotify={setNotice} onAdd={inform} focused={previewFocused} onFocus={setPreviewFocused} allowVoiceInput={false} /> : <KnowledgeBaseWorkspace showHeader={false} base={base} workspaceId="preview_workspace" mode={mode} onMode={navigate} onBack={() => navigate("contents")} onAdd={inform} onRecord={inform} onExport={inform} onEdit={inform} onNotify={setNotice} onOpenSource={inform} />}
+        <KnowledgeBaseWorkspace base={base} workspaceId="preview_workspace" onAdd={inform} onNotify={setNotice} onOpenSource={inform} />
       </main>
     </div>
     {notice && <div className="gx-toast" role="status" onClick={() => setNotice("")}>{notice}</div>}

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, aliased
 
 from gunther import artifact_workspace as workspaces
 from gunther.artifact_read import artifact_detail, latest_check_records
-from gunther.artifact_versions import ArtifactConflictError, output_library
+from gunther.artifact_versions import ArtifactConflictError, lineage_head, output_library
 from gunther.database import session_scope
 from gunther.models import Artifact, ArtifactConversation, ArtifactMessage, utc_now
 from gunther.output_types import output_type_for
@@ -252,6 +252,7 @@ class ArtifactConversations:
                 row, workspace, self._last_artifact_turn(reversed(messages)),
             ).model_dump(),
             scope=self._conversation_scope(row),
+            refinement_scopes=workspace.refinement_scopes,
             brief=self._artifact_brief_out(brief),
             messages=[self._artifact_message_out(message) for message in messages],
             works=[self._artifact_work_out(work, brief) for work in workspace.works],
@@ -617,9 +618,22 @@ class ArtifactConversations:
                 if not title:
                     raise ValueError("title must not be blank")
                 row.title = title[:160]
+            if payload.target_lineage_id and payload.scope is None:
+                raise ValueError("Choose a scope for this output.")
             if payload.scope is not None:
                 self._resolve_output_scope(session, base_id, payload.scope)
-                row.scope_json = json.dumps(payload.scope.model_dump())
+                if payload.target_lineage_id is None:
+                    row.scope_json = json.dumps(payload.scope.model_dump())
+                else:
+                    lineage_id = payload.target_lineage_id
+                    head = lineage_head(session, workspace_id, base_id, lineage_id)
+                    provenance = json.loads(head.provenance_json) if head else {}
+                    if head is None or provenance.get("conversation_id") not in (None, row.id):
+                        raise LookupError("This artifact was not found in this conversation.")
+                    self._require_agent_output(head)
+                    workspace, brief = self._load_workspace(row)
+                    workspace.refinement_scopes[lineage_id] = payload.scope
+                    self._store_workspace(row, workspace, brief)
             if payload.archived is not None:
                 row.archived = payload.archived
             row.updated_at = utc_now()

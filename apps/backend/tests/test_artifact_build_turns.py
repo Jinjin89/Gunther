@@ -425,6 +425,59 @@ def test_target_lineage_imports_and_refines_the_named_output(tmp_path):
         assert refused[-1][1]["status"] == 404 and len(fake.requests) == calls
 
 
+def test_refinement_uses_each_outputs_scope_and_allows_an_explicit_update(tmp_path, monkeypatch):
+    fake = FakeProvider(lambda request: router(request, DECK.replace("[2]", "[1]")))
+    with app_for(tmp_path, fake) as client:
+        passage = " ".join(PASSAGES)
+        base, sources = library(client, notes={"First": passage, "Second": passage})
+        cid = create(client, base)["id"]
+        headers = workspace(client)
+        first_scope = {"mode": "selection", "sourceIds": [sources["First"]]}
+        second_scope = {"mode": "selection", "sourceIds": [sources["Second"]]}
+        first = done(turn(
+            client, base, cid, "", "build", build={"type": "briefing", "scope": first_scope},
+        ))["artifact"]
+        second = done(turn(
+            client, base, cid, "", "build", build={"type": "slides", "scope": second_scope},
+        ))["artifact"]
+        service = client.app.state.knowledge_service
+        material = service._output_material
+        used = []
+
+        def record(session, base_id, scope, **options):
+            used.append(scope.source_ids)
+            return material(session, base_id, scope, **options)
+
+        monkeypatch.setattr(service, "_output_material", record)
+
+        def refine(artifact):
+            fake.replies[:] = [script([{"actions": [{"do": "reply", "text": "Reviewed."}]}])]
+            return done(turn(
+                client, base, cid, "Review the evidence", targetLineageId=artifact["lineageId"],
+            ))
+
+        refine(first)
+        refine(second)
+        assert used == [first_scope["sourceIds"], second_scope["sourceIds"]]
+        path = conversations(base, f"/{cid}")
+        before = client.get(path, headers=headers).raise_for_status().json()
+        requested = {"mode": "selection", "sourceIds": list(sources.values())}
+        update = {"targetLineageId": first["lineageId"], "scope": requested}
+        other = create(client, base, "other")["id"]
+        refused = client.patch(conversations(base, f"/{other}"), headers=headers, json=update)
+        assert refused.status_code == 404
+        changed = client.patch(path, headers=headers, json=update).raise_for_status().json()
+        assert changed["scope"] == before["scope"]
+        assert changed["refinementScopes"] == {
+            first["lineageId"]: requested | {"unitIds": [], "sessionIds": []},
+        }
+        refine(first)
+        refine(second)
+        assert used[-2:] == [requested["sourceIds"], second_scope["sourceIds"]]
+        original = client.get(route(base, first["id"]), headers=headers).raise_for_status().json()
+        assert original["scope"] == first["scope"]
+
+
 def test_build_rejects_an_empty_selection_before_calling_models(tmp_path):
     fake = FakeProvider(router)
     with app_for(tmp_path, fake) as client:
