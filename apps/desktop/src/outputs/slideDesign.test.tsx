@@ -44,7 +44,6 @@ describe("slide planning and design persistence", () => {
     ];
     render(<OutlineEditor outline={outline} label="slides" max={14} busy={false} onRebuild={rebuild}/>);
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /Outline/ }));
     expect(screen.getByText("Quality remains unknown")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Edit outline" }));
     await user.click(screen.getByRole("button", { name: "Remove 2" }));
