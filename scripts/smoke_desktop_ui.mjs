@@ -223,6 +223,7 @@ async function findChrome() {
 async function waitForChromePage(profileDirectory, chrome, logs) {
   const activePortFile = path.join(profileDirectory, "DevToolsActivePort");
   const deadline = Date.now() + 15_000;
+  let askedForPage = false;
   while (Date.now() < deadline) {
     if (chrome.exitCode !== null || chrome.signalCode !== null) {
       throw new SmokeFailure(`Chrome exited before DevTools was ready\n${logs()}`);
@@ -234,6 +235,13 @@ async function waitForChromePage(profileDirectory, chrome, logs) {
         const targets = await jsonFrom(`http://127.0.0.1:${port}/json/list`);
         const page = targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl);
         if (page) return page.webSocketDebuggerUrl;
+        // Chrome sometimes never opens its first tab; after a wait, ask DevTools for one, once.
+        if (!askedForPage && Date.now() > deadline - 12_000) {
+          askedForPage = true;
+          const opened = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" });
+          const created = opened.ok ? await opened.json() : null;
+          if (created?.type === "page" && created.webSocketDebuggerUrl) return created.webSocketDebuggerUrl;
+        }
       }
     } catch {
       // The debugging socket and the page target can become ready separately.
