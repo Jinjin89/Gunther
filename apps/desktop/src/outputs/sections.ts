@@ -2,8 +2,8 @@
  * The sections of an output, split by the same rules as the service (gunther/outputs.py).
  * Both sides are tested with the same cases.
  *
- * - A report's sections start at lines beginning with "## ". What comes before the first
- *   one (the title, the brief) is the preamble.
+ * - Report sections and cards start at lines beginning with "## ". What comes before the first
+ *   one is the preamble.
  * - A deck's slides are the parts between lines that are only "---". Empty ones are left out.
  * - A "## " or "---" inside a code fence (a line starting with ``` or ~~~) does not count.
  * - A section's hash is the sha256 of its text with "\n" line ends, trimmed.
@@ -75,30 +75,37 @@ function lines(content: string): Array<{ line: string; fenced: boolean }> {
   });
 }
 
+const headed = { startsUnit: (line: string) => line.startsWith("## "), keepsPreamble: true, joiner: "\n\n" };
+const sectionFormats = {
+  report: headed,
+  slides: { startsUnit: (line: string) => line.trim() === "---", keepsPreamble: false, joiner: "\n\n---\n\n" },
+  cards: headed,
+} satisfies Record<OutputKind, typeof headed>;
+
 /** A document as its preamble and its sections, each trimmed. */
 export function splitDocument(content: string, kind: OutputKind): { preamble: string; sections: string[] } {
+  const { startsUnit, keepsPreamble } = sectionFormats[kind];
   const preamble: string[] = [];
   const parts: string[][] = [[]];
   for (const { line, fenced } of lines(content)) {
-    if (kind === "slides") {
-      if (!fenced && line.trim() === "---") parts.push([]);
-      else parts[parts.length - 1]?.push(line);
-    } else if (!fenced && line.startsWith("## ")) {
-      parts.push([line]);
-    } else if (parts.length === 1) {
+    if (!fenced && startsUnit(line)) {
+      parts.push(keepsPreamble ? [line] : []);
+    } else if (keepsPreamble && parts.length === 1) {
       preamble.push(line);
     } else {
       parts[parts.length - 1]?.push(line);
     }
   }
-  if (kind === "slides") return { preamble: "", sections: parts.map((part) => part.join("\n").trim()).filter(Boolean) };
-  return { preamble: preamble.join("\n").trim(), sections: parts.slice(1).map((part) => part.join("\n").trim()) };
+  return {
+    preamble: preamble.join("\n").trim(),
+    sections: parts.slice(keepsPreamble ? 1 : 0).map((part) => part.join("\n").trim()).filter(Boolean),
+  };
 }
 
 /** The pieces put back together as the service writes them. */
 export function joinDocument(preamble: string, sections: string[], kind: OutputKind): string {
-  if (kind === "slides") return sections.join("\n\n---\n\n");
-  return [preamble, ...sections].filter(Boolean).join("\n\n");
+  const { keepsPreamble, joiner } = sectionFormats[kind];
+  return (keepsPreamble ? [preamble, ...sections].filter(Boolean) : sections).join(joiner);
 }
 
 /** A section as its hash is taken: "\n" line ends, no space around it. */

@@ -1,18 +1,18 @@
 # Outputs
 
-Studio makes saved reports and slide decks in a library. Click a tile to start a build from the library's Sources ticks. Click its pencil to set options such as focus, audience, length, language and slide use when offered. Each tile build starts a new conversation. Studio disables its build tiles until a model is available and links to Models settings when setup is needed.
+Studio makes saved reports, slide decks, flashcards and quizzes in a library. Click a tile to start a build from the library's Sources ticks. Click its pencil to set options such as focus, audience, length, language and slide use when offered. Each tile build starts a new conversation. Studio disables its build tiles until a model is available and links to Models settings when setup is needed.
 
 ## Build in Studio
 
 Studio prepares a verified evidence pool, reads the material, writes a memo or study map, plans the storyline and drafts the report or slides. Slide building adds format repair, factual verification, fitting, design, and optional rendered review. For scientific decks it plans coverage of the study and figures, reads supplied pixels when it can, and records limitations and review status. The study workflow ties the explanation of methods, results and figures to their passages.
 
-The backend also accepts `flashcards` and `quiz` builds through the conversation API. These types use the direct pipeline. Studio reads the sources, writes a memo, drafts the whole card set, checks its format, verifies each card against its citations and assembles the version. An invalid draft gets one format repair. If it still fails, Studio reports the format error and leaves the saved version intact. Refine can replace a single numbered card in the set. [Cards format](STUDIO_FORMAT.md#3-cards-design-v1)
+Flashcards and Quiz use the direct pipeline. Studio reads the sources, writes a memo, drafts the whole card set, checks its format, verifies each card against its citations and assembles the version. An invalid draft gets one format repair. If it still fails, Studio reports the format error and leaves the saved version intact. [Cards format](STUDIO_FORMAT.md#3-cards-design-v1)
 
 Studio searches checked key results using the build brief and source selection. A usable result brings its passages into the evidence pool from the original reading. Studio sees the result sentence as orientation with pointers to those passages. Citations and checks use the original passages. Rebuilding an older output with saved answers in its scope keeps those answers as notes. [Key results](LIBRARY.md#key-results)
 
 Each output type has a recipe for what to write and how to organize it. Choose the type on its Studio tile.
 
-| Output type | ID | Submitted outline limit |
+| Output type | ID | Outline or card limit |
 | --- | --- | --- |
 | Report | `report` | 8 sections |
 | Briefing doc | `briefing` | 8 sections |
@@ -20,6 +20,8 @@ Each output type has a recipe for what to write and how to organize it. Choose t
 | FAQ | `faq` | 16 sections |
 | Timeline | `timeline` | 16 sections |
 | Slides | `slides` | 14 slides |
+| Flashcards | `flashcards` | 40 cards |
+| Quiz | `quiz` | 40 cards |
 
 Report and Briefing doc open with a summary box and use exhibits for comparisons that rely on numbers. The Study guide teaches concepts in order, the FAQ uses questions as headings, and the Timeline follows events by date. The output types share verification of claims and cited passages. Each shape determines the text that reaches the Checker. [Studio format](STUDIO_FORMAT.md)
 
@@ -35,13 +37,21 @@ Conversations can build at the same time, including two in the same library. Eac
 
 ## Conversations and versions
 
-The agent reads a compact view of the brief, evidence and work. It chooses bounded actions such as Understand, Plan, Write, Edit, Check, Review, Answer and Save. Action gates check selection, part positions and readiness. Part IDs remain stable through reordering or heading edits. The reader can show changes and jump to the affected section or slide.
+The agent reads a compact view of the brief, evidence and work. It chooses bounded actions such as Understand, Plan, Write, Edit, Check, Review, Answer and Save. Action gates check selection, part positions and readiness. Part IDs remain stable through reordering or heading edits. The reader can show changes and jump to the affected section, slide or card.
 
 Saving seals content and provenance as an immutable version, with a lineage head, outline and citation snapshots. The version owner stages the candidate, conversation and workspace together and publishes them on success. A failed or stopped publication keeps the prior stored work and head. A replay of an already published turn returns that version. Older saved versions still open through their stored format and seal. Interrupted old turns reopen with the conversation state they stored.
 
 The reader and backup verification use the same seal rules. A broken seal or malformed saved outline reports an integrity conflict (HTTP 409). Version edits start from the current head. Open a card in the middle to read the output, see its folded change history and send a Refine message. In older conversations that built several outputs, the change history marks turns that saved a different output. Refine targets that output and uses its own stored scope. When the library ticks differ, the scope bar offers an explicit update for future refinements. The output actions include Versions, Outline where available, Edit, Check again, Style for decks, and Export. Leaving an unsaved Edit asks for confirmation.
 
 [Action gates](../apps/backend/gunther/artifact_actions.py) · [Workspace](../apps/backend/gunther/artifact_workspace.py) · [Version commit](../apps/backend/gunther/artifact_versions.py) · [Verified reads](../apps/backend/gunther/artifact_read.py)
+
+## Study a card set
+
+Click a flashcard or press Space on its flip button to reveal the answer. Use Previous, Next or the arrow keys while focused in the reader to change cards. Activate a citation number to open its passage in Evidence.
+
+In a quiz, choose one answer to see the result, the correct choice and the explanation with citations. The score counts correct choices among the questions you have answered. Start again clears those choices. List view shows every question and answer so you can review the full set. Versions opens earlier saved sets, and Refine this card points the shared Refine box at that card.
+
+Download Markdown saves the version's stored text. Export PDF opens the print dialog with all the cards, including the choices, marked correct answer and explanation for each quiz card. The printout includes numbered citations and a source list. [Cards format](STUDIO_FORMAT.md#3-cards-design-v1)
 
 ## Trash
 
@@ -67,6 +77,6 @@ The conversation turn stream accepts `kind="build"` with the output type and opt
 
 Use `GET /artifact-conversations/{id}/stream` under the library to follow its run and `POST /artifact-conversations/{id}/stop` to stop it. Runs and Activity share the key `output-conv:<conversation_id>`. A restyle or visual review of a deck without a conversation uses `output-lineage:<lineage_id>` and can be stopped from Activity. Output Activity targets include `conversationId`, `typeId`, `lineageId` and `artifactId` as they become available. [Output streams](../apps/backend/gunther/artifact_api_common.py)
 
-`GET /api/output-types` lists each type's ID, label, shape, description, icon, options, outline part limit and legacy style aliases. The catalog uses the same mapping as the legacy build route. New versions seal the type ID in `style`. The API projects a display label as `outputType` on summaries and details. Earlier styles and workspace structures are read with their corresponding types. A saved Field guide retains its label and opens with the report reader. [Type catalog](../apps/backend/gunther/output_types.py)
+`GET /api/output-types` lists each type's ID, label, shape, description, icon, options, part limit and legacy style aliases. `capabilities` supplies the unit label, outline and design availability, and export formats. The desktop selects the reader by shape and uses the catalog to show its controls. New versions seal the type ID in `style`. The API projects a display label as `outputType` on summaries and details. Earlier styles and workspace structures are read with their corresponding types. A saved Field guide retains its label and opens with the report reader. [Type catalog](../apps/backend/gunther/output_types.py)
 
 Under the library, post to `/artifacts/{versionId}/trash` for a lineage or `/artifact-conversations/{id}/trash` for a conversation. Both return an `output` entry with the Trash batch ID for Restore and Delete forever. An active run returns HTTP 409. Reading a trashed version returns HTTP 404. [Trash API](../apps/backend/gunther/trash_api.py)

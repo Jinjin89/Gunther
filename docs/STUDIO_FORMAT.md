@@ -288,7 +288,7 @@ A flashcard has a non-empty question and answer. A quiz heading starts with `(qu
   placed over it. [Deck export](../apps/desktop/src/outputs/deck/exportPptx.ts)
 - **DOCX** keeps headings, summary and callout boxes, exhibit tables and a Sources list.
   Citation marks are superscript numbers. [Report export](../apps/desktop/src/outputs/deck/exportDocx.ts)
-- **PDF** uses the print renderer. The same content can be copied or downloaded as Markdown.
+- **PDF** uses the print renderer. A card set prints as a list with its answers, marked correct choices, explanations and sources. The stored content can be copied or downloaded as Markdown.
 
 ## 5. Gallery
 

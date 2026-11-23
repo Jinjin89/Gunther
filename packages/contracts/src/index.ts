@@ -1282,16 +1282,24 @@ export interface ArtifactUnitSnapshot {
   evidenceCount: number;
 }
 
-/** A report is read on the page; slides are shown in a viewer. */
-export const outputKinds = ["report", "slides"] as const;
+/** The saved document shapes supported by the output readers. */
+export const outputKinds = ["report", "slides", "cards"] as const;
 export type OutputKind = (typeof outputKinds)[number];
-export const outputTypeIds = ["report", "briefing", "study_guide", "faq", "timeline", "slides"] as const;
+export const outputTypeIds = ["report", "briefing", "study_guide", "faq", "timeline", "slides", "flashcards", "quiz"] as const;
 export type OutputTypeId = (typeof outputTypeIds)[number];
 /** A Studio type ID or a style accepted from earlier clients. */
 export const outputStyles = [...outputTypeIds, "auto", "overview", "field_guide", "teaching_path", "decision_brief"] as const;
 export type OutputStyle = (typeof outputStyles)[number];
 export type OutputLength = "short" | "standard" | "long";
 export type OutputOption = "focus" | "audience" | "length" | "language" | "use";
+export type OutputExport = "markdown" | "pdf" | "docx" | "pptx";
+
+export interface OutputCapabilities {
+  unitLabel: string;
+  outline: boolean;
+  design: boolean;
+  exports: OutputExport[];
+}
 
 export interface OutputType {
   id: OutputTypeId;
@@ -1303,6 +1311,7 @@ export interface OutputType {
   partLimit?: number;
   /** Stored styles from earlier versions that use this catalog type. */
   legacyStyles?: string[];
+  capabilities: OutputCapabilities;
 }
 
 /** How a version came about. "legacy" is a version from before agents wrote them. */

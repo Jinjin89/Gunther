@@ -1,4 +1,4 @@
-import type { Artifact, ArtifactConversationMessage, ArtifactTurnInput, ConversationCitation, OutputScope } from "@gunther/contracts";
+import type { Artifact, ArtifactConversationMessage, ArtifactTurnInput, ConversationCitation, OutputKind, OutputScope } from "@gunther/contracts";
 import { invoke } from "@tauri-apps/api/core";
 import { Trash2 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -13,14 +13,12 @@ import { downloadDocx, downloadPptx } from "./deck/download";
 import { isDeckV2, isReportV2 } from "./deck/detect";
 import { withDeckMarker } from "./deck/marker";
 import { discardOutputEdit, EditPane } from "./EditPane";
-import { LazySlidesView } from "./LazySlides";
 import { outputActivity } from "./liveOutput";
 import { OutlineEditor } from "./OutlineEditor";
+import { outputViews } from "./OutputViews";
 import { prepareForPrint } from "./printReady";
 import { PrintRoot } from "./PrintRoot";
-import { ReportView } from "./ReportView";
 import { parseSlides, withAccent, withTheme, type DeckStyle, type DeckTheme } from "./sections";
-import { SlideReviewPanel } from "./SlideReviewPanel";
 import { type OutputTarget, type OutputTrashTarget, type useStudio } from "./useStudio";
 import "./outputs.css";
 
@@ -61,7 +59,7 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   const [draft, setDraft] = useState("");
   const [focus, setFocus] = useState<ArtifactTurnInput["focus"]>();
   const [jump, setJump] = useState<{ index: number; nonce: number } | null>(null);
-  const slide = useRef<number | null>(null);
+  const partInView = useRef<number | null>(null);
   const refine = useRef<HTMLTextAreaElement>(null);
   const styleRun = useRef<{ running: DeckStyle; pending: DeckStyle | null } | null>(null);
   const [pendingStyle, setPendingStyle] = useState<DeckStyle | null>(null);
@@ -85,11 +83,12 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   const pending = conversation?.pending;
   const last = conversation?.messages.at(-1);
   const onDirtyChange = useCallback((value: boolean) => { dirty.current = value; }, [dirty]);
+  const onPart = useCallback((index: number | null) => { partInView.current = index; }, []);
 
   useEffect(() => {
     if (!shownId) return;
     let alive = true;
-    setError(""); setFocus(undefined); slide.current = null;
+    setError(""); setFocus(undefined); partInView.current = null;
     void knowledgeApi.artifact(baseId, shownId, workspaceId).then((version) => {
       if (alive) setOpened(version);
     }).catch((reason) => { if (alive) setError(message(reason)); });
@@ -108,11 +107,19 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
     setError("");
     const material = artifact.scope ?? libraryScope();
     const result = await studio.send(conversationId, { ...turn, targetLineageId: artifact.lineageId }, material);
-    if (result && "outcome" in result && result.artifact && latest) pickVersion(null);
+    if (result && "outcome" in result && result.artifact && latest) {
+      const section = turn.focus?.section;
+      if (section !== undefined) {
+        const id = artifact.outline[section - 1]?.id;
+        const index = id ? result.artifact.outline.findIndex((item) => item.id === id) : section - 1;
+        if (index >= 0) setJump((current) => ({ index, nonce: (current?.nonce ?? 0) + 1 }));
+      }
+      pickVersion(null);
+    }
   };
   const refineOutput = (text: string) => {
     if (!text.trim() || !artifact || !changeable || busy || editing) return;
-    const part = latest ? focus ?? (slide.current !== null ? { section: slide.current + 1, selected: false } : undefined) : undefined;
+    const part = latest ? focus ?? (partInView.current !== null ? { section: partInView.current + 1, selected: false } : undefined) : undefined;
     void send({ kind: pending ? "answer" : "message", text, ...(part ? { focus: part } : {}) });
     setDraft(""); setFocus(undefined);
   };
@@ -237,15 +244,21 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   };
   const switchVersion = (id: string) => {
     if (!discardOutputEdit(dirty)) return false;
-    setEditing(false); pickVersion(id);
+    setEditing(false); pickVersion(id); setJump(null);
     return true;
   };
   const choosePanel = (next: typeof panel) => setPanel((current) => current === next ? null : next);
   const type = artifact && (studio.types.find((item) => item.shape === artifact.kind
     && (item.id === artifact.style || item.legacyStyles?.includes(artifact.style ?? "")))
-    ?? studio.types.find((item) => item.id === artifact.kind));
-  const deck = (type?.shape ?? artifact?.kind ?? targetType?.shape) === "slides";
-  useLayoutEffect(() => onWideReader(deck), [deck, onWideReader]);
+    ?? studio.types.find((item) => item.shape === artifact.kind));
+  const { Reader, Review, wide = false } = outputViews[artifact?.kind ?? targetType?.shape ?? conversation?.shape ?? "report"];
+  const capabilities = type?.capabilities;
+  const unitLabel = (kind: OutputKind | null) => studio.types.find((item) => item.shape === kind)?.capabilities?.unitLabel ?? "part";
+  const unit = capabilities?.unitLabel ?? "part";
+  const outline = capabilities?.outline && Boolean(artifact?.outline.length);
+  const formats = capabilities?.exports ?? [];
+  const styling = capabilities?.design && panel === "style" && changeable;
+  useLayoutEffect(() => onWideReader(wide), [wide, onWideReader]);
   const allowPoint = changeable && latest && !editing;
 
   return <CitationDetails.Provider value={artifact?.citations ?? []}><article className="library-reading output-reader" aria-label="Open output">
@@ -253,18 +266,20 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
       <h1>{title}</h1>
       {artifact && <ArtifactMenu label="Output actions" items={[
         { label: "Versions", onSelect: () => choosePanel("versions") },
-        ...(artifact.outline.length ? [{ label: "Outline", onSelect: () => choosePanel("outline") }] : []),
+        ...(outline ? [{ label: "Outline", onSelect: () => choosePanel("outline") }] : []),
         { label: "Edit", disabled: busy || !latest || !changeable, onSelect: () => { pickVersion(artifact.id); setEditing(true); setPanel(null); } },
         { label: "Check again", disabled: busy || !latest || !changeable, onSelect: () => void check() },
-        ...(deck ? [{ label: "Style", disabled: editing, onSelect: () => choosePanel("style") }] : []),
-        { label: "Export PDF", divider: true, disabled: editing, onSelect: () => void withSavedVersion(print) },
-        { label: "Copy Markdown", onSelect: () => void withSavedVersion(async (version) => {
-          await navigator.clipboard.writeText(version.content);
-          onNotify("Copied Markdown.");
-        }) },
-        { label: "Download Markdown", onSelect: () => void withSavedVersion(download) },
-        ...(deck && isDeckV2(artifact.content) ? [{ label: "Download PowerPoint", onSelect: () => exportFile(downloadPptx) }] : []),
-        ...(!deck && isReportV2(artifact.content) ? [{ label: "Download Word", onSelect: () => exportFile(downloadDocx) }] : []),
+        ...(capabilities?.design ? [{ label: "Style", disabled: editing, onSelect: () => choosePanel("style") }] : []),
+        ...(formats.includes("pdf") ? [{ label: "Export PDF", divider: true, disabled: editing, onSelect: () => void withSavedVersion(print) }] : []),
+        ...(formats.includes("markdown") ? [
+          { label: "Copy Markdown", onSelect: () => void withSavedVersion(async (version) => {
+            await navigator.clipboard.writeText(version.content);
+            onNotify("Copied Markdown.");
+          }) },
+          { label: "Download Markdown", onSelect: () => void withSavedVersion(download) },
+        ] : []),
+        ...(formats.includes("pptx") && isDeckV2(artifact.content) ? [{ label: "Download PowerPoint", onSelect: () => exportFile(downloadPptx) }] : []),
+        ...(formats.includes("docx") && isReportV2(artifact.content) ? [{ label: "Download Word", onSelect: () => exportFile(downloadDocx) }] : []),
         { label: "Move to Trash", icon: Trash2, divider: true, danger: true, disabled: saving,
           onSelect: () => onTrash({ id: artifact.id, lineageId: artifact.lineageId }) },
       ]} />}
@@ -281,27 +296,29 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
       {panel === "versions" && <ul className="output-versions" aria-label="Versions">{versions.map((version) => <li key={version.id}>
         <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" aria-current={version.id === artifact.id ? "page" : undefined} onClick={() => switchVersion(version.id)}>Version {version.versionNumber}</button>
       </li>)}</ul>}
-      {panel === "outline" && <OutlineEditor outline={artifact.outline} label={deck ? "slides" : "sections"} max={type?.partLimit}
+      {panel === "outline" && outline && <OutlineEditor outline={artifact.outline} label={`${unit}s`} max={type?.partLimit}
         review={artifact.provenance.skill?.outlineReview} busy={busy || !changeable || !latest || editing}
         onRebuild={(outline) => void send({ kind: "rebuild", rebuild: { artifactId: artifact.id, outline } })} />}
       {editing ? <EditPane key={artifact.id} artifact={artifact} saving={saving} onSave={(content) => void save(content)}
         onCancel={() => { if (discardOutputEdit(dirty)) { setEditing(false); pickVersion(null); } }} onCite={cite} onDirtyChange={onDirtyChange} />
-        : deck ? <>
-          <SlideReviewPanel artifact={artifact} baseId={baseId} workspaceId={workspaceId} disabled={busy || !latest || !changeable} onReview={() => void reviewSlides()} onFollowUp={refineOutput} />
-          <LazySlidesView artifact={artifact} onCite={cite} onSlide={(index) => { slide.current = index; }}
+        : <>
+          {Review && capabilities?.design && <Review artifact={artifact} baseId={baseId} workspaceId={workspaceId} disabled={busy || !latest || !changeable} onReview={() => void reviewSlides()} onFollowUp={refineOutput} />}
+          <Reader artifact={artifact} onCite={cite} onPart={onPart}
             onAsk={allowPoint ? point : undefined} goTo={jump} changed={changed} onNotice={onNotify}
-            onAccent={panel === "style" && changeable ? (accent) => void save(withAccent(artifact.content, accent)) : undefined}
-            onTheme={panel === "style" && changeable ? (theme) => void save(withTheme(artifact.content, theme)) : undefined}
-            onDeckTheme={panel === "style" && changeable ? (theme: DeckTheme) => void save(withDeckMarker(artifact.content, { theme })) : undefined}
-            onDeckStyle={panel === "style" && changeable ? (style) => void restyle(style) : undefined}
-            accentDisabled={busy || !latest} deckStyleDisabled={(!restyling && busy) || !latest} pendingDeckStyle={pendingStyle} />
-        </> : <ReportView artifact={artifact} onCite={cite} onAsk={allowPoint ? point : undefined} goTo={jump} changed={changed} />}
-      <PrintRoot artifact={artifact} />
+            design={styling ? {
+              onAccent: (accent) => void save(withAccent(artifact.content, accent)),
+              onTheme: (theme) => void save(withTheme(artifact.content, theme)),
+              onDeckTheme: (theme: DeckTheme) => void save(withDeckMarker(artifact.content, { theme })),
+              onDeckStyle: (style) => void restyle(style),
+              accentDisabled: busy || !latest, deckStyleDisabled: (!restyling && busy) || !latest, pendingDeckStyle: pendingStyle,
+            } : undefined} />
+        </>}
+      {formats.includes("pdf") && <PrintRoot artifact={artifact} />}
     </>}
     {conversation && conversation.messages.length > 0 && <details className="output-history">
       <summary>Change history</summary>
       <ArtifactMessageList messages={conversation.messages} pending={pending ?? null} history={studio.artifacts}
-        citations={artifact?.citations ?? []} kind={artifact?.kind ?? null} lineageId={lineageId ?? null} busy={busy}
+        citations={artifact?.citations ?? []} kind={artifact?.kind ?? null} unitLabel={unitLabel} lineageId={lineageId ?? null} busy={busy}
         onOption={refineOutput} onStart={() => void send({ kind: "start" })} onContinue={() => void send({ kind: "continue" })}
         onRetry={retry} onOpenVersion={(version) => onOpen({ conversationId: studio.owner(version), lineageId: version.lineageId, artifactId: version.id })}
         onOpenPart={(id, position) => {
@@ -322,7 +339,7 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
         </button>
       </div>}
       {pending && <div className="output-question"><p>{pending.question}</p>{pending.options.map((option) => <button key={option} type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={busy} onClick={() => refineOutput(option)}>{option}</button>)}</div>}
-      {focus && <small>About {focus.quote ? `“${focus.quote}”` : `${deck ? "slide" : "section"} ${focus.section}`}
+      {focus && <small>About {focus.quote ? `“${focus.quote}”` : `${unit} ${focus.section}`}
         <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => setFocus(undefined)}>Clear</button></small>}
       <label>Refine<textarea ref={refine} value={draft} maxLength={20_000} rows={2} onChange={(event) => setDraft(event.target.value)} /></label>
       <button type="submit" className="gx-btn gx-btn-primary gx-btn-sm" disabled={busy || !draft.trim()}>Refine</button>

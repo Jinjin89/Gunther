@@ -32,6 +32,31 @@
 .outputs-issues li q { font-family: var(--gx-font-display); }
 .outputs-issues li small { color: var(--gx-faint); }
 
+.cards-reader { display: grid; gap: 14px; outline-offset: 5px; }
+.cards-toolbar, .cards-pagination { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.cards-score { display: flex; align-items: center; gap: 8px; color: var(--gx-muted); font-size: var(--gx-text-xs); }
+.cards-pagination { color: var(--gx-muted); font-size: var(--gx-text-sm); font-variant-numeric: tabular-nums; }
+.cards-toolbar [aria-pressed="true"] { background: var(--gx-hover); }
+.cards-practice { display: grid; gap: 12px; padding: clamp(14px, 4vw, 26px); border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-lg); background: var(--gx-surface); }
+.cards-question { position: relative; display: grid; justify-items: start; gap: 8px; }
+.cards-flip[aria-expanded="false"]:active { transform: none; }
+.cards-flip[aria-expanded="false"]::after { content: ""; position: absolute; inset: 0; }
+.cards-reader .answer-markdown { overflow-wrap: anywhere; }
+.cards-question .answer-markdown h2, .cards-list .answer-markdown h2 { margin: 0; font-family: var(--gx-font-display); font-size: 1.25em; font-weight: 520; }
+.cards-practice .answer-markdown p, .cards-list .answer-markdown p { margin: 0; }
+.cards-practice .answer-markdown p + p, .cards-list .answer-markdown p + p { margin-top: 0.75em; }
+.cards-answer { display: grid; gap: 8px; }
+.cards-feedback { margin: 0; font-weight: 600; }
+.cards-reader .outputs-issues li { border-left-color: var(--gx-line-3); }
+.cards-options { margin: 0; padding-inline-start: 1.5em; display: grid; gap: 5px; }
+.cards-options li > :is(strong, span) { font-size: 0.85em; color: var(--gx-muted); }
+.cards-options .is-correct .answer-markdown { font-weight: 600; }
+.cards-option { width: 100%; padding: 7px 10px; text-align: start; font: inherit; color: inherit; background: var(--gx-surface); border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-sm); cursor: pointer; }
+.cards-option:hover { background: var(--gx-hover); }
+.cards-list { margin: 0; padding-inline-start: 1.5em; }
+.cards-list-item { padding: 12px 0; border-bottom: 1px solid var(--gx-line); }
+.cards-list-item > .answer-markdown { margin-bottom: 5px; }
+
 /* Slides: a deck in the page (reveal.js), thumbnails, and the presenter's notes. */
 .outputs-slides { display: grid; gap: 14px; }
 .outputs-slides-bar { display: flex; align-items: center; justify-content: space-between; color: var(--gx-faint); font-size: var(--gx-text-xs); }
@@ -204,6 +229,8 @@
   .outputs-print-report .answer-markdown :is(table, pre, blockquote, figure) { break-inside: avoid; }
   .outputs-print-report .answer-markdown sup { font-size: 7pt; line-height: 0; color: #5f5e5a; }
   .outputs-print-report .answer-markdown a { color: inherit; text-decoration: none; }
+  .outputs-print-report .cards-list-item { break-inside: avoid; }
+  .outputs-print-report .cards-list .answer-markdown h2 { margin: 0 0 6pt; }
 
   .outputs-print-sources { margin-top: 22pt; padding-top: 10pt; border-top: 0.5pt solid #b8b7b1; font-family: var(--gx-font-sans); font-size: 8.5pt; line-height: 1.45; }
   .outputs-print-sources h2 { margin: 0 0 6pt; font-size: 10.5pt; font-weight: 600; }

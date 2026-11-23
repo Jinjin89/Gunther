@@ -19,6 +19,24 @@ from gunther.studio.state import ReportStory, Run, _validate_storyline
 from gunther.studio.work import StudioWorkAgents
 
 
+def test_the_catalog_publishes_shape_capabilities(tmp_path):
+    with app_for(tmp_path, FakeProvider([])) as client:
+        response = client.get("/api/output-types", headers=workspace(client))
+        catalog = response.raise_for_status().json()
+    types = {item["id"]: item["capabilities"] for item in catalog}
+    assert types["report"] == {
+        "unitLabel": "section", "outline": True, "design": False,
+        "exports": ["markdown", "pdf", "docx"],
+    }
+    assert types["slides"] == {
+        "unitLabel": "slide", "outline": True, "design": True,
+        "exports": ["markdown", "pdf", "pptx"],
+    }
+    assert types["flashcards"] == types["quiz"] == {
+        "unitLabel": "card", "outline": False, "design": False, "exports": ["markdown", "pdf"],
+    }
+
+
 @pytest.mark.parametrize(
     ("style", "shape", "label", "recipe", "limit"),
     [

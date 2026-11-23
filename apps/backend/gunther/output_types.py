@@ -29,6 +29,10 @@ class OutputType:
     max_parts: int | None = None
 
     @property
+    def capabilities(self) -> ShapeSpec:
+        return SHAPES[self.shape]
+
+    @property
     def part_limit(self) -> int:
         return self.max_parts if self.max_parts is not None else SHAPES[self.shape].max_parts
 

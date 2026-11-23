@@ -2,8 +2,7 @@ import type { Artifact, ConversationCitation } from "@gunther/contracts";
 import { Check, LoaderCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { MarkdownEditor } from "../components/markdown/MarkdownEditor";
-import { LazySlidesView } from "./LazySlides";
-import { ReportView } from "./ReportView";
+import { outputViews } from "./OutputViews";
 import { restoreUnchangedScenes, withDraft, withoutSceneMarkers } from "./sections";
 
 export function discardOutputEdit(dirty: { current: boolean }): boolean {
@@ -35,6 +34,7 @@ export function EditPane({ artifact, saving, onSave, onCancel, onCite, onDirtyCh
     return () => { alive = false; };
   }, [artifact, draft]);
   const preview = useMemo(() => withDraft(artifact, previewContent), [artifact, previewContent]);
+  const { Reader } = outputViews[artifact.kind];
   const changed = draft !== editableOriginal;
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
   const typed = preview.sections.filter((section) => !section.checked).length - artifact.sections.filter((section) => !section.checked).length;
@@ -55,13 +55,11 @@ export function EditPane({ artifact, saving, onSave, onCancel, onCite, onDirtyCh
     </div>
     <div className="outputs-edit-columns">
       <div className="outputs-edit-source">
-        <MarkdownEditor value={draft} onChange={(next) => { setDraft(next); onDirtyChange(next !== editableOriginal); }} ariaLabel={artifact.kind === "slides" ? "Slides, as Markdown" : "Report, as Markdown"} autoFocus maxLength={2_500_000} onEscape={onCancel} onSubmit={() => { if (changed && draft.trim()) saveDraft(); }} />
+        <MarkdownEditor value={draft} onChange={(next) => { setDraft(next); onDirtyChange(next !== editableOriginal); }} ariaLabel={`${artifact.outputType}, as Markdown`} autoFocus maxLength={2_500_000} onEscape={onCancel} onSubmit={() => { if (changed && draft.trim()) saveDraft(); }} />
         {artifact.kind === "slides" && <p className="outputs-edit-hint">A line with only <code>---</code> starts the next slide. A line starting with <code>Note:</code> begins the speaker notes. The comment on a slide's first line, <code>{"<!-- layout: … -->"}</code>, says how it is drawn; keep it with the slide. Scene metadata and a designed slide's drawing are hidden and retained for slides whose source text stays unchanged; a slide whose words you change is drawn by its template again.</p>}
       </div>
       <div className="outputs-edit-preview" aria-label="Preview">
-        {artifact.kind === "slides"
-          ? <LazySlidesView artifact={preview} onCite={onCite} compact />
-          : <ReportView artifact={preview} onCite={onCite} />}
+        <Reader artifact={preview} onCite={onCite} compact />
       </div>
     </div>
   </section>;

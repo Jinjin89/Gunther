@@ -45,10 +45,21 @@ const contents: LibraryContents = {
   ],
   placements: [{ sourceId: "s1", sectionId: "methods", position: 0 }, { sourceId: "s2", sectionId: "fieldwork", position: 0 }],
 };
-const report: OutputType = { id: "report", label: "Report", shape: "report", description: "A written report", icon: "FileText", options: ["focus", "length"], partLimit: 8, legacyStyles: ["auto", "overview", "field_guide"] };
+const report: OutputType = {
+  id: "report", label: "Report", shape: "report", description: "A written report", icon: "FileText", options: ["focus", "length"], partLimit: 8, legacyStyles: ["auto", "overview", "field_guide"],
+  capabilities: { unitLabel: "section", outline: true, design: false, exports: ["markdown", "pdf", "docx"] },
+};
 const briefing: OutputType = { ...report, id: "briefing", label: "Briefing doc", legacyStyles: ["decision_brief"] };
 const guide: OutputType = { ...report, id: "study_guide", label: "Study guide", partLimit: 12, legacyStyles: ["teaching_path"] };
-const slides: OutputType = { id: "slides", label: "Slides", shape: "slides", description: "A slide deck", icon: "Presentation", options: ["focus", "use"], partLimit: 14 };
+const slides: OutputType = {
+  id: "slides", label: "Slides", shape: "slides", description: "A slide deck", icon: "Presentation", options: ["focus", "use"], partLimit: 14,
+  capabilities: { unitLabel: "slide", outline: true, design: true, exports: ["markdown", "pdf", "pptx"] },
+};
+const flashcards: OutputType = {
+  id: "flashcards", label: "Flashcards", shape: "cards", description: "Study the source material", icon: "Layers", options: ["focus", "audience", "length", "language"], partLimit: 40,
+  capabilities: { unitLabel: "card", outline: false, design: false, exports: ["markdown", "pdf"] },
+};
+const quiz: OutputType = { ...flashcards, id: "quiz", label: "Quiz", icon: "ListChecks" };
 const readyModels: ModelMenu = {
   models: [{ ref: "local/model", provider: "Local", label: "Model", display: "Local Model", vision: false, levels: [] }],
   default: { model: "local/model", effort: "high" }, efforts: [],
@@ -149,6 +160,8 @@ it("renders each catalog icon on its Studio tile", async () => {
     [{ ...report, id: "faq", label: "FAQ", icon: "CircleHelp" }, "lucide-circle-question-mark"],
     [{ ...report, id: "timeline", label: "Timeline", icon: "CalendarDays" }, "lucide-calendar-days"],
     [slides, "lucide-presentation"],
+    [flashcards, "lucide-layers"],
+    [quiz, "lucide-list-checks"],
   ];
   vi.mocked(knowledgeApi.outputTypes).mockResolvedValue(catalog.map(([type]) => type));
   setup();
@@ -466,6 +479,76 @@ it("refines the open lineage and updates its scope only on request", async () =>
   expect(patch).toHaveBeenCalledExactlyOnceWith(base.id, "earlier", { targetLineageId: saved.lineageId, scope: selected("s1", "s2") }, ws);
   expect(create).not.toHaveBeenCalled();
   await waitFor(() => expect(screen.queryByRole("button", { name: "Update to current 2" })).toBeNull());
+});
+
+it("opens card evidence and shows a refined card in the new version", async () => {
+  const user = userEvent.setup();
+  vi.mocked(knowledgeApi.outputTypes).mockResolvedValue([report, slides, flashcards, quiz]);
+  const saved = version({
+    kind: "cards", format: "cards", outputType: "Flashcards", style: "flashcards", title: "Trial cards",
+    content: "<!-- cards: flashcards; design: v1 -->\n\n## What was the sample size?\nTwelve samples.\n\n## When was the sample read?\nThe sample was read at noon [1].",
+    outline: [{ id: "card-1", heading: "What was the sample size?", goal: "" }, { id: "card-2", heading: "When was the sample read?", goal: "" }],
+    citations: [{
+      id: "card-citation", sourceId: "s1", sourceTitle: "Lab notes", assertionId: null,
+      quote: "Readings were recorded at noon.", locator: "Page 3", status: "verified", confidence: 1,
+    }],
+  });
+  const revised = version({
+    ...saved, id: "version-2", versionNumber: 2, supersedesArtifactId: saved.id, origin: "revise",
+    content: saved.content.replace("When was the sample read?", "At what time were readings recorded?"),
+    outline: [saved.outline[0]!, { ...saved.outline[1]!, heading: "At what time were readings recorded?" }],
+  });
+  const { turn, artifacts } = setup({ artifacts: [saved], conversations: [conversation("earlier")] });
+  turn.mockImplementation(async () => { artifacts.push(revised); return done(revised); });
+
+  await user.click(await screen.findByRole("button", { name: /Trial cards Flashcards Version 1/ }));
+  const reader = () => within(screen.getByRole("region", { name: "Card reader" }));
+  await user.click(await screen.findByRole("button", { name: "Next" }));
+  await user.click(reader().getByRole("button", { name: "Show answer" }));
+  const citation = reader().getByRole("button", { name: "Inspect citation 1" });
+  expect(citation).toHaveAttribute("data-opens-evidence");
+  await user.click(citation);
+  const evidence = within(screen.getByRole("complementary", { name: "Evidence" }));
+  expect(evidence.getByText("Readings were recorded at noon.")).toBeVisible();
+  await user.click(evidence.getByRole("button", { name: "Close evidence" }));
+  await user.click(reader().getByRole("button", { name: "Refine this card" }));
+  expect(screen.getByText("About card 2", { exact: false })).toBeVisible();
+  await user.type(screen.getByRole("textbox", { name: "Refine" }), "Ask about the time recorded in the log");
+  await user.click(screen.getByRole("button", { name: "Refine" }));
+  expect(turn).toHaveBeenLastCalledWith(base.id, "earlier", expect.objectContaining({
+    focus: { section: 2, selected: true }, targetLineageId: saved.lineageId,
+  }), ws, expect.any(Function), expect.any(AbortSignal));
+  expect(await screen.findByRole("heading", { name: "At what time were readings recorded?" })).toBeVisible();
+  expect(reader().getByText("2 / 2")).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "Output actions" }));
+  await user.click(screen.getByRole("menuitem", { name: "Versions" }));
+  await user.click(screen.getByRole("button", { name: "Version 1" }));
+  await user.click(await screen.findByRole("button", { name: "Next" }));
+  expect(reader().getByRole("heading", { name: "When was the sample read?" })).toBeVisible();
+});
+
+it("offers the card export formats from the catalog and prints the answer sheet", async () => {
+  const user = userEvent.setup();
+  vi.mocked(knowledgeApi.outputTypes).mockResolvedValue([quiz]);
+  const content = "<!-- cards: quiz; design: v1 -->\n\n## (quiz) When did the reading end?\n- [ ] Midnight\n- [x] Noon\nWhy: The end time was 12:00.";
+  const saved = version({ kind: "cards", format: "cards", outputType: "Quiz", style: "quiz", title: "Trial quiz", content });
+  setup({ artifacts: [saved] });
+  let paper: string | null | undefined;
+  const print = vi.spyOn(window, "print").mockImplementation(() => { paper = document.getElementById("print-root")?.textContent; });
+  await user.click(await screen.findByRole("button", { name: /Trial quiz Quiz Version 1/ }));
+  const reader = within(await screen.findByRole("region", { name: "Card reader" }));
+  expect(reader.getByRole("button", { name: "Noon" })).toBeVisible();
+  expect(reader.queryByText("Why:")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Output actions" }));
+  for (const name of ["Outline", "Style", "Download Word", "Download PowerPoint"]) {
+    expect(screen.queryByRole("menuitem", { name })).not.toBeInTheDocument();
+  }
+  expect(screen.getByRole("menuitem", { name: "Download Markdown" })).toBeVisible();
+  await user.click(screen.getByRole("menuitem", { name: "Export PDF" }));
+  await waitFor(() => expect(print).toHaveBeenCalledOnce());
+  expect(paper).toContain("NoonCorrect answer");
+  expect(paper).toContain("Why: The end time was 12:00.");
 });
 
 it.each([

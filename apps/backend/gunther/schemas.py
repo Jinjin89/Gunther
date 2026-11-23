@@ -16,6 +16,7 @@ from pydantic.json_schema import SkipJsonSchema
 
 from gunther.brief import SettledItem
 from gunther.model_profiles import Effort
+from gunther.output_shapes import OutputExport
 from gunther.output_types import (
     LEGACY_OUTPUT_STYLES,
     MAX_OUTPUT_PARTS,
@@ -1086,6 +1087,13 @@ class OutputInputsOut(ApiModel):
 REQUEST_ID = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
 
 
+class OutputCapabilitiesOut(ApiModel):
+    unit_label: str
+    outline: bool
+    design: bool
+    exports: tuple[OutputExport, ...]
+
+
 class OutputTypeOut(ApiModel):
     id: str
     label: str
@@ -1095,6 +1103,7 @@ class OutputTypeOut(ApiModel):
     options: tuple[OutputOption, ...]
     part_limit: int
     legacy_styles: tuple[str, ...]
+    capabilities: OutputCapabilitiesOut
 
 
 class OutputRequestInput(ApiModel):

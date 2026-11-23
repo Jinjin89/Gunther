@@ -1,6 +1,6 @@
 # One library screen, Studio types and key results
 
-Status: agreed and final (2026-11-23). Phases 1a, 1b, 2a, 2b, 3a and 3b are built; the rest is unbuilt. Read [AGENTS.md](../AGENTS.md) first. When a phase ships, move
+Status: agreed and final (2026-11-23). Phases 1–4 are built; the rest is unbuilt. Read [AGENTS.md](../AGENTS.md) first. When a phase ships, move
 what it built into the shipped docs ([Outputs](OUTPUTS.md), [Ask](ASK.md), [Library](LIBRARY.md),
 [Studio format](STUDIO_FORMAT.md)) and delete that phase from this file.
 
@@ -41,14 +41,10 @@ These follow from AGENTS.md and are not open questions:
 The existing shapes and types, build options and saved-version rules are in [Outputs](OUTPUTS.md).
 Extend the type options from `GET /api/output-types` with `voices` when audio ships.
 
-- **Two Studio pipelines.** Report and slides use the planned pipeline. Add the direct pipeline
-  for cards, map and audio. It runs read → memo → draft → format fix → verify → assemble.
-- **One general Checker.** For each new shape, add a `check_text` projection that turns one unit
-  into plain checkable claims. Keep the backend split and join rules aligned with
-  [desktop section parsing](../apps/desktop/src/outputs/sections.ts) through shared fixtures.
-- Register the remaining shapes and types in their phases. Cards allow 40 cards, mind maps allow
-  60 nodes and audio overviews allow 120 lines. Use shape metadata for outline, design and export
-  capabilities when the readers use those capabilities.
+- Mind maps and audio overviews use Studio's direct pipeline. Each shape adds a `check_text`
+  projection into checkable claims and extends the shared split and join fixtures. The catalog
+  supplies outline, design and export capabilities to the readers. Mind maps allow 60 nodes and
+  audio overviews allow 120 lines. [Outputs](OUTPUTS.md)
 
 ### 3.2 One way to build and refine
 
@@ -108,29 +104,12 @@ The shared selection, columns, Chat and current readers are described in
 [Library](LIBRARY.md#sources-chat-and-studio), [Ask](ASK.md) and [Outputs](OUTPUTS.md).
 
 - **Key results (N)** sits below the Sources tree in Phase 3a. Each row shows source chips and opens `EvidencePanel` with passages and origin such as “from your question on 20 Nov”. Mark its evidence triggers with `data-opens-evidence`. The row actions include Remove.
-- **Output reader** chooses the view by shape as cards, map and audio ship. The map reader also collapses Sources below 1200 px.
+- **Output reader** chooses the view by shape. The map reader also collapses Sources below 1200 px.
 
 ## 5. New shapes
 
 Each shape adds its grammar to [STUDIO_FORMAT.md](STUDIO_FORMAT.md), a `ShapeSpec` row, a reader, a
 `check_text` projection and exports.
-
-**Cards (phase 4).** `pipeline = "direct"`, `unit_label = "card"`, exports = Markdown + PDF print.
-
-```markdown
-<!-- cards: flashcards; design: v1 -->
-## What does factor T do in progenitors?
-It steers them toward the red-cell branch [1].
-
-## (quiz) Which branch grows when T is removed?
-- [ ] Red-cell
-- [x] White-cell
-Why: removing T shifted cells toward the white-cell lineage [1].
-```
-
-- `format_check` requires non-empty Q+A for flashcards, and exactly one `[x]` option plus a `Why:` line for quiz cards.
-- `check_text` projects a flashcard as `"<question> <answer>"` and a quiz card as `"<question> Answer: <checked option>. <Why>"`. Unchecked distractors are excluded so `ClaimChecks` never flags wrong choices as unsupported.
-- Reader: flashcards flip; quiz scores choices and shows the explanation with clickable `[n]` citations after answering.
 
 **Mind map (phase 5).** `pipeline = "direct"`, `unit_label = "node"`, exports = Markdown + PDF print.
 
@@ -150,17 +129,6 @@ Why: removing T shifted cells toward the white-cell lineage [1].
 
 The builder may split a phase into batches. Each batch keeps every test green and is reviewed on
 its own. Codex builds; Claude and the checker review each diff.
-
-### Phase 4 — Cards (`flashcards` and `quiz`)
-**Adds:**
-- `cards` `ShapeSpec` (`direct` pipeline, format check, `check_text` ignoring quiz distractors).
-- `flashcards` and `quiz` `OutputType` rows with recipes and examples; grammar in `STUDIO_FORMAT.md`.
-- Cards reader (flip cards, scored quiz revealing citations after answering) and Markdown + PDF print exports.
-
-**Removes:** Nothing.
-
-**Tests (no live model calls):**
-- Shared split/join fixture tests (backend + desktop), fake-gateway build + Checker test confirming distractors are not flagged, Refine turn on cards, and desktop reader tests.
 
 ### Phase 5 — Mind map (`mind_map`)
 **Adds:**

@@ -1,7 +1,8 @@
 import type { Artifact, OutlineItem } from "@gunther/contracts";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, render, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { PrintRoot } from "./PrintRoot";
+import documentSections from "./fixtures/document-sections.json";
 
 const deck = (content: string, outline: OutlineItem[] = [], citations: unknown[] = []) => ({
   id: "art_1", kind: "slides", origin: "build", title: "Deck", versionNumber: 1, createdAt: "2026-10-15T09:00:00Z",
@@ -12,6 +13,21 @@ const faces = () => Array.from(document.querySelectorAll("#print-root .outputs-s
 const drawn = () => Array.from(document.querySelectorAll("#print-root .outputs-slide-face")).map((face) => face.getAttribute("data-drawn"));
 
 afterEach(cleanup);
+
+it("prints every card with static citations, the correct choice and the explanation", () => {
+  const fixture = documentSections.find((item) => item.shape === "cards")!;
+  const artifact: Artifact = { ...deck(fixture.content, [], [{ sourceTitle: "Lab notes", quote: "A source passage." }]), kind: "cards" };
+  render(<PrintRoot artifact={artifact} />);
+  const paper = document.getElementById("print-root")!;
+  expect(paper).toHaveAttribute("data-kind", "cards");
+  expect(paper.querySelectorAll(".cards-list-item")).toHaveLength(2);
+  expect(paper.querySelector(".is-correct")).toHaveTextContent("White-cell");
+  expect(paper).toHaveTextContent("Red-cell");
+  expect(paper).toHaveTextContent("Why: removing T shifted cells toward the white-cell lineage");
+  expect(paper.querySelectorAll("sup")).toHaveLength(2);
+  expect(paper).toHaveTextContent("Lab notes");
+  expect(within(paper).queryByRole("button", { hidden: true })).not.toBeInTheDocument();
+});
 
 // The slides are drawn by a part of the app that is fetched when a deck is open, so they appear a moment after the root does.
 describe("printing a deck", () => {

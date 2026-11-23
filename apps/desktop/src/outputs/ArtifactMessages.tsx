@@ -69,8 +69,7 @@ export function changesOf(payload: Record<string, unknown>): ArtifactChange[] {
 const optionsOf = (payload: Record<string, unknown>): string[] => Array.isArray(payload.options) ? payload.options.filter((item): item is string => typeof item === "string") : [];
 
 /** "Slide 4 · Costs — shortened", "Added slide 7 · Results", "Removed slide 5 · Costs". */
-export function describeChange(change: ArtifactChange, kind: OutputKind | null): string {
-  const unit = kind === "report" ? "section" : kind === "slides" ? "slide" : "part";
+export function describeChange(change: ArtifactChange, unit: string): string {
   // The note is what the writer was told; a row keeps it short.
   const full = change.note.trim().replace(/\s+/g, " ");
   const note = full.length > 90 ? `${full.slice(0, 89).trimEnd()}…` : full;
@@ -82,18 +81,18 @@ export function describeChange(change: ArtifactChange, kind: OutputKind | null):
 }
 
 /** What a message of the user's was about, in words. */
-export function aboutOf(payload: Record<string, unknown>, kind: OutputKind | null): string | null {
+export function aboutOf(payload: Record<string, unknown>, unit: string): string | null {
   const focus = isRecord(payload.focus) ? payload.focus : null;
   if (!focus || focus.selected !== true) return null;
   const quote = typeof focus.quote === "string" ? focus.quote : "";
   if (quote) return `“${quote.length > 80 ? `${quote.slice(0, 79)}…` : quote}”`;
-  return typeof focus.section === "number" ? `${kind === "report" ? "Section" : kind === "slides" ? "Slide" : "Part"} ${focus.section}` : null;
+  return typeof focus.section === "number" ? `${unit[0]!.toUpperCase()}${unit.slice(1)} ${focus.section}` : null;
 }
 
 const USER_WORDS: Record<string, string> = { start: "Just start", continue: "Continue" };
 
 /** The chat of an Artifacts conversation, as the service stored it. */
-export function ArtifactMessageList({ messages, pending, history, citations, kind, lineageId, busy, onOption, onStart, onContinue, onRetry, onOpenPart, onOpenVersion, onCite, earlier = false }: {
+export function ArtifactMessageList({ messages, pending, history, citations, kind, unitLabel, lineageId, busy, onOption, onStart, onContinue, onRetry, onOpenPart, onOpenVersion, onCite, earlier = false }: {
   messages: ArtifactConversationMessage[];
   /** The question waiting for an answer, if any: only that message offers its options. */
   pending: ArtifactPending | null;
@@ -102,6 +101,7 @@ export function ArtifactMessageList({ messages, pending, history, citations, kin
   citations: unknown[];
   /** What the conversation's artifact is made of (a deck's parts are slides). */
   kind: OutputKind | null;
+  unitLabel: (kind: OutputKind | null) => string;
   lineageId: string | null;
   busy: boolean;
   onOption: (text: string) => void;
@@ -121,7 +121,7 @@ export function ArtifactMessageList({ messages, pending, history, citations, kin
     {shown.length < messages.length && <p className="outputs-hint">These versions were made before conversations were kept. Ask for a change here, or start a new conversation.</p>}
     <div className="aw-messages" role="log" aria-label="Artifact messages">{shown.map((message) => {
     if (message.role === "user") {
-      const about = aboutOf(message.payload, kind);
+      const about = aboutOf(message.payload, unitLabel(kind));
       return <div key={message.id} className="aw-message is-user"><div><small>You</small><p>{message.text || USER_WORDS[message.kind] || ""}</p>{about && <small className="artifact-about">About {about}</small>}</div></div>;
     }
     const steps = stepsOf(message.payload);
@@ -129,7 +129,7 @@ export function ArtifactMessageList({ messages, pending, history, citations, kin
     const changes = changesOf(message.payload);
     // A new artifact is all "added": its reply says what it is, and a row per part says nothing more.
     const listed = changes.every((change) => change.what === "added") ? [] : changes;
-    const unit = version?.kind ?? kind;
+    const unit = unitLabel(version?.kind ?? kind);
     const mine = message.id === last;
     return <div key={message.id} className="aw-message is-assistant"><span className="aw-agent-mark"><BrandMark size={17} /></span><div className="artifact-reply">
       <FoldedSteps steps={steps} />

@@ -11,6 +11,7 @@ from gunther.studio import format as fmt
 
 ShapeId = Literal["report", "slides", "cards"]
 OutputPipeline = Literal["planned", "direct"]
+OutputExport = Literal["markdown", "pdf", "docx", "pptx"]
 FENCE = re.compile(r"^\s*(```|~~~)")
 
 
@@ -118,7 +119,9 @@ class ShapeSpec:
     join: Callable[[str, Sequence[str]], str]
     format_check: Callable[..., list[str] | list[tuple[int, list[str]]]]
     check_text: Callable[..., list[str]]
-    exports: tuple[str, ...]
+    exports: tuple[OutputExport, ...]
+    outline: bool = False
+    design: bool = False
     header: str = ""
     unit_problem: Callable[[str], str | None] | None = None
 
@@ -135,12 +138,12 @@ SHAPES = {
         ShapeSpec(
             "report", "report", "report", "a report", "section", 8, "planned",
             markdown_spans, join_headed, fmt.check_report, prose_check_text,
-            ("markdown", "pdf", "docx"),
+            ("markdown", "pdf", "docx"), outline=True,
         ),
         ShapeSpec(
             "slides", "slides", "deck", "a slide deck", "slide", 14, "planned",
             partial(markdown_spans, separator="---"), join_slides, fmt.check_deck,
-            prose_check_text, ("markdown", "pdf", "pptx"),
+            prose_check_text, ("markdown", "pdf", "pptx"), outline=True, design=True,
         ),
         ShapeSpec(
             "cards", "flashcards", "card set", "a card set", "card", 40, "direct",
