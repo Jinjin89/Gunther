@@ -1,11 +1,28 @@
 """Explicit Studio builds and refinements through the artifact conversation API."""
 
+import threading
+
 import pytest
-from fake_models import FakeProvider, is_orchestrating, output_replies
+from fake_models import FakeProvider, is_orchestrating, is_sentence_checking, output_replies
 from test_artifact_agent import conversations, done, kept, script, turn, versions_of
-from test_outputs import OUTLINE, REPORT, app_for, body, build, built, library, route, workspace
+from test_outputs import (
+    OUTLINE,
+    REPORT,
+    activity_of,
+    app_for,
+    body,
+    build,
+    built,
+    in_background,
+    library,
+    route,
+    wait_for,
+    workspace,
+)
 from test_studio_pipeline import DECK, PASSAGES, request_text, router
 
+from evals.sse import read_events
+from gunther import usage
 from gunther.answer_runs import Stopped
 from gunther.artifact_workspace import approach_state, dump_workspace
 from gunther.evidence import Tool
@@ -23,6 +40,103 @@ def create(client, base_id, identifier="studio"):
         .raise_for_status()
         .json()
     )
+
+
+@pytest.mark.parametrize("stop_first", [False, True], ids=["both finish", "stop one"])
+def test_conversations_in_one_library_build_and_follow_independently(tmp_path, stop_first):
+    ids = ("report_a", "report_b")
+    release = {cid: threading.Event() for cid in ids}
+    entered = {cid: threading.Event() for cid in ids}
+    checks = dict.fromkeys(ids, 0)
+    guard = threading.Lock()
+
+    def pause(request):
+        cid = usage.current()["ref"]
+        if cid not in release or not is_sentence_checking(request):
+            return
+        with guard:
+            checks[cid] += 1
+            second = checks[cid] == 2
+        if second:
+            assert threading.current_thread().name.startswith("studio")
+            entered[cid].set()
+            assert release[cid].wait(15)
+
+    fake = FakeProvider(output_replies(OUTLINE, REPORT), rule=pause)
+    with app_for(tmp_path, fake) as client:
+        base, _ = library(client)
+        other_base, _ = library(client)
+        headers = workspace(client)
+        for cid in ids:
+            create(client, base, cid)
+        runs = client.app.state.answer_runs
+        keys = {cid: f"output-conv:{cid}" for cid in ids}
+
+        def build_report(cid):
+            return turn(client, base, cid, f"Build {cid}", "build", build={"type": "report"})
+
+        def follow_second():
+            path = conversations(base, "/report_b/stream")
+            with client.stream("GET", path, headers=headers) as response:
+                response.raise_for_status()
+                return read_events(response)
+
+        first, first_events = in_background(lambda: build_report("report_a"))
+        second, second_events = in_background(lambda: build_report("report_b"))
+        try:
+            assert all(entered[cid].wait(10) for cid in ids)
+            activity = activity_of(client)
+            assert set(activity) == set(keys.values())
+            for cid, key in keys.items():
+                item = activity[key]
+                assert item["state"] == "running"
+                assert item["detail"] == (
+                    "Checking every claim against its source · 1 of 2 sections checked"
+                )
+                assert item["progress"] is None
+                assert item["open"]["conversationId"] == cid
+
+            assert client.get(
+                conversations(other_base, "/report_b/stream"), headers=headers,
+            ).status_code == 204
+            assert client.post(
+                conversations(other_base, "/report_b/stop"), headers=headers,
+            ).status_code == 204
+            assert not runs.get(keys["report_b"]).stop_requested.is_set()
+
+            follower, followed = in_background(follow_second)
+            wait_for(lambda: len(runs.get(keys["report_b"])._watchers) == 2)
+            if stop_first:
+                assert client.post(
+                    conversations(base, "/report_a/stop"), headers=headers,
+                ).status_code == 204
+                release["report_a"].set()
+                first.join(10)
+                assert first_events[0][-1] == ("stopped", {"type": "stopped"})
+                assert runs.get(keys["report_b"]) is not None
+                assert not runs.get(keys["report_b"]).stop_requested.is_set()
+                assert keys["report_a"] not in activity_of(client)
+        finally:
+            for gate in release.values():
+                gate.set()
+            first.join(10)
+            second.join(10)
+
+        follower.join(10)
+        saved = done(second_events[0])["artifact"]
+        name, resumed = followed[0][0]
+        assert (name, resumed["question"]) == ("resumed", "Build report_b")
+        assert done(followed[0]) == done(second_events[0])
+        assert [data["conversationId"] for name, data in followed[0] if name == "turn"] == [
+            "report_b",
+        ]
+        assert activity_of(client)[keys["report_b"]]["open"] == {
+            "view": "library", "libraryId": base, "tab": "outputs", "conversationId": "report_b",
+            "typeId": "report", "lineageId": saved["lineageId"], "artifactId": saved["id"],
+        }
+        assert len(versions_of(client)) == (1 if stop_first else 2)
+        if not stop_first:
+            assert done(first_events[0])["artifact"]["lineageId"] != saved["lineageId"]
 
 
 @pytest.mark.parametrize(

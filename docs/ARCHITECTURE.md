@@ -28,7 +28,9 @@ Paths in the table are relative to [apps/backend/gunther](../apps/backend/gunthe
 1. Capture registers a note or source, or stages and verifies an original first. File receipts identify the queued job. The worker claims a lease, reads and indexes the file, and publishes a revision only if its expected head and lease still match. Originals and their evidence links remain available.
 2. Search and Ask resolve a library, section or list of sources. Retrieval uses eligible current passages and verifies a pinned revision before reading any cached passage from it. An answer stores numbered evidence snapshots with the turn. An explicit Save as knowledge publishes a trusted unit revision.
 3. An output binds its material, builds or edits the work, checks the claims and stages a candidate version. The version commit owns the seal, lineage head and associated conversation writes. Opening a saved version verifies its seal before projecting sections and checks.
-4. Live audio and durable recording uploads use separate transports. Recording completion uses the server byte ledger and checkpoint. Ask and Outputs share `answer_runs.py` for following a stream and stopping it. Their completion events follow the durable save and Activity update.
+4. Live audio and durable recording uploads use separate transports. Recording completion uses the server byte ledger and checkpoint.
+
+Ask and Outputs share the run registry for Stop and Follow. Their completion events follow the durable save and Activity update. Output keys identify a conversation, or a lineage for an unattached restyle or visual review. Studio shares a process-wide pool of 12 workers across builds for fan-out such as reading long material, checking parts and designing slides. Each call keeps its own worker limit. Calls made from a Studio worker run inline. Ask runs independently of this pool. [Run registry](../apps/backend/gunther/answer_runs.py) · [Studio requests](../apps/backend/gunther/studio/requests.py)
 
 ## Storage
 

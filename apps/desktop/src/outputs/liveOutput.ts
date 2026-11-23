@@ -1,5 +1,5 @@
 import type { ArtifactBriefState, OutlineItem, OutputApproach, StudioMemo, StudioReview } from "@gunther/contracts";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { ArtifactTurnEvent, OutputEvent } from "../api";
 import type { LiveStep } from "../pages/liveAnswer";
 
@@ -156,16 +156,79 @@ export function applyOutputEvent(state: LiveOutputState, event: ArtifactTurnEven
   }
 }
 
-/**
- * Live progress for one build or revision at a time: `start()`, feed `hear`, then `stop()`.
- * A revision starts from the sections the version already has.
- */
-export function useLiveOutput() {
-  const [live, setLive] = useState<LiveOutputState | null>(null);
-  const start = useCallback((seed?: { title: string; sections: OutlineItem[] }) => {
-    setLive(seed ? applyOutputEvent(EMPTY_LIVE, { type: "outline", title: seed.title, sections: seed.sections }) : EMPTY_LIVE);
+interface OutputJob {
+  kind: "turn" | "version" | "follow";
+  turnId: string;
+  text: string;
+  stop: () => Promise<void>;
+  live: LiveOutputState;
+  stopping: boolean;
+}
+
+/** Keep one listener per conversation. Switching views leaves the other runs listening. */
+export function useLiveOutputs() {
+  const listeners = useRef(new Map<string, { abort: AbortController; ready: Promise<boolean>; visible: boolean; job: OutputJob }>());
+  const [jobs, setJobs] = useState(new Map<string, OutputJob>());
+  const publish = useCallback((id: string, job: OutputJob) => {
+    setJobs((current) => new Map(current).set(id, job));
   }, []);
-  const stop = useCallback(() => setLive(null), []);
-  const hear = useCallback((event: ArtifactTurnEvent) => setLive((current) => applyOutputEvent(current ?? EMPTY_LIVE, event)), []);
-  return { live, start, stop, hear };
+  const watch = useCallback((id: string, info: Omit<OutputJob, "live" | "stopping">) => {
+    const previous = listeners.current.get(id);
+    if (previous?.visible || (previous && info.kind === "follow")) return null;
+    previous?.abort.abort();
+    let started!: (value: boolean) => void;
+    const ready = new Promise<boolean>((resolve) => { started = resolve; });
+    // A Follow that returns 204 should never show a running job.
+    const listener = {
+      abort: new AbortController(), ready, visible: info.kind !== "follow",
+      job: { ...info, live: EMPTY_LIVE, stopping: false },
+    };
+    listeners.current.set(id, listener);
+    if (listener.visible) publish(id, listener.job);
+    const { signal } = listener.abort;
+    signal.addEventListener("abort", () => started(false), { once: true });
+    return {
+      signal,
+      hear(event: ArtifactTurnEvent) {
+        if (signal.aborted) return;
+        started(true);
+        listener.visible = true;
+        listener.job = { ...listener.job, live: applyOutputEvent(listener.job.live, event) };
+        publish(id, listener.job);
+      },
+      finish() {
+        started(false);
+        if (listeners.current.get(id) !== listener) return;
+        listeners.current.delete(id);
+        if (!listener.visible) return;
+        setJobs((current) => {
+          const next = new Map(current);
+          next.delete(id);
+          return next;
+        });
+      },
+    };
+  }, [publish]);
+  const stop = async (id: string) => {
+    const listener = listeners.current.get(id);
+    if (!listener?.visible || listener.job.stopping) return;
+    listener.job = { ...listener.job, stopping: true };
+    publish(id, listener.job);
+    try {
+      // A turn can spend time saving its conversation before the server starts the run.
+      if (await listener.ready && listeners.current.get(id) === listener) await listener.job.stop();
+    } catch (reason) {
+      if (listeners.current.get(id) === listener) {
+        listener.job = { ...listener.job, stopping: false };
+        publish(id, listener.job);
+      }
+      throw reason;
+    }
+  };
+  const reset = useCallback(() => {
+    for (const listener of listeners.current.values()) listener.abort.abort();
+    listeners.current.clear();
+    setJobs(new Map());
+  }, []);
+  return { jobs, watch, stop, reset };
 }

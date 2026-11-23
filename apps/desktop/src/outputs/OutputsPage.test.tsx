@@ -1,4 +1,4 @@
-import type { Artifact, ArtifactConversationDetail, ArtifactConversationMessage, ArtifactSummary, ArtifactTurnInput, ArtifactTurnOut, ArtifactWork, ConversationCitation, KnowledgeUnit, ModelMenu } from "@gunther/contracts";
+import type { Artifact, ArtifactConversationDetail, ArtifactConversationMessage, ArtifactSummary, ArtifactTurnInput, ArtifactTurnOut, ArtifactWork, ConversationCitation, KnowledgeUnit, ModelMenu, OutputActivityOpen } from "@gunther/contracts";
 import { invoke } from "@tauri-apps/api/core";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -91,7 +91,7 @@ function keep(service: Service, id: string, payload: ArtifactTurnInput, answer: 
 }
 
 interface Context { service: Service; history: Artifact[]; created: Array<{ id?: string; scope?: unknown }>; imports: Array<{ conversations: Array<{ id: string; turns: unknown[] }> }> }
-async function setup(options: { from?: string; history?: Artifact[]; conversations?: ArtifactConversationDetail[]; menu?: ModelMenu; sources?: number; units?: KnowledgeUnit[]; follow?: typeof knowledgeApi.followOutputBuild; web?: boolean } = {}) {
+async function setup(options: { from?: string; history?: Artifact[]; conversations?: ArtifactConversationDetail[]; menu?: ModelMenu; sources?: number; units?: KnowledgeUnit[]; follow?: typeof knowledgeApi.followArtifactTurn; web?: boolean } = {}) {
   const history = options.history ?? [];
   const service: Service = new Map();
   for (const found of options.conversations ?? []) service.set(found.id, found);
@@ -113,7 +113,7 @@ async function setup(options: { from?: string; history?: Artifact[]; conversatio
   vi.spyOn(knowledgeApi, "sessions").mockResolvedValue([]);
   vi.spyOn(knowledgeApi, "artifacts").mockImplementation(async () => history.map(summary));
   vi.spyOn(knowledgeApi, "artifact").mockImplementation(async (_base, id) => history.find((item) => item.id === id) ?? version(1));
-  vi.spyOn(knowledgeApi, "followOutputBuild").mockImplementation(options.follow ?? (async () => null));
+  vi.spyOn(knowledgeApi, "followArtifactTurn").mockImplementation(options.follow ?? (async () => null));
   if (options.web) vi.spyOn(knowledgeApi, "health").mockResolvedValue({ status: "ok", webSearchMode: "tavily" } as never); else vi.spyOn(knowledgeApi, "health").mockRejectedValue(new Error("No web search in these tests."));
   vi.spyOn(knowledgeApi, "artifactConversations").mockImplementation(async () => [...service.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(({ id, title, updatedAt, artifactCount, waiting, pending, outputType, shape, lineageId, lastTurn }) => ({ id, title, updatedAt, artifactCount, waiting: waiting || pending !== null, outputType, shape, lineageId, lastTurn })));
   vi.spyOn(knowledgeApi, "artifactConversation").mockImplementation(async (_base, id) => { const found = service.get(id); if (!found) throw new Error("There is no such conversation."); return found; });
@@ -128,11 +128,12 @@ async function setup(options: { from?: string; history?: Artifact[]; conversatio
     }
     return [];
   });
-  const onNotify = vi.fn(); const onAdd = vi.fn(); const onFromDiscussion = vi.fn();
+  const onNotify = vi.fn(); const onAdd = vi.fn(); const onFromDiscussion = vi.fn(); const onOutputActivity = vi.fn();
   let view!: ReturnType<typeof render>;
-  await act(async () => { view = render(<OutputsPage base={makeBase({ id: "biology", title: "Biology" })} workspaceId="wsp_primary" onNotify={onNotify} onAdd={onAdd} fromDiscussion={options.from ?? null} onFromDiscussion={onFromDiscussion} />); });
+  const page = (outputActivity?: OutputActivityOpen) => <OutputsPage base={makeBase({ id: "biology", title: "Biology" })} workspaceId="wsp_primary" onNotify={onNotify} onAdd={onAdd} fromDiscussion={options.from ?? null} onFromDiscussion={onFromDiscussion} outputActivity={outputActivity} onOutputActivity={onOutputActivity} />;
+  await act(async () => { view = render(page()); });
   await waitFor(() => expect(screen.getByRole("button", { name: "New conversation" })).toBeEnabled());
-  return { view, onNotify, onAdd, onFromDiscussion, service, history, created, imports };
+  return { view, openActivity: (target: OutputActivityOpen) => view.rerender(page(target)), onNotify, onAdd, onFromDiscussion, service, history, created, imports };
 }
 function held<T>() { let release!: (value: T) => void; let fail!: (reason: Error) => void; const promise = new Promise<T>((resolve, reject) => { release = resolve; fail = reject; }); return { promise, release, fail }; }
 /** A turn that saves this version, kept by the service as it would be. */
@@ -281,18 +282,25 @@ describe("artifact conversations", () => {
   it("stops a turn and keeps the previous version", async () => {
     const user = userEvent.setup(); const running = held<ArtifactTurnOut>(); const context = await setup({ history: [version()] });
     vi.spyOn(knowledgeApi, "artifactTurnStream").mockImplementation(async (_base, id, payload, _workspace, hear) => { hear({ type: "decision", actions: [{ id: "a1", do: "write", label: "Writing section 1" }] }); keep(context.service, id, payload, { kind: "stopped", text: "" }); return running.promise; });
-    const stop = vi.spyOn(knowledgeApi, "stopOutputBuild").mockImplementation(async () => running.fail(new OutputStoppedError()));
+    const stop = vi.spyOn(knowledgeApi, "stopArtifactTurn").mockImplementation(async () => running.fail(new OutputStoppedError()));
     await send(user, "Make it shorter");
     await user.click(await chat().findByRole("button", { name: "Stop generation" }));
     await waitFor(() => expect(context.onNotify).toHaveBeenCalledWith("Stopped. Nothing was saved."));
-    expect(stop).toHaveBeenCalledWith("biology", "wsp_primary"); expect(screen.getByRole("heading", { level: 2, name: "Immune markers v1" })).toBeVisible();
+    expect(stop).toHaveBeenCalledWith("biology", "earlier-work", "wsp_primary"); expect(screen.getByRole("heading", { level: 2, name: "Immune markers v1" })).toBeVisible();
     expect(await chat().findByText("Stopped. Nothing was saved.")).toBeVisible();
   });
 
   it("follows an existing build and associates its result with the conversation", async () => {
     const running = held<Artifact | null>(); let context!: Awaited<ReturnType<typeof setup>>;
-    context = await setup({ follow: async (_base, _workspace, hear) => { hear({ type: "resumed", question: "Cover B cells", startedAt: 1 }); hear({ type: "outline", title: "Immune markers", sections: [{ heading: "B cells", goal: "" }] }); hear({ type: "section", index: 0, state: "researching" }); return running.promise; } });
+    const follow: typeof knowledgeApi.followArtifactTurn = async (_base, _id, _workspace, hear) => {
+      hear({ type: "resumed", question: "Cover B cells", startedAt: 1 });
+      hear({ type: "stage", id: "verify", label: "Checking every claim", state: "running", detail: "1 of 2 sections checked" });
+      return running.promise;
+    };
+    context = await setup({ conversations: [conversation("recovered", { title: "Recovered request" })], follow });
     expect(chat().getAllByText("Cover B cells")[0]).toBeVisible();
+    expect(chat().getByText("Checking every claim · 1 of 2 sections checked", { selector: "p" })).toBeVisible();
+    expect(knowledgeApi.followArtifactTurn).toHaveBeenCalledWith("biology", "recovered", "wsp_primary", expect.any(Function), expect.any(AbortSignal));
     expect(chat().getByRole("button", { name: "Stop generation" })).toBeEnabled();
     const artifact = version(1, { conversationId: "recovered", conversationTitle: "Recovered request", clientRequestId: "original_request", request: "Cover B cells" });
     await act(async () => { context.history.unshift(artifact); context.service.set("recovered", conversation("recovered", { title: "Recovered request", works: [workOf(artifact)], active: artifact.lineageId, artifactCount: 1 })); running.release(artifact); });
@@ -300,19 +308,23 @@ describe("artifact conversations", () => {
     expect(within(screen.getByRole("region", { name: "Conversations" })).getByRole("button", { name: /Recovered request/ })).toHaveAttribute("aria-current", "page");
   });
 
-  it("follows a turn that is still running, with its steps, and shows how it ended", async () => {
+  it("follows the selected conversation and shows how its turn ended", async () => {
+    const user = userEvent.setup();
     const running = held<ArtifactTurnOut>();
     const mine = conversation("conv_a", { title: "Costs deck", messages: [said("old", "Earlier request"), replied("old_a", "reply", "Earlier answer.")], updatedAt: "2026-10-01T00:09:00.000Z" });
     const other = conversation("conv_b", { title: "Another conversation", updatedAt: "2026-10-01T00:10:00.000Z" });
-    const context = await setup({ conversations: [other, mine], follow: async (_base, _workspace, hear) => {
+    const context = await setup({ conversations: [other, mine], follow: async (_base, id, _workspace, hear) => {
+      if (id !== "conv_a") return null;
       hear({ type: "resumed", question: "Add a slide on costs", startedAt: 1 });
       hear({ type: "turn", conversationId: "conv_a", messageId: "m" });
       hear({ type: "decision", actions: [{ id: "a1", do: "plan", label: "Adding a slide" }] });
       hear({ type: "action", id: "a1", state: "running", label: "Adding a slide", note: "" });
       return running.promise;
     } });
-    // The turn belongs to the conversation it names, which opens.
-    expect(within(screen.getByRole("region", { name: "Conversations" })).getByRole("button", { name: /Costs deck/ })).toHaveAttribute("aria-current", "page");
+    const list = within(screen.getByRole("region", { name: "Conversations" }));
+    expect(list.getByRole("button", { name: /Another conversation/ })).toHaveAttribute("aria-current", "page");
+    expect(chat().queryByText("Adding a slide")).toBeNull();
+    await user.click(list.getByRole("button", { name: /Costs deck/ }));
     expect(chat().getAllByText("Add a slide on costs")[0]).toBeVisible(); expect(chat().getByText("Adding a slide")).toBeVisible();
     const artifact = version(1, { conversationId: "conv_a" });
     await act(async () => { context.history.unshift(artifact); keep(context.service, "conv_a", { clientRequestId: "x", text: "Add a slide on costs" }, { kind: "result", text: "Added it.", artifactId: artifact.id }, artifact); running.release(turnOut("saved", "Added it.", artifact)); });
@@ -328,6 +340,58 @@ describe("artifact conversations", () => {
     await act(async () => { context.history.unshift(version(1)); running.release(turnOut("saved", "Done.", version(1))); });
     expect(chat().getByRole("textbox", { name: "Artifact message" })).toHaveValue("My next request");
     expect(screen.queryByRole("heading", { level: 2, name: "Immune markers v1" })).not.toBeInTheDocument();
+  });
+
+  it("starts builds in two conversations and stops only the selected run", async () => {
+    const user = userEvent.setup();
+    const first = held<ArtifactTurnOut>();
+    const second = held<ArtifactTurnOut>();
+    let announceSecond!: () => void;
+    const context = await setup({
+      conversations: [
+        conversation("conv_a", { title: "First report" }),
+        conversation("conv_b", { title: "Second report" }),
+      ],
+    });
+    const run = vi.spyOn(knowledgeApi, "artifactTurnStream").mockImplementation(async (_base, id, payload, _workspace, hear) => {
+      const announce = () => hear({ type: "stage", id: "verify", label: "Checking every claim", state: "running", detail: "1 of 2 sections checked" });
+      if (id === "conv_a") {
+        announce();
+        return first.promise;
+      }
+      announceSecond = announce;
+      keep(context.service, id, payload, { kind: "stopped", text: "" });
+      return second.promise;
+    });
+    const stop = vi.spyOn(knowledgeApi, "stopArtifactTurn").mockImplementation(async () => second.fail(new OutputStoppedError()));
+    await user.click(chat().getByRole("button", { name: "Report" }));
+    const list = within(screen.getByRole("region", { name: "Conversations" }));
+    await user.click(list.getByRole("button", { name: /Second report/ }));
+    await user.click(chat().getByRole("button", { name: "Report" }));
+    await user.click(await chat().findByRole("button", { name: "Stop generation" }));
+    expect(stop).not.toHaveBeenCalled();
+    await act(async () => announceSecond());
+    expect(run.mock.calls.map(([, id]) => id)).toEqual(["conv_a", "conv_b"]);
+    expect(stop).toHaveBeenCalledWith("biology", "conv_b", "wsp_primary");
+    expect(await chat().findByText("Stopped. Nothing was saved.")).toBeVisible();
+    await user.click(list.getByRole("button", { name: /First report/ }));
+    expect(chat().getByText("Checking every claim · 1 of 2 sections checked", { selector: "p" })).toBeVisible();
+    expect(run.mock.calls[0]?.[5]?.aborted).toBe(false);
+    await act(async () => first.release(turnOut("replied", "Done.")));
+  });
+
+  it("opens the exact saved version named by Activity while Outputs is already open", async () => {
+    const first = version(1, { conversationId: "conv_a", conversationTitle: "First report" });
+    const second = version(2, { conversationId: "conv_a", conversationTitle: "First report" });
+    const other = version(1, { id: "other", lineageId: "arl_other", title: "Other report", conversationId: "conv_b" });
+    const context = await setup({
+      history: [other, second, first],
+      conversations: [conversation("conv_b", { title: "Other report", works: [workOf(other)], active: other.lineageId })],
+    });
+    expect(await screen.findByRole("heading", { level: 2, name: "Other report" })).toBeVisible();
+    context.openActivity({ view: "library", tab: "outputs", libraryId: "biology", conversationId: "conv_a", typeId: "report", lineageId: first.lineageId, artifactId: first.id });
+    expect(await screen.findByRole("heading", { level: 2, name: "Immune markers v1" })).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "Conversations" })).getByRole("button", { name: /First report/ })).toHaveAttribute("aria-current", "page");
   });
 
   it("lists the conversations the service has and opens the one used last", async () => {

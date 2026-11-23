@@ -80,9 +80,10 @@ class Tracked:
             self._entry, self._token, state=state, title=title, detail=detail, progress=progress
         )
 
-    def done(self, title: str, detail: str = "") -> None:
+    def done(self, title: str, detail: str = "", *, open: dict[str, Any] | None = None) -> None:
         self._activity._change(
-            self._entry, self._token, state="done", title=title, detail=detail, error=None
+            self._entry, self._token, state="done", title=title, detail=detail,
+            error=None, open=open,
         )
 
     def failed(self, title: str, error: str) -> None:

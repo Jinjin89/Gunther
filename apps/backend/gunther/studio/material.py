@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -15,7 +14,7 @@ from gunther.outputs import Events, Notes, Pool, figure_lines
 from gunther.skill_checks import figures_of
 from gunther.studio import prompts as P
 from gunther.studio import science as S
-from gunther.studio.requests import WORKERS, _in_context, material_request
+from gunther.studio.requests import WORKERS, material_request, request_map
 from gunther.studio.state import Run
 
 logger = logging.getLogger("gunther.studio.pipeline")
@@ -127,8 +126,7 @@ class StudioMaterial:
                 logger.info("Reading a part failed: %s", error)
                 return None
 
-        with ThreadPoolExecutor(WORKERS) as workers:
-            found = list(workers.map(_in_context(note), parts))
+        found = request_map(note, parts, WORKERS)
         lines = []
         for part, result in zip(parts, found, strict=True):
             if result is None:

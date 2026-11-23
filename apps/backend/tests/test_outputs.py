@@ -1248,7 +1248,7 @@ def test_a_version_made_by_agents_is_sealed_and_tampering_is_caught(tmp_path: Pa
             assert status() == (200, 200), field
 
 
-def test_a_second_build_waits_and_a_page_that_comes_back_follows_the_first(
+def test_legacy_build_locks_its_conversation_and_can_be_followed(
     tmp_path: Path,
 ) -> None:
     gate = threading.Event()
@@ -1262,19 +1262,20 @@ def test_a_second_build_waits_and_a_page_that_comes_back_follows_the_first(
         base_id, _ = library(client)
         headers = workspace(client)
         runs = client.app.state.answer_runs
-        key = f"outputs:{base_id}"
-        first, first_box = in_background(lambda: build(client, base_id, body(), headers))
+        key = "output-conv:talk"
+        stream = f"/api/knowledge-bases/{base_id}/artifact-conversations/talk/stream"
+        first, first_box = in_background(
+            lambda: build(client, base_id, body(conversationId="talk"), headers)
+        )
         wait_for(lambda: writing(runs.get(key)))
         busy = client.post(
-            f"/api/knowledge-bases/{base_id}/outputs/build/stream", headers=headers, json=body()
+            f"/api/knowledge-bases/{base_id}/outputs/build/stream",
+            headers=headers, json=body(conversationId="talk"),
         )
         assert busy.status_code == 409
-        assert busy.json()["detail"] == "Gunther is still building an output here."
 
         def follow() -> list:
-            with client.stream(
-                "GET", f"/api/knowledge-bases/{base_id}/outputs/build/stream", headers=headers
-            ) as response:
+            with client.stream("GET", stream, headers=headers) as response:
                 return read_events(response)
 
         again, again_box = in_background(follow)
@@ -1282,7 +1283,7 @@ def test_a_second_build_waits_and_a_page_that_comes_back_follows_the_first(
         gate.set()
         first.join(10)
         again.join(10)
-        after = client.get(f"/api/knowledge-bases/{base_id}/outputs/build/stream", headers=headers)
+        after = client.get(stream, headers=headers)
         assert len(versions(client)) == 1
 
     [followed] = again_box
@@ -1311,10 +1312,14 @@ def test_stopping_a_build_saves_nothing(tmp_path: Path) -> None:
         base_id, _ = library(client)
         headers = workspace(client)
         runs = client.app.state.answer_runs
-        key = f"outputs:{base_id}"
-        first, first_box = in_background(lambda: build(client, base_id, body(), headers))
+        key = "output-conv:talk"
+        first, first_box = in_background(
+            lambda: build(client, base_id, body(conversationId="talk"), headers)
+        )
         wait_for(lambda: writing(runs.get(key)))
-        stopped = client.post(f"/api/knowledge-bases/{base_id}/outputs/build/stop", headers=headers)
+        stopped = client.post(
+            f"/api/knowledge-bases/{base_id}/artifact-conversations/talk/stop", headers=headers,
+        )
         assert stopped.status_code == 204
         gate.set()
         first.join(10)
@@ -1322,7 +1327,7 @@ def test_stopping_a_build_saves_nothing(tmp_path: Path) -> None:
         # Once it has ended, another can start.
         wait_for(lambda: runs.get(key) is None)
         fake.replies = [output_replies(OUTLINE, REPORT)]
-        built(build(client, base_id, body()))
+        built(build(client, base_id, body(conversationId="talk")))
     assert first_box[0][-1] == ("stopped", {"type": "stopped"})
 
 
@@ -1369,73 +1374,38 @@ def test_a_build_is_listed_while_it_works_and_when_it_is_done(
     fake = FakeProvider(output_replies(outline, written))
     with app_for(tmp_path, fake) as client:
         base_id, _ = library(client, "Immune cells")
-        key = f"output:{base_id}"
-        request = body(kind=kind, audience="student")
+        key = "output-conv:talk"
+        request = body(kind=kind, audience="student", conversationId="talk")
         first, box = in_background(lambda: build(client, base_id, request))
         wait_for(lambda: activity_of(client).get(key, {}).get("detail", "").startswith("Writing"))
         item = activity_of(client)[key]
         assert (item["title"], item["state"], item["kind"]) == (words[0], "running", "output")
         assert item["about"] == "Immune cells" and item["canStop"] is True
         assert item["detail"] in ("Writing the report", "Writing the slides")
-        assert item["open"] == {"view": "library", "libraryId": base_id, "tab": "outputs"}
+        assert item["open"] == {
+            "view": "library", "libraryId": base_id, "tab": "outputs",
+            "conversationId": "talk", "typeId": kind, "lineageId": None, "artifactId": None,
+        }
+        assert item["progress"] is None
         gate.set()
         first.join(10)
         done = activity_of(client)[key]
     assert (done["state"], done["title"]) == ("done", words[1])
     assert done["endedAt"] and done["canStop"] is False
-    built(box[0])
+    saved = built(box[0])
+    assert done["open"] == item["open"] | {
+        "lineageId": saved["lineageId"], "artifactId": saved["id"],
+    }
 
 
 def test_a_failed_build_says_why_in_the_list(tmp_path: Path) -> None:
     with app_for(tmp_path, FakeProvider(output_replies(OUTLINE, REPORT))) as client:
         base_id, _ = library(client, notes={})
-        events = build(client, base_id, body())
-        item = activity_of(client)[f"output:{base_id}"]
+        events = build(client, base_id, body(conversationId="talk"))
+        item = activity_of(client)["output-conv:talk"]
     assert events[-1][0] == "error"
     assert (item["state"], item["title"]) == ("failed", "Couldn't write the report")
     assert item["error"] == events[-1][1]["detail"]
-
-
-def test_two_libraries_building_at_once_both_show_and_stop_ends_one(tmp_path: Path) -> None:
-    gate = threading.Event()
-    with app_for(tmp_path, FakeProvider("unused")) as client:
-        first_id, _ = library(client, "Cells")
-        second_id, _ = library(client, "Genes")
-        service = client.app.state.knowledge_service
-        real = service.artifact_turn
-
-        def slow(base_id, workspace_id, conversation_id, payload, hear, **options):
-            hear({"type": "outline", "title": "T", "sections": [{"heading": "a"}] * 2})
-            hear({"type": "section", "index": 0, "state": "writing"})
-            assert gate.wait(10)
-            hear({"type": "section", "index": 0, "state": "done"})
-            hear({"type": "section", "index": 1, "state": "checking"})
-            return real(base_id, workspace_id, conversation_id, payload, hear, **options)
-
-        service.artifact_turn = slow
-        runs = client.app.state.answer_runs
-        slides = body(kind="slides", audience="student")
-        one, one_box = in_background(lambda: build(client, first_id, slides))
-        two, _ = in_background(lambda: build(client, second_id, body()))
-        wait_for(lambda: all(runs.get(f"outputs:{i}") for i in (first_id, second_id)))
-        wait_for(lambda: len(activity_of(client)) == 2)
-        found = activity_of(client)
-        assert found[f"output:{first_id}"]["title"] == "Building slides"
-        assert found[f"output:{second_id}"]["title"] == "Writing a report"
-        assert {item["about"] for item in found.values()} == {"Cells", "Genes"}
-        assert all(item["state"] == "running" for item in found.values())
-
-        # Stopping one through the activity route ends it like the old stop route.
-        stopped = client.post(f"/api/activity/output%3A{first_id}/stop", headers=SIDECAR)
-        assert stopped.status_code == 204
-        gate.set()
-        one.join(10)
-        two.join(10)
-        after = activity_of(client)
-        assert versions(client) == []
-    assert one_box[0][-1] == ("stopped", {"type": "stopped"})
-    assert f"output:{first_id}" not in after
-    assert after[f"output:{second_id}"]["state"] == "failed"
 
 
 def test_conversation_membership_and_instructions_survive_build_and_edit(tmp_path: Path) -> None:

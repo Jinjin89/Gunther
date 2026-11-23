@@ -1,6 +1,6 @@
 """Artifact workspace headers, error mapping and output stream orchestration."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Annotated
 
@@ -8,10 +8,12 @@ from fastapi import Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from gunther.answer_runs import AnswerRun, Stopped, check_stop, stopping_on
-from gunther.api_common import _answer_runs, _sse
+from gunther.api_common import _answer_runs, _sse, _sse_events
 from gunther.artifact_read import ArtifactIntegrityError
 from gunther.artifact_versions import ArtifactConflictError
 from gunther.llm import ModelError
+from gunther.output_types import output_type_for
+from gunther.schemas import ArtifactOut, ArtifactTurnOut
 
 WorkspaceHeader = Annotated[
     str, Header(alias="X-Gunther-Workspace-Id", min_length=1, max_length=40)
@@ -40,89 +42,91 @@ def _artifact_http_errors(*additional: type[Exception]) -> Iterator[None]:
         raise HTTPException(status_code=_artifact_error_status(error), detail=str(error)) from error
 
 
-_SECTION_VERBS = {"researching": "Researching", "writing": "Writing", "checking": "Checking"}
+def _output_key(conversation_id: str | None, lineage_id: str | None = None) -> str:
+    if conversation_id is not None:
+        return f"output-conv:{conversation_id}"
+    assert lineage_id is not None
+    return f"output-lineage:{lineage_id}"
 
 
-def _outputs_key(knowledge_base_id: str) -> str:
-    """One output at a time is built in a library."""
+def _conversation_run(
+    request: Request, workspace_id: str, knowledge_base_id: str, conversation_id: str,
+) -> AnswerRun | None:
+    run = _answer_runs(request).get(_output_key(conversation_id))
+    if run is not None and not run.finished and run.scope == (workspace_id, knowledge_base_id):
+        return run
+    return None
 
-    return f"outputs:{knowledge_base_id}"
+
+def _output_event(name: str, data: dict) -> StreamingResponse:
+    """Reply to a replay or a rejected request without starting a run."""
+
+    async def event():
+        yield name, data
+
+    return _sse_events(event())
+
+
+def _output_error(error: Exception) -> StreamingResponse:
+    return _output_event("error", {"status": _artifact_error_status(error), "detail": str(error)})
 
 
 def _output_run(
     request: Request,
+    workspace_id: str,
     knowledge_base_id: str,
     label: str,
-    call,
+    call: Callable[[Callable[[dict], None]], ArtifactOut | ArtifactTurnOut],
     words: tuple[str, str, str],
     about: str,
-    result=None,
+    *,
+    conversation_id: str | None,
+    type_id: str | None = None,
+    lineage_id: str | None = None,
+    artifact_id: str | None = None,
 ) -> StreamingResponse:
-    """Start building (or revising) an output and stream how it goes.
-
-    ``call`` does the work, given the function that hears each step. The events are the
-    agents' progress (``outline``, ``section``, ``step``, ``text``), then ``done`` with
-    the saved version, ``error`` saying why there is none, or ``stopped``. Closing the
-    connection only stops listening; ``POST .../outputs/build/stop`` ends the work, and
-    then nothing is saved.
-
-    ``result`` shapes the ``done`` payload from what ``call`` returns (a saved version unless
-    told otherwise; the Artifacts agent's turn has its own).
-    """
+    """Stream one output run while Activity offers to open or stop it."""
 
     running, done_word, failed_word = words
-    shaped = result or (lambda saved: saved.model_dump(mode="json", by_alias=True))
     activity = request.app.state.activity
     runs = _answer_runs(request)
+    key = _output_key(conversation_id, lineage_id)
+    target = {
+        "view": "library", "libraryId": knowledge_base_id, "tab": "outputs",
+        "conversationId": conversation_id, "typeId": type_id,
+        "lineageId": lineage_id, "artifactId": artifact_id,
+    }
 
     def work(run: AnswerRun) -> None:
-        sections = 0
-        # A section can be checked again after it is done: each counts once.
-        finished: set[int] = set()
         tracked = run.track_activity(
-            activity.track(
-                f"output:{knowledge_base_id}",
-                "output",
-                running,
-                about,
-                open={"view": "library", "libraryId": knowledge_base_id, "tab": "outputs"},
-                stop=lambda: runs.stop(_outputs_key(knowledge_base_id)),
-                detail="Planning",
-            ),
+            activity.track(key, "output", running, about, open=target, stop=run.stop),
             done=done_word,
             failed=failed_word,
         )
 
         def hear(event: dict) -> None:
-            nonlocal sections
             check_stop()
             if event["type"] == "action" and event.get("state") == "running":
                 tracked.update(detail=event.get("label") or "Working")
-            elif event["type"] == "stage" and event.get("state") == "running":
-                # A studio build's step, with what it is doing now ("4 of 11 slides checked").
+            elif event["type"] == "stage":
                 tracked.update(
                     detail=" · ".join(filter(None, (event.get("label"), event.get("detail"))))
-                    or "Working"
                 )
-            elif event["type"] == "outline":
-                sections = len(event.get("sections") or [])
-            elif event["type"] == "section":
-                number = event["index"] + 1
-                of = f" of {sections}" if sections else ""
-                if event["state"] == "done":
-                    finished.add(event["index"])
-                    if sections:
-                        tracked.update(progress=len(finished) / sections)
-                elif event["state"] in _SECTION_VERBS:
-                    verb = _SECTION_VERBS[event["state"]]
-                    tracked.update(detail=f"{verb} section {number}{of}")
             if event["type"] != "saving":
                 run.publish(event["type"], event)
 
         try:
             with stopping_on(run.stop_requested):
-                artifact = call(hear)
-            run.publish("done", shaped(artifact))
+                result = call(hear)
+            saved = result.artifact if isinstance(result, ArtifactTurnOut) else result
+            opened = {
+                **target,
+                "conversationId": saved.conversation_id or conversation_id,
+                "typeId": output_type_for(saved.kind, saved.style).id,
+                "lineageId": saved.lineage_id,
+                "artifactId": saved.id,
+            } if saved is not None else None
+            run.publish("done", result.model_dump(mode="json", by_alias=True), open=opened)
         except Stopped:
             run.publish("stopped", {"type": "stopped"})
         except tuple(_ARTIFACT_ERROR_STATUS) as error:
@@ -133,7 +137,7 @@ def _output_run(
             logger.exception("Building an output failed")
             run.publish("error", {"status": 500, "detail": "The output could not be built."})
 
-    run = _answer_runs(request).start(_outputs_key(knowledge_base_id), label, work)
+    run = runs.start(key, label, work, scope=(workspace_id, knowledge_base_id))
     if run is None:
-        raise HTTPException(status_code=409, detail="Gunther is still building an output here.")
+        raise HTTPException(status_code=409, detail="Gunther is still working on this output.")
     return _sse(run)

@@ -3,7 +3,7 @@ import { ActivityStatus } from "./activity/ActivityStatus";
 import { publishRecordingStatus } from "./activity/recordingStatus";
 import { ActivityProvider } from "./activity/useActivity";
 import { Check } from "lucide-react";
-import type { ActivityOpen, CreateKnowledgeBaseInput, NotebookNote, TrashItem } from "@gunther/contracts";
+import type { ActivityOpen, CreateKnowledgeBaseInput, NotebookNote, OutputActivityOpen, TrashItem } from "@gunther/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { normalizeAtlasMode, type AtlasMode, type KnowledgeBase } from "./atlas";
 import { AtlasPage, AtlasRail, AtlasTitlebar, type AtlasView } from "./components/AtlasChrome";
@@ -103,6 +103,10 @@ export default function App() {
   const [view, setView] = useState<AtlasView>("home");
   const [activeBaseId, setActiveBaseId] = useState<string | null>(null);
   const [mode, setMode] = useState<AtlasMode>(DEFAULT_KNOWLEDGE_BASE_MODE);
+  const [outputActivity, setOutputActivity] = useState<OutputActivityOpen | null>(null);
+  const clearOutputActivity = useCallback((target: OutputActivityOpen) => {
+    setOutputActivity((current) => current === target ? null : current);
+  }, []);
   const [artifactPreviewFocused, setArtifactPreviewFocused] = useState(false);
   const sidebar = useSidebarLayout(view === "base" && normalizeAtlasMode(mode) === "outputs", artifactPreviewFocused);
   useEffect(() => setArtifactPreviewFocused(false), [view, mode, activeBaseId]);
@@ -318,6 +322,9 @@ export default function App() {
     if (target.view === "item") {
       openItem({ type: "source", id: target.id }, originOf(view));
     } else if (target.view === "library") {
+      if (target.tab === "outputs") {
+        setOutputActivity(target.conversationId || target.lineageId || target.artifactId ? { ...target } : null);
+      }
       if (target.tab === "ask" && target.sessionId) {
         persistentStorage.setItem(`gunther:active-session:${target.libraryId}`, target.sessionId);
       }
@@ -335,7 +342,10 @@ export default function App() {
   /** Whether the page on screen already shows what an Activity row would open. */
   const isActivityHere = useCallback((target: ActivityOpen) => {
     if (target.view === "item") return view === "item" && openItemState?.ref.type === "source" && openItemState.ref.id === target.id;
-    if (target.view === "library") return view === "base" && activeBaseId === target.libraryId && mode === target.tab;
+    if (target.view === "library") {
+      if (target.tab === "outputs" && (target.conversationId || target.lineageId || target.artifactId)) return false;
+      return view === "base" && activeBaseId === target.libraryId && mode === target.tab;
+    }
     return view === "home";
   }, [activeBaseId, mode, openItemState, view]);
 
@@ -539,7 +549,8 @@ export default function App() {
         <main className="atlas-workspace" id="main-content">
           {view === "home" && <AtlasPage className="gx-page-home"><HomePage bases={bases} basesReady={basesReady} inboxCount={pendingCount} profileName={profileName} focusRequest={searchFocusRequest} onCapture={(kind?: HomeCaptureKind) => openCapture(kind ?? null)} onOpenBase={openBase} onAskBase={askBase} onOpenNote={(id) => openItem({ type: "note", id }, "home")} onOpenItem={(ref, queue) => openItem(ref, "home", queue)} resumeSearch={homeResume} onOpenLibraries={() => navigate("library")} onCreateBase={() => setCreateBaseOpen(true)} onOpenInbox={() => navigate("inbox")} onNotify={notify} resolveWorkspaceId={refreshWorkspaceId} /></AtlasPage>}
           {view === "library" && <AtlasPage><AtlasLibraryPage bases={bases} loading={!basesReady} onOpen={openBase} onAdd={() => openCapture()} onCreateBase={() => setCreateBaseOpen(true)} /></AtlasPage>}
-          {view === "base" && (activeBase ? <KnowledgeBaseWorkspace key={activeBase.id} showHeader={false} previewFocused={artifactPreviewFocused} onPreviewFocus={setArtifactPreviewFocused} base={activeBase} workspaceId={workspaceId} mode={mode} onMode={setMode} onBack={() => navigate("library")} onOpenSource={(id, queue) => openItem({ type: "source", id }, "base", queue.map((sourceId): ItemRef => ({ type: "source", id: sourceId })))} onAdd={(kind) => openCapture(kind ?? null, "lecture", activeBase.id)} onRecord={(context) => openCapture("recording", context, activeBase.id)} onExport={exportBase} onEdit={() => setEditingBaseId(activeBase.id)} onNotify={notify} /> : <AtlasPage>
+          {view === "base" && (activeBase ? <KnowledgeBaseWorkspace key={activeBase.id} showHeader={false} previewFocused={artifactPreviewFocused} onPreviewFocus={setArtifactPreviewFocused} base={activeBase} workspaceId={workspaceId} mode={mode} onMode={setMode} onBack={() => navigate("library")} onOpenSource={(id, queue) => openItem({ type: "source", id }, "base", queue.map((sourceId): ItemRef => ({ type: "source", id: sourceId })))} onAdd={(kind) => openCapture(kind ?? null, "lecture", activeBase.id)} onRecord={(context) => openCapture("recording", context, activeBase.id)} onExport={exportBase} onEdit={() => setEditingBaseId(activeBase.id)} onNotify={notify}
+            outputActivity={outputActivity?.libraryId === activeBase.id ? outputActivity : null} onOutputActivity={clearOutputActivity} /> : <AtlasPage>
             <header className="gx-page-header">
               <h1>{basesReady ? "Library unavailable" : "Opening library…"}</h1>
               {basesReady && <div className="gx-page-actions">

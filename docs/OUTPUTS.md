@@ -25,6 +25,10 @@ Planning uses structured requested count and duration fields. An approved outlin
 
 The Report and Slides shortcuts send build turns with the selected sources and the draft as focus. Studio starts directly from those options. Choose at least one source, saved answer or discussion when building from a selection. Failed or stopped builds keep completed stages with the draft. The conversation brief, scope and evidence pool are published with the version. Retry uses the saved build options and reuses the stages whose inputs still match. Stop is checked on entry to each stage. [Studio coordinator](../apps/backend/gunther/studio/pipeline.py) · [Study](../apps/backend/gunther/studio/study.py) · [Drafting](../apps/backend/gunther/studio/drafting.py)
 
+## Progress and Activity
+
+Conversations can build at the same time, including two in the same library. Each conversation runs one turn at a time. The Activity panel shows the current stage and counts when available, such as “Checking every claim against its source · 4 of 11 sections checked.” Closing Outputs leaves its runs working. Reopen a conversation to follow it, or use Stop in the conversation or its Activity row. A completed row opens the version that run saved.
+
 ## Conversations and versions
 
 The agent reads a compact view of the brief, evidence and work. It chooses bounded actions such as Understand, Plan, Write, Edit, Check, Review, Answer and Save. Action gates check selection, part positions and readiness. Part IDs remain stable through reordering or heading edits. The reader can show changes and jump to the affected section or slide.
@@ -45,6 +49,8 @@ Decks can carry a guarded HTML design over their Markdown. Real rendering and me
 
 ## API boundaries
 
-The conversation turn stream accepts `kind="build"` with the output type and options in `build`. A refinement can specify `targetLineageId`. Conversation summaries include the active output's label, shape and lineage, plus the last turn's build options and any error. The legacy build route translates `kind`, `style` and `brief` into a build turn and replays previously saved requests. Restyle, visual review, typed edits and Check use the shared version writer. Streams support progress, Stop and Follow. [Conversation API](../apps/backend/gunther/artifact_conversations_api.py) · [Output commands](../apps/backend/gunther/output_commands_api.py)
+The conversation turn stream accepts `kind="build"` with the output type and options in `build`. A refinement can specify `targetLineageId`. Conversation summaries include the active output's label, shape and lineage, plus the last turn's build options and any error. The legacy build route translates `kind`, `style` and `brief` into a build turn and replays previously saved requests. Restyle, visual review, typed edits and Check use the shared version writer. [Conversation API](../apps/backend/gunther/artifact_conversations_api.py) · [Output commands](../apps/backend/gunther/output_commands_api.py)
+
+Use `GET /artifact-conversations/{id}/stream` under the library to follow its run and `POST /artifact-conversations/{id}/stop` to stop it. Runs and Activity share the key `output-conv:<conversation_id>`. A restyle or visual review of a deck without a conversation uses `output-lineage:<lineage_id>` and can be stopped from Activity. Output Activity targets include `conversationId`, `typeId`, `lineageId` and `artifactId` as they become available. [Output streams](../apps/backend/gunther/artifact_api_common.py)
 
 `GET /api/output-types` lists each type's ID, label, shape, description, icon and options. New versions seal the type ID in `style`. The API projects a display label as `outputType` on summaries and details. Earlier styles and workspace structures are read with their corresponding types. A saved Field guide retains its label and opens with the report reader. [Type catalog](../apps/backend/gunther/output_types.py)

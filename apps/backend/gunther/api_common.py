@@ -1,6 +1,7 @@
 """Request-scoped service access, body limits and shared SSE transport."""
 
 import json
+from collections.abc import AsyncIterable
 
 from fastapi import Request
 from fastapi.responses import StreamingResponse
@@ -32,12 +33,16 @@ def _answer_runs(request: Request) -> AnswerRuns:
 
 
 def _sse(run: AnswerRun, *, resumed: bool = False):
-    async def events():
-        async for name, data in run.follow(resumed=resumed):
+    return _sse_events(run.follow(resumed=resumed))
+
+
+def _sse_events(events: AsyncIterable[tuple[str, dict]]) -> StreamingResponse:
+    async def encode():
+        async for name, data in events:
             yield f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
-        events(),
+        encode(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )

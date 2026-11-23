@@ -1,4 +1,5 @@
 import { persistentStorage } from "../persistentStorage";
+import type { OutputActivityOpen } from "@gunther/contracts";
 import { useState } from "react";
 import { ArrowLeft, Camera, FileText, Link2, Mic2, Plus } from "lucide-react";
 import { normalizeAtlasMode, type AtlasMode, type KnowledgeBase } from "../atlas";
@@ -28,6 +29,8 @@ interface KnowledgeBaseWorkspaceProps {
   showHeader?: boolean;
   previewFocused?: boolean;
   onPreviewFocus?: (value: boolean) => void;
+  outputActivity?: OutputActivityOpen | null | undefined;
+  onOutputActivity?: ((target: OutputActivityOpen) => void) | undefined;
 }
 
 function BaseHeader({ base, mode, onMode, onBack, onExport, onEdit }: Pick<KnowledgeBaseWorkspaceProps, "base" | "mode" | "onMode" | "onBack" | "onExport" | "onEdit">) {
@@ -80,7 +83,8 @@ export function KnowledgeBaseWorkspace(props: KnowledgeBaseWorkspaceProps) {
       <div className="base-workspace-body">
         {mode === "contents" && <ContentsView base={props.base} onAdd={props.onAdd} onEdit={props.onEdit} onOpenSource={props.onOpenSource} onAsk={(id) => void askSection(id)} onAskLibrary={() => props.onMode("ask")} />}
         {mode === "ask" && <SessionWorkspace base={props.base} onAdd={props.onAdd} onNotify={props.onNotify} onOpenSource={(id) => props.onOpenSource?.(id, [id])} onMakeReport={(sessionId) => { setReportFrom(sessionId); props.onMode("outputs"); }} />}
-        {mode === "outputs" && <OutputsPage base={props.base} workspaceId={props.workspaceId} focused={props.previewFocused} onFocus={props.onPreviewFocus} onNotify={props.onNotify} onAdd={props.onAdd} onOpenSource={props.onOpenSource} fromDiscussion={reportFrom} onFromDiscussion={() => setReportFrom(null)} />}
+        {mode === "outputs" && <OutputsPage base={props.base} workspaceId={props.workspaceId} focused={props.previewFocused} onFocus={props.onPreviewFocus} onNotify={props.onNotify} onAdd={props.onAdd} onOpenSource={props.onOpenSource} fromDiscussion={reportFrom} onFromDiscussion={() => setReportFrom(null)}
+          outputActivity={props.outputActivity} onOutputActivity={props.onOutputActivity} />}
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 # One library screen, Studio types and key results
 
-Status: agreed and final (2026-11-23). Phase 1a and the build turn of Phase 1b are built; the rest is unbuilt. Read [AGENTS.md](../AGENTS.md) first. When a phase ships, move
+Status: agreed and final (2026-11-23). Phases 1a and 1b are built; the rest is unbuilt. Read [AGENTS.md](../AGENTS.md) first. When a phase ships, move
 what it built into the shipped docs ([Outputs](OUTPUTS.md), [Ask](ASK.md), [Library](LIBRARY.md),
 [Studio format](STUDIO_FORMAT.md)) and delete that phase from this file.
 
@@ -59,25 +59,11 @@ Use `GET /api/output-types` for the Studio tiles in Phase 2a. Extend the type op
 
 ### 3.2 One way to build and refine
 
-There is one path for making and changing an output: an `ArtifactConversation` turn.
-
-- **Tile build = `kind="build"` turn.** Clicking a tile (or submitting its options) creates a 1:1 `ArtifactConversation` and posts one turn with `kind="build"` and `build: BuildTurnInput` (`type`, `focus`, `audience`, `length`, `language`, `use`, `voices`, `theme`, `web`, `title`, `scope`).
-  - `artifact_turn` (`artifact_turns.py:147-415`) runs `kind="build"` directly without calling `ArtifactAgent.run()` and without asking clarifying questions.
-  - It saves `build.scope` on `row.scope_json`, loads material with `strict=True` (failing fast with 400 if empty), and honours `build.web`.
-  - It creates—or on Retry reuses—a `draft_*` `Work` with `brief` and `work.spec` filled from `build`, runs Studio via `agent.build(...)` (keeping `studio_progress` checkpoints on failure), and saves v1 + sets `row.title = artifact.title` inside `commit_version`'s `publish` callback.
-  - Store `build` inside the user `ArtifactMessage.payload_json` and hash it in `_turn_fingerprint` and `_earlier_turn` (`artifact_turns.py:64-106`).
-  - Extend `ArtifactConversationSummaryOut` (`artifact_conversations.py:165-175`) with `outputType`, `shape`, `lineageId` and `lastTurn` (`kind`, `error`, `build`, `createdAt`). Example: if a Briefing doc fails mid-run and you reload the app, the card still shows the error; clicking Retry re-sends `lastTurn.build` with a fresh `clientRequestId` (`artifact_turns.py:397` already leaves `request_id=None` on failed turns) and resumes from saved checkpoints.
-- **Refining and multi-output history.**
-  - Add optional `targetLineageId` to `ArtifactTurnInput` (`schemas.py:1315-1327`). When supplied, `artifact_turn` sets `workspace.active = targetLineageId` (calling `import_work` if missing) before `ArtifactAgent` runs.
-  - Make `POST .../outputs/build/stream` a thin wrapper around `artifact_turn(kind="build")`. Map old `kind`+`style` to `type` and keep `earlier_output` replay at the API edge.
-  - Retire direct `revise_output` (`output_commands.py:267-403`). Keep `edit_output`, `check_output`, `restyle_output` and `review_slides`.
-- **Progress and concurrency.**
-  - Show no percent. Show the latest real stage label from `stage` events, with real counts where known (example: `"Writing slides · 3 of 8"` or `"Checking every claim against its source · 4 of 11 sections checked"`).
-  - Replace hardcoded `"slides"` in `studio/verification.py:147,179` with `ShapeSpec.unit_label`. Remove the unused `"section"` / `progress` code in `artifact_api_common.py:79-81,107-118`.
-  - Extend `ActivityItem.open` with `{ conversationId, typeId, lineageId, artifactId }` so clicking a done Activity row opens that output in the middle pane.
-  - Key output runs and Activity entries by `conversation_id` (`output-conv:<conversation_id>`), falling back to `output-lineage:<lineage_id>` only for legacy direct calls (`restyle`, `visual-review`) with no conversation. Scope Follow and Stop routes to the conversation (`/artifact-conversations/{id}/stream` and `/stop`).
-  - Different outputs build in parallel with no per-library cap. All Studio fan-out requests share **one process-wide pool of 12 workers** in `studio/requests.py`—covering `warm_map` and `studio/material.py:135` (which currently creates its own `ThreadPoolExecutor`). One build gets all 12 workers; two builds share them; Ask never waits on Studio, and `ModelGateway` stays unchanged. Guard the shared pool against nested re-entry (run inline if called from a pool thread) and keep smaller per-call limits (`FIGURE_WORKERS = 4` in `study.py:23`, `3` in `look.py:211`).
-  - Clicking a tile directly while its first build is still running opens the running card; clicking the tile's pencil can start a new custom build.
+Use the [shipped conversation API](OUTPUTS.md#api-boundaries) for the Studio tiles in Phase 2a.
+A fresh tile build creates a conversation for that output and sends `kind="build"` with its
+`BuildTurnInput`. Clicking the tile while its first build is running opens that running card.
+The pencil can start a new custom build. Failed cards resend `lastTurn.build` with a fresh
+request ID. Refine sends `targetLineageId` for the open output.
 
 ### 3.3 Key results: one growing, checked fact list per library
 
@@ -220,20 +206,6 @@ Why: removing T shifted cells toward the white-cell lineage [1].
 
 The builder may split a phase into batches. Each batch keeps every test green and is reviewed on
 its own. Codex builds; Claude and the checker review each diff.
-
-### Phase 1b — One way to build
-**Adds:**
-- `kind="build"` turn in `artifact_turns.py` with `BuildTurnInput`, `targetLineageId`, stored `build` payload/fingerprint, `strict=True` scope check, checkpoint-preserving Retry, and `outputType`/`shape`/`lineageId`/`lastTurn` on `ArtifactConversationSummaryOut`.
-- Thin `POST .../outputs/build/stream` wrapper keeping old `kind`+`style` mapping and `earlier_output` replay.
-- Conversation-keyed runs and Activity entries (`output-conv:<conversation_id>`, lineage fallback for unattached legacy calls), conversation-scoped Follow/Stop routes, and `ActivityItem.open` output fields.
-- One shared 12-worker Studio pool in `studio/requests.py` covering `warm_map` and `studio/material.py:135` (with nested-call inline fallback and per-call worker caps kept intact).
-- Real stage labels in `Activity` (no percent) and `ShapeSpec.unit_label` in `studio/verification.py`.
-
-**Removes:**
-- Direct `revise_output` (`output_commands.py:267-403`) and dead `"section"`/`progress` code (`artifact_api_common.py:79-81,107-118`).
-
-**Tests (no live model calls):**
-- Fake `ModelGateway` tests for `kind="build"` turns, Retry resuming failed builds from checkpoints, `targetLineageId` editing the right lineage in a multi-output conversation, parallel builds sharing the 12-worker pool without 409, stage-label Activity updates, and legacy request replays.
 
 ### Phase 2a — Core library screen
 **Adds:**

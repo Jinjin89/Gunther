@@ -1147,7 +1147,7 @@ def test_stop_keeps_what_was_found_and_saves_no_version(tmp_path: Path) -> None:
         ]
         headers = workspace(client)
         runs = client.app.state.answer_runs
-        key = f"outputs:{base_id}"
+        key = "output-conv:talk"
         first, box = in_background(lambda: turn(client, base_id, "talk", "Look for CD3D"))
         wait_for(
             lambda: (
@@ -1155,7 +1155,7 @@ def test_stop_keeps_what_was_found_and_saves_no_version(tmp_path: Path) -> None:
                 and any(n == "action" and d["state"] == "done" for n, d in runs.get(key).events)
             )
         )
-        stopped = client.post(f"/api/knowledge-bases/{base_id}/outputs/build/stop", headers=headers)
+        stopped = client.post(conversations(base_id, "/talk/stop"), headers=headers)
         assert stopped.status_code == 204
         gate.set()
         first.join(10)
@@ -1182,7 +1182,7 @@ def test_follow_gets_the_new_done_payload(tmp_path: Path) -> None:
         fake.replies[:] = [script([waiting])]
         headers = workspace(client)
         runs = client.app.state.answer_runs
-        key = f"outputs:{base_id}"
+        key = "output-conv:talk"
         first, first_box = in_background(lambda: turn(client, base_id, "talk", "How is it?"))
         wait_for(lambda: runs.get(key) is not None and runs.get(key).events)
 
@@ -1195,7 +1195,7 @@ def test_follow_gets_the_new_done_payload(tmp_path: Path) -> None:
 
         def follow() -> list:
             with client.stream(
-                "GET", f"/api/knowledge-bases/{base_id}/outputs/build/stream", headers=headers
+                "GET", conversations(base_id, "/talk/stream"), headers=headers
             ) as response:
                 return read_events(response)
 

@@ -488,6 +488,8 @@ const turnTerminal: RunTerminal = {
 };
 
 const outputsPath = (baseId: string) => `/knowledge-bases/${encodeURIComponent(baseId)}`;
+const artifactConversationPath = (baseId: string, conversationId: string) =>
+  `${outputsPath(baseId)}/artifact-conversations/${encodeURIComponent(conversationId)}`;
 
 /** A failed call, in the log: method, path without its query, and what the service said. */
 function logFailure(init: RequestInit | undefined, path: string, what: string) {
@@ -891,12 +893,12 @@ export const knowledgeApi = {
       undefined,
       expectedWorkspaceId,
     ),
-  /** Build a report or slides and hear the agents at work; resolves with the saved version. */
+  /** Send one Artifacts turn and hear the agents at work. */
   artifactTurnStream: (baseId: string, conversationId: string, payload: ArtifactTurnInput, workspaceId: string, onEvent: (event: ArtifactTurnEvent) => void, signal?: AbortSignal) =>
-    startRun<ArtifactTurnOut, ArtifactTurnEvent>(`${outputsPath(baseId)}/artifact-conversations/${encodeURIComponent(conversationId)}/messages/stream`, payload, onEvent, turnTerminal, signal, workspaceId),
-  /** Follow a build, revision or turn of the Artifacts agent still running in this library; null when there is none. Aborting only stops listening. A turn ends with how it ended, anything else with the saved version. */
-  followOutputBuild: async (baseId: string, workspaceId: string, onEvent: (event: ArtifactTurnEvent) => void, signal?: AbortSignal): Promise<OutputDone | null> => {
-    const response = await requestResponse(`${outputsPath(baseId)}/outputs/build/stream`, {
+    startRun<ArtifactTurnOut, ArtifactTurnEvent>(`${artifactConversationPath(baseId, conversationId)}/messages/stream`, payload, onEvent, turnTerminal, signal, workspaceId),
+  /** Replay and follow this conversation's live run. Aborting only stops listening. */
+  followArtifactTurn: async (baseId: string, conversationId: string, workspaceId: string, onEvent: (event: ArtifactTurnEvent) => void, signal?: AbortSignal): Promise<OutputDone | null> => {
+    const response = await requestResponse(`${artifactConversationPath(baseId, conversationId)}/stream`, {
       method: "GET",
       ...(signal ? { signal } : {}),
     }, { expectedWorkspaceId: workspaceId, logErrors: false });
@@ -908,22 +910,22 @@ export const knowledgeApi = {
     request<ArtifactConversationSummary[]>(`${outputsPath(baseId)}/artifact-conversations`, undefined, workspaceId),
   /** One conversation: its messages, brief and works. */
   artifactConversation: (baseId: string, conversationId: string, workspaceId: string) =>
-    request<ArtifactConversationDetail>(`${outputsPath(baseId)}/artifact-conversations/${encodeURIComponent(conversationId)}`, undefined, workspaceId),
+    request<ArtifactConversationDetail>(artifactConversationPath(baseId, conversationId), undefined, workspaceId),
   /** Start a conversation under the id given; asking for one that exists returns it. */
   createArtifactConversation: (baseId: string, payload: CreateArtifactConversationRequest, workspaceId: string) =>
     request<ArtifactConversationDetail>(`${outputsPath(baseId)}/artifact-conversations`, { method: "POST", body: JSON.stringify(payload) }, workspaceId),
   /** Rename a conversation, change what it reads from, or archive it. */
   updateArtifactConversation: (baseId: string, conversationId: string, payload: UpdateArtifactConversationRequest, workspaceId: string) =>
-    request<ArtifactConversationDetail>(`${outputsPath(baseId)}/artifact-conversations/${encodeURIComponent(conversationId)}`, { method: "PATCH", body: JSON.stringify(payload) }, workspaceId),
+    request<ArtifactConversationDetail>(artifactConversationPath(baseId, conversationId), { method: "PATCH", body: JSON.stringify(payload) }, workspaceId),
   /** Take in the conversations a device kept; ids the service has are skipped. */
   importArtifactConversations: (baseId: string, payload: ImportArtifactConversationsRequest, workspaceId: string) =>
     request<ArtifactConversationSummary[]>(`${outputsPath(baseId)}/artifact-conversations/import`, { method: "POST", body: JSON.stringify(payload) }, workspaceId),
   /** Set lines of the brief the user typed; the lines set are marked as theirs. */
   editArtifactBrief: (baseId: string, conversationId: string, payload: EditArtifactBriefRequest, workspaceId: string) =>
-    request<ArtifactBriefState>(`${outputsPath(baseId)}/artifact-conversations/${encodeURIComponent(conversationId)}/brief`, { method: "PATCH", body: JSON.stringify(payload) }, workspaceId),
-  /** Stop the build or revision; nothing is saved, and its stream ends with OutputStoppedError. */
-  stopOutputBuild: (baseId: string, workspaceId: string) =>
-    request<void>(`${outputsPath(baseId)}/outputs/build/stop`, { method: "POST" }, workspaceId),
+    request<ArtifactBriefState>(`${artifactConversationPath(baseId, conversationId)}/brief`, { method: "PATCH", body: JSON.stringify(payload) }, workspaceId),
+  /** Stop the run owned by this conversation. */
+  stopArtifactTurn: (baseId: string, conversationId: string, workspaceId: string) =>
+    request<void>(`${artifactConversationPath(baseId, conversationId)}/stop`, { method: "POST" }, workspaceId),
   /** Save typed text as the next version, exactly as typed. */
   editOutput: (baseId: string, artifactId: string, payload: EditOutputRequest, workspaceId: string) =>
     request<Artifact>(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/edits`, { method: "POST", body: JSON.stringify(payload) }, workspaceId),

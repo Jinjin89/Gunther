@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { knowledgeApi } from "../api";
 import { ProgressRing } from "./ProgressRing";
 import { sendRecordingControl, useRecordingStatus, type RecordingStatus } from "./recordingStatus";
-import { ago, clock, earlierRows, failureKey, FLASH_MS, isActive, nowRows, pillView, type PillView } from "./summary";
+import { activityProgress, ago, clock, earlierRows, failureKey, FLASH_MS, isActive, nowRows, pillView, type PillView } from "./summary";
 import { useActivity } from "./useActivity";
 
 const OFFLINE_HINT = "The local knowledge service is not responding. New captures stay on this device and are sent when it returns.";
@@ -287,17 +287,17 @@ function recordingRow(recording: RecordingStatus, show: () => void): RowProps {
 
 function jobRow(item: ActivityItem, now: number, open: (target: ActivityOpen) => void): RowProps {
   const active = isActive(item);
-  const known = typeof item.progress === "number";
+  const progress = activityProgress(item);
   const icon = active
-    ? <ProgressRing progress={known ? item.progress : null} />
+    ? <ProgressRing progress={progress} />
     : item.state === "done" ? <Check size={14} className="gx-activity-done" aria-hidden="true" /> : <AlertCircle size={14} className="gx-activity-failed" aria-hidden="true" />;
   const target = item.open;
   return {
     icon,
     headline: item.about ? `${item.title}: ${item.about}` : item.title,
     detail: item.state === "failed" ? item.error ?? "" : item.detail,
-    bar: active && known ? item.progress : null,
-    side: active ? (known ? `${Math.round((item.progress as number) * 100)}%` : "") : ago(item.endedAt, now),
+    bar: active ? progress : null,
+    side: active ? (progress === null ? "" : `${Math.round(progress * 100)}%`) : ago(item.endedAt, now),
     failed: item.state === "failed",
     onClick: target ? () => open(target) : undefined,
     actions: active

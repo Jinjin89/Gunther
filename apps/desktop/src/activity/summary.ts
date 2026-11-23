@@ -29,6 +29,7 @@ export interface PillView {
 }
 
 export const isActive = (item: ActivityItem) => item.state === "waiting" || item.state === "running";
+export const activityProgress = (item: ActivityItem) => item.kind === "output" ? null : item.progress;
 
 /** `m:ss` under an hour, `h:mm:ss` from an hour. */
 export function clock(seconds: number): string {
@@ -53,7 +54,7 @@ export function ago(iso: string | null, now: number): string {
 
 /** The mean of the progresses that are known; null when none is. */
 export function meanProgress(items: ActivityItem[]): number | null {
-  const known = items.flatMap((item) => (typeof item.progress === "number" ? [item.progress] : []));
+  const known = items.map(activityProgress).filter((progress) => progress !== null);
   return known.length ? known.reduce((sum, value) => sum + value, 0) / known.length : null;
 }
 
@@ -113,9 +114,10 @@ export function pillView({ items, recording, reachable, seenFailures, flash }: P
 
   if (active.length === 1) {
     const [only] = active as [ActivityItem];
-    const known = typeof only.progress === "number";
-    const view: PillView = { tone: "busy", icon: "ring", text: only.title, progress: known ? only.progress : null, extra: 0, ariaLabel: `${only.title}${only.about ? `: ${only.about}` : ""}` };
-    if (known) view.percent = percentOf(only.progress as number);
+    const progress = activityProgress(only);
+    const title = only.kind === "output" && only.detail ? only.detail : only.title;
+    const view: PillView = { tone: "busy", icon: "ring", text: title, progress, extra: 0, ariaLabel: `${title}${only.about ? `: ${only.about}` : ""}` };
+    if (progress !== null) view.percent = percentOf(progress);
     return view;
   }
   if (active.length > 1) {

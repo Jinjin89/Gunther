@@ -5,8 +5,8 @@ Each answer runs on its own thread and keeps what it has reported (steps and
 text so far), so a page that comes back is given everything it missed and then
 follows along live. Only an explicit stop ends an answer early.
 
-Outputs being built use the same runs, one per library, under the key
-``outputs:<library id>``.
+Outputs use the same registry, with a key for each Artifacts conversation or
+unattached lineage.
 """
 
 from __future__ import annotations
@@ -59,6 +59,7 @@ class AnswerRun:
     events: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     stop_requested: threading.Event = field(default_factory=threading.Event)
     finished: bool = False
+    scope: tuple[str, str] | None = None  # Workspace and library of a scoped run.
     _activity: tuple[Tracked, str, str] | None = field(default=None, init=False)
     _watchers: list[_Watcher] = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -67,7 +68,16 @@ class AnswerRun:
         self._activity = (tracked, done, failed)
         return tracked
 
-    def publish(self, name: str, data: dict[str, Any]) -> None:
+    def stop(self) -> bool:
+        with self._lock:
+            if self.finished:
+                return False
+            self.stop_requested.set()
+            return True
+
+    def publish(
+        self, name: str, data: dict[str, Any], *, open: dict[str, Any] | None = None,
+    ) -> None:
         with self._lock:
             if name in FINAL:
                 # The worker has saved its result. Finish Activity before readers
@@ -75,7 +85,7 @@ class AnswerRun:
                 if self._activity is not None:
                     tracked, done, failed = self._activity
                     if name == "done":
-                        tracked.done(done)
+                        tracked.done(done, open=open)
                     elif name == "stopped":
                         tracked.stopped()
                     else:
@@ -153,6 +163,8 @@ class AnswerRuns:
         session_id: str,
         question: str,
         work: Callable[[AnswerRun], None],
+        *,
+        scope: tuple[str, str] | None = None,
     ) -> AnswerRun | None:
         """Begin an answer on its own thread; None when one is already being written."""
 
@@ -160,7 +172,7 @@ class AnswerRuns:
             current = self._runs.get(session_id)
             if current is not None and not current.finished:
                 return None
-            run = AnswerRun(session_id, question)
+            run = AnswerRun(session_id, question, scope=scope)
             self._runs[session_id] = run
 
         def target() -> None:
@@ -180,7 +192,4 @@ class AnswerRuns:
 
     def stop(self, session_id: str) -> bool:
         run = self.get(session_id)
-        if run is None or run.finished:
-            return False
-        run.stop_requested.set()
-        return True
+        return run is not None and run.stop()

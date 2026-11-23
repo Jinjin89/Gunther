@@ -1,10 +1,16 @@
 """Artifact conversation lifecycle, briefs and turn streams."""
 
 from fastapi import APIRouter, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
-from gunther.api_common import _service
-from gunther.artifact_api_common import WorkspaceHeader, _artifact_http_errors, _output_run
+from gunther.api_common import _service, _sse
+from gunther.artifact_api_common import (
+    WorkspaceHeader,
+    _artifact_http_errors,
+    _conversation_run,
+    _output_error,
+    _output_run,
+)
 from gunther.artifact_versions import ArtifactConflictError
 from gunther.schemas import (
     ArtifactBriefStateOut,
@@ -24,36 +30,61 @@ router = APIRouter()
 @turn_router.post(
     "/knowledge-bases/{knowledge_base_id}/artifact-conversations/{conversation_id}/messages/stream"
 )
-async def artifact_turn_stream(
+def artifact_turn_stream(
     knowledge_base_id: str,
     conversation_id: str,
     payload: ArtifactTurnInput,
     request: Request,
     workspace_id: WorkspaceHeader,
 ) -> StreamingResponse:
-    """Send a message to the Artifacts agent and hear it work: ``decision`` and ``action``
-    events (and the skill's own) while it does, then ``done`` with how the turn ended, ``error``
-    or ``stopped``. The run is the library's one output run: Stop and Follow work as for a
-    build."""
+    """Send a turn and hear its progress, followed by ``done``, ``error`` or ``stopped``."""
 
     service = _service(request)
     try:
         title = service.artifact_conversation_title(
             knowledge_base_id, workspace_id, conversation_id, payload.text
         )
-    except LookupError:
-        title = "your artifacts"  # the run itself answers 404
+    except LookupError as error:
+        return _output_error(error)
     return _output_run(
         request,
+        workspace_id,
         knowledge_base_id,
-        payload.text,
+        payload.text or (payload.build.focus if payload.build else ""),
         lambda hear: service.artifact_turn(
             knowledge_base_id, workspace_id, conversation_id, payload, hear
         ),
         (f"Working on {title}", "Done", "Couldn't finish"),
         service.library_title(knowledge_base_id),
-        result=lambda turn: turn.model_dump(mode="json", by_alias=True),
+        conversation_id=conversation_id,
+        type_id=payload.build.type if payload.build else None,
+        lineage_id=payload.target_lineage_id,
     )
+
+
+@router.get("/knowledge-bases/{knowledge_base_id}/artifact-conversations/{conversation_id}/stream")
+async def follow_artifact_turn(
+    knowledge_base_id: str, conversation_id: str, request: Request, workspace_id: WorkspaceHeader,
+) -> Response:
+    """Replay and follow the live run of this conversation, if one is running."""
+
+    run = _conversation_run(request, workspace_id, knowledge_base_id, conversation_id)
+    return _sse(run, resumed=True) if run is not None else Response(status_code=204)
+
+
+@router.post(
+    "/knowledge-bases/{knowledge_base_id}/artifact-conversations/{conversation_id}/stop",
+    status_code=204,
+)
+def stop_artifact_turn(
+    knowledge_base_id: str, conversation_id: str, request: Request, workspace_id: WorkspaceHeader,
+) -> Response:
+    """Ask this conversation's current run to stop."""
+
+    run = _conversation_run(request, workspace_id, knowledge_base_id, conversation_id)
+    if run is not None:
+        run.stop()
+    return Response(status_code=204)
 
 
 @router.get(

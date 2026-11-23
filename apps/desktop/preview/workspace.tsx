@@ -82,7 +82,7 @@ Object.assign(knowledgeApi, {
   contents: async () => contents,
   artifacts: async () => [...artifacts],
   artifact: async (_base: string, id: string) => findArtifact(id),
-  followOutputBuild: async () => null,
+  followArtifactTurn: async () => null,
   health: async () => ({ webSearchMode: "off" }),
   editOutput: async (_base: string, id: string, request: { content: string }) => saveVersion(findArtifact(id), { content: request.content, origin: "edit" }),
   checkOutput: async (_base: string, id: string) => findArtifact(id),

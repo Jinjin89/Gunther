@@ -201,14 +201,14 @@ describe("desktop knowledge API contract", () => {
     await knowledgeApi.artifact("biology/team", "art/1", "wsp_primary");
     await knowledgeApi.editOutput("biology/team", "art/1", { clientRequestId: "edit_request_1", content: "# Typed" }, "wsp_primary");
     await knowledgeApi.checkOutput("biology/team", "art/1", "wsp_primary");
-    await knowledgeApi.stopOutputBuild("biology/team", "wsp_primary");
+    await knowledgeApi.stopArtifactTurn("biology/team", "talk/1", "wsp_primary");
 
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
       "/api/knowledge-bases/biology%2Fteam/artifacts",
       "/api/knowledge-bases/biology%2Fteam/artifacts/art%2F1",
       "/api/knowledge-bases/biology%2Fteam/artifacts/art%2F1/edits",
       "/api/knowledge-bases/biology%2Fteam/artifacts/art%2F1/check",
-      "/api/knowledge-bases/biology%2Fteam/outputs/build/stop",
+      "/api/knowledge-bases/biology%2Fteam/artifact-conversations/talk%2F1/stop",
     ]);
     for (const call of [0, 1, 2, 3, 4]) expect(workspace(call)).toBe("wsp_primary");
     const edit = fetchMock.mock.calls[2]?.[1] as RequestInit;
@@ -226,14 +226,14 @@ describe("desktop knowledge API contract", () => {
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
 
     await installedApi.artifacts("biology", "wsp_primary");
-    await installedApi.followOutputBuild("biology", "wsp_primary", () => undefined);
+    await installedApi.followArtifactTurn("biology", "talk", "wsp_primary", () => undefined);
 
     expect(install).toHaveBeenCalledOnce();
     expect(install.mock.calls[0]?.[0]).toBe("backend_connection");
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "http://127.0.0.1:28789/api/health",
       "http://127.0.0.1:28789/api/knowledge-bases/biology/artifacts",
-      "http://127.0.0.1:28789/api/knowledge-bases/biology/outputs/build/stream",
+      "http://127.0.0.1:28789/api/knowledge-bases/biology/artifact-conversations/talk/stream",
     ]);
     for (const [, init] of fetchMock.mock.calls.slice(1)) {
       const headers = new Headers(init.headers);
@@ -321,19 +321,19 @@ describe("desktop knowledge API contract", () => {
       fetchMock.mockResolvedValueOnce(stream(events(["text", { type: "text", section: 0, text: "Half" }])));
       await expect(knowledgeApi.reviewSlidesStream("biology", "deck", request, "wsp_primary", () => undefined)).rejects.toThrow("The connection closed before the output was finished.");
 
-      fetchMock.mockResolvedValueOnce({ ok: false, status: 409, body: null, json: vi.fn().mockResolvedValue({ detail: "Gunther is still building an output here." }) } as unknown as Response);
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 409, body: null, json: vi.fn().mockResolvedValue({ detail: "Gunther is still working on this output." }) } as unknown as Response);
       await expect(knowledgeApi.reviewSlidesStream("biology", "deck", request, "wsp_primary", () => undefined))
-        .rejects.toMatchObject({ message: "Gunther is still building an output here.", status: 409 });
+        .rejects.toMatchObject({ message: "Gunther is still working on this output.", status: 409 });
     });
 
     it("follows a build that is running, and gets nothing when none is", async () => {
       fetchMock.mockResolvedValueOnce({ ok: true, status: 204, body: null, json: vi.fn() } as unknown as Response);
-      expect(await knowledgeApi.followOutputBuild("biology", "wsp_primary", () => undefined)).toBeNull();
+      expect(await knowledgeApi.followArtifactTurn("biology", "talk", "wsp_primary", () => undefined)).toBeNull();
       expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe("GET");
 
       fetchMock.mockResolvedValueOnce(stream(events(["resumed", { type: "resumed", question: "Cover B cells", startedAt: 1 }], ["done", { id: "art_1" }])));
       const heard: unknown[] = [];
-      expect(await knowledgeApi.followOutputBuild("biology", "wsp_primary", (event) => heard.push(event))).toEqual({ id: "art_1" });
+      expect(await knowledgeApi.followArtifactTurn("biology", "talk", "wsp_primary", (event) => heard.push(event))).toEqual({ id: "art_1" });
       expect(heard).toEqual([{ type: "resumed", question: "Cover B cells", startedAt: 1 }]);
     });
   });

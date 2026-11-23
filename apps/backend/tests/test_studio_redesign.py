@@ -461,6 +461,28 @@ def test_what_the_eye_finds_on_a_designed_slide_leads_to_a_design_not_a_rewrite(
 # The restyle route -------------------------------------------------------------------------
 
 
+def test_unattached_restyle_is_tracked_by_lineage(tmp_path):
+    from test_output_skills import saved_skill_output
+    from test_outputs import app_for, built, library, read_events, route, workspace
+
+    with app_for(tmp_path, FakeProvider(studio_inner)) as client:
+        base_id, _ = library(client)
+        first = saved_skill_output(client, base_id, kind="slides")
+        assert first["conversationId"] is None
+        headers = workspace(client)
+        saved = built(read_events(client.post(
+            route(base_id, first["id"], "/restyle/stream"), headers=headers,
+            json={"clientRequestId": "restyle-unattached", "style": "bold"},
+        )))
+        [item] = client.get("/api/activity", headers=headers).json()["items"]
+        assert item["id"] == f"output-lineage:{first['lineageId']}"
+        assert (item["state"], item["progress"]) == ("done", None)
+        assert item["open"] == {
+            "view": "library", "libraryId": base_id, "tab": "outputs", "conversationId": None,
+            "typeId": "slides", "lineageId": first["lineageId"], "artifactId": saved["id"],
+        }
+
+
 def test_restyle_can_return_to_an_earlier_style_and_repeat_the_current_style(tmp_path):
     from test_outputs import built as saved_version
     from test_outputs import read_events, workspace

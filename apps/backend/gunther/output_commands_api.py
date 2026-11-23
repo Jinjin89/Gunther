@@ -1,17 +1,20 @@
 """The compatibility build route and operations on saved outputs."""
 
 import json
+from collections.abc import Callable
 
 from fastapi import APIRouter, Request, status
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import StreamingResponse
 
-from gunther.api_common import _answer_runs, _service, _sse
+from gunther.api_common import _service
 from gunther.artifact_api_common import (
     WorkspaceHeader,
     _artifact_http_errors,
+    _output_error,
+    _output_event,
     _output_run,
-    _outputs_key,
 )
+from gunther.artifact_read import ArtifactIntegrityError
 from gunther.artifact_versions import earlier_output, output_library, output_version
 from gunther.database import session_scope
 from gunther.llm import ModelError
@@ -44,7 +47,10 @@ _BUILD_WORDS = {
 }
 
 
-def _legacy_build(service, base_id: str, workspace_id: str, payload: BuildOutputInput, hear):
+def _legacy_build(
+    request: Request, base_id: str, workspace_id: str, payload: BuildOutputInput,
+) -> StreamingResponse:
+    service = _service(request)
     fields = service._output_request_fields(payload)
     previous = [service._output_fingerprint(workspace_id, base_id, "build", fields)]
     inherits_style = payload.kind == "report" and "style" not in payload.model_fields_set
@@ -57,7 +63,7 @@ def _legacy_build(service, base_id: str, workspace_id: str, payload: BuildOutput
         service.sessions, workspace_id, payload.client_request_id, fingerprint, previous=previous,
     )
     if earlier is not None:
-        return earlier
+        return _output_event("done", earlier.model_dump(mode="json", by_alias=True))
 
     with session_scope(service.sessions) as session:
         output_library(session, workspace_id, base_id)
@@ -105,23 +111,30 @@ def _legacy_build(service, base_id: str, workspace_id: str, payload: BuildOutput
     conversation_id = payload.conversation_id or owner or "ac_" + service._output_fingerprint(
         workspace_id, base_id, "build-conversation", {"requestId": payload.client_request_id},
     )
-    turn = service.artifact_turn(
-        base_id, workspace_id, conversation_id,
-        ArtifactTurnInput(
-            client_request_id=payload.client_request_id, kind="build", build=build,
-            target_lineage_id=lineage, model=payload.model, effort=payload.effort,
-        ),
-        # Legacy followers expect an Artifact as the terminal payload.
-        lambda event: hear(event) if event["type"] != "turn" else None,
-        legacy_fingerprint=fingerprint, legacy_title=payload.conversation_title,
-        expected_parent=payload.supersedes_artifact_id,
+    turn = ArtifactTurnInput(
+        client_request_id=payload.client_request_id, kind="build", build=build,
+        target_lineage_id=lineage, model=payload.model, effort=payload.effort,
     )
-    assert turn.artifact is not None
-    return turn.artifact
+
+    def run(hear) -> ArtifactOut:
+        result = service.artifact_turn(
+            base_id, workspace_id, conversation_id, turn,
+            lambda event: hear(event) if event["type"] != "turn" else None,
+            legacy_fingerprint=fingerprint, legacy_title=payload.conversation_title,
+            expected_parent=payload.supersedes_artifact_id,
+        )
+        assert result.artifact is not None
+        return result.artifact
+
+    return _output_run(
+        request, workspace_id, base_id, payload.brief, run, _BUILD_WORDS[payload.kind],
+        service.library_title(base_id), conversation_id=conversation_id, type_id=build.type,
+        lineage_id=lineage, artifact_id=payload.supersedes_artifact_id,
+    )
 
 
 @stream_router.post("/knowledge-bases/{knowledge_base_id}/outputs/build/stream")
-async def build_output_stream(
+def build_output_stream(
     knowledge_base_id: str,
     payload: BuildOutputInput,
     request: Request,
@@ -129,31 +142,53 @@ async def build_output_stream(
 ) -> StreamingResponse:
     """Build a report or slides by agents from the library or what was picked."""
 
+    try:
+        return _legacy_build(request, knowledge_base_id, workspace_id, payload)
+    except (ArtifactIntegrityError, LookupError, ValueError) as error:
+        return _output_error(error)
+
+
+def _version_run(
+    request: Request, base_id: str, workspace_id: str, artifact_id: str,
+    label: str, call: Callable[[Callable[[dict], None]], ArtifactOut],
+    words: tuple[str, str, str], *, conversation_id: str | None = None,
+) -> StreamingResponse:
     service = _service(request)
+    try:
+        with session_scope(service.sessions) as session:
+            output_library(session, workspace_id, base_id)
+            # A replay can still name a version that is no longer the head.
+            parent = output_version(session, workspace_id, base_id, artifact_id, latest=False)
+            owner = json.loads(parent.provenance_json).get("conversation_id")
+            if owner and conversation_id and owner != conversation_id:
+                raise ValueError("This artifact belongs to a different conversation.")
+    except (LookupError, ValueError) as error:
+        return _output_error(error)
     return _output_run(
-        request,
-        knowledge_base_id,
-        payload.brief,
-        lambda hear: _legacy_build(service, knowledge_base_id, workspace_id, payload, hear),
-        _BUILD_WORDS[payload.kind],
-        service.library_title(knowledge_base_id),
+        request, workspace_id, base_id, label, call, words, service.library_title(base_id),
+        conversation_id=owner or conversation_id,
+        type_id=output_type_for(parent.kind, parent.style).id,
+        lineage_id=parent.lineage_id, artifact_id=artifact_id,
     )
 
 
 @stream_router.post("/knowledge-bases/{knowledge_base_id}/artifacts/{artifact_id}/visual-review/stream")
-async def review_slides_stream(knowledge_base_id: str, artifact_id: str,
-                               payload: ReviewSlidesInput, request: Request,
-                               workspace_id: WorkspaceHeader) -> StreamingResponse:
+def review_slides_stream(
+    knowledge_base_id: str, artifact_id: str, payload: ReviewSlidesInput,
+    request: Request, workspace_id: WorkspaceHeader,
+) -> StreamingResponse:
     service = _service(request)
-    return _output_run(request, knowledge_base_id, "Review rendered slides",
-        lambda hear: service.review_slides(knowledge_base_id, workspace_id, artifact_id,
-                                           payload, hear),
+    return _version_run(
+        request, knowledge_base_id, workspace_id, artifact_id, "Review rendered slides",
+        lambda hear: service.review_slides(
+            knowledge_base_id, workspace_id, artifact_id, payload, hear,
+        ),
         ("Reviewing rendered slides", "Slide review saved", "Couldn't review slides"),
-        service.library_title(knowledge_base_id))
+    )
 
 
 @stream_router.post("/knowledge-bases/{knowledge_base_id}/artifacts/{artifact_id}/restyle/stream")
-async def restyle_slides_stream(
+def restyle_slides_stream(
     knowledge_base_id: str,
     artifact_id: str,
     payload: RestyleSlidesInput,
@@ -163,38 +198,18 @@ async def restyle_slides_stream(
     """Draw every slide of the latest version again in another style: the next version."""
 
     service = _service(request)
-    return _output_run(
+    return _version_run(
         request,
         knowledge_base_id,
+        workspace_id,
+        artifact_id,
         f"Restyle the slides: {payload.style}",
         lambda hear: service.restyle_output(
             knowledge_base_id, workspace_id, artifact_id, payload, hear
         ),
         ("Designing the slides", "Slides restyled", "Couldn't restyle the slides"),
-        service.library_title(knowledge_base_id),
+        conversation_id=payload.conversation_id,
     )
-
-
-@router.get("/knowledge-bases/{knowledge_base_id}/outputs/build/stream", response_model=None)
-async def follow_output_build(
-    knowledge_base_id: str, request: Request, workspace_id: WorkspaceHeader
-) -> Response:
-    """Follow an output being built: what it did so far, then live. 204 when none is."""
-
-    run = _answer_runs(request).get(_outputs_key(knowledge_base_id))
-    if run is None or run.finished:
-        return Response(status_code=204)
-    return _sse(run, resumed=True)
-
-
-@router.post("/knowledge-bases/{knowledge_base_id}/outputs/build/stop", status_code=204)
-def stop_output_build(
-    knowledge_base_id: str, request: Request, workspace_id: WorkspaceHeader
-) -> Response:
-    """Stop the output being built. Nothing is saved."""
-
-    _answer_runs(request).stop(_outputs_key(knowledge_base_id))
-    return Response(status_code=204)
 
 
 @router.post(

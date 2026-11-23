@@ -1858,13 +1858,24 @@ export type ActivityKind = "transcribe" | "output" | "answer";
 export type ActivityState = "waiting" | "running" | "done" | "failed";
 
 /** The page an activity row opens. */
+export interface OutputActivityOpen {
+  view: "library";
+  libraryId: string;
+  tab: "outputs";
+  conversationId?: string | null;
+  typeId?: string | null;
+  lineageId?: string | null;
+  artifactId?: string | null;
+}
+
 export type ActivityOpen =
   | { view: "item"; itemType: "source"; id: string }
-  | { view: "library"; libraryId: string; tab: "outputs" | "ask"; sessionId?: string | null }
+  | { view: "library"; libraryId: string; tab: "ask"; sessionId?: string | null }
+  | OutputActivityOpen
   | { view: "home"; sessionId: string };
 
 export interface ActivityItem {
-  /** `transcribe:<recording id>` | `output:<library id>` | `answer:<session id>` */
+  /** `transcribe:<recording id>` | `output-conv:<conversation id>` | `output-lineage:<lineage id>` | `answer:<session id>` */
   id: string;
   kind: ActivityKind;
   /** The words for its state: "Building slides" → "Slides ready" / "Couldn't build slides". */
@@ -1872,9 +1883,9 @@ export interface ActivityItem {
   /** What it is about: the recording's title, the library's title, the question. */
   about: string;
   state: ActivityState;
-  /** 0..1, null when unknown. */
+  /** 0..1 for measured progress. Output runs use stage labels in detail. */
   progress: number | null;
-  /** One line: "5:02 of 12:00 heard", "Writing section 3 of 7". */
+  /** One line such as "5:02 of 12:00 heard" or "Checking every claim · 3 of 7 slides checked". */
   detail: string;
   /** Plain words, only when failed. */
   error: string | null;

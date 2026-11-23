@@ -16,6 +16,7 @@ from gunther.evidence import Evidence
 from gunther.llm import ModelError
 from gunther.llm import unfence as _unfence
 from gunther.output_checks import check_part
+from gunther.output_types import SHAPES
 from gunther.outputs import Draft, Events, Issue, Pool, _marked, check_heading_refs, split_document
 from gunther.skill_checks import CHARTS
 from gunther.studio import design as D
@@ -144,7 +145,9 @@ class StudioVerification:
         """Warm with the first part, then check and repair the remaining parts in parallel."""
 
         label = "Checking every claim against its source"
-        self._stage(emit, "verify", label, "running", f"{len(parts)} slides")
+        unit = SHAPES[run.output_type.shape].unit_label
+        units = unit if len(parts) == 1 else f"{unit}s"
+        self._stage(emit, "verify", label, "running", f"{len(parts)} {units}")
         by_ref = pool.by_ref()
 
         rest = "\n".join(parts[1:])
@@ -176,7 +179,7 @@ class StudioVerification:
             parts,
             WORKERS,
             lambda done, total: self._progress(
-                emit, "verify", label, f"{done} of {total} slides checked"
+                emit, "verify", label, f"{done} of {total} {units} checked"
             ),
         )
         left = sum(

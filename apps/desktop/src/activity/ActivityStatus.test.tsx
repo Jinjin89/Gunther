@@ -70,25 +70,26 @@ describe("ActivityStatus", () => {
     expect(screen.getByText("+2")).toBeInTheDocument();
   });
 
-  it("lists the rows in the panel and opens a row's page", async () => {
+  it("shows a stage with its counts and opens the saved output from Activity", async () => {
     const user = userEvent.setup();
-    const open = { view: "library", libraryId: "lib", tab: "outputs" } as const;
+    const open = { view: "library", libraryId: "lib", tab: "outputs", conversationId: "talk", typeId: "slides", lineageId: "deck", artifactId: "version_2" } as const;
     serve([
-      item({ id: "output:lib", kind: "output", title: "Building slides", about: "Single-cell", progress: 0.5, detail: "Writing section 3 of 7", open }),
-      item({ id: "answer:s", state: "done", title: "Answer ready", about: "Why?", endedAt: new Date().toISOString() }),
+      item({ id: "output-conv:draft", kind: "output", title: "Building slides", about: "Single-cell", progress: 0.5, detail: "Writing slides · 3 of 7" }),
+      item({ id: "output-conv:talk", kind: "output", state: "done", title: "Slides ready", about: "Single-cell", endedAt: new Date().toISOString(), open }),
     ]);
     mount();
     await settle();
+    expect(within(pill()).getByText("Writing slides · 3 of 7")).toBeVisible();
+    expect(within(pill()).queryByText("50%")).toBeNull();
     await user.click(pill());
     const panel = screen.getByRole("dialog", { name: "Activity" });
     expect(panel.parentElement).toBe(document.body);
     expect(within(panel).getByText("Now")).toBeInTheDocument();
     expect(within(panel).getByText("Building slides: Single-cell")).toBeInTheDocument();
-    expect(within(panel).getByText("Writing section 3 of 7")).toBeInTheDocument();
-    expect(within(panel).getByText("50%")).toBeInTheDocument();
+    expect(within(panel).getByText("Writing slides · 3 of 7")).toBeInTheDocument();
+    expect(within(panel).queryByText("50%")).toBeNull();
     expect(within(panel).getByText("Earlier")).toBeInTheDocument();
-    expect(within(panel).getByText("Answer ready: Why?")).toBeInTheDocument();
-    await user.click(within(panel).getByText("Building slides: Single-cell"));
+    await user.click(within(panel).getByText("Slides ready: Single-cell"));
     expect(onOpen).toHaveBeenCalledWith(open);
     expect(screen.queryByRole("dialog")).toBeNull();
   });
