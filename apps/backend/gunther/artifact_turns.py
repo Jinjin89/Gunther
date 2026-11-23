@@ -685,6 +685,7 @@ class ArtifactTurns:
                 "work": record.model_dump(mode="json"),
             },
             publish=publish,
+            voices=build.voices if build else None,
         )
         return artifact, message
 

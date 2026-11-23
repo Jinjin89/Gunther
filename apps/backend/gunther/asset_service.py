@@ -15,7 +15,7 @@ from codecs import (
     BOM_UTF32_LE,
     getincrementaldecoder,
 )
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -747,6 +747,7 @@ class AssetService:
         file_name: str,
         media_type: str,
         staging: tuple[str, str] | None = None,
+        publish: Callable[[Session, Asset], None] | None = None,
     ) -> Asset:
         # The bytes already count toward managed usage in ``.incoming``. A
         # zero-growth reservation revalidates external changes and translates a
@@ -759,6 +760,7 @@ class AssetService:
                 file_name,
                 media_type,
                 staging,
+                publish,
             )
 
     def _preserve_received(
@@ -769,10 +771,13 @@ class AssetService:
         file_name: str,
         media_type: str,
         staging: tuple[str, str] | None = None,
+        publish: Callable[[Session, Asset], None] | None = None,
     ) -> Asset:
         safe_name = _safe_name(file_name)
         with _asset_lock(content_hash):
             with session_scope(self.sessions) as session:
+                if publish:
+                    session.connection().exec_driver_sql("BEGIN IMMEDIATE")
                 existing = session.scalar(select(Asset).where(Asset.content_hash == content_hash))
                 if existing:
                     self._stage_asset(session, existing.id, staging)
@@ -782,6 +787,8 @@ class AssetService:
                     # The received copy already passed the content hash. Replacing is
                     # atomic and repairs an interrupted or externally damaged original.
                     os.replace(temporary, existing_path)
+                    if publish:
+                        publish(session, existing)
                     return existing
 
             relative_path = str(Path(content_hash[:2]) / content_hash / safe_name)
@@ -802,6 +809,8 @@ class AssetService:
                     session.add(asset)
                     session.flush()
                     self._stage_asset(session, asset.id, staging)
+                    if publish:
+                        publish(session, asset)
             except IntegrityError:
                 try:
                     with session_scope(self.sessions) as session:
@@ -818,7 +827,11 @@ class AssetService:
                     final_path.unlink(missing_ok=True)
                 asset = existing
                 with session_scope(self.sessions) as session:
+                    if publish:
+                        session.connection().exec_driver_sql("BEGIN IMMEDIATE")
                     self._stage_asset(session, asset.id, staging)
+                    if publish:
+                        publish(session, asset)
             except Exception:
                 # The file is published before the DB row so readers never observe a
                 # row pointing at absent bytes. If the transaction fails, undo that
@@ -909,8 +922,9 @@ class AssetService:
         file_name: str,
         media_type: str,
         staging: tuple[str, str] | None = None,
+        publish: Callable[[Session, Asset], None] | None = None,
     ) -> Asset:
-        """Preserve an already bounded response body through the normal Asset path."""
+        """Preserve bounded bytes and optionally attach an owner in the Asset transaction."""
 
         async def stream() -> AsyncIterator[bytes]:
             yield data
@@ -927,6 +941,7 @@ class AssetService:
                 file_name,
                 media_type,
                 staging,
+                publish,
             )
         finally:
             temporary.unlink(missing_ok=True)

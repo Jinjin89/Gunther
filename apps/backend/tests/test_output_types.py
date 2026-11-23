@@ -85,6 +85,7 @@ def test_catalog_types_build_with_their_recipe_and_save_their_label(
         assert [item["id"] for item in catalog] == [
             "report", "briefing", "study_guide", "faq", "timeline", "slides", "flashcards", "quiz",
             "mind_map",
+            "audio_overview",
         ]
         [item] = [row for row in catalog if row["id"] == style]
         assert (item["shape"], item["label"]) == (shape, label)

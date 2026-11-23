@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 
 from gunther.answer_runs import AnswerRun, Stopped, check_stop, output_key, stopping_on
 from gunther.api_common import _answer_runs, _sse, _sse_events
+from gunther.artifact_audio import render_audio
 from gunther.artifact_read import ArtifactIntegrityError
 from gunther.artifact_versions import ArtifactConflictError
 from gunther.llm import ModelError
@@ -111,6 +112,11 @@ def _output_run(
         try:
             with stopping_on(run.stop_requested):
                 result = call(hear)
+                saved = result.artifact if isinstance(result, ArtifactTurnOut) else result
+                if saved is not None and saved.audio and saved.audio.status == "pending":
+                    saved = render_audio(request, saved, hear)
+                    result = (result.model_copy(update={"artifact": saved})
+                              if isinstance(result, ArtifactTurnOut) else saved)
             saved = result.artifact if isinstance(result, ArtifactTurnOut) else result
             opened = {
                 **target,

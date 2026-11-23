@@ -8,7 +8,7 @@ from gunther.output_shapes import ShapeId as ShapeId
 from gunther.output_shapes import ShapeSpec as ShapeSpec
 from gunther.studio import prompts
 
-OutputOption = Literal["focus", "audience", "length", "language", "use"]
+OutputOption = Literal["focus", "audience", "length", "language", "use", "voices"]
 OutputLength = Literal["short", "standard", "long"]
 DeckUse = Literal["talk", "read"]
 DECK_USES = get_args(DeckUse)
@@ -99,6 +99,11 @@ OUTPUT_TYPES = {
         OutputType(
             "mind_map", "Mind map", "map", "Explore a topic through connected ideas.",
             "Network", write=prompts.MIND_MAP_RECIPE,
+        ),
+        OutputType(
+            "audio_overview", "Audio overview", "audio", "Two voices discuss the sources.",
+            "AudioLines", write=prompts.AUDIO_OVERVIEW_RECIPE,
+            options=("focus", "audience", "length", "language", "voices"),
         ),
     )
 }

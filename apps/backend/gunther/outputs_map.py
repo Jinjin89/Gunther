@@ -1,7 +1,6 @@
 """The nested Markdown list grammar for mind maps."""
 
 import re
-from collections.abc import Sequence
 
 from gunther.checks import claim_text
 from gunther.citations import ANY_CITATION, UNSOURCED, collapse_citations
@@ -20,18 +19,9 @@ def node_of(line: str) -> tuple[int, str] | None:
 
 
 def node_spans(content: str) -> tuple[int, list[tuple[int, int]]]:
-    from gunther.output_shapes import markdown_lines
+    from gunther.output_shapes import line_spans
 
-    spans, offset = [], 0
-    for raw, _ in markdown_lines(content, keepends=True):
-        if raw.strip() and (spans or raw.lstrip().startswith("-")):
-            spans.append((offset, offset + len(raw.rstrip())))
-        offset += len(raw)
-    return spans[0][0] if spans else offset, spans
-
-
-def join_nodes(preamble: str, nodes: Sequence[str]) -> str:
-    return "\n".join(part for part in (preamble, *nodes) if part)
+    return line_spans(content, starts=lambda line: line.lstrip().startswith("-"))
 
 
 def check_map(content: str, *, header: str | None = None) -> list[str]:

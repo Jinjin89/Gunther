@@ -95,6 +95,7 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (31, "output_trash"),
             (32, "key_results"),
             (33, "key_result_indexes"),
+            (34, "artifact_audio"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
@@ -265,6 +266,7 @@ def test_v10_upgrade_backfills_evidence_without_rewriting_original(tmp_path: Pat
         "citation_mentions",
         "processing_assets",
         "artifact_assets",
+        "artifact_audio",  # v34
         *ARTIFACT_CONVERSATION_TABLES,  # v27
     }
     legacy = MetaData()

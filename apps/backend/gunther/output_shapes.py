@@ -6,12 +6,12 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Literal
 
-from gunther import outputs_cards, outputs_map
+from gunther import outputs_audio, outputs_cards, outputs_map
 from gunther.studio import format as fmt
 
-ShapeId = Literal["report", "slides", "cards", "map"]
+ShapeId = Literal["report", "slides", "cards", "map", "audio"]
 OutputPipeline = Literal["planned", "direct"]
-OutputExport = Literal["markdown", "pdf", "docx", "pptx"]
+OutputExport = Literal["markdown", "pdf", "docx", "pptx", "wav"]
 FENCE = re.compile(r"^\s*(```|~~~)")
 
 
@@ -62,6 +62,21 @@ def split_spans(content: str, spans: Callable) -> tuple[str, list[str]]:
 
 def split_headed(content: str) -> tuple[str, list[str]]:
     return split_spans(content, markdown_spans)
+
+
+def line_spans(
+    content: str, *, starts: Callable[[str], bool],
+) -> tuple[int, list[tuple[int, int]]]:
+    spans, offset = [], 0
+    for raw, _ in markdown_lines(content, keepends=True):
+        if raw.strip() and (spans or starts(raw)):
+            spans.append((offset, offset + len(raw.rstrip())))
+        offset += len(raw)
+    return spans[0][0] if spans else offset, spans
+
+
+def join_lines(preamble: str, lines: Sequence[str]) -> str:
+    return "\n".join(part for part in (preamble, *lines) if part)
 
 
 def join_headed(preamble: str, units: Sequence[str]) -> str:
@@ -132,6 +147,8 @@ class ShapeSpec:
     header: str = ""
     unit_problem: Callable[[str], str | None] | None = None
     node: Callable[[str], tuple[int, str] | None] | None = None
+    batch_checks: bool = False
+    speech: Callable[[str], tuple[str, str]] | None = None
 
     def split(self, content: str) -> tuple[str, list[OutputUnit]]:
         preamble, texts = split_spans(content, self.spans)
@@ -209,9 +226,16 @@ SHAPES = {
         ),
         ShapeSpec(
             "map", "mind_map", "mind map", "a mind map", "node", 60, "direct",
-            outputs_map.node_spans, outputs_map.join_nodes, outputs_map.check_map,
+            outputs_map.node_spans, join_lines, outputs_map.check_map,
             outputs_map.check_text, ("markdown", "pdf"), header=outputs_map.HEADER,
             node=outputs_map.node_of,
+        ),
+        ShapeSpec(
+            "audio", "audio_overview", "audio overview", "an audio overview", "line", 120, "direct",
+            outputs_audio.spans, join_lines, outputs_audio.check_audio, outputs_audio.check_text,
+            ("markdown", "wav"),
+            header=outputs_audio.HEADER, unit_problem=outputs_audio.line_problem,
+            batch_checks=True, speech=outputs_audio.speech,
         ),
     )
 }

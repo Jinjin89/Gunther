@@ -764,6 +764,14 @@ Example:
   - Heat transfer
     - Reduces heat flow through the wall [1]"""
 
+AUDIO_OVERVIEW_RECIPE = """Write a spoken conversation with two voices. Start each line with
+A: or B:. Use both speakers. Let one ask a useful question and the other explain the evidence
+in everyday language. Keep turns short and put the source numbers on the factual lines.
+
+Example:
+A: What did the trial measure?
+B: It compared heat loss through insulated and bare walls [1]."""
+
 DIRECT_WRITE = """Write the complete {output_type} in the requested format.
 Brief: {brief}
 Audience: {audience}.

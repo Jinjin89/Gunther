@@ -16,14 +16,17 @@ from gunther.checks import complete, coverage_of, issue_view, read_verdicts
 from gunther.database import session_scope
 from gunther.models import (
     Artifact,
+    ArtifactAudio,
     ArtifactCheck,
     ArtifactMessage,
     ArtifactUnitBinding,
     KnowledgeUnitRevision,
 )
+from gunther.output_shapes import SHAPES
 from gunther.output_types import output_type_label
 from gunther.outputs import _marked, document_units, heading_of, section_hash
 from gunther.schemas import (
+    ArtifactAudioOut,
     ArtifactOut,
     ArtifactProvenanceOut,
     ArtifactSummaryOut,
@@ -223,6 +226,18 @@ def artifact_summary(session: Session, artifact: Artifact) -> ArtifactSummaryOut
     return _summary(artifact, provenance.accepted_unit_ids, saved)
 
 
+def _audio(session: Session, artifact: Artifact) -> ArtifactAudioOut | None:
+    if not SHAPES[artifact.kind].speech:
+        return None
+    row = session.get(ArtifactAudio, artifact.id)
+    if row is None or row.content_hash != artifact.content_hash:
+        return ArtifactAudioOut(status="pending", content_hash=artifact.content_hash)
+    return ArtifactAudioOut(
+        status=row.status, content_hash=row.content_hash, audio_asset_id=row.asset_id,
+        voices=json.loads(row.voices_json), timings=json.loads(row.timings_json), error=row.error,
+    )
+
+
 def artifact_detail(
     session: Session, artifact: Artifact, *, check_records: dict[str, dict] | None = None
 ) -> ArtifactOut:
@@ -261,6 +276,7 @@ def artifact_detail(
         ),
         sections=sections,
         key_results=key_results.origin_states(session, "output", [artifact.id]).get(artifact.id),
+        audio=_audio(session, artifact),
     )
 
 

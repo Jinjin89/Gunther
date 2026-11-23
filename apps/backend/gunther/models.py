@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -412,6 +413,25 @@ class ArtifactAsset(Base):
     asset_id: Mapped[str] = mapped_column(
         ForeignKey("assets.id", ondelete="RESTRICT"), primary_key=True
     )
+
+
+class ArtifactAudio(Base):
+    __tablename__ = "artifact_audio"
+    __table_args__ = (ForeignKeyConstraint(
+        ["artifact_id", "asset_id"], ["artifact_assets.artifact_id", "artifact_assets.asset_id"],
+        ondelete="CASCADE",
+    ),)
+
+    artifact_id: Mapped[str] = mapped_column(
+        ForeignKey("artifacts.id", ondelete="CASCADE"), primary_key=True,
+    )
+    content_hash: Mapped[str] = mapped_column(String(64))
+    attempt: Mapped[str | None] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    asset_id: Mapped[str | None] = mapped_column(String(40))
+    voices_json: Mapped[str] = mapped_column(Text, default="null")
+    timings_json: Mapped[str] = mapped_column(Text, default="[]")
+    error: Mapped[str | None] = mapped_column(Text)
 
 
 class ReferenceEntry(Base):

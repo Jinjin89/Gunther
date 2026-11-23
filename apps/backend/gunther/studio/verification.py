@@ -15,7 +15,7 @@ from gunther.citations import CITATION_GROUP, MARKDOWN_TABLE, check_citations, c
 from gunther.evidence import Evidence
 from gunther.llm import ModelError
 from gunther.llm import unfence as _unfence
-from gunther.output_checks import check_part, output_claim_inventory
+from gunther.output_checks import check_part, check_projected_parts, output_claim_inventory
 from gunther.output_shapes import OutputUnit, lend_refs
 from gunther.output_types import SHAPES
 from gunther.outputs import Draft, Events, Issue, Pool, _marked, split_document
@@ -133,6 +133,15 @@ class StudioVerification:
         units = unit if len(parts) == 1 else f"{unit}s"
         self._stage(emit, "verify", label, "running", f"{len(parts)} {units}")
         by_ref = pool.by_ref()
+        if shape.batch_checks:
+            texts = [check_citations(text, set(by_ref))[0] for text in parts]
+            checked = check_projected_parts(
+                self._checker(by_ref, material), model, shape.id, shape.units(texts), by_ref,
+                limit=self.limits.sentences,
+            )
+            drafts = [Draft(text, state) for text, state in zip(texts, checked, strict=True)]
+            self._stage(emit, "verify", label, "done", f"{len(parts)} {units} checked")
+            return drafts
 
         rest = "\n".join(parts[1:])
 
@@ -223,18 +232,8 @@ class StudioVerification:
             kind, text, by_ref, prior, rest=rest, scientific=bool(self.scientific_context),
         )
         direct = SHAPES[kind].pipeline == "direct"
-        checker = copy(self.ask)
-        checker.gateway = _MaterialCheckerGateway(
-            self,
-            material if material is not None else self._material(list(by_ref.values())),
-        )
-        if self.scientific_context:
-            checker.gateway.material += (
-                "\nActual image readings (linked asset IDs identify the source figures above):\n"
-                + json.dumps(self.scientific_context.get("figure_readings", []), ensure_ascii=False)
-            )
         checked = check_part(
-            checker, model,
+            self._checker(by_ref, material), model,
             STUDIO_CHECK + ("\n" + P.SCIENCE_TRUTH if self.scientific_context else ""),
             projected,
             by_ref, limit=self.limits.sentences, prior=prior or {},
@@ -260,6 +259,18 @@ class StudioVerification:
                 issue = Issue(plain[:300], "unsourced", "A number with no citation.")
                 findings.append(finding(issue.out()))
         return checked | verdicts_of(*findings)
+
+    def _checker(self, by_ref: dict[int, Evidence], material: str | None):
+        checker = copy(self.ask)
+        checker.gateway = _MaterialCheckerGateway(
+            self, material if material is not None else self._material(list(by_ref.values())),
+        )
+        if self.scientific_context:
+            checker.gateway.material += (
+                "\nActual image readings (linked asset IDs identify the source figures above):\n"
+                + json.dumps(self.scientific_context.get("figure_readings", []), ensure_ascii=False)
+            )
+        return checker
 
     def _cover(
         self, model, drafts: list[Draft], pool: Pool, material: str | None = None

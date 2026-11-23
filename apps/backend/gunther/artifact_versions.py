@@ -19,6 +19,7 @@ from gunther.knowledge_index import new_id
 from gunther.models import (
     Artifact,
     ArtifactAsset,
+    ArtifactAudio,
     ArtifactCheck,
     ArtifactConversation,
     ArtifactUnitBinding,
@@ -27,12 +28,14 @@ from gunther.models import (
     KnowledgeBaseRecord,
     WorkspaceIdentity,
 )
+from gunther.output_shapes import SHAPES
 from gunther.output_types import output_type_for
 from gunther.schemas import (
     ArtifactOut,
     ArtifactUnitSnapshotOut,
     OutputModelOut,
     OutputProvenanceOut,
+    VoicePair,
 )
 
 # The largest an output's text may be, in bytes.
@@ -147,6 +150,7 @@ def commit_version(
     checks: list[dict[str, object]],
     made_by: dict[str, object] | None = None,
     publish: Callable[[Session, ArtifactOut], None] | None = None,
+    voices: VoicePair | None = None,
 ) -> ArtifactOut:
     """Write a new version of an output, sealed with its hashes, and what the Checker found.
 
@@ -279,6 +283,14 @@ def commit_version(
             artifact.manifest_hash = artifact_manifest_hash(artifact.__getattribute__)
             session.add(artifact)
             session.flush()
+            if SHAPES[kind].speech:
+                previous_audio = session.get(ArtifactAudio, parent.id) if parent else None
+                session.add(ArtifactAudio(
+                    artifact_id=artifact.id,
+                    content_hash=artifact.content_hash,
+                    voices_json=(previous_audio.voices_json if previous_audio and voices is None
+                                else json.dumps(voices)),
+                ))
             cited_revisions = [
                 c.get("source_revision_id") or c.get("sourceRevisionId") for c in citations
             ]

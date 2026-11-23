@@ -22,7 +22,7 @@ from gunther.database import session_scope
 from gunther.llm import ModelInfo
 from gunther.model_profiles import Effort
 from gunther.models import ArtifactCheck
-from gunther.output_checks import check_saved_part
+from gunther.output_checks import check_projected_parts, check_saved_part
 from gunther.output_types import SHAPES, output_type_for
 from gunther.outputs import (
     OutputLimits,
@@ -371,11 +371,21 @@ class OutputCommands:
         with usage.job("outputs", artifact_kind, ref=artifact_id):
             checker = AskAgent(self.models)
             limit = OutputLimits().sentences
+            batched = {}
+            if SHAPES[artifact_kind].batch_checks:
+                pending = [unit for unit in sections if (digest := section_hash(unit)) not in known
+                           or not complete(known[digest])]
+                checked = check_projected_parts(
+                    checker, model, artifact_kind, pending, by_ref, limit=limit,
+                )
+                batched = dict(zip(map(section_hash, pending), checked, strict=True))
             checks = []
             for text in sections:
                 digest = section_hash(text)
                 state = known.get(digest)
-                if state is None or not complete(state):
+                if digest in batched:
+                    state = batched[digest]
+                elif state is None or not complete(state):
                     state = check_saved_part(
                         checker, model, text, by_ref, state, limit=limit, kind=artifact_kind,
                     )

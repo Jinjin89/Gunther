@@ -2,6 +2,7 @@
 
 import logging
 import re
+from collections.abc import Sequence
 
 from pydantic import BaseModel, Field
 
@@ -90,6 +91,23 @@ def check_part(
     checker.check_claim_records(model, question, text, by_ref, limit=limit, claims=claims)
     checked = verdicts_of(*(verdict("checker", row) for row in claims))
     return merge_verdicts(active, previous, checked)
+
+
+def check_projected_parts(
+    checker: AskAgent, model: ModelInfo, kind: str, units: Sequence[str | OutputUnit],
+    by_ref: dict[int, Evidence], *, limit: int,
+) -> list[Verdicts]:
+    """Batch projected claims while retaining each unit's own stored verdicts."""
+    projected = [output_claim_inventory(kind, unit, by_ref) for unit in units]
+    active = {key: row for _, inventory in projected for key, row in inventory.items()}
+    inventory = {key: {**row, "n": n} for n, (key, row) in enumerate(active.items(), 1)}
+    checked = check_part(
+        checker, model, "Verify the cited claims in these output lines.",
+        "\n".join(text for text, _ in projected), by_ref, limit=limit, inventory=inventory,
+    )
+    _saved_issues(checked)
+    return [merge_verdicts(inventory, checked) for _, inventory in projected]
+
 
 def _check_support(
     checker: AskAgent, model: ModelInfo, body: str, by_ref: dict[int, Evidence],
@@ -203,6 +221,11 @@ def check_saved_part(
         ),
         projected, by_ref, limit=limit, prior=previous, inventory=active,
     )
+    _saved_issues(checked)
+    return stages | checked
+
+
+def _saved_issues(checked: Verdicts) -> None:
     for row in checked.values():
         label = row.get("label", row["verdict"])
         if label not in {"supported", "nonfactual"} and "issue" not in row:
@@ -212,4 +235,3 @@ def check_saved_part(
                 _plain(row["text"])[:300], outcome,
                 row.get("reason") or "The claim was not fully supported.",
             ).out()
-    return stages | checked

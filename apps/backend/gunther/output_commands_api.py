@@ -14,11 +14,12 @@ from gunther.artifact_api_common import (
     _output_event,
     _output_run,
 )
+from gunther.artifact_audio import render_audio, voice_options
 from gunther.artifact_read import ArtifactIntegrityError
 from gunther.artifact_versions import earlier_output, output_library, output_version
 from gunther.database import session_scope
 from gunther.llm import ModelError
-from gunther.output_types import OUTPUT_TYPES, output_type_for
+from gunther.output_types import OUTPUT_TYPES, SHAPES, output_type_for
 from gunther.outputs import _marked, split_document
 from gunther.schemas import (
     ArtifactOut,
@@ -28,6 +29,7 @@ from gunther.schemas import (
     EditOutputInput,
     OutputTypeOut,
     RestyleSlidesInput,
+    RetryAudioInput,
     ReviewSlidesInput,
 )
 
@@ -36,8 +38,31 @@ router = APIRouter()
 
 
 @router.get("/output-types", response_model=list[OutputTypeOut])
-def output_types() -> list[OutputTypeOut]:
-    return [OutputTypeOut.model_validate(item) for item in OUTPUT_TYPES.values()]
+def output_types(request: Request) -> list[OutputTypeOut]:
+    types = [OutputTypeOut.model_validate(item) for item in OUTPUT_TYPES.values()]
+    for item in types:
+        if "voices" in item.options:
+            item.voices = voice_options(request)
+    return types
+
+
+@stream_router.post("/knowledge-bases/{knowledge_base_id}/artifacts/{artifact_id}/audio/stream")
+def retry_audio(
+    request: Request, knowledge_base_id: str, artifact_id: str,
+    payload: RetryAudioInput, workspace_id: WorkspaceHeader,
+) -> StreamingResponse:
+    service = _service(request)
+    with _artifact_http_errors(ValueError):
+        artifact = service.get_artifact(knowledge_base_id, artifact_id, workspace_id)
+        if not SHAPES[artifact.kind].speech:
+            raise ValueError("This output does not support audio.")
+    return _output_run(
+        request, workspace_id, knowledge_base_id, "Recording audio",
+        lambda hear: render_audio(request, artifact, hear, retry=True, voices=payload.voices),
+        ("Recording audio", "Done", "Couldn't record audio"), artifact.title,
+        conversation_id=artifact.conversation_id, lineage_id=artifact.lineage_id,
+        artifact_id=artifact.id, type_id=artifact.style,
+    )
 
 
 # The words for an output's entry in the top bar: running, done, failed.

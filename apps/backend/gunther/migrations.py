@@ -734,6 +734,11 @@ def _create_key_result_indexes(connection: Connection, metadata: MetaData) -> No
 
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
+def _create_artifact_audio(connection: Connection, metadata: MetaData) -> None:
+    if "artifact_audio" in metadata.tables:
+        metadata.tables["artifact_audio"].create(bind=connection, checkfirst=True)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "baseline_current_schema", _create_current_schema),
     Migration(2, "durable_recording_lifecycle", _create_recording_lifecycle_tables),
@@ -768,6 +773,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(31, "output_trash", _add_output_trash),
     Migration(32, "key_results", _create_key_results),
     Migration(33, "key_result_indexes", _create_key_result_indexes),
+    Migration(34, "artifact_audio", _create_artifact_audio),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

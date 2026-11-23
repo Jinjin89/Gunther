@@ -62,6 +62,14 @@ Hover over or focus a node to reveal Ask. It opens Chat and asks about the node 
 
 Download Markdown saves the nested list. Export PDF prints the full indented outline with its citations and sources. [Mind map format](STUDIO_FORMAT.md#4-mind-maps-design-v1)
 
+## Audio overview
+
+The backend accepts `audio_overview` builds. The type offers focus, audience, length, language, and two voice picks. The catalog's `voices` gives the choices from Settings → Read aloud and defaults to its selected voice plus a different listed voice when available. The selected voices can be sent in `build.voices` in A, B order. [Script format](STUDIO_FORMAT.md#5-audio-overview-script-design-v1)
+
+Studio checks the dialogue in batches and saves the script before recording. The artifact response's `audio` contains the script's `contentHash`, the recording state, and, when ready, the `audioAssetId`, voices, and timings. Timings count lines from one and give start and end in seconds. The WAV streams through `GET /api/assets/{id}`. Delete forever releases its asset links.
+
+An unconfigured Read aloud provider gives `needs_tts`. A failed recording gives `error` with a reason. `POST /api/knowledge-bases/{libraryId}/artifacts/{versionId}/audio/stream` retries the recording for that exact script version. Pass `{}` to keep the current picks or `{ "voices": ["voice-a", "voice-b"] }` to choose new ones. The audio record lives alongside the sealed script and carries its hash so both operations keep the script version and seal.
+
 ## Trash
 
 Choose **Move to Trash** in the open output's actions or the menu on its Studio card. The entire version history moves together. Stop a running turn before moving its output or conversation. Trashed versions disappear from Studio, conversation history, Activity links and exports. Use Undo in the toast or Restore on the Trash page to get the versions back with their seals intact.

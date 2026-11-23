@@ -1094,6 +1094,21 @@ class OutputCapabilitiesOut(ApiModel):
     exports: tuple[OutputExport, ...]
 
 
+VoiceId = Annotated[str, Field(min_length=1, max_length=80, pattern=r"^\S(?:.*\S)?$")]
+VoicePair = tuple[VoiceId, VoiceId]
+
+
+class VoiceChoiceOut(ApiModel):
+    value: str
+    label: str
+
+
+class OutputVoicesOut(ApiModel):
+    choices: list[VoiceChoiceOut]
+    defaults: VoicePair | None
+    allow_custom: bool = False
+
+
 class OutputTypeOut(ApiModel):
     id: str
     label: str
@@ -1104,6 +1119,7 @@ class OutputTypeOut(ApiModel):
     part_limit: int
     legacy_styles: tuple[str, ...]
     capabilities: OutputCapabilitiesOut
+    voices: OutputVoicesOut | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class OutputRequestInput(ApiModel):
@@ -1140,6 +1156,7 @@ class BuildTurnInput(ApiModel):
     audience: ArtifactAudience = "scientist"
     length: OutputLength | None = None
     language: str | None = Field(default=None, max_length=100)
+    voices: VoicePair | None = Field(default=None, exclude_if=lambda value: value is None)
     use: DeckUse | None = None
     theme: DeckThemeInput | None = None
     web: bool = False
@@ -1158,6 +1175,8 @@ class BuildTurnInput(ApiModel):
             raise ValueError("Choose a known output type")
         if self.use is not None and "use" not in item.options:
             raise ValueError(f"{item.label} has no slide use option")
+        if self.voices is not None and "voices" not in item.options:
+            raise ValueError(f"{item.label} has no voices option")
         if item.shape != "slides" and (self.theme is not None or self.design_version is not None):
             raise ValueError("Only slides have a deck theme or design version")
         if error := item.part_limit_error(len(self.outline or ())):
@@ -1269,6 +1288,26 @@ class ArtifactSummaryOut(ApiModel):
     request: str | None = None
 
 
+class AudioTimingOut(ApiModel):
+    line: int
+    speaker: Literal["A", "B"]
+    start: float
+    end: float
+
+
+class ArtifactAudioOut(ApiModel):
+    status: Literal["pending", "needs_tts", "error", "ready"]
+    content_hash: str
+    audio_asset_id: str | None = None
+    voices: VoicePair | None = None
+    timings: list[AudioTimingOut] = Field(default_factory=list)
+    error: str | None = None
+
+
+class RetryAudioInput(ApiModel):
+    voices: VoicePair | None = None
+
+
 class ArtifactOut(ArtifactSummaryOut):
     content: str
     unit_snapshots: list[ArtifactUnitSnapshotOut]
@@ -1283,6 +1322,7 @@ class ArtifactOut(ArtifactSummaryOut):
     model_label: str | None = None
     sections: list[OutputSectionOut] = Field(default_factory=list)
     key_results: KeyResultJobOut | None = None
+    audio: ArtifactAudioOut | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 # The Artifacts agent's conversations, kept on the backend (see artifact_workspace) ------------

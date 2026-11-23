@@ -294,7 +294,19 @@ A mind map starts with `<!-- map: mind_map; design: v1 -->`. Write one non-empty
 
 Citations follow the node they support. The Checker reads the cited node with its ancestor labels as context, using the citations on that node. Uncited labels provide structure. Map Markdown preserves the node indentation, and PDF print shows the whole tree as a nested outline. [Mind map reader](OUTPUTS.md#explore-a-mind-map)
 
-## 5. Exports (desktop)
+## 5. Audio overview script (design v1)
+
+An audio overview starts with `<!-- audio: audio_overview; design: v1 -->`. Each line starts with `A:` or `B:` followed by spoken text. Use both speakers and at most 120 lines.
+
+```markdown
+<!-- audio: audio_overview; design: v1 -->
+A: What did the trial measure?
+B: It compared heat loss through insulated and bare walls [1].
+```
+
+Citations stay in the saved Markdown. Studio checks cited lines in batches with the speaker labels removed. The voice provider receives the spoken text with the citation markers removed. [Audio overview API](OUTPUTS.md#audio-overview)
+
+## 6. Exports (desktop)
 
 - **PPTX** uses editable text and tables, native charts for template slides, and speaker
   notes. A designed slide exports a picture of the visual layer with editable text boxes
@@ -303,7 +315,7 @@ Citations follow the node they support. The Checker reads the cited node with it
   Citation marks are superscript numbers. [Report export](../apps/desktop/src/outputs/deck/exportDocx.ts)
 - **PDF** uses the print renderer. A card set prints as a list with its answers, marked correct choices, explanations and sources. The stored content can be copied or downloaded as Markdown.
 
-## 6. Gallery
+## 7. Gallery
 
 Developer render and export checks use the short, maximum, CJK and designed fixtures.
 The backend grammar tests share the deck inputs. [Fixtures](../apps/desktop/src/outputs/deck/fixtures/) · [Slide evals](../apps/backend/evals/slides/README.md)
