@@ -14,6 +14,18 @@ const drawn = () => Array.from(document.querySelectorAll("#print-root .outputs-s
 
 afterEach(cleanup);
 
+it("prints the audio script and static citations with no playback controls", () => {
+  const fixture = documentSections.find((item) => item.shape === "audio")!;
+  const artifact: Artifact = { ...deck(fixture.content, [], [{ sourceTitle: "Trial log", quote: "Supporting passage." }]), kind: "audio" };
+  render(<PrintRoot artifact={artifact} />);
+  const paper = document.getElementById("print-root")!;
+  const script = paper.querySelector(".audio-script")!;
+  expect(script.querySelectorAll("li")).toHaveLength(3);
+  expect(script.querySelector("sup")).toHaveTextContent("[1]");
+  expect(paper.querySelector(".outputs-print-sources")).toHaveTextContent("Trial log");
+  expect(paper.querySelector("audio, button")).toBeNull();
+});
+
 it("prints the full mind map as a nested outline with sources", () => {
   const fixture = documentSections.find((item) => item.shape === "map")!;
   const artifact: Artifact = { ...deck(fixture.content, [], [{ sourceTitle: "Trial log", quote: "Supporting passage." }]), kind: "map" };

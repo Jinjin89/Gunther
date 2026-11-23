@@ -1,5 +1,5 @@
 import type {
-  Artifact, ArtifactConversationDetail, ArtifactTurnOut, BuildTurnInput, ContentsSource, KnowledgeSession,
+  Artifact, ArtifactAudio, ArtifactConversationDetail, ArtifactTurnOut, BuildTurnInput, ContentsSource, KnowledgeSession,
   KeyResult, KeyResultJob, LibraryContents, LibraryOverview, ModelMenu, OutputScope, OutputType,
   SessionMessage, SourceDigest,
 } from "@gunther/contracts";
@@ -64,6 +64,15 @@ const mindMap: OutputType = {
   ...flashcards, id: "mind_map", label: "Mind map", icon: "Network", shape: "map", partLimit: 60,
   capabilities: { ...flashcards.capabilities, unitLabel: "node" },
 };
+const audioOverview: OutputType = {
+  id: "audio_overview", label: "Audio overview", icon: "AudioLines", description: "A recorded dialogue", shape: "audio",
+  options: ["focus", "audience", "length", "language", "voices"], partLimit: 120,
+  capabilities: { ...flashcards.capabilities, unitLabel: "line", exports: ["markdown", "wav"] },
+  voices: {
+    choices: [{ value: "cedar", label: "Cedar" }, { value: "ash", label: "Ash" }, { value: "elm", label: "Elm" }],
+    defaults: ["cedar", "ash"], allowCustom: false,
+  },
+};
 const readyModels: ModelMenu = {
   models: [{ ref: "local/model", provider: "Local", label: "Model", display: "Local Model", vision: false, levels: [] }],
   default: { model: "local/model", effort: "high" }, efforts: [],
@@ -89,6 +98,24 @@ function version(changes: Partial<Artifact> = {}): Artifact {
     outline: [{ heading: "Observations", goal: "Review the records" }], sections: [], citations: [],
     scope: selected("s1"), inputs: { sources: 1, sessions: 0, units: 0 }, ...changes,
   };
+}
+function audioVersion(status: ArtifactAudio["status"] = "ready"): Artifact {
+  return version({
+    kind: "audio", style: "audio_overview", format: "audio", outputType: "Audio overview", title: "Field interview",
+    content: "<!-- audio: audio_overview; design: v1 -->\nA: When was the trial?\nB: The trial started at noon [1].",
+    outline: [],
+    audio: {
+      status, audioAssetId: status === "ready" ? "wav-1" : null, contentHash: "hash", voices: ["cedar", "ash"],
+      timings: status === "ready" ? [
+        { line: 1, speaker: "A", start: 0, end: 1.5 }, { line: 2, speaker: "B", start: 1.5, end: 3 },
+      ] : [],
+      error: status === "error" ? "The configured voice is busy." : null,
+    },
+    citations: [{
+      id: "trial-passage", sourceId: "s1", sourceTitle: "Lab notes", assertionId: null,
+      quote: "Observations were recorded at noon.", locator: "Page 3", status: "verified", confidence: 1,
+    }],
+  });
 }
 function conversation(id: string, changes: Partial<ArtifactConversationDetail> = {}): ArtifactConversationDetail {
   return {
@@ -167,6 +194,7 @@ it("renders each catalog icon on its Studio tile", async () => {
     [flashcards, "lucide-layers"],
     [quiz, "lucide-list-checks"],
     [mindMap, "lucide-network"],
+    [audioOverview, "lucide-audio-lines"],
   ];
   vi.mocked(knowledgeApi.outputTypes).mockResolvedValue(catalog.map(([type]) => type));
   setup();
@@ -175,6 +203,135 @@ it("renders each catalog icon on its Studio tile", async () => {
     const tile = await studio.findByRole("button", { name: type.label });
     expect(tile.querySelector("svg")).toHaveClass(iconClass);
   }
+});
+
+it("builds an audio overview with the two voices from Studio options", async () => {
+  const user = userEvent.setup();
+  vi.mocked(knowledgeApi.outputTypes).mockResolvedValue([audioOverview]);
+  const { turn } = setup();
+  await user.click(await screen.findByRole("button", { name: "Audio overview options" }));
+  const options = within(screen.getByRole("form", { name: "Audio overview options" }));
+  expect(options.getByLabelText("Speaker A voice")).toHaveValue("cedar");
+  expect(options.getByLabelText("Speaker B voice")).toHaveValue("ash");
+  await user.selectOptions(options.getByLabelText("Speaker B voice"), "elm");
+  await user.click(options.getByRole("button", { name: "Build Audio overview" }));
+  await waitFor(() => expect(turn).toHaveBeenCalledExactlyOnceWith(
+    base.id, expect.any(String), expect.objectContaining({ build: expect.objectContaining({ type: "audio_overview", voices: ["cedar", "elm"] }) }),
+    ws, expect.any(Function), expect.any(AbortSignal),
+  ));
+});
+
+async function openAudio(user: ReturnType<typeof userEvent.setup>, status: ArtifactAudio["status"] = "ready") {
+  vi.mocked(knowledgeApi.outputTypes).mockResolvedValue([audioOverview]);
+  const saved = audioVersion(status);
+  const artifacts = [saved];
+  setup({ artifacts });
+  await user.click(await screen.findByRole("button", { name: /Field interview Audio overview Version 1/ }));
+  const reader = within(await screen.findByRole("region", { name: "Audio overview" }));
+  return { artifacts, saved, reader };
+}
+
+it("follows the recording timings, seeks on line clicks, and opens citations without seeking", async () => {
+  const user = userEvent.setup();
+  const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+  const { reader } = await openAudio(user);
+  const audio = reader.getByLabelText<HTMLAudioElement>("Audio overview recording");
+  const lines = reader.getAllByRole("listitem");
+  expect(audio).toHaveAttribute("src", expect.stringContaining("/api/assets/wav-1"));
+  audio.currentTime = 1.5;
+  fireEvent.timeUpdate(audio);
+  expect(lines[1]).toHaveAttribute("aria-current", "true");
+  await user.click(reader.getByText("When was the trial?"));
+  expect(audio.currentTime).toBe(0);
+  expect(lines[0]).toHaveAttribute("aria-current", "true");
+  expect(play).toHaveBeenCalledTimes(1);
+
+  await user.click(reader.getByRole("button", { name: "Inspect citation 1" }));
+  const evidence = within(screen.getByRole("complementary", { name: "Evidence" }));
+  expect(evidence.getByText("Observations were recorded at noon.")).toBeVisible();
+  expect(audio.currentTime).toBe(0);
+  expect(play).toHaveBeenCalledTimes(1);
+  await user.click(evidence.getByRole("button", { name: "Close evidence" }));
+  await user.click(screen.getByRole("button", { name: "Output actions" }));
+  for (const name of ["Download Markdown", "Download WAV", "Print script"]) {
+    expect(screen.getByRole("menuitem", { name })).toBeVisible();
+  }
+});
+
+it("keeps the script readable and opens Read aloud settings when audio needs setup", async () => {
+  const user = userEvent.setup();
+  const settings = vi.fn();
+  window.addEventListener(OPEN_SETTINGS_EVENT, settings, { once: true });
+  const { reader } = await openAudio(user, "needs_tts");
+  expect(reader.getByText("Set up Read aloud in Settings to generate audio")).toBeVisible();
+  expect(reader.getByText("When was the trial?")).toBeVisible();
+  expect(reader.queryByLabelText("Audio overview recording")).toBeNull();
+  await user.click(reader.getByRole("button", { name: "Open Read aloud settings" }));
+  expect(settings).toHaveBeenCalledWith(expect.objectContaining({ detail: { pane: "voice" } }));
+});
+
+it("retries and changes voices on the same version while the recording stage stays visible", async () => {
+  const user = userEvent.setup();
+  const { reader, saved, artifacts } = await openAudio(user, "error");
+  let finish!: () => void;
+  const recording = vi.spyOn(knowledgeApi, "retryAudioStream").mockImplementation((_base, _id, payload, _ws, hear) => {
+    hear({ type: "stage", id: "audio", label: "Recording audio", state: "running", detail: "line 2 of 2" });
+    return new Promise((resolve) => {
+      finish = () => {
+        const ready = audioVersion();
+        if (payload.voices) ready.audio = { ...ready.audio!, voices: payload.voices, audioAssetId: "wav-2" };
+        artifacts[0] = ready;
+        resolve(ready);
+      };
+    });
+  });
+  expect(reader.getByRole("alert")).toHaveTextContent("The configured voice is busy.");
+  await user.click(reader.getByRole("button", { name: "Retry audio" }));
+  expect(recording).toHaveBeenLastCalledWith(base.id, saved.id, {}, ws, expect.any(Function), expect.any(AbortSignal));
+  expect(within(screen.getByRole("article", { name: "Open output" })).getByRole("status")).toHaveTextContent("Recording audio · line 2 of 2");
+  expect(reader.getByText("When was the trial?")).toBeVisible();
+  expect(reader.queryByLabelText("Audio overview recording")).toBeNull();
+  act(finish);
+  await reader.findByLabelText("Audio overview recording");
+  await user.click(reader.getByText("Change voices"));
+  await user.selectOptions(reader.getByLabelText("Speaker A voice"), "elm");
+  await user.click(reader.getByRole("button", { name: "Record with these voices" }));
+  expect(recording).toHaveBeenLastCalledWith(base.id, saved.id, { voices: ["elm", "ash"] }, ws, expect.any(Function), expect.any(AbortSignal));
+  expect(reader.queryByLabelText("Audio overview recording")).toBeNull();
+  act(finish);
+  expect(await reader.findByLabelText("Audio overview recording")).toHaveAttribute("src", expect.stringContaining("/api/assets/wav-2"));
+});
+
+it("opens the saved script during a first recording and loads the WAV once it finishes", async () => {
+  const user = userEvent.setup();
+  vi.mocked(knowledgeApi.outputTypes).mockResolvedValue([audioOverview]);
+  const { artifacts, turn } = setup();
+  let start!: () => void;
+  let finish!: () => void;
+  turn.mockImplementation((_base, id, _payload, _ws, hear) => new Promise((resolve) => {
+    const script = { ...audioVersion("pending"), conversationId: id };
+    start = () => {
+      artifacts.push(script);
+      hear({ type: "stage", id: "audio", label: "Recording audio", state: "running", detail: "line 1 of 2" });
+    };
+    finish = () => {
+      const ready = { ...script, audio: audioVersion().audio! };
+      artifacts[0] = ready;
+      hear({ type: "stage", id: "audio", label: "Recording audio", state: "done" });
+      resolve(done(ready));
+    };
+  }));
+  const tile = await screen.findByRole("button", { name: "Audio overview" });
+  await user.click(tile);
+  await waitFor(() => expect(turn).toHaveBeenCalledTimes(1));
+  await user.click(tile);
+  act(start);
+  const reader = within(await screen.findByRole("region", { name: "Audio overview" }));
+  expect(within(screen.getByRole("article", { name: "Open output" })).getByRole("status")).toHaveTextContent("Recording audio · line 1 of 2");
+  expect(reader.getByText("When was the trial?")).toBeVisible();
+  expect(reader.queryByLabelText("Audio overview recording")).toBeNull();
+  act(finish);
+  expect(await reader.findByLabelText("Audio overview recording")).toHaveAttribute("src", expect.stringContaining("/api/assets/wav-1"));
 });
 
 it("disables Studio builds until Models settings provide a model", async () => {

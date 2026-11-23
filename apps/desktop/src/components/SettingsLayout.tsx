@@ -39,11 +39,12 @@ const rememberedPane = (): SettingsPaneId => {
 };
 
 /** Open Settings on one topic, from anywhere: `openSettings("voice")`. */
-export function openSettings(pane?: SettingsPaneId) {
+export function openSettings(pane?: SettingsPaneId, section?: string) {
   if (pane) {
     try { persistentStorage.setItem(PANE_KEY, pane); } catch { /* opens on the last topic instead */ }
   }
   window.dispatchEvent(new CustomEvent(OPEN_SETTINGS_EVENT, { detail: pane ? { pane } : undefined }));
+  if (section) requestAnimationFrame(() => document.getElementById(section)?.scrollIntoView?.({ block: "start" }));
 }
 
 /** The topic on screen, remembered on this device and changed by `openSettings`. */

@@ -1,12 +1,12 @@
 # Outputs
 
-Studio makes saved reports, slide decks, flashcards, quizzes and mind maps in a library. Click a tile to start a build from the library's Sources ticks. Click its pencil to set options such as focus, audience, length, language and slide use when offered. Each tile build starts a new conversation. Studio disables its build tiles until a model is available and links to Models settings when setup is needed.
+Studio makes saved reports, slide decks, flashcards, quizzes, mind maps and audio overviews in a library. Click a tile to start a build from the library's Sources ticks. Click its pencil to set options such as focus, audience, length, language and slide use when offered. Each tile build starts a new conversation. Studio disables its build tiles until a model is available and links to Models settings when setup is needed.
 
 ## Build in Studio
 
 Studio prepares a verified evidence pool, reads the material, writes a memo or study map, plans the storyline and drafts the report or slides. Slide building adds format repair, factual verification, fitting, design, and optional rendered review. For scientific decks it plans coverage of the study and figures, reads supplied pixels when it can, and records limitations and review status. The study workflow ties the explanation of methods, results and figures to their passages.
 
-Flashcards, Quiz and Mind map use the direct pipeline. Studio reads the sources, writes a memo, drafts the whole output, checks its format, verifies the claims against their citations and assembles the version. An invalid draft gets one format repair. If it still fails, Studio reports the format error and leaves the saved version intact. [Cards format](STUDIO_FORMAT.md#3-cards-design-v1) · [Mind map format](STUDIO_FORMAT.md#4-mind-maps-design-v1)
+Flashcards, Quiz, Mind map and Audio overview use the direct pipeline. Studio reads the sources, writes a memo, drafts the whole output, checks its format, verifies the claims against their citations and assembles the version. An invalid draft gets one format repair. If it still fails, Studio reports the format error and leaves the saved version intact. [Cards format](STUDIO_FORMAT.md#3-cards-design-v1) · [Mind map format](STUDIO_FORMAT.md#4-mind-maps-design-v1) · [Audio script format](STUDIO_FORMAT.md#5-audio-overview-script-design-v1)
 
 Studio searches checked key results using the build brief and source selection. A usable result brings its passages into the evidence pool from the original reading. Studio sees the result sentence as orientation with pointers to those passages. Citations and checks use the original passages. Rebuilding an older output with saved answers in its scope keeps those answers as notes. [Key results](LIBRARY.md#key-results)
 
@@ -23,6 +23,7 @@ Each output type has a recipe for what to write and how to organize it. Choose t
 | Flashcards | `flashcards` | 40 cards |
 | Quiz | `quiz` | 40 cards |
 | Mind map | `mind_map` | 60 nodes |
+| Audio overview | `audio_overview` | 120 lines |
 
 Report and Briefing doc open with a summary box and use exhibits for comparisons that rely on numbers. The Study guide teaches concepts in order, the FAQ uses questions as headings, and the Timeline follows events by date. The output types share verification of claims and cited passages. Each shape determines the text that reaches the Checker. [Studio format](STUDIO_FORMAT.md)
 
@@ -64,9 +65,13 @@ Download Markdown saves the nested list. Export PDF prints the full indented out
 
 ## Audio overview
 
-The backend accepts `audio_overview` builds. The type offers focus, audience, length, language, and two voice picks. The catalog's `voices` gives the choices from Settings → Read aloud and defaults to its selected voice plus a different listed voice when available. The selected voices can be sent in `build.voices` in A, B order. [Script format](STUDIO_FORMAT.md#5-audio-overview-script-design-v1)
+Choose **Audio overview** in Studio to build with the default voices. Open its options to set focus, audience, length, language, or a voice for each speaker. The voices come from Settings → Read aloud. Studio defaults to the configured voice and a different listed voice when available. [Script format](STUDIO_FORMAT.md#5-audio-overview-script-design-v1)
 
-Studio checks the dialogue in batches and saves the script before recording. The artifact response's `audio` contains the script's `contentHash`, the recording state, and, when ready, the `audioAssetId`, voices, and timings. Timings count lines from one and give start and end in seconds. The WAV streams through `GET /api/assets/{id}`. Delete forever releases its asset links.
+The reader shows the player above the script. The line being spoken is highlighted. Select a line to play from its start or select a citation to open Evidence. The script stays readable while Activity shows which line Studio is recording.
+
+If Studio needs a voice provider, use **Open Read aloud settings** from the reader. If recording fails, the reader shows the reason and **Retry audio**. Use **Change voices** to record the same script with different speakers. The output actions offer Markdown, **Download WAV** when the recording is ready, and **Print script**.
+
+Studio checks the dialogue in batches and saves the script before recording. Clients can send `build.voices` in A, B order when building an `audio_overview`. The artifact response's `audio` contains the script's `contentHash`, the recording state, and, when ready, the `audioAssetId`, voices, and timings. Timings count lines from one and give start and end in seconds. The WAV streams through `GET /api/assets/{id}`. Delete forever releases its asset links.
 
 An unconfigured Read aloud provider gives `needs_tts`. A failed recording gives `error` with a reason. `POST /api/knowledge-bases/{libraryId}/artifacts/{versionId}/audio/stream` retries the recording for that exact script version. Pass `{}` to keep the current picks or `{ "voices": ["voice-a", "voice-b"] }` to choose new ones. The audio record lives alongside the sealed script and carries its hash so both operations keep the script version and seal.
 

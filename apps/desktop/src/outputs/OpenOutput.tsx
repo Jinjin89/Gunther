@@ -2,15 +2,13 @@ import type { Artifact, ArtifactConversationMessage, ArtifactTurnInput, Conversa
 import { invoke } from "@tauri-apps/api/core";
 import { Trash2 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ApiRequestError, knowledgeApi } from "../api";
+import { ApiRequestError, isTurnResult, knowledgeApi } from "../api";
 import { CitationDetails } from "../components/evidence/CitationButton";
 import { KeyResultsStatus } from "../keyResults/KeyResultsStatus";
 import { AnswerBody, citationNumbers, verificationNotice } from "../pages/AnswerBody";
 import { ArtifactMenu } from "./ArtifactMenu";
 import { ArtifactMessageList } from "./ArtifactMessages";
 import { artifactRequestId, EARLIER_WORK, libraryScope } from "./artifactConversations";
-import { downloadDocx, downloadPptx } from "./deck/download";
-import { isDeckV2, isReportV2 } from "./deck/detect";
 import { withDeckMarker } from "./deck/marker";
 import { discardOutputEdit, EditPane } from "./EditPane";
 import { outputActivity } from "./liveOutput";
@@ -19,7 +17,7 @@ import { outputViews } from "./OutputViews";
 import { prepareForPrint } from "./printReady";
 import { PrintRoot } from "./PrintRoot";
 import { parseSlides, withAccent, withTheme, type DeckStyle, type DeckTheme } from "./sections";
-import { type OutputTarget, type OutputTrashTarget, type useStudio } from "./useStudio";
+import { type OutputListener, type OutputTarget, type OutputTrashTarget, type useStudio } from "./useStudio";
 import "./outputs.css";
 
 const message = (reason: unknown) => reason instanceof Error ? reason.message : "The request could not be completed.";
@@ -76,6 +74,11 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
     && !studio.artifacts.some((item) => item.id === shownId);
   const artifact = opened?.id === shownId && !unavailable ? opened : null;
   const job = conversationId ? studio.jobs.get(conversationId) : undefined;
+  const activity = studio.activities.find((item) => item.open?.view === "library" && item.open.tab === "outputs"
+    && (item.open.conversationId ?? item.open.lineageId) === conversationId && item.state === "running");
+  const runVersion = job?.artifactId ?? (activity?.open?.view === "library" && activity.open.tab === "outputs"
+    ? activity.open.artifactId : undefined);
+  const workingOnVersion = Boolean(shownId && runVersion === shownId);
   const failure = conversationId ? studio.failures[conversationId] : undefined;
   const latest = !head || head.id === artifact?.id;
   const changeable = artifact !== null && artifact.origin !== "legacy";
@@ -87,15 +90,9 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   const onPart = useCallback((index: number | null) => { partInView.current = index; }, []);
 
   useEffect(() => {
-    if (!shownId) return;
-    let alive = true;
     setError(""); setFocus(undefined); partInView.current = null;
-    void knowledgeApi.artifact(baseId, shownId, workspaceId).then((version) => {
-      if (alive) setOpened(version);
-    }).catch((reason) => { if (alive) setError(message(reason)); });
-    return () => { alive = false; };
   }, [baseId, shownId, workspaceId]);
-  const { read, follow } = studio;
+  const { read, follow, reload } = studio;
   useEffect(() => {
     if (!conversationId) return;
     void read(conversationId).catch((reason) => setError(message(reason)));
@@ -171,6 +168,14 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
       knowledgeApi.reviewSlidesStream(baseId, artifact.id, { clientRequestId: artifactRequestId() }, workspaceId, hear, signal));
     if (reviewed && "id" in reviewed) pickVersion(reviewed.id);
   };
+  const runReaderAction = async (label: string, listen: OutputListener) => {
+    if (!artifact || !conversationId || busy || activity || editing) return;
+    setError("");
+    const updated = await studio.direct(conversationId, artifact, label, listen);
+    if (updated && !isTurnResult(updated)) {
+      setOpened((current) => current?.id === updated.id ? updated : current);
+    }
+  };
   const restyle = async (style: DeckStyle) => {
     if (!artifact || !conversationId || !latest) return;
     if (styleRun.current) {
@@ -229,8 +234,6 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
     setFocus({ section: index + 1, selected: true, ...(quote ? { quote } : {}) });
     refine.current?.focus();
   };
-  const activity = studio.activities.find((item) => item.open?.view === "library" && item.open.tab === "outputs"
-    && (item.open.conversationId ?? item.open.lineageId) === conversationId && item.state === "running");
   const problem = error || failure?.message || (unavailable ? "This output is unavailable." : "");
   const targetType = studio.types.find((item) => item.id === target.typeId);
   const title = artifact?.title || (!unavailable && opened?.title) || job?.live.title || targetType?.label
@@ -252,12 +255,28 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   const type = artifact && (studio.types.find((item) => item.shape === artifact.kind
     && (item.id === artifact.style || item.legacyStyles?.includes(artifact.style ?? "")))
     ?? studio.types.find((item) => item.shape === artifact.kind));
-  const { Reader, Review, wide = false } = outputViews[artifact?.kind ?? targetType?.shape ?? conversation?.shape ?? "report"];
+  const { Reader, Review, wide = false, printLabel, savedStage, file } = outputViews[artifact?.kind ?? targetType?.shape ?? conversation?.shape ?? "report"];
+  const writingAttachment = Boolean(savedStage && (!runVersion || workingOnVersion)
+    && job?.live.running.some((step) => step.kind === "stage" && step.id === savedStage));
+  const working = workingOnVersion || writingAttachment;
+  useEffect(() => {
+    // An attachment can take a while after its text version has already been saved.
+    if (writingAttachment && !shownId) void reload();
+  }, [writingAttachment, shownId, reload]);
+  useEffect(() => {
+    if (!shownId) return;
+    let alive = true;
+    void knowledgeApi.artifact(baseId, shownId, workspaceId).then((version) => {
+      if (alive) setOpened(version);
+    }).catch((reason) => { if (alive) setError(message(reason)); });
+    return () => { alive = false; };
+  }, [baseId, shownId, workspaceId, working]);
   const capabilities = type?.capabilities;
   const unitLabel = (kind: OutputKind | null) => studio.types.find((item) => item.shape === kind)?.capabilities?.unitLabel ?? "part";
   const unit = capabilities?.unitLabel ?? "part";
   const outline = capabilities?.outline && Boolean(artifact?.outline.length);
   const formats = capabilities?.exports ?? [];
+  const printAction = formats.includes("pdf") ? "Export PDF" : printLabel;
   const styling = capabilities?.design && panel === "style" && changeable;
   useLayoutEffect(() => onWideReader(wide), [wide, onWideReader]);
   const allowPoint = changeable && latest && !editing;
@@ -271,7 +290,7 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
         { label: "Edit", disabled: busy || !latest || !changeable, onSelect: () => { pickVersion(artifact.id); setEditing(true); setPanel(null); } },
         { label: "Check again", disabled: busy || !latest || !changeable, onSelect: () => void check() },
         ...(capabilities?.design ? [{ label: "Style", disabled: editing, onSelect: () => choosePanel("style") }] : []),
-        ...(formats.includes("pdf") ? [{ label: "Export PDF", divider: true, disabled: editing, onSelect: () => void withSavedVersion(print) }] : []),
+        ...(printAction ? [{ label: printAction, divider: true, disabled: editing, onSelect: () => void withSavedVersion(print) }] : []),
         ...(formats.includes("markdown") ? [
           { label: "Copy Markdown", onSelect: () => void withSavedVersion(async (version) => {
             await navigator.clipboard.writeText(version.content);
@@ -279,8 +298,8 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
           }) },
           { label: "Download Markdown", onSelect: () => void withSavedVersion(download) },
         ] : []),
-        ...(formats.includes("pptx") && isDeckV2(artifact.content) ? [{ label: "Download PowerPoint", onSelect: () => exportFile(downloadPptx) }] : []),
-        ...(formats.includes("docx") && isReportV2(artifact.content) ? [{ label: "Download Word", onSelect: () => exportFile(downloadDocx) }] : []),
+        ...(file && formats.includes(file.format) && file.available(artifact, working)
+          ? [{ label: file.label, onSelect: () => exportFile(file.download) }] : []),
         { label: "Move to Trash", icon: Trash2, divider: true, danger: true, disabled: saving,
           onSelect: () => onTrash({ id: artifact.id, lineageId: artifact.lineageId }) },
       ]} />}
@@ -306,6 +325,7 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
           {Review && capabilities?.design && <Review artifact={artifact} baseId={baseId} workspaceId={workspaceId} disabled={busy || !latest || !changeable} onReview={() => void reviewSlides()} onFollowUp={refineOutput} />}
           <Reader artifact={artifact} onCite={cite} onPart={onPart} onAskChat={onAskChat}
             onAsk={allowPoint ? point : undefined} goTo={jump} changed={changed} onNotice={onNotify}
+            type={type || undefined} work={{ working, disabled: busy || Boolean(activity), run: runReaderAction }}
             design={styling ? {
               onAccent: (accent) => void save(withAccent(artifact.content, accent)),
               onTheme: (theme) => void save(withTheme(artifact.content, theme)),
@@ -314,7 +334,7 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
               accentDisabled: busy || !latest, deckStyleDisabled: (!restyling && busy) || !latest, pendingDeckStyle: pendingStyle,
             } : undefined} />
         </>}
-      {formats.includes("pdf") && <PrintRoot artifact={artifact} />}
+      {printAction && <PrintRoot artifact={artifact} />}
     </>}
     {conversation && conversation.messages.length > 0 && <details className="output-history">
       <summary>Change history</summary>

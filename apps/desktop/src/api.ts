@@ -97,6 +97,7 @@ import type {
   TtsSampleInput,
   TtsOverview,
   TtsRole,
+  VoicePair,
   AnswerTrace,
   BackgroundJob,
   DeveloperSettings,
@@ -949,6 +950,8 @@ export const knowledgeApi = {
   /** Draw every slide of the latest version again in another style: the next version. */
   restyleSlidesStream: (baseId: string, artifactId: string, payload: RestyleSlidesRequest, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal) =>
     startRun<Artifact, OutputEvent>(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/restyle/stream`, payload, onEvent, outputTerminal, signal, workspaceId),
+  retryAudioStream: (baseId: string, artifactId: string, payload: { voices?: VoicePair }, workspaceId: string, onEvent: (event: OutputEvent) => void, signal?: AbortSignal) =>
+    startRun<Artifact, OutputEvent>(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/audio/stream`, payload, onEvent, outputTerminal, signal, workspaceId),
   checkOutput: (baseId: string, artifactId: string, workspaceId: string) =>
     request<Artifact>(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/check`, { method: "POST" }, workspaceId),
 };

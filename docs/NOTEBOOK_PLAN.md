@@ -1,15 +1,13 @@
 # One library screen, Studio types and key results
 
-Status: agreed and final (2026-11-23). Phases 1–5 are built; the rest is unbuilt. Read [AGENTS.md](../AGENTS.md) first. When a phase ships, move
-what it built into the shipped docs ([Outputs](OUTPUTS.md), [Ask](ASK.md), [Library](LIBRARY.md),
-[Studio format](STUDIO_FORMAT.md)) and delete that phase from this file.
+Status: all phases are built. See the shipped guides for [Outputs](OUTPUTS.md), [Ask](ASK.md),
+[Library](LIBRARY.md), and [Studio format](STUDIO_FORMAT.md). The original design decisions remain below for reference.
 
 ## 1. Why
 
 The [library workspace](LIBRARY.md#sources-chat-and-studio) gives questions and Studio builds a
-shared selection, with a place to open and refine outputs. The next phases add automatic key
-results and more Studio types. Keep checked citations, versions,
-refinement, exports and designed slides as the new types ship.
+shared selection, with a place to open and refine outputs. Studio keeps checked citations, versions,
+refinement, and exports across its types. The library gathers key results from checked work.
 
 ## 2. Decisions (agreed with the owner, 2026-11-23)
 
@@ -38,12 +36,7 @@ These follow from AGENTS.md and are not open questions:
 
 ### 3.1 Extend the output catalog
 
-The existing shapes and types, build options and saved-version rules are in [Outputs](OUTPUTS.md).
-Extend the type options from `GET /api/output-types` with `voices` when audio ships.
-
-- Audio overviews use Studio's direct pipeline with up to 120 lines. The audio shape adds a
-  `check_text` projection, extends the shared split and join fixtures, and declares its reader
-  capabilities in the catalog. [Outputs](OUTPUTS.md)
+The shapes and types, build options, and saved-version rules are in [Outputs](OUTPUTS.md).
 
 ### 3.2 One way to build and refine
 
@@ -102,7 +95,7 @@ as notes when rebuilding an old output whose stored scope pinned saved answers.
 The shared selection, columns, Chat and current readers are described in
 [Library](LIBRARY.md#sources-chat-and-studio), [Ask](ASK.md) and [Outputs](OUTPUTS.md).
 
-- **Key results (N)** sits below the Sources tree in Phase 3a. Each row shows source chips and opens `EvidencePanel` with passages and origin such as “from your question on 20 Nov”. Mark its evidence triggers with `data-opens-evidence`. The row actions include Remove.
+- **Key results (N)** sits below the Sources tree. Each row shows source chips and opens `EvidencePanel` with passages and origin such as “from your question on 20 Nov”. Its evidence triggers carry `data-opens-evidence`. The row actions include Remove.
 - **Output reader** chooses the view by shape.
 
 ## 5. New shapes
@@ -110,32 +103,7 @@ The shared selection, columns, Chat and current readers are described in
 Each shape adds its grammar to [STUDIO_FORMAT.md](STUDIO_FORMAT.md), a `ShapeSpec` row, a reader, a
 `check_text` projection and exports.
 
-**Audio overview (phase 6).** `pipeline = "direct"`, `unit_label = "line"`, exports = Markdown script + WAV audio.
-
-- Grammar: dialogue lines `A: ... [1]` and `B: ... [2]`. Citations stay in the script and are stripped before synthesis.
-- `check_text` strips speaker prefixes and checks lines in batches (not one LLM call per spoken line).
-- **Audio storage (not `SpeechClip`).** Do not use `SpeechClip` (`models.py:620-622` has a `NOT NULL` FK to `session_messages`). Synthesize each line with `TtsProvider.synthesize()` (`tts_providers.py:59`) using the two chosen voices, measure each WAV with `wav_seconds()` (`tts_providers.py:215`), record `timings: [{ line, speaker, start, end }]`, join with `join_wav()`, and save the combined WAV via `AssetService.preserve_bytes` as an immutable `Asset` linked through `ArtifactAsset` (`models.py:390-397`). Store `{ audioAssetId, voices, timings }` in provenance. Streaming (`/api/assets/{id}`) and ref-counted Trash cleanup then work automatically.
-- If no TTS provider is configured or synthesis fails, still save and open the verified script with an inline banner ("Set up Read aloud in Settings to generate audio" / "Retry audio").
-- Reader: audio player beside the script. The active line highlights from `timings`, clicking a line seeks, and `[n]` opens `EvidencePanel`.
-
-## 6. Phases
-
-The builder may split a phase into batches. Each batch keeps every test green and is reviewed on
-its own. Codex builds; Claude and the checker review each diff.
-
-### Phase 6 — Audio overview (`audio`)
-**Adds:**
-- `audio` `ShapeSpec` (`direct` pipeline, `A:`/`B:` format check, batched `check_text`).
-- `audio` `OutputType` row with recipe, example and `voices` option; grammar in `STUDIO_FORMAT.md`.
-- Synthesis via `TtsProvider.synthesize()`, `wav_seconds()` timings and `join_wav()`, saved as an immutable `Asset` via `ArtifactAsset` with `{ audioAssetId, voices, timings }` in provenance.
-- Audio player + synchronized script reader, script-only fallback banner when TTS is unconfigured/fails, and Markdown + WAV exports.
-
-**Removes:** Nothing.
-
-**Tests (no live model calls):**
-- Backend tests with fake `ModelGateway` and fake `TtsProvider` returning valid short WAV bytes: citations stripped before TTS, `timings` match durations, `ArtifactAsset` streams and cleans up on Trash, unconfigured TTS still saves verified script; desktop player highlight/seek tests.
-
-## 7. Done when
+## 6. Done when
 
 Each phase is done when all of these hold:
 

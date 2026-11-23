@@ -1,5 +1,5 @@
 import { artifactAudiences, type BuildTurnInput, type OutputScope, type OutputType } from "@gunther/contracts";
-import { BookOpen, CalendarDays, CircleHelp, ClipboardList, FileText, Layers, ListChecks, LoaderCircle, Network, Pencil, Presentation, Trash2, X } from "lucide-react";
+import { AudioLines, BookOpen, CalendarDays, CircleHelp, ClipboardList, FileText, Layers, ListChecks, LoaderCircle, Network, Pencil, Presentation, Trash2, X } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { openSettings } from "../components/SettingsLayout";
 import { useModelMenu } from "../models/askModel";
@@ -7,8 +7,9 @@ import { ArtifactMenu } from "./ArtifactMenu";
 import { artifactRequestId } from "./artifactConversations";
 import { outputActivity } from "./liveOutput";
 import { latestVersions, type OutputTarget, type OutputTrashTarget, type useStudio } from "./useStudio";
+import { readVoices, VoiceFields } from "./VoiceFields";
 
-const icons = { BookOpen, CalendarDays, CircleHelp, ClipboardList, FileText, Layers, ListChecks, Network, Presentation };
+const icons = { AudioLines, BookOpen, CalendarDays, CircleHelp, ClipboardList, FileText, Layers, ListChecks, Network, Presentation };
 type Card = {
   id: string; title: string; label: string; at: string; target: OutputTarget; status: "saved" | "running" | "failed";
   detail: string; retry?: BuildTurnInput | undefined;
@@ -42,8 +43,9 @@ function cardsOf(studio: ReturnType<typeof useStudio>): Card[] {
     });
   };
   for (const [id, job] of studio.jobs) {
+    // A job without a lineage works on its conversation's output, once that output is saved.
     const head = heads.find((item) => job.lineageId ? item.lineageId === job.lineageId
-      : job.kind === "follow" && studio.owner(item) === id);
+      : studio.owner(item) === id);
     if (!job.build && !head) continue;
     showRun(id, { conversationId: id, typeId: job.build?.type ?? null, lineageId: head?.lineageId ?? null },
       job.live.title || job.build?.title || job.build?.focus || label(job.build?.type) || "Output",
@@ -84,6 +86,11 @@ function BuildOptions({ type, disabled, onBuild, onClose }: {
     const data = new FormData(event.currentTarget);
     const options: BuildTurnInput = { type: type.id };
     for (const field of type.options) {
+      if (field === "voices") {
+        const voices = readVoices(data);
+        if (voices) options.voices = voices;
+        continue;
+      }
       const value = String(data.get(field) ?? "").trim();
       if (value) Object.assign(options, { [field]: value });
     }
@@ -96,6 +103,7 @@ function BuildOptions({ type, disabled, onBuild, onClose }: {
     {type.options.includes("length") && <label>Length<select name="length"><option value="">Default</option><option value="short">Short</option><option value="standard">Standard</option><option value="long">Long</option></select></label>}
     {type.options.includes("language") && <label>Language<input name="language" maxLength={80} placeholder="Automatic" /></label>}
     {type.options.includes("use") && <label>Use<select name="use"><option value="">Default</option><option value="talk">Present</option><option value="read">Read</option></select></label>}
+    {type.options.includes("voices") && type.voices && <VoiceFields options={type.voices} />}
     <button type="submit" className="gx-btn gx-btn-primary gx-btn-sm" disabled={disabled}>Build {type.label}</button>
   </form>;
 }

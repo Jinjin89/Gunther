@@ -11,7 +11,7 @@ import { useLiveOutputs } from "./liveOutput";
 export type OutputTarget = Pick<OutputActivityOpen, "artifactId" | "conversationId" | "lineageId" | "typeId">;
 export type OutputTrashTarget = { id: string; lineageId: string } | { id: string; conversation: true };
 type Turn = Omit<ArtifactTurnInput, "clientRequestId">;
-type Listen = (hear: (event: ArtifactTurnEvent) => void, signal: AbortSignal) => Promise<OutputDone | null>;
+export type OutputListener = (hear: (event: ArtifactTurnEvent) => void, signal: AbortSignal) => Promise<OutputDone | null>;
 type Failure = { message: string; build?: BuildTurnInput | undefined; createdAt: string };
 
 export function latestVersions(versions: ArtifactSummary[]): ArtifactSummary[] {
@@ -108,7 +108,7 @@ export function useStudio(baseId: string, workspaceId: string | null) {
     return knowledgeApi.stopArtifactTurn(baseId, id, workspaceId);
   }, [baseId, workspaceId]);
 
-  const run = useCallback(async (id: string, info: Parameters<typeof watch>[1], listen: Listen) => {
+  const run = useCallback(async (id: string, info: Parameters<typeof watch>[1], listen: OutputListener) => {
     const listener = watch(id, info);
     if (!listener) return null;
     if (info.kind !== "follow") setFailures((current) => ({ ...current, [id]: undefined }));
@@ -158,13 +158,13 @@ export function useStudio(baseId: string, workspaceId: string | null) {
     const lineage = asked?.payload.targetLineageId;
     return send(id, { kind: "build", build: options, ...(typeof lineage === "string" ? { targetLineageId: lineage } : {}) }, options.scope);
   };
-  const direct = (id: string, artifact: Artifact, title: string, listen: Listen) =>
-    run(id, { kind: "version", lineageId: artifact.lineageId, title, stop: () => artifact.conversationId
+  const direct = (id: string, artifact: Artifact, title: string, listen: OutputListener) =>
+    run(id, { kind: "version", lineageId: artifact.lineageId, artifactId: artifact.id, title, stop: () => artifact.conversationId
       ? turnStop(id) : knowledgeApi.stopActivity(`output-lineage:${artifact.lineageId}`) }, listen);
 
   const owner = (artifact: ArtifactSummary) => artifact.conversationId
     || (conversations.some((item) => item.id === EARLIER_WORK) ? EARLIER_WORK : artifact.lineageId);
 
   return { types, artifacts, artifactsLoaded, conversations, details, activities, jobs, failures, error: catalogError || error, remember, rememberVersion, forgetTrashed,
-    read, follow, ensure, send, build, retry, direct, owner, stop };
+    read, reload, follow, ensure, send, build, retry, direct, owner, stop };
 }

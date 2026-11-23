@@ -6,6 +6,7 @@
  *   one is the preamble.
  * - A deck's slides are the parts between lines that are only "---". Empty ones are left out.
  * - A mind map preserves the indentation of each bullet line and the labels of its ancestors.
+ * - An audio script uses one speaker line per part, after its format marker.
  * - A "## " or "---" inside a code fence (a line starting with ``` or ~~~) does not count.
  * - A section's hash is the sha256 of its text with "\n" line ends, trimmed.
  * - A slide's speaker notes start at a line beginning with "Note:".
@@ -99,6 +100,7 @@ const sectionFormats: Record<OutputKind, SectionFormat> = {
   slides: { startsUnit: (line: string) => line.trim() === "---", keepsPreamble: false, joiner: "\n\n---\n\n" },
   cards: headed,
   map: { startsUnit: (line) => line.trimStart().startsWith("-"), keepsPreamble: true, joiner: "\n", eachLine: true, node: parseNode },
+  audio: { startsUnit: (line) => line.startsWith("A:") || line.startsWith("B:"), keepsPreamble: true, joiner: "\n", eachLine: true },
 };
 
 /** A document as its preamble and its sections, each trimmed. */

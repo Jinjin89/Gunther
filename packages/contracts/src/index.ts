@@ -1283,16 +1283,25 @@ export interface ArtifactUnitSnapshot {
 }
 
 /** The saved document shapes supported by the output readers. */
-export const outputKinds = ["report", "slides", "cards", "map"] as const;
+export const outputKinds = ["report", "slides", "cards", "map", "audio"] as const;
 export type OutputKind = (typeof outputKinds)[number];
-export const outputTypeIds = ["report", "briefing", "study_guide", "faq", "timeline", "slides", "flashcards", "quiz", "mind_map"] as const;
+export const outputTypeIds = ["report", "briefing", "study_guide", "faq", "timeline", "slides", "flashcards", "quiz", "mind_map", "audio_overview"] as const;
 export type OutputTypeId = (typeof outputTypeIds)[number];
 /** A Studio type ID or a style accepted from earlier clients. */
 export const outputStyles = [...outputTypeIds, "auto", "overview", "field_guide", "teaching_path", "decision_brief"] as const;
 export type OutputStyle = (typeof outputStyles)[number];
 export type OutputLength = "short" | "standard" | "long";
-export type OutputOption = "focus" | "audience" | "length" | "language" | "use";
-export type OutputExport = "markdown" | "pdf" | "docx" | "pptx";
+export type OutputOption = "focus" | "audience" | "length" | "language" | "use" | "voices";
+export type OutputExport = "markdown" | "pdf" | "docx" | "pptx" | "wav";
+
+/** A and B, in speaker order. */
+export type VoicePair = [string, string];
+
+export interface OutputVoices {
+  choices: { value: string; label: string }[];
+  defaults: VoicePair | null;
+  allowCustom: boolean;
+}
 
 export interface OutputCapabilities {
   unitLabel: string;
@@ -1312,6 +1321,7 @@ export interface OutputType {
   /** Stored styles from earlier versions that use this catalog type. */
   legacyStyles?: string[];
   capabilities: OutputCapabilities;
+  voices?: OutputVoices | null;
 }
 
 /** How a version came about. "legacy" is a version from before agents wrote them. */
@@ -1564,6 +1574,22 @@ export interface ArtifactSummary {
   request?: string | null;
 }
 
+export interface AudioTiming {
+  line: number;
+  speaker: "A" | "B";
+  start: number;
+  end: number;
+}
+
+export interface ArtifactAudio {
+  status: "pending" | "needs_tts" | "error" | "ready";
+  contentHash: string;
+  audioAssetId: string | null;
+  voices: VoicePair | null;
+  timings: AudioTiming[];
+  error: string | null;
+}
+
 export interface Artifact extends ArtifactSummary {
   /** Markdown. A deck's slides are separated by lines that are only "---". */
   content: string;
@@ -1579,6 +1605,7 @@ export interface Artifact extends ArtifactSummary {
   modelLabel: string | null;
   sections: OutputSection[];
   keyResults?: KeyResultJob | null;
+  audio?: ArtifactAudio | null;
 }
 
 export interface BuildOutputRequest {
@@ -1796,6 +1823,7 @@ export interface BuildTurnInput {
   audience?: ArtifactAudience;
   length?: OutputLength | null;
   language?: string | null;
+  voices?: VoicePair;
   use?: DeckUse | null;
   theme?: "classic" | "briefing" | "editorial" | "keynote" | "paper" | "ink" | "brand" | null;
   web?: boolean;

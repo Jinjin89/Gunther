@@ -1,14 +1,17 @@
-import type { Artifact, ConversationCitation, OutputKind } from "@gunther/contracts";
+import type { Artifact, ConversationCitation, OutputExport, OutputKind, OutputType } from "@gunther/contracts";
 import { lazy, Suspense, type ComponentProps, type ComponentType, type ReactNode } from "react";
 import { AnswerBody, citationNumbers } from "../pages/AnswerBody";
+import { audioFile, AudioOverview, AudioScript } from "./AudioOverview";
 import { CardsList, CardsView } from "./CardsView";
 import { LazySlidesView } from "./LazySlides";
 import { MindMapOutline, MindMapView } from "./MindMapView";
 import { ReportView } from "./ReportView";
 import { SlideReviewPanel } from "./SlideReviewPanel";
-import { isReportV2 } from "./deck/detect";
+import { isDeckV2, isReportV2 } from "./deck/detect";
+import { downloadDocx, downloadPptx } from "./deck/download";
 import { ReportV2Section } from "./deck/ReportV2";
 import { splitDocument, withoutTitle } from "./sections";
+import type { OutputListener } from "./useStudio";
 
 // Load the slide renderer and its charts only for a deck.
 const PrintSlides = lazy(() => import("./PrintSlides").then((module) => ({ default: module.PrintSlides })));
@@ -16,7 +19,7 @@ const PrintSlides = lazy(() => import("./PrintSlides").then((module) => ({ defau
 type SlideDesignControls = Pick<ComponentProps<typeof LazySlidesView>,
   "onAccent" | "onTheme" | "onDeckTheme" | "onDeckStyle" | "accentDisabled" | "deckStyleDisabled" | "pendingDeckStyle">;
 
-type ReaderProps = {
+export type ReaderProps = {
   artifact: Artifact;
   onCite: (citation: ConversationCitation, index: number) => void;
   onAsk?: ((index: number, quote?: string) => void) | undefined;
@@ -27,6 +30,8 @@ type ReaderProps = {
   onNotice?: ((text: string) => void) | undefined;
   design?: SlideDesignControls | undefined;
   compact?: boolean;
+  type?: OutputType | undefined;
+  work?: { working: boolean; disabled: boolean; run: (title: string, listen: OutputListener) => void };
 };
 
 type OutputView = {
@@ -34,6 +39,14 @@ type OutputView = {
   Print: ComponentType<{ artifact: Artifact; from: number; to: number }>;
   wide?: boolean;
   pageRule?: string;
+  printLabel?: string;
+  savedStage?: string;
+  file?: {
+    format: OutputExport;
+    label: string;
+    available: (artifact: Artifact, working: boolean) => boolean;
+    download: (artifact: Artifact) => Promise<string>;
+  };
   Review?: typeof SlideReviewPanel;
 };
 
@@ -110,9 +123,17 @@ function PrintMap({ artifact }: { artifact: Artifact }) {
   return <PrintDocument artifact={artifact}><MindMapOutline artifact={artifact} /></PrintDocument>;
 }
 
+function PrintAudio({ artifact }: { artifact: Artifact }) {
+  return <PrintDocument artifact={artifact}><AudioScript artifact={artifact} /></PrintDocument>;
+}
+
 export const outputViews: Record<OutputKind, OutputView> = {
-  report: { Reader: ReportView, Print: PrintReport },
-  slides: { Reader: SlideReader, Print: PrintDeck, wide: true, Review: SlideReviewPanel, pageRule: "@page { size: 13.333in 7.5in; margin: 0; }" },
+  report: { Reader: ReportView, Print: PrintReport, file: {
+    format: "docx", label: "Download Word", available: (artifact) => isReportV2(artifact.content), download: downloadDocx,
+  } },
+  slides: { Reader: SlideReader, Print: PrintDeck, wide: true, Review: SlideReviewPanel, pageRule: "@page { size: 13.333in 7.5in; margin: 0; }",
+    file: { format: "pptx", label: "Download PowerPoint", available: (artifact) => isDeckV2(artifact.content), download: downloadPptx } },
   cards: { Reader: CardReader, Print: PrintCards },
   map: { Reader: MapReader, Print: PrintMap, wide: true },
+  audio: { Reader: AudioOverview, Print: PrintAudio, printLabel: "Print script", savedStage: "audio", file: audioFile },
 };

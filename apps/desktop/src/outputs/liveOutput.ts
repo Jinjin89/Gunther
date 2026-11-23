@@ -48,6 +48,7 @@ interface OutputJob {
   kind: "turn" | "version" | "follow";
   title?: string | undefined;
   lineageId?: string | undefined;
+  artifactId?: string | undefined;
   build?: BuildTurnInput | undefined;
   startedAt: string;
   stop: () => Promise<void>;

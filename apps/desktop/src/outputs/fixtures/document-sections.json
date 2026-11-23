@@ -46,5 +46,13 @@
     "sections": ["- Trial [1]", "  - Setup", "    - Timing [2]", "  - Results", "    - Timing [2]"],
     "joined": "<!-- map: mind_map; design: v1 -->\n- Trial [1]\n  - Setup\n    - Timing [2]\n  - Results\n    - Timing [2]",
     "paths": [["Trial"], ["Trial", "Setup"], ["Trial", "Setup", "Timing"], ["Trial", "Results"], ["Trial", "Results", "Timing"]]
+  },
+  {
+    "name": "audio overview with Windows newlines and blank lines",
+    "shape": "audio",
+    "content": "<!-- audio: audio_overview; design: v1 -->\r\n\r\nA: What did the trial measure?\r\nB: Heat loss through each wall [1]. \r\n\r\nA: What was held constant?\r\n",
+    "preamble": "<!-- audio: audio_overview; design: v1 -->",
+    "sections": ["A: What did the trial measure?", "B: Heat loss through each wall [1].", "A: What was held constant?"],
+    "joined": "<!-- audio: audio_overview; design: v1 -->\nA: What did the trial measure?\nB: Heat loss through each wall [1].\nA: What was held constant?"
   }
 ]
