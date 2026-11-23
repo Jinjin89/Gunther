@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, aliased
 
 from gunther import artifact_workspace as workspaces
-from gunther.artifact_read import artifact_detail, latest_check_records
+from gunther.artifact_read import artifact_detail, latest_check_records, live_artifact_message
 from gunther.artifact_versions import ArtifactConflictError, lineage_head, output_library
 from gunther.database import session_scope
 from gunther.models import Artifact, ArtifactConversation, ArtifactMessage, utc_now
@@ -80,6 +80,7 @@ class ArtifactConversations:
                 ArtifactConversation.id == conversation_id,
                 ArtifactConversation.workspace_id == workspace_id,
                 ArtifactConversation.knowledge_base_id == base_id,
+                ArtifactConversation.trashed_at.is_(None),
             )
         )
         if row is None:
@@ -93,6 +94,30 @@ class ArtifactConversations:
         """A conversation's workspace and its brief, as stored."""
 
         return workspaces.load_workspace(row.state_json), workspaces.load_brief(row.brief_json)
+
+    @staticmethod
+    def _live_lineages(session: Session, row: ArtifactConversation) -> set[str]:
+        return set(session.scalars(
+            select(Artifact.lineage_id).where(
+                Artifact.workspace_id == row.workspace_id,
+                Artifact.knowledge_base_id == row.knowledge_base_id,
+                Artifact.trashed_at.is_(None),
+            ).distinct()
+        ))
+
+    @staticmethod
+    def _hidden_works(workspace: workspaces.Workspace, live: set[str]) -> set[str]:
+        return {work.key for work in workspace.works if work.version_id and work.key not in live}
+
+    def _visible_workspace(
+        self, session: Session, row: ArtifactConversation, live: set[str] | None = None,
+    ) -> tuple[workspaces.Workspace, workspaces.ConversationBrief]:
+        workspace, brief = self._load_workspace(row)
+        if live is None:
+            live = self._live_lineages(session, row)
+        hidden = self._hidden_works(workspace, live) | (workspace.refinement_scopes.keys() - live)
+        workspaces.forget_works(workspace, hidden)
+        return workspace, brief
 
     @staticmethod
     def _store_workspace(
@@ -192,10 +217,9 @@ class ArtifactConversations:
 
     @staticmethod
     def _artifact_conversation_summary(
-        row: ArtifactConversation, workspace: workspaces.Workspace | None = None,
+        row: ArtifactConversation, workspace: workspaces.Workspace,
         last_turn: ArtifactLastTurnOut | None = None,
     ) -> ArtifactConversationSummaryOut:
-        workspace = workspace or workspaces.load_workspace(row.state_json)
         active = workspaces.active_work(workspace)
         output_type = (
             output_type_for(active.spec.kind, active.spec.chosen_output_type) if active else None
@@ -224,14 +248,17 @@ class ArtifactConversations:
         ).label("position")
         ranked = select(ArtifactMessage, position).where(
             ArtifactMessage.conversation_id.in_([row.id for row in rows]),
+            live_artifact_message(),
         ).subquery()
         message = aliased(ArtifactMessage, ranked)
         recent = defaultdict(list)
         for item in session.scalars(select(message).where(ranked.c.position == 1)):
             recent[item.conversation_id].append(item)
+        live = self._live_lineages(session, rows[0])
         return [
             self._artifact_conversation_summary(
-                row, last_turn=self._last_artifact_turn(recent[row.id]),
+                row, self._visible_workspace(session, row, live)[0],
+                last_turn=self._last_artifact_turn(recent[row.id]),
             )
             for row in rows
         ]
@@ -239,10 +266,10 @@ class ArtifactConversations:
     def _artifact_conversation_out(
         self, session: Session, row: ArtifactConversation
     ) -> ArtifactConversationOut:
-        workspace, brief = self._load_workspace(row)
+        workspace, brief = self._visible_workspace(session, row)
         messages = session.scalars(
             select(ArtifactMessage)
-            .where(ArtifactMessage.conversation_id == row.id)
+            .where(ArtifactMessage.conversation_id == row.id, live_artifact_message())
             # A question and its answer can share a second: the user's message comes first.
             .order_by(ArtifactMessage.created_at, ArtifactMessage.role.desc())
         ).all()
@@ -287,7 +314,11 @@ class ArtifactConversations:
                 Artifact.scope_json,
                 Artifact.provenance_json,
             )
-            .where(Artifact.workspace_id == workspace_id, Artifact.knowledge_base_id == base_id)
+            .where(
+                Artifact.workspace_id == workspace_id,
+                Artifact.knowledge_base_id == base_id,
+                Artifact.trashed_at.is_(None),
+            )
             .order_by(Artifact.created_at, Artifact.version_number)
         )
         for row in rows:
@@ -378,16 +409,7 @@ class ArtifactConversations:
         for lineage_id in lineage_ids:
             if any(work.key == lineage_id for work in workspace.works):
                 continue
-            head = session.scalar(
-                select(Artifact)
-                .where(
-                    Artifact.lineage_id == lineage_id,
-                    Artifact.workspace_id == row.workspace_id,
-                    Artifact.knowledge_base_id == row.knowledge_base_id,
-                )
-                .order_by(Artifact.version_number.desc())
-                .limit(1)
-            )
+            head = lineage_head(session, row.workspace_id, row.knowledge_base_id, lineage_id)
             if head is None or head.origin == "legacy":
                 continue
             checks = latest_check_records(session, head)
@@ -465,6 +487,7 @@ class ArtifactConversations:
                     ArtifactConversation.workspace_id == workspace_id,
                     ArtifactConversation.knowledge_base_id == base_id,
                     ArtifactConversation.archived.is_(False),
+                    ArtifactConversation.trashed_at.is_(None),
                 )
                 .order_by(ArtifactConversation.updated_at.desc(), ArtifactConversation.id)
             ).all()
@@ -485,6 +508,8 @@ class ArtifactConversations:
             if existing is not None:
                 if existing.workspace_id != workspace_id or existing.knowledge_base_id != base_id:
                     raise ArtifactConflictError("That conversation id is used somewhere else.")
+                if existing.trashed_at is not None:
+                    raise LookupError(f"Conversation {conversation_id} was not found")
                 return self._artifact_conversation_out(session, existing)
             now = utc_now()
             row = ArtifactConversation(
@@ -562,6 +587,7 @@ class ArtifactConversations:
                         Artifact.id == turn.artifact_id,
                         Artifact.workspace_id == workspace_id,
                         Artifact.knowledge_base_id == base_id,
+                        Artifact.trashed_at.is_(None),
                     )
                 )
                 if turn.status == "saved" and turn.artifact_id
@@ -656,6 +682,8 @@ class ArtifactConversations:
             row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
             workspace, brief = self._load_workspace(row)
             work = workspaces.active_work(workspace)
+            if work and work.version_id and work.key not in self._live_lineages(session, row):
+                work = None
             spec = payload.spec
             brief, edited = workspaces.edit_brief(
                 brief,

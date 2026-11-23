@@ -836,7 +836,7 @@ export interface ServiceTestResult extends ServiceCheck {
   service: ServiceSettings;
 }
 
-export type TrashItemKind = "source" | "note" | "library";
+export type TrashItemKind = "source" | "note" | "library" | "output";
 
 /** One thing moved to Trash, with everything that went in alongside it. */
 export interface TrashItem {
@@ -853,6 +853,8 @@ export interface TrashItem {
   itemCount: number;
   /** Libraries a source or note was filed in when it was trashed. */
   libraryTitles: string[];
+  outputType?: string | null;
+  versionCount?: number;
 }
 
 export interface Entity {

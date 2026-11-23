@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from gunther.answer_runs import AnswerRun, Stopped, check_stop, stopping_on
+from gunther.answer_runs import AnswerRun, Stopped, check_stop, output_key, stopping_on
 from gunther.api_common import _answer_runs, _sse, _sse_events
 from gunther.artifact_read import ArtifactIntegrityError
 from gunther.artifact_versions import ArtifactConflictError
@@ -42,17 +42,10 @@ def _artifact_http_errors(*additional: type[Exception]) -> Iterator[None]:
         raise HTTPException(status_code=_artifact_error_status(error), detail=str(error)) from error
 
 
-def _output_key(conversation_id: str | None, lineage_id: str | None = None) -> str:
-    if conversation_id is not None:
-        return f"output-conv:{conversation_id}"
-    assert lineage_id is not None
-    return f"output-lineage:{lineage_id}"
-
-
 def _conversation_run(
     request: Request, workspace_id: str, knowledge_base_id: str, conversation_id: str,
 ) -> AnswerRun | None:
-    run = _answer_runs(request).get(_output_key(conversation_id))
+    run = _answer_runs(request).get(output_key(conversation_id))
     if run is not None and not run.finished and run.scope == (workspace_id, knowledge_base_id):
         return run
     return None
@@ -90,7 +83,7 @@ def _output_run(
     running, done_word, failed_word = words
     activity = request.app.state.activity
     runs = _answer_runs(request)
-    key = _output_key(conversation_id, lineage_id)
+    key = output_key(conversation_id, lineage_id)
     target = {
         "view": "library", "libraryId": knowledge_base_id, "tab": "outputs",
         "conversationId": conversation_id, "typeId": type_id,
@@ -129,6 +122,10 @@ def _output_run(
             run.publish("done", result.model_dump(mode="json", by_alias=True), open=opened)
         except Stopped:
             run.publish("stopped", {"type": "stopped"})
+        except LookupError as error:
+            # The request may have named a target moved to Trash before the run registered.
+            tracked.stopped()
+            run.publish("error", {"status": 404, "detail": str(error)})
         except tuple(_ARTIFACT_ERROR_STATUS) as error:
             run.publish("error", {"status": _artifact_error_status(error), "detail": str(error)})
         except Exception:
@@ -137,7 +134,9 @@ def _output_run(
             logger.exception("Building an output failed")
             run.publish("error", {"status": 500, "detail": "The output could not be built."})
 
-    run = runs.start(key, label, work, scope=(workspace_id, knowledge_base_id))
+    run = runs.start(
+        key, label, work, scope=(workspace_id, knowledge_base_id), lineage_id=lineage_id,
+    )
     if run is None:
         raise HTTPException(status_code=409, detail="Gunther is still working on this output.")
     return _sse(run)

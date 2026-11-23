@@ -8,7 +8,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiRequestError, knowledgeApi } from "../api";
 import { announceModelsChanged, OPEN_SETTINGS_EVENT } from "../models/askModel";
 import { libraryScope } from "../outputs/artifactConversations";
-import { makeBase, makeSource } from "../test/fixtures";
+import { makeBase, makeSource, makeTrashItem } from "../test/fixtures";
 import { KnowledgeBaseWorkspace } from "./KnowledgeBaseWorkspace";
 
 vi.mock("../components/markdown/MarkdownEditor", () => ({
@@ -105,8 +105,10 @@ function setup({ artifacts = [], conversations = [] }: { artifacts?: Artifact[];
   vi.spyOn(knowledgeApi, "followArtifactTurn").mockResolvedValue(null);
   const turn = vi.spyOn(knowledgeApi, "artifactTurnStream").mockResolvedValue(done());
   const onAdd = vi.fn();
-  const view = render(<KnowledgeBaseWorkspace base={base} workspaceId={ws} onOpenSource={vi.fn()} onNotify={vi.fn()} onAdd={onAdd} onTrashed={vi.fn()} />);
-  return { view, create, patch, turn, artifacts, onAdd };
+  const onNotify = vi.fn();
+  const onTrashed = vi.fn();
+  const view = render(<KnowledgeBaseWorkspace base={base} workspaceId={ws} onOpenSource={vi.fn()} onNotify={onNotify} onAdd={onAdd} onTrashed={onTrashed} />);
+  return { view, create, patch, turn, artifacts, onAdd, onNotify, onTrashed };
 }
 
 beforeEach(() => {
@@ -387,6 +389,50 @@ it("keeps an unsaved document edit until leaving is confirmed", async () => {
   expect(ask).toHaveBeenCalledTimes(2);
   expect(screen.getByRole("article", { name: "Source summary" })).toBeVisible();
   expect(editor).not.toBeInTheDocument();
+});
+
+it("moves the whole output to Trash from the menu on an older open version", async () => {
+  const user = userEvent.setup();
+  const older = version();
+  const saved = [older, version({ id: "version-2", versionNumber: 2, supersedesArtifactId: older.id })];
+  const entry = makeTrashItem({ id: "trash-batch", title: older.title, kind: "output", versionCount: 2 });
+  const { onTrashed } = setup({ artifacts: saved });
+  const move = vi.spyOn(knowledgeApi, "trashOutput").mockImplementation(async () => {
+    saved.splice(0);
+    return entry;
+  });
+  const openMenu = () => user.click(screen.getByRole("button", { name: "Output actions" }));
+  await user.click(await screen.findByRole("button", { name: /Field findings Report Version 2/ }));
+  await screen.findByRole("button", { name: "Output actions" });
+  await openMenu();
+  await user.click(screen.getByRole("menuitem", { name: "Versions" }));
+  await user.click(screen.getByRole("button", { name: "Version 1" }));
+  await screen.findByRole("button", { name: "Output actions" });
+  await openMenu();
+  await user.click(screen.getByRole("menuitem", { name: "Move to Trash" }));
+  expect(move).toHaveBeenCalledExactlyOnceWith(base.id, older.id, ws);
+  expect(onTrashed).toHaveBeenCalledExactlyOnceWith(entry);
+  expect(screen.queryByRole("article", { name: "Open output" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Field findings Report Version/ })).not.toBeInTheDocument();
+});
+
+it("keeps an unsaved edit when a running turn blocks Move to Trash", async () => {
+  const user = userEvent.setup();
+  const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(true).mockReturnValueOnce(false);
+  const { onNotify } = setup({ artifacts: [version()] });
+  const detail = "Stop the output run before moving it to Trash.";
+  vi.spyOn(knowledgeApi, "trashOutput").mockRejectedValue(new ApiRequestError(detail, 409));
+  await user.click(await screen.findByRole("button", { name: /Field findings Report Version 1/ }));
+  await user.click(await screen.findByRole("button", { name: "Output actions" }));
+  await user.click(screen.getByRole("menuitem", { name: "Edit" }));
+  const editor = screen.getByRole("textbox", { name: "Report, as Markdown" });
+  await user.type(editor, " Continued observations.");
+  await user.click(screen.getByRole("button", { name: "Output actions" }));
+  await user.click(screen.getByRole("menuitem", { name: "Move to Trash" }));
+  expect(onNotify).toHaveBeenCalledWith(detail);
+  await user.click(screen.getByRole("button", { name: "Back to chat" }));
+  expect(confirm).toHaveBeenCalledTimes(2);
+  expect(editor).toBeInTheDocument();
 });
 
 it("refines the open lineage and updates its scope only on request", async () => {

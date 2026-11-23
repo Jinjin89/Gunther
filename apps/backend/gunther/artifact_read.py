@@ -7,13 +7,19 @@ import json
 import secrets
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from gunther.artifact_manifest import artifact_manifest_hash
 from gunther.checks import complete, coverage_of, issue_view, read_verdicts
 from gunther.database import session_scope
-from gunther.models import Artifact, ArtifactCheck, ArtifactUnitBinding, KnowledgeUnitRevision
+from gunther.models import (
+    Artifact,
+    ArtifactCheck,
+    ArtifactMessage,
+    ArtifactUnitBinding,
+    KnowledgeUnitRevision,
+)
 from gunther.output_types import output_type_label
 from gunther.outputs import _marked, heading_of, section_hash, split_document
 from gunther.schemas import (
@@ -33,6 +39,20 @@ from gunther.schemas import (
 
 class ArtifactIntegrityError(RuntimeError):
     """Stored immutable Artifact bytes or provenance no longer match their hashes."""
+
+
+def artifact_owner():
+    """Read the owning conversation from the sealed provenance."""
+
+    provenance = case(
+        (func.json_valid(Artifact.provenance_json), Artifact.provenance_json), else_="{}",
+    )
+    return func.json_extract(provenance, "$.conversation_id")
+
+
+def live_artifact_message():
+    live = select(Artifact.id).where(Artifact.trashed_at.is_(None))
+    return or_(ArtifactMessage.artifact_id.is_(None), ArtifactMessage.artifact_id.in_(live))
 
 
 def _verified_payload(
@@ -252,6 +272,7 @@ class ArtifactReader:
                 .where(
                     Artifact.knowledge_base_id == knowledge_base_id,
                     Artifact.workspace_id == workspace_id,
+                    Artifact.trashed_at.is_(None),
                 )
                 .order_by(Artifact.created_at.desc(), Artifact.version_number.desc())
             ).all()
@@ -261,11 +282,14 @@ class ArtifactReader:
         self, knowledge_base_id: str, artifact_id: str, workspace_id: str
     ) -> ArtifactOut:
         with session_scope(self.sessions) as session:
+            if self._live_knowledge_base(session, knowledge_base_id) is None:
+                raise LookupError(f"Knowledge Base {knowledge_base_id} was not found")
             artifact = session.scalar(
                 select(Artifact).where(
                     Artifact.id == artifact_id,
                     Artifact.workspace_id == workspace_id,
                     Artifact.knowledge_base_id == knowledge_base_id,
+                    Artifact.trashed_at.is_(None),
                 )
             )
             if artifact is None:
@@ -299,6 +323,7 @@ class ArtifactReader:
             .where(
                 Artifact.knowledge_base_id == base_id,
                 Artifact.kind == "slides",
+                Artifact.trashed_at.is_(None),
             )
             .order_by(Artifact.created_at.desc())
             .limit(30)

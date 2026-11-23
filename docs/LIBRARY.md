@@ -50,6 +50,6 @@ Each source has a home folder. Other library placements use relative links. The 
 
 ## Trash
 
-Move sources, notes and libraries into Trash with Undo. Items kept in another live library stay available there. Trashed sources leave active search and new evidence gathering. Restore inside Trash, or use Delete forever or Empty Trash to remove the items and any now-unused managed originals. The service keeps Trash for 30 days and purges expired batches. Saved answers and sealed output versions retain their citation snapshots.
+Move sources, notes, libraries and outputs into Trash with Undo. Sources kept in another live library stay available there. Trashed sources leave active search and new evidence gathering. Outputs go with their version history. The Trash page shows the output type, version count and when it was moved. Restore inside Trash, or use Delete forever or Empty Trash to remove the items and any now-unused managed originals. The service keeps Trash for 30 days by default and purges expired batches. Saved answers and sealed output versions retain their citation snapshots. [Output Trash](OUTPUTS.md#trash)
 
 [Contents API](../apps/backend/gunther/knowledge_api.py) · [Pinned reading](../apps/backend/gunther/evidence_reader.py) · [Trash service](../apps/backend/gunther/trash.py)

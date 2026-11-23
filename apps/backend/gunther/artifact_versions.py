@@ -19,6 +19,7 @@ from gunther.models import (
     Artifact,
     ArtifactAsset,
     ArtifactCheck,
+    ArtifactConversation,
     ArtifactUnitBinding,
     DocumentElement,
     ElementAsset,
@@ -64,6 +65,9 @@ def earlier_output(
             raise ArtifactConflictError(
                 "clientRequestId was already used for a different Artifact request"
             )
+        if existing.trashed_at is not None:
+            raise LookupError(f"Artifact {existing.id} was not found")
+        output_library(session, workspace_id, existing.knowledge_base_id)
         return artifact_detail(session, existing)
 
 
@@ -86,6 +90,7 @@ def lineage_head(
             Artifact.lineage_id == lineage_id,
             Artifact.workspace_id == workspace_id,
             Artifact.knowledge_base_id == base_id,
+            Artifact.trashed_at.is_(None),
         )
         .order_by(Artifact.version_number.desc())
         .limit(1)
@@ -103,6 +108,7 @@ def output_version(
             Artifact.id == artifact_id,
             Artifact.workspace_id == workspace_id,
             Artifact.knowledge_base_id == base_id,
+            Artifact.trashed_at.is_(None),
         )
     )
     if found is None:
@@ -148,6 +154,8 @@ def commit_version(
 
     try:
         with session_scope(sessions) as session:
+            # Serialize the lineage eligibility check with a concurrent move to Trash.
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
             library = output_library(session, workspace_id, base_id)
             if parent_id:
                 parent = output_version(session, workspace_id, base_id, parent_id, latest=True)
@@ -203,6 +211,10 @@ def commit_version(
                 reply=skilled.get("reply") if conversation_id else None,
                 changes=skilled.get("changes"),
             )
+            if provenance.conversation_id:
+                conversation = session.get(ArtifactConversation, provenance.conversation_id)
+                if conversation is not None and conversation.trashed_at is not None:
+                    raise LookupError("The output's conversation was not found")
             sealed = provenance.model_dump()
             if skilled.get("work") is not None:
                 # The artifact's work as it was made: sealed with the version, not sent out.

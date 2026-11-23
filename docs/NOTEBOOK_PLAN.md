@@ -1,14 +1,14 @@
 # One library screen, Studio types and key results
 
-Status: agreed and final (2026-11-23). Phases 1a, 1b and 2a are built; the rest is unbuilt. Read [AGENTS.md](../AGENTS.md) first. When a phase ships, move
+Status: agreed and final (2026-11-23). Phases 1a, 1b, 2a and 2b are built; the rest is unbuilt. Read [AGENTS.md](../AGENTS.md) first. When a phase ships, move
 what it built into the shipped docs ([Outputs](OUTPUTS.md), [Ask](ASK.md), [Library](LIBRARY.md),
 [Studio format](STUDIO_FORMAT.md)) and delete that phase from this file.
 
 ## 1. Why
 
 The [library workspace](LIBRARY.md#sources-chat-and-studio) gives questions and Studio builds a
-shared selection, with a place to open and refine outputs. The next phases add a library
-overview, automatic key results and more Studio types. Keep checked citations, versions,
+shared selection, with a place to open and refine outputs. The next phases add automatic key
+results and more Studio types. Keep checked citations, versions,
 refinement, exports and designed slides as the new types ship.
 
 ## 2. Decisions (agreed with the owner, 2026-11-23)
@@ -112,10 +112,7 @@ The shared selection, columns, Chat and current readers are described in
 [Library](LIBRARY.md#sources-chat-and-studio), [Ask](ASK.md) and [Outputs](OUTPUTS.md).
 
 - **Key results (N)** sits below the Sources tree in Phase 3a. Each row shows source chips and opens `EvidencePanel` with passages and origin such as “from your question on 20 Nov”. Mark its evidence triggers with `data-opens-evidence`. The row actions include Remove.
-- **Chat overview** uses a new `library_overviews` table and Analysis job in Phase 2b. Store `knowledge_base_id` as the primary key with `summary`, `suggested_questions_json`, `source_fingerprint`, `method`, `error` and `updated_at`. Summarize all live sources from `SourceDigest.overview`, `SourcePaper.abstract` or a leading snippet, so notes, web pages and recordings contribute. Offer up to three clickable suggested questions. Use a library-level job because `TopicSynthesis` requires a `TopicNode` and filed paper abstracts.
-- **Citation preview** in Phase 2b shows `sourceTitle`, `locator` and a clipped `quote` on hover over an inline `[n]` in `AnswerBody.tsx`, shared by Chat and output readers. Clicking opens `EvidencePanel`.
-- **Source summary** in Phase 2b shows the full `SourceDigest` beside paper metadata and Open full page. Link `keyPoints` to their citations and let `terms` and `openQuestions` pre-fill or send to Chat.
-- **Output reader** chooses the view by shape as cards, map and audio ship. The map reader also collapses Sources below 1200 px. Phase 2b adds Move to Trash to the output actions.
+- **Output reader** chooses the view by shape as cards, map and audio ship. The map reader also collapses Sources below 1200 px.
 
 ## 5. New shapes
 
@@ -157,19 +154,6 @@ Why: removing T shifted cells toward the white-cell lineage [1].
 
 The builder may split a phase into batches. Each batch keeps every test green and is reviewed on
 its own. Codex builds; Claude and the checker review each diff.
-
-### Phase 2b — Library overview, parity polish and Output Trash
-**Adds:**
-- `library_overviews` migration and Analysis job (short summary + up to 3 suggested questions from all live source kinds), shown in empty Chat.
-- Lightweight `[n]` hover popover in `AnswerBody.tsx` (shared across Chat and all output readers).
-- Full `SourceDigest` (`overview`, `keyPoints` with citations, clickable `terms` and `openQuestions`) in Source summary.
-- Output Trash through `TrashService`: nullable `trashed_at`/`trash_batch_id` on `Artifact` and `ArtifactConversation`, `TrashItemKind = "output"`, lineage-level batching, active-run refusal, `trashed_at IS NULL` filtering, leaf-first purge in `_delete_batch` (`trash.py:463-474`) with ref-counted `ArtifactAsset` cleanup, and `⋯ → Move to Trash` + Trash page support.
-
-**Removes:**
-- The overview replaces the library details in empty Chat when an overview exists.
-
-**Tests (no live model calls):**
-- Backend tests with fake Analysis model for `library_overviews` (PDF, note, recording, empty library) and Output Trash (trash, refuse during active run, restore, delete forever leaf-first, asset ref-count); desktop tests for hover popover, full Source summary and Output Trash; Chrome journey passes.
 
 ### Phase 3a — Key results core and migration
 **Adds:**

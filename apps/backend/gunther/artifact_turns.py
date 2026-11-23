@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from gunther import artifact_agent, usage
 from gunther import artifact_workspace as workspaces
 from gunther.answer_runs import Stopped
-from gunther.artifact_read import artifact_detail, latest_check_records
+from gunther.artifact_read import artifact_detail, latest_check_records, live_artifact_message
 from gunther.artifact_turn_result import TurnResult, audience_of
 from gunther.artifact_versions import (
     ArtifactConflictError,
@@ -28,7 +28,7 @@ from gunther.database import session_scope
 from gunther.evidence import Evidence
 from gunther.llm import ModelError, ModelInfo
 from gunther.model_profiles import Effort
-from gunther.models import Artifact, ArtifactConversation, ArtifactMessage, utc_now
+from gunther.models import ArtifactConversation, ArtifactMessage, utc_now
 from gunther.output_types import OUTPUT_TYPES, output_type_for
 from gunther.outputs import BuiltOutput, Notes, OutputLimits, Planned, Pool, Spec
 from gunther.run_budget import BudgetedGateway, RunBudget
@@ -97,6 +97,7 @@ class ArtifactTurns:
         its first message's words."""
 
         with session_scope(self.sessions) as session:
+            output_library(session, workspace_id, base_id)
             row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
             if row.title == NEW_CONVERSATION and text.strip():
                 return " ".join(text.split())[:60]
@@ -144,12 +145,11 @@ class ArtifactTurns:
         )
         if not same:
             raise ArtifactConflictError("clientRequestId was already used for a different message")
-        return self._turn_out(session, *linked)
+        return self._turn_out(session, row, *linked)
 
     def _turn_out(
-        self, session: Session, reply: ArtifactMessage, found: dict | None = None
+        self, session: Session, row: ArtifactConversation, reply: ArtifactMessage, found: dict
     ) -> ArtifactTurnOut:
-        found = found if found is not None else json.loads(reply.payload_json or "{}")
         outcome = {
             "question": "asked",
             "answer": "answered",
@@ -158,7 +158,9 @@ class ArtifactTurns:
             "paused": "paused",
         }[reply.kind]
         artifact = (
-            artifact_detail(session, session.get(Artifact, reply.artifact_id))
+            artifact_detail(session, output_version(
+                session, row.workspace_id, row.knowledge_base_id, reply.artifact_id, latest=False,
+            ))
             if reply.kind == "result" and reply.artifact_id
             else None
         )
@@ -271,7 +273,7 @@ class ArtifactTurns:
             library = output_library(session, workspace_id, base_id)
             library_title = library.title
             row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
-            workspace, brief = self._load_workspace(row)
+            workspace, brief = self._visible_workspace(session, row)
             began = (
                 brief.model_copy(deep=True),
                 {work.key: work.spec.model_copy(deep=True) for work in workspace.works},
@@ -552,7 +554,7 @@ class ArtifactTurns:
 
         messages = session.scalars(
             select(ArtifactMessage)
-            .where(ArtifactMessage.conversation_id == conversation_id)
+            .where(ArtifactMessage.conversation_id == conversation_id, live_artifact_message())
             .order_by(ArtifactMessage.created_at, ArtifactMessage.role.desc())
         ).all()
         pairs: list[tuple[str, str]] = []
@@ -704,6 +706,11 @@ class ArtifactTurns:
                     before = began[1].get(work.key)
                     if before is not None and work.key in theirs:
                         work.spec = workspaces.keep_spec_edits(before, work.spec, theirs[work.key])
+                hidden = self._hidden_works(stored, self._live_lineages(session, row))
+                present = {work.key for work in workspace.works}
+                workspace.works.extend(
+                    work for work in stored.works if work.key in hidden and work.key not in present
+                )
                 if build_scope is not None:
                     row.scope_json = json.dumps(build_scope.model_dump())
                     if artifact_title and row.title == NEW_CONVERSATION:

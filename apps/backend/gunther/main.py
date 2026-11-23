@@ -295,10 +295,13 @@ def create_app(
         browser=active_settings.slide_browser_path,
     ) if active_settings.slide_review_enabled else None
 
+    answer_runs = AnswerRuns()
     trash_service = TrashService(
         sessions,
         assets_dir=active_settings.assets_dir,
         recordings_dir=active_settings.recordings_dir,
+        runs=answer_runs,
+        activity=worker.activity,
         retention_days=active_settings.trash_retention_days,
     )
 
@@ -363,7 +366,7 @@ def create_app(
     application.state.base_settings = base_settings
     application.state.service_settings = service_store
     application.state.tts = TtsService(sessions, active_settings.speech_dir)
-    application.state.answer_runs = AnswerRuns()
+    application.state.answer_runs = answer_runs
     application.state.activity = worker.activity
     # A recording's Transcribe again button.
     retranscriber = Retranscriber(application.state, sessions, active_settings.recordings_dir)

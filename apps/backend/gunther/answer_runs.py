@@ -31,6 +31,13 @@ class Stopped(Exception):
     """Someone pressed Stop; the answer is dropped and the question kept, marked."""
 
 
+def output_key(conversation_id: str | None, lineage_id: str | None = None) -> str:
+    if conversation_id is not None:
+        return f"output-conv:{conversation_id}"
+    assert lineage_id is not None
+    return f"output-lineage:{lineage_id}"
+
+
 @contextmanager
 def stopping_on(requested: threading.Event) -> Iterator[None]:
     token = _stop_requested.set(requested)
@@ -60,6 +67,7 @@ class AnswerRun:
     stop_requested: threading.Event = field(default_factory=threading.Event)
     finished: bool = False
     scope: tuple[str, str] | None = None  # Workspace and library of a scoped run.
+    lineage_id: str | None = None
     _activity: tuple[Tracked, str, str] | None = field(default=None, init=False)
     _watchers: list[_Watcher] = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -158,6 +166,13 @@ class AnswerRuns:
         with self._lock:
             return self._runs.get(session_id)
 
+    @contextmanager
+    def locked_active(self) -> Iterator[list[AnswerRun]]:
+        """Keep run registration out of a short mutation that requires idle work."""
+
+        with self._lock:
+            yield [run for run in self._runs.values() if not run.finished]
+
     def start(
         self,
         session_id: str,
@@ -165,6 +180,7 @@ class AnswerRuns:
         work: Callable[[AnswerRun], None],
         *,
         scope: tuple[str, str] | None = None,
+        lineage_id: str | None = None,
     ) -> AnswerRun | None:
         """Begin an answer on its own thread; None when one is already being written."""
 
@@ -172,7 +188,7 @@ class AnswerRuns:
             current = self._runs.get(session_id)
             if current is not None and not current.finished:
                 return None
-            run = AnswerRun(session_id, question, scope=scope)
+            run = AnswerRun(session_id, question, scope=scope, lineage_id=lineage_id)
             self._runs[session_id] = run
 
         def target() -> None:

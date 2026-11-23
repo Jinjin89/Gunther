@@ -88,6 +88,7 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (28, "recording_audio_duration"),
             (29, "model_usage"),
             (30, "library_overviews"),
+            (31, "output_trash"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
@@ -144,7 +145,7 @@ def test_library_overview_upgrade_preserves_the_existing_queue_and_staged_assets
                     error TEXT, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL
                 )
             """)
-        run_migrations(engine, Base.metadata, MIGRATIONS[:-1])
+        run_migrations(engine, Base.metadata, MIGRATIONS[:29])
         with engine.begin() as connection:
             connection.exec_driver_sql("""
                 INSERT INTO sources (id, title, kind, content, content_hash, created_at)
@@ -807,6 +808,8 @@ def test_v9_database_adds_immutable_artifact_history_without_touching_library(
             "outline_json",
             "citations_json",
             "created_at",
+            "trashed_at",
+            "trash_batch_id",
         } == {column["name"] for column in inspector.get_columns("artifacts")}
         assert inspector.has_table("artifact_unit_bindings")
         assert {
@@ -913,6 +916,7 @@ def test_v11_outputs_without_request_identity_are_repaired_in_place(tmp_path: Pa
         with session_scope(sessions) as session:
             kept = session.scalars(select(Artifact)).one()
             assert (kept.id, kept.title, kept.content) == ("art_old", "Marker review", "# Markers")
+            assert kept.trashed_at is None and kept.trash_batch_id is None
             assert kept.client_request_id == "legacy-art_old"
             assert len(kept.request_fingerprint) == 64
             assert session.execute(text("PRAGMA foreign_key_check")).all() == []

@@ -1,11 +1,9 @@
 import type { TrashItem, TrashItemKind } from "@gunther/contracts";
 import { knowledgeApi } from "../api";
 
-/** Something that can move to Trash: a source (recordings included), a note, or a library. */
-export interface TrashTarget {
-  kind: TrashItemKind;
-  id: string;
-}
+export type TrashTarget =
+  | { kind: Exclude<TrashItemKind, "output">; id: string }
+  | { kind: "output"; id: string; libraryId: string; workspaceId: string; conversation: boolean };
 
 /** Everything a Trash change can touch, so every open list refreshes. */
 const TRASH_EVENTS = ["gunther:inbox-updated", "gunther:sources-updated", "gunther:trash-updated"];
@@ -15,11 +13,17 @@ export function announceTrashChange() {
 }
 
 export async function moveToTrash(target: TrashTarget): Promise<TrashItem> {
-  const entry = target.kind === "library"
-    ? await knowledgeApi.trashLibrary(target.id)
-    : target.kind === "note"
-      ? await knowledgeApi.trashNote(target.id)
-      : await knowledgeApi.trashSource(target.id);
+  let entry: TrashItem;
+  switch (target.kind) {
+    case "library": entry = await knowledgeApi.trashLibrary(target.id); break;
+    case "note": entry = await knowledgeApi.trashNote(target.id); break;
+    case "source": entry = await knowledgeApi.trashSource(target.id); break;
+    case "output":
+      entry = target.conversation
+        ? await knowledgeApi.trashOutputConversation(target.libraryId, target.id, target.workspaceId)
+        : await knowledgeApi.trashOutput(target.libraryId, target.id, target.workspaceId);
+      break;
+  }
   announceTrashChange();
   return entry;
 }

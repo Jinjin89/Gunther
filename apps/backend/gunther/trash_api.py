@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Request
 
+from gunther.artifact_api_common import WorkspaceHeader
 from gunther.schemas import ApiModel, TrashItemKind, TrashItemOut
 from gunther.trash import TrashConflict, TrashService
 
@@ -50,11 +51,38 @@ def trash_library(knowledge_base_id: str, request: Request) -> TrashItemOut:
         raise trash_error(error) from error
 
 
+@router.post(
+    "/knowledge-bases/{library_id}/artifacts/{artifact_id}/trash", response_model=TrashItemOut,
+)
+def trash_artifact(
+    library_id: str, artifact_id: str, request: Request, workspace_id: WorkspaceHeader,
+) -> TrashItemOut:
+    try:
+        return _trash(request).trash_output(workspace_id, library_id, artifact_id)
+    except (LookupError, TrashConflict) as error:
+        raise trash_error(error) from error
+
+
+@router.post(
+    "/knowledge-bases/{library_id}/artifact-conversations/{conversation_id}/trash",
+    response_model=TrashItemOut,
+)
+def trash_artifact_conversation(
+    library_id: str, conversation_id: str, request: Request, workspace_id: WorkspaceHeader,
+) -> TrashItemOut:
+    try:
+        return _trash(request).trash_output(
+            workspace_id, library_id, conversation_id, conversation=True,
+        )
+    except (LookupError, TrashConflict) as error:
+        raise trash_error(error) from error
+
+
 @router.post("/trash/{kind}/{item_id}/restore", response_model=TrashItemOut)
 def restore_from_trash(kind: TrashItemKind, item_id: str, request: Request) -> TrashItemOut:
     try:
         return _trash(request).restore(kind, item_id)
-    except LookupError as error:
+    except (LookupError, TrashConflict) as error:
         raise trash_error(error) from error
 
 

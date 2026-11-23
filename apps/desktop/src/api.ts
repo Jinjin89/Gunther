@@ -804,6 +804,10 @@ export const knowledgeApi = {
   trashSource: (id: string) => request<TrashItem>(`/sources/${encodeURIComponent(id)}/trash`, { method: "POST" }),
   trashNote: (id: string) => request<TrashItem>(`/notes/${encodeURIComponent(id)}/trash`, { method: "POST" }),
   trashLibrary: (id: string) => request<TrashItem>(`/knowledge-bases/${encodeURIComponent(id)}/trash`, { method: "POST" }),
+  trashOutput: (baseId: string, artifactId: string, workspaceId: string) =>
+    request<TrashItem>(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/trash`, { method: "POST" }, workspaceId),
+  trashOutputConversation: (baseId: string, conversationId: string, workspaceId: string) =>
+    request<TrashItem>(`${artifactConversationPath(baseId, conversationId)}/trash`, { method: "POST" }, workspaceId),
   restoreFromTrash: (kind: TrashItemKind, id: string) =>
     request<TrashItem>(`/trash/${kind}/${encodeURIComponent(id)}/restore`, { method: "POST" }),
   deleteForever: (kind: TrashItemKind, id: string) =>

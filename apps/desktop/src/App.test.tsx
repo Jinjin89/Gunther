@@ -1,3 +1,4 @@
+import type { ArtifactSummary } from "@gunther/contracts";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -6,7 +7,7 @@ import { activityItem } from "./activity/fixtures";
 import { knowledgeApi } from "./api";
 import { appendStoredCapture, loadStoredCaptures } from "./localCaptureQueue";
 import * as storage from "./persistentStorage";
-import { makeBase } from "./test/fixtures";
+import { makeBase, makeTrashItem } from "./test/fixtures";
 
 HTMLElement.prototype.scrollTo ??= () => undefined;
 
@@ -83,6 +84,35 @@ it("uses stored metadata and Contents for a library with a former sample ID", as
   const capture = within(await screen.findByRole("dialog", { name: "Capture something" }));
   expect(capture.getByRole("tab", { name: "Note", selected: true })).toBeVisible();
   expect(capture.getByText(savedLibrary.title)).toBeVisible();
+});
+
+it("moves a Studio card to Trash and restores its batch with Undo", async () => {
+  vi.stubGlobal("innerWidth", 1280);
+  vi.spyOn(knowledgeApi, "activity").mockResolvedValue({ version: 1, items: [] });
+  const artifact: ArtifactSummary = {
+    id: "field-version", lineageId: "field-lineage", workspaceId: "wsp", knowledgeBaseId: savedLibrary.id,
+    title: "Field report", kind: "report", format: "report", style: "report", outputType: "Report",
+    origin: "build", versionNumber: 1, supersedesArtifactId: null, audience: "student",
+    contentHash: "hash", manifestHash: "seal", acceptedUnitIds: [], unitCount: 0, createdAt: savedLibrary.createdAt,
+  };
+  const entry = makeTrashItem({ id: "trash-batch", title: artifact.title, kind: "output", versionCount: 1 });
+  let live = true;
+  vi.spyOn(knowledgeApi, "artifacts").mockImplementation(async () => live ? [artifact] : []);
+  const move = vi.spyOn(knowledgeApi, "trashOutput").mockImplementation(async () => { live = false; return entry; });
+  const undo = vi.spyOn(knowledgeApi, "restoreFromTrash").mockImplementation(async () => { live = true; return entry; });
+  const user = userEvent.setup();
+  render(<App />);
+
+  const libraries = screen.getByRole("region", { name: "Your libraries" });
+  await user.click(await within(libraries).findByRole("button", { name: savedLibrary.title }));
+  await user.click(await screen.findByRole("button", { name: "Actions for “Field report”" }));
+  await user.click(screen.getByRole("menuitem", { name: "Move to Trash" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: /Field report Report Version 1/ })).toBeNull());
+  expect(move).toHaveBeenCalledExactlyOnceWith(savedLibrary.id, artifact.id, artifact.workspaceId);
+
+  await user.click(await screen.findByRole("button", { name: "Undo" }));
+  expect(undo).toHaveBeenCalledExactlyOnceWith("output", entry.id);
+  expect(await screen.findByRole("button", { name: /Field report Report Version 1/ })).toBeVisible();
 });
 
 it("recovers queued links according to their stored URL and workspace", async () => {

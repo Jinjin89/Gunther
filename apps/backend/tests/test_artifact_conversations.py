@@ -712,7 +712,7 @@ def test_migration_27_creates_the_conversation_tables_on_a_new_database(tmp_path
         inspector = inspect(engine)
         assert {c["name"] for c in inspector.get_columns("artifact_conversations")} == {
             "id", "workspace_id", "knowledge_base_id", "title", "scope_json", "brief_json",
-            "state_json", "archived", "created_at", "updated_at",
+            "state_json", "archived", "created_at", "updated_at", "trashed_at", "trash_batch_id",
         }
         assert {c["name"] for c in inspector.get_columns("artifact_messages")} == {
             "id", "conversation_id", "role", "kind", "text", "payload_json", "artifact_id",

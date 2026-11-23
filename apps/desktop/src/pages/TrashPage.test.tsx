@@ -48,6 +48,28 @@ describe("TrashPage", () => {
     expect(props.onNotify).toHaveBeenCalledWith("Restored “Cells”.");
   });
 
+  it.each(["restore", "delete"] as const)("shows output type and versions and can %s its batch", async (action) => {
+    const entry = makeTrashItem({
+      id: "output-batch", title: "Field report", kind: "output", sourceKind: null,
+      outputType: "Briefing doc", versionCount: 3,
+    });
+    api.trash.mockResolvedValue([entry]);
+    const finish = api[action === "restore" ? "restoreFromTrash" : "deleteForever"];
+    finish.mockImplementation(async () => { api.trash.mockResolvedValue([]); return entry; });
+    renderTrash();
+    const row = await screen.findByRole("listitem");
+    expect(within(row).getByText("Briefing doc · 3 versions")).toBeVisible();
+    expect(within(row).getByText(/Trashed/)).toBeVisible();
+    if (action === "restore") {
+      await userEvent.click(within(row).getByRole("button", { name: "Restore “Field report”" }));
+    } else {
+      await userEvent.click(within(row).getByRole("button", { name: "Delete “Field report” forever" }));
+      await userEvent.click(within(row).getByRole("button", { name: "Delete forever" }));
+    }
+    expect(finish).toHaveBeenCalledExactlyOnceWith("output", entry.id);
+    expect(await screen.findByRole("heading", { name: "Trash is empty." })).toBeVisible();
+  });
+
   it("deletes an item forever only after it is confirmed", async () => {
     const { props } = renderTrash();
     await userEvent.click(await screen.findByRole("button", { name: "Delete “Lecture 3” forever" }));

@@ -39,6 +39,12 @@ The reader and backup verification use the same seal rules. A broken seal or mal
 
 [Action gates](../apps/backend/gunther/artifact_actions.py) · [Workspace](../apps/backend/gunther/artifact_workspace.py) · [Version commit](../apps/backend/gunther/artifact_versions.py) · [Verified reads](../apps/backend/gunther/artifact_read.py)
 
+## Trash
+
+Choose **Move to Trash** in the open output's actions or the menu on its Studio card. The entire version history moves together. Stop a running turn before moving its output or conversation. Trashed versions disappear from Studio, conversation history, Activity links and exports. Use Undo in the toast or Restore on the Trash page to get the versions back with their seals intact.
+
+Moving an output conversation to Trash also moves the outputs it owns. The batch preserves outputs that were moved to Trash separately. Deleting the conversation for good also removes those separately trashed outputs. Restore the conversation before restoring one of its outputs separately. Files stay available while another record can still use them, including items that can be restored from Trash. [Trash service](../apps/backend/gunther/trash.py)
+
 ## Checks, decks and exports
 
 The Checker judges claims against their cited evidence. Each verdict is keyed by claim hash, evidence hash and stage. Coverage and incomplete or unavailable states come from that one snapshot. An incremental edit rechecks changed paragraphs where the format allows, keeps findings on untouched text, and checks the whole part where needed. Retry and sync merge the same way. Saved legacy checks are read into the current shape. Typed edits can be saved with unresolved checks.
@@ -56,3 +62,5 @@ The conversation turn stream accepts `kind="build"` with the output type and opt
 Use `GET /artifact-conversations/{id}/stream` under the library to follow its run and `POST /artifact-conversations/{id}/stop` to stop it. Runs and Activity share the key `output-conv:<conversation_id>`. A restyle or visual review of a deck without a conversation uses `output-lineage:<lineage_id>` and can be stopped from Activity. Output Activity targets include `conversationId`, `typeId`, `lineageId` and `artifactId` as they become available. [Output streams](../apps/backend/gunther/artifact_api_common.py)
 
 `GET /api/output-types` lists each type's ID, label, shape, description, icon, options, outline part limit and legacy style aliases. The catalog uses the same mapping as the legacy build route. New versions seal the type ID in `style`. The API projects a display label as `outputType` on summaries and details. Earlier styles and workspace structures are read with their corresponding types. A saved Field guide retains its label and opens with the report reader. [Type catalog](../apps/backend/gunther/output_types.py)
+
+Under the library, post to `/artifacts/{versionId}/trash` for a lineage or `/artifact-conversations/{id}/trash` for a conversation. Both return an `output` entry with the Trash batch ID for Restore and Delete forever. An active run returns HTTP 409. Reading a trashed version returns HTTP 404. [Trash API](../apps/backend/gunther/trash_api.py)

@@ -1,7 +1,8 @@
 import type { Artifact, ArtifactConversationMessage, ArtifactTurnInput, ConversationCitation, OutputScope } from "@gunther/contracts";
 import { invoke } from "@tauri-apps/api/core";
+import { Trash2 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { knowledgeApi } from "../api";
+import { ApiRequestError, knowledgeApi } from "../api";
 import { EvidencePanel } from "../components/evidence/EvidencePanel";
 import { CitationDetails } from "../components/evidence/CitationButton";
 import { AnswerBody, citationNumbers, verificationNotice } from "../pages/AnswerBody";
@@ -20,7 +21,7 @@ import { PrintRoot } from "./PrintRoot";
 import { ReportView } from "./ReportView";
 import { parseSlides, withAccent, withTheme, type DeckStyle, type DeckTheme } from "./sections";
 import { SlideReviewPanel } from "./SlideReviewPanel";
-import { type OutputTarget, type useStudio } from "./useStudio";
+import { type OutputTarget, type OutputTrashTarget, type useStudio } from "./useStudio";
 import "./outputs.css";
 
 const message = (reason: unknown) => reason instanceof Error ? reason.message : "The request could not be completed.";
@@ -41,12 +42,13 @@ function scopeLabel(scope: OutputScope) {
 }
 
 export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEmpty,
-  dirty, onNotify, onOpenSource, onOpen, onWideReader }: {
+  dirty, onNotify, onOpenSource, onOpen, onWideReader, onTrash }: {
   baseId: string; workspaceId: string; target: OutputTarget; studio: ReturnType<typeof useStudio>;
   scope: OutputScope; scopeEmpty: boolean; dirty: { current: boolean };
   onNotify: (message: string) => void; onOpenSource: (id: string) => void;
   onOpen: (target: OutputTarget) => void;
   onWideReader: (wide: boolean) => void;
+  onTrash: (target: OutputTrashTarget) => void;
 }) {
   const [picked, pickVersion] = useState(target.artifactId ?? null);
   const [opened, setOpened] = useState<Artifact | null>(null);
@@ -72,7 +74,9 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
     : target.conversationId && studio.owner(item) === target.conversationId).sort((a, b) => b.versionNumber - a.versionNumber);
   const head = versions[0];
   const shownId = picked ?? head?.id;
-  const artifact = opened?.id === shownId ? opened : null;
+  const unavailable = studio.artifactsLoaded && shownId
+    && !studio.artifacts.some((item) => item.id === shownId);
+  const artifact = opened?.id === shownId && !unavailable ? opened : null;
   const job = conversationId ? studio.jobs.get(conversationId) : undefined;
   const failure = conversationId ? studio.failures[conversationId] : undefined;
   const latest = !head || head.id === artifact?.id;
@@ -191,8 +195,17 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
     }
   };
 
-  const exportFile = (make: () => Promise<string>) =>
-    void make().then((name) => onNotify(`Downloaded ${name}.`), (reason) => setError(message(reason)));
+  const withSavedVersion = async (use: (version: Artifact) => void | Promise<void>) => {
+    if (!artifact) return;
+    try {
+      await use(await knowledgeApi.artifact(baseId, artifact.id, workspaceId));
+    } catch (reason) {
+      if (reason instanceof ApiRequestError && reason.status === 404) setOpened(null);
+      setError(message(reason));
+    }
+  };
+  const exportFile = (make: (version: Artifact) => Promise<string>) =>
+    void withSavedVersion(async (version) => onNotify(`Downloaded ${await make(version)}.`));
   const print = async () => {
     try {
       const done = await prepareForPrint();
@@ -212,9 +225,9 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   };
   const activity = studio.activities.find((item) => item.open?.view === "library" && item.open.tab === "outputs"
     && (item.open.conversationId ?? item.open.lineageId) === conversationId && item.state === "running");
-  const problem = error || failure?.message;
+  const problem = error || failure?.message || (unavailable ? "This output is unavailable." : "");
   const targetType = studio.types.find((item) => item.id === target.typeId);
-  const title = artifact?.title || opened?.title || job?.live.title || targetType?.label
+  const title = artifact?.title || (!unavailable && opened?.title) || job?.live.title || targetType?.label
     || activity?.title || conversation?.title || "Output";
   const changed = artifact?.supersedesArtifactId
     ? (artifact.provenance.changes ?? []).flatMap((change) => change.position && change.what !== "deleted" ? [change.position - 1] : [])
@@ -246,11 +259,16 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
         { label: "Edit", disabled: busy || !latest || !changeable, onSelect: () => { pickVersion(artifact.id); setEditing(true); setPanel(null); } },
         { label: "Check again", disabled: busy || !latest || !changeable, onSelect: () => void check() },
         ...(deck ? [{ label: "Style", disabled: editing, onSelect: () => choosePanel("style") }] : []),
-        { label: "Export PDF", divider: true, disabled: editing, onSelect: () => void print() },
-        { label: "Copy Markdown", onSelect: () => void navigator.clipboard.writeText(artifact.content).then(() => onNotify("Copied Markdown."), (reason) => setError(message(reason))) },
-        { label: "Download Markdown", onSelect: () => download(artifact) },
-        ...(deck && isDeckV2(artifact.content) ? [{ label: "Download PowerPoint", onSelect: () => exportFile(() => downloadPptx(artifact)) }] : []),
-        ...(!deck && isReportV2(artifact.content) ? [{ label: "Download Word", onSelect: () => exportFile(() => downloadDocx(artifact)) }] : []),
+        { label: "Export PDF", divider: true, disabled: editing, onSelect: () => void withSavedVersion(print) },
+        { label: "Copy Markdown", onSelect: () => void withSavedVersion(async (version) => {
+          await navigator.clipboard.writeText(version.content);
+          onNotify("Copied Markdown.");
+        }) },
+        { label: "Download Markdown", onSelect: () => void withSavedVersion(download) },
+        ...(deck && isDeckV2(artifact.content) ? [{ label: "Download PowerPoint", onSelect: () => exportFile(downloadPptx) }] : []),
+        ...(!deck && isReportV2(artifact.content) ? [{ label: "Download Word", onSelect: () => exportFile(downloadDocx) }] : []),
+        { label: "Move to Trash", icon: Trash2, divider: true, danger: true, disabled: saving,
+          onSelect: () => onTrash({ id: artifact.id, lineageId: artifact.lineageId }) },
       ]} />}
     </header>
     {problem && <p role="alert" className="output-error">{problem}</p>}

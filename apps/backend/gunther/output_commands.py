@@ -371,6 +371,8 @@ class OutputCommands:
                     state = check_saved_part(checker, model, text, by_ref, state, limit=limit)
                 checks.append({"hash": digest, "verdicts": state})
         with session_scope(self.sessions) as session:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            output_library(session, workspace_id, base_id)
             artifact = output_version(
                 session, workspace_id, base_id, artifact_id, latest=False
             )

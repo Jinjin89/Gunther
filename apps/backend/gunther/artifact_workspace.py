@@ -277,6 +277,25 @@ def active_work(workspace: Workspace) -> Work | None:
     return next((work for work in workspace.works if work.key == workspace.active), None)
 
 
+def forget_works(workspace: Workspace, lineages: set[str]) -> bool:
+    """Remove the works and their controls from this workspace view."""
+
+    if not lineages:
+        return False
+    works = [work for work in workspace.works if work.key not in lineages]
+    scopes = {
+        key: scope for key, scope in workspace.refinement_scopes.items() if key not in lineages
+    }
+    lost_active = workspace.active in lineages
+    changed = lost_active or len(works) != len(workspace.works) or (
+        len(scopes) != len(workspace.refinement_scopes)
+    )
+    workspace.works, workspace.refinement_scopes = works, scopes
+    if lost_active:
+        workspace.active, workspace.pending = None, None
+    return changed
+
+
 # The pool and its numbers ---------------------------------------------------------------------
 
 

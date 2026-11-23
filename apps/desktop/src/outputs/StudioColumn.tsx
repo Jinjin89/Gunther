@@ -1,16 +1,18 @@
 import { artifactAudiences, type BuildTurnInput, type OutputScope, type OutputType } from "@gunther/contracts";
-import { BookOpen, CalendarDays, CircleHelp, ClipboardList, FileText, LoaderCircle, Pencil, Presentation, X } from "lucide-react";
+import { BookOpen, CalendarDays, CircleHelp, ClipboardList, FileText, LoaderCircle, Pencil, Presentation, Trash2, X } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { openSettings } from "../components/SettingsLayout";
 import { useModelMenu } from "../models/askModel";
+import { ArtifactMenu } from "./ArtifactMenu";
 import { artifactRequestId } from "./artifactConversations";
 import { outputActivity } from "./liveOutput";
-import { latestVersions, type OutputTarget, type useStudio } from "./useStudio";
+import { latestVersions, type OutputTarget, type OutputTrashTarget, type useStudio } from "./useStudio";
 
 const icons = { BookOpen, CalendarDays, CircleHelp, ClipboardList, FileText, Presentation };
 type Card = {
   id: string; title: string; label: string; at: string; target: OutputTarget; status: "saved" | "running" | "failed";
   detail: string; retry?: BuildTurnInput | undefined;
+  trash?: OutputTrashTarget | undefined;
 };
 
 function cardsOf(studio: ReturnType<typeof useStudio>): Card[] {
@@ -24,6 +26,7 @@ function cardsOf(studio: ReturnType<typeof useStudio>): Card[] {
       id, title: artifact.title, label: artifact.outputType, at: artifact.createdAt, status: "saved",
       target: { conversationId: studio.owner(artifact), lineageId: id, typeId: artifact.style },
       detail: `Version ${artifact.versionNumber}`,
+      trash: { id: artifact.id, lineageId: id },
     });
   }
   const showRun = (id: string, target: OutputTarget, title: string, detail: string, at: string) => {
@@ -35,7 +38,7 @@ function cardsOf(studio: ReturnType<typeof useStudio>): Card[] {
     cards.set(key, {
       id: key, title: current?.title ?? title,
       label: label(typeId) ?? current?.label ?? conversation?.outputType ?? "Output",
-      at, status: "running", detail, target: { ...target, typeId: typeId ?? null },
+      at, status: "running", detail, target: { ...target, typeId: typeId ?? null }, trash: current?.trash,
     });
   };
   for (const [id, job] of studio.jobs) {
@@ -59,6 +62,7 @@ function cardsOf(studio: ReturnType<typeof useStudio>): Card[] {
     cards.set(id, {
       id, title: build.title || build.focus || type, label: type, at,
       target: { conversationId: id, typeId: build.type }, status: "failed", detail: error, retry: build,
+      trash: { id, conversation: true },
     });
   };
   for (const conversation of studio.conversations) {
@@ -96,9 +100,10 @@ function BuildOptions({ type, disabled, onBuild, onClose }: {
   </form>;
 }
 
-export function StudioColumn({ studio, scope, scopeEmpty, disabled, onOpen }: {
+export function StudioColumn({ studio, scope, scopeEmpty, disabled, onOpen, onTrash }: {
   studio: ReturnType<typeof useStudio>; scope: OutputScope; scopeEmpty: boolean; disabled: boolean;
   onOpen: (target: OutputTarget) => void;
+  onTrash: (target: OutputTrashTarget) => void;
 }) {
   const [optionsId, setOptionsId] = useState<string | null>(null);
   const { menu, unavailable } = useModelMenu();
@@ -136,6 +141,9 @@ export function StudioColumn({ studio, scope, scopeEmpty, disabled, onOpen }: {
         <span><strong>{card.title}</strong><small>{card.label}</small><small className={card.status === "failed" ? "is-failed" : ""}>{card.detail}</small></span>
       </button>
       {card.retry && card.target.conversationId && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={buildDisabled} onClick={() => void studio.retry(card.target.conversationId!, card.retry!)}>Retry</button>}
+      {card.trash && <ArtifactMenu label={`Actions for “${card.title}”`} items={[
+        { label: "Move to Trash", icon: Trash2, danger: true, onSelect: () => onTrash(card.trash!) },
+      ]} />}
     </li>)}</ul>
   </aside>;
 }

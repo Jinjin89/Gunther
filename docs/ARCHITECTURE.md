@@ -36,6 +36,8 @@ Ask and Outputs share the run registry for Stop and Follow. Their completion eve
 
 Ask commits a turn's source selection and section focus before answering. Model and web calls in Ask, Studio, and Analysis run after the sessions that prepared their inputs have closed. Retrieval opens read sessions as needed during a run. Final messages, output versions, and Analysis results are published in short write transactions.
 
+Trash marks all versions of an output lineage in one transaction. Conversation batches use ownership from the sealed version provenance. The run registry guards those writes against active turns. Permanent deletion removes versions leaf-first, then their conversations, and releases files after commit once the last reference is gone. [Trash service](../apps/backend/gunther/trash.py)
+
 - [models.py](../apps/backend/gunther/models.py) contains the SQLite records. [database.py](../apps/backend/gunther/database.py) enables WAL and foreign keys. [migrations.py](../apps/backend/gunther/migrations.py) applies ordered migrations at startup.
 - A source has original capture provenance and immutable reading revisions, including ordered elements and indexed passages. The head selects the current reading. The source paper card and search index are derived. Figures and citations carry source, revision and region identity.
 - A library root has readable folders and a private `.gunther/` directory for the database, originals and recovery state. The desktop config directory holds private preferences and provider keys. See [Library folders](LIBRARY.md#library-folders) and [Operations](OPERATIONS.md#data-and-logs).

@@ -30,12 +30,14 @@ const trashedOn = (value: string) => new Date(value).toLocaleDateString(undefine
 
 function describe(entry: TrashItem): string {
   if (entry.kind === "library") return entry.itemCount > 0 ? `Library · with ${plural(entry.itemCount, "source")}` : "Library";
+  if (entry.kind === "output") return `${entry.outputType ?? "Output"} · ${plural(entry.versionCount ?? 0, "version")}`;
   const label = entry.kind === "note" ? "Quick note" : SOURCE_KIND_LABEL[entry.sourceKind ?? "file"];
   return [label, ...entry.libraryTitles].join(" · ");
 }
 
 function EntryIcon({ entry }: { entry: TrashItem }) {
   if (entry.kind === "library") return <LibraryGlyph base={{ title: entry.title, color: entry.color ?? "green" }} size="md" />;
+  if (entry.kind === "output") return <span className="gx-kind-tile tone-violet" aria-hidden="true"><FileText size={15} /></span>;
   const { icon: Icon, tone } = KIND_IDENTITY[entry.kind === "note" ? "note" : entry.sourceKind ?? "file"];
   return <span className={`gx-kind-tile tone-${tone}`} aria-hidden="true"><Icon size={15} /></span>;
 }
@@ -116,7 +118,7 @@ export function TrashPage({ onNotify, onRestored }: TrashPageProps) {
     <header className="gx-page-header">
       <div>
         <h1>Trash</h1>
-        <p>Hidden from Inbox, search and Ask. Deleted for good after {plural(retentionDays, "day")}.</p>
+        <p>Hidden from Inbox, search, Ask and Studio. Deleted for good after {plural(retentionDays, "day")}.</p>
       </div>
       {entries.length > 0 && <div className="gx-page-actions">
         <button type="button" className="gx-btn gx-btn-quiet" disabled={confirmEmpty} aria-expanded={confirmEmpty} onClick={() => setConfirmEmpty(true)}><Trash2 size={15} />Empty Trash</button>

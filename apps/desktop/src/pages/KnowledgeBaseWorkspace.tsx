@@ -10,8 +10,9 @@ import { outputScope, selectedSources, useSourceSelection } from "../contents/so
 import { discardOutputEdit } from "../outputs/EditPane";
 import { OpenOutput } from "../outputs/OpenOutput";
 import { StudioColumn } from "../outputs/StudioColumn";
-import { type OutputTarget, useStudio } from "../outputs/useStudio";
+import { type OutputTarget, type OutputTrashTarget, useStudio } from "../outputs/useStudio";
 import { persistentStorage } from "../persistentStorage";
+import { moveToTrash } from "../trash/trash";
 import { LibraryColumn } from "./LibraryColumn";
 import { SessionWorkspace, type LibraryChatActions } from "./SessionWorkspace";
 import "./libraryWorkspace.css";
@@ -73,6 +74,26 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
   }, [dirty, middle]);
   const openOutput = (target: OutputTarget) => choose({ kind: "output", target });
   const openFullSource = (id: string) => onOpenSource(id, sources.map((source) => source.id));
+  const trashOutput = async (item: OutputTrashTarget, fromReader = false) => {
+    if (!workspaceId) return;
+    const selected = target && studio.artifacts.find((version) => version.id === target.artifactId);
+    const conversation = "conversation" in item;
+    const affected = fromReader || (conversation
+      ? (selected?.conversationId ?? target?.conversationId) === item.id
+      : (selected?.lineageId ?? target?.lineageId) === item.lineageId);
+    // The editor clears its dirty state when the move succeeds and closes it.
+    if (affected && !discardOutputEdit({ current: dirty.current })) return;
+    try {
+      const entry = await moveToTrash({
+        kind: "output", id: item.id, libraryId: base.id, workspaceId, conversation,
+      });
+      studio.forgetTrashed(item);
+      if (affected) setMiddle((current) => current === middle ? chat : current);
+      onTrashed(entry);
+    } catch (reason) {
+      onNotify(reason instanceof Error ? reason.message : "The output could not move to Trash.");
+    }
+  };
 
   useEffect(() => {
     const resize = () => setScreenWidth(window.innerWidth);
@@ -125,12 +146,14 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
         {middle.kind === "source" && !source && <p className="library-reading">{contents ? "Source unavailable." : "Loading source…"}</p>}
         {target && workspaceId && <OpenOutput key={outputKey(target)} baseId={base.id} workspaceId={workspaceId}
           target={target} studio={studio} scope={scope} scopeEmpty={scopeEmpty} dirty={dirty} onNotify={onNotify}
-          onOpenSource={openFullSource} onOpen={openOutput} onWideReader={onWideReader} />}
+          onOpenSource={openFullSource} onOpen={openOutput} onWideReader={onWideReader}
+          onTrash={(item) => void trashOutput(item, true)} />}
       </div>}
     </section>
     <LibraryColumn column="studio" workspace={workspace} collapsed={studioColumn.collapsed}
       onToggle={() => studioColumn.setCollapsed(!studioColumn.collapsed)}>
-      <StudioColumn studio={studio} scope={scope} scopeEmpty={scopeEmpty} disabled={!workspaceId} onOpen={openOutput} />
+      <StudioColumn studio={studio} scope={scope} scopeEmpty={scopeEmpty} disabled={!workspaceId}
+        onOpen={openOutput} onTrash={(item) => void trashOutput(item)} />
     </LibraryColumn>
   </div>;
 }

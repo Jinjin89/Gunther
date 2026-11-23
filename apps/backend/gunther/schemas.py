@@ -242,7 +242,7 @@ class SourceDetailOut(SourceSummaryOut):
     trashed_at: str | None = None
 
 
-TrashItemKind = Literal["source", "note", "library"]
+TrashItemKind = Literal["source", "note", "library", "output"]
 
 
 class TrashItemOut(ApiModel):
@@ -260,6 +260,8 @@ class TrashItemOut(ApiModel):
     item_count: int = 0
     # Libraries a source or note was filed in when it was trashed.
     library_titles: list[str] = Field(default_factory=list)
+    output_type: str | None = None
+    version_count: int = 0
 
 
 class InboxItemOut(ApiModel):

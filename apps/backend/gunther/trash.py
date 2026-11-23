@@ -1,35 +1,41 @@
 """Trash: a reversible resting place before anything is deleted for good.
 
-Moving a library, source or note to Trash only marks it. It leaves Inbox,
-search, Ask and libraries, while its text, claims, index and original file stay
+Moving a library, source, note or output to Trash only marks it. It leaves Inbox,
+search, Ask and Studio, while its stored data and original files stay
 in place, so Restore is exact. Everything one action put in Trash shares a
 batch: trashing a library also trashes the sources that live only there (and
 the filed notes promoted into them), and restoring any of them restores the
 whole batch.
 
 Delete forever is the only destructive path. It removes a batch's rows, lets the
-database cascade their derived records, and deletes an original file only when
-no remaining source still uses it. Batches older than the retention period are
+database cascade their derived records, and deletes an original file after
+its last reference is removed. Batches older than the retention period are
 deleted the same way.
 """
 
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import and_, case, delete, func, or_, select, tuple_, update
 from sqlalchemy.orm import Session, sessionmaker
 
-from gunther import listen_copy, papers, vector_index
+from gunther import artifact_workspace, listen_copy, papers, vector_index
+from gunther.activity import Activity
+from gunther.answer_runs import AnswerRuns, output_key
+from gunther.artifact_read import artifact_owner
+from gunther.artifact_versions import output_library
 from gunther.database import session_scope
 from gunther.knowledge_index import new_id
 from gunther.models import (
     Artifact,
     ArtifactAsset,
     ArtifactConversation,
+    ArtifactMessage,
     Asset,
     DocumentElement,
     ElementAsset,
@@ -49,12 +55,14 @@ from gunther.models import (
     WebSnapshot,
     utc_now,
 )
+from gunther.output_types import output_type_label
 from gunther.recording_metadata import recording_file_paths, source_recording_id
 from gunther.schemas import TrashItemKind, TrashItemOut
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_RETENTION_DAYS = 30
+_TRASH_MODELS = (KnowledgeBaseRecord, Source, NotebookNote, Artifact, ArtifactConversation)
 
 class TrashConflict(ValueError):
     """The item cannot move to Trash yet, for example while it is still recording."""
@@ -85,11 +93,15 @@ class TrashService:
         *,
         assets_dir: Path,
         recordings_dir: Path,
+        runs: AnswerRuns,
+        activity: Activity,
         retention_days: int = DEFAULT_RETENTION_DAYS,
     ) -> None:
         self.sessions = sessions
         self.assets_dir = assets_dir
         self.recordings_dir = recordings_dir
+        self.runs = runs
+        self.activity = activity
         self.retention = timedelta(days=retention_days)
 
     # Moving into Trash -------------------------------------------------------
@@ -125,11 +137,13 @@ class TrashService:
             return self._root_entry(session, note.trash_batch_id)
 
     def trash_library(self, library_id: str) -> TrashItemOut:
-        with session_scope(self.sessions) as session:
+        with self.runs.locked_active() as runs, session_scope(self.sessions) as session:
             library = session.get(KnowledgeBaseRecord, library_id)
             if library is None:
                 raise LookupError(f"Knowledge Base {library_id} was not found")
             if library.trashed_at is None:
+                if any(run.scope and run.scope[1] == library_id for run in runs):
+                    raise TrashConflict("Stop the output run before moving the library to Trash.")
                 if session.scalar(
                     select(RecordingSession.id)
                     .where(
@@ -172,30 +186,126 @@ class TrashService:
                     ):
                         self._mark(note, batch, now)
                 self._record(session, "knowledge_base", library.id, "trashed")
-            return self._root_entry(session, library.trash_batch_id)
+            entry = self._root_entry(session, library.trash_batch_id)
+        self._dismiss_output_activity(library_id)
+        return entry
+
+    def trash_output(
+        self, workspace_id: str, library_id: str, item_id: str, *, conversation: bool = False,
+    ) -> TrashItemOut:
+        """Move one lineage or a conversation's owned lineages as one batch."""
+
+        with self.runs.locked_active() as runs:
+            with session_scope(self.sessions) as session:
+                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+                output_library(session, workspace_id, library_id)
+                model = ArtifactConversation if conversation else Artifact
+                row = session.get(model, item_id)
+                if row is None or (row.workspace_id, row.knowledge_base_id) != (
+                    workspace_id, library_id,
+                ):
+                    raise LookupError("This output was not found in the library.")
+                if row.trashed_at is not None:
+                    return self._root_entry(session, row.trash_batch_id)
+
+                scope = (
+                    Artifact.workspace_id == workspace_id,
+                    Artifact.knowledge_base_id == library_id,
+                )
+                lineages = (
+                    self._owned_lineages(workspace_id, library_id, item_id)
+                    if conversation else [row.lineage_id]
+                )
+                versions = session.execute(
+                    select(Artifact.id, Artifact.lineage_id, artifact_owner()).where(
+                        *scope, Artifact.lineage_id.in_(lineages), Artifact.trashed_at.is_(None),
+                    )
+                ).all()
+                version_ids = {id_ for id_, _, _ in versions}
+                lineage_ids = {lineage for _, lineage, _ in versions}
+                owners = {owner for _, _, owner in versions if owner}
+                owners.update(session.scalars(
+                    select(ArtifactMessage.conversation_id)
+                    .where(ArtifactMessage.artifact_id.in_(version_ids))
+                    .distinct()
+                ))
+                if conversation:
+                    owners.add(item_id)
+                keys = {output_key(owner) for owner in owners}
+                keys.update(output_key(None, lineage) for lineage in lineage_ids)
+                if any(
+                    run.scope == (workspace_id, library_id)
+                    and (run.session_id in keys or run.lineage_id in lineage_ids)
+                    for run in runs
+                ):
+                    raise TrashConflict("Stop the output run before moving it to Trash.")
+
+                batch, now = new_id("trash"), utc_now()
+                if conversation:
+                    self._mark(row, batch, now)
+                session.execute(
+                    update(Artifact)
+                    .where(*scope, Artifact.lineage_id.in_(lineages), Artifact.trashed_at.is_(None))
+                    .values(trashed_at=now, trash_batch_id=batch)
+                )
+                self._record(session, "output", batch, "trashed")
+                entry = self._root_entry(session, batch)
+
+            self._dismiss_output_activity(
+                library_id, version_ids, lineage_ids, item_id if conversation else None,
+            )
+            return entry
+
+    def _dismiss_output_activity(
+        self, library_id: str, version_ids: set[str] | None = None,
+        lineage_ids: set[str] | None = None, conversation_id: str | None = None,
+    ) -> None:
+        for item in self.activity.snapshot()["items"]:
+            target = item["open"] or {}
+            if item["kind"] == "output" and target.get("libraryId") == library_id and (
+                version_ids is None
+                or target.get("artifactId") in version_ids
+                or (lineage_ids and target.get("lineageId") in lineage_ids)
+                or (conversation_id and target.get("conversationId") == conversation_id)
+            ):
+                self.activity.dismiss(item["id"])
+
+    @staticmethod
+    def _owned_lineages(workspace_id: str, library_id: str, conversation_id: str):
+        return select(Artifact.lineage_id).where(
+            Artifact.workspace_id == workspace_id,
+            Artifact.knowledge_base_id == library_id,
+            artifact_owner() == conversation_id,
+        )
 
     # Reading -----------------------------------------------------------------
 
     def list(self) -> list[TrashItemOut]:
         with session_scope(self.sessions) as session:
-            batches: dict[str, datetime] = {}
-            for model in (KnowledgeBaseRecord, Source, NotebookNote):
-                for batch, trashed_at in session.execute(
-                    select(model.trash_batch_id, model.trashed_at).where(
-                        model.trashed_at.is_not(None)
-                    )
-                ):
-                    batches[batch] = trashed_at
-            entries = [self._root_entry(session, batch) for batch in batches]
+            entries = [self._root_entry(session, batch) for batch in self._batches(session)]
             return sorted(entries, key=lambda entry: entry.trashed_at, reverse=True)
 
     # Leaving Trash -----------------------------------------------------------
 
     def restore(self, kind: TrashItemKind, item_id: str) -> TrashItemOut:
         with session_scope(self.sessions) as session:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
             batch = self._batch_of(session, kind, item_id)
             entry = self._root_entry(session, batch)
-            for model in (KnowledgeBaseRecord, Source, NotebookNote):
+            if kind == "output" and session.scalar(
+                select(ArtifactConversation.id)
+                .join(Artifact, artifact_owner() == ArtifactConversation.id)
+                .where(
+                    Artifact.trash_batch_id == batch,
+                    ArtifactConversation.workspace_id == Artifact.workspace_id,
+                    ArtifactConversation.knowledge_base_id == Artifact.knowledge_base_id,
+                    ArtifactConversation.trash_batch_id != batch,
+                    ArtifactConversation.trashed_at.is_not(None),
+                )
+                .limit(1)
+            ):
+                raise TrashConflict("Restore the output's conversation first.")
+            for model in _TRASH_MODELS:
                 session.execute(
                     update(model)
                     .where(model.trash_batch_id == batch)
@@ -206,13 +316,14 @@ class TrashService:
 
     def delete_forever(self, kind: TrashItemKind, item_id: str) -> TrashItemOut:
         with session_scope(self.sessions) as session:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
             batch = self._batch_of(session, kind, item_id)
             entry = self._root_entry(session, batch)
             files = self._delete_batch(session, batch)
             self._record(session, _TARGET_TYPES[entry.kind], entry.id, "deleted_forever")
         # Files go only after the rows are committed: a failed commit must never
         # leave a record pointing at a missing original.
-        self._remove_files(files)
+        self._remove_files(*files)
         return entry
 
     def empty(self) -> int:
@@ -231,7 +342,11 @@ class TrashService:
     # Internals ---------------------------------------------------------------
 
     @staticmethod
-    def _mark(row: KnowledgeBaseRecord | Source | NotebookNote, batch: str, now: datetime) -> None:
+    def _mark(
+        row: KnowledgeBaseRecord | Source | NotebookNote | ArtifactConversation,
+        batch: str,
+        now: datetime,
+    ) -> None:
         row.trashed_at = now
         row.trash_batch_id = batch
 
@@ -264,6 +379,16 @@ class TrashService:
 
     @staticmethod
     def _batch_of(session: Session, kind: TrashItemKind, item_id: str) -> str:
+        if kind == "output":
+            # Output and conversation batches use the same kind and are addressed by batch ID.
+            select_batch = select(Artifact.trash_batch_id).where(Artifact.trash_batch_id == item_id)
+            if session.scalar(select_batch.limit(1)) or session.scalar(
+                select(ArtifactConversation.trash_batch_id)
+                .where(ArtifactConversation.trash_batch_id == item_id)
+                .limit(1)
+            ):
+                return item_id
+            raise LookupError("That output is no longer in Trash")
         model = {"library": KnowledgeBaseRecord, "source": Source, "note": NotebookNote}[kind]
         row = session.get(model, item_id)
         if row is None or row.trash_batch_id is None:
@@ -273,7 +398,7 @@ class TrashService:
     @staticmethod
     def _batches(session: Session, before: datetime | None = None) -> list[str]:
         batches: set[str] = set()
-        for model in (KnowledgeBaseRecord, Source, NotebookNote):
+        for model in _TRASH_MODELS:
             statement = select(model.trash_batch_id).where(model.trash_batch_id.is_not(None))
             if before is not None:
                 statement = statement.where(model.trashed_at < before)
@@ -281,7 +406,10 @@ class TrashService:
         return sorted(batches)
 
     def _root_entry(self, session: Session, batch: str | None) -> TrashItemOut:
-        """Describe a batch by the item that was moved: a library, else a source, else a note."""
+        """Describe a batch by the item that was moved."""
+
+        if batch is None:
+            raise LookupError("That item is no longer in Trash")
 
         library = session.scalar(
             select(KnowledgeBaseRecord).where(KnowledgeBaseRecord.trash_batch_id == batch)
@@ -322,7 +450,7 @@ class TrashService:
             )
         note = session.scalar(select(NotebookNote).where(NotebookNote.trash_batch_id == batch))
         if note is None:
-            raise LookupError("That item is no longer in Trash")
+            return self._output_entry(session, batch)
         library_title = (
             session.scalar(
                 select(KnowledgeBaseRecord.title).where(
@@ -342,20 +470,47 @@ class TrashService:
             library_titles=[library_title] if library_title else [],
         )
 
+    def _output_entry(self, session: Session, batch: str) -> TrashItemOut:
+        versions = select(Artifact).where(Artifact.trash_batch_id == batch)
+        conversation = session.scalar(
+            select(ArtifactConversation).where(ArtifactConversation.trash_batch_id == batch)
+        )
+        if conversation is not None:
+            title, trashed_at = conversation.title, conversation.trashed_at
+            label = "Output conversation"
+        else:
+            head = session.execute(
+                versions.with_only_columns(
+                    Artifact.title, Artifact.trashed_at, Artifact.kind, Artifact.style,
+                ).order_by(Artifact.version_number.desc()).limit(1)
+            ).one_or_none()
+            if head is None:
+                raise LookupError("That item is no longer in Trash")
+            title, trashed_at = head.title, head.trashed_at
+            label = output_type_label(head.kind, head.style)
+        return TrashItemOut(
+            kind="output", id=batch, title=title, output_type=label,
+            version_count=session.scalar(select(func.count()).select_from(versions.subquery())),
+            trashed_at=_timestamp(trashed_at), expires_at=_timestamp(trashed_at + self.retention),
+        )
+
     def _delete_batch_by_id(self, batch: str) -> bool:
         """Delete one batch for good; a batch that cannot go yet is left for next time."""
 
         try:
             with session_scope(self.sessions) as session:
+                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
                 entry = self._root_entry(session, batch)
                 files = self._delete_batch(session, batch)
                 self._record(session, _TARGET_TYPES[entry.kind], entry.id, "deleted_forever")
         except (LookupError, TrashConflict):
             return False
-        self._remove_files(files)
+        self._remove_files(*files)
         return True
 
-    def _delete_batch(self, session: Session, batch: str) -> list[Path]:
+    def _delete_batch(
+        self, session: Session, batch: str,
+    ) -> tuple[list[Path], list[tuple[str, str]]]:
         """Delete a batch's rows and return the original files that are now unused."""
 
         sources = session.scalars(select(Source).where(Source.trash_batch_id == batch)).all()
@@ -366,6 +521,29 @@ class TrashService:
                 select(KnowledgeBaseRecord.id).where(KnowledgeBaseRecord.trash_batch_id == batch)
             )
         )
+        # The final deletion of a conversation includes any of its outputs that were
+        # moved to Trash separately. They would otherwise recover the conversation.
+        owned = session.scalars(
+            select(Artifact.lineage_id)
+            .join(ArtifactConversation, artifact_owner() == ArtifactConversation.id)
+            .where(
+                ArtifactConversation.trash_batch_id == batch,
+                Artifact.workspace_id == ArtifactConversation.workspace_id,
+                Artifact.knowledge_base_id == ArtifactConversation.knowledge_base_id,
+            )
+            .distinct()
+        ).all()
+        versions = session.execute(
+            select(
+                Artifact.id, Artifact.lineage_id, Artifact.workspace_id, Artifact.knowledge_base_id,
+            )
+            .where(or_(
+                Artifact.trash_batch_id == batch,
+                Artifact.knowledge_base_id.in_(library_ids),
+                Artifact.lineage_id.in_(owned),
+            ))
+        ).all()
+        version_ids = [row.id for row in versions]
         asset_ids = {source.asset_id for source in sources if source.asset_id}
         asset_ids.update(
             session.scalars(
@@ -376,9 +554,7 @@ class TrashService:
         )
         asset_ids.update(
             session.scalars(
-                select(ArtifactAsset.asset_id)
-                .join(Artifact)
-                .where(Artifact.knowledge_base_id.in_(library_ids))
+                select(ArtifactAsset.asset_id).where(ArtifactAsset.artifact_id.in_(version_ids))
             )
         )
         asset_ids.update(
@@ -399,9 +575,30 @@ class TrashService:
         }
 
         session.execute(delete(NotebookNote).where(NotebookNote.trash_batch_id == batch))
-        for library_id in session.scalars(
-            select(KnowledgeBaseRecord.id).where(KnowledgeBaseRecord.trash_batch_id == batch)
-        ).all():
+        if version_ids:
+            self._delete_versions(session, version_ids)
+            self._delete_output_messages(session, version_ids)
+            lineages_by_library: dict[tuple[str, str], set[str]] = defaultdict(set)
+            for version in versions:
+                if version.knowledge_base_id not in library_ids:
+                    lineages_by_library[version.workspace_id, version.knowledge_base_id].add(
+                        version.lineage_id,
+                    )
+            for (workspace_id, library_id), lineages in lineages_by_library.items():
+                for conversation in session.scalars(select(ArtifactConversation).where(
+                    ArtifactConversation.workspace_id == workspace_id,
+                    ArtifactConversation.knowledge_base_id == library_id,
+                )):
+                    workspace = artifact_workspace.load_workspace(conversation.state_json)
+                    if artifact_workspace.forget_works(workspace, lineages):
+                        conversation.state_json = artifact_workspace.dump_workspace(workspace)
+        session.execute(
+            delete(ArtifactConversation).where(or_(
+                ArtifactConversation.trash_batch_id == batch,
+                ArtifactConversation.knowledge_base_id.in_(library_ids),
+            ))
+        )
+        for library_id in library_ids:
             self._delete_library_records(session, library_id)
         if source_ids:
             # The database cascades revisions, blocks, index entries, jobs, claims,
@@ -413,6 +610,7 @@ class TrashService:
         session.flush()
 
         files: list[Path] = []
+        asset_files: list[tuple[str, str]] = []
         for asset_id in asset_ids:
             still_used = (
                 session.scalar(select(Source.id).where(Source.asset_id == asset_id).limit(1))
@@ -437,7 +635,7 @@ class TrashService:
             )
             asset = None if still_used else session.get(Asset, asset_id)
             if asset is not None:
-                files.append(self.assets_dir / asset.relative_path)
+                asset_files.append((asset.content_hash, asset.relative_path))
                 session.delete(asset)
         for recording_id in referenced_recordings:
             # Retain audio when surviving text may still refer to it, including old formats.
@@ -452,30 +650,48 @@ class TrashService:
                 # The audio copy kept for listening again goes with the recording.
                 files += list(listen_copy.copy_paths(self.recordings_dir, recording.id))
                 session.delete(recording)
-        return files
+        return files, asset_files
 
     @staticmethod
-    def _delete_library_records(session: Session, library_id: str) -> None:
-        """Delete everything that belongs to one library, dependants first."""
+    def _delete_versions(session: Session, version_ids: list[str]) -> None:
+        """Remove leaves first. Checks, unit bindings and asset links cascade."""
 
-        # Outputs pin trusted knowledge, and each version restricts the one it
-        # supersedes, so remove versions nothing supersedes until none remain.
-        while True:
-            superseded = select(Artifact.supersedes_artifact_id).where(
-                Artifact.supersedes_artifact_id.is_not(None)
-            )
+        remaining = set(version_ids)
+        superseded = select(Artifact.supersedes_artifact_id).where(
+            Artifact.supersedes_artifact_id.is_not(None)
+        )
+        while remaining:
             leaves = session.scalars(
                 select(Artifact.id).where(
-                    Artifact.knowledge_base_id == library_id, Artifact.id.not_in(superseded)
+                    Artifact.id.in_(remaining), Artifact.id.not_in(superseded),
                 )
             ).all()
             if not leaves:
-                break
+                raise TrashConflict("Another output version still depends on this batch.")
             session.execute(delete(Artifact).where(Artifact.id.in_(leaves)))
-        # The Artifacts agent's conversations; their messages cascade.
-        session.execute(
-            delete(ArtifactConversation).where(ArtifactConversation.knowledge_base_id == library_id)
+            remaining.difference_update(leaves)
+
+    @staticmethod
+    def _delete_output_messages(session: Session, version_ids: list[str]) -> None:
+        reply_payload = case(
+            (func.json_valid(ArtifactMessage.payload_json), ArtifactMessage.payload_json),
+            else_="{}",
         )
+        requests = select(
+            ArtifactMessage.conversation_id, func.json_extract(reply_payload, "$.to"),
+        ).where(ArtifactMessage.artifact_id.in_(version_ids), ArtifactMessage.role == "assistant")
+        session.execute(delete(ArtifactMessage).where(or_(
+            ArtifactMessage.artifact_id.in_(version_ids),
+            and_(
+                ArtifactMessage.role == "user",
+                tuple_(ArtifactMessage.conversation_id, ArtifactMessage.id).in_(requests),
+            ),
+        )))
+
+    @staticmethod
+    def _delete_library_records(session: Session, library_id: str) -> None:
+        """Delete the library and its remaining dependants after its outputs."""
+
         # Trusted knowledge (revisions cascade) before the suggestions it came from.
         session.execute(delete(KnowledgeUnit).where(KnowledgeUnit.knowledge_base_id == library_id))
         # Conversations; their messages, branches and suggestions cascade.
@@ -504,22 +720,38 @@ class TrashService:
             )
         session.execute(delete(KnowledgeBaseRecord).where(KnowledgeBaseRecord.id == library_id))
 
-    def _remove_files(self, paths: Iterable[Path]) -> None:
+    def _remove_files(self, paths: Iterable[Path], assets: Iterable[tuple[str, str]]) -> None:
+        from gunther.asset_service import _asset_lock
+
         roots = (self.assets_dir.resolve(), self.recordings_dir.resolve())
-        for path in paths:
+
+        def unlink(path: Path) -> None:
             try:
                 resolved = path.resolve()
                 # Never follow a stored path outside Gunther's own directories.
                 if path.is_symlink() or not any(resolved.is_relative_to(root) for root in roots):
                     logger.warning("Skipped removing an original outside managed storage")
-                    continue
+                    return
                 resolved.unlink(missing_ok=True)
             except OSError:
                 logger.warning("An original file could not be removed", exc_info=True)
+
+        for path in paths:
+            unlink(path)
+        for content_hash, relative_path in assets:
+            # A fresh copy may have been captured in the gap after the purge committed.
+            with _asset_lock(content_hash):
+                with self.sessions() as session:
+                    used = session.scalar(
+                        select(Asset.id).where(Asset.relative_path == relative_path)
+                    )
+                if used is None:
+                    unlink(self.assets_dir / relative_path)
 
 
 _TARGET_TYPES: dict[str, str] = {
     "library": "knowledge_base",
     "source": "source",
     "note": "notebook_note",
+    "output": "output",
 }

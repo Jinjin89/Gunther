@@ -9,6 +9,7 @@ import { artifactRequestId, EARLIER_WORK, importDeviceConversations } from "./ar
 import { useLiveOutputs } from "./liveOutput";
 
 export type OutputTarget = Pick<OutputActivityOpen, "artifactId" | "conversationId" | "lineageId" | "typeId">;
+export type OutputTrashTarget = { id: string; lineageId: string } | { id: string; conversation: true };
 type Turn = Omit<ArtifactTurnInput, "clientRequestId">;
 type Listen = (hear: (event: ArtifactTurnEvent) => void, signal: AbortSignal) => Promise<OutputDone | null>;
 type Failure = { message: string; build?: BuildTurnInput | undefined; createdAt: string };
@@ -26,6 +27,7 @@ export function useStudio(baseId: string, workspaceId: string | null) {
   const activities = items.filter((item) => item.open?.view === "library" && item.open.tab === "outputs" && item.open.libraryId === baseId);
   const [types, setTypes] = useState<OutputType[]>([]);
   const [artifacts, setArtifacts] = useState<ArtifactSummary[]>([]);
+  const [artifactsLoaded, setArtifactsLoaded] = useState(false);
   const [conversations, setConversations] = useState<ArtifactConversationSummary[]>([]);
   const [details, setDetails] = useState<Record<string, ArtifactConversationDetail>>({});
   const [failures, setFailures] = useState<Record<string, Failure | undefined>>({});
@@ -40,8 +42,18 @@ export function useStudio(baseId: string, workspaceId: string | null) {
     return detail;
   }, []);
   const rememberVersion = useCallback((artifact: Artifact) => {
+    loadOrder.current += 1;
     setArtifacts((current) => [artifact, ...current.filter((item) => item.id !== artifact.id)]);
   }, []);
+  const forgetTrashed = (target: OutputTrashTarget) => {
+    if ("conversation" in target) {
+      setArtifacts((current) => current.filter((item) => item.conversationId !== target.id));
+      setConversations((current) => current.filter((item) => item.id !== target.id));
+      setFailures((current) => ({ ...current, [target.id]: undefined }));
+    } else {
+      setArtifacts((current) => current.filter((item) => item.lineageId !== target.lineageId));
+    }
+  };
 
   const reload = useCallback(async () => {
     if (!workspaceId) return;
@@ -49,10 +61,8 @@ export function useStudio(baseId: string, workspaceId: string | null) {
     try {
       const versions = await knowledgeApi.artifacts(baseId, workspaceId);
       if (order !== loadOrder.current) return;
-      setArtifacts((current) => {
-        const ids = new Set(versions.map((artifact) => artifact.id));
-        return [...versions, ...current.filter((artifact) => !ids.has(artifact.id))];
-      });
+      setArtifacts(versions);
+      setArtifactsLoaded(true);
       const importError = await importDeviceConversations(baseId, workspaceId, versions).catch(() => "Earlier work could not be imported.");
       const list = await knowledgeApi.artifactConversations(baseId, workspaceId);
       if (order === loadOrder.current) { setConversations(list); setError(importError ?? ""); }
@@ -71,10 +81,15 @@ export function useStudio(baseId: string, workspaceId: string | null) {
     return () => abort.abort();
   }, []);
   useEffect(() => {
-    setArtifacts([]); setConversations([]); setDetails({}); setFailures({});
+    setArtifacts([]); setArtifactsLoaded(false); setConversations([]); setDetails({}); setFailures({});
     void reload();
     return () => { loadOrder.current += 1; reset(); };
   }, [reload, reset]);
+  useEffect(() => {
+    const refresh = () => void reload();
+    window.addEventListener("gunther:trash-updated", refresh);
+    return () => window.removeEventListener("gunther:trash-updated", refresh);
+  }, [reload]);
   const finished = activities.filter((item) => item.state === "done" || item.state === "failed")
     .map((item) => [item.id, item.endedAt, item.open, item.state]);
   const finishedKey = finished.length ? JSON.stringify(finished) : "";
@@ -150,6 +165,6 @@ export function useStudio(baseId: string, workspaceId: string | null) {
   const owner = (artifact: ArtifactSummary) => artifact.conversationId
     || (conversations.some((item) => item.id === EARLIER_WORK) ? EARLIER_WORK : artifact.lineageId);
 
-  return { types, artifacts, conversations, details, activities, jobs, failures, error: catalogError || error, remember, rememberVersion,
+  return { types, artifacts, artifactsLoaded, conversations, details, activities, jobs, failures, error: catalogError || error, remember, rememberVersion, forgetTrashed,
     read, follow, ensure, send, build, retry, direct, owner, stop };
 }

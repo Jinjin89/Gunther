@@ -259,6 +259,7 @@ AGENT_OUTPUT_COLUMNS = frozenset(
         "citations_json",
     }
 )
+OUTPUT_TRASH_COLUMNS = {"trashed_at": "DATETIME", "trash_batch_id": "VARCHAR(40)"}
 
 
 def _stored_column_drift(connection: Connection, table: Table) -> tuple[set[str], set[str]]:
@@ -314,7 +315,7 @@ def _repair_legacy_artifact_tables(connection: Connection, metadata: MetaData) -
     if artifacts is None or bindings is None:
         return
     artifact_missing, artifact_blocking = _stored_column_drift(connection, artifacts)
-    artifact_missing -= AGENT_OUTPUT_COLUMNS
+    artifact_missing.difference_update(AGENT_OUTPUT_COLUMNS, OUTPUT_TRASH_COLUMNS)
     binding_missing, binding_blocking = _stored_column_drift(connection, bindings)
 
     if artifact_missing and not (
@@ -685,6 +686,17 @@ def _create_library_overviews(connection: Connection, metadata: MetaData) -> Non
     legacy.drop(connection)
 
 
+def _add_output_trash(connection: Connection, _metadata: MetaData) -> None:
+    for name in ("artifacts", "artifact_conversations"):
+        if not inspect(connection).has_table(name):
+            continue
+        for field, definition in OUTPUT_TRASH_COLUMNS.items():
+            add_column_if_missing(connection, name, field, definition)
+            connection.exec_driver_sql(
+                f"CREATE INDEX IF NOT EXISTS ix_{name}_{field} ON {name} ({field})"
+            )
+
+
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
 MIGRATIONS: tuple[Migration, ...] = (
@@ -718,6 +730,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(28, "recording_audio_duration", _add_recording_audio_duration),
     Migration(29, "model_usage", _create_model_usage),
     Migration(30, "library_overviews", _create_library_overviews),
+    Migration(31, "output_trash", _add_output_trash),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

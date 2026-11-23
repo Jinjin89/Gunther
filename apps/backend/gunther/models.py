@@ -784,6 +784,8 @@ class Artifact(Base):
     outline_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
     citations_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
     created_at: Mapped[datetime] = mapped_column(default=utc_now, index=True)
+    trashed_at: Mapped[datetime | None] = mapped_column(index=True)
+    trash_batch_id: Mapped[str | None] = mapped_column(String(40), index=True)
 
 
 class ArtifactCheck(Base):
@@ -853,6 +855,8 @@ class ArtifactConversation(Base):
     archived: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(default=utc_now, index=True)
+    trashed_at: Mapped[datetime | None] = mapped_column(index=True)
+    trash_batch_id: Mapped[str | None] = mapped_column(String(40), index=True)
 
 
 class ArtifactMessage(Base):
