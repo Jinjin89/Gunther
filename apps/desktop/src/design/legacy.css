@@ -82,7 +82,6 @@
 .primary-button,
 .studio-generate,
 .file-note-button,
-.new-session-button,
 .recording-dock-controls .is-save,
 .lecture-controls .record-start,
 .capture-submit,
@@ -96,7 +95,6 @@
 .primary-button:hover:not(:disabled),
 .studio-generate:hover:not(:disabled),
 .file-note-button:hover:not(:disabled),
-.new-session-button:hover,
 .recording-dock-controls .is-save:hover,
 .lecture-controls .record-start:hover,
 .capture-submit:hover,
@@ -116,10 +114,8 @@
 .quiet-button:hover:not(:disabled) { border-color: var(--gx-line-3); background: var(--gx-surface-2); color: var(--gx-ink) !important; }
 .text-button { color: var(--gx-ink) !important; }
 .text-button:hover { text-decoration: underline; text-underline-offset: 3px; }
-.notebook-header kbd,
-.new-session-button kbd { border-color: rgba(255, 255, 255, 0.24); background: transparent; color: inherit; opacity: 0.7; }
-:root[data-theme="dark"] .notebook-header kbd,
-:root[data-theme="dark"] .new-session-button kbd { border-color: rgba(0, 0, 0, 0.2); }
+.notebook-header kbd { border-color: rgba(255, 255, 255, 0.24); background: transparent; color: inherit; opacity: 0.7; }
+:root[data-theme="dark"] .notebook-header kbd { border-color: rgba(0, 0, 0, 0.2); }
 .send-button:hover:not(:disabled) { background: color-mix(in srgb, var(--gx-ink) 82%, var(--gx-canvas)); }
 .base-export:hover,
 .base-edit:hover { border-color: var(--gx-line-3); color: var(--gx-ink) !important; background: var(--gx-surface-2); }
@@ -262,7 +258,7 @@
 /* Serif is for reading and display; interface labels, inputs and numbers are sans. */
 .material-action-grid strong,
 .material-collection > header strong,
-.conversation-title > button strong,
+.conversation-title > strong,
 .conversation-title form input,
 .recording-dock-summary strong,
 .recording-dock-time,

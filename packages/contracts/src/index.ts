@@ -1244,6 +1244,8 @@ export interface OutputType {
   icon: string;
   options: OutputOption[];
   partLimit?: number;
+  /** Stored styles from earlier versions that use this catalog type. */
+  legacyStyles?: string[];
 }
 
 /** How a version came about. "legacy" is a version from before agents wrote them. */

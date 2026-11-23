@@ -1,9 +1,10 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ContentsSource, KnowledgeTopic, LibraryContents as Contents } from "@gunther/contracts";
 import { useState } from "react";
 import { knowledgeApi } from "../api";
+import { makeTrashItem } from "../test/fixtures";
 import { SourceTree } from "./SourceTree";
 import { selectedSources, useSourceSelection } from "./sourceScope";
 
@@ -29,12 +30,12 @@ const base: Contents = {
   ],
 };
 
-const props = () => ({ baseId: "lib", onOpenSource: vi.fn(), onSource: vi.fn() });
-function Tree({ baseId, onSource, onOpenSource }: ReturnType<typeof props>) {
+const props = () => ({ baseId: "lib", onTrashed: vi.fn(), onSource: vi.fn() });
+function Tree({ baseId, onSource, onTrashed }: ReturnType<typeof props>) {
   const [contents, setContents] = useState<Contents | null>(null);
   const [selection, onScope] = useSourceSelection(baseId);
   const ids = selectedSources(selection, contents?.sources.map((item) => item.id) ?? []);
-  return <SourceTree baseId={baseId} onSource={onSource} onOpenSource={onOpenSource} contents={contents} onContents={setContents} selection={selection} selectedIds={ids} onScope={onScope}
+  return <SourceTree baseId={baseId} onSource={onSource} onTrashed={onTrashed} contents={contents} onContents={setContents} selection={selection} selectedIds={ids} onScope={onScope}
     activeSourceId={null} addSource={<button>Add source</button>} />;
 }
 const show = async (contents: Contents = base, extra: Partial<ReturnType<typeof props>> = {}) => {
@@ -50,7 +51,7 @@ const rowOf = (title: string) => list().getByText(title).closest(".contents-row"
 beforeEach(() => {
   window.localStorage.clear();
 });
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("Sources tree", () => {
   it("refreshes duration estimates until audio measurement finishes", async () => {
@@ -150,6 +151,12 @@ describe("Sources tree", () => {
     const moved: Contents = { ...base, placements: base.placements.map((item) => item.sourceId === "rec2" ? { ...item, sectionId: "b" } : item) };
     const move = vi.spyOn(knowledgeApi, "moveContents").mockResolvedValue(moved);
     await show();
+    const scope = screen.getByRole("checkbox", { name: "Select Lecture 2 recording" });
+    await user.click(scope);
+    const row = within(rowOf("Lecture 2 recording"));
+    expect(row.getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent)).toEqual([
+      "Drag Lecture 2 recording", expect.stringContaining("Lecture 2 recording"), "Actions for Lecture 2 recording",
+    ]);
     await user.click(screen.getByRole("button", { name: "Actions for Lecture 2 recording" }));
     await user.click(screen.getByRole("menuitem", { name: "Move to…" }));
     const picker = screen.getByRole("dialog", { name: "Move to…" });
@@ -157,7 +164,78 @@ describe("Sources tree", () => {
     await user.click(within(picker).getByRole("option", { name: "Part B" }));
     expect(move).toHaveBeenCalledWith("lib", { items: [{ kind: "source", id: "rec2" }], parentId: "b", index: null });
     expect(await list().findByText("Lecture 2 recording")).toBeVisible();
+    expect(screen.getByRole("checkbox", { name: "Select Lecture 2 recording" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select Lecture 1 recording" })).toBeChecked();
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("takes a single source out of its section and moves it to Trash without changing scope", async () => {
+    const user = userEvent.setup();
+    const entry = makeTrashItem({ id: "rec2", title: "Lecture 2 recording" });
+    const unplaced = { ...base, placements: base.placements.filter((item) => item.sourceId !== entry.id) };
+    const move = vi.spyOn(knowledgeApi, "moveContents").mockResolvedValue(unplaced);
+    const trash = vi.spyOn(knowledgeApi, "trashSource").mockResolvedValue(entry);
+    const { onTrashed } = await show();
+    const check = (title: string) => screen.getByRole("checkbox", { name: `Select ${title}` });
+    await user.click(check("Course outline.pdf"));
+    const scope = window.localStorage.getItem("gunther:library-sources:lib");
+    const actions = () => screen.getByRole("button", { name: `Actions for ${entry.title}` });
+    await user.click(actions());
+    await user.click(screen.getByRole("menuitem", { name: "Take out of section" }));
+    expect(move).toHaveBeenCalledExactlyOnceWith("lib", { items: [{ kind: "source", id: entry.id }], parentId: null, index: null });
+    await user.click(actions());
+    expect(screen.queryByRole("menuitem", { name: "Take out of section" })).not.toBeInTheDocument();
+    vi.mocked(knowledgeApi.contents).mockResolvedValue({ ...unplaced, sources: base.sources.filter((item) => item.id !== entry.id) });
+    await user.click(screen.getByRole("menuitem", { name: "Move to Trash" }));
+    expect(trash).toHaveBeenCalledExactlyOnceWith(entry.id);
+    expect(onTrashed).toHaveBeenCalledExactlyOnceWith(entry);
+    await waitFor(() => expect(screen.queryByText(entry.title)).not.toBeInTheDocument());
+    expect(check("Course outline.pdf")).not.toBeChecked();
+    expect(check("Lecture 1 recording")).toBeChecked();
+    expect(window.localStorage.getItem("gunther:library-sources:lib")).toBe(scope);
+  });
+
+  it("starts a drag only at the handle and moves one row while leaving scope ticks intact", async () => {
+    const user = userEvent.setup();
+    class TestPointerEvent extends MouseEvent {
+      readonly isPrimary = true;
+      readonly pointerId = 1;
+    }
+    vi.stubGlobal("PointerEvent", TestPointerEvent);
+    const moved = { ...base, placements: base.placements.map((item) => item.sourceId === "rec2" ? { ...item, sectionId: "b" } : item) };
+    const move = vi.spyOn(knowledgeApi, "moveContents").mockResolvedValue(moved);
+    await show();
+    const checkbox = (title: string) => screen.getByRole("checkbox", { name: `Select ${title}` });
+    const title = "Lecture 2 recording";
+    await user.click(checkbox(title));
+    const scope = window.localStorage.getItem("gunther:library-sources:lib");
+    const row = rowOf(title);
+    const destination = rowOf("Part B");
+    document.querySelectorAll<HTMLElement>(".contents-list [data-row]").forEach((element, index) => {
+      vi.spyOn(element, "getBoundingClientRect").mockReturnValue(new DOMRect(0, index * 40, 260, 40));
+    });
+    const start = { clientX: 20, clientY: row.getBoundingClientRect().top + 20 };
+    const end = { clientX: 20, clientY: destination.getBoundingClientRect().top + 20 };
+    fireEvent.pointerDown(within(row).getByRole("button", { name: /^Lecture 2 recording/ }), start);
+    fireEvent.pointerMove(document, end);
+    fireEvent.pointerUp(document, end);
+    expect(move).not.toHaveBeenCalled();
+
+    fireEvent.pointerDown(within(row).getByRole("button", { name: `Drag ${title}` }), start);
+    fireEvent.pointerMove(row, { ...start, clientX: 30 });
+    try {
+      await waitFor(() => expect(row).toHaveClass("is-dragging"));
+      fireEvent.pointerMove(row, end);
+      await waitFor(() => expect(destination).toHaveClass("is-drop-on"));
+    } finally {
+      fireEvent.pointerUp(row, end);
+    }
+    expect(move).toHaveBeenCalledExactlyOnceWith("lib", {
+      items: [{ kind: "source", id: "rec2" }], parentId: "b", index: null,
+    });
+    expect(checkbox(title)).not.toBeChecked();
+    expect(checkbox("Lecture 1 recording")).toBeChecked();
+    expect(window.localStorage.getItem("gunther:library-sources:lib")).toBe(scope);
   });
 
   it("does not offer a section's own sub-tree when moving a section", async () => {

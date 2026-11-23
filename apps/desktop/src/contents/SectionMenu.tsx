@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowDownAZ, ArrowUpRight, FolderInput, FolderOutput, FolderPlus, MoreHorizontal, PenLine, Plus, Trash2, type LucideIcon } from "lucide-react";
+import { ArrowDownAZ, FolderInput, FolderOutput, FolderPlus, MoreHorizontal, PenLine, Plus, Trash2, type LucideIcon } from "lucide-react";
 
 export interface MenuItem {
   label: string;
@@ -58,11 +58,13 @@ export function SectionMenu({ title, actions }: { title: string; actions: Sectio
 }
 
 /** The ⋯ menu of a source row. */
-export function SourceMenu({ title, placed, onOpen, onRename, onMove, onTakeOut }: { title: string; placed: boolean; onOpen: () => void; onRename: () => void; onMove: () => void; onTakeOut: () => void }) {
+export function SourceMenu({ title, placed, onRename, onMove, onTakeOut, onTrash }: {
+  title: string; placed: boolean; onRename: () => void; onMove: () => void; onTakeOut: () => void; onTrash: () => void;
+}) {
   return <PopMenu label={`Actions for ${title}`} items={[
-    { label: "Open", icon: ArrowUpRight, onSelect: onOpen },
     { label: "Rename", icon: PenLine, onSelect: onRename },
-    { label: "Move to…", icon: FolderInput, onSelect: onMove, divider: true },
+    { label: "Move to…", icon: FolderInput, onSelect: onMove },
     ...(placed ? [{ label: "Take out of section", icon: FolderOutput, onSelect: onTakeOut }] : []),
+    { label: "Move to Trash", icon: Trash2, onSelect: onTrash, danger: true, divider: true },
   ]} />;
 }

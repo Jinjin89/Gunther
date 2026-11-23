@@ -503,6 +503,11 @@ async function run() {
     });
     await cdp.send("Runtime.enable");
     await cdp.send("Page.enable");
+    const resizeViewport = (width, height) => cdp.send("Emulation.setDeviceMetricsOverride", {
+      width, height, deviceScaleFactor: 1, mobile: false,
+    });
+    const wideViewport = () => resizeViewport(1280, 820);
+    await wideViewport();
     await cdp.send("Page.navigate", { url: uiOrigin });
     await waitForEvaluation(
       cdp,
@@ -567,6 +572,22 @@ async function run() {
       throw new SmokeFailure("Create library was not clickable");
     }
     await waitForEvaluation(cdp, libraryWelcome, "new library with Sources, Chat and Studio");
+    if (!await cdp.evaluate(clickExpression(".contents-add button", "Add source"))
+      || !await cdp.evaluate(clickExpression('[role="menuitem"]', "Note or pasted text"))) {
+      throw new SmokeFailure("Sources could not start a note capture");
+    }
+    await waitForEvaluation(
+      cdp,
+      `(() => {
+        const capture = document.querySelector('[role="dialog"][aria-label="Capture something"]');
+        return capture?.querySelector('#capture-kind-note[aria-selected="true"]')
+          && capture.querySelector('.gx-picker-trigger')?.textContent.includes(${JSON.stringify(libraryTitle)});
+      })()`,
+      "note capture targeting the open library",
+    );
+    if (!await cdp.evaluate(clickExpression("button", "Close capture"))) {
+      throw new SmokeFailure("The note capture could not be closed");
+    }
 
     if (!await cdp.evaluate(clickExpression("button", "Inbox"))) {
       throw new SmokeFailure("Inbox navigation was not clickable");
@@ -687,13 +708,20 @@ async function run() {
     await waitForEvaluation(cdp, libraryWelcome, "reopened library with Chat in the middle");
 
     const sourceRow = `.contents[aria-label="Sources"] [data-row=${JSON.stringify(`source:${source.id}`)}]`;
-    const rowOpenButton = `${sourceRow} button[aria-label=${JSON.stringify(`Open ${noteTitle}`)}]`;
     await waitForEvaluation(
       cdp,
       `document.querySelector(${JSON.stringify(`${sourceRow} .contents-source strong`)})?.textContent.trim() === ${JSON.stringify(noteTitle)}
-        && document.querySelector(${JSON.stringify(rowOpenButton)})?.disabled === false`,
-      "filed note and its Open action in the Sources tree",
+        && document.querySelector(${JSON.stringify(`${sourceRow} .contents-drag-handle`)})?.disabled === false`,
+      "filed note and its drag handle in the Sources tree",
     );
+    const sourceActions = clickExpression(`${sourceRow} button`, `Actions for ${noteTitle}`);
+    if (!await cdp.evaluate(sourceActions)) throw new SmokeFailure("The source actions menu could not be opened");
+    await waitForEvaluation(
+      cdp,
+      `[...document.querySelectorAll(${JSON.stringify(`${sourceRow} [role="menuitem"]`)})].map((button) => button.textContent.trim()).join('|') === 'Rename|Move to…|Move to Trash'`,
+      "single-row menu for the unplaced note",
+    );
+    if (!await cdp.evaluate(sourceActions)) throw new SmokeFailure("The source actions menu could not be closed");
     if (!await cdp.evaluate(clickExpression(`${sourceRow} button.contents-source`, noteTitle))) {
       throw new SmokeFailure("The filed source summary could not be opened");
     }
@@ -747,9 +775,10 @@ async function run() {
     const askReadyMilliseconds = Date.now() - askReadyStartedAt;
     // The fixture provider also exercises the model menu with a long display label.
     await waitForEvaluation(cdp, "document.querySelector('.composer [data-chip=model]')?.textContent.includes('A model with a long display name')", "long model menu fixture");
-    // The narrowest desktop window keeps All sources and the two action buttons usable.
-    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 900, height: 640, deviceScaleFactor: 1, mobile: false });
-    await waitForEvaluation(cdp, "window.innerWidth === 900", "narrow Ask window");
+    // Chat keeps All sources and the two action buttons usable with Studio collapsed.
+    await resizeViewport(900, 640);
+    const studioRailAt900 = `window.innerWidth === 900 && document.querySelector('button[aria-label="Expand Studio"]') !== null`;
+    await waitForEvaluation(cdp, studioRailAt900, "narrow Ask window with a Studio rail");
     const composerLayout = await cdp.evaluate(`(() => {
       const composer = document.querySelector('.composer').getBoundingClientRect();
       const options = document.querySelector('.composer-options').getBoundingClientRect();
@@ -763,7 +792,7 @@ async function run() {
       throw new SmokeFailure(`The narrow Ask layout is crowded: ${JSON.stringify(composerLayout)}`);
     }
     await screenshot("ask-900");
-    await cdp.send("Emulation.clearDeviceMetricsOverride");
+    await wideViewport();
     const question = "What does BRCA1 regulate?";
     if (!await cdp.evaluate(setAriaValueExpression("Message Gunther", question))) {
       throw new SmokeFailure("Ask composer was not editable");
@@ -870,6 +899,32 @@ async function run() {
     const trustedUnit = units.find((item) => item.status === "trusted" && item.evidenceCount > 0);
     if (!trustedUnit) throw new SmokeFailure("The saved answer did not create a trusted, evidenced knowledge unit");
 
+    const chatTitle = await cdp.evaluate("document.querySelector('.conversation-title > strong')?.textContent.trim()");
+    if (!chatTitle || !await cdp.evaluate(clickExpression("button", "Chat actions"))) {
+      throw new SmokeFailure("The Chat actions menu could not be opened");
+    }
+    await waitForEvaluation(
+      cdp,
+      `[...document.querySelectorAll('.conversation-header [role="menuitem"]')].map((button) => button.textContent.trim()).join('|') === 'New chat|History|Rename|Export Markdown|Archive'`,
+      "library Chat actions",
+    );
+    if (!await cdp.evaluate(clickExpression('[role="menuitem"]', "History"))) {
+      throw new SmokeFailure("Chat History could not be opened");
+    }
+    await waitForEvaluation(
+      cdp,
+      `document.querySelector('[role="dialog"][aria-label="Session history"] [aria-label="Search sessions"]') !== null`,
+      "searchable Chat history",
+    );
+    if (!await cdp.evaluate(clickExpression('[role="dialog"][aria-label="Session history"] .session-row-main', chatTitle))) {
+      throw new SmokeFailure("The saved chat could not be reopened from History");
+    }
+    await waitForEvaluation(
+      cdp,
+      `!document.querySelector('[role="dialog"][aria-label="Session history"]') && document.querySelector('.message-sources summary') !== null`,
+      "saved answer after reopening from Chat history",
+    );
+
     // The saved answer stays available after removing its model from Settings.
     const { providers: [fixtureProvider] } = await jsonFrom(`${backendOrigin}/api/settings/models`);
     if (!fixtureProvider) throw new SmokeFailure("The fixture Ask provider was not configured");
@@ -904,8 +959,8 @@ async function run() {
       "Studio shows model setup with its tiles disabled",
     );
 
-    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 900, height: 640, deviceScaleFactor: 1, mobile: false });
-    await waitForEvaluation(cdp, "window.innerWidth === 900", "narrow Sources window");
+    await resizeViewport(900, 640);
+    await waitForEvaluation(cdp, studioRailAt900, "narrow Sources window");
     await screenshot("sources-900");
     const sourcesFit = await cdp.evaluate(`(() => {
       const tree = document.querySelector('.library-workspace .contents');
@@ -914,7 +969,21 @@ async function run() {
       return box.top >= 0 && box.bottom <= innerHeight + 1 && footer.bottom <= box.bottom + 1 && box.right <= innerWidth;
     })()`);
     if (!sourcesFit) throw new SmokeFailure("Source selection does not fit in a narrow window");
-    await cdp.send("Emulation.clearDeviceMetricsOverride");
+    if (!await cdp.evaluate(clickExpression("button", "Expand Studio"))) {
+      throw new SmokeFailure("Studio could not be reopened from its rail");
+    }
+    await waitForEvaluation(cdp, "document.querySelector('.studio-column')?.getClientRects().length > 0", "Studio visible after reopening its rail");
+    await resizeViewport(800, 640);
+    await waitForEvaluation(
+      cdp,
+      `window.innerWidth === 800 && document.querySelector('button[aria-label="Expand Sources"]') !== null`,
+      "Sources rail at the minimum desktop width",
+    );
+    if (!await cdp.evaluate(clickExpression("button", "Expand Sources"))) {
+      throw new SmokeFailure("Sources could not be reopened from its rail");
+    }
+    await waitForEvaluation(cdp, "document.querySelector('.contents')?.getClientRects().length > 0", "Sources visible after reopening its rail");
+    await wideViewport();
 
     // The answer preference remains available in General Settings and survives reopening.
     if (!await cdp.evaluate(clickExpression("button", "Settings"))) throw new SmokeFailure("Settings was not clickable");
@@ -923,14 +992,14 @@ async function run() {
     await waitForEvaluation(cdp, "document.querySelector('.settings-pane [aria-label=\"Answer style\"]') !== null", "Answer style in General Settings");
     await cdp.evaluate(`(() => { const select = document.querySelector('[aria-label="Answer style"]'); select.value = 'concise'; select.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     await waitForEvaluation(cdp, "localStorage.getItem('gunther:answer-style') === 'concise'", "remembered concise answer preference");
-    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1000, height: 820, deviceScaleFactor: 1, mobile: false });
+    await resizeViewport(1000, 820);
     await screenshot("settings-answer-style");
     await cdp.evaluate(clickExpression("button", "Home"));
     await waitForEvaluation(cdp, "document.querySelector('.gx-home') !== null", "Home after choosing an answer style");
     if (await cdp.evaluate("Boolean(document.querySelector('.gx-home [aria-label=\"Answer style\"]'))")) throw new SmokeFailure("Home still crowds its composer with answer style");
     await cdp.evaluate(clickExpression("button", "Settings"));
     await waitForEvaluation(cdp, "document.querySelector('.settings-pane [aria-label=\"Answer style\"]')?.value === 'concise'", "answer preference after reopening Settings");
-    await cdp.send("Emulation.clearDeviceMetricsOverride");
+    await wideViewport();
 
     // Trash: move a capture there from Inbox, undo, restore from the Trash page, delete forever.
     const trashTitle = `Disposable capture ${marker}`;
@@ -999,18 +1068,21 @@ async function run() {
         "capture before organize",
         "Quick note persisted to Inbox",
         "library created through UI",
+        "Add source opened Note capture for the open library",
         "Inbox item filed through UI",
         "filed source found from search-first Home",
         "note-to-source provenance preserved",
         "filed source written to its readable library folder",
         "successful local retry copy cleared",
-        "filed note shown in Sources and reopened through its summary with preserved content",
+        "filed note showed its row actions and drag handle and reopened through its summary with preserved content",
         "grounded Chat answer persisted with sources that open evidence",
+        "Chat actions opened searchable History and reopened a saved answer",
         "answer saved as knowledge with no Inbox review",
         "saved answer became a trusted evidenced unit",
         "Studio showed model setup with disabled tiles after the saved answer was reopened",
         "Chat kept All sources and side-by-side voice/send actions at 900 × 640",
-        "Sources showed the total and fit at 900 × 640",
+        "Sources showed the total and fit at 900 × 640, with Studio available from its rail",
+        "Sources collapsed at 800 × 640 and reopened from its rail",
         "section ticks set Chat and Studio scope, blocked empty selection, and persisted on library reopen",
         "Answer style moved to General Settings, persisted and stayed out of Ask/Home composers",
         "capture moved to Trash from Inbox and brought back with Undo",

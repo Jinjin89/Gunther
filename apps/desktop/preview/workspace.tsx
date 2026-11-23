@@ -121,7 +121,7 @@ function WorkspacePreview() {
     <div className="atlas-app-body">
       <AtlasRail active="base" inboxCount={0} bases={[base, makeBase({ id: "preview_biology", title: "Biology", color: "blue" })]} activeBaseId={base.id} profileName="UI review" onNavigate={inform} onOpenBase={inform} onSidebarAuto={() => setSidebarPreference(null)} sidebarAutomatic={sidebarPreference === null} />
       <main className="atlas-workspace">
-        <KnowledgeBaseWorkspace base={base} workspaceId="preview_workspace" onAdd={inform} onNotify={setNotice} onOpenSource={inform} />
+        <KnowledgeBaseWorkspace base={base} workspaceId="preview_workspace" onAdd={inform} onNotify={setNotice} onOpenSource={inform} onTrashed={inform} />
       </main>
     </div>
     {notice && <div className="gx-toast" role="status" onClick={() => setNotice("")}>{notice}</div>}

@@ -62,6 +62,7 @@ it("shows an unavailable library for a stale Activity link", async () => {
 });
 
 it("uses stored metadata and Contents for a library with a former sample ID", async () => {
+  vi.stubGlobal("innerWidth", 1280);
   vi.spyOn(knowledgeApi, "activity").mockResolvedValue({ version: 1, items: [] });
   const user = userEvent.setup();
   render(<App />);
@@ -76,6 +77,12 @@ it("uses stored metadata and Contents for a library with a former sample ID", as
   expect(screen.getByText(savedLibrary.description)).toBeVisible();
   expect(knowledgeApi.contents).toHaveBeenCalledWith(savedLibrary.id);
   expect(screen.queryByText("Single-cell Best Practices · Annotation")).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Add source" }));
+  await user.click(screen.getByRole("menuitem", { name: "Note or pasted text" }));
+  const capture = within(await screen.findByRole("dialog", { name: "Capture something" }));
+  expect(capture.getByRole("tab", { name: "Note", selected: true })).toBeVisible();
+  expect(capture.getByText(savedLibrary.title)).toBeVisible();
 });
 
 it("recovers queued links according to their stored URL and workspace", async () => {

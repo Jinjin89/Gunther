@@ -9,22 +9,24 @@ interface DragWidthOptions {
   max: () => number;
   /** Used until a width has been chosen, and on double-click. */
   fallback: number;
+  /** Which side of the workspace the panel is docked to. */
+  side?: "left" | "right";
   /** An element whose size changing (besides the window) changes how wide the panel may be. */
   observe?: () => Element | null;
 }
 
 /**
- * The width of a panel docked to the right: dragged by its left edge (leftwards
- * widens), moved by the arrow keys, reset by a double-click, and remembered.
+ * A docked panel's width, set by dragging the inner edge or using its arrow
+ * keys. Double-click resets it.
  * Spread `handle` on the edge element.
  */
-export function useDragWidth({ storageKey, min, max, fallback, observe }: DragWidthOptions) {
+export function useDragWidth({ storageKey, min, max, fallback, side = "right", observe }: DragWidthOptions) {
   const clamp = useCallback((value: number) => Math.min(Math.max(value, min), Math.max(min, max())), [min, max]);
   const [width, setWidth] = useState(() => {
     const stored = Number(persistentStorage.getItem(storageKey));
-    return Number.isFinite(stored) && stored > 0 ? clamp(stored) : fallback;
+    return Number.isFinite(stored) && stored > 0 ? stored : fallback;
   });
-  const drag = useRef<{ startX: number; startWidth: number } | null>(null);
+  const drag = useRef<{ pointerId: number; startX: number; startWidth: number; chosenWidth: number } | null>(null);
   // The room changes with the window: the chosen width stays as chosen, but what is shown is
   // kept within what fits now, so a narrowed window never leaves the panel's content outside it.
   const [, setRoom] = useState(0);
@@ -42,6 +44,7 @@ export function useDragWidth({ storageKey, min, max, fallback, observe }: DragWi
     };
   }, []);
   const shown = clamp(width);
+  const direction = side === "left" ? 1 : -1;
   const commit = useCallback((next: number) => {
     const value = clamp(next);
     setWidth(value);
@@ -51,23 +54,32 @@ export function useDragWidth({ storageKey, min, max, fallback, observe }: DragWi
       // The width still holds until the app closes.
     }
   }, [clamp, storageKey]);
+  const cancel = (event: PointerEvent<HTMLDivElement>) => {
+    if (drag.current?.pointerId !== event.pointerId) return;
+    setWidth(drag.current.chosenWidth);
+    drag.current = null;
+  };
   const handle = {
     onPointerDown: (event: PointerEvent<HTMLDivElement>) => {
-      drag.current = { startX: event.clientX, startWidth: shown };
+      if (event.button !== 0 || drag.current) return;
+      drag.current = { pointerId: event.pointerId, startX: event.clientX, startWidth: shown, chosenWidth: width };
       event.currentTarget.setPointerCapture(event.pointerId);
     },
     onPointerMove: (event: PointerEvent<HTMLDivElement>) => {
-      if (drag.current) setWidth(clamp(drag.current.startWidth + drag.current.startX - event.clientX));
+      if (drag.current?.pointerId !== event.pointerId) return;
+      setWidth(clamp(drag.current.startWidth + direction * (event.clientX - drag.current.startX)));
     },
     onPointerUp: (event: PointerEvent<HTMLDivElement>) => {
-      if (!drag.current) return;
-      commit(drag.current.startWidth + drag.current.startX - event.clientX);
+      if (drag.current?.pointerId !== event.pointerId) return;
+      commit(drag.current.startWidth + direction * (event.clientX - drag.current.startX));
       drag.current = null;
     },
+    onPointerCancel: cancel,
+    onLostPointerCapture: cancel,
     onDoubleClick: () => commit(fallback),
     onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
-      if (event.key === "ArrowLeft") { event.preventDefault(); commit(shown + 24); }
-      if (event.key === "ArrowRight") { event.preventDefault(); commit(shown - 24); }
+      if (event.key === "ArrowLeft") { event.preventDefault(); commit(shown - direction * 24); }
+      if (event.key === "ArrowRight") { event.preventDefault(); commit(shown + direction * 24); }
     },
   };
   return { width: shown, handle };

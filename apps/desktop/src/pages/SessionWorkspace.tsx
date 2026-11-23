@@ -19,14 +19,15 @@ import {
   CircleAlert,
   Copy,
   Download,
-  FileText,
   FolderOpen,
   GitBranch,
   Globe2,
+  History,
   Library,
   MessageSquareText,
   MoreHorizontal,
   Pin,
+  Plus,
   Search,
   ShieldCheck,
   Sparkles,
@@ -57,6 +58,7 @@ import { useSavedAnswers } from "./savedAnswers";
 import { ModelPicker } from "../models/ModelPicker";
 import { BrandMark } from "../design/BrandMark";
 import { createPortal } from "react-dom";
+import { PopMenu } from "../contents/SectionMenu";
 import { EvidencePanel } from "../components/evidence/EvidencePanel";
 import "../session.css";
 
@@ -69,8 +71,6 @@ interface SessionWorkspaceProps {
   onNotify: (message: string) => void;
   /** Open a source on its own page. */
   onOpenSource?: (sourceId: string) => void;
-  /** Open Outputs with a conversation chosen as material (from a research answer). */
-  onMakeReport?: (sessionId: string) => void;
 }
 
 function relativeTime(value: string) {
@@ -137,7 +137,6 @@ function SessionRow({
 
 function SessionsSidebar({
   base,
-  online,
   sessions,
   archivedSessions,
   showArchived,
@@ -145,7 +144,6 @@ function SessionsSidebar({
   loading,
   query,
   onQuery,
-  onNew,
   onOpen,
   onPin,
   onArchive,
@@ -153,7 +151,6 @@ function SessionsSidebar({
   onRestore,
 }: {
   base: KnowledgeBase;
-  online: boolean;
   sessions: KnowledgeSessionSummary[];
   archivedSessions: KnowledgeSessionSummary[];
   showArchived: boolean;
@@ -161,7 +158,6 @@ function SessionsSidebar({
   loading: boolean;
   query: string;
   onQuery: (value: string) => void;
-  onNew: () => void;
   onOpen: (id: string) => void;
   onPin: (session: KnowledgeSessionSummary) => void;
   onArchive: (session: KnowledgeSessionSummary) => void;
@@ -178,7 +174,6 @@ function SessionsSidebar({
         <span className={`base-dot color-${base.color}`} />
         <span><small>Library</small><strong>{base.title}</strong></span>
       </div>
-      <button className="new-session-button" onClick={onNew} disabled={!online || loading}><SquarePen size={15} /><span>New session</span><kbd>⌘N</kbd></button>
       <label className="session-search"><Search size={13} /><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search sessions" aria-label="Search sessions" />{query && <button onClick={() => onQuery("")} aria-label="Clear search"><X size={11} /></button>}</label>
       <div className="session-list" aria-busy={loading}>
         {loading && <div className="session-list-loading"><i /><i /><i /></div>}
@@ -217,7 +212,7 @@ function AnswerModel({ context }: { context: ConversationContext }) {
   </span>;
 }
 
-export function ConversationMessage({ message, retryDisabled, onRetry, onEdit, onCite, selected, saveAvailable = true, promoting, promoted, branching, onSelect, onCopy, onPromote, onRemove, onBranch, onMakeReport, onTrace }: { message: SessionMessage; retryDisabled: boolean; onRetry: () => void; onEdit: () => void; onCite: (citation: ConversationCitation, index: number) => void; selected: boolean; saveAvailable?: boolean; promoting: boolean; promoted: boolean; branching: boolean; onSelect: () => void; onCopy: () => void; onPromote: () => void; onRemove: () => void; onBranch: () => void; /** Open Outputs with this conversation chosen as material; offered under a research answer. */ onMakeReport?: (() => void) | undefined; onTrace?: (() => void) | undefined }) {
+export function ConversationMessage({ message, retryDisabled, onRetry, onEdit, onCite, selected, saveAvailable = true, promoting, promoted, branching, onSelect, onCopy, onPromote, onRemove, onBranch, onTrace }: { message: SessionMessage; retryDisabled: boolean; onRetry: () => void; onEdit: () => void; onCite: (citation: ConversationCitation, index: number) => void; selected: boolean; saveAvailable?: boolean; promoting: boolean; promoted: boolean; branching: boolean; onSelect: () => void; onCopy: () => void; onPromote: () => void; onRemove: () => void; onBranch: () => void; onTrace?: (() => void) | undefined }) {
   const isAssistant = message.role === "assistant";
   // Small talk and follow-ups on the conversation itself need no sources.
   const conversational = noSourcesNeeded(message.context);
@@ -244,7 +239,7 @@ export function ConversationMessage({ message, retryDisabled, onRetry, onEdit, o
           })}</ul>
         </details> : conversational ? null : <span className="no-citation-state"><CircleAlert size={12} />Not from your sources</span>}
         {onTrace && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={(event) => { event.stopPropagation(); onTrace(); }}>Trace</button>}
-        <button className="copy-answer" onClick={(event) => { event.stopPropagation(); onCopy(); }}><Copy size={12} />Copy</button><SpeakerButton message={message} /><button className="branch-answer" disabled={branching} onClick={(event) => { event.stopPropagation(); onBranch(); }}><GitBranch size={12} />{branching ? "Branching…" : "Branch"}</button>{onMakeReport && message.context.research && message.context.research.state !== "asking" && message.content && <button className="make-report" onClick={(event) => { event.stopPropagation(); onMakeReport(); }}><FileText size={12} />Make a report from this</button>}{saveAvailable && !(conversational && message.citations.length === 0) && <><button className={`promote-answer ${promoted ? "is-promoted" : ""}`} disabled={promoting || promoted || message.citations.length === 0} title={message.citations.length === 0 ? "Add or retrieve supporting evidence before saving this answer as knowledge." : undefined} onClick={(event) => { event.stopPropagation(); onPromote(); }}><Sparkles size={12} />{promoting && !promoted ? "Saving…" : promoted ? "Saved as knowledge" : message.citations.length === 0 ? "Needs evidence" : "Save as knowledge"}</button>{promoted && <button className="remove-answer" disabled={promoting} title="Take this answer out of your knowledge." onClick={(event) => { event.stopPropagation(); onRemove(); }}>{promoting ? "Removing…" : "Remove"}</button>}</>}</div>
+        <button className="copy-answer" onClick={(event) => { event.stopPropagation(); onCopy(); }}><Copy size={12} />Copy</button><SpeakerButton message={message} /><button className="branch-answer" disabled={branching} onClick={(event) => { event.stopPropagation(); onBranch(); }}><GitBranch size={12} />{branching ? "Branching…" : "Branch"}</button>{saveAvailable && !(conversational && message.citations.length === 0) && <><button className={`promote-answer ${promoted ? "is-promoted" : ""}`} disabled={promoting || promoted || message.citations.length === 0} title={message.citations.length === 0 ? "Add or retrieve supporting evidence before saving this answer as knowledge." : undefined} onClick={(event) => { event.stopPropagation(); onPromote(); }}><Sparkles size={12} />{promoting && !promoted ? "Saving…" : promoted ? "Saved as knowledge" : message.citations.length === 0 ? "Needs evidence" : "Save as knowledge"}</button>{promoted && <button className="remove-answer" disabled={promoting} title="Take this answer out of your knowledge." onClick={(event) => { event.stopPropagation(); onRemove(); }}>{promoting ? "Removing…" : "Remove"}</button>}</>}</div>
         <AnswerModel context={message.context} />
       </footer>}
     </article>
@@ -360,7 +355,7 @@ const startupReads = Object.keys(readLabels) as StartupRead[];
 // The current session supplies the durable destination for a send.
 const sendReads = ["history", "models", "settings"] as const;
 
-export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = false, visible = true, onFocusSources, onNotify, onOpenSource, onMakeReport }: SessionWorkspaceProps) {
+export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = false, visible = true, onFocusSources, onNotify, onOpenSource }: SessionWorkspaceProps) {
   const [sessions, setSessions] = useState<KnowledgeSessionSummary[]>([]);
   const [archivedSessions, setArchivedSessions] = useState<KnowledgeSessionSummary[]>([]);
   const [showArchived, setShowArchived] = useState(false);
@@ -389,8 +384,8 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
   const [briefBusy, setBriefBusy] = useState<string | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
-  const [sessionOptionsOpen, setSessionOptionsOpen] = useState(false);
-  const [mobileSessionsOpen, setMobileSessionsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const creatingSession = useRef(false);
   const scrollPane = useRef<HTMLDivElement>(null);
   /** Whether the reader is at the bottom; only then does new text pull the view along. */
   const followTail = useRef(true);
@@ -550,7 +545,8 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
   }, [visible]);
   useEffect(() => { followTail.current = true; }, [activeId]);
   const createSession = async () => {
-    if (!online || loading) return;
+    if (!online || loading || creatingSession.current) return;
+    creatingSession.current = true;
     setError(null);
     try {
       const created = await knowledgeApi.createSession(base.id, { focusChapterId: null, selectedSourceIds: [] });
@@ -558,8 +554,16 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
       setActiveId(created.id);
       setActiveSession(created);
       setSelectedMessageId(null);
+      setDraft("");
+      setSkill(null);
+      setBudget("standard");
+      setRenameOpen(false);
+      setTrace(null);
+      setEvidence(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not create a session");
+    } finally {
+      creatingSession.current = false;
     }
   };
 
@@ -571,14 +575,36 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
 
   const patchSession = async (id: string, patch: Partial<Pick<KnowledgeSessionSummary, "title" | "pinned" | "archived">>) => {
     const updated = await knowledgeApi.updateSession(id, patch);
-    setSessions((current) => sortSessions(current.map((item) => item.id === id ? updated : item).filter((item) => !item.archived)));
+    const updateList = (current: KnowledgeSessionSummary[], archived: boolean) => sortSessions([
+      ...(updated.archived === archived ? [updated] : []), ...current.filter((item) => item.id !== id),
+    ]);
+    setSessions((current) => updateList(current, false));
+    setArchivedSessions((current) => updateList(current, true));
     setActiveSession((current) => current?.id === id ? { ...current, ...updated } : current);
+  };
+
+  const renameSession = async () => {
+    const title = renameValue.trim();
+    if (!activeSession || !title) return;
+    try {
+      await patchSession(activeSession.id, { title });
+      setRenameOpen(false);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not rename the session");
+    }
+  };
+
+  const pinSession = async (session: KnowledgeSessionSummary) => {
+    try {
+      await patchSession(session.id, { pinned: !session.pinned });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not update the session pin");
+    }
   };
 
   const archiveSession = async (session: KnowledgeSessionSummary) => {
     try {
       await patchSession(session.id, { archived: true });
-      setArchivedSessions((current) => sortSessions([{ ...session, archived: true, updatedAt: new Date().toISOString() }, ...current.filter((item) => item.id !== session.id)]));
       const remaining = sessions.filter((item) => item.id !== session.id);
       if (activeId === session.id) {
         if (remaining[0]) await loadSession(remaining[0].id);
@@ -604,10 +630,7 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
 
   const restoreSession = async (session: KnowledgeSessionSummary) => {
     try {
-      const restored = await knowledgeApi.updateSession(session.id, { archived: false });
-      setArchivedSessions((current) => current.filter((item) => item.id !== session.id));
-      setSessions((current) => sortSessions([restored, ...current.filter((item) => item.id !== session.id)]));
-      setActiveSession((current) => current?.id === session.id ? { ...current, archived: false, updatedAt: new Date().toISOString() } : current);
+      await patchSession(session.id, { archived: false });
       onNotify("Session restored to recent history.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not restore the session");
@@ -706,17 +729,16 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
   };
 
   useEffect(() => {
-    if (!trace && !mobileSessionsOpen && !sessionOptionsOpen && !renameOpen) return;
+    if (!trace && !historyOpen && !renameOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (trace) setTrace(null);
-      else if (mobileSessionsOpen) setMobileSessionsOpen(false);
-      else if (sessionOptionsOpen) setSessionOptionsOpen(false);
+      else if (historyOpen) setHistoryOpen(false);
       else if (renameOpen) setRenameOpen(false);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [trace, mobileSessionsOpen, renameOpen, sessionOptionsOpen]);
+  }, [trace, historyOpen, renameOpen]);
 
   const exportSession = async () => {
     if (!activeSession) return;
@@ -742,20 +764,23 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
     link.click();
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
-    setSessionOptionsOpen(false);
     onNotify("Session exported with its citation trail.");
   };
 
   const selectedMessage = activeSession?.messages.find((message) => message.id === selectedMessageId) ?? null;
   const cite = (citation: ConversationCitation, index?: number) => setEvidence({ citation, ...(index === undefined ? {} : { index }) });
+  const currentChat = activeSession?.id === activeId ? activeSession : null;
 
   return (
     <div className="session-workspace">
       <section className="conversation-pane" aria-label="Conversation">
         <header className="conversation-header">
-          <button className="mobile-session-toggle" onClick={() => setMobileSessionsOpen(true)} aria-label="Show conversations" title="Show conversations"><MessageSquareText size={15} /></button>
           <div className="conversation-title">
-            {renameOpen ? <form onSubmit={(event) => { event.preventDefault(); if (activeSession && renameValue.trim()) void patchSession(activeSession.id, { title: renameValue.trim() }).then(() => setRenameOpen(false)); }}><input autoFocus value={renameValue} onChange={(event) => setRenameValue(event.target.value)} aria-label="Session title" /><button type="submit" aria-label="Save session title"><Check size={13} /></button><button type="button" onClick={() => setRenameOpen(false)} aria-label="Cancel renaming"><X size={13} /></button></form> : <button onClick={() => { if (activeSession) { setRenameValue(activeSession.title); setRenameOpen(true); } }} aria-label="Rename session"><strong>{activeSession?.title ?? (loading ? "Opening session…" : "Conversation unavailable")}</strong><SquarePen size={12} /></button>}
+            {renameOpen ? <form onSubmit={(event) => { event.preventDefault(); void renameSession(); }}>
+              <input autoFocus value={renameValue} onChange={(event) => setRenameValue(event.target.value)} aria-label="Session title" />
+              <button type="submit" aria-label="Save session title"><Check size={13} /></button>
+              <button type="button" onClick={() => setRenameOpen(false)} aria-label="Cancel renaming"><X size={13} /></button>
+            </form> : <strong>{activeSession?.title ?? (loading ? "Opening session…" : "Conversation unavailable")}</strong>}
             <span><i className={online ? "is-online" : "is-offline"} />{!online ? "Knowledge service unavailable" : activeSession?.archived ? "Archived session · read only" : activeSession ? "Saved to local knowledge service" : ""}{activeSession?.parentSessionId && <><b>·</b><GitBranch size={10} />Branch lineage preserved</>}</span>
           </div>
           <div className="conversation-actions">
@@ -768,12 +793,17 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
               </div>
             </details>}
 
-            <button title="Session options" aria-label="Session options" aria-expanded={sessionOptionsOpen} aria-haspopup="menu" onClick={() => setSessionOptionsOpen((value) => !value)}><MoreHorizontal size={15} /></button>
-            {sessionOptionsOpen && activeSession && <div className="conversation-options-menu" role="menu" onMouseLeave={() => setSessionOptionsOpen(false)}>
-              <button role="menuitem" onClick={() => { void patchSession(activeSession.id, { pinned: !activeSession.pinned }); setSessionOptionsOpen(false); }}><Pin size={12} />{activeSession.pinned ? "Unpin session" : "Pin session"}</button>
-              <button role="menuitem" onClick={exportSession}><Download size={12} />Export Markdown</button>
-              <button role="menuitem" onClick={() => { if (activeSession.archived) void restoreSession(activeSession); else void archiveSession(activeSession); setSessionOptionsOpen(false); }}><Archive size={12} />{activeSession.archived ? "Restore session" : "Archive session"}</button>
-            </div>}
+            <PopMenu label="Chat actions" triggerLabel="Chat actions" triggerClass="gx-icon-button" trigger={<MoreHorizontal size={16} />} items={[
+              { label: "New chat", icon: Plus, disabled: !online || loading, onSelect: () => void createSession() },
+              { label: "History", icon: History, onSelect: () => setHistoryOpen(true) },
+              { label: "Rename", icon: SquarePen, disabled: !online || !currentChat || currentChat.archived, onSelect: () => {
+                if (currentChat) { setRenameValue(currentChat.title); setRenameOpen(true); }
+              } },
+              { label: "Export Markdown", icon: Download, disabled: !currentChat, onSelect: () => void exportSession() },
+              { label: currentChat?.archived ? "Restore" : "Archive", icon: Archive, disabled: !online || !currentChat, onSelect: () => {
+                if (currentChat) void (currentChat.archived ? restoreSession(currentChat) : archiveSession(currentChat));
+              } },
+            ]} />
           </div>
         </header>
         <div className="conversation-scroll" ref={scrollPane} onScroll={(event) => {
@@ -793,7 +823,7 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
           })}
           {error && <div className="conversation-error" role="alert"><CircleAlert size={14} /><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError(null)}><X size={12} /></button></div>}
           {online && !loading && activeSession?.messages.length === 0 ? <WelcomePanel base={base} sourceCount={base.sourceCount} /> : <h1 className="gx-sr-only">Ask {base.title}</h1>}
-          {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} retryDisabled={!ready || sending || sourceScopeEmpty || Boolean(activeSession?.archived)} onRetry={() => void send(message.content, message.context.askFailure?.options)} onEdit={() => setDraft(message.content)} onCite={(citation, index) => setEvidence({ citation, index })} selected={selectedMessageId === message.id} saveAvailable={readReady("proposals")} promoting={answers.busyId === message.id} promoted={answers.isSaved(message.id)} branching={branchingMessageId === message.id} onSelect={() => setSelectedMessageId(message.id)} onCopy={() => void copyMessage(message)} onPromote={() => void answers.save(activeSession, message)} onRemove={() => void answers.remove(message)} onBranch={() => void branchFromMessage(message)} onMakeReport={onMakeReport ? () => onMakeReport(activeSession.id) : undefined} onTrace={traces.on ? () => setTrace({ sessionId: activeSession.id, messageId: message.id }) : undefined} />)}
+          {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} retryDisabled={!ready || sending || sourceScopeEmpty || Boolean(activeSession?.archived)} onRetry={() => void send(message.content, message.context.askFailure?.options)} onEdit={() => setDraft(message.content)} onCite={(citation, index) => setEvidence({ citation, index })} selected={selectedMessageId === message.id} saveAvailable={readReady("proposals")} promoting={answers.busyId === message.id} promoted={answers.isSaved(message.id)} branching={branchingMessageId === message.id} onSelect={() => setSelectedMessageId(message.id)} onCopy={() => void copyMessage(message)} onPromote={() => void answers.save(activeSession, message)} onRemove={() => void answers.remove(message)} onBranch={() => void branchFromMessage(message)} onTrace={traces.on ? () => setTrace({ sessionId: activeSession.id, messageId: message.id }) : undefined} />)}
           {sending && asking && <article className="conversation-message role-user"><div className="message-author"><span className="user-mark"><UserRound size={13} /></span><span>You</span></div><div className="message-body"><MessageContent content={asking} /></div></article>}
           {sending && (live ? <LiveAnswer state={live} /> : <div className="thinking-row"><span className="assistant-mark"><BrandMark size={14} busy /></span><span><i /><i /><i /></span><small>Working out what to look up…</small></div>)}
         </div>
@@ -806,7 +836,7 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
         </aside>
       </div>, document.body)}
       {visible && evidence && <EvidencePanel citation={evidence.citation} index={evidence.index} onClose={() => setEvidence(null)} onOpenSource={onOpenSource ? (id) => { setEvidence(null); onOpenSource(id); } : undefined} />}
-      {mobileSessionsOpen && <div className="mobile-session-drawer" role="dialog" aria-modal="true" aria-label="Session history"><button className="mobile-session-scrim" onClick={() => setMobileSessionsOpen(false)} aria-label="Close session history" /><div className="mobile-session-sheet"><button className="mobile-session-close" autoFocus onClick={() => setMobileSessionsOpen(false)} aria-label="Close session history"><X size={15} /></button><SessionsSidebar base={base} online={online} sessions={sessions} archivedSessions={archivedSessions} showArchived={showArchived} activeId={activeId} loading={loading} query={sessionQuery} onQuery={setSessionQuery} onNew={() => { setMobileSessionsOpen(false); void createSession(); }} onOpen={(id) => { setMobileSessionsOpen(false); void loadSession(id); }} onPin={(session) => void patchSession(session.id, { pinned: !session.pinned })} onArchive={(session) => void archiveSession(session)} onToggleArchived={() => void toggleArchived()} onRestore={(session) => void restoreSession(session)} /></div></div>}
+      {historyOpen && <div className="mobile-session-drawer" role="dialog" aria-modal="true" aria-label="Session history"><button className="mobile-session-scrim" onClick={() => setHistoryOpen(false)} aria-label="Dismiss session history" /><div className="mobile-session-sheet"><button className="mobile-session-close" autoFocus onClick={() => setHistoryOpen(false)} aria-label="Close session history"><X size={15} /></button><SessionsSidebar base={base} sessions={sessions} archivedSessions={archivedSessions} showArchived={showArchived} activeId={activeId} loading={loading} query={sessionQuery} onQuery={setSessionQuery} onOpen={(id) => { setHistoryOpen(false); setRenameOpen(false); void loadSession(id); }} onPin={(session) => void pinSession(session)} onArchive={(session) => void archiveSession(session)} onToggleArchived={() => void toggleArchived()} onRestore={(session) => void restoreSession(session)} /></div></div>}
     </div>
   );
 }

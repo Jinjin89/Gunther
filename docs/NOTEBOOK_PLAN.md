@@ -1,21 +1,15 @@
 # One library screen, Studio types and key results
 
-Status: agreed and final (2026-11-23). Phases 1a and 1b are built; the rest is unbuilt. Read [AGENTS.md](../AGENTS.md) first. When a phase ships, move
+Status: agreed and final (2026-11-23). Phases 1a, 1b and 2a are built; the rest is unbuilt. Read [AGENTS.md](../AGENTS.md) first. When a phase ships, move
 what it built into the shipped docs ([Outputs](OUTPUTS.md), [Ask](ASK.md), [Library](LIBRARY.md),
 [Studio format](STUDIO_FORMAT.md)) and delete that phase from this file.
 
 ## 1. Why
 
-Gunther's outputs work like Google NotebookLM, but they are harder to use:
-
-- The library page has three tabs: Ask, Contents and Outputs. Each tab has its own source picker and its own conversations.
-- To make something, you type a request into a chat. The Report and Slides buttons only fill in text.
-- Outputs hide behind four panes: a preview dropdown, a version dropdown, a Details drawer (artifacts, brief, approach, outline, versions) and a conversations list.
-- The desktop starts outputs through the Report and Slides conversation shortcuts.
-- Knowledge does not grow. Save as knowledge copies a whole answer, chatter included. Ask never reads saved knowledge, and outputs never become knowledge.
-
-Gunther stays ahead in checked citations, versions, refining by chat, real exports and designed
-slides. Keep all of these.
+The [library workspace](LIBRARY.md#sources-chat-and-studio) gives questions and Studio builds a
+shared selection, with a place to open and refine outputs. The next phases add a library
+overview, automatic key results and more Studio types. Keep checked citations, versions,
+refinement, exports and designed slides as the new types ship.
 
 ## 2. Decisions (agreed with the owner, 2026-11-23)
 
@@ -45,8 +39,7 @@ These follow from AGENTS.md and are not open questions:
 ### 3.1 Extend the output catalog
 
 The existing shapes and types, build options and saved-version rules are in [Outputs](OUTPUTS.md).
-Use `GET /api/output-types` for the Studio tiles in Phase 2a. Extend the type options with
-`voices` when audio ships.
+Extend the type options from `GET /api/output-types` with `voices` when audio ships.
 
 - **Two Studio pipelines.** Report and slides use the planned pipeline. Add the direct pipeline
   for cards, map and audio. It runs read → memo → draft → format fix → verify → assemble.
@@ -59,11 +52,7 @@ Use `GET /api/output-types` for the Studio tiles in Phase 2a. Extend the type op
 
 ### 3.2 One way to build and refine
 
-Use the [shipped conversation API](OUTPUTS.md#api-boundaries) for the Studio tiles in Phase 2a.
-A fresh tile build creates a conversation for that output and sends `kind="build"` with its
-`BuildTurnInput`. Clicking the tile while its first build is running opens that running card.
-The pencil can start a new custom build. Failed cards resend `lastTurn.build` with a fresh
-request ID. Refine sends `targetLineageId` for the open output.
+Use the [Studio conversation API](OUTPUTS.md#api-boundaries) for the new output types.
 
 ### 3.3 Key results: one growing, checked fact list per library
 
@@ -119,52 +108,14 @@ distill each `status == "trusted"` unit (`origin_kind = "saved_answer"`).
 
 ## 4. Screen
 
-```
-┌ Sources ─────────┬ Middle ─────────────────────────┬ Studio ──────────┐
-│ 🔍 Filter   +Sec │ chat | open output | source     │ [Report][Brief…] │
-│ ☑ All (12)       │                                 │ [Slides][Cards…] │
-│ ▾ Methods     ⋯  │                                 │ ──────────────── │
-│   ☑ Paper A   ⋯  │                                 │ ▣ Slides         │
-│ ▾ Key results(14)│ ┌ Ask your sources… ─────────┐  │   Writing 3 of 8 │
-│ + Add source     │ └────────────────────────────┘  │ ▣ Briefing    ✓  │
-└──────────────────┴─────────────────────────────────┴──────────────────┘
-```
+The shared selection, columns, Chat and current readers are described in
+[Library](LIBRARY.md#sources-chat-and-studio), [Ask](ASK.md) and [Outputs](OUTPUTS.md).
 
-**Sources (left column).**
-
-- One tree replaces both [LibraryContents](../apps/desktop/src/contents/LibraryContents.tsx) and [SourceScopeTree](../apps/desktop/src/outputs/SourceScopeTree.tsx).
-- **Checkboxes control scope only** (decoupled from `LibraryContents.tsx:63,174,235-268` bulk selection). Clicking a source title opens its Source summary in the middle without changing any tick. Dragging a row handle or opening its `⋯` menu acts on that single row (Rename, Move to…, Take out of section, Move to Trash via `trash.ts`). Ticking a section ticks its sources.
-- **Shared selection.** Store per library as `{ mode: "all" } | { mode: "selected", sourceIds: string[] }`. Adding a source while in `mode: "all"` includes it automatically. When `mode: "selected"` has zero sources, disable Send and Studio tiles with an inline hint ("Select at least one source") instead of sending `[]` to Ask (`ask_turns.py:642-652` treats `[]` as all sources).
-- Ask turns always send the resolved source IDs (`[]` only for `mode: "all"`) and `focusChapterId: null` (preventing old section sessions from silently narrowing scope at `ask_turns.py:667-689`). Switching Ask history never overwrites the library's ticks.
-- **`+ Add source`** includes Document, Photo, Web page, Recording and **Note or pasted text** (`onAdd("note")`).
-- **Key results (N)** sits below the tree (phase 3a). Each row shows its source chips. Clicking opens `EvidencePanel` with its passages and origin ("from your question on 20 Nov"), whitelisted via `data-opens-evidence` (`EvidencePanel.tsx:20`). Its `⋯` menu has Remove.
-
-**Middle column.** Switches between three views while keeping Chat mounted (hidden via CSS/state so drafts and scroll position are kept). Leaving a dirty `EditPane` asks first.
-
-- **Chat** ([SessionWorkspace](../apps/desktop/src/pages/SessionWorkspace.tsx)):
-  - Header holds the title, a compact **Brief** popover (Ask's brief, carrying context across turns), and a menu: New chat, History (search/pin/archived/restore), Rename, Export Markdown, Archive. Drop Home-only "File" and drop "Make a report" on research answers.
-  - Below each answer, `"N sources"` expands an inline source list (clicking any opens `EvidencePanel`). When `traces.on`, a `"Trace"` footer button opens a slide-over.
-  - Inline `[n]` buttons in `AnswerBody.tsx` show a hover popover with `sourceTitle`, `locator` and clipped `quote` (shared by Chat and all output readers). Clicking still opens `EvidencePanel`.
-  - Empty chat shows library title, question, description and source counts in phase 2a. In phase 2b, a new `library_overviews` table + Analysis job (`knowledge_base_id` PK, `summary`, `suggested_questions_json`, `source_fingerprint`, `method`, `error`, `updated_at`) summarizes all live sources (from `SourceDigest.overview`, `SourcePaper.abstract` or leading snippet, so notes, web pages and recordings work too) with up to 3 clickable suggested questions. Do not reuse `TopicSynthesis`, which requires `TopicNode` FK (`models.py:958-960`) and filed paper abstracts (`library_topics.py:324-337`).
-- **Open output** (with Back to chat):
-  - Reader chosen by `shape`: ReportView, SlidesView, or the new cards, map or audio reader.
-  - Below the reader: folded change history and the **Refine** box (`ArtifactConversation` turn with `targetLineageId`). On old multi-output conversations, turns that saved another lineage show a small output badge.
-  - Refining keeps the output's own stored scope by default (delete `scopeWrites` in `artifactConversations.ts:188-236`). Example: if you built a Briefing doc from 3 sources and later tick 5 sources in the library, a small bar above Refine shows `"Using this output's 3 sources · Update to current 5"`, updating scope only when clicked.
-  - `⋯` menu: Versions, Outline (if `supports_outline`), Edit, Check again, Style (if `supports_design`), Export, and Move to Trash (phase 2b).
-- **Source summary** (with Back to chat):
-  - Shows full `SourceDigest` (`overview`, `keyPoints` with clickable citations, clickable `terms` and `openQuestions` that pre-fill or send to Chat) beside `SourcePaper` metadata and Open full page.
-
-**Studio (right column).**
-
-- Top: neutral tile grid from `/api/output-types`, each with a pencil button for its options popover.
-- Bottom: output cards (built, running and failed, newest first) from artifacts and conversation summaries. Each card shows title, type, version or live stage label (e.g. `"Writing slides · 3 of 8"`), or error with Retry. Clicking opens it in the middle.
-
-**Window widths.** Update `App.tsx:107` to auto-collapse the outer app sidebar whenever `view === "base"`. Sources and Studio resize and collapse: below `1080px` Studio collapses to an icon rail; below `840px` Sources collapses too; below `1200px` opening wide readers (`slides`, `map`) auto-collapses Sources.
-
-**Removed (phase 2a).** Remove along with their CSS and tests: Ask/Contents/Outputs tabs,
-`ArtifactWorkspaceLayout`, Outputs conversations list, Outputs Brief/Approach panels and Details
-drawer, preview and version dropdowns, and Ask's right-hand `ContextInspector`. Saved navigation
-modes `contents`, `ask` and `outputs` all open the library screen. Home Ask is unchanged.
+- **Key results (N)** sits below the Sources tree in Phase 3a. Each row shows source chips and opens `EvidencePanel` with passages and origin such as “from your question on 20 Nov”. Mark its evidence triggers with `data-opens-evidence`. The row actions include Remove.
+- **Chat overview** uses a new `library_overviews` table and Analysis job in Phase 2b. Store `knowledge_base_id` as the primary key with `summary`, `suggested_questions_json`, `source_fingerprint`, `method`, `error` and `updated_at`. Summarize all live sources from `SourceDigest.overview`, `SourcePaper.abstract` or a leading snippet, so notes, web pages and recordings contribute. Offer up to three clickable suggested questions. Use a library-level job because `TopicSynthesis` requires a `TopicNode` and filed paper abstracts.
+- **Citation preview** in Phase 2b shows `sourceTitle`, `locator` and a clipped `quote` on hover over an inline `[n]` in `AnswerBody.tsx`, shared by Chat and output readers. Clicking opens `EvidencePanel`.
+- **Source summary** in Phase 2b shows the full `SourceDigest` beside paper metadata and Open full page. Link `keyPoints` to their citations and let `terms` and `openQuestions` pre-fill or send to Chat.
+- **Output reader** chooses the view by shape as cards, map and audio ship. The map reader also collapses Sources below 1200 px. Phase 2b adds Move to Trash to the output actions.
 
 ## 5. New shapes
 
@@ -207,20 +158,6 @@ Why: removing T shifted cells toward the white-cell lineage [1].
 The builder may split a phase into batches. Each batch keeps every test green and is reviewed on
 its own. Codex builds; Claude and the checker review each diff.
 
-### Phase 2a — Core library screen
-**Adds:**
-- 3-column `Sources · Middle · Studio` layout with auto-collapsed outer sidebar (`App.tsx:107`) and narrow breakpoints (`1200px`, `1080px`, `840px`).
-- Unified Sources tree with decoupled scope ticks (`{ mode: "all" } | { mode: "selected", sourceIds }`), empty-selection guard, single-row drag and `⋯` menu (including Move to Trash), and `+ Add source → Note or pasted text`.
-- Studio tile grid from `/api/output-types`, pencil options popover, and output cards (live stage labels and failed Retry cards).
-- Middle view switcher keeping Chat mounted: Chat header Brief popover + updated menu, inline `"N sources"`, Trace slide-over, Open output with Refine box + scope-mismatch bar, and Source summary.
-- Updated local Chrome journey driving the new screen.
-
-**Removes:**
-- Ask/Contents/Outputs tabs, `ArtifactWorkspaceLayout`, Outputs conversations list, Outputs Brief/Approach panels, Details drawer, preview/version dropdowns, Ask's right-hand `ContextInspector`, `"Make a report"` button, `scopeWrites` queue, and their CSS and tests. (Net desktop LOC must drop.)
-
-**Tests (no live model calls):**
-- Desktop Vitest tests for shared selection (all/empty/section/Ask `focusChapterId: null`), decoupled drag/click vs ticks, Middle switching preserving Chat draft + dirty `EditPane` guard, Refine scope bar, and Retry card; local Chrome journey passes.
-
 ### Phase 2b — Library overview, parity polish and Output Trash
 **Adds:**
 - `library_overviews` migration and Analysis job (short summary + up to 3 suggested questions from all live source kinds), shown in empty Chat.
@@ -229,7 +166,7 @@ its own. Codex builds; Claude and the checker review each diff.
 - Output Trash through `TrashService`: nullable `trashed_at`/`trash_batch_id` on `Artifact` and `ArtifactConversation`, `TrashItemKind = "output"`, lineage-level batching, active-run refusal, `trashed_at IS NULL` filtering, leaf-first purge in `_delete_batch` (`trash.py:463-474`) with ref-counted `ArtifactAsset` cleanup, and `⋯ → Move to Trash` + Trash page support.
 
 **Removes:**
-- Nothing major (replaces Phase 2a empty-chat fallback when an overview exists).
+- The overview replaces the library details in empty Chat when an overview exists.
 
 **Tests (no live model calls):**
 - Backend tests with fake Analysis model for `library_overviews` (PDF, note, recording, empty library) and Output Trash (trash, refuse during active run, restore, delete forever leaf-first, asset ref-count); desktop tests for hover popover, full Source summary and Output Trash; Chrome journey passes.
@@ -305,4 +242,4 @@ Each phase is done when all of these hold:
 - Model and TTS behaviour are tested with fakes and recorded replies. Run no live model calls, no app builds and no worktrees.
 - Saved data from before the phase opens and verifies cleanly: old reports, decks, multi-output conversations and saved answers.
 - Shipped docs ([Outputs](OUTPUTS.md), [Ask](ASK.md), [Library](LIBRARY.md), [Studio format](STUDIO_FORMAT.md)) describe what shipped, and the completed phase is deleted from this file.
-- Production line count is reported honestly (including new files). Phase 2a removes more desktop code than it adds.
+- Production line count is reported honestly (including new files).

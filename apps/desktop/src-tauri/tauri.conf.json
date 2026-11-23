@@ -34,7 +34,7 @@
         "title": "Gunther — Living Knowledge",
         "width": 1280,
         "height": 800,
-        "minWidth": 900,
+        "minWidth": 800,
         "minHeight": 640,
         "resizable": true,
         "fullscreen": false,

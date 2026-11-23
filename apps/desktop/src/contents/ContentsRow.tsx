@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
-import { ArrowUpRight, AudioLines, BookOpenText, Camera, ChevronRight, FileText, FolderPlus, Inbox, Link2, NotebookText, Plus, Table2, type LucideIcon } from "lucide-react";
+import { AudioLines, BookOpenText, Camera, ChevronRight, FileText, GripVertical, Inbox, Link2, NotebookText, Table2, type LucideIcon } from "lucide-react";
 import type { SourceKind } from "@gunther/contracts";
 import { rowDetail, type ContentsRow as Row } from "./contentsTree";
-import { PopMenu, SectionMenu, SourceMenu, type SectionActions } from "./SectionMenu";
+import { SectionMenu, SourceMenu, type SectionActions } from "./SectionMenu";
 
 export const kindIcon: Record<SourceKind, LucideIcon> = {
   note: NotebookText, paper: BookOpenText, link: Link2, file: FileText, image: Camera, table: Table2, recording: AudioLines, course: AudioLines,
@@ -19,12 +19,13 @@ interface CommonProps {
   drop: DropMark | null;
 }
 
-/** Wires a row to dnd-kit: the whole row can be picked up (after a 6 px move) and dropped onto. */
+/** The row is the drop target. Its handle is the only drag activator. */
 function useRowDnd(row: Row, dragDisabled: boolean) {
   const drag = useDraggable({ id: row.key, disabled: dragDisabled || row.type === "unplaced" || row.type === "empty" });
   const over = useDroppable({ id: row.key });
   const ref = (node: HTMLElement | null) => { drag.setNodeRef(node); over.setNodeRef(node); };
-  return { ref, listeners: dragDisabled ? {} : drag.listeners, dragging: drag.isDragging };
+  const handle = { ref: drag.setActivatorNodeRef, disabled: dragDisabled, ...drag.attributes, ...drag.listeners };
+  return { ref, handle, dragging: drag.isDragging };
 }
 
 const markClass = (drop: DropMark | null) => drop ? ` is-drop-${drop.position}${drop.allowed ? "" : " is-drop-denied"}` : "";
@@ -65,22 +66,23 @@ export function ScopeTick({ label, checked, mixed = false, disabled, onCheck }: 
     onDoubleClick={(event) => event.stopPropagation()} onChange={(event) => onCheck(event.target.checked)} />;
 }
 
-/** A section heading: toggle, title, its note, a count when closed, then + and ⋯ on hover. */
+/** A section heading with its own handle and actions. */
 export function SectionRow({ row, dragDisabled, drop, editing, scope, actions, onToggle, onSave, onCancel }: CommonProps & {
   editing: boolean; scope: { checked: boolean; mixed: boolean; disabled: boolean; onCheck: (checked: boolean) => void };
   actions: SectionActions; onToggle: () => void; onSave: (title: string) => void; onCancel: () => void;
 }) {
-  const { ref, listeners, dragging } = useRowDnd(row, dragDisabled || editing);
+  const { ref, handle, dragging } = useRowDnd(row, dragDisabled || editing);
   if (row.node?.type !== "section") return null;
   const section = row.node.section;
   const level = Math.min(row.depth + 1, 3);
   const keys = (event: KeyboardEvent) => {
     if (event.key === "F2") { event.preventDefault(); actions.onRename(); }
   };
-  return <div ref={ref} {...listeners} role="presentation"
+  return <div ref={ref} role="presentation"
     className={`contents-row contents-section is-level-${level}${dragging ? " is-dragging" : ""}${markClass(drop)}`}
     data-row={row.key}>
     <Guides depth={row.depth} />
+    <button {...handle} type="button" className="contents-drag-handle" aria-label={`Drag ${section.title}`}><GripVertical size={14} /></button>
     <button type="button" className={`contents-toggle${row.collapsed ? "" : " is-open"}`} aria-expanded={!row.collapsed} aria-label={`${row.collapsed ? "Expand" : "Collapse"} ${section.title}`}
       onClick={(event) => { event.stopPropagation(); onToggle(); }} onDoubleClick={(event) => event.stopPropagation()}><ChevronRight size={14} /></button>
     <ScopeTick label={`Select sources in ${section.title}`} {...scope} />
@@ -93,13 +95,7 @@ export function SectionRow({ row, dragDisabled, drop, editing, scope, actions, o
         {section.description && <span className="contents-note">{section.description}</span>}
       </span>}
     {!editing && row.collapsed && <small className="contents-count">{row.count}</small>}
-    {!editing && <span className="contents-actions">
-      <PopMenu label={`Add to ${section.title}`} triggerLabel={`Add to ${section.title}`} triggerClass="contents-icon-btn" trigger={<Plus size={15} />} items={[
-        { label: "Sub-section", icon: FolderPlus, onSelect: actions.onAddSubsection },
-        { label: "Sources from this library…", icon: FileText, onSelect: actions.onAddSources },
-      ]} />
-      <SectionMenu title={section.title} actions={actions} />
-    </span>}
+    {!editing && <span className="contents-actions"><SectionMenu title={section.title} actions={actions} /></span>}
   </div>;
 }
 
@@ -126,19 +122,20 @@ export function EmptyRow({ row, drop, onAddSources, onAddSubsection }: { row: Ro
   </div>;
 }
 
-export function SourceRow({ row, dragDisabled, drop, current, checked, editing, onSelect, onCheck, onOpen, onRename, onSave, onCancel, onMove, onTakeOut }: CommonProps & {
+export function SourceRow({ row, dragDisabled, drop, current, checked, editing, onSelect, onCheck, onRename, onSave, onCancel, onMove, onTakeOut, onTrash }: CommonProps & {
   current: boolean; checked: boolean; editing: boolean;
-  onSelect: () => void; onCheck: (checked: boolean) => void; onOpen: () => void;
-  onRename: () => void; onSave: (title: string) => void; onCancel: () => void; onMove: () => void; onTakeOut: () => void;
+  onSelect: () => void; onCheck: (checked: boolean) => void;
+  onRename: () => void; onSave: (title: string) => void; onCancel: () => void; onMove: () => void; onTakeOut: () => void; onTrash: () => void;
 }) {
-  const { ref, listeners, dragging } = useRowDnd(row, dragDisabled || editing);
+  const { ref, handle, dragging } = useRowDnd(row, dragDisabled || editing);
   const source = row.source;
   if (!source) return null;
   const Icon = kindIcon[source.kind];
-  return <div ref={ref} {...listeners} role="presentation"
+  return <div ref={ref} role="presentation"
     className={`contents-row contents-source-row${current ? " is-current" : ""}${dragging ? " is-dragging" : ""}${markClass(drop)}`}
     data-row={row.key}>
     <Guides depth={row.depth} />
+    <button {...handle} type="button" className="contents-drag-handle" aria-label={`Drag ${source.title}`}><GripVertical size={14} /></button>
     <ScopeTick label={`Select ${source.title}`} checked={checked} onCheck={onCheck} />
     {editing
       ? <span className="contents-source is-editing"><span className={`gx-kind-icon kind-${source.kind}`}><Icon size={13} /></span><TitleEditor value={source.title} label="Source name" onSave={onSave} onCancel={onCancel} /></span>
@@ -148,8 +145,7 @@ export function SourceRow({ row, dragDisabled, drop, current, checked, editing, 
         <span className={`contents-detail${source.processing === "failed" ? " is-failed" : ""}${source.processing === "reading" ? " is-reading" : ""}`}>{rowDetail(source)}</span>
       </button>}
     {!editing && <span className="contents-actions">
-      <button type="button" className="contents-icon-btn" aria-label={`Open ${source.title}`} title="Open" onClick={(event) => { event.stopPropagation(); onOpen(); }} onDoubleClick={(event) => event.stopPropagation()}><ArrowUpRight size={15} /></button>
-      <SourceMenu title={source.title} placed={!row.loose} onOpen={onOpen} onRename={onRename} onMove={onMove} onTakeOut={onTakeOut} />
+      <SourceMenu title={source.title} placed={!row.loose} onRename={onRename} onMove={onMove} onTakeOut={onTakeOut} onTrash={onTrash} />
     </span>}
   </div>;
 }

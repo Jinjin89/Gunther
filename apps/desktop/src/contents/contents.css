@@ -33,6 +33,13 @@
 .contents-row:hover { background: var(--gx-hover); }
 .contents-row.is-current { background: var(--gx-active); }
 .contents-row.is-dragging { opacity: 0.4; }
+.contents-drag-handle {
+  display: grid; place-items: center; flex: none; width: 20px; height: 26px; padding: 0;
+  border: 0; background: transparent; color: var(--gx-faint); cursor: grab; touch-action: none;
+}
+.contents-drag-handle:hover, .contents-drag-handle:focus-visible { color: var(--gx-ink); }
+.contents-row.is-dragging .contents-drag-handle { cursor: grabbing; }
+.contents-drag-handle:disabled { opacity: 0.35; cursor: default; }
 
 /* One faint line under the toggle of every open section above the row. */
 .contents-guides {
@@ -194,7 +201,6 @@
 
 .contents { --contents-indent: 14px; display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .contents-top, .contents-add { padding: 12px; }
-.contents-top h2 { margin: 0 0 10px; font-size: var(--gx-text-md); font-weight: 620; }
 .contents-scope {
   display: grid;
   grid-template-columns: auto 1fr auto;

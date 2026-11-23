@@ -118,22 +118,8 @@ describe("a saved research answer", () => {
   const message = (patch: Partial<ConversationContext>): SessionMessage => ({
     id: "msg_1", sessionId: "ses_1", role: "assistant", content: "An answer.", citations: [], createdAt: "2026-10-02T08:00:00.000Z", context: context(patch),
   });
-  const show = (patch: Partial<ConversationContext>, onMakeReport?: () => void) => render(<ConversationMessage message={message(patch)} retryDisabled={false} onRetry={vi.fn()} onEdit={vi.fn()} onCite={vi.fn()} selected={false} promoting={false} promoted={false} branching={false} onSelect={vi.fn()} onCopy={vi.fn()} onPromote={vi.fn()} onRemove={vi.fn()} onBranch={vi.fn()} onMakeReport={onMakeReport} />);
-
-  it("offers a report from it, and only from a research answer", async () => {
-    const onMakeReport = vi.fn();
-    const user = userEvent.setup();
-    const { unmount } = show({ research: research("done"), work }, onMakeReport);
-    await user.click(screen.getByRole("button", { name: "Make a report from this" }));
-    expect(onMakeReport).toHaveBeenCalledOnce();
-    unmount();
-    show({}, onMakeReport);
-    expect(screen.queryByRole("button", { name: "Make a report from this" })).not.toBeInTheDocument();
-  });
-
-  it("offers no report from questions the reader still has to answer", () => {
-    show({ research: research("asking") }, vi.fn());
-    expect(screen.queryByRole("button", { name: "Make a report from this" })).not.toBeInTheDocument();
+  it("leaves the source warning off a research clarification", () => {
+    render(<ConversationMessage message={message({ research: research("asking") })} retryDisabled={false} onRetry={vi.fn()} onEdit={vi.fn()} onCite={vi.fn()} selected={false} promoting={false} promoted={false} branching={false} onSelect={vi.fn()} onCopy={vi.fn()} onPromote={vi.fn()} onRemove={vi.fn()} onBranch={vi.fn()} />);
     expect(screen.queryByText("Not from your sources")).not.toBeInTheDocument();
   });
 });

@@ -1051,6 +1051,7 @@ class OutputTypeOut(ApiModel):
     icon: str
     options: tuple[OutputOption, ...]
     part_limit: int
+    legacy_styles: tuple[str, ...]
 
 
 class OutputRequestInput(ApiModel):

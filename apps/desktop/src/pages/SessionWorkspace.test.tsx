@@ -1,5 +1,5 @@
 import type { ConversationTurn, KnowledgeProposal, KnowledgeSession, KnowledgeUnit, SessionMessage } from "@gunther/contracts";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AnswerStoppedError, ServiceUnavailableError, knowledgeApi, type AnswerEvent } from "../api";
@@ -95,6 +95,119 @@ function deferred<T>() {
   const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
   return { promise, resolve, reject };
 }
+
+describe("Library Chat actions", () => {
+  const base = makeBase({ id: "chat-actions" });
+  const first = sessionWithAnswer(base.id);
+  const second = { ...first, id: "second", title: "Reading notes", messageCount: 0, messages: [] };
+
+  beforeEach(() => {
+    const saved = new Map([first, second].map((chat) => [chat.id, chat]));
+    vi.spyOn(knowledgeApi, "sessions").mockImplementation(async (_id, includeArchived) =>
+      [...saved.values()].filter((chat) => includeArchived || !chat.archived));
+    vi.spyOn(knowledgeApi, "session").mockImplementation(async (id) => saved.get(id)!);
+    vi.spyOn(knowledgeApi, "updateSession").mockImplementation(async (id, patch) => {
+      const chat = saved.get(id)!;
+      const updated = { ...chat, title: patch.title ?? chat.title, pinned: patch.pinned ?? chat.pinned, archived: patch.archived ?? chat.archived };
+      saved.set(id, updated);
+      return updated;
+    });
+    vi.spyOn(knowledgeApi, "followAnswer").mockResolvedValue(null);
+    vi.spyOn(knowledgeApi, "modelMenu").mockResolvedValue({ models: [], default: null, efforts: [] });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
+  });
+
+  it("starts a new chat and opens the previous chat from searchable, pinnable history", async () => {
+    const user = userEvent.setup();
+    const created = { ...second, id: "new", title: "New conversation" };
+    const create = vi.spyOn(knowledgeApi, "createSession").mockResolvedValue(created);
+    renderWorkspace(base);
+    const composer = screen.getByRole("textbox", { name: "Message Gunther" });
+    await waitFor(() => expect(composer).toBeEnabled());
+    await user.type(composer, "A draft in the first chat");
+
+    const actions = screen.getByRole("button", { name: "Chat actions" });
+    await user.click(actions);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "New chat", "History", "Rename", "Export Markdown", "Archive",
+    ]);
+    await user.click(screen.getByRole("menuitem", { name: "New chat" }));
+    expect(await screen.findByText(created.title)).toBeVisible();
+    expect(create).toHaveBeenCalledExactlyOnceWith(base.id, { focusChapterId: null, selectedSourceIds: [] });
+    expect(composer).toHaveValue("");
+
+    await user.click(actions);
+    await user.click(screen.getByRole("menuitem", { name: "History" }));
+    const drawer = within(screen.getByRole("dialog", { name: "Session history" }));
+    await user.type(drawer.getByRole("textbox", { name: "Search sessions" }), first.title);
+    expect(drawer.queryByRole("button", { name: /^New conversation/ })).not.toBeInTheDocument();
+    await user.click(drawer.getByRole("button", { name: "Actions for Markers" }));
+    await user.click(drawer.getByRole("menuitem", { name: "Pin session" }));
+    expect(await drawer.findByText("Pinned")).toBeVisible();
+    expect(knowledgeApi.updateSession).toHaveBeenCalledExactlyOnceWith(first.id, { pinned: true });
+    await user.click(drawer.getByRole("button", { name: /^Markers/ }));
+    expect(await screen.findByText(first.title)).toBeVisible();
+  });
+
+  it("renames, archives and restores the active chat through its menu and history", async () => {
+    const user = userEvent.setup();
+    renderWorkspace(base);
+    expect(await screen.findByText(first.title)).toBeVisible();
+    const actions = screen.getByRole("button", { name: "Chat actions" });
+    await user.click(actions);
+    await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+    const title = screen.getByRole("textbox", { name: "Session title" });
+    await user.clear(title);
+    await user.type(title, "Lab discussion{Enter}");
+    expect(await screen.findByText("Lab discussion")).toBeVisible();
+    expect(knowledgeApi.updateSession).toHaveBeenLastCalledWith(first.id, { title: "Lab discussion" });
+
+    await user.click(actions);
+    await user.click(screen.getByRole("menuitem", { name: "Archive" }));
+    expect(await screen.findByText(second.title)).toBeVisible();
+    expect(knowledgeApi.updateSession).toHaveBeenLastCalledWith(first.id, { archived: true });
+    await user.click(actions);
+    await user.click(screen.getByRole("menuitem", { name: "History" }));
+    const drawer = within(screen.getByRole("dialog", { name: "Session history" }));
+    await user.click(drawer.getByRole("button", { name: /^View archive/ }));
+    const archived = await drawer.findByRole("button", { name: "Actions for Lab discussion" });
+    await user.click(archived);
+    await user.click(drawer.getByRole("menuitem", { name: "Restore session" }));
+    await waitFor(() => expect(drawer.getByText("No archived sessions yet.")).toBeVisible());
+    expect(knowledgeApi.updateSession).toHaveBeenLastCalledWith(first.id, { archived: false });
+    await user.click(drawer.getByRole("button", { name: /^Lab discussion/ }));
+    expect(await screen.findByText("Lab discussion")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Message Gunther" })).toBeEnabled();
+  });
+
+  it("exports the active chat as Markdown with its citations", async () => {
+    const user = userEvent.setup();
+    const createObjectURL = vi.fn((_: Blob) => "blob:session-export");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", class extends URL {
+      static createObjectURL = createObjectURL;
+      static revokeObjectURL = revokeObjectURL;
+    });
+    const download = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      download(this.download);
+    });
+    renderWorkspace(base);
+    expect(await screen.findByText(first.title)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Chat actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Export Markdown" }));
+    expect(download).toHaveBeenCalledExactlyOnceWith("markers.md");
+    const blob = createObjectURL.mock.calls[0]![0];
+    const markdown = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.readAsText(blob);
+    });
+    expect(markdown).toContain("# Markers");
+    expect(markdown).toContain("> CD3D is a T-cell marker.");
+    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:session-export"), { timeout: 1500 });
+  });
+});
 
 describe("Library Ask startup selection", () => {
   beforeEach(() => {

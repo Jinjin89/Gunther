@@ -4,11 +4,14 @@ Capture goes to Inbox or directly to a library. File or move an item from its de
 
 ## Sources, Chat and Studio
 
-- The Sources column has the library's sections and sources. Create, rename and nest sections. Drag or move sources into a section and order its children. A source with no placement remains in the library. Deleting a section clears those placements and keeps the sources. The API uses stable IDs and rejects conflicting orders.
+- The Sources column has the library's sections and sources. Create, rename and nest sections. Use a row's drag handle to place or reorder it. A source's actions menu offers Rename, Move to…, Take out of section for placed sources, and Move to Trash with Undo. Each action targets that row and leaves the scope selection intact. A source with no placement remains in the library. Deleting a section clears those placements and keeps the sources. The API uses stable IDs and rejects conflicting orders.
 - Tick sources to choose material for Chat and new Studio outputs. A section tick selects its descendant sources, including those under collapsed sections. All sources includes additions to the library. The library remembers its selection across chats. Select at least one source to send a question or start an output from a selection.
-- Click a source title to see its summary and paper details in the middle. Open full page opens the source reader. Back to chat restores the open conversation and draft. Studio tiles start builds, and Studio cards open saved or running outputs. [Output guide](OUTPUTS.md)
+- Use **Add source** to capture a document, photo or scan, web page, recording, or note or pasted text directly into this library.
+- Click a source title to see its summary and paper details in the middle. Open full page opens the source reader. Back to chat restores the open conversation, draft and scroll position. Studio tiles start builds, and Studio cards open saved or running outputs. [Output guide](OUTPUTS.md)
 - Home search crosses libraries. Use `@` to narrow it, or use search within a library. Exact text uses SQLite full-text search. The installed local embedding model adds search by meaning with sqlite-vec. Source, section and selected-source scopes restrict eligible passages.
 - Suggest sections groups unplaced papers by shared terms when enough papers are available.
+
+The app sidebar starts collapsed in a library. Drag the inside edge of Sources or Studio to resize it, or focus the separator and use the arrow keys. Double-click the edge to restore the starting width. The desktop remembers each width on this device. Studio starts collapsed below 1080 px, and Sources below 840 px. Opening slides below 1200 px also collapses Sources. Use a column's rail icon to reopen it at the current width. The desktop window can shrink to 800 px.
 
 ## Readings and provenance
 

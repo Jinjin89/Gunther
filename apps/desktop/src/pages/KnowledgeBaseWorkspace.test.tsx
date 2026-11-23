@@ -15,6 +15,7 @@ vi.mock("../components/markdown/MarkdownEditor", () => ({
   MarkdownEditor: ({ value, onChange, ariaLabel }: { value: string; onChange: (value: string) => void; ariaLabel: string }) =>
     <textarea value={value} aria-label={ariaLabel} onChange={(event) => onChange(event.target.value)} />,
 }));
+vi.mock("../outputs/LazySlides", () => ({ LazySlidesView: () => <p>Slide reader</p> }));
 
 const ws = "workspace";
 const base = makeBase({ id: "study", title: "Reading group" });
@@ -32,7 +33,9 @@ const contents: LibraryContents = {
   ],
   placements: [{ sourceId: "s1", sectionId: "methods", position: 0 }, { sourceId: "s2", sectionId: "fieldwork", position: 0 }],
 };
-const report: OutputType = { id: "report", label: "Report", shape: "report", description: "A written report", icon: "FileText", options: ["focus", "length"], partLimit: 8 };
+const report: OutputType = { id: "report", label: "Report", shape: "report", description: "A written report", icon: "FileText", options: ["focus", "length"], partLimit: 8, legacyStyles: ["auto", "overview", "field_guide"] };
+const briefing: OutputType = { ...report, id: "briefing", label: "Briefing doc", legacyStyles: ["decision_brief"] };
+const guide: OutputType = { ...report, id: "study_guide", label: "Study guide", partLimit: 12, legacyStyles: ["teaching_path"] };
 const slides: OutputType = { id: "slides", label: "Slides", shape: "slides", description: "A slide deck", icon: "Presentation", options: ["focus", "use"], partLimit: 14 };
 const readyModels: ModelMenu = {
   models: [{ ref: "local/model", provider: "Local", label: "Model", display: "Local Model", vision: false, levels: [] }],
@@ -94,12 +97,14 @@ function setup({ artifacts = [], conversations = [] }: { artifacts?: Artifact[];
   vi.spyOn(knowledgeApi, "artifact").mockImplementation(async (_base, id) => artifacts.find((item) => item.id === id)!);
   vi.spyOn(knowledgeApi, "followArtifactTurn").mockResolvedValue(null);
   const turn = vi.spyOn(knowledgeApi, "artifactTurnStream").mockResolvedValue(done());
-  const view = render(<KnowledgeBaseWorkspace base={base} workspaceId={ws} onOpenSource={vi.fn()} onNotify={vi.fn()} onAdd={vi.fn()} />);
-  return { view, create, patch, turn, artifacts };
+  const onAdd = vi.fn();
+  const view = render(<KnowledgeBaseWorkspace base={base} workspaceId={ws} onOpenSource={vi.fn()} onNotify={vi.fn()} onAdd={onAdd} onTrashed={vi.fn()} />);
+  return { view, create, patch, turn, artifacts, onAdd };
 }
 
 beforeEach(() => {
   window.localStorage.clear();
+  vi.stubGlobal("innerWidth", 1280);
   vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
   vi.spyOn(knowledgeApi, "contents").mockResolvedValue(contents);
@@ -191,7 +196,8 @@ it("shares all sources, blocks an empty selection, and uses section ticks for ea
   expect(field).not.toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "Select Field notes" })).toBeChecked();
   expect(screen.getByRole("checkbox", { name: "Select Review notes" })).not.toBeChecked();
-  await user.click(screen.getByRole("button", { name: "Show conversations" }));
+  await user.click(screen.getByRole("button", { name: "Chat actions" }));
+  await user.click(screen.getByRole("menuitem", { name: "History" }));
   await user.click(within(screen.getByRole("dialog", { name: "Session history" })).getByRole("button", { name: /^History discussion/ }));
   await waitFor(() => expect(button).toBeEnabled());
   await user.click(button);
@@ -358,27 +364,99 @@ it("retries a failed card with its stored build options and original conversatio
   expect(create).not.toHaveBeenCalled();
 });
 
-it("uses the library ticks for tiles and the discussion for an explicit report from Chat", async () => {
+it("opens Capture in Note mode from the Add source menu", async () => {
   const user = userEvent.setup();
-  const answer: SessionMessage = {
-    id: "research-answer", role: "assistant", sessionId: originalSession.id, createdAt: at, content: "The research is complete.", citations: [],
-    context: {
-      sourcesConsidered: 1, assertionsConsidered: 1, verifiedAssertions: 1, retrievalMode: "all", responderMode: "model",
-      research: { state: "done", budget: "standard", used: { searches: 1, reads: 0 }, limits: { searches: 3, reads: 3 }, coreQuestion: "What changed?", doneWhen: "" },
-    },
-  };
-  vi.mocked(knowledgeApi.session).mockResolvedValue({ ...originalSession, messages: [answer], messageCount: 1 });
-  const { turn } = setup();
-  await user.click(await screen.findByRole("checkbox", { name: "Select Review notes" }));
-  const makeReport = await screen.findByRole("button", { name: "Make a report from this" });
-  await user.click(makeReport);
-  expect(screen.getByText("Using this chat as material.")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Slides" }));
-  expect(turn.mock.calls[0]![2].build).toEqual({ type: "slides", scope: selected("s1", "s2") });
+  const { onAdd } = setup();
+  await screen.findByRole("checkbox", { name: "Select Lab notes" });
+  await user.click(screen.getByRole("button", { name: "Add source" }));
+  await user.click(screen.getByRole("menuitem", { name: "Note or pasted text" }));
+  expect(onAdd).toHaveBeenCalledExactlyOnceWith("note");
+});
 
-  await user.click(makeReport);
-  await user.click(screen.getByRole("button", { name: "Build Report" }));
-  expect(turn.mock.calls[1]![2].build).toEqual({
-    type: "report", scope: { ...selected(), sessionIds: [originalSession.id] },
-  });
+const resizeWindow = (width: number) => act(() => {
+  vi.stubGlobal("innerWidth", width);
+  window.dispatchEvent(new Event("resize"));
+});
+
+it("collapses the columns at their window thresholds and reopens either rail", async () => {
+  const user = userEvent.setup();
+  setup();
+  await screen.findByRole("checkbox", { name: "Select Lab notes" });
+  const column = (action: string) => screen.getByRole("button", { name: action });
+  resizeWindow(1080);
+  expect(column("Collapse Studio")).toHaveAttribute("aria-expanded", "true");
+  resizeWindow(1079);
+  expect(column("Expand Studio")).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("button", { name: "Slides" })).not.toBeInTheDocument();
+  await user.click(column("Expand Studio"));
+  expect(screen.getByRole("button", { name: "Slides" })).toBeVisible();
+  await user.click(column("Collapse Studio"));
+  resizeWindow(840);
+  expect(column("Collapse Sources")).toBeVisible();
+  resizeWindow(839);
+  expect(column("Expand Sources")).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("checkbox", { name: "Select Lab notes" })).not.toBeInTheDocument();
+  await user.click(column("Expand Sources"));
+  expect(screen.getByRole("checkbox", { name: "Select Lab notes" })).toBeChecked();
+});
+
+it("resizes the columns from their inner edges and remembers the widths", async () => {
+  const user = userEvent.setup();
+  setup();
+  await screen.findByRole("checkbox", { name: "Select Lab notes" });
+  const sourcesWidth = screen.getByRole("separator", { name: "Resize Sources" });
+  const studioWidth = screen.getByRole("separator", { name: "Resize Studio" });
+  const widen = (separator: HTMLElement, key: string) => {
+    const before = Number(separator.getAttribute("aria-valuenow"));
+    fireEvent.keyDown(separator, { key });
+    const after = Number(separator.getAttribute("aria-valuenow"));
+    expect(after).toBeGreaterThan(before);
+    return after;
+  };
+  const widerSources = widen(sourcesWidth, "ArrowRight");
+  const widerStudio = widen(studioWidth, "ArrowLeft");
+  await user.click(screen.getByRole("button", { name: "Collapse Sources" }));
+  await user.click(screen.getByRole("button", { name: "Expand Sources" }));
+  expect(screen.getByRole("separator", { name: "Resize Sources" })).toHaveAttribute("aria-valuenow", String(widerSources));
+  expect(window.localStorage.getItem("gunther:library-sources-width")).toBe(String(widerSources));
+  expect(window.localStorage.getItem("gunther:library-studio-width")).toBe(String(widerStudio));
+});
+
+it("gives an open slide reader more room below 1200px", async () => {
+  const user = userEvent.setup();
+  resizeWindow(1200);
+  const deck = version({ kind: "slides", format: "slides", style: "slides", outputType: "Slides" });
+  setup({ artifacts: [deck] });
+  await user.click(await screen.findByRole("button", { name: /Field findings Slides Version 1/ }));
+  expect(await screen.findByText("Slide reader")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Collapse Sources" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Back to chat" }));
+  resizeWindow(1199);
+  expect(screen.getByRole("button", { name: "Collapse Sources" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: /Field findings Slides Version 1/ }));
+  await user.click(await screen.findByRole("button", { name: "Expand Sources" }));
+  expect(screen.getByRole("checkbox", { name: "Select Lab notes" })).toBeChecked();
+  await user.click(screen.getByRole("button", { name: "Collapse Sources" }));
+  await user.click(screen.getByRole("button", { name: "Back to chat" }));
+  expect(screen.getByRole("button", { name: "Collapse Sources" })).toBeVisible();
+});
+
+it.each([
+  ["auto", report],
+  ["overview", report],
+  ["field_guide", report],
+  ["teaching_path", guide],
+  ["decision_brief", briefing],
+] as const)("enforces the catalog outline limit for the legacy %s style", async (style, type) => {
+  const user = userEvent.setup();
+  vi.mocked(knowledgeApi.outputTypes).mockResolvedValue([report, briefing, guide, slides]);
+  const outline = Array.from({ length: type.partLimit! }, (_, index) => ({ heading: `Section ${index + 1}`, goal: "" }));
+  setup({ artifacts: [version({ style, outputType: type.label, outline })] });
+  await user.click(await screen.findByRole("button", { name: /Field findings .* Version 1/ }));
+  await user.click(await screen.findByRole("button", { name: "Output actions" }));
+  await user.click(screen.getByRole("menuitem", { name: "Outline" }));
+  await user.click(screen.getByRole("button", { name: "Edit outline" }));
+  expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Remove 1" }));
+  expect(screen.getByRole("button", { name: "Add" })).toBeEnabled();
 });

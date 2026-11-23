@@ -1,6 +1,7 @@
 import type { ConversationCitation, SourceDetail } from "@gunther/contracts";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { knowledgeApi } from "../../api";
 import { EvidencePanel, hostOf } from "./EvidencePanel";
@@ -41,6 +42,24 @@ describe("EvidencePanel", () => {
     expect(onClose).not.toHaveBeenCalled();
     await userEvent.click(screen.getByText("Conversation"));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("switches evidence from a marked trigger while keeping the panel open", async () => {
+    const second = { ...web, id: "c_second", quote: "A different passage." };
+    const closed = vi.fn();
+    function Reader() {
+      const [citation, setCitation] = useState<ConversationCitation | null>(web);
+      return <>
+        <button type="button" data-opens-evidence onClick={() => setCitation(second)}>Other answer sources</button>
+        {citation && <EvidencePanel citation={citation} index={0} onClose={() => { closed(); setCitation(null); }} />}
+      </>;
+    }
+    render(<Reader />);
+    const panel = screen.getByRole("complementary", { name: "Evidence" });
+    await userEvent.click(screen.getByRole("button", { name: "Other answer sources" }));
+    expect(closed).not.toHaveBeenCalled();
+    expect(screen.getByRole("complementary", { name: "Evidence" })).toBe(panel);
+    expect(screen.getByText(second.quote)).toBeVisible();
   });
 
   it("shows a library passage among its neighbours and opens the source", async () => {

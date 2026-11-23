@@ -13,11 +13,7 @@
 .sessions-heading strong { overflow: hidden; font-size: calc(12px * var(--gx-fs, 1)); text-overflow: ellipsis; white-space: nowrap; }
 .sessions-heading > button, .session-search button { width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--atlas-faint) !important; }
 .sessions-heading > button:hover { background: var(--atlas-paper); color: var(--atlas-ink) !important; }
-.new-session-button { height: 40px; margin: 13px 13px 9px; padding: 0 10px; display: flex; align-items: center; gap: 8px; border: 1px solid color-mix(in srgb, var(--atlas-green) 42%, transparent); border-radius: 9px; background: var(--gx-ink); color: var(--gx-on-ink) !important; font-size: var(--gx-text-sm); font-weight: 600; }
-.new-session-button:hover { opacity: .88; }
-.new-session-button span { flex: 1; text-align: left; }
-.new-session-button kbd { opacity: .68; color: inherit; font-size: calc(12px * var(--gx-fs, 1)); }
-.session-search { height: 32px; margin: 0 13px 11px; padding: 0 8px; display: flex; align-items: center; gap: 7px; border: 1px solid transparent; border-radius: 8px; background: var(--atlas-paper); color: var(--atlas-faint); }
+.session-search { height: 32px; margin: 12px 13px 11px; padding: 0 8px; display: flex; align-items: center; gap: 7px; border: 1px solid transparent; border-radius: 8px; background: var(--atlas-paper); color: var(--atlas-faint); }
 .session-search:focus-within { border-color: var(--atlas-green); box-shadow: 0 0 0 2px var(--atlas-green-soft); }
 .session-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; font-size: calc(12px * var(--gx-fs, 1)); }
 .session-search button { width: 20px; height: 20px; padding: 0; }
@@ -60,12 +56,8 @@
 /* Conversation */
 .conversation-pane { display: flex; flex-direction: column; background: var(--atlas-paper); position: relative; }
 .conversation-header { min-height: 57px; padding: 8px 17px 8px 20px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--atlas-line); background: color-mix(in srgb, var(--atlas-paper) 96%, transparent); }
-.mobile-session-toggle { width: 31px; height: 31px; display: grid; flex: none; place-items: center; border: 1px solid var(--atlas-line); border-radius: 8px; background: var(--atlas-paper-soft); color: var(--atlas-muted) !important; }
 .conversation-title { min-width: 0; display: grid; gap: 4px; }
-.conversation-title > button { min-width: 0; padding: 0; display: flex; align-items: center; gap: 6px; border: 0; background: transparent; text-align: left; }
-.conversation-title > button strong { max-width: min(370px, 32vw); overflow: hidden; font-family: var(--atlas-serif); font-size: calc(15px * var(--gx-fs, 1)); font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
-.conversation-title > button svg { opacity: 0; color: var(--atlas-faint); }
-.conversation-title > button:hover svg { opacity: 1; }
+.conversation-title > strong { max-width: min(370px, 32vw); overflow: hidden; font-family: var(--atlas-serif); font-size: calc(15px * var(--gx-fs, 1)); font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-title > span { display: flex; align-items: center; gap: 5px; color: var(--atlas-faint); font-size: calc(12px * var(--gx-fs, 1)); }
 .conversation-title > span b { font-weight: 400; }
 .conversation-title > span svg { color: var(--atlas-green); }
@@ -76,11 +68,6 @@
 .conversation-title form input { width: min(360px, 34vw); height: 30px; padding: 0 8px; border: 1px solid var(--atlas-green); border-radius: 7px; outline: 0; background: var(--atlas-paper-soft); font-family: var(--atlas-serif); font-size: calc(14px * var(--gx-fs, 1)); }
 .conversation-title form button { width: 27px; height: 27px; display: grid; place-items: center; border: 0; border-radius: 6px; background: var(--atlas-paper-soft); }
 .conversation-actions { display: flex; align-items: center; gap: 5px; position: relative; }
-.conversation-actions > button { width: 31px; height: 31px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--atlas-faint) !important; }
-.conversation-actions > button:hover { border-color: var(--atlas-line); background: var(--atlas-paper-soft); color: var(--atlas-ink) !important; }
-.conversation-options-menu { width: 152px; padding: 4px; position: absolute; right: 0; top: 37px; z-index: 55; border: 1px solid var(--atlas-line-strong); border-radius: 9px; background: var(--atlas-paper); box-shadow: 0 18px 42px -22px rgba(15, 38, 29, .68); }
-.conversation-options-menu button { width: 100%; height: 33px; padding: 0 8px; display: flex; align-items: center; gap: 7px; border: 0; border-radius: 6px; background: transparent; color: var(--atlas-muted) !important; font-size: calc(12px * var(--gx-fs, 1)); text-align: left; }
-.conversation-options-menu button:hover { background: var(--atlas-paper-soft); color: var(--atlas-green) !important; }
 .conversation-scroll { flex: 1; min-height: 0; padding: 0 max(24px, calc((100% - 760px) / 2)); overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .conversation-error { min-height: 38px; margin: 13px 0; padding: 8px 10px; display: flex; align-items: center; gap: 7px; border: 1px solid color-mix(in srgb, #b75b4c 28%, transparent); border-radius: 8px; background: color-mix(in srgb, #b75b4c 8%, var(--atlas-paper)); color: #a34f42; font-size: calc(12px * var(--gx-fs, 1)); }
 .conversation-error span { flex: 1; }
@@ -112,8 +99,8 @@
 .promote-answer:hover:not(:disabled) { border-color: var(--atlas-line); background: var(--atlas-paper-soft); color: var(--atlas-green) !important; }
 .promote-answer:disabled { opacity: .55; }
 .promote-answer.is-promoted { opacity: 1; color: var(--atlas-green) !important; }
-.copy-answer, .branch-answer, .make-report, .remove-answer { height: 29px; padding: 0 6px; display: flex; align-items: center; gap: 4px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--atlas-faint) !important; font-size: calc(12px * var(--gx-fs, 1)); }
-.copy-answer:hover, .branch-answer:hover:not(:disabled), .make-report:hover, .remove-answer:hover:not(:disabled) { border-color: var(--atlas-line); background: var(--atlas-paper-soft); color: var(--atlas-green) !important; }
+.copy-answer, .branch-answer, .remove-answer { height: 29px; padding: 0 6px; display: flex; align-items: center; gap: 4px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--atlas-faint) !important; font-size: calc(12px * var(--gx-fs, 1)); }
+.copy-answer:hover, .branch-answer:hover:not(:disabled), .remove-answer:hover:not(:disabled) { border-color: var(--atlas-line); background: var(--atlas-paper-soft); color: var(--atlas-green) !important; }
 .branch-answer:disabled, .remove-answer:disabled { opacity: .55; }
 .no-citation-state { display: flex; align-items: center; gap: 5px; color: #a46942; font-size: calc(12px * var(--gx-fs, 1)); }
 .message-method { display: flex; align-items: center; gap: 5px; color: var(--atlas-faint); font-size: calc(12px * var(--gx-fs, 1)); }
@@ -157,7 +144,6 @@
 .sessions-heading { min-height: 72px; }
 .sessions-heading strong { font-size: calc(14px * var(--gx-fs, 1)); }
 .sessions-heading small { line-height: 1.35; }
-.new-session-button { height: 44px; font-size: calc(13px * var(--gx-fs, 1)); }
 .session-search { height: 38px; }
 .session-search input { font-size: calc(13px * var(--gx-fs, 1)); }
 .session-list section > header { height: 34px; }
@@ -171,9 +157,8 @@
 .sidebar-scope-summary strong { font-size: calc(13px * var(--gx-fs, 1)); }
 
 .conversation-header { min-height: 64px; }
-.conversation-title > button strong { font-size: calc(17px * var(--gx-fs, 1)); }
+.conversation-title > strong { font-size: calc(17px * var(--gx-fs, 1)); }
 .conversation-title > span { font-size: calc(12px * var(--gx-fs, 1)); }
-.conversation-options-menu button { font-size: calc(12px * var(--gx-fs, 1)); }
 .chat-welcome > p { font-size: calc(15px * var(--gx-fs, 1)); line-height: 1.65; }
 .message-author { font-size: calc(12px * var(--gx-fs, 1)); }
 .message-body { font-size: calc(15px * var(--gx-fs, 1)); line-height: 1.75; }
@@ -181,7 +166,6 @@
 .promote-answer,
 .copy-answer,
 .branch-answer,
-.make-report,
 .remove-answer,
 .no-citation-state,
 .message-method { font-size: calc(12px * var(--gx-fs, 1)); }

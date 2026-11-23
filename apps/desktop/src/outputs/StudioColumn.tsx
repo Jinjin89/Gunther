@@ -71,8 +71,8 @@ function cardsOf(studio: ReturnType<typeof useStudio>): Card[] {
   return [...cards.values()].sort((a, b) => b.at.localeCompare(a.at));
 }
 
-function BuildOptions({ type, disabled, fromChat, onBuild, onClose }: {
-  type: OutputType; disabled: boolean; fromChat: boolean; onBuild: (options: BuildTurnInput) => void; onClose: () => void;
+function BuildOptions({ type, disabled, onBuild, onClose }: {
+  type: OutputType; disabled: boolean; onBuild: (options: BuildTurnInput) => void; onClose: () => void;
 }) {
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -87,7 +87,6 @@ function BuildOptions({ type, disabled, fromChat, onBuild, onClose }: {
   };
   return <form className="studio-options" aria-label={`${type.label} options`} onSubmit={submit} onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}>
     <header><strong>{type.label}</strong><button type="button" className="gx-icon-button" aria-label="Close options" onClick={onClose}><X size={15} /></button></header>
-    {fromChat && <p>Using this chat as material.</p>}
     {type.options.includes("focus") && <label>Focus<textarea name="focus" rows={2} maxLength={2_000} autoFocus /></label>}
     {type.options.includes("audience") && <label>Audience<select name="audience"><option value="">Default</option>{artifactAudiences.map((audience) => <option key={audience} value={audience}>{audience[0]!.toUpperCase() + audience.slice(1)}</option>)}</select></label>}
     {type.options.includes("length") && <label>Length<select name="length"><option value="">Default</option><option value="short">Short</option><option value="standard">Standard</option><option value="long">Long</option></select></label>}
@@ -97,26 +96,24 @@ function BuildOptions({ type, disabled, fromChat, onBuild, onClose }: {
   </form>;
 }
 
-export function StudioColumn({ studio, scope, scopeEmpty, disabled, reportFrom, onReportFrom, onOpen }: {
+export function StudioColumn({ studio, scope, scopeEmpty, disabled, onOpen }: {
   studio: ReturnType<typeof useStudio>; scope: OutputScope; scopeEmpty: boolean; disabled: boolean;
-  reportFrom: string | null; onReportFrom: () => void; onOpen: (target: OutputTarget) => void;
+  onOpen: (target: OutputTarget) => void;
 }) {
   const [optionsId, setOptionsId] = useState<string | null>(null);
   const { menu, unavailable } = useModelMenu();
   const needsModel = menu !== null && menu.models.length === 0;
   const buildDisabled = disabled || unavailable || !menu?.models.length;
   const cards = cardsOf(studio);
-  const optionType = studio.types.find((type) => type.id === (reportFrom ? "report" : optionsId));
-  const closeOptions = () => { setOptionsId(null); onReportFrom(); };
+  const optionType = studio.types.find((type) => type.id === optionsId);
+  const closeOptions = () => setOptionsId(null);
   const tilesDisabled = buildDisabled || scopeEmpty;
-  const start = (options: BuildTurnInput, sessionId?: string | null) => {
-    if (buildDisabled || (scopeEmpty && !sessionId)) return;
-    const material: OutputScope = sessionId ? { mode: "selection", sourceIds: [], unitIds: [], sessionIds: [sessionId] } : scope;
+  const start = (options: BuildTurnInput) => {
+    if (tilesDisabled) return;
     closeOptions();
-    void studio.build(artifactRequestId(), { ...options, scope: material });
+    void studio.build(artifactRequestId(), { ...options, scope });
   };
   return <aside className="studio-column" aria-label="Studio">
-    <h2>Studio</h2>
     {studio.error && <p role="alert">{studio.error}</p>}
     {unavailable ? <p role="alert">Studio models could not be loaded.</p> : needsModel && <div className="studio-model-note">
       <p role="status">Studio needs a model.</p>
@@ -128,11 +125,11 @@ export function StudioColumn({ studio, scope, scopeEmpty, disabled, reportFrom, 
       return <div key={type.id} className="studio-tile">
         <button type="button" title={type.description} disabled={tilesDisabled} onClick={() => running ? onOpen(running.target) : start({ type: type.id })}><Icon size={16} /><span>{type.label}</span></button>
         <button type="button" className="gx-icon-button" disabled={tilesDisabled} aria-label={`${type.label} options`}
-          aria-expanded={optionType?.id === type.id} onClick={() => { onReportFrom(); setOptionsId(optionsId === type.id ? null : type.id); }}><Pencil size={13} /></button>
+          aria-expanded={optionType?.id === type.id} onClick={() => setOptionsId(optionsId === type.id ? null : type.id)}><Pencil size={13} /></button>
       </div>;
     })}</div>
-    {optionType && <div className="studio-popover"><BuildOptions key={optionType.id + (reportFrom ?? "")} type={optionType}
-      disabled={buildDisabled || (scopeEmpty && !reportFrom)} fromChat={Boolean(reportFrom)} onBuild={(options) => start(options, reportFrom)} onClose={closeOptions} /></div>}
+    {optionType && <div className="studio-popover"><BuildOptions key={optionType.id} type={optionType}
+      disabled={tilesDisabled} onBuild={start} onClose={closeOptions} /></div>}
     <ul className="studio-cards">{cards.map((card) => <li key={card.id}>
       <button type="button" className="studio-card-open" onClick={() => onOpen(card.target)}>
         {card.status === "running" ? <LoaderCircle size={16} className="spin" /> : <FileText size={16} />}

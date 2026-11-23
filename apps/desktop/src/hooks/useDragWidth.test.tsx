@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { useDragWidth } from "./useDragWidth";
 
 const options = { storageKey: "test:width", min: 200, max: () => 500, fallback: 300 };
-const pointer = (x: number) => ({ clientX: x, pointerId: 1, currentTarget: { setPointerCapture: () => undefined } }) as never;
+const pointer = (x: number) => ({ clientX: x, button: 0, pointerId: 1, currentTarget: { setPointerCapture: () => undefined } }) as never;
 
 describe("useDragWidth", () => {
   beforeEach(() => window.localStorage.clear());
@@ -14,6 +14,8 @@ describe("useDragWidth", () => {
     act(() => result.current.handle.onPointerDown(pointer(800)));
     act(() => result.current.handle.onPointerMove(pointer(700)));
     expect(result.current.width).toBe(400);
+    act(() => result.current.handle.onPointerMove(pointer(1_000)));
+    expect(result.current.width).toBe(200);
     act(() => result.current.handle.onPointerUp(pointer(0)));
     expect(result.current.width).toBe(500);
     expect(window.localStorage.getItem("test:width")).toBe("500");

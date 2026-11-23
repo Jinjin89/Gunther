@@ -1,10 +1,11 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { DndContext, PointerSensor, closestCenter, pointerWithin, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type DragMoveEvent, type DragStartEvent } from "@dnd-kit/core";
+import { DndContext, KeyboardSensor, PointerSensor, closestCenter, pointerWithin, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type DragMoveEvent, type DragStartEvent } from "@dnd-kit/core";
 import { ChevronsDownUp, ChevronsUpDown, Plus, Search, X } from "lucide-react";
-import type { ContentsItemRef, LibraryContents as Contents } from "@gunther/contracts";
+import type { ContentsItemRef, LibraryContents as Contents, TrashItem } from "@gunther/contracts";
 import { persistentStorage } from "../persistentStorage";
 import { knowledgeApi } from "../api";
+import { moveToTrash } from "../trash/trash";
 import { applyMove, buildTree, dropTarget, findSource, naturalOrder, nodeRef, sourcesIn, subtreeStats, visibleRows, type ContentsNode, type ContentsRow, type DropPosition } from "./contentsTree";
 import { EmptyRow, ScopeTick, SectionRow, SourceRow, UnplacedRow, type DropMark } from "./ContentsRow";
 import { allSources, type SourceSelection } from "./sourceScope";
@@ -34,7 +35,7 @@ const readCollapsed = (baseId: string): Set<string> => {
   } catch { return new Set(); }
 };
 
-export function SourceTree({ baseId, contents, onContents, selection, selectedIds, onScope, activeSourceId, onSource, onOpenSource, addSource }: {
+export function SourceTree({ baseId, contents, onContents, selection, selectedIds, onScope, activeSourceId, onSource, onTrashed, addSource }: {
   baseId: string;
   contents: Contents | null;
   onContents: (contents: Contents | null) => void;
@@ -43,7 +44,7 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
   onScope: (selection: SourceSelection) => void;
   activeSourceId: string | null;
   onSource: (id: string) => void;
-  onOpenSource: (id: string, queue: string[]) => void;
+  onTrashed: (entry: TrashItem) => void;
   addSource: ReactNode;
 }) {
   const [unavailable, setUnavailable] = useState(false);
@@ -54,7 +55,7 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
   const [picker, setPicker] = useState<Picker | null>(null);
   const [noteSection, setNoteSection] = useState<string | null>(null);
   const [suggesting, setSuggesting] = useState(false);
-  const [dragging, setDragging] = useState<ContentsItemRef[] | null>(null);
+  const [dragging, setDragging] = useState<ContentsItemRef | null>(null);
   const [drop, setDrop] = useState<DropMark | null>(null);
   // Where the pointer is while dragging: the chip follows it, and it decides above/below.
   const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
@@ -65,16 +66,16 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
       pointerRef.current = { x: event.clientX, y: event.clientY };
       setPointer(pointerRef.current);
     };
-    window.addEventListener("pointermove", follow);
-    return () => window.removeEventListener("pointermove", follow);
+    window.addEventListener("pointermove", follow, true);
+    return () => window.removeEventListener("pointermove", follow, true);
   }, [dragging]);
   const contentsRef = useRef<Contents | null>(null);
+  const trashing = useRef(new Set<string>());
   contentsRef.current = contents;
 
   const tree = useMemo(() => buildTree(contents ?? { sections: [], placements: [], sources: [] }), [contents]);
   const filtering = filter.trim() !== "";
   const rows = useMemo(() => visibleRows(tree, collapsed, filter), [tree, collapsed, filter]);
-  const sourceIds = useMemo(() => rows.filter((row) => row.type === "source").map((row) => row.id), [rows]);
   const selected = new Set(selectedIds);
   const check = (ids: string[], checked: boolean) => {
     const next = new Set(selectedIds);
@@ -185,7 +186,18 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
     const children = naturalOrder(node.children).map(nodeRef);
     void change(applyMove(now, { items: children, parentId: node.id, index: 0 }), () => knowledgeApi.orderContents(baseId, { parentId: node.id, children }));
   };
-  const open = (id: string) => onOpenSource(id, sourceIds);
+  const trashSource = async (id: string) => {
+    if (trashing.current.has(id)) return;
+    trashing.current.add(id);
+    setError("");
+    try {
+      onTrashed(await moveToTrash({ kind: "source", id }));
+    } catch (reason) {
+      setError(message(reason, "This source could not be moved to Trash."));
+    } finally {
+      trashing.current.delete(id);
+    }
+  };
 
   const navigable = rows.filter((row) => row.type === "section" || row.type === "source");
   const focusRow = (row: ContentsRow | undefined) => {
@@ -209,25 +221,22 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
     }
   };
 
-  // Drag and drop: the whole row can be picked up once the pointer has moved 6 px.
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
-  const carried = (key: string): ContentsItemRef[] => {
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), useSensor(KeyboardSensor));
+  const carried = (key: string): ContentsItemRef | null => {
     const row = rows.find((item) => item.key === key);
-    if (!row || (row.type !== "section" && row.type !== "source")) return [];
-    return [{ kind: row.type, id: row.id }];
+    if (!row || (row.type !== "section" && row.type !== "source")) return null;
+    return { kind: row.type, id: row.id };
   };
-  const place = (event: DragMoveEvent | DragEndEvent, items: ContentsItemRef[]) => {
+  const place = (event: DragMoveEvent | DragEndEvent, item: ContentsItemRef) => {
     const over = event.over;
     const row = over && rows.find((item) => item.key === over.id);
     if (!over || !row) return null;
-    // The row as it is on screen now, against the pointer.
-    const element = document.querySelector(`[data-row="${CSS.escape(String(over.id))}"]`);
-    const rect = element?.getBoundingClientRect() ?? over.rect;
+    const rect = over.rect;
     const box = event.active.rect.current.translated;
     const y = pointerRef.current?.y ?? (box ? box.top + box.height / 2 : rect.top + rect.height / 2);
     const fraction = rect.height > 0 ? (y - rect.top) / rect.height : 0.5;
     const position: DropPosition = row.type === "unplaced" || row.type === "empty" ? "on" : row.type === "section" ? (fraction < 0.25 ? "before" : "on") : (fraction < 0.5 ? "before" : "after");
-    return { row, position, target: dropTarget(tree, rows, row.key, position, items) };
+    return { row, position, target: dropTarget(tree, rows, row.key, position, [item]) };
   };
   const onDragStart = (event: DragStartEvent) => {
     const start = event.activatorEvent;
@@ -235,15 +244,15 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
     setPointer(pointerRef.current);
     setDragging(carried(String(event.active.id)));
   };
-  const onDragMove = (event: DragMoveEvent) => {
+  const markDrop = (event: DragMoveEvent) => {
     const found = dragging ? place(event, dragging) : null;
     setDrop(found ? { key: found.row.key, position: found.position, allowed: found.target !== null } : null);
   };
   const onDragEnd = (event: DragEndEvent) => {
-    const items = dragging;
-    const found = items ? place(event, items) : null;
+    const item = carried(String(event.active.id));
+    const found = item ? place(event, item) : null;
     setDragging(null); setDrop(null); setPointer(null); pointerRef.current = null;
-    if (items && found?.target) void move(items, found.target.parentId, found.target.index);
+    if (item && found?.target) void move([item], found.target.parentId, found.target.index);
   };
   const stopDrag = () => { setDragging(null); setDrop(null); setPointer(null); pointerRef.current = null; };
 
@@ -267,7 +276,6 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
 
   return <section className="contents" aria-label="Sources">
     <div className="contents-top">
-      <h2>Sources</h2>
       <div className="contents-toolbar">
         <label className="contents-filter"><Search size={14} />
           <input value={filter} placeholder="Filter by name" aria-label="Filter contents" onChange={(event) => setFilter(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape" && filter) { event.stopPropagation(); setFilter(""); } }} />
@@ -292,7 +300,7 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
       {!contents && <p className="contents-loading">{unavailable ? "Sources could not be loaded." : "Loading sources…"}</p>}
       {contents?.sources.length === 0 && <p className="contents-loading">No sources yet.</p>}
       {contents && filtering && rows.length === 0 && <p className="contents-loading">Nothing matches “{filter.trim()}”.</p>}
-      <DndContext sensors={sensors} collisionDetection={collide} onDragStart={onDragStart} onDragMove={onDragMove} onDragEnd={onDragEnd} onDragCancel={stopDrag}>
+      <DndContext sensors={sensors} collisionDetection={collide} onDragStart={onDragStart} onDragMove={markDrop} onDragOver={markDrop} onDragEnd={onDragEnd} onDragCancel={stopDrag}>
         <div className="contents-list" onKeyDown={keys}>
           {rows.map((row) => {
             const mark = drop?.key === row.key ? drop : null;
@@ -312,11 +320,11 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
                 current={activeSourceId === row.id} checked={selected.has(row.id)}
                 editing={editing?.kind === "source" && editing.id === row.id}
                 onSelect={() => onSource(row.id)} onCheck={(checked) => check([row.id], checked)}
-                onOpen={() => open(row.id)}
                 onRename={() => setEditing({ id: row.id, kind: "source", fresh: false })}
                 onSave={(title) => void renameSource(row.id, title)} onCancel={() => setEditing(null)}
                 onMove={() => setPicker({ mode: "move", moving: [{ kind: "source", id: row.id }] })}
-                onTakeOut={() => void move([{ kind: "source", id: row.id }], null, null)} />;
+                onTakeOut={() => void move([{ kind: "source", id: row.id }], null, null)}
+                onTrash={() => void trashSource(row.id)} />;
             }
             const node = tree.sections.get(row.id);
             if (!node) return null;
@@ -343,7 +351,7 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
             </Fragment>;
           })}
         </div>
-        {dragging && dragging.length > 0 && pointer && createPortal(<div className="contents-drag-chip" style={{ left: pointer.x + 14, top: pointer.y + 10 }}>{dragTitle(tree, dragging[0]!)}</div>, document.body)}
+        {dragging && pointer && createPortal(<div className="contents-drag-chip" style={{ left: pointer.x + 14, top: pointer.y + 10 }}>{dragTitle(tree, dragging)}</div>, document.body)}
       </DndContext>
     </div>
 

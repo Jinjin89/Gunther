@@ -1,6 +1,6 @@
 .library-workspace {
   display: grid;
-  grid-template-columns: minmax(200px, min(24%, 260px)) minmax(0, 1fr) minmax(210px, min(24%, 270px));
+  grid-template-columns: auto minmax(0, 1fr) auto;
   height: 100%;
   min-height: 0;
   background: var(--gx-canvas);
@@ -8,7 +8,19 @@
 }
 
 .library-workspace > * { min-width: 0; min-height: 0; }
+.library-column { position: relative; display: flex; flex-direction: column; }
+.library-column.is-collapsed { width: 44px; }
 .library-sources { border-right: 1px solid var(--gx-line); }
+.library-studio { border-left: 1px solid var(--gx-line); }
+.library-column-heading { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; }
+.library-column-heading h2 { margin: 0; font-size: var(--gx-text-md); font-weight: 620; }
+.library-column.is-collapsed .library-column-heading { justify-content: center; padding-inline: 0; }
+.library-column-body { flex: 1; min-height: 0; }
+.library-column-body[hidden] { display: none; }
+.library-column-resize { position: absolute; z-index: 4; inset-block: 0; width: 7px; cursor: col-resize; touch-action: none; }
+.library-sources .library-column-resize { right: 0; }
+.library-studio .library-column-resize { left: 0; }
+.library-column-resize:hover, .library-column-resize:active, .library-column-resize:focus-visible { background: var(--gx-line-2); }
 .library-middle > * { height: 100%; min-height: 0; }
 .library-chat[hidden] { display: none; }
 .library-middle-page { overflow: auto; scrollbar-width: thin; }
@@ -29,8 +41,7 @@
 .library-reading h2 { font-size: var(--gx-text-lg); }
 .library-reading .gx-paper-card { margin-top: 20px; }
 
-.studio-column { padding: 12px; overflow: auto; border-left: 1px solid var(--gx-line); scrollbar-width: thin; }
-.studio-column > h2 { margin: 0 0 12px; font-size: var(--gx-text-md); font-weight: 620; }
+.studio-column { height: 100%; padding: 0 12px 12px; overflow: auto; scrollbar-width: thin; }
 .studio-column [role="alert"] { color: var(--gx-danger); font-size: var(--gx-text-xs); }
 .studio-model-note { margin-bottom: 12px; font-size: var(--gx-text-sm); }
 .studio-model-note p { margin: 0 0 6px; }
@@ -76,7 +87,6 @@
   font-size: var(--gx-text-xs);
 }
 .studio-options > header { display: flex; align-items: center; justify-content: space-between; }
-.studio-options p { margin: 0; color: var(--gx-muted); }
 .studio-options label, .output-refine label { display: grid; gap: 4px; }
 .studio-options input, .studio-options select, .studio-options textarea, .output-refine textarea {
   width: 100%;

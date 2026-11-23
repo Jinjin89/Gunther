@@ -17,7 +17,7 @@ const MIN_WIDTH = 340;
 const DEFAULT_WIDTH = 460;
 
 /** What opens or switches the panel: a press on these must not also close it. */
-const OPENS_EVIDENCE = 'button[aria-label^="Inspect citation"], button[aria-label^="Show evidence"], .conversation-sources button';
+const OPENS_EVIDENCE = '[data-opens-evidence], button[aria-label^="Inspect citation"], button[aria-label^="Show evidence"], .conversation-sources button';
 
 const maxWidth = () => Math.max(MIN_WIDTH, Math.min(960, Math.round(window.innerWidth * 0.8)));
 

@@ -43,6 +43,12 @@ class OutputType:
     def part_limit(self) -> int:
         return self.max_parts if self.max_parts is not None else SHAPES[self.shape].max_parts
 
+    @property
+    def legacy_styles(self) -> tuple[str, ...]:
+        return tuple(
+            style for style, (type_id, _) in LEGACY_OUTPUT_STYLES.items() if type_id == self.id
+        )
+
     def part_limit_error(self, count: int) -> str | None:
         limit = self.part_limit
         if count > limit:

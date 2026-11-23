@@ -1,6 +1,6 @@
 import type { Artifact, ArtifactConversationMessage, ArtifactTurnInput, ConversationCitation, OutputScope } from "@gunther/contracts";
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { knowledgeApi } from "../api";
 import { EvidencePanel } from "../components/evidence/EvidencePanel";
 import { AnswerBody, citationNumbers, verificationNotice } from "../pages/AnswerBody";
@@ -40,11 +40,12 @@ function scopeLabel(scope: OutputScope) {
 }
 
 export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEmpty,
-  dirty, onNotify, onOpenSource, onOpen }: {
+  dirty, onNotify, onOpenSource, onOpen, onWideReader }: {
   baseId: string; workspaceId: string; target: OutputTarget; studio: ReturnType<typeof useStudio>;
   scope: OutputScope; scopeEmpty: boolean; dirty: { current: boolean };
   onNotify: (message: string) => void; onOpenSource: (id: string) => void;
   onOpen: (target: OutputTarget) => void;
+  onWideReader: (wide: boolean) => void;
 }) {
   const [picked, pickVersion] = useState(target.artifactId ?? null);
   const [opened, setOpened] = useState<Artifact | null>(null);
@@ -211,7 +212,8 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   const activity = studio.activities.find((item) => item.open?.view === "library" && item.open.tab === "outputs"
     && (item.open.conversationId ?? item.open.lineageId) === conversationId && item.state === "running");
   const problem = error || failure?.message;
-  const title = artifact?.title || opened?.title || job?.live.title || studio.types.find((item) => item.id === target.typeId)?.label
+  const targetType = studio.types.find((item) => item.id === target.typeId);
+  const title = artifact?.title || opened?.title || job?.live.title || targetType?.label
     || activity?.title || conversation?.title || "Output";
   const changed = artifact?.supersedesArtifactId
     ? (artifact.provenance.changes ?? []).flatMap((change) => change.position && change.what !== "deleted" ? [change.position - 1] : [])
@@ -227,8 +229,11 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
     return true;
   };
   const choosePanel = (next: typeof panel) => setPanel((current) => current === next ? null : next);
-  const type = studio.types.find((item) => item.id === artifact?.style);
-  const deck = (type?.shape ?? artifact?.kind) === "slides";
+  const type = artifact && (studio.types.find((item) => item.shape === artifact.kind
+    && (item.id === artifact.style || item.legacyStyles?.includes(artifact.style ?? "")))
+    ?? studio.types.find((item) => item.id === artifact.kind));
+  const deck = (type?.shape ?? artifact?.kind ?? targetType?.shape) === "slides";
+  useLayoutEffect(() => onWideReader(deck), [deck, onWideReader]);
   const allowPoint = changeable && latest && !editing;
 
   return <article className="library-reading output-reader" aria-label="Open output">

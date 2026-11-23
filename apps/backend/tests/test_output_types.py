@@ -67,6 +67,13 @@ def test_catalog_types_build_with_their_recipe_and_save_their_label(
         [item] = [row for row in catalog if row["id"] == style]
         assert (item["shape"], item["label"]) == (shape, label)
         assert item["description"] and item["icon"]
+        assert item["partLimit"] == limit
+        aliases = {
+            "report": ["auto", "overview", "field_guide"],
+            "briefing": ["decision_brief"],
+            "study_guide": ["teaching_path"],
+        }
+        assert item["legacyStyles"] == aliases.get(style, [])
         options = ["focus", "audience", "length", "language"]
         assert item["options"] == options + (["use"] if shape == "slides" else [])
 
