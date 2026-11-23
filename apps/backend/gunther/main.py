@@ -13,6 +13,7 @@ from sqlalchemy import event, select
 from sqlalchemy.orm import ORMExecuteState, Session, sessionmaker
 
 from gunther import (
+    key_results,
     listen_copy,
     log_buffer,
     model_registry,
@@ -157,6 +158,9 @@ def _connect_models(
     worker.digest_writer = digest_writer
     # Documents read from now on have their structure checked by the Analysis model.
     worker.structure_reviser = create_structure_reviser(models)
+    if models.for_role("analysis"):
+        with session_scope(knowledge_service.sessions) as session:
+            key_results.requeue_needs_model(session)
     application.state.models = models
     application.state.model_registry = registry
     application.state.speech_registry = speech_registry.effective(

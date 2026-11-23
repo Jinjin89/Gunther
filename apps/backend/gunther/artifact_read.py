@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
+from gunther import key_results
 from gunther.artifact_manifest import artifact_manifest_hash
 from gunther.checks import complete, coverage_of, issue_view, read_verdicts
 from gunther.database import session_scope
@@ -259,6 +260,7 @@ def artifact_detail(
             else None
         ),
         sections=sections,
+        key_results=key_results.origin_states(session, "output", [artifact.id]).get(artifact.id),
     )
 
 

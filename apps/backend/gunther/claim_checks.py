@@ -250,6 +250,7 @@ class ClaimChecks:
         notes: list[str] | None = None,
         limit: int | None = None,
         claims: list[dict[str, Any]] | None = None,
+        raise_model_error: bool = False,
     ) -> Check:
         """Check an answer, updating any supplied claim records in place."""
         text = collapse_citations(text)
@@ -333,6 +334,8 @@ class ClaimChecks:
                     )
                     trace.update(checking, verdicts=[v.model_dump() for v in checked.sentences])
             except ModelError as error:
+                if raise_model_error:
+                    raise
                 failed_calls += 1
                 if notes is not None and failed_calls == 1:
                     notes.append(f"Citations were not checked: {error}")

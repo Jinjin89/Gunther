@@ -1049,6 +1049,7 @@ export interface ConversationContext {
   skill?: { name: string; version: number; title: string; auto: boolean } | null;
   /** Deep research. `asking`: the answer is questions for the user and nothing was searched. `stoppedEarly`: written from what was found when the reader pressed Stop. */
   research?: ResearchRun | null;
+  rework?: boolean;
   /** On a question that got no answer: stopped by the reader, or failed. */
   interrupted?: "stopped" | "failed" | null;
   askFailure?: { needsModel: boolean; hasTrace: boolean; options: AskRetryOptions } | null;
@@ -1085,6 +1086,44 @@ export interface AgentStep {
   error: string | null;
 }
 
+export type KeyResultOriginKind = "answer" | "output" | "saved_answer";
+
+export interface KeyResultJob {
+  id: string;
+  originKind: KeyResultOriginKind;
+  originId: string;
+  state: "queued" | "running" | "done" | "needs_model" | "failed";
+  error: string | null;
+  keptCount: number;
+  keptIds: string[];
+}
+
+export interface KeyResultOrigin {
+  kind: KeyResultOriginKind;
+  id: string;
+  title: string | null;
+  sessionId: string | null;
+  createdAt: string;
+}
+
+export interface KeyResultEvidence {
+  id: string;
+  sourceId: string;
+  revisionId: string;
+  blockId: string;
+  regionIds: string[];
+  sourceTitle: string | null;
+  locator: string | null;
+  quote: string;
+}
+
+export interface KeyResult {
+  id: string;
+  text: string;
+  origin: KeyResultOrigin;
+  evidence: KeyResultEvidence[];
+}
+
 export interface SessionMessage {
   id: string;
   sessionId: string;
@@ -1093,6 +1132,7 @@ export interface SessionMessage {
   citations: ConversationCitation[];
   context: ConversationContext;
   createdAt: string;
+  keyResults?: KeyResultJob | null;
 }
 
 export interface KnowledgeSessionSummary {
@@ -1523,6 +1563,7 @@ export interface Artifact extends ArtifactSummary {
   inputs: { sources: number; units: number; sessions: number };
   modelLabel: string | null;
   sections: OutputSection[];
+  keyResults?: KeyResultJob | null;
 }
 
 export interface BuildOutputRequest {
@@ -1870,7 +1911,7 @@ export interface TranscribeAgainStatus {
 }
 
 /** What Gunther is working on in the background (`GET /activity`), shown in the top bar. */
-export type ActivityKind = "transcribe" | "output" | "answer" | "overview";
+export type ActivityKind = "transcribe" | "output" | "answer" | "overview" | "key_results";
 export type ActivityState = "waiting" | "running" | "done" | "failed";
 
 /** The page an activity row opens. */

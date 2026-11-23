@@ -49,6 +49,8 @@ Moving an output conversation to Trash also moves the outputs it owns. The batch
 
 The Checker judges claims against their cited evidence. Each verdict is keyed by claim hash, evidence hash and stage. Coverage and incomplete or unavailable states come from that one snapshot. An incremental edit rechecks changed paragraphs where the format allows, keeps findings on untouched text, and checks the whole part where needed. Retry and sync merge the same way. Saved legacy checks are read into the current shape. Typed edits can be saved with unresolved checks.
 
+Supported claims from new builds, revisions and rebuilds can contribute key results through their library citations. Check again makes supported claims from a typed edit eligible. A revision or rebuild with the same supported claims and passages as its parent skips this work, including a restyle that keeps the checked wording. The version detail API reports its key results job alongside the saved checks. [Key results](LIBRARY.md#key-results)
+
 In report and slide readers, hover over or focus a citation number to preview the source title, location and a short quote. Activate the number to open that passage in Evidence.
 
 Charts are drawn only when their rows are checked and supported by the label, values and citations. Tables and rows use their positions and each header belongs to its own table. Unsupported or unchecked rows use the table fallback. [Studio verification](../apps/backend/gunther/studio/verification.py) · [Verdicts](../apps/backend/gunther/checks.py)

@@ -14,7 +14,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
 from gunther import brief as briefs
-from gunther import trace, usage
+from gunther import key_result_origins, key_results, trace, usage
 from gunther.agent import DEFAULT_STYLE, STYLES, AskAgent
 from gunther.artifact_workspace import evidence_from_citation
 from gunther.ask_research import Notes as Work
@@ -41,6 +41,7 @@ from gunther.schemas import (
     ConversationTurnOut,
     CreateKnowledgeSessionInput,
     CreateSessionMessageInput,
+    KeyResultJobOut,
     KnowledgeSessionOut,
     KnowledgeSessionSummaryOut,
     SessionMessageOut,
@@ -83,6 +84,7 @@ class _Answer:
     work: Work | None = None
     skill: AskSkill | None = None
     research: dict | None = None
+    rework: bool = False
 
 
 # Reasoning is kept for the model that wrote it; past this it is cut.
@@ -182,7 +184,9 @@ class AskTurns:
             selectinload(KnowledgeSession.branch),
         )
 
-    def _message_out(self, message: SessionMessage) -> SessionMessageOut:
+    def _message_out(
+        self, message: SessionMessage, results: KeyResultJobOut | None = None,
+    ) -> SessionMessageOut:
         citations = [
             ConversationCitationOut.model_validate(item)
             for item in json.loads(message.citations_json or "[]")
@@ -196,6 +200,7 @@ class AskTurns:
             citations=citations,
             context=ConversationContextOut.model_validate(context_payload),
             created_at=_timestamp(message.created_at),
+            key_results=results,
         )
 
     def _session_summary(self, knowledge_session: KnowledgeSession) -> KnowledgeSessionSummaryOut:
@@ -269,9 +274,16 @@ class AskTurns:
             )
             if knowledge_session is None:
                 raise LookupError(f"Session {session_id} was not found")
+            states = key_results.origin_states(
+                session, "answer",
+                [m.id for m in knowledge_session.messages if m.role == "assistant"],
+            )
             return KnowledgeSessionOut(
                 **self._session_summary(knowledge_session).model_dump(),
-                messages=[self._message_out(message) for message in knowledge_session.messages],
+                messages=[
+                    self._message_out(message, states.get(message.id))
+                    for message in knowledge_session.messages
+                ],
                 brief=self._brief_out(briefs.load(knowledge_session.brief_json)),
             )
 
@@ -482,6 +494,7 @@ class AskTurns:
         """Move a Home conversation into a library; it keeps its messages and citations."""
 
         with session_scope(self.sessions) as session:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
             knowledge_session = session.scalar(
                 self._session_query().where(KnowledgeSession.id == session_id)
             )
@@ -494,6 +507,8 @@ class AskTurns:
             knowledge_session.focus_chapter_id = None
             knowledge_session.updated_at = utc_now()
             session.flush()
+            for message in knowledge_session.messages:
+                key_result_origins.enqueue_answer(session, knowledge_base_id, message)
             return self._session_summary(knowledge_session)
 
     def update_knowledge_session(
@@ -611,6 +626,7 @@ class AskTurns:
             checked=result.checked,
             support_notes=result.support_notes,
             coverage=result.coverage,
+            rework=result.rework,
             budget_usage=result.budget_usage,
             work=result.work,
             effort_label=completion.effort_label if completion else None,
@@ -786,12 +802,14 @@ class AskTurns:
                 else None
             ),
             research=response.research,
+            rework=response.rework,
         )
         if events:
             events({"type": "saving"})  # a reader who left by now gets nothing saved
 
         with session_scope(self.sessions) as session:
-            knowledge_session, _ = self._turn_session(session, session_id)
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            knowledge_session, library = self._turn_session(session, session_id)
             now = utc_now()
             user_message = SessionMessage(
                 id=_id("msg"),
@@ -818,12 +836,17 @@ class AskTurns:
             knowledge_session.summary = re.sub(r"\s+", " ", response.content)[:220]
             knowledge_session.updated_at = now
             session.flush()
+            if library is not None and library.id != HOME_SCOPE:
+                key_result_origins.enqueue_answer(session, library.id, assistant_message)
             if kept is not None:
                 self._keep_trace(session, assistant_message.id, kept)
+            results = key_results.origin_states(session, "answer", [assistant_message.id])
             return ConversationTurnOut(
                 session=self._session_summary(knowledge_session),
                 user_message=self._message_out(user_message),
-                assistant_message=self._message_out(assistant_message),
+                assistant_message=self._message_out(
+                    assistant_message, results.get(assistant_message.id),
+                ),
             )
 
     def _keep_trace(self, session: Session, message_id: str, kept: trace.Trace) -> None:

@@ -117,6 +117,7 @@ class AgentResult:
     research: dict[str, Any] | None = None
     coverage: dict[str, Any] | None = None
     budget_usage: dict[str, Any] | None = None
+    rework: bool = False
 
 
 class Action(BaseModel):
@@ -923,6 +924,7 @@ class AskAgent(ClaimChecks, AskResearch):
             checked=checked,
             support_notes=tuple(support_notes),
             coverage=coverage,
+            rework=rework,
             work=work if work.findings or work.sub_questions else None,
             skill=skill,
             research=research_state("stopped_early" if stopped else "done")

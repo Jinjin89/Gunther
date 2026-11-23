@@ -6,7 +6,7 @@ import hashlib
 import json
 from collections.abc import Callable
 
-from gunther import usage
+from gunther import key_result_origins, usage
 from gunther.agent import AskAgent
 from gunther.artifact_read import artifact_detail, latest_check_records
 from gunther.artifact_versions import (
@@ -351,6 +351,7 @@ class OutputCommands:
             if all(
                 (key := section_hash(text)) in known and complete(known[key]) for text in sections
             ):
+                key_result_origins.enqueue_output(session, artifact, records, checked_edit=True)
                 return artifact_detail(session, artifact, check_records=records)
             by_ref = {
                 citation.ref: evidence_from_citation(citation)
@@ -390,4 +391,6 @@ class OutputCommands:
                 )
             )
             session.flush()
-            return artifact_detail(session, artifact)
+            records = {check["hash"]: check for check in checks}
+            key_result_origins.enqueue_output(session, artifact, records, checked_edit=True)
+            return artifact_detail(session, artifact, check_records=records)

@@ -15,6 +15,22 @@ The app sidebar starts collapsed in a library. Drag the inside edge of Sources o
 
 Opening an empty Chat requests an overview of the library's current sources. Analysis uses each source's current digest overview, paper abstract or opening passage, so notes, web pages and recordings can contribute. The job appears in Activity and under Background jobs in Settings → Developer. The saved overview is reused until the live source set or its material changes. If the job fails, choose Retry in Chat to try again on the same material. [Ask](ASK.md#ask-a-question)
 
+## Key results
+
+Analysis can keep up to five findings from a saved answer or output. Each result is a sentence backed by original library passages, with the source title, location and quote available through the library API. The Checker must mark the sentence supported. A later answer or output can add checked evidence to the same result.
+
+Jobs run one at a time per library in the background. Failed jobs appear in Activity and the API supports Retry. Setting up an Analysis model resumes jobs that were waiting for one. Each trusted saved answer in the library can contribute once. Its stored revisions remain available to the output versions that pinned them.
+
+The key results API uses `/api/knowledge-bases/{libraryId}/key-results` as its base path.
+
+| Method and suffix | Result |
+| --- | --- |
+| `GET` on the base path | Lists kept sentences, their creation origins and original passages. |
+| `POST /{resultId}/remove` | Removes one sentence and keeps it suppressed when found again. |
+| `GET /origins/{kind}/{originId}` | Returns the job state, kept count and kept IDs. This data also appears on saved Ask messages and output version details. |
+| `POST /origins/{kind}/{originId}/undo` | Removes the sentences created by that origin and deletes its evidence contributions. |
+| `POST /jobs/{jobId}/retry` | Queues a failed job again. |
+
 ## Readings and provenance
 
 Each capture retains its original and provenance. The current reading consists of ordered elements, source regions and indexed passages, with a revision ID. Document structure comes from the file's own layout, reading order and tags when available. An outline may be empty. Open a passage or figure through the corresponding reading revision.

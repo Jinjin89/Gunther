@@ -11,8 +11,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from gunther import key_result_origins
 from gunther.artifact_manifest import artifact_manifest_hash
-from gunther.artifact_read import artifact_detail
+from gunther.artifact_read import artifact_detail, latest_check_records
 from gunther.database import session_scope
 from gunther.knowledge_index import new_id
 from gunther.models import (
@@ -314,7 +315,9 @@ def commit_version(
                     )
                 )
             session.flush()
-            shown = artifact_detail(session, artifact)
+            records = latest_check_records(session, artifact)
+            key_result_origins.enqueue_output(session, artifact, records)
+            shown = artifact_detail(session, artifact, check_records=records)
             if publish is not None:
                 publish(session, shown)
             return shown

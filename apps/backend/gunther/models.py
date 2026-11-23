@@ -12,6 +12,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -733,6 +734,68 @@ class KnowledgeUnitRevision(Base):
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
 
     unit: Mapped[KnowledgeUnit] = relationship(back_populates="revisions")
+
+
+class KeyResult(Base):
+    __tablename__ = "key_results"
+    __table_args__ = (CheckConstraint("status IN ('kept', 'removed')"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    knowledge_base_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"), index=True
+    )
+    text: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(24), default="kept")
+    created_origin_kind: Mapped[str] = mapped_column(String(24))
+    created_origin_id: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
+class KeyResultEvidence(Base):
+    __tablename__ = "key_result_evidence"
+    __table_args__ = (Index("ix_key_result_evidence_origin", "origin_kind", "origin_id"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    key_result_id: Mapped[str] = mapped_column(
+        ForeignKey("key_results.id", ondelete="CASCADE"), index=True
+    )
+    # Keep the checked provenance even if an original is later permanently deleted.
+    source_id: Mapped[str] = mapped_column(String, index=True)
+    revision_id: Mapped[str] = mapped_column(String)
+    block_id: Mapped[str] = mapped_column(String)
+    region_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    quote: Mapped[str] = mapped_column(Text)
+    source_content_hash: Mapped[str] = mapped_column(String(64))
+    source_asset_id: Mapped[str | None] = mapped_column(String)
+    origin_kind: Mapped[str] = mapped_column(String(24))
+    origin_id: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
+class KeyResultJob(Base):
+    __tablename__ = "key_result_jobs"
+    __table_args__ = (
+        UniqueConstraint("origin_kind", "origin_id"),
+        CheckConstraint("origin_kind IN ('answer', 'output', 'saved_answer')"),
+        CheckConstraint("state IN ('queued', 'running', 'done', 'needs_model', 'failed')"),
+        Index(
+            "ux_key_result_jobs_running_library", "knowledge_base_id",
+            unique=True, sqlite_where=text("state = 'running'"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    knowledge_base_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"), index=True
+    )
+    origin_kind: Mapped[str] = mapped_column(String(24))
+    origin_id: Mapped[str] = mapped_column(String)
+    state: Mapped[str] = mapped_column(String(24), default="queued", index=True)
+    error: Mapped[str | None] = mapped_column(Text)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=utc_now)
 
 
 class Artifact(Base):

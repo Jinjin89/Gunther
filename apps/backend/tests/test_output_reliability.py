@@ -78,8 +78,10 @@ def test_check_persists_an_unavailable_audit_and_retries_only_unchecked_claims(t
             "clientRequestId": "partial_check_edit_0001",
             "content": initial["content"].replace(original, unchecked),
         }).raise_for_status().json()
+        assert edited["keyResults"] is None
         version = route(base, edited["id"])
         partial = client.post(f"{version}/check", headers=headers).raise_for_status().json()
+        assert partial["keyResults"]["state"] == "queued"
         [section] = partial["sections"]
         assert not section["checked"]
         coverage = section["coverage"]

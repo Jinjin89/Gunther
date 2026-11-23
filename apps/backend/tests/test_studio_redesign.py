@@ -524,6 +524,8 @@ def test_the_restyle_route_saves_a_new_version_with_the_words_and_checks_unchang
         assert next(s["detail"] for s in stages if s["state"] == "done") == "3 slides designed"
         restyled = saved_version(events)
         assert restyled["versionNumber"] == first["versionNumber"] + 1
+        assert first["keyResults"]["state"] == "queued"
+        assert restyled["keyResults"] is None
         old, new = fmt.split_slides(first["content"]), fmt.split_slides(restyled["content"])
         assert fmt.parse_slide(new[0]).attrs["style"] == "bold"
         for before, after in zip(old, new, strict=True):

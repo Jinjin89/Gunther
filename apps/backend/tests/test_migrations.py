@@ -89,6 +89,7 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (29, "model_usage"),
             (30, "library_overviews"),
             (31, "output_trash"),
+            (32, "key_results"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
@@ -111,6 +112,28 @@ def test_unversioned_legacy_database_is_baselined_without_data_loss(tmp_path: Pa
             row = connection.execute(text("SELECT id, name FROM items")).one()
         assert row == (1, "keep me")
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
+    finally:
+        engine.dispose()
+
+
+def test_v31_database_creates_the_key_results_tables(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path)
+    names = ("key_results", "key_result_evidence", "key_result_jobs")
+    previous = MetaData()
+    for table in Base.metadata.sorted_tables:
+        if table.name not in names:
+            table.to_metadata(previous)
+    try:
+        run_migrations(engine, previous, MIGRATIONS[:-1])
+        assert get_schema_version(engine) == 31
+        assert not any(inspect(engine).has_table(name) for name in names)
+        run_migrations(engine, Base.metadata)
+        assert get_schema_version(engine) == 32
+        assert all(inspect(engine).has_table(name) for name in names)
+        assert ["origin_kind", "origin_id"] in [
+            constraint["column_names"]
+            for constraint in inspect(engine).get_unique_constraints("key_result_jobs")
+        ]
     finally:
         engine.dispose()
 

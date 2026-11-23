@@ -19,6 +19,8 @@ Ask needs a configured model. The composer links to Settings when a model or key
 3. The answer stores the source revision, block or region and supporting text with its citations. Hover over or tab to a citation number for its source title, location and a short quote, then activate it to open Evidence. You can also expand the source count below an answer and choose a source there. Selecting another citation switches the open Evidence panel to that passage. The answer may read a pinned revision through the verified reader. Search and new reads respect current library membership and Trash.
 4. Choose Save as knowledge on a cited answer to publish a trusted knowledge unit. Remove withdraws it from active knowledge. Saved questions and answers use their IDs for retry and promotion.
 
+A saved answer with a library citation queues key results for Analysis. When the answer's Checker coverage is complete, Analysis receives only its supported claims and their original passages. Filing a Home chat queues its eligible answers in the destination library. Research clarification turns, reworks and answers that cite only live web search results are skipped. [Key results](LIBRARY.md#key-results)
+
 ## Streaming and trace
 
 Ask uses `POST /api/sessions/{id}/messages/stream`. Attach to existing work at `GET /api/sessions/{id}/answer/stream`, or stop it with `POST /api/sessions/{id}/answer/stop`. Home and Library share the answer listener. The stream reports steps and text, then a stored answer or a terminal failure. Terminal events follow persistence and the Activity update. Clients parse SSE on CR, LF and CRLF line breaks.

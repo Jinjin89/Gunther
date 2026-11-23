@@ -10,6 +10,8 @@ import asyncio
 import json
 import logging
 import math
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from difflib import SequenceMatcher
@@ -20,7 +22,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from gunther import digest, library_overview, papers, vector_index
+from gunther import digest, key_result_worker, key_results, library_overview, papers, vector_index
 from gunther.activity import Activity
 from gunther.asset_service import AssetService, read_initial_asset
 from gunther.audio_decode import audio_duration_ms
@@ -36,6 +38,8 @@ from gunther.models import (
     Asset,
     BlockEmbedding,
     ContentBlock,
+    KeyResultJob,
+    KnowledgeBaseRecord,
     ProcessingJob,
     RecordingSession,
     Source,
@@ -55,6 +59,7 @@ POLL_STEP_SECONDS = 0.5
 MAX_RETRY_SECONDS = 60.0
 FAILURE_LOG_EVERY = 30
 HEARTBEAT_SECONDS = 10
+JOB_LEASE = timedelta(seconds=120)
 # Jobs that may wait on a model over the network.
 AI_KINDS = ("digest", "extract_assertions", library_overview.KIND)
 
@@ -159,6 +164,28 @@ def _finish_job(job: ProcessingJob, state: str = "completed", error: str | None 
     job.updated_at = utc_now()
 
 
+@contextmanager
+def _keep_lease(renew: Callable[[], bool]) -> Iterator[Event]:
+    finished, lease_lost = Event(), Event()
+
+    def heartbeat() -> None:
+        while not finished.wait(HEARTBEAT_SECONDS):
+            try:
+                if not renew():
+                    lease_lost.set()
+                    return
+            except Exception as error:
+                logger.warning("Processing heartbeat failed (%s)", type(error).__name__)
+
+    thread = Thread(target=heartbeat, daemon=True)
+    thread.start()
+    try:
+        yield lease_lost
+    finally:
+        finished.set()
+        thread.join()
+
+
 class ProcessingWorker:
     def __init__(
         self,
@@ -207,7 +234,7 @@ class ProcessingWorker:
                     state="running",
                     attempts=ProcessingJob.attempts + 1,
                     lease_token=token,
-                    lease_until=now + timedelta(seconds=120),
+                    lease_until=now + JOB_LEASE,
                     updated_at=now,
                     error=None,
                 )
@@ -238,26 +265,13 @@ class ProcessingWorker:
                     ProcessingJob.lease_token == token,
                     ProcessingJob.state == "running",
                 )
-                .values(lease_until=utc_now() + timedelta(seconds=120), updated_at=utc_now())
+                .values(lease_until=utc_now() + JOB_LEASE, updated_at=utc_now())
             ).rowcount
         return bool(owned)
 
     def process(self, job_id: str, token: str) -> None:
         # Both the background lanes and synchronous harnesses renew long-running jobs.
-        finished, lease_lost = Event(), Event()
-
-        def renew() -> None:
-            while not finished.wait(HEARTBEAT_SECONDS):
-                try:
-                    if not self.heartbeat(job_id, token):
-                        lease_lost.set()
-                        return
-                except Exception as error:
-                    logger.warning("Processing heartbeat failed (%s)", type(error).__name__)
-
-        heartbeat = Thread(target=renew, daemon=True)
-        heartbeat.start()
-        try:
+        with _keep_lease(lambda: self.heartbeat(job_id, token)) as lease_lost:
             with session_scope(self.sessions) as session:
                 job = session.get(ProcessingJob, job_id)
             if job is None or job.lease_token != token or job.state != "running":
@@ -266,9 +280,6 @@ class ProcessingWorker:
                 self._process_library_overview(job, job.knowledge_base_id, token, lease_lost)
             else:
                 self._process(job, token, lease_lost)
-        finally:
-            finished.set()
-            heartbeat.join()
 
     def _process_library_overview(
         self, claimed: ProcessingJob, library_id: str, token: str, lease_lost: Event,
@@ -731,7 +742,38 @@ class ProcessingWorker:
         claimed = self.claim(ai)
         if claimed:
             self.process(*claimed)
-        return bool(claimed)
+            return True
+        return ai is not False and self._distill_key_results()
+
+    def _distill_key_results(self) -> bool:
+        gateway = self.assets.knowledge_service.models
+        with session_scope(self.sessions) as session:
+            job, interrupted = key_results.claim(
+                session, configured=bool(gateway and gateway.for_role("analysis")), lease=JOB_LEASE,
+            )
+            timed_out = [
+                (expired, session.get(KnowledgeBaseRecord, expired.knowledge_base_id).title)
+                for expired in interrupted
+            ]
+        for expired, title in timed_out:
+            key_result_worker.report_interrupted(self.activity, expired, title)
+        if job is None:
+            return False
+
+        def renew() -> bool:
+            with session_scope(self.sessions) as session:
+                now = utc_now()
+                return bool(session.execute(
+                    update(KeyResultJob).where(key_results.owned(job, now, JOB_LEASE))
+                    .values(updated_at=now)
+                ).rowcount)
+
+        with _keep_lease(renew) as lease_lost:
+            key_result_worker.process(
+                self.sessions, self.activity, job, gateway, JOB_LEASE,
+                lambda: self.stopping.is_set() or lease_lost.is_set(),
+            )
+        return True
 
     async def _pause(self, seconds: float) -> None:
         """Sleep, but wake promptly when the worker is asked to stop."""
@@ -750,14 +792,12 @@ class ProcessingWorker:
             try:
                 if not ai:
                     await asyncio.to_thread(self.index.backfill, 10)
-                claimed = await asyncio.to_thread(self.claim, ai)
+                processed = await asyncio.to_thread(self.run_once, ai)
                 if failures:
                     logger.warning("Knowledge worker recovered after %d failed attempts", failures)
                     failures = 0
-                if not claimed:
+                if not processed:
                     await self._pause(IDLE_POLL_SECONDS)
-                    continue
-                await asyncio.to_thread(self.process, *claimed)
             except asyncio.CancelledError:
                 raise
             except Exception as error:

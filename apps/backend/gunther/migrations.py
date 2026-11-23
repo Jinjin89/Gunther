@@ -697,6 +697,12 @@ def _add_output_trash(connection: Connection, _metadata: MetaData) -> None:
             )
 
 
+def _create_key_results(connection: Connection, metadata: MetaData) -> None:
+    for name in ("key_results", "key_result_evidence", "key_result_jobs"):
+        if name in metadata.tables:
+            metadata.tables[name].create(bind=connection, checkfirst=True)
+
+
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
 MIGRATIONS: tuple[Migration, ...] = (
@@ -731,6 +737,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(29, "model_usage", _create_model_usage),
     Migration(30, "library_overviews", _create_library_overviews),
     Migration(31, "output_trash", _add_output_trash),
+    Migration(32, "key_results", _create_key_results),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

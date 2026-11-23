@@ -650,9 +650,49 @@ class ConversationContextOut(ApiModel):
     # "reads"}, "limits": {"searches", "reads"}, "coreQuestion", "doneWhen"}. "asking": the answer
     # is questions for the user, and nothing was searched.
     research: dict[str, object] | None = None
+    rework: bool = False
     # On a question that got no answer: "stopped" by the reader, or "failed".
     interrupted: Literal["stopped", "failed"] | None = None
     ask_failure: dict[str, object] | None = None
+
+
+KeyResultOriginKind = Literal["answer", "output", "saved_answer"]
+
+
+class KeyResultJobOut(ApiModel):
+    id: str
+    origin_kind: KeyResultOriginKind
+    origin_id: str
+    state: Literal["queued", "running", "done", "needs_model", "failed"]
+    error: str | None
+    kept_count: int
+    kept_ids: list[str]
+
+
+class KeyResultOriginOut(ApiModel):
+    kind: KeyResultOriginKind
+    id: str
+    title: str | None = None
+    session_id: str | None = None
+    created_at: str
+
+
+class KeyResultEvidenceOut(ApiModel):
+    id: str
+    source_id: str
+    revision_id: str
+    block_id: str
+    region_ids: list[str]
+    source_title: str | None
+    locator: str | None
+    quote: str
+
+
+class KeyResultOut(ApiModel):
+    id: str
+    text: str
+    origin: KeyResultOriginOut
+    evidence: list[KeyResultEvidenceOut]
 
 
 class SessionMessageOut(ApiModel):
@@ -663,6 +703,7 @@ class SessionMessageOut(ApiModel):
     citations: list[ConversationCitationOut] = Field(default_factory=list)
     context: ConversationContextOut = Field(default_factory=ConversationContextOut)
     created_at: str
+    key_results: KeyResultJobOut | None = None
 
 
 class KnowledgeSessionSummaryOut(ApiModel):
@@ -1232,6 +1273,7 @@ class ArtifactOut(ArtifactSummaryOut):
     inputs: OutputInputsOut = Field(default_factory=OutputInputsOut)
     model_label: str | None = None
     sections: list[OutputSectionOut] = Field(default_factory=list)
+    key_results: KeyResultJobOut | None = None
 
 
 # The Artifacts agent's conversations, kept on the backend (see artifact_workspace) ------------
