@@ -285,14 +285,19 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
     return undefined;
   };
   /** Send a message to the agent, and follow it until the turn ends. */
-  const sendTurn = async (turn: Pick<ArtifactTurnInput, "text" | "focus" | "rebuild"> & { kind: NonNullable<ArtifactTurnInput["kind"]> }) => {
+  const sendTurn = async (turn: Omit<ArtifactTurnInput, "clientRequestId"> & { kind: NonNullable<ArtifactTurnInput["kind"]> }) => {
     if (!workspaceId || building) return;
     const conversationId = active.id;
-    const asking = turn.kind === "start" || turn.kind === "continue" || turn.rebuild ? undefined : turn.focus ?? pointer();
-    const payload: ArtifactTurnInput = { clientRequestId: artifactRequestId(), kind: turn.kind, ...(turn.text ? { text: turn.text } : {}), ...(asking ? { focus: asking } : {}), ...(turn.rebuild ? { rebuild: turn.rebuild } : {}), ...(choice.model ? { model: choice.model, effort: choice.effort } : {}), ...(web.enabled ? { web: true } : {}) };
+    const { focus, ...options } = turn;
+    const asking = turn.kind === "start" || turn.kind === "continue" || turn.rebuild || turn.build ? undefined : focus ?? pointer();
+    const payload: ArtifactTurnInput = {
+      ...(choice.model ? { model: choice.model, effort: choice.effort } : {}),
+      ...(!turn.build && web.enabled ? { web: true } : {}),
+      ...options, clientRequestId: artifactRequestId(), ...(asking ? { focus: asking } : {}),
+    };
     followController.current?.abort();
     const abort = new AbortController(); controller.current = abort;
-    const context: JobContext = { conversationId, turnId: payload.clientRequestId, kind: "turn", text: turn.text || (turn.kind === "start" || turn.kind === "continue" ? USER_WORDS[turn.kind] : "") };
+    const context: JobContext = { conversationId, turnId: payload.clientRequestId, kind: "turn", text: turn.text || turn.build?.focus || (turn.kind === "start" || turn.kind === "continue" ? USER_WORDS[turn.kind] : "") };
     jobRef.current = context; setJob(context); setGeneralError(null); setStopping(false); setSettingsOpen(false); setPointing(null);
     if (!turn.rebuild) store.update(conversationId, { draft: "" });
     live.start();
@@ -309,7 +314,8 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
       await store.sync(conversationId).catch(() => undefined);
       const kept = store.messages(conversationId).at(-1);
       if (!stopped && !(kept?.role === "assistant" && kept.kind === "failed")) setGeneralError(messageOf(reason));
-      if (!turn.rebuild && !store.messages(conversationId).some((message) => message.clientRequestId === payload.clientRequestId) && turn.text && !store.get(conversationId)?.draft) store.update(conversationId, { draft: turn.text });
+      const draft = turn.build?.focus || turn.text;
+      if (!turn.rebuild && !store.messages(conversationId).some((message) => message.clientRequestId === payload.clientRequestId) && draft && !store.get(conversationId)?.draft) store.update(conversationId, { draft });
       onNotify(stopped ? "Stopped. Nothing was saved." : "The request wasn’t handled.");
     } finally { if (!abort.signal.aborted && jobRef.current === context) { live.stop(); jobRef.current = null; setJob(null); setStopping(false); } }
   };
@@ -333,7 +339,14 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
       return null;
     } finally { if (!abort.signal.aborted && jobRef.current === context) { live.stop(); jobRef.current = null; setJob(null); setStopping(false); } }
   };
-  const send = (text: string) => void sendTurn({ kind: pending ? "answer" : "message", text });
+  const send = (text: string) => void sendTurn({
+    kind: pending ? "answer" : "message", text,
+    ...(!pending && changeable && open ? { targetLineageId: open.lineageId } : {}),
+  });
+  const build = (type: "report" | "slides") => void sendTurn({
+    kind: "build", text: active.draft.trim() || (type === "slides" ? "Build Slides" : "Build Report"),
+    build: { type, focus: active.draft.trim(), scope, web: web.enabled },
+  });
   const reviewSlides = () => {
     if (!open) return;
     const target = open.id;
@@ -341,11 +354,18 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
       knowledgeApi.reviewSlidesStream(base.id, target, { clientRequestId, ...(choice.model ? { model: choice.model, effort: choice.effort } : {}) }, workspace, hear, signal));
   };
   const retry = (message: ArtifactConversationMessage) => {
-    const asked = messages.slice(0, messages.findIndex((item) => item.id === message.id)).reverse().find((item) => item.role === "user");
+    const asked = messages.find((item) => item.id === message.payload.to && item.role === "user")
+      ?? messages.slice(0, messages.findIndex((item) => item.id === message.id)).reverse().find((item) => item.role === "user");
     if (!asked) return;
-    const focus = asked.payload.focus as ArtifactTurnInput["focus"] | undefined;
-    const rebuild = asked.payload.rebuild as ArtifactTurnInput["rebuild"];
-    void sendTurn({ kind: asked.kind as NonNullable<ArtifactTurnInput["kind"]>, ...(asked.text ? { text: asked.text } : {}), ...(focus ? { focus } : {}), ...(rebuild ? { rebuild } : {}) });
+    const { focus, rebuild, build: savedBuild, targetLineageId, model, effort, web: requestedWeb } = asked.payload as Partial<ArtifactTurnInput>;
+    const latestBuild = messages.at(-1)?.id === message.id ? detail?.lastTurn?.build : null;
+    const included = latestBuild ?? savedBuild;
+    void sendTurn({
+      kind: asked.kind as NonNullable<ArtifactTurnInput["kind"]>, ...(asked.text ? { text: asked.text } : {}),
+      ...(focus ? { focus } : {}), ...(rebuild ? { rebuild } : {}), ...(included ? { build: included } : {}),
+      ...(targetLineageId ? { targetLineageId } : {}), ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}), ...(requestedWeb === undefined ? {} : { web: requestedWeb }),
+    });
   };
   const stop = async () => { if (!workspaceId) return; setStopping(true); try { await knowledgeApi.stopOutputBuild(base.id, workspaceId); } catch (reason) { setStopping(false); setGeneralError(messageOf(reason)); } };
   const saveEdit = async (content: string, note = "What you typed has not been re-checked yet.", target = open) => {
@@ -456,7 +476,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
     <header className="aw-pane-head"><div><h1>Conversation</h1><p>{active.title}</p></div><span className="aw-live-dot" /></header>
     <div ref={messagesPanel} className="aw-message-scroll" onScroll={() => { const panel = messagesPanel.current; if (panel) followingMessages.current = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 60; }}><div ref={messagesContent}>
       {state.problem && <p role="alert" className="outputs-hint">{state.problem}</p>}
-      {messages.length === 0 && !activeJob && <div className="aw-welcome"><BrandMark size={35} /><h2>{open ? "Refine it here." : "What would you like to make?"}</h2><p>{open ? "Ask for a change, ask about its sources, or start another report or slide deck in this conversation." : "Choose sources, describe a report or presentation, then refine it here."}</p><div className="artifact-create-shortcuts"><button type="button" onClick={() => { store.update(active.id, { draft: "Create a report from the selected material." }); setFocusRequest((value) => value + 1); }}>Report</button><button type="button" onClick={() => { store.update(active.id, { draft: "Create a slide deck from the selected material." }); setFocusRequest((value) => value + 1); }}>Slides</button></div></div>}
+      {messages.length === 0 && !activeJob && <div className="aw-welcome"><BrandMark size={35} /><h2>{open ? "Refine it here." : "What would you like to make?"}</h2><p>{open ? "Ask for a change, ask about its sources, or start another report or slide deck in this conversation." : "Choose sources, describe a report or presentation, then refine it here."}</p><div className="artifact-create-shortcuts"><button type="button" disabled={sendDisabled || building} onClick={() => build("report")}>Report</button><button type="button" disabled={sendDisabled || building} onClick={() => build("slides")}>Slides</button></div></div>}
       {noModel && <div className="outputs-setup-note"><p>Artifacts need a model. Set one up under Settings → Models.</p><button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => openSettings("models")}>Open Settings<ArrowRight size={13} /></button></div>}
       {menuUnavailable && <p role="alert">Models couldn’t be loaded. Check the connection or open Settings.</p>}
       {!noModel && emptyScope && !open && <div className="outputs-setup-note"><p>Nothing to build from yet</p><button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={onAdd}>Add sources<ArrowRight size={13} /></button></div>}

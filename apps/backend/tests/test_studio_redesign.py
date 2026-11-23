@@ -225,12 +225,11 @@ def test_review_saves_checked_words_and_a_skip_if_redesign_fails(tmp_path):
                    for note in saved["provenance"]["skill"]["skipped"])
 
 
-@pytest.mark.parametrize("entry", ["direct", "conversation"])
 @pytest.mark.parametrize("valid_writer", [True, False], ids=["formatter-failure", "invalid-writer"])
 def test_revision_saves_only_valid_writer_text_when_the_formatter_is_unavailable(
-    tmp_path, entry, valid_writer,
+    tmp_path, valid_writer,
 ):
-    from test_outputs import built, revise, versions
+    from test_outputs import versions
 
     writer_text = (
         "<!-- layout: points -->\n## The findings in brief\n"
@@ -249,18 +248,10 @@ def test_revision_saves_only_valid_writer_text_when_the_formatter_is_unavailable
 
     instruction = "Summarize slide 2 for discussion"
     with studio_deck(tmp_path, inner) as (client, base_id, first, go):
-        if entry == "direct":
-            events = revise(client, base_id, first["id"], instruction, sectionIndex=1)
-            if valid_writer:
-                saved = built(events)
-            else:
-                assert events[-1][0] == "error" and events[-1][1]["status"] == 502
-                saved = None
-        else:
-            saved, _ = go([{"actions": [
-                {"do": "write", "parts": [2], "instruction": instruction},
-                {"do": "save", "text": "Revised slide 2."},
-            ]}], instruction, outcome="saved" if valid_writer else "paused")
+        saved, _ = go([{"actions": [
+            {"do": "write", "parts": [2], "instruction": instruction},
+            {"do": "save", "text": "Revised slide 2."},
+        ]}], instruction, outcome="saved" if valid_writer else "paused")
 
         assert bool(fits) == valid_writer
         if valid_writer:

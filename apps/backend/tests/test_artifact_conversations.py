@@ -16,7 +16,7 @@ from test_output_skills import (
     SLIDES_OUTLINE,
     saved_skill_output,
 )
-from test_outputs import SIDECAR, app_for, built, check_reads, library, revise, route, workspace
+from test_outputs import SIDECAR, app_for, check_reads, library, route, workspace
 
 from gunther.artifact_manifest import artifact_manifest_hash
 from gunther.artifact_workspace import (
@@ -90,7 +90,10 @@ def test_a_conversation_is_created_listed_read_renamed_and_archived(tmp_path: Pa
 
         listed = client.get(conversations(base_id), headers=headers).json()
         assert [item["id"] for item in listed] == [other["id"], blank.json()["id"], "device-one"]
-        assert set(listed[0]) == {"id", "title", "updatedAt", "artifactCount", "waiting"}
+        assert set(listed[0]) == {
+            "id", "title", "updatedAt", "artifactCount", "waiting",
+            "outputType", "shape", "lineageId", "lastTurn",
+        }
 
         read = client.get(conversations(base_id, "/device-one"), headers=headers)
         assert read.status_code == 200 and read.json() == one
@@ -273,6 +276,28 @@ def device_conversation(deck_id: str, **fields) -> dict:
         ],
         **fields,
     }
+
+
+def test_latest_imported_failure_appears_in_last_turn(tmp_path):
+    _, app = a_library(tmp_path)
+    with app as client:
+        base, _ = library(client)
+        headers = workspace(client)
+        turn = {
+            "instruction": "Make it longer", "status": "failed", "error": "The model is down",
+            "createdAt": "2026-10-01T09:05:00.000Z",
+        }
+        imported = client.post(
+            conversations(base, "/import"), headers=headers,
+            json={"conversations": [{"id": "device-1", "turns": [turn]}]},
+        )
+        [summary] = imported.raise_for_status().json()
+        detail = client.get(conversations(base, "/device-1"), headers=headers)
+        assert summary["lastTurn"]["error"] == turn["error"]
+        assert detail.raise_for_status().json()["lastTurn"] == summary["lastTurn"]
+        assert detail.json()["messages"][-1]["payload"] == {
+            "imported": True, "error": turn["error"],
+        }
 
 
 def test_a_device_conversation_becomes_messages_and_a_work_and_is_brought_in_once(
@@ -511,15 +536,6 @@ def test_listing_gives_a_row_to_a_conversation_the_versions_name(tmp_path: Path)
         base_id, _ = library(client)
         headers = workspace(client)
 
-        def shortening():
-            return output_replies(
-                            OUTLINE,
-                REPORT,
-                rewrite=lambda index, prompt: (
-                    "## CD3D is the T-cell marker\n\nCD3D marks T cells [1]."
-                ),
-            )
-
         first = saved_skill_output(client, base_id, brief="A report on markers",
             conversationId="lost-1", conversationTitle="Lost one",
         )
@@ -527,8 +543,10 @@ def test_listing_gives_a_row_to_a_conversation_the_versions_name(tmp_path: Path)
             conversationId="lost-1",
         )
         # The report is worked on again after the deck was made.
-        fake.replies[:] = [shortening()]
-        second = built(revise(client, base_id, first["id"], "Shorter", sectionIndex=1))
+        second = client.post(
+            route(base_id, first["id"], "/edits"), headers=headers,
+            json={"clientRequestId": "earlier-work-edit", "content": first["content"] + "\n"},
+        ).raise_for_status().json()
         alone = saved_skill_output(client, base_id, brief="Another conversation",
             conversationId="lost-2",
         )
@@ -549,8 +567,6 @@ def test_listing_gives_a_row_to_a_conversation_the_versions_name(tmp_path: Path)
             ("assistant", "result", "", first["id"]),
             ("user", "message", "Slides on markers", None),
             ("assistant", "result", "", deck["id"]),
-            ("user", "message", "Shorter", None),
-            ("assistant", "result", "", second["id"]),
         ]
         # A deck and a report: one work each, at the newest version of its lineage, the one
         # worked on last at the end and active.
@@ -568,7 +584,7 @@ def test_listing_gives_a_row_to_a_conversation_the_versions_name(tmp_path: Path)
         assert {item["id"] for item in again} == {"lost-1", "lost-2"}
         with client.app.state.knowledge_service.sessions() as session:
             assert session.scalar(select(func.count()).select_from(ArtifactConversation)) == 2
-            assert session.scalar(select(func.count()).select_from(ArtifactMessage)) == 8
+            assert session.scalar(select(func.count()).select_from(ArtifactMessage)) == 6
 
         # An archived conversation keeps its row, so it is not made again.
         client.patch(conversations(base_id, "/lost-2"), headers=headers, json={"archived": True})

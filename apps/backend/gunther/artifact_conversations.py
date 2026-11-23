@@ -3,23 +3,27 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, aliased
 
 from gunther import artifact_workspace as workspaces
 from gunther.artifact_read import artifact_detail, latest_check_records
 from gunther.artifact_versions import ArtifactConflictError, output_library
 from gunther.database import session_scope
 from gunther.models import Artifact, ArtifactConversation, ArtifactMessage, utc_now
+from gunther.output_types import output_type_for
 from gunther.schemas import (
     ArtifactBriefOut,
     ArtifactBriefStateOut,
     ArtifactConversationOut,
     ArtifactConversationSummaryOut,
+    ArtifactLastTurnOut,
     ArtifactLineOut,
     ArtifactMessageOut,
     ArtifactPartOut,
@@ -27,6 +31,7 @@ from gunther.schemas import (
     ArtifactSpecOut,
     ArtifactStepOut,
     ArtifactWorkOut,
+    BuildTurnInput,
     CreateArtifactConversationInput,
     EditArtifactBriefInput,
     ImportArtifactConversationsInput,
@@ -162,17 +167,74 @@ class ArtifactConversations:
         )
 
     @staticmethod
+    def _last_artifact_turn(messages: Iterable[ArtifactMessage]) -> ArtifactLastTurnOut | None:
+        user = reply = None
+        for message in messages:
+            if message.role == "user" and user is None:
+                user = message
+            elif message.role == "assistant" and reply is None:
+                reply = message
+            if user is not None and reply is not None:
+                break
+        if user is None:
+            return None
+        asked = json.loads(user.payload_json or "{}")
+        answered = json.loads(reply.payload_json or "{}") if reply else {}
+        matched = answered.get("to") == user.id or (
+            answered.get("imported") and reply is not None and reply.created_at >= user.created_at
+        )
+        return ArtifactLastTurnOut(
+            kind=user.kind,
+            error=answered.get("error") if matched else None,
+            build=BuildTurnInput.model_validate(asked["build"]) if asked.get("build") else None,
+            created_at=_timestamp(user.created_at),
+        )
+
+    @staticmethod
     def _artifact_conversation_summary(
-        row: ArtifactConversation, workspace: workspaces.Workspace | None = None
+        row: ArtifactConversation, workspace: workspaces.Workspace | None = None,
+        last_turn: ArtifactLastTurnOut | None = None,
     ) -> ArtifactConversationSummaryOut:
         workspace = workspace or workspaces.load_workspace(row.state_json)
+        active = workspaces.active_work(workspace)
+        output_type = (
+            output_type_for(active.spec.kind, active.spec.chosen_output_type) if active else None
+        )
         return ArtifactConversationSummaryOut(
             id=row.id,
             title=row.title,
             updated_at=_timestamp(row.updated_at),
             artifact_count=len(workspace.works),
             waiting=workspace.pending is not None,
+            output_type=output_type.label if output_type else None,
+            shape=output_type.shape if output_type else None,
+            lineage_id=active.key if active and active.version_id else None,
+            last_turn=last_turn,
         )
+
+    def _artifact_conversation_summaries(
+        self, session: Session, rows: Iterable[ArtifactConversation],
+    ) -> list[ArtifactConversationSummaryOut]:
+        rows = list(rows)
+        if not rows:
+            return []
+        position = func.row_number().over(
+            partition_by=(ArtifactMessage.conversation_id, ArtifactMessage.role),
+            order_by=(ArtifactMessage.created_at.desc(), ArtifactMessage.id.desc()),
+        ).label("position")
+        ranked = select(ArtifactMessage, position).where(
+            ArtifactMessage.conversation_id.in_([row.id for row in rows]),
+        ).subquery()
+        message = aliased(ArtifactMessage, ranked)
+        recent = defaultdict(list)
+        for item in session.scalars(select(message).where(ranked.c.position == 1)):
+            recent[item.conversation_id].append(item)
+        return [
+            self._artifact_conversation_summary(
+                row, last_turn=self._last_artifact_turn(recent[row.id]),
+            )
+            for row in rows
+        ]
 
     def _artifact_conversation_out(
         self, session: Session, row: ArtifactConversation
@@ -186,7 +248,9 @@ class ArtifactConversations:
         ).all()
         pending = workspace.pending
         return ArtifactConversationOut(
-            **self._artifact_conversation_summary(row, workspace).model_dump(),
+            **self._artifact_conversation_summary(
+                row, workspace, self._last_artifact_turn(reversed(messages)),
+            ).model_dump(),
             scope=self._conversation_scope(row),
             brief=self._artifact_brief_out(brief),
             messages=[self._artifact_message_out(message) for message in messages],
@@ -403,7 +467,7 @@ class ArtifactConversations:
                 )
                 .order_by(ArtifactConversation.updated_at.desc(), ArtifactConversation.id)
             ).all()
-            return [self._artifact_conversation_summary(row) for row in rows]
+            return self._artifact_conversation_summaries(session, rows)
 
     def create_artifact_conversation(
         self, base_id: str, workspace_id: str, payload: CreateArtifactConversationInput
@@ -459,7 +523,7 @@ class ArtifactConversations:
                         session, workspace_id, base_id, imported, owned.get(imported.id, [])
                     )
                 )
-            return [self._artifact_conversation_summary(row) for row in made]
+            return self._artifact_conversation_summaries(session, made)
 
     def _import_artifact_conversation(
         self,

@@ -1,19 +1,16 @@
-"""Run direct output builds, revisions, reviews, restyles, typed edits and checks."""
+"""Review, restyle, edit and check saved outputs."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 from collections.abc import Callable
-from dataclasses import replace
 
-from gunther import artifact_workspace as workspaces
 from gunther import usage
 from gunther.agent import AskAgent
 from gunther.artifact_read import artifact_detail, latest_check_records
 from gunther.artifact_versions import (
     MAX_OUTPUT_BYTES,
-    ArtifactConflictError,
     commit_version,
     earlier_output,
     output_library,
@@ -26,13 +23,8 @@ from gunther.llm import ModelInfo
 from gunther.model_profiles import Effort
 from gunther.models import ArtifactCheck
 from gunther.output_checks import check_saved_part
-from gunther.output_types import output_type_for
 from gunther.outputs import (
     OutputLimits,
-    Planned,
-    Pool,
-    Spec,
-    _marked,
     join_document,
     section_hash,
     split_document,
@@ -41,13 +33,11 @@ from gunther.outputs import (
 from gunther.schemas import (
     ArtifactOut,
     ArtifactUnitSnapshotOut,
-    BuildOutputInput,
     ConversationCitationOut,
     EditOutputInput,
     OutputModelOut,
-    OutputScope,
+    OutputRequestInput,
     RestyleSlidesInput,
-    ReviseOutputInput,
 )
 from gunther.service_records import _id
 
@@ -83,7 +73,7 @@ class OutputCommands:
         return chosen[0], effort or chosen[1]
 
     @staticmethod
-    def _output_request_fields(payload: BuildOutputInput | ReviseOutputInput) -> dict:
+    def _output_request_fields(payload: OutputRequestInput) -> dict:
         fields = payload.model_dump(mode="json", exclude={"client_request_id"})
         # Requests made before the conversation UI retain their original fingerprint.
         for name in ("model", "effort", "conversation_id", "conversation_title", "theme"):
@@ -108,329 +98,6 @@ class OutputCommands:
                 }
             )
         ).hexdigest()
-
-    def build_output(
-        self,
-        base_id: str,
-        workspace_id: str,
-        payload: BuildOutputInput,
-        events: Callable[[dict], None] | None = None,
-    ) -> ArtifactOut:
-        """Build a report or slides from the library, or from what was picked.
-
-        Studio reads, plans, writes and verifies first; the version is
-        written afterwards, so a failed build saves nothing. ``supersedesArtifactId`` makes
-        it the next version of an existing output (a rebuild). ``events`` hears the
-        progress and may raise to stop the work.
-        """
-
-        limits = OutputLimits()
-        fields = self._output_request_fields(payload)
-        # The retired option was part of saved fingerprints, including the old style hash.
-        previous = [self._output_fingerprint(workspace_id, base_id, "build", fields)]
-        inherits_style = payload.kind == "report" and "style" not in payload.model_fields_set
-        if payload.kind == "report" and payload.supersedes_artifact_id:
-            fields["inherit_style"] = inherits_style
-            previous.append(self._output_fingerprint(workspace_id, base_id, "build", fields))
-        fields.pop("library_supplements")
-        fingerprint = self._output_fingerprint(workspace_id, base_id, "build", fields)
-        earlier = earlier_output(
-            self.sessions,
-            workspace_id, payload.client_request_id, fingerprint, previous=previous
-        )
-        if earlier is not None:
-            return earlier
-        model, effort = self._output_model(payload.model, payload.effort)
-        with (
-            usage.job("outputs", payload.kind, ref=payload.conversation_id),
-            session_scope(self.sessions) as session,
-        ):
-            library = output_library(session, workspace_id, base_id)
-            parent = (
-                output_version(
-                    session, workspace_id, base_id, payload.supersedes_artifact_id, latest=True
-                )
-                if payload.supersedes_artifact_id
-                else None
-            )
-            style = payload.style
-            if inherits_style and parent and parent.kind == "report":
-                style = parent.style
-            output_type = output_type_for(payload.kind, style)
-            if error := output_type.part_limit_error(len(payload.outline or ())):
-                raise ValueError(error)
-            parent_provenance = (
-                json.loads(parent.provenance_json) if parent and parent.kind == payload.kind else {}
-            )
-            parent_theme = None
-            parent_sections = []
-            if parent and parent.kind == payload.kind == "slides":
-                parent_sections = split_document(parent.content, "slides")[1]
-                if parent_sections:
-                    parent_theme = _marked(parent_sections[0]).theme
-            theme = payload.theme or parent_theme
-            design_version = payload.design_version
-            if design_version is None and parent and payload.kind == "slides" and parent_sections:
-                design_version = _marked(parent_sections[0]).design_version
-            spec = Spec(
-                payload.kind,
-                payload.audience,
-                output_type.id,
-                payload.brief,
-                payload.title,
-                theme,
-                design_version,
-                length=(payload.length if "length" in payload.model_fields_set
-                        else parent_provenance.get("length")),
-                language=(payload.language if "language" in payload.model_fields_set
-                          else parent_provenance.get("language")),
-            )
-            if parent and payload.conversation_id:
-                owner = json.loads(parent.provenance_json).get("conversation_id")
-                if owner and owner != payload.conversation_id:
-                    raise ValueError("This artifact belongs to a different conversation.")
-            material = self._output_material(session, base_id, payload.scope)
-            pool = self._output_pool(material.seeds, limits)
-            outline = (
-                [Planned(item.heading, item.goal, id=item.id) for item in payload.outline]
-                if payload.outline else None
-            )
-            fallback_title = parent.title if parent else library.title
-            from gunther.studio import format as studio_format
-            from gunther.studio.pipeline import StudioAgents
-
-            if parent_sections:
-                cover = studio_format.parse_slide(parent_sections[0])
-                spec = replace(
-                    spec,
-                    theme=payload.theme or cover.attrs.get("theme") or theme,
-                    deck_style=cover.attrs.get("style"),
-                )
-            reading_gaps = self._studio_reading(
-                session, material.source_revisions, pool, pinned=material.seeds
-            )
-            notes = replace(material.notes, extraction_gaps=tuple(reading_gaps))
-            use = parent_provenance.get("use") if payload.use == "auto" else payload.use
-            studio = StudioAgents(
-                self.models,
-                limits,
-                use=use,
-                renderer=self.slide_renderer,
-                asset_reader=self.asset_reader,
-                reusable_figures=self._reusable_figure_readings(session, base_id),
-            )
-            purpose = None
-            same_plan = parent_provenance and (
-                outline is not None
-                or (
-                    payload.brief == parent.brief
-                    and output_type_for(parent.kind, parent.style).id == output_type.id
-                    and spec.length == parent_provenance.get("length")
-                    and spec.language == parent_provenance.get("language")
-                    and use == parent_provenance.get("use")
-                )
-            )
-            if same_plan:
-                saved = parent_provenance.get("approach") or {}
-                purpose = "explain_study" if saved.get("study_map") else saved.get("purpose")
-                if outline is None:
-                    outline = [
-                        Planned(p["heading"], p.get("goal", ""), id=p.get("id", ""))
-                        for p in json.loads(parent.outline_json)
-                    ]
-            if payload.web:
-                web, reason = self._web_tool(True)
-                warning = self._studio_web(web, reason, payload.brief or payload.title or "", pool,
-                                           limits.per_section)
-                if warning:
-                    studio.skipped.append(warning)
-            built = studio.make(
-                model, effort, spec, pool, notes, events,
-                fallback_title=fallback_title,
-                purpose=purpose,
-                fixed_outline=outline,
-                outline_approved=payload.outline is not None,
-                scope={"selection": payload.scope.model_dump(), "inputs": material.inputs},
-                web=payload.web,
-            )
-            made_by = {
-                "generator": "gunther.studio.v1",
-                "skill": built.skill,
-                "approach": built.approach,
-                "use": (built.approach or {}).get("use"),
-                "length": spec.length,
-                "language": spec.language,
-                "conversation_id": payload.conversation_id,
-                "conversation_title": payload.conversation_title,
-                "request": payload.brief,
-            }
-            parent_id = parent.id if parent else None
-        if events:
-            events({"type": "saving"})  # a reader who pressed Stop by now gets nothing saved
-        return commit_version(
-            self.sessions,
-            workspace_id=workspace_id,
-            base_id=base_id,
-            client_request_id=payload.client_request_id,
-            fingerprint=fingerprint,
-            parent_id=parent_id,
-            kind=payload.kind,
-            style=output_type.id,
-            audience=payload.audience,
-            title=built.title,
-            brief=payload.brief,
-            origin="rebuild" if parent_id else "build",
-            content=built.content,
-            scope=payload.scope.model_dump(),
-            inputs=material.inputs,
-            outline=built.outline,
-            citations=[item.model_dump() for item in built.citations],
-            snapshots=material.snapshots,
-            model=OutputModelOut(ref=model.ref, label=model.display, effort=effort),
-            checks=built.checks,
-            made_by=made_by,
-        )
-
-    def revise_output(
-        self,
-        base_id: str,
-        workspace_id: str,
-        artifact_id: str,
-        payload: ReviseOutputInput,
-        events: Callable[[dict], None] | None = None,
-    ) -> ArtifactOut:
-        """Change one section (or all) of the latest version as instructed: the next version.
-
-        The passages the version cites keep their numbers; new research on the
-        instruction searches the scope the output was built from. Sections that change
-        are checked again; the others keep what the Checker found in them.
-        """
-        from gunther.studio.work import StudioWorkAgents
-
-        limits = OutputLimits()
-        fingerprint = self._output_fingerprint(
-            workspace_id,
-            base_id,
-            "revise",
-            {
-                "artifactId": artifact_id,
-                **self._output_request_fields(payload),
-            },
-        )
-        earlier = earlier_output(
-            self.sessions, workspace_id, payload.client_request_id, fingerprint,
-        )
-        if earlier is not None:
-            return earlier
-        model, effort = self._output_model(payload.model, payload.effort)
-        with usage.job("outputs", ref=artifact_id), session_scope(self.sessions) as session:
-            library = output_library(session, workspace_id, base_id)
-            try:
-                parent = output_version(
-                    session, workspace_id, base_id, artifact_id, latest=True
-                )
-            except ArtifactConflictError:
-                earlier = earlier_output(
-                    self.sessions, workspace_id, payload.client_request_id, fingerprint,
-                )
-                if earlier is not None:
-                    return earlier
-                raise
-            self._require_agent_output(parent)
-            if payload.conversation_id:
-                owner = json.loads(parent.provenance_json).get("conversation_id")
-                if owner and owner != payload.conversation_id:
-                    raise ValueError("This artifact belongs to a different conversation.")
-            material = self._output_material(
-                session,
-                base_id,
-                OutputScope.model_validate(json.loads(parent.scope_json)),
-                strict=False,
-                allow_empty=True,
-            )
-            pool = Pool(limits.pool)
-            citations = map(
-                ConversationCitationOut.model_validate, json.loads(parent.citations_json)
-            )
-            pool.restore(
-                [
-                    evidence_from_citation(citation.model_copy(update={"ref": citation.ref or n}))
-                    for n, citation in enumerate(citations, 1)
-                ]
-            )
-            tool = self._output_search_tool(
-                session, list(material.source_revisions), f"{library.title}: {library.question}"
-            )
-            made_by = self._made_by(parent) or {}
-            agents = StudioWorkAgents(self.models, parent.kind, limits)
-            agents.use = made_by.get("use")
-            saved = made_by.get("approach") or {}
-            if saved.get("purpose") == "explain_study":
-                numbers = {int(ref): n for ref, n in (saved.get("ref_map") or {}).items()
-                           if ref.isdecimal()}
-                agents.scientific_context = (
-                    workspaces.rebind_approach_refs(saved, numbers) if numbers else saved
-                )
-            with usage.job(detail=parent.kind):
-                built = agents.revise(
-                    model,
-                    effort,
-                    Spec(
-                        parent.kind,
-                        parent.audience,
-                        parent.style,
-                        parent.brief,
-                        title=parent.title,
-                        length=made_by.get("length"),
-                        language=made_by.get("language"),
-                    ),
-                    parent.content,
-                    json.loads(parent.outline_json),
-                    latest_check_records(session, parent),
-                    payload.instruction,
-                    payload.section_index,
-                    tool,
-                    pool,
-                    material.notes,
-                    events,
-                    approach=saved,
-                )
-            made_by = {
-                **made_by,
-                "generator": "gunther.studio.v1",
-                "skill": {**(made_by.get("skill") or {}), **agents.record()},
-                "conversation_id": payload.conversation_id,
-                "conversation_title": payload.conversation_title,
-                "request": payload.instruction,
-            }
-            fields = {
-                "kind": parent.kind,
-                "style": parent.style,
-                "audience": parent.audience,
-                "brief": parent.brief,
-                "scope": json.loads(parent.scope_json),
-                "outline": built.outline,
-                "title": built.title or parent.title,
-            }
-        if events:
-            events({"type": "saving"})
-        return commit_version(
-            self.sessions,
-            workspace_id=workspace_id,
-            base_id=base_id,
-            client_request_id=payload.client_request_id,
-            fingerprint=fingerprint,
-            parent_id=artifact_id,
-            origin="revise",
-            content=built.content,
-            inputs=material.inputs,
-            citations=[item.model_dump() for item in built.citations],
-            snapshots=material.snapshots,
-            model=OutputModelOut(ref=model.ref, label=model.display, effort=effort),
-            checks=built.checks,
-            made_by=made_by,
-            **fields,
-        )
 
     def review_slides(
         self, base_id, workspace_id, artifact_id, payload, events=None,

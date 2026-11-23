@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { knowledgeApi } from "../api";
 import { ArtifactConversationStore, EARLIER_WORK, libraryScope } from "./artifactConversations";
 
-const summary = (id: string, title = "A conversation"): ArtifactConversationSummary => ({ id, title, updatedAt: "2026-10-01T00:00:00Z", artifactCount: 0, waiting: false });
+const summary = (id: string, title = "A conversation"): ArtifactConversationSummary => ({ id, title, updatedAt: "2026-10-01T00:00:00Z", artifactCount: 0, waiting: false, outputType: null, shape: null, lineageId: null, lastTurn: null });
 const detail = (id: string, title = "A conversation"): ArtifactConversationDetail => ({ ...summary(id, title), scope: libraryScope(), brief: { goal: null, audience: null, constraints: [], open: [] }, messages: [], works: [], active: null, pending: null, archived: false, createdAt: "2026-10-01T00:00:00Z" });
 const item = (id: string, overrides: Partial<ArtifactSummary> = {}): ArtifactSummary => ({
   id, workspaceId: "workspace", knowledgeBaseId: "library", lineageId: `lineage_${id}`, versionNumber: 1, supersedesArtifactId: null, format: "report", kind: "report", audience: "student", style: "overview", outputType: "Report", origin: "build", title: `Document ${id}`, contentHash: "hash", manifestHash: "seal", acceptedUnitIds: [], unitCount: 0, createdAt: "2026-10-01T00:00:00Z", ...overrides,

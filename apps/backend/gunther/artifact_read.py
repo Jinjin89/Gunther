@@ -282,19 +282,6 @@ class ArtifactReader:
                         **skill.visual_review, "status": "stale", "reason": reason}
             return shown
 
-    def artifact_kind(self, base_id: str, artifact_id: str) -> str:
-        """``slides`` or ``report``: what this version of an output is."""
-
-        with session_scope(self.sessions) as session:
-            artifact = session.scalar(
-                select(Artifact).where(
-                    Artifact.id == artifact_id, Artifact.knowledge_base_id == base_id
-                )
-            )
-            if artifact is None:
-                raise LookupError(f"Artifact {artifact_id} was not found")
-            return artifact.kind
-
     @staticmethod
     def _require_agent_output(artifact: Artifact) -> None:
         if artifact.origin == "legacy":

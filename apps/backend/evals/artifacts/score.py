@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from evals.ask.score import LIBRARY_DIR, library_texts, word_count
 from gunther.llm import ModelError, ModelGateway, ModelInfo
+from gunther.output_types import output_type_for
 from gunther.outputs import join_document, split_document
 
 __all__ = ["LIBRARY_DIR", "library_texts"]
@@ -49,7 +50,6 @@ CATEGORIES = {
 ARTIFACTS = {"deck": "slides", "report": "report", "none": ""}
 INTENTS = ("ask", "answer", "make", "change")
 ASKS = ("must", "may", "must_not")
-ROUTES = ("revise", "rebuild", "outline", "new", "none")
 # What each placeholder in a case needs its setup to have made.
 PLACEHOLDERS = {"typo": "typo", "fixed": "typo", "quote": "quote"}
 CITATION = re.compile(r"\[(?:([ipd]):)?(\d+(?:\s*[,，、]\s*\d+)*)\]")
@@ -96,29 +96,6 @@ class Setup:
 
 
 @dataclass(frozen=True)
-class Edit:
-    """One change to an outline item, for a person who edits the outline and rebuilds."""
-
-    part: int
-    heading: str | None = None
-    goal: str | None = None
-    layout: str | None = None
-
-
-@dataclass(frozen=True)
-class Today:
-    """How the old path takes a message (the baseline). Left empty, it follows from the case."""
-
-    route: str = ""
-    why: str = ""
-    edit: tuple[Edit, ...] = ()
-    # For a new document: what the person would have picked in the old screen.
-    kind: str = ""
-    audience: str = "scientist"
-    use: str = ""
-
-
-@dataclass(frozen=True)
 class Expect:
     intent: tuple[str, ...] = ("change",)
     changed: tuple[int, ...] = ()
@@ -153,7 +130,6 @@ class Case:
     history: tuple[Turn, ...] = ()
     focus: Focus | None = None
     setup: Setup = field(default_factory=Setup)
-    today: Today = field(default_factory=Today)
 
     def resolved(self, subs: dict[str, str]) -> Case:
         """The case with ``{typo}``, ``{fixed}`` and ``{quote}`` replaced by what the setup made."""
@@ -181,7 +157,6 @@ class Case:
             self.history,
             focus,
             self.setup,
-            self.today,
         )
 
 
@@ -215,21 +190,19 @@ class Fixture:
         return hashlib.sha256(text.encode()).hexdigest()[:12]
 
     def request(self) -> dict[str, Any]:
-        """The build request that makes it (without an id or a model)."""
+        """The options for the fixture's conversation build turn."""
 
         body: dict[str, Any] = {
-            "kind": self.kind,
+            "type": output_type_for(self.kind, self.style).id,
             "audience": self.audience,
-            "brief": self.brief,
+            "focus": self.brief,
             "scope": {"mode": "library"},
             "outline": [
                 {"heading": s.heading, "goal": s.goal, **({"layout": s.layout} if s.layout else {})}
                 for s in self.outline
             ],
         }
-        if self.kind == "report":
-            body["style"] = self.style or "overview"
-        elif self.use:
+        if self.kind == "slides" and self.use:
             body["use"] = self.use
         if self.title:
             body["title"] = self.title
@@ -304,29 +277,6 @@ def _expect(raw: dict[str, Any], where: str) -> Expect:
     return expect
 
 
-def _today(raw: dict[str, Any] | None, where: str) -> Today:
-    if not raw:
-        return Today()
-    _fields(raw, set(Today.__dataclass_fields__), f"{where} today")
-    edits = []
-    for item in raw.get("edit", []):
-        _fields(item, set(Edit.__dataclass_fields__), f"{where} today edit")
-        edits.append(
-            Edit(int(item["part"]), item.get("heading"), item.get("goal"), item.get("layout"))
-        )
-    today = Today(
-        route=str(raw.get("route", "")),
-        why=str(raw.get("why", "")),
-        edit=tuple(edits),
-        kind=str(raw.get("kind", "")),
-        audience=str(raw.get("audience", "scientist")),
-        use=str(raw.get("use", "")),
-    )
-    if today.route and today.route not in ROUTES:
-        raise ValueError(f"{where}: unknown route {today.route!r}")
-    return today
-
-
 def load_cases(path: Path = CASES_FILE) -> list[Case]:
     """Every case in the file, checked: a mistyped field or rule is an error, not a skip."""
 
@@ -339,7 +289,6 @@ def load_cases(path: Path = CASES_FILE) -> list[Case]:
         "history",
         "focus",
         "setup",
-        "today",
         "expect",
     }
     cases = []
@@ -362,7 +311,6 @@ def load_cases(path: Path = CASES_FILE) -> list[Case]:
             history=tuple(history),
             focus=_focus(entry.get("focus"), where),
             setup=Setup(setup.get("typo"), (int(quote[0]), int(quote[1])) if quote else None),
-            today=_today(entry.get("today"), where),
         )
         if case.category not in CATEGORIES:
             raise ValueError(f"{where}: unknown category {case.category!r}")
@@ -429,7 +377,6 @@ def problems(cases: Sequence[Case], fixtures: dict[str, Fixture]) -> list[str]:
             "layout": tuple(expect.layout),
             "typo": (case.setup.typo,) if case.setup.typo else (),
             "quote": (case.setup.quote[0],) if case.setup.quote else (),
-            "edit": tuple(edit.part for edit in case.today.edit),
             "focus": tuple(
                 turn.focus.section
                 for turn in [*case.history, Turn(case.message, case.focus)]
@@ -525,10 +472,10 @@ class Outcome:
     seconds: float = 0.0
     calls: int = 0
     tokens: int = 0
-    # Why there is nothing to score (the request failed), or why the old path cannot do it.
+    # Why the request failed, or why a historical run could not send it.
     failed: str = ""
     impossible: str = ""
-    # How the request was made, in a few words (the baseline's route).
+    # How the request was made, including the route in historical runs.
     route: str = ""
     notes: list[str] = field(default_factory=list)
 

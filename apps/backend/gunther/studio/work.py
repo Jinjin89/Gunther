@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Sequence
-from dataclasses import replace
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -30,13 +29,11 @@ from gunther.checks import (
     merge_verdicts,
     verdicts_of,
 )
-from gunther.citations import check_citations
 from gunther.claim_checks import checker_inventory
 from gunther.evidence import Evidence
 from gunther.llm import ModelError
 from gunther.llm import unfence as _unfence
 from gunther.output_checks import check_saved_part, support_inventory
-from gunther.output_document import number_output_citations, number_output_part
 from gunther.output_types import output_type_for
 from gunther.outputs import (
     COMPOSITION_LAYOUTS,
@@ -49,14 +46,9 @@ from gunther.outputs import (
     Spec,
     _marked,
     _notes_block,
-    chart_unverified,
-    document_spans,
     fallback_unverified_diagram,
-    heading_of,
-    numbered_check,
     section_hash,
     split_document,
-    title_of,
 )
 from gunther.schemas import OutlineItem
 from gunther.skill_checks import CHARTS
@@ -67,7 +59,7 @@ from gunther.studio import science as S
 from gunther.studio.drafting import source_images_kept
 from gunther.studio.pipeline import StudioAgents
 from gunther.studio.reference import DECK_FORMAT, READ_NOTE, STUDY_DECK_FORMAT, report_format
-from gunther.studio.state import DeckStory, Insight, Memo, Run, _no_events
+from gunther.studio.state import DeckStory, Insight, Memo, Run
 
 logger = logging.getLogger(__name__)
 
@@ -532,103 +524,6 @@ class StudioWorkAgents(StudioAgents):
             if found := self._science_problems(text, pool, scientific):
                 raise ModelError("The edited slide breaks a scientific rule: " + found[0])
         return text
-
-    def revise(
-        self, model, effort, spec: Spec, content: str, outline, records, instruction: str,
-        target: int | None, tool, pool: Pool, notes: Notes, events=None,
-        *, approach: dict | None = None,
-    ) -> BuiltOutput:
-        """Rewrite selected parts with the saved version's text and citation numbers."""
-        emit = events or _no_events
-        _, spans = document_spans(content, spec.kind)
-        parts = [content[start:end] for start, end in spans]
-        if not parts:
-            raise ValueError("This output has no sections to change.")
-        if target is not None and not 0 <= target < len(parts):
-            raise ValueError(f"There is no section {target + 1} to change.")
-        headings = [heading_of(part) for part in parts]
-        plans = list(outline) if len(outline) == len(parts) else [{"heading": h} for h in headings]
-        saved = pool.by_ref()
-        asked = f"{headings[target]}: {instruction}" if target is not None else instruction
-        self._research_section(model, asked, [asked[:300]], tool, pool,
-                               self.limits.per_section, emit, target)
-        by_ref = pool.by_ref()
-        deck = spec.kind == "slides"
-        style = D.deck_style(parts) if deck else None
-        changed: dict[int, Draft] = {}
-        for index in range(len(parts)) if target is None else [target]:
-            emit({"type": "section", "index": index, "state": "writing"})
-            old = parts[index]
-
-            def stream(piece: str, index: int = index) -> None:
-                emit({"type": "text", "section": index, "text": piece})
-
-            text = self.write_part(
-                model, effort, spec, parts, headings, index, pool,
-                goal=plans[index].get("goal", ""), instruction=instruction, notes=notes,
-                approach=approach, on_text=stream,
-            )
-            if section_hash(text) == section_hash(fmt.without_design(old)):
-                emit({"type": "section", "index": index, "state": "done"})
-                continue
-            text = self.fit(model, effort, spec, index, pool, text)
-            text, _ = check_citations(text, set(by_ref))
-            if deck:
-                text = slide_in_deck_format(text, parts[0], index)
-            text = _single_part(text, spec.kind, index)
-            emit({"type": "section", "index": index, "state": "checking"})
-            draft = self.check_built(model, text, pool, index)
-            parts[index] = draft.text
-            if style and draft.text == text:
-                old_html = fmt.design_of(old)
-                if (old_html and D.visible_content(old) == D.visible_content(draft.text)
-                        and not D.check_design(draft.text, old_html)):
-                    parts[index] = fmt.with_design(draft.text, old_html)
-                else:
-                    try:
-                        designed, _, skipped = D.redesign(
-                            self, model, parts, {index: ""}, workers=1, style=style,
-                            keep_on_fail=False,
-                        )
-                        parts[index] = designed[index]
-                        self.skipped += skipped
-                    except Exception as error:  # noqa: BLE001 - the template can draw this slide
-                        logger.info("Designing revised slide %d failed: %s", index + 1, error)
-            changed[index] = replace(draft, text=parts[index])
-            headings[index] = heading_of(parts[index])
-            plans[index] = {**plans[index], "heading": headings[index]}
-            if deck:
-                plans[index]["layout"] = fmt.parse_slide(parts[index]).layout
-            emit({"type": "section", "index": index, "state": "done"})
-
-        numbers, citations = number_output_citations(
-            (draft.text for draft in changed.values()), by_ref, saved=saved,
-        )
-        checks = []
-        for index, part in enumerate(parts):
-            if index in changed:
-                draft = changed[index]
-                parts[index] = number_output_part(draft.text, numbers)
-                checks.append(numbered_check(draft, parts[index], numbers))
-                continue
-            record = records.get(section_hash(part))
-            if deck and _marked(part).layout in CHARTS:
-                state = (record or {}).get("verdicts") or {}
-                if not has_stage(state, "checker"):
-                    state = self._claims(model, part, by_ref)
-                    record = numbered_check(Draft(part, state), part, numbers)
-                draft = Draft(part, state)
-                _, reason = chart_unverified(part, draft.issues, draft.coverage, by_ref, index)
-                if reason is not None:
-                    raise ModelError("Chart values must be verified before saving. " + reason)
-            if record is not None:
-                checks.append(record)
-        for index in reversed(changed):
-            start, end = spans[index]
-            content = content[:start] + parts[index] + content[end:]
-        return BuiltOutput(
-            title_of(content) or spec.title or "", content, plans, citations, checks, model, effort,
-        )
 
     def _part_material(self, pool: Pool, cited: list[int], about: str) -> str:
         """The passages a part may need: those the document cites, then the ones sharing the

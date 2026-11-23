@@ -33,7 +33,7 @@ from gunther.artifact_workspace import (
 from gunther.citations import check_citations
 from gunther.evidence import Tool
 from gunther.llm import Turn
-from gunther.outputs import ACCENTS, BuiltOutput, Planned, Pool, _marked
+from gunther.outputs import ACCENTS, BuiltOutput, Planned, Pool, Spec, _marked
 from gunther.studio import design as studio_design
 from gunther.studio import format as studio_format
 from gunther.studio.work import load_built
@@ -460,33 +460,46 @@ class ArtifactActions:
             "against its sources.",
         )
 
-    def _make(self, work: Work, approved: Sequence[Planned] | None = None) -> BuiltOutput:
+    def _make(
+        self, work: Work, approved: Sequence[Planned] | None = None, *,
+        request: Spec | None = None, progress: Work | None = None, reuse_plan: bool = False,
+    ) -> BuiltOutput:
         c = self.ctx
-        spec = spec_of(self.brief, work)
+        spec = request or spec_of(self.brief, work)
+        scoped = request is not None or approved is not None
         made = Pool(1_000_000)
         made.restore([
             item for item in self.pool.items
-            if approved is None or c.evidence_allowed is None or c.evidence_allowed(item)
+            if not scoped or c.evidence_allowed is None or c.evidence_allowed(item)
         ])
         approach = work.approach or {}
         use = _fold_use(work) or (approach.get("use") if approved is not None else None)
         current = approach_state(work, self.brief).state
         outline = approved
-        if outline is None and current != "out_of_date" and outline_state(work).state == "ok":
+        keep_outline = reuse_plan if request else (
+            current != "out_of_date" and outline_state(work).state == "ok"
+        )
+        if outline is None and keep_outline:
             outline = [Planned(item.heading, item.goal, id=item.id) for item in work.outline]
         if work.outline and spec.kind == "slides":
             cover = work.parts.get(work.outline[0].id)
             if cover:
                 attrs = studio_format.parse_slide(cover.text).attrs
                 theme = attrs.get("theme")
-                spec = replace(spec, theme=theme if theme in studio_format.THEMES else spec.theme,
-                               deck_style=attrs.get("style"))
-                if approved is not None:
+                if request is not None:
+                    spec = replace(spec, deck_style=attrs.get("style"))
+                else:
                     spec = replace(
-                        spec, theme=spec.theme or "classic",
-                        design_version=_marked(cover.text).design_version,
+                        spec, theme=theme if theme in studio_format.THEMES else spec.theme,
+                        deck_style=attrs.get("style"),
                     )
-        resume = approach.get("studio_progress")
+                    if approved is not None:
+                        spec = replace(
+                            spec, theme=spec.theme or "classic",
+                            design_version=_marked(cover.text).design_version,
+                        )
+        checkpoint_work = progress if progress is not None else work
+        resume = (checkpoint_work.approach or {}).get("studio_progress")
         if resume is None and approach.get("purpose") == "explain_study":
             resume = {
                 "previous_purpose": {
@@ -498,19 +511,23 @@ class ArtifactActions:
             }
 
         def keep(state: dict[str, Any]) -> None:
-            # Kept in the work (the workspace is saved even when the turn fails).
-            work.approach = {**(work.approach or {}), "studio_progress": state}
+            checkpoint_work.approach = {
+                **(checkpoint_work.approach or {}), "studio_progress": state,
+            }
 
+        keep_purpose = reuse_plan if request else current == "ok"
         built = c.studio(
             spec, made, use, resume, keep,
-            purpose=approach.get("purpose") if approved is not None or current == "ok" else None,
+            purpose=approach.get("purpose") if approved is not None or keep_purpose else None,
             fixed_outline=outline,
         )
-        if approved is not None and spec.kind == "slides":
+        if scoped and spec.kind == "slides":
             work.spec.theme, work.spec.design_version = spec.theme, spec.design_version
             used = (built.approach or {}).get("use")
             if work.spec.use is None and used in ("talk", "read"):
                 work.spec.use = Line(text=used, mark="guessed")
+        if spec.title:
+            built = replace(built, title=spec.title)
         load_built(work, built, made, self.pool, self.brief)
         return replace(
             built,

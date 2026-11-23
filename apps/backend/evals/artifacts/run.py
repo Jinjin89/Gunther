@@ -1,13 +1,12 @@
 """The Artifacts exam: fixed messages sent to a deck and a report built from the demo library.
 
-Run from ``apps/backend``: ``python -m evals.artifacts.run --path baseline --label baseline``.
+Run from ``apps/backend``: ``python -m evals.artifacts.run --label exam``.
 See the README. It is a developer tool: nothing in the app or the sidecar uses it.
 """
 
 from __future__ import annotations
 
 import argparse
-import itertools
 import json
 import os
 import queue
@@ -46,17 +45,8 @@ from gunther.outputs import section_hash, split_document
 from gunther.schemas import OutputModelOut
 from gunther.service import KnowledgeService
 
-PATHS = ("baseline", "agent")
 # A fixture that lacks what the cases rely on is built again, this many times at most.
 FIXTURE_TRIES = 3
-# What today's path cannot do, said the way the scorecard says it.
-NOT_POSSIBLE = {
-    "ask": "it never asks; it starts building at once.",
-    "answer": (
-        "it cannot answer a question; every message revises the document and saves a version."
-    ),
-    "structure": "it cannot add, remove or move a part; it can only rebuild the whole document.",
-}
 
 
 @dataclass
@@ -67,7 +57,6 @@ class Options:
     judge: str | None = None
     only: list[str] = field(default_factory=list)
     label: str = "exam"
-    paths: list[str] = field(default_factory=lambda: ["baseline"])
     reseed: bool = False
     rebuild_fixtures: bool = False
     fixtures_only: bool = False
@@ -77,13 +66,12 @@ class Options:
 
 @dataclass(frozen=True)
 class Configuration:
-    path: str
     model: str
     writer_effort: Effort | None
 
     @property
     def name(self) -> str:
-        return f"{self.path}: {self.model} (write {self.writer_effort or 'default'})"
+        return f"agent: {self.model} (write {self.writer_effort or 'default'})"
 
 
 # Counting model calls ---------------------------------------------------------------------
@@ -100,7 +88,7 @@ class Counter:
     """Counts the model calls and tokens a gateway makes while a window is open.
 
     It listens where the gateway talks to the provider (``_stream``): every call goes
-    through it, whoever made it. The output paths keep no trace, as Ask does.
+    through it, whoever made it. The Artifacts agent keeps no trace, as Ask does.
     """
 
     def __init__(self, gateway: ModelGateway) -> None:
@@ -337,19 +325,24 @@ def build_fixture(
     lacking: list[str] = []
     for attempt in range(1, FIXTURE_TRIES + 1):
         body = {
-            **fixture.request(),
+            "kind": "build",
+            "build": fixture.request(),
             "clientRequestId": f"exam_fixture_{secrets.token_hex(6)}",
             **model,
         }
+        conversation = open_conversation(session, None)
         with session.counter.window() as used:
-            name, data = session.stream("outputs/build/stream", body)
+            name, data = session.stream(
+                f"artifact-conversations/{conversation}/messages/stream", body,
+            )
         calls, tokens = calls + used.calls, tokens + used.tokens
         if name != "done":
             lacking = [describe(name, data)]
         else:
-            lacking = fixture.problems(score.Version.from_artifact(data).parts)
+            artifact = data["artifact"]
+            lacking = fixture.problems(score.Version.from_artifact(artifact).parts)
             if not lacking:
-                saved = export_version(session.service, data["id"])
+                saved = export_version(session.service, artifact["id"])
                 saved["built"] = {
                     "attempts": attempt,
                     "seconds": round(time.perf_counter() - started),
@@ -432,147 +425,6 @@ def ensure_fixtures(
     if failures:
         raise failures[0]
     return saved
-
-
-# Today's path -----------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class Request:
-    """A message as the old screen would send it. ``route`` is none when it cannot."""
-
-    route: str
-    tail: str = ""
-    body: dict[str, Any] = field(default_factory=dict)
-    why: str = ""
-
-
-def route_of(case: score.Case) -> tuple[str, str]:
-    """How the old path takes this case, and when it cannot, why.
-
-    A change is a revision, of the part the person selected or else of the whole document.
-    A change upstream of the parts is a rebuild, with the message as the brief. A new
-    document is a build. What the old path has no way to say (asking, answering, adding,
-    removing or moving a part) is not possible.
-    """
-
-    expect, today = case.expect, case.today
-    structure = NOT_POSSIBLE["structure"]
-    asking = expect.asks_rule == "must" or expect.intent == ("ask",)
-    if today.route:
-        if today.route != "none":
-            return today.route, ""
-        reason = (
-            NOT_POSSIBLE["ask"]
-            if asking
-            else NOT_POSSIBLE["answer"]
-            if expect.intent == ("answer",)
-            else structure
-        )
-        return "none", today.why or reason
-    if asking:
-        return "none", NOT_POSSIBLE["ask"]
-    if expect.intent == ("answer",):
-        return "none", NOT_POSSIBLE["answer"]
-    if expect.intent == ("make",) or case.artifact == "none":
-        return "new", ""
-    if case.category == "upstream":
-        return "rebuild", ""
-    if expect.count_delta or expect.order or expect.new_at:
-        return "none", structure
-    return "revise", ""
-
-
-def edited_outline(
-    outline: list[dict[str, Any]], edits: tuple[score.Edit, ...]
-) -> list[dict[str, Any]]:
-    """The version's outline with the person's changes to it, as the outline editor sends it."""
-
-    items = [dict(item) for item in outline]
-    for edit in edits:
-        item = items[edit.part - 1]
-        for key in ("heading", "goal", "layout"):
-            value = getattr(edit, key)
-            if value is not None:
-                item[key] = value
-    return items
-
-
-def baseline_request(
-    case: score.Case,
-    turn: score.Turn,
-    head: score.Version | None,
-    config: Configuration,
-    route: str,
-    request_id: str,
-) -> Request:
-    """The request the old path makes for one message, from what the old screen knows: the
-    message, the part selected (never the text), and the version's own settings."""
-
-    model: dict[str, Any] = {"model": config.model}
-    if config.writer_effort:
-        model["effort"] = config.writer_effort
-    if route == "revise":
-        assert head is not None
-        body: dict[str, Any] = {"clientRequestId": request_id, "instruction": turn.message, **model}
-        focus = turn.focus
-        if focus and focus.selected and focus.section:
-            body["sectionIndex"] = focus.section - 1
-        return Request("revise", f"artifacts/{head.id}/revise/stream", body)
-    body = {"clientRequestId": request_id, "scope": {"mode": "library"}, **model}
-    if route == "new":
-        today = case.today
-        body |= {"kind": today.kind or "slides", "audience": today.audience, "brief": turn.message}
-        if today.use:
-            body["use"] = today.use
-        return Request("new", "outputs/build/stream", body)
-    assert head is not None
-    body |= {"kind": head.kind, "audience": head.audience, "supersedesArtifactId": head.id}
-    if head.kind == "report":
-        body["style"] = head.style or "overview"
-    elif head.use:
-        body["use"] = head.use
-    if route == "rebuild":
-        body["brief"] = turn.message
-    else:
-        body["brief"] = head.brief
-        body["outline"] = edited_outline(head.outline, case.today.edit)
-    return Request(route, "outputs/build/stream", body)
-
-
-def run_baseline_case(
-    session: Session, case: score.Case, start: score.Version | None
-) -> score.Outcome:
-    """Send a case's messages the way today's path would, and report what came of the last."""
-
-    route, why = route_of(case)
-    if route == "none":
-        return score.Outcome(impossible=why, route="not possible")
-    outcome = score.Outcome(route=route)
-    turns = [*case.history, score.Turn(case.message, case.focus)]
-    head = start
-    for number, turn in enumerate(turns, start=1):
-        last = number == len(turns)
-        request = baseline_request(
-            case,
-            turn,
-            head,
-            session.config,
-            route if last else "revise",
-            f"exam_{secrets.token_hex(8)}",
-        )
-        with session.counter.window() as used:
-            name, data = session.stream(request.tail, request.body)
-        if name != "done":
-            outcome.failed = describe(name, data)
-            return outcome
-        saved = score.Version.from_artifact(data)
-        if last:
-            outcome.before, outcome.after = head, saved
-            outcome.intent = "change" if head else "make"
-            outcome.calls, outcome.tokens, outcome.seconds = used.calls, used.tokens, used.seconds
-        head = saved
-    return outcome
 
 
 # The agent -----------------------------------------------------------------------------------
@@ -665,12 +517,6 @@ def run_agent_case(
     return outcome
 
 
-RUNNERS: dict[str, Callable[[Session, score.Case, score.Version | None], score.Outcome] | None] = {
-    "baseline": run_baseline_case,
-    "agent": run_agent_case,
-}
-
-
 # One case, one configuration --------------------------------------------------------------
 
 
@@ -678,7 +524,6 @@ def run_case(
     session: Session,
     case: score.Case,
     saved: dict[str, dict[str, Any]],
-    runner: Callable[[Session, score.Case, score.Version | None], score.Outcome],
     judge_ref: str,
     library: dict[str, str],
 ) -> dict[str, Any]:
@@ -693,7 +538,7 @@ def run_case(
             content, subs = score.prepare(case, fixture["content"], fixture["kind"])
             start = session.clone(fixture, content)
         resolved = case.resolved(subs)
-        outcome = runner(session, resolved, start)
+        outcome = run_agent_case(session, resolved, start)
     except Exception as error:  # one broken case must not end an hours-long run
         outcome = score.Outcome(failed=f"The case could not run: {type(error).__name__}: {error}")
     measures: dict[str, Any] = {}
@@ -721,11 +566,10 @@ def run_case(
 
 def weight(case: score.Case) -> int:
     """A guess at how long a case takes, so that the long ones start first: a change upstream
-    of the parts, an outline edit or a new document remakes everything, and every earlier
-    message is another turn."""
+    of the parts or a new document can require a full build, and every earlier message
+    is another turn."""
 
     remakes = case.category == "upstream" or case.artifact == "none"
-    remakes = remakes or case.today.route in ("outline", "rebuild", "new")
     return (len(case.history) + 1) * (3 if remakes else 1)
 
 
@@ -752,8 +596,6 @@ def run_configuration(
     records are kept as ``E1#1``, ``E1#2``…
     """
 
-    runner = RUNNERS[config.path]
-    assert runner is not None
     work: queue.Queue[tuple[str, score.Case]] = queue.Queue()
     for case in sorted(cases, key=weight, reverse=True):
         for turn in range(1, repeat + 1):
@@ -773,7 +615,7 @@ def run_configuration(
                     except queue.Empty:
                         return
                     say(f"  {key} ...")
-                    result = run_case(session, case, saved, runner, judge_ref, library)
+                    result = run_case(session, case, saved, judge_ref, library)
                     with lock:
                         results[key] = result
                         seconds = result["outcome"]["seconds"]
@@ -853,9 +695,6 @@ def run_exam(
     ``model_client_factory`` and ``overrides`` stand in for real models in tests only.
     """
 
-    for path in options.paths:
-        if path not in RUNNERS:
-            raise ExamError(f"Unknown path {path}; use one of {', '.join(PATHS)}.")
     settings_source = options.settings
     if settings_source is None and os.environ.get("SERVICE_SETTINGS_FILE"):
         settings_source = Path(os.environ["SERVICE_SETTINGS_FILE"])
@@ -900,7 +739,7 @@ def run_exam(
     wanted = [fixtures[name] for name in needed]
     kept: dict[str, dict[str, dict[str, Any]]] = {}
     for model in asked:
-        config = Configuration("fixture", model, writer)
+        config = Configuration(model, writer)
         kept[model] = ensure_fixtures(
             results_root, template, info, settings_source, config, wanted, options,
             model_client_factory, overrides, say,
@@ -937,10 +776,7 @@ def run_exam(
             "Warning: the judge is also a model under test, so it may favour its own answers."
         )
     recorded: list[dict[str, Any]] = []
-    configurations = [
-        Configuration(path, model, writer)
-        for model, path in itertools.product(asked, options.paths)
-    ]
+    configurations = [Configuration(model, writer) for model in asked]
     for config in configurations:
         say(f"Configuration: {config.name}")
 
@@ -975,11 +811,6 @@ def parse(argv: list[str] | None = None) -> Options:
         "--settings",
         type=Path,
         help="a service-settings.json (else SERVICE_SETTINGS_FILE, else .env)",
-    )
-    parser.add_argument(
-        "--path",
-        default="baseline",
-        help="how the messages are handled, comma-separated: baseline (today's path) or agent",
     )
     parser.add_argument(
         "--models",
@@ -1019,7 +850,6 @@ def parse(argv: list[str] | None = None) -> Options:
         judge=args.judge,
         only=split(args.only),
         label=args.label,
-        paths=split(args.path),
         reseed=args.reseed,
         rebuild_fixtures=args.rebuild_fixtures,
         fixtures_only=args.fixtures_only,

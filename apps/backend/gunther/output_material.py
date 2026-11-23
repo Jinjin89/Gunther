@@ -33,7 +33,7 @@ from gunther.models import (
     SourceIndexHead,
     SourcePaper,
 )
-from gunther.outputs import Notes, OutputLimits, Pool
+from gunther.outputs import Notes, Pool
 from gunther.schemas import ArtifactUnitSnapshotOut, ConversationCitationOut, OutputScope
 from gunther.service_records import _id
 
@@ -474,14 +474,6 @@ class OutputMaterialService:
                     )
                 )
         return gaps
-
-    def _output_pool(self, seeds: list[Evidence], limits: OutputLimits) -> Pool:
-        pool = Pool(limits.pool)
-        for item in seeds:
-            if len(pool) >= limits.seed:
-                break
-            pool.adopt(item)
-        return pool
 
     @staticmethod
     def _studio_web(

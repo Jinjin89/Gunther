@@ -23,8 +23,6 @@ from fake_models import (
 from sqlalchemy import select
 from test_artifact_steps import replacing
 from test_output_skills import (
-    OUTLINE,
-    REPORT,
     SLIDES,
     SLIDES_APPROACH,
     SLIDES_OUTLINE,
@@ -32,11 +30,9 @@ from test_output_skills import (
 )
 from test_outputs import (
     app_for,
-    built,
     in_background,
     library,
     read_events,
-    revise,
     route,
     saved_output,
     wait_for,
@@ -254,7 +250,7 @@ def test_published_turn_replay_leaves_the_conversation_unchanged(tmp_path, histo
         assert len(fake.requests) == calls
 
 
-def test_ordinary_revision_keeps_the_existing_work_and_edited_length(tmp_path):
+def test_typed_edit_keeps_the_existing_work_and_edited_length(tmp_path):
     fake = FakeProvider(deck_replies())
     with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
@@ -265,10 +261,11 @@ def test_ordinary_revision_keeps_the_existing_work_and_edited_length(tmp_path):
         client.patch(f"{path}/brief", headers=headers, json={"spec": {"length": "2 pages"}}).raise_for_status()
         [before] = kept(client, "report")[0].works
         heading = "CD3D identifies T cells"
-        fake.replies[:] = [output_replies(
-            OUTLINE, REPORT, rewrite=lambda index, prompt: f"## {heading}\n\nCD3D marks T cells [1].",
-        )]
-        revision = built(revise(client, base_id, parent["id"], "Rename section 2", sectionIndex=1))
+        content = parent["content"].replace(before.outline[1].heading, heading, 1)
+        revision = client.post(
+            route(base_id, parent["id"], "/edits"), headers=headers,
+            json={"clientRequestId": "edit_before_turn_1", "content": content},
+        ).raise_for_status().json()
         reopened = client.get(path, headers=headers).raise_for_status().json()["works"][0]
         assert reopened["versionId"] == parent["id"]
         assert reopened["spec"]["length"]["text"] == "2 pages"

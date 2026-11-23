@@ -10,7 +10,7 @@ from test_outputs import (
     build,
     built,
     library,
-    revise,
+    refine,
     saved_output,
     versions,
     workspace,
@@ -189,7 +189,7 @@ def test_studio_revises_a_saved_skills_version_and_keeps_its_approach(tmp_path: 
         )
         assert first["provenance"]["approach"]["supplements"][0]["url"] == supplement["url"]
         fake.requests.clear()
-        second = built(revise(client, base_id, first["id"], "Shorter", sectionIndex=1))
+        second = refine(client, base_id, fake, first, "Shorter", 2)
         edited = client.post(
             f"/api/knowledge-bases/{base_id}/artifacts/{second['id']}/edits",
             headers=workspace(client),
@@ -201,7 +201,9 @@ def test_studio_revises_a_saved_skills_version_and_keeps_its_approach(tmp_path: 
     assert "Shorter" in rewriting["messages"][0]["content"] and changed in second["content"]
     for version in (second, edited):
         assert version["provenance"]["skill"]["name"] == "studio"
-        assert version["provenance"]["approach"] == first["provenance"]["approach"]
+        assert version["provenance"]["approach"] == first["provenance"]["approach"] | {
+            "refMap": {"1": 1, "2": 2},
+        }
     assert len(versions(client)) == 3
 
 
@@ -231,8 +233,8 @@ def test_studio_can_revise_an_older_slide_layout_and_keeps_the_titles_accent(
             json={"clientRequestId": "edit_request_0006", "content": typed},
         ).json()
         fake.requests.clear()
-        third = built(revise(client, base_id, second["id"], "Say it as a list", sectionIndex=1))
-        fourth = built(revise(client, base_id, third["id"], "A new message", sectionIndex=0))
+        third = refine(client, base_id, fake, second, "Say it as a list", 2)
+        fourth = refine(client, base_id, fake, third, "A new message", 1)
 
     old = split_document(second["content"], "slides")[1]
     middle = split_document(third["content"], "slides")[1]
@@ -244,7 +246,9 @@ def test_studio_can_revise_an_older_slide_layout_and_keeps_the_titles_accent(
     asked = [r["messages"][0]["content"] for r in fake.requests if is_writing(r)]
     assert "layout: cards" in asked[0] and "accent: blue" in asked[1]
     assert [row["ref"] for row in fourth["citations"]] == [1, 2]
-    assert fourth["provenance"]["approach"] == first["provenance"]["approach"]
+    assert fourth["provenance"]["approach"] == first["provenance"]["approach"] | {
+        "refMap": {"1": 1, "2": 2},
+    }
     assert not any("world-class presentation designer" in r["messages"][0]["content"]
                    for r in fake.requests)
     assert [item.get("layout") for item in fourth["outline"]] == ["title", "text", "takeaways"]

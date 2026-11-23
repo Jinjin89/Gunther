@@ -18,9 +18,7 @@ from fake_models import (
     is_auditing,
     is_grading,
     is_outlining,
-    is_sentence_checking,
     is_support_checking,
-    is_writing,
     orchestrator_replies,
     output_replies,
     studio_task,
@@ -30,8 +28,6 @@ from legacy_artifacts import insert_legacy_version
 from sqlalchemy import event, func, select, text
 
 from evals.sse import ask_turn, read_events
-from gunther import output_commands as service_module
-from gunther.answer_runs import AnswerRun
 from gunther.artifact_versions import commit_version
 from gunther.checks import coverage_of, verdict, verdicts_of
 from gunther.claim_checks import checker_inventory
@@ -59,7 +55,7 @@ from gunther.outputs import (
     unsource,
     with_layout,
 )
-from gunther.schemas import BuildOutputInput, OutputScope, ReviseOutputInput
+from gunther.schemas import BuildOutputInput, OutputScope
 from gunther.studio.work import StudioWorkAgents
 
 SIDECAR_TOKEN = "sidecar-token-with-at-least-256-bits-000000000000000000000000"
@@ -167,21 +163,29 @@ def built(events: list[tuple[str, dict]]) -> dict:
     return events[-1][1]
 
 
-def revise(
-    client: TestClient, base_id: str, artifact_id: str, instruction: str, **fields
-) -> list[tuple[str, dict]]:
-    with client.stream(
-        "POST",
-        route(base_id, artifact_id, "/revise/stream"),
-        headers=workspace(client),
-        json={
-            "clientRequestId": f"revise_request_{next(_requests):04d}",
-            "instruction": instruction,
-            **fields,
-        },
-    ) as response:
-        assert response.status_code == 200, response.read()
-        return read_events(response)
+def refine(client, base_id, fake, artifact, instruction, section, *, before=()):
+    """Script a conversation turn that rewrites a selected part and saves it."""
+    path = f"/api/knowledge-bases/{base_id}/artifact-conversations"
+    headers = workspace(client)
+    cid = client.post(path, headers=headers, json={
+        "id": artifact["conversationId"] or f"refine_{next(_requests):04d}",
+    }).raise_for_status().json()["id"]
+    [reply] = fake.replies
+    fake.replies[:] = [orchestrator_replies([
+        {"actions": [*before, {"do": "write", "parts": [section], "instruction": instruction}]},
+        {"actions": [{"do": "save", "text": instruction}]},
+    ], reply)]
+    try:
+        with client.stream("POST", f"{path}/{cid}/messages/stream", headers=headers, json={
+            "clientRequestId": f"output_refine_{next(_requests):04d}", "text": instruction,
+            "targetLineageId": artifact["lineageId"], "focus": {"section": section},
+        }) as response:
+            response.raise_for_status()
+            result = built(read_events(response))
+        assert result["outcome"] == "saved", result
+        return result["artifact"]
+    finally:
+        fake.replies[:] = [reply]
 
 
 @contextmanager
@@ -207,7 +211,9 @@ def saved_output(client, base_id, outline=None, written=None, *, approach=None, 
     with service.sessions() as session:
         limits = OutputLimits()
         material = service._output_material(session, base_id, payload.scope, allow_empty=True)
-        pool = service._output_pool(material.seeds, limits)
+        pool = Pool(limits.pool)
+        for seed in material.seeds[:limits.seed]:
+            pool.adopt(seed)
         service._studio_reading(session, material.source_revisions, pool, pinned=material.seeds)
     plans, drafts = [], []
     for index, (row, part) in enumerate(zip(outline["sections"], written, strict=True)):
@@ -836,7 +842,9 @@ def test_delete_forever_drops_cached_passage_before_grouped_read(tmp_path: Path)
             material = service._output_material(session, base_id, scope)
             [seed] = material.seeds
             assert seed.payload[0].source_id == ids["Receptors"]
-            pool = service._output_pool(material.seeds, OutputLimits())
+            pool = Pool(OutputLimits().pool)
+            for seed in material.seeds:
+                pool.adopt(seed)
             assert service._studio_reading(
                 session, material.source_revisions, pool, pinned=material.seeds,
             ) == []
@@ -1182,7 +1190,6 @@ def test_a_version_from_the_old_builder_cannot_be_changed_but_can_be_rebuilt(
             json={"clientRequestId": "edit_request_0004", "content": "# Typed"},
         )
         check = client.post(route(base_id, legacy_id, "/check"), headers=headers)
-        revised = revise(client, base_id, legacy_id, "Shorter")
         # Nothing was asked of a model, and the old version is as it was.
         assert len(fake.requests) == asked
         legacy = client.get(route(base_id, legacy_id), headers=headers).json()
@@ -1192,218 +1199,12 @@ def test_a_version_from_the_old_builder_cannot_be_changed_but_can_be_rebuilt(
 
     for refused in (edit, check):
         assert refused.status_code == 400 and "old builder" in refused.json()["detail"]
-    assert revised[-1][0] == "error" and revised[-1][1]["status"] == 400
-    assert "old builder" in revised[-1][1]["detail"]
     assert legacy["origin"] == "legacy"
     assert legacy["outputType"] == "Field guide"
     assert (rebuilt["versionNumber"], rebuilt["origin"]) == (2, "rebuild")
     assert rebuilt["provenance"]["generator"] == "gunther.studio.v1"
     assert rebuilt["lineageId"] == legacy["lineageId"]
     assert rebuilt["supersedesArtifactId"] == legacy_id
-
-
-@pytest.mark.parametrize("studio", [False, True], ids=["imported", "studio"])
-def test_a_revision_changes_one_section_and_keeps_the_checks_of_the_others(
-    tmp_path: Path, studio: bool,
-) -> None:
-    def written(index: int, prompt: str) -> str:
-        if "The section now:" in prompt:
-            assert index == 0 and "Say it more briefly" in prompt
-            return replacement
-        return REPORT[index]
-
-    fake = FakeProvider(output_replies(OUTLINE, written))
-    with app_for(tmp_path, fake) as client:
-        base_id, _ = library(client)
-        first = built(build(client, base_id, body())) if studio else saved_output(client, base_id)
-        ref = next(c["ref"] for c in first["citations"] if c["sourceTitle"] == "Markers")
-        replacement = f"## T cells\n\nCD3D marks T cells [{ref}]."
-        old_part = split_document(first["content"], "report")[1][0].replace("\n", "\r\n")
-        content = first["content"].replace("## B cells", "\n\n## B cells").replace("\n", "\r\n")
-        response = client.post(route(base_id, first["id"], "/edits"), headers=workspace(client),
-                               json={"clientRequestId": "revise_parent_01", "content": content})
-        assert response.status_code == 201, response.text
-        first = response.json()
-        before = len(fake.requests)
-        events = revise(client, base_id, first["id"], "Say it more briefly", sectionIndex=0)
-        second = built(events)
-        calls = fake.requests[before:]
-        stale = revise(client, base_id, first["id"], "Again")
-        assert client.get(route(base_id, first["id"]), headers=workspace(client)).json() == first
-
-    assert (second["origin"], second["versionNumber"]) == ("revise", 3)
-    assert second["lineageId"] == first["lineageId"]
-    assert second["provenance"]["generator"] == "gunther.studio.v1"
-    assert second["content"] == content.replace(old_part, replacement, 1)
-    assert second["citations"] == first["citations"]
-    assert second["sections"][1] == first["sections"][1]
-    assert [s["checked"] for s in second["sections"]] == [True, True]
-    assert sum(is_writing(r) for r in calls) == 1
-    assert sum(is_sentence_checking(r) for r in calls) == 1
-    assert {d["section"] for name, d in events if name == "text"} == {0}
-    assert stale[-1][0] == "error" and stale[-1][1]["status"] == 409
-
-
-def test_revising_the_whole_output_rewrites_only_the_sections_the_instruction_touches(
-    tmp_path: Path,
-) -> None:
-    def written(index: int, prompt: str) -> str:
-        if "The section now:" in prompt:
-            if index == 0:
-                return "UNCHANGED"
-            return "## B cells\n\nOnly B cells matter here, and CD19 is their marker [1]."
-        return REPORT[index]
-
-    fake = FakeProvider(output_replies(OUTLINE, written))
-    with built_output(tmp_path, fake) as (client, base_id, first):
-        before = len(fake.requests)
-        second = built(revise(client, base_id, first["id"], "Keep to B cells"))
-        calls = fake.requests[before:]
-    assert sum(is_writing(r) for r in calls) == 2
-    # The section left as it was is not checked again.
-    assert sum(is_sentence_checking(r) for r in calls) == 1
-    old = split_document(first["content"], "report")[1]
-    new = split_document(second["content"], "report")[1]
-    assert new[0] == old[0]
-    assert new[1] == "## B cells\n\nOnly B cells matter here, and CD19 is their marker [1]."
-    assert [s["checked"] for s in second["sections"]] == [True, True]
-
-
-def test_a_failed_revision_can_be_retried_with_the_same_request(tmp_path: Path) -> None:
-    fake = FakeProvider(output_replies(OUTLINE, ["## T cells\n\n## Extra\n\nA second section."]))
-    with built_output(tmp_path, fake) as (client, base_id, first):
-        options = {"clientRequestId": "revise_retry_01", "sectionIndex": 0}
-        failed = revise(client, base_id, first["id"], "Clarify the finding", **options)[-1]
-        assert failed[0] == "error" and failed[1]["status"] == 502
-        assert [version.id for version in versions(client)] == [first["id"]]
-        fake.replies[:] = [output_replies(OUTLINE, ["## T cells\n\nCD3D marks T cells [2]."])]
-        second = built(revise(client, base_id, first["id"], "Clarify the finding", **options))
-        before = len(fake.requests)
-        assert revise(client, base_id, first["id"], "Clarify the finding", **options) == [
-            ("done", second)
-        ]
-        conflict = revise(client, base_id, first["id"], "A different instruction", **options)[-1]
-        assert conflict[0] == "error" and conflict[1]["status"] == 409
-        assert len(fake.requests) == before and second["versionNumber"] == 2
-
-
-def test_revision_accepts_a_divider_with_its_layout_heading(tmp_path):
-    cover = f"<!-- layout: title; design: v2 -->\n{SLIDES[0]}"
-    divider = "<!-- layout: section -->\n# Evidence from the trial"
-    renamed = divider.replace("Evidence from the trial", "What the trial found")
-    fake = FakeProvider(output_replies(SLIDES_OUTLINE, [SLIDES[0], renamed, SLIDES[2]]))
-    with built_output(tmp_path, fake, kind="slides",
-                      written=[cover, divider, SLIDES[2]]) as (client, base_id, first):
-        second = built(revise(client, base_id, first["id"], "Rename the divider", sectionIndex=1))
-    assert second["content"] == first["content"].replace(divider, renamed, 1)
-
-
-@pytest.mark.parametrize(("stage", "problem"), [
-    ("write", "count"), ("fit", "count"), ("write", "heading"), ("fit", "heading"),
-    ("fit", "empty"),
-])
-def test_revision_handles_invalid_writer_and_fitter_replies(tmp_path, stage, problem):
-    cover = f"<!-- layout: title; design: v2 -->\n{SLIDES[0]}"
-    takeaways = "## Takeaways\n\n- CD19 marks B cells [2]."
-    heading = "<!-- layout: points -->\n## The evidence distinguishes the two cell populations"
-    short = heading + "\n- CD3D marks T cells [1]."
-    complete = short + "\n- CD19 marks B cells [2]."
-    invalid = {
-        "count": complete + "\n\n---\n\n" + complete,
-        "heading": complete.replace("\n## ", "\n# ", 1),
-        "empty": "",
-    }[problem]
-    written = output_replies(SLIDES_OUTLINE, [SLIDES[0], short if stage == "fit" else invalid])
-    fits = []
-
-    def reply(request):
-        if "Slide 2 as written:" in request["messages"][0]["content"]:
-            fits.append(request)
-            return invalid
-        return written(request)
-
-    fake = FakeProvider(reply)
-    with built_output(tmp_path, fake, kind="slides",
-                      written=[cover, SLIDES[1], takeaways]) as (client, base_id, first):
-        options = {"clientRequestId": "revise_slide_retry_01", "sectionIndex": 1}
-        events = revise(client, base_id, first["id"], "Clarify the slide", **options)
-        assert bool(fits) == (stage == "fit")
-        if stage == "write":
-            name, failure = events[-1]
-            assert name == "error" and failure["status"] == 502
-            assert [version.id for version in versions(client)] == [first["id"]]
-            fake.replies[:] = [output_replies(SLIDES_OUTLINE, [SLIDES[0], complete])]
-            events = revise(client, base_id, first["id"], "Clarify the slide", **options)
-        second = built(events)
-
-    assert second["supersedesArtifactId"] == first["id"] and second["versionNumber"] == 2
-    saved_part = split_document(second["content"], "slides")[1][1]
-    assert saved_part == (short if stage == "fit" else complete)
-
-
-def test_revision_keeps_an_unsupported_diagram_relationship_as_text(tmp_path):
-    diagram = (
-        "<!-- layout: diagram -->\n## Markers distinguish these populations\n"
-        "| From | Relationship | To |\n| --- | --- | --- |\n| CD3D | marks [1] | T cells |"
-    )
-    revised = diagram.replace("| marks [1] |", "| regulates [1] |")
-
-    def unsupported(request):
-        prompt = request["messages"][-1]["content"]
-        return [int(n) for n in re.findall(r"^\((\d+)\) \| CD3D \| regulates", prompt, re.M)]
-
-    fake = FakeProvider(output_replies(
-        SLIDES_OUTLINE, [SLIDES[0], revised], unsupported=unsupported,
-    ))
-    with built_output(tmp_path, fake, kind="slides",
-                      written=[SLIDES[0], diagram, SLIDES[2]]) as (client, base_id, first):
-        second = built(revise(client, base_id, first["id"], "Revise relationship", sectionIndex=1))
-
-    slide = split_document(second["content"], "slides")[1][1]
-    assert slide == revised.replace("layout: diagram", "layout: text", 1)
-    assert any(issue["verdict"] == "unsupported" for issue in second["sections"][1]["issues"])
-
-
-@pytest.mark.parametrize("same_request", [False, True], ids=["parent-race", "replay-race"])
-def test_revision_rechecks_the_parent_and_replays_a_racing_request(
-    tmp_path, monkeypatch, same_request,
-):
-    fake = FakeProvider(output_replies(OUTLINE, ["## T cells\n\nT cells carry CD3D [2]."]))
-    with built_output(tmp_path, fake) as (client, base_id, first):
-        service = client.app.state.knowledge_service
-        workspace_id = workspace(client)["X-Gunther-Workspace-Id"]
-        original = service_module.commit_version
-        ready, release = threading.Event(), threading.Event()
-
-        def pause_first_save(sessions, **fields):
-            if not ready.is_set():
-                ready.set()
-                assert release.wait(15)
-            return original(sessions, **fields)
-
-        monkeypatch.setattr(service_module, "commit_version", pause_first_save)
-        options = {"clientRequestId": "revise_race_001", "sectionIndex": 0}
-        instruction = "Clarify the finding"
-        running, result = in_background(
-            lambda: revise(client, base_id, first["id"], instruction, **options)
-        )
-        try:
-            assert ready.wait(15)
-            winner_id = options["clientRequestId"] if same_request else "revise_race_002"
-            winner = service.revise_output(
-                base_id, workspace_id, first["id"], ReviseOutputInput.model_validate({
-                    **options, "instruction": instruction, "clientRequestId": winner_id,
-                }),
-            )
-        finally:
-            release.set()
-            running.join(15)
-        assert not running.is_alive() and len(versions(client)) == 2
-        name, payload = result[0][-1]
-        if same_request:
-            assert name == "done" and payload["id"] == winner.id
-        else:
-            assert name == "error" and payload["status"] == 409
 
 
 def test_a_version_made_by_agents_is_sealed_and_tampering_is_caught(tmp_path: Path) -> None:
@@ -1595,54 +1396,23 @@ def test_a_failed_build_says_why_in_the_list(tmp_path: Path) -> None:
     assert item["error"] == events[-1][1]["detail"]
 
 
-def test_a_revision_has_its_own_words(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    revised = [REPORT[0], "## B cells\n\nCD19 marks B cells, briefly, in the sources [1]."]
-    fake = FakeProvider(output_replies(OUTLINE, revised))
-    with built_output(tmp_path, fake) as (client, base_id, first):
-        terminal = threading.Event()
-        states = []
-        publish = AnswerRun.publish
-
-        def observe(run, name, data):
-            publish(run, name, data)
-            if name in {"done", "error"}:
-                with client.app.state.knowledge_service.sessions() as db:
-                    saved = name == "done" and db.get(Artifact, data["id"]) is not None
-                states.append((name, activity_of(client)[f"output:{base_id}"]["state"], saved))
-                terminal.set()
-
-        monkeypatch.setattr(AnswerRun, "publish", observe)
-        built(revise(client, base_id, first["id"], "Say it more briefly", sectionIndex=1))
-        assert terminal.wait(5)
-        terminal.clear()
-        done = activity_of(client)[f"output:{base_id}"]
-        # An old version can't be revised: that ends as a failure with the page's message.
-        events = revise(client, base_id, first["id"], "Again")
-        assert terminal.wait(5)
-        failed = activity_of(client)[f"output:{base_id}"]
-    assert states == [("done", "done", True), ("error", "failed", False)]
-    assert (done["title"], done["state"]) == ("Report revised", "done")
-    assert (failed["title"], failed["state"]) == ("Couldn't revise the report", "failed")
-    assert failed["error"] == events[-1][1]["detail"]
-
-
 def test_two_libraries_building_at_once_both_show_and_stop_ends_one(tmp_path: Path) -> None:
     gate = threading.Event()
     with app_for(tmp_path, FakeProvider("unused")) as client:
         first_id, _ = library(client, "Cells")
         second_id, _ = library(client, "Genes")
         service = client.app.state.knowledge_service
-        real = service.build_output
+        real = service.artifact_turn
 
-        def slow(base_id, workspace_id, payload, hear):
+        def slow(base_id, workspace_id, conversation_id, payload, hear, **options):
             hear({"type": "outline", "title": "T", "sections": [{"heading": "a"}] * 2})
             hear({"type": "section", "index": 0, "state": "writing"})
             assert gate.wait(10)
             hear({"type": "section", "index": 0, "state": "done"})
             hear({"type": "section", "index": 1, "state": "checking"})
-            return real(base_id, workspace_id, payload, hear)
+            return real(base_id, workspace_id, conversation_id, payload, hear, **options)
 
-        service.build_output = slow
+        service.artifact_turn = slow
         runs = client.app.state.answer_runs
         slides = body(kind="slides", audience="student")
         one, one_box = in_background(lambda: build(client, first_id, slides))
@@ -1668,7 +1438,7 @@ def test_two_libraries_building_at_once_both_show_and_stop_ends_one(tmp_path: Pa
     assert after[f"output:{second_id}"]["state"] == "failed"
 
 
-def test_conversation_membership_and_instructions_survive_revise_and_edit(tmp_path: Path) -> None:
+def test_conversation_membership_and_instructions_survive_build_and_edit(tmp_path: Path) -> None:
     fake = FakeProvider(output_replies(ONE_SECTION, [REPORT[0]]))
     with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
@@ -1677,7 +1447,7 @@ def test_conversation_membership_and_instructions_survive_revise_and_edit(tmp_pa
             conversationTitle="Lab briefing",
             brief="Make notes",
         )
-        first = saved_output(client, base_id, ONE_SECTION, [REPORT[0]], **request)
+        first = built(build(client, base_id, request))
         assert first["conversationId"] == "conversation_first"
         assert first["conversationTitle"] == "Lab briefing"
         assert first["clientRequestId"] == request["clientRequestId"]
@@ -1687,32 +1457,20 @@ def test_conversation_membership_and_instructions_survive_revise_and_edit(tmp_pa
         ).json()
         assert listed[0]["conversationId"] == "conversation_first"
         assert listed[0]["request"] == "Make notes"
-        second = built(
-            revise(
-                client,
-                base_id,
-                first["id"],
-                "Make it shorter",
-                conversationId="conversation_first",
-                conversationTitle="Lab briefing",
-            )
-        )
-        assert second["conversationId"] == "conversation_first"
-        assert second["provenance"]["request"] == "Make it shorter"
         edited = client.post(
-            route(base_id, second["id"], "/edits"),
+            route(base_id, first["id"], "/edits"),
             headers=workspace(client),
             json={
                 "clientRequestId": "conversation_edit_001",
-                "content": second["content"] + "\n\nExtra notes.",
+                "content": first["content"] + "\n\nExtra notes.",
             },
         ).json()
         assert edited["conversationId"] == "conversation_first"
         assert edited["provenance"]["conversationTitle"] == "Lab briefing"
         before = len(fake.requests)
-        rejected = revise(
-            client, base_id, edited["id"], "Change ownership", conversationId="conversation_other"
-        )
+        rejected = build(client, base_id, body(
+            supersedesArtifactId=edited["id"], conversationId="conversation_other",
+        ))
         assert rejected[-1][0] == "error"
         assert "different conversation" in rejected[-1][1]["detail"]
         assert len(fake.requests) == before

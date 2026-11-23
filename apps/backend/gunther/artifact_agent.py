@@ -47,7 +47,7 @@ from gunther.evidence import Evidence, Tool, ToolFailure
 from gunther.llm import ModelError, ModelGateway, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.output_types import output_type_for
-from gunther.outputs import BuiltOutput, Notes, Planned, Pool, _marked
+from gunther.outputs import BuiltOutput, Notes, Planned, Pool, Spec, _marked
 from gunther.run_budget import RunBudget
 from gunther.studio.work import StudioWorkAgents
 
@@ -655,6 +655,19 @@ class ArtifactAgent(ArtifactActions, ArtifactTurnResults):
             case "select":
                 return "Choosing the artifact"
         return act.do
+
+    def build(
+        self, work: Work, draft: Work, spec: Spec, outline: Sequence[Planned] | None,
+        *, reuse_plan: bool = False,
+    ) -> TurnResult:
+        """Build the selected type directly and stage the finished work for publication."""
+        candidate = work.model_copy(
+            deep=True, update={"spec": draft.spec.model_copy(deep=True), "build_key": None},
+        )
+        candidate.cards = []
+        built = self._make(candidate, outline, request=spec, progress=draft, reuse_plan=reuse_plan)
+        self._store()
+        return self._finish("saved", "", save=(candidate, built, candidate.version_map))
 
     def rebuild(self, work: Work, outline: Sequence[Planned]) -> TurnResult:
         """Build the approved outline on a copy until the version and turn can be saved."""

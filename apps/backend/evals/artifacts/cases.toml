@@ -27,9 +27,6 @@
 #               them (the same words inside a longer sentence of the notes do not count)
 #               asks: must | may | must_not (default: must for intent ask, else must_not)
 #               judge: a yes/no question for the judge model
-#   today       how the old path takes the message (the baseline): route = revise | rebuild |
-#               outline | new | none, why (for none), edit (parts of the outline to change, for
-#               outline), kind / audience / use (for new). Left out, it follows from the case.
 
 [fixture.deck]
 kind = "slides"
@@ -363,7 +360,6 @@ id = "S5"
 category = "structure"
 artifact = "deck"
 message = "Show slide 7 as cards instead of a two-column table."
-today = { route = "outline", edit = [{ part = 7, layout = "cards" }] }
 
 [case.expect]
 intent = "change"
@@ -375,7 +371,6 @@ id = "S6"
 category = "structure"
 artifact = "report"
 message = "Rename section 3 to “Keep the roof clean and mind the neighbours” and make it about those two points."
-today = { route = "outline", edit = [{ part = 3, heading = "Keep the roof clean and mind the neighbours", goal = "Cleaning every two years, and glare complaints from the neighbours." }] }
 
 [case.expect]
 intent = "change"
@@ -439,7 +434,6 @@ id = "N2"
 category = "content"
 artifact = "deck"
 message = "Add a slide with how many tonnes of CO2 the trial saved."
-today = { route = "none" }
 
 [case.expect]
 intent = ["change", "answer"]
@@ -535,7 +529,6 @@ id = "A2"
 category = "asking"
 artifact = "none"
 message = "A 10-minute talk for the lab on the Velmora trial results."
-today = { route = "new", kind = "slides", audience = "collaborator" }
 
 [case.expect]
 intent = "make"

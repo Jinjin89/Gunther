@@ -24,7 +24,7 @@ from test_outputs import (
     build,
     built,
     library,
-    revise,
+    refine,
     route,
     saved_output,
     workspace,
@@ -38,7 +38,7 @@ from gunther.checks import coverage_of, read_verdicts
 from gunther.database import session_scope
 from gunther.evidence import Evidence, Tool
 from gunther.llm import ModelError
-from gunther.models import Artifact, ArtifactAsset, ArtifactCheck, Asset
+from gunther.models import Artifact, ArtifactAsset, ArtifactCheck, Asset, SourceIndexHead
 from gunther.output_checks import check_saved_part
 from gunther.output_document import assemble_output
 from gunther.outputs import Draft, OutputLimits, Planned, Pool, Spec, section_hash, split_document
@@ -315,9 +315,8 @@ def test_revising_another_slide_preserves_a_verified_chart(tmp_path, historical_
                         record["issues"] = []
                     check.checks_json = json.dumps(records)
         before = len(fake.requests)
-        second = built(
-            revise(client, base_id, first["id"], "Clarify the takeaway", sectionIndex=2)
-        )
+        actions = [{"do": "check", "parts": [2]}] if historical_check else []
+        second = refine(client, base_id, fake, first, "Clarify the takeaway", 3, before=actions)
 
     old_sections = split_document(first["content"], "slides")[1]
     new_sections = split_document(second["content"], "slides")[1]
@@ -385,25 +384,36 @@ def test_report_keeps_authored_citations_without_borrowing_for_uncited_figures(
 
 
 def test_revision_appends_used_sources_and_keeps_parent_numbers(tmp_path, monkeypatch):
-    revised = "## Results\n\nThe trial includes a follow-up [4]."
-    with app_for(tmp_path, FakeProvider(output_replies(OUTLINE, [revised]))) as client:
+    revised = (
+        "## Results\n\nCD19 marks B cells [1]. CD3D marks T cells [2]. "
+        "The trial includes a follow-up [4]."
+    )
+    fake = FakeProvider(output_replies(OUTLINE, [revised]))
+    with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         first = saved_output(client, base_id)
         source = client.post("/api/sources", headers=SIDECAR, json={
             "title": "Trial", "kind": "note", "knowledgeBaseId": base_id,
             "content": "A trial was run. The trial includes a follow-up.",
         }).json()["source"]
+        service = client.app.state.knowledge_service
+        with service.sessions() as session:
+            head = session.get(SourceIndexHead, source["id"])
+            revision_id = head.revision_id
         passages = [
             Evidence("library", "Trial", quote, payload=(ConversationCitationOut(
                 id=f"cit_trial_{n}", source_id=source["id"], source_title="Trial", quote=quote,
                 locator="Note", status="provisional", confidence=1.0,
+                source_revision_id=revision_id,
             ), None))
             for n, quote in enumerate(("A trial was run.", "The trial includes a follow-up."))
         ]
         tool = Tool("search_library", "Trial", lambda _: passages, "the library")
-        service = client.app.state.knowledge_service
         monkeypatch.setattr(service, "_output_search_tool", lambda *args: tool)
-        second = built(revise(client, base_id, first["id"], "Include follow-up", sectionIndex=0))
+        second = refine(
+            client, base_id, fake, first, "Include follow-up", 1,
+            before=[{"do": "search_library", "query": "Follow-up"}],
+        )
 
     assert second["citations"][:2] == first["citations"]
     assert [(c["ref"], c["quote"]) for c in second["citations"][2:]] == [

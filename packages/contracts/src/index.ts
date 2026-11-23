@@ -1539,17 +1539,6 @@ export interface BuildOutputRequest {
   web?: boolean;
 }
 
-export interface ReviseOutputRequest {
-  clientRequestId: string;
-  model?: string;
-  effort?: Effort;
-  conversationId?: string;
-  conversationTitle?: string;
-  instruction: string;
-  /** The section or slide to change, counted from 0; the whole output when left out. */
-  sectionIndex?: number;
-}
-
 /** Draw every slide of a deck again in another style (the words stay as they are). Streams like a visual review and ends with the next version. */
 export interface RestyleSlidesRequest {
   clientRequestId: string;
@@ -1656,6 +1645,10 @@ export interface ArtifactConversationSummary {
   artifactCount: number;
   /** The agent asked a question and has not had its answer. */
   waiting: boolean;
+  outputType: string | null;
+  shape: OutputKind | null;
+  lineageId: string | null;
+  lastTurn: ArtifactLastTurn | null;
 }
 
 export interface ArtifactConversationDetail extends ArtifactConversationSummary {
@@ -1725,14 +1718,38 @@ export interface ArtifactFocus {
   selected?: boolean;
 }
 
-/** One message to the Artifacts agent. "answer" replies to its question, "start" is "just start" (no more questions), "continue" picks up a paused turn. */
+export interface BuildTurnInput {
+  type: OutputTypeId;
+  focus?: string;
+  audience?: ArtifactAudience;
+  length?: OutputLength | null;
+  language?: string | null;
+  use?: DeckUse | null;
+  theme?: "classic" | "briefing" | "editorial" | "keynote" | "paper" | "ink" | "brand" | null;
+  web?: boolean;
+  title?: string | null;
+  scope?: OutputScope;
+  outline?: OutlineItem[] | null;
+  designVersion?: 0 | 1 | null;
+}
+
+export interface ArtifactLastTurn {
+  kind: string;
+  error: string | null;
+  build: BuildTurnInput | null;
+  createdAt: string;
+}
+
+/** One conversation turn. A build goes straight to Studio with its explicit options. */
 export interface ArtifactTurnInput {
   clientRequestId: string;
-  kind?: "message" | "answer" | "start" | "continue" | "rebuild";
-  /** Left out for "start" and "continue". */
+  kind?: "message" | "answer" | "start" | "continue" | "rebuild" | "build";
+  /** Optional for structured actions. */
   text?: string;
   focus?: ArtifactFocus;
   rebuild?: { artifactId: string; outline: OutlineItem[] };
+  build?: BuildTurnInput;
+  targetLineageId?: string;
   model?: string;
   effort?: Effort;
   /** The web may be searched for this message (when it is set up). */

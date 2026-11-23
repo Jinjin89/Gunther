@@ -179,6 +179,7 @@ class Work(BaseModel):
 
     key: str  # the lineage id; "draft_<uuid>" before the first save
     spec: WorkSpec
+    build_key: str | None = None  # identifies the request that can retry this draft
     title: str = ""
     approach: dict | None = None  # the fields of Approach.out()
     approach_inputs: str = ""

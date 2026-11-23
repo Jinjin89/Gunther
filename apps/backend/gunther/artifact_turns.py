@@ -28,9 +28,11 @@ from gunther.evidence import Evidence
 from gunther.llm import ModelError, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.models import Artifact, ArtifactConversation, ArtifactMessage, utc_now
+from gunther.output_types import OUTPUT_TYPES, output_type_for
 from gunther.outputs import BuiltOutput, Notes, OutputLimits, Planned, Pool, Spec
 from gunther.run_budget import BudgetedGateway, RunBudget
 from gunther.schemas import (
+    ARTIFACT_TURN_FIELDS,
     ArtifactChangeOut,
     ArtifactMessageOut,
     ArtifactOut,
@@ -38,12 +40,50 @@ from gunther.schemas import (
     ArtifactTurnInput,
     ArtifactTurnOut,
     ArtifactUnitSnapshotOut,
+    BuildTurnInput,
+    CreateArtifactConversationInput,
     OutputModelOut,
     OutputScope,
 )
 from gunther.service_records import _id
 
 NEW_CONVERSATION = "New conversation"
+
+
+def _build_work(
+    build: BuildTurnInput, workspace: workspaces.Workspace, brief: workspaces.ConversationBrief,
+    target: str | None, key: str,
+) -> tuple[workspaces.Work, workspaces.Work, Spec]:
+    kind = OUTPUT_TYPES[build.type].shape
+    options = workspaces.WorkSpec(
+        kind=kind,
+        output_type=workspaces.Line(text=build.type, mark="you"),
+        use=workspaces.Line(text=build.use, mark="you") if build.use else None,
+        length=workspaces.Line(text=build.length, mark="you") if build.length else None,
+        language=build.language,
+        theme=build.theme,
+        design_version=build.design_version,
+    )
+    draft = next((item for item in workspace.works if item.build_key == key), None)
+    if draft is None:
+        draft = workspaces.Work(key=_id("draft"), spec=options, build_key=key)
+        if target is None:
+            workspace.works.append(draft)
+    else:
+        draft.spec = options
+        if target is not None:
+            workspace.works.remove(draft)
+    if target is None:
+        workspace.active = draft.key
+    work = workspaces.active_work(workspace)
+    assert work is not None
+    brief.goal = workspaces.Line(text=build.focus[:300], mark="you") if build.focus else None
+    brief.audience = workspaces.Line(text=build.audience, mark="you")
+    spec = Spec(
+        kind, build.audience, build.type, build.focus, build.title, build.theme,
+        build.design_version, length=build.length, language=build.language,
+    )
+    return work, draft, spec
 
 
 class ArtifactTurns:
@@ -67,7 +107,7 @@ class ArtifactTurns:
         return self._output_fingerprint(
             workspace_id, base_id, "artifact-turn",
             {"conversationId": conversation_id, "kind": payload.kind, "text": payload.text,
-             **payload.rebuild_fields()},
+             **payload.request_fields()},
         )
 
     def _earlier_turn(
@@ -97,9 +137,9 @@ class ArtifactTurns:
             return None
         stored = json.loads(user.payload_json or "{}")
         same = (
-            user.text == payload.text and user.kind == payload.kind and all(
-                stored.get(key) == value for key, value in payload.rebuild_fields().items()
-            )
+            user.text == payload.text and user.kind == payload.kind
+            and {key: stored[key] for key in ARTIFACT_TURN_FIELDS & stored.keys()}
+            == payload.request_fields()
         )
         if not same:
             raise ArtifactConflictError("clientRequestId was already used for a different message")
@@ -151,6 +191,10 @@ class ArtifactTurns:
         conversation_id: str,
         payload: ArtifactTurnInput,
         events: Callable[[dict], None] | None = None,
+        *,
+        legacy_fingerprint: str | None = None,
+        legacy_title: str | None = None,
+        expected_parent: str | None = None,
     ) -> ArtifactTurnOut:
         """One message of the user to the Artifacts agent: it decides what the message needs
         and does that, in small steps, until it asks, answers, saves a version or replies.
@@ -165,15 +209,33 @@ class ArtifactTurns:
         emit = events or (lambda _event: None)
         limits = OutputLimits()
         agent_limits = self.artifact_limits
+        build = payload.build
+        build_scope = build.scope.model_copy(deep=True) if build is not None else None
+        web_enabled = build.web if build is not None else payload.web
+        turn_key = self._turn_fingerprint(workspace_id, base_id, conversation_id, payload)
+        fingerprint = legacy_fingerprint or turn_key
+        needs_conversation = False
         with usage.job("outputs", ref=conversation_id), session_scope(self.sessions) as session:
             output_library(session, workspace_id, base_id)
-            row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
-            earlier = self._earlier_turn(session, row, payload)
-            if earlier is not None:
-                return earlier
+            try:
+                row = self._artifact_conversation_row(
+                    session, workspace_id, base_id, conversation_id,
+                )
+            except LookupError:
+                if legacy_fingerprint is None:
+                    raise
+                if session.get(ArtifactConversation, conversation_id) is not None:
+                    raise ArtifactConflictError(
+                        "That conversation id is used somewhere else."
+                    ) from None
+                needs_conversation = True
+            else:
+                earlier = self._earlier_turn(session, row, payload)
+                if earlier is not None:
+                    return earlier
         published = earlier_output(
             self.sessions, workspace_id, payload.client_request_id,
-            self._turn_fingerprint(workspace_id, base_id, conversation_id, payload),
+            fingerprint,
         )
         if published is not None:
             if (
@@ -185,11 +247,24 @@ class ArtifactTurns:
                 )
             return self._published_turn_out(published)
         model, effort = self._output_model(payload.model, payload.effort)
+        material = None
+        if needs_conversation:
+            assert build_scope is not None
+            with session_scope(self.sessions) as session:
+                material = self._output_material(session, base_id, build_scope)
+            # The compatibility route has already validated the older conversation fields.
+            self.create_artifact_conversation(
+                base_id, workspace_id,
+                CreateArtifactConversationInput.model_construct(
+                    id=conversation_id, title=legacy_title,
+                ),
+            )
         user_id, reply_id = _id("acm"), _id("acm")
         emit({"type": "turn", "conversationId": conversation_id, "messageId": user_id})
         failure: BaseException | None = None
         result: TurnResult | None = None
-        preserve_on_failure = payload.rebuild is not None
+        draft: workspaces.Work | None = None
+        preserve_on_failure = build is not None or payload.rebuild is not None
         with usage.job("outputs", ref=conversation_id), session_scope(self.sessions) as session:
             library = output_library(session, workspace_id, base_id)
             row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
@@ -198,12 +273,13 @@ class ArtifactTurns:
                 brief.model_copy(deep=True),
                 {work.key: work.spec.model_copy(deep=True) for work in workspace.works},
             )
-            scope = self._conversation_scope(row)
-            material = self._output_material(session, base_id, scope, strict=False)
+            scope = build_scope if build_scope is not None else self._conversation_scope(row)
+            if material is None:
+                material = self._output_material(session, base_id, scope, strict=build is not None)
             tool = self._output_search_tool(
                 session, list(material.source_revisions), f"{library.title}: {library.question}"
             )
-            web, web_reason = self._web_tool(payload.web)
+            web, web_reason = self._web_tool(web_enabled)
             pinned_keys = {item.key for item in material.seeds}
             reader = self._source_reader(
                 session, material.source_revisions, pinned_keys=pinned_keys,
@@ -211,22 +287,51 @@ class ArtifactTurns:
             versions: dict[str, int] = {}
             saved: dict[str, str] = {}
             heads: dict[str, str] = {}
-            for work in workspace.works:
-                if work.key.startswith("draft_"):
-                    continue
+            target = payload.target_lineage_id
+            reuse_plan = False
+            works: dict[str, workspaces.Work | None] = {
+                w.key: w for w in workspace.works if not w.key.startswith("draft_")
+            }
+            if target is not None:
+                works.setdefault(target, None)
+            for lineage, work in works.items():
                 head = session.scalar(
                     select(Artifact).where(
-                        Artifact.lineage_id == work.key,
+                        Artifact.lineage_id == lineage,
                         Artifact.workspace_id == workspace_id,
                         Artifact.knowledge_base_id == base_id,
                     ).order_by(Artifact.version_number.desc()).limit(1)
                 )
+                if lineage == target:
+                    prior = json.loads(head.provenance_json) if head else {}
+                    owner = prior.get("conversation_id") or conversation_id
+                    if head is None or owner != conversation_id:
+                        raise LookupError("This artifact was not found in this conversation.")
+                    if expected_parent is not None and expected_parent != head.id:
+                        raise ArtifactConflictError(
+                            "That is not the latest version of this output. Open the latest one."
+                        )
+                    if build is None:
+                        self._require_agent_output(head)
+                    else:
+                        reuse_plan = (
+                            output_type_for(head.kind, head.style).id == build.type
+                            and head.brief == build.focus
+                            and prior.get("length") == build.length
+                            and prior.get("language") == build.language
+                            and prior.get("use") == build.use
+                            and bool(json.loads(head.outline_json))
+                        )
+                    workspace.active = lineage
                 if head is None:
                     continue
                 checks = latest_check_records(session, head)
                 shown = artifact_detail(session, head, check_records=checks)
-                workspaces.sync(work, shown, checks, workspace, brief)
-                versions[work.key], saved[work.key], heads[work.key] = (
+                if work is None:
+                    workspaces.import_work(shown, checks, workspace, brief)
+                else:
+                    workspaces.sync(work, shown, checks, workspace, brief)
+                versions[lineage], saved[lineage], heads[lineage] = (
                     shown.version_number, shown.content, head.id,
                 )
             history = self._turn_history(session, row.id, agent_limits.history)
@@ -273,9 +378,9 @@ class ArtifactTurns:
                     asset_reader=self.asset_reader,
                     reusable_figures=self._reusable_figure_readings(session, base_id),
                 )
-                if payload.rebuild and payload.web:
+                if (build is not None or payload.rebuild) and web_enabled:
                     warning = self._studio_web(
-                        web, web_reason, spec.brief, made, limits.per_section,
+                        web, web_reason, spec.brief or spec.title or "", made, limits.per_section,
                     )
                     if warning:
                         agents.skipped.append(warning)
@@ -289,13 +394,24 @@ class ArtifactTurns:
                     fallback_title=library.title,
                     purpose=purpose,
                     fixed_outline=fixed_outline,
-                    outline_approved=payload.rebuild is not None,
+                    outline_approved=payload.rebuild is not None or bool(build and build.outline),
                     scope={"selection": scope.model_dump(), "inputs": material.inputs},
-                    web=payload.web,
+                    web=web_enabled,
                     resume=resume,
                     checkpoint=checkpoint,
                 )
 
+            prepared = None
+            if build is not None:
+                identity = build.model_dump(mode="json")
+                if target is not None:
+                    identity["parent"] = heads[target]
+                build_key = self._output_fingerprint(
+                    workspace_id, base_id, "build-draft", identity,
+                )
+                brief = brief.model_copy(deep=True)
+                prepared = _build_work(build, workspace, brief, target, build_key)
+                draft = prepared[1]
             agent = artifact_agent.ArtifactAgent(
                 artifact_agent.TurnContext(
                     studio=studio,
@@ -327,7 +443,13 @@ class ArtifactTurns:
                 )
             )
             try:
-                if payload.rebuild is None:
+                if build is not None and prepared is not None:
+                    approved = [
+                        Planned(i.heading, i.goal, id=i.id) for i in build.outline or ()
+                    ]
+                    with usage.job(detail=OUTPUT_TYPES[build.type].shape):
+                        result = agent.build(*prepared, approved or None, reuse_plan=reuse_plan)
+                elif payload.rebuild is None:
                     result = agent.run()
                 else:
                     action = payload.rebuild
@@ -362,6 +484,8 @@ class ArtifactTurns:
                 base_id, workspace_id, conversation_id, payload, user_id, reply_id, state, brief,
                 began, kind=kind, text=result.reply, extra=extra,
                 artifact_id=artifact.id if artifact else None, request_id=payload.client_request_id,
+                artifact_title=artifact.title if artifact else None,
+                build_scope=build_scope if artifact else None,
                 existing_session=session,
             )  # fmt: skip
 
@@ -371,6 +495,7 @@ class ArtifactTurns:
                 artifact, message = self._save_turn_version(
                     base_id, workspace_id, conversation_id, payload, model, effort, result,
                     workspace, brief, scope, material.inputs, material.snapshots, heads, emit, keep,
+                    fingerprint,
                 )
             except Exception as error:
                 preserve_on_failure = True
@@ -395,7 +520,7 @@ class ArtifactTurns:
                 None if preserve_on_failure else workspace,
                 brief, began, kind="stopped" if stopped else "failed", text=error,
                 extra={"error": error} if error else {}, artifact_id=None,
-                request_id=None,
+                request_id=None, build_draft=draft,
             )  # fmt: skip
             raise failure
         assert result is not None
@@ -453,6 +578,7 @@ class ArtifactTurns:
         heads: dict[str, str],
         emit: Callable[[dict], None],
         keep: Callable[[Session, ArtifactOut, workspaces.Workspace], ArtifactMessageOut],
+        fingerprint: str,
     ) -> tuple[ArtifactOut, ArtifactMessageOut | None]:
         """Seal the artifact a turn finished as a version, and make its work match it."""
 
@@ -461,10 +587,17 @@ class ArtifactTurns:
         work, built = request.work, request.built
         spec = workspaces.spec_of(brief, work)
         kind = spec.kind
+        build = payload.build
         title = self.artifact_conversation_title(base_id, workspace_id, conversation_id)
+        if build is not None and title == NEW_CONVERSATION:
+            title = built.title
         record = work.model_copy(deep=True)
         record.version_id, record.version_map, record.skipped = None, request.version_map, []
         parent = heads.get(work.key)
+        origin = "revise" if parent else "build"
+        if payload.rebuild or (build and parent):
+            origin = "rebuild"
+        generator = "gunther.studio.v1" if build is not None else "gunther.artifact-agent.v1"
         message = None
 
         def publish(session: Session, artifact: ArtifactOut) -> None:
@@ -487,14 +620,14 @@ class ArtifactTurns:
             workspace_id=workspace_id,
             base_id=base_id,
             client_request_id=payload.client_request_id,
-            fingerprint=self._turn_fingerprint(workspace_id, base_id, conversation_id, payload),
+            fingerprint=fingerprint,
             parent_id=parent,
             kind=kind,
             style=spec.output_type,
-            audience=audience_of(brief),
+            audience=build.audience if build is not None else audience_of(brief),
             title=built.title,
-            brief=spec.brief,
-            origin="rebuild" if payload.rebuild else "revise" if parent else "build",
+            brief=build.focus if build is not None else spec.brief,
+            origin=origin,
             content=built.content,
             scope=scope.model_dump(),
             inputs=inputs,
@@ -504,7 +637,7 @@ class ArtifactTurns:
             model=OutputModelOut(ref=model.ref, label=model.display, effort=effort),
             checks=built.checks,
             made_by={
-                "generator": "gunther.artifact-agent.v1",
+                "generator": generator,
                 "skill": built.skill,
                 "approach": built.approach,
                 "use": (
@@ -542,11 +675,14 @@ class ArtifactTurns:
         extra: dict[str, object],
         artifact_id: str | None,
         request_id: str | None,
+        artifact_title: str | None = None,
+        build_scope: OutputScope | None = None,
+        build_draft: workspaces.Work | None = None,
         existing_session: Session | None = None,
     ) -> ArtifactMessageOut:
         """Keep the turn: both messages, the workspace and the brief. What the user typed in the
-        panel while it ran is kept over the turn's version of it. A failed publication records
-        its messages without writing any staged workspace or brief."""
+        panel while it ran is kept over the turn's version of it. A failed build records its
+        messages and draft checkpoints without publishing its staged workspace or brief."""
 
         transaction = (
             nullcontext(existing_session)
@@ -563,9 +699,28 @@ class ArtifactTurns:
                     before = began[1].get(work.key)
                     if before is not None and work.key in theirs:
                         work.spec = workspaces.keep_spec_edits(before, work.spec, theirs[work.key])
-                if row.title == NEW_CONVERSATION:
+                if build_scope is not None:
+                    row.scope_json = json.dumps(build_scope.model_dump())
+                    if artifact_title and row.title == NEW_CONVERSATION:
+                        row.title = artifact_title
+                elif row.title == NEW_CONVERSATION:
                     row.title = " ".join(payload.text.split())[:160] or NEW_CONVERSATION
                 self._store_workspace(row, workspace, brief, at=asked + timedelta(milliseconds=1))
+            elif build_draft is not None and (
+                progress := (build_draft.approach or {}).get("studio_progress")
+            ) is not None:
+                stored = workspaces.load_workspace(row.state_json)
+                saved = next((work for work in stored.works if work.key == build_draft.key), None)
+                if saved is None:
+                    if not stored.works and stored.active is None:
+                        stored.active = build_draft.key
+                    stored.works.append(build_draft)
+                else:
+                    saved.approach = {
+                        **(saved.approach or {}),
+                        "studio_progress": progress,
+                    }
+                row.state_json = workspaces.dump_workspace(stored)
             focus = payload.focus.model_dump() if payload.focus else None
             session.add(
                 ArtifactMessage(
@@ -575,7 +730,7 @@ class ArtifactTurns:
                     kind=payload.kind,
                     text=payload.text,
                     payload_json=json.dumps(
-                        {**payload.rebuild_fields(), **({"focus": focus} if focus else {})},
+                        {**payload.request_fields(), **({"focus": focus} if focus else {})},
                         ensure_ascii=False,
                     ),
                     client_request_id=request_id,

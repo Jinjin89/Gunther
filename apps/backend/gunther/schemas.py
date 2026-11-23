@@ -1,5 +1,5 @@
 import json
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (
     AfterValidator,
@@ -935,6 +935,7 @@ class OutputScope(ApiModel):
     source_ids: list[str] = Field(default_factory=list, max_length=500)
     unit_ids: list[str] = Field(default_factory=list, max_length=200)
     session_ids: list[str] = Field(default_factory=list, max_length=100)
+    _allow_empty_selection: ClassVar[bool] = False
 
     @model_validator(mode="after")
     def tidy_ids(self) -> "OutputScope":
@@ -946,7 +947,9 @@ class OutputScope(ApiModel):
         if self.mode == "library":
             # The whole library has nothing to pick.
             self.source_ids, self.unit_ids, self.session_ids = [], [], []
-        elif not (self.source_ids or self.unit_ids or self.session_ids):
+        elif not self._allow_empty_selection and not (
+            self.source_ids or self.unit_ids or self.session_ids
+        ):
             raise ValueError("Choose at least one source, saved answer or discussion")
         return self
 
@@ -1069,15 +1072,59 @@ class OutputRequestInput(ApiModel):
         return self
 
 
+DeckThemeInput = Literal["classic", "briefing", "editorial", "keynote", "paper", "ink", "brand"]
+
+
+class BuildTurnScope(OutputScope):
+    # Studio checks for eligible material and reports an empty selection with the same error.
+    _allow_empty_selection = True
+
+
+class BuildTurnInput(ApiModel):
+    type: str = Field(json_schema_extra={"enum": list(OUTPUT_TYPES)})
+    focus: str = Field(default="", max_length=2_000)
+    audience: ArtifactAudience = "scientist"
+    length: OutputLength | None = None
+    language: str | None = Field(default=None, max_length=100)
+    use: DeckUse | None = None
+    theme: DeckThemeInput | None = None
+    web: bool = False
+    title: str | None = Field(default=None, max_length=160)
+    scope: BuildTurnScope = Field(default_factory=BuildTurnScope)
+    # The compatibility build route can carry an approved outline and an older deck format.
+    outline: list[OutlineItem] | None = Field(
+        default=None, min_length=1, max_length=MAX_OUTPUT_PARTS,
+    )
+    design_version: Literal[0, 1] | None = None
+
+    @model_validator(mode="after")
+    def tidy(self) -> "BuildTurnInput":
+        item = OUTPUT_TYPES.get(self.type)
+        if item is None:
+            raise ValueError("Choose a known output type")
+        if self.use is not None and "use" not in item.options:
+            raise ValueError(f"{item.label} has no slide use option")
+        if item.shape != "slides" and (self.theme is not None or self.design_version is not None):
+            raise ValueError("Only slides have a deck theme or design version")
+        if error := item.part_limit_error(len(self.outline or ())):
+            raise ValueError(error)
+        self.focus = self.focus.strip()
+        for name in ("language", "title"):
+            value = getattr(self, name)
+            if value is not None:
+                if not (value := value.strip()):
+                    raise ValueError(f"{name} must not be blank")
+                setattr(self, name, value)
+        return self
+
+
 class BuildOutputInput(OutputRequestInput):
     client_request_id: str = REQUEST_ID
     kind: OutputKind
     # The type ID. Earlier clients can send a legacy style.
     style: OutputStyle | None = "auto"
     # Slides only: a visual theme, separate from a report's structural style.
-    theme: Literal[
-        "classic", "briefing", "editorial", "keynote", "paper", "ink", "brand"
-    ] | None = None
+    theme: DeckThemeInput | None = None
     design_version: Literal[0, 1] | None = None
     audience: ArtifactAudience
     brief: str = Field(default="", max_length=2_000)
@@ -1124,20 +1171,6 @@ class BuildOutputInput(OutputRequestInput):
             output_type = output_type_for(self.kind, self.style)
             if error := output_type.part_limit_error(len(self.outline)):
                 raise ValueError(error)
-        return self
-
-
-class ReviseOutputInput(OutputRequestInput):
-    client_request_id: str = REQUEST_ID
-    instruction: str = Field(min_length=1, max_length=2_000)
-    # The section or slide to change (counted from 0); the whole output when left out.
-    section_index: int | None = Field(default=None, ge=0, le=50)
-
-    @model_validator(mode="after")
-    def tidy(self) -> "ReviseOutputInput":
-        self.instruction = self.instruction.strip()
-        if not self.instruction:
-            raise ValueError("instruction must not be blank")
         return self
 
 
@@ -1288,6 +1321,13 @@ class ArtifactPendingOut(ApiModel):
     message_id: str
 
 
+class ArtifactLastTurnOut(ApiModel):
+    kind: str
+    error: str | None = None
+    build: BuildTurnInput | None = None
+    created_at: str
+
+
 class ArtifactConversationSummaryOut(ApiModel):
     id: str
     title: str
@@ -1295,6 +1335,10 @@ class ArtifactConversationSummaryOut(ApiModel):
     artifact_count: int
     # The agent asked a question and has not had its answer.
     waiting: bool
+    output_type: str | None = None
+    shape: ShapeId | None = None
+    lineage_id: str | None = None
+    last_turn: ArtifactLastTurnOut | None = None
 
 
 class ArtifactConversationOut(ArtifactConversationSummaryOut):
@@ -1359,24 +1403,34 @@ class OutlineRebuildInput(ApiModel):
     outline: list[OutlineItem] = Field(min_length=1, max_length=MAX_OUTPUT_PARTS)
 
 
+ARTIFACT_TURN_FIELDS = {"build", "rebuild", "model", "effort", "web", "targetLineageId"}
+
+
 class ArtifactTurnInput(ApiModel):
     """One message of the user to the agent. ``answer`` replies to its question, ``start`` is
     "just start" (no more questions), ``continue`` picks up a paused turn."""
 
-    client_request_id: str = Field(min_length=8, max_length=120)
-    kind: Literal["message", "answer", "start", "continue", "rebuild"] = "message"
+    client_request_id: str = Field(min_length=8, max_length=128)
+    kind: Literal["message", "answer", "start", "continue", "rebuild", "build"] = "message"
     text: str = Field(default="", max_length=20_000)
     focus: ArtifactFocusInput | None = None
     model: str | None = Field(default=None, max_length=200)
     effort: Effort | None = None
     web: bool = False
     rebuild: OutlineRebuildInput | None = None
+    build: BuildTurnInput | None = None
+    target_lineage_id: str | None = Field(default=None, min_length=1, max_length=80)
 
     @model_validator(mode="after")
     def needs_words(self) -> "ArtifactTurnInput":
         self.text = self.text.strip()
         if (self.kind == "rebuild") != (self.rebuild is not None):
             raise ValueError("An outline rebuild needs the current artifact and its outline")
+        if (self.kind == "build") != (self.build is not None):
+            raise ValueError("A build turn needs an output type and build options")
+        if self.build is not None:
+            label = OUTPUT_TYPES[self.build.type].label
+            self.text = self.text or self.build.focus or f"Build {label}"
         if self.rebuild is not None:
             self.text = self.text or "Rebuild with the updated outline"
         if not self.text:
@@ -1385,12 +1439,16 @@ class ArtifactTurnInput(ApiModel):
             self.text = "Just start" if self.kind == "start" else "Continue"
         return self
 
-    def rebuild_fields(self) -> dict:
-        if self.rebuild is None:
-            return {}
-        return self.model_dump(
-            mode="json", by_alias=True, include={"rebuild", "model", "effort", "web"},
-        )
+    def request_fields(self) -> dict:
+        fields = {}
+        operation = "build" if self.build is not None else "rebuild" if self.rebuild else None
+        if operation:
+            fields = self.model_dump(
+                mode="json", by_alias=True, include={operation, "model", "effort", "web"},
+            )
+        if self.target_lineage_id:
+            fields["targetLineageId"] = self.target_lineage_id
+        return fields
 
 
 class ArtifactChangeOut(ApiModel):

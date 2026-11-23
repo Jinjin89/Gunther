@@ -48,7 +48,7 @@ Below the table, each case that failed has one line saying why. The judge is one
 
 ## The Artifacts exam
 
-A second exam, `evals/artifacts/`, sends messages to a slide deck and a report built from this same demo library and scores what changed and what stayed (`python -m evals.artifacts.run --path baseline`). It reuses this exam's library seeding, settings and app creation; see `evals/artifacts/README.md`.
+A second exam, `evals/artifacts/`, sends messages to a slide deck and a report built from this same demo library and scores what changed and what stayed (`python -m evals.artifacts.run`). It reuses this exam's library seeding, settings and app creation; see `evals/artifacts/README.md`.
 
 ## Comparing runs
 

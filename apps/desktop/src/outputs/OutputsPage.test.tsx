@@ -61,7 +61,7 @@ const library = { mode: "library" as const, sourceIds: [], unitIds: [], sessionI
 const emptyBrief = { goal: null, audience: null, constraints: [], open: [] };
 const AT = "2026-10-01T00:05:00.000Z";
 const workOf = (artifact: Artifact): ArtifactWork => ({ key: artifact.lineageId, kind: artifact.kind, title: artifact.title, versionId: artifact.id, spec: { kind: artifact.kind, use: null, length: null, outputType: null }, approach: { state: "ok", why: "" }, outline: { state: "ok", why: "" }, parts: [] });
-const conversation = (id: string, overrides: Partial<ArtifactConversationDetail> = {}): ArtifactConversationDetail => ({ id, title: "Make notes", updatedAt: AT, artifactCount: overrides.works?.length ?? 0, waiting: false, scope: library, brief: emptyBrief, messages: [], works: [], active: null, pending: null, archived: false, createdAt: AT, ...overrides });
+const conversation = (id: string, overrides: Partial<ArtifactConversationDetail> = {}): ArtifactConversationDetail => ({ id, title: "Make notes", updatedAt: AT, artifactCount: overrides.works?.length ?? 0, waiting: false, outputType: null, shape: null, lineageId: null, lastTurn: null, scope: library, brief: emptyBrief, messages: [], works: [], active: null, pending: null, archived: false, createdAt: AT, ...overrides });
 const said = (id: string, text: string, overrides: Partial<ArtifactConversationMessage> = {}): ArtifactConversationMessage => ({ id, role: "user", kind: "message", text, payload: {}, artifactId: null, clientRequestId: id, createdAt: AT, ...overrides });
 const replied = (id: string, kind: string, text: string, overrides: Partial<ArtifactConversationMessage> = {}): ArtifactConversationMessage => ({ id, role: "assistant", kind, text, payload: {}, artifactId: null, clientRequestId: null, createdAt: AT, ...overrides });
 const turnOut = (outcome: ArtifactTurnOut["outcome"], reply: string, artifact: Artifact | null = null): ArtifactTurnOut => ({ outcome, reply, question: null, artifact, changes: [], message: replied("m", "result", reply) });
@@ -82,7 +82,8 @@ function keep(service: Service, id: string, payload: ArtifactTurnInput, answer: 
   const options = (answer.payload?.options ?? []) as string[];
   service.set(id, {
     ...found, artifactCount: artifact ? Math.max(found.artifactCount, 1) : found.artifactCount,
-    messages: [...found.messages, said(`u${n}`, payload.text ?? "", { kind: payload.kind ?? "message", payload: payload.focus ? { focus: payload.focus } : {}, clientRequestId: answer.kind === "failed" || answer.kind === "stopped" ? null : payload.clientRequestId }), replied(`a${n}`, answer.kind, answer.text, { payload: answer.payload ?? {}, artifactId: answer.artifactId ?? null })],
+    messages: [...found.messages, said(`u${n}`, payload.text ?? "", { kind: payload.kind ?? "message", payload: { focus: payload.focus, build: payload.build, rebuild: payload.rebuild, targetLineageId: payload.targetLineageId }, clientRequestId: answer.kind === "failed" || answer.kind === "stopped" ? null : payload.clientRequestId }), replied(`a${n}`, answer.kind, answer.text, { payload: { to: `u${n}`, ...answer.payload }, artifactId: answer.artifactId ?? null })],
+    lastTurn: { kind: payload.kind ?? "message", build: payload.build ?? null, error: answer.kind === "failed" ? answer.text : null, createdAt: AT },
     works: artifact ? [...found.works.filter((work) => work.key !== artifact.lineageId), workOf(artifact)] : found.works,
     active: artifact ? artifact.lineageId : found.active,
     pending: answer.kind === "question" ? { question: answer.text, options, messageId: `a${n}` } : null,
@@ -114,7 +115,7 @@ async function setup(options: { from?: string; history?: Artifact[]; conversatio
   vi.spyOn(knowledgeApi, "artifact").mockImplementation(async (_base, id) => history.find((item) => item.id === id) ?? version(1));
   vi.spyOn(knowledgeApi, "followOutputBuild").mockImplementation(options.follow ?? (async () => null));
   if (options.web) vi.spyOn(knowledgeApi, "health").mockResolvedValue({ status: "ok", webSearchMode: "tavily" } as never); else vi.spyOn(knowledgeApi, "health").mockRejectedValue(new Error("No web search in these tests."));
-  vi.spyOn(knowledgeApi, "artifactConversations").mockImplementation(async () => [...service.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(({ id, title, updatedAt, artifactCount, waiting, pending }) => ({ id, title, updatedAt, artifactCount, waiting: waiting || pending !== null })));
+  vi.spyOn(knowledgeApi, "artifactConversations").mockImplementation(async () => [...service.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(({ id, title, updatedAt, artifactCount, waiting, pending, outputType, shape, lineageId, lastTurn }) => ({ id, title, updatedAt, artifactCount, waiting: waiting || pending !== null, outputType, shape, lineageId, lastTurn })));
   vi.spyOn(knowledgeApi, "artifactConversation").mockImplementation(async (_base, id) => { const found = service.get(id); if (!found) throw new Error("There is no such conversation."); return found; });
   vi.spyOn(knowledgeApi, "createArtifactConversation").mockImplementation(async (_base, payload) => { created.push(payload); const made = conversation(payload.id!, { title: "New conversation", scope: payload.scope ?? library }); service.set(made.id, made); return made; });
   vi.spyOn(knowledgeApi, "updateArtifactConversation").mockImplementation(async (_base, id) => service.get(id)!);
@@ -163,6 +164,24 @@ describe("artifact conversations", () => {
     expect(screen.queryByRole("button", { name: "New artifact" })).not.toBeInTheDocument();
     expect(chat().getByRole("button", { name: "Voice input" })).toBeVisible();
     expect(chat().getByRole("button", { name: "Model: DeepSeek · Flash" })).toBeVisible();
+  });
+
+  it("builds from a shortcut and retries the saved build options", async () => {
+    const user = userEvent.setup(); const context = await setup();
+    const turn = vi.spyOn(knowledgeApi, "artifactTurnStream").mockImplementationOnce(async (_base, id, payload) => {
+      keep(context.service, id, payload, { kind: "failed", text: "The writer was interrupted." });
+      throw new Error("The writer was interrupted.");
+    }).mockImplementationOnce(saves(context, (id) => version(1, { conversationId: id })));
+    await user.type(chat().getByRole("textbox", { name: "Artifact message" }), "For the lab");
+    await user.click(chat().getByRole("button", { name: "Report" }));
+    expect(await chat().findByRole("alert")).toHaveTextContent("The writer was interrupted.");
+    await user.click(chat().getByRole("button", { name: "Retry" }));
+    await screen.findByRole("heading", { level: 2, name: "Immune markers v1" });
+    const [first, second] = turn.mock.calls;
+    expect(first?.[2]).toMatchObject({ kind: "build", build: { type: "report", focus: "For the lab", scope: library, web: false } });
+    expect(second?.[1]).toBe(first?.[1]);
+    expect(second?.[2].build).toEqual(first?.[2].build);
+    expect(second?.[2].clientRequestId).not.toBe(first?.[2].clientRequestId);
   });
 
   it("sends a message to the agent, shows its steps, and opens the saved version", async () => {

@@ -46,7 +46,7 @@ Point `DATABASE_URL` at that database when using the fixture. The evals keep the
 | Eval | Guide and entry point from `apps/backend` |
 | --- | --- |
 | Ask | [Ask exam](../apps/backend/evals/README.md), `.venv/bin/python -m evals.ask.run --label dev` |
-| Artifacts turns | [Artifacts exam](../apps/backend/evals/artifacts/README.md), `.venv/bin/python -m evals.artifacts.run --path baseline` |
+| Artifacts turns | [Artifacts exam](../apps/backend/evals/artifacts/README.md), `.venv/bin/python -m evals.artifacts.run` |
 | Build quality | [Quality eval](../apps/backend/evals/quality/README.md), `.venv/bin/python -m evals.quality.run --sets velmora --label dev` |
 | Slide rendering and review | [Slide evals](../apps/backend/evals/slides/README.md) |
 | Speech and paragraph grouping | [Transcript evals](../apps/backend/evals/transcript/README.md) |

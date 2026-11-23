@@ -213,7 +213,7 @@ export class ArtifactConversationStore {
     if (!conversation.saved) {
       const detail = await knowledgeApi.createArtifactConversation(this.baseId, { id, scope: conversation.scope }, this.workspaceId);
       this.details.set(id, detail);
-      this.summaries = [{ id, title: detail.title, updatedAt: detail.updatedAt, artifactCount: detail.artifactCount, waiting: detail.waiting }, ...this.summaries.filter((item) => item.id !== id)];
+      this.summaries = [detail, ...this.summaries.filter((item) => item.id !== id)];
       this.unsaved = this.unsaved.filter((item) => item !== id);
       this.commit();
     }
@@ -241,7 +241,7 @@ export class ArtifactConversationStore {
     const detail = await knowledgeApi.artifactConversation(this.baseId, id, this.workspaceId);
     this.details.set(id, detail);
     if (!this.summaries.some((item) => item.id === id)) this.summaries = [detail, ...this.summaries];
-    else this.summaries = this.summaries.map((item) => item.id === id ? { id, title: detail.title, updatedAt: detail.updatedAt, artifactCount: detail.artifactCount, waiting: detail.waiting } : item);
+    else this.summaries = this.summaries.map((item) => item.id === id ? detail : item);
     this.summaries = [...this.summaries].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     this.unsaved = this.unsaved.filter((item) => item !== id);
     this.commit();

@@ -1,5 +1,4 @@
-"""The Artifacts exam (evals/artifacts): its cases, its scoring, the baseline mapping and one
-run with stand-in models. It needs no keys."""
+"""The Artifacts exam, its scoring and conversation runs with stand-in models."""
 
 import json
 from pathlib import Path
@@ -8,7 +7,6 @@ import pytest
 from fake_models import (
     FakeProvider,
     gateway,
-    is_writing,
     model,
     orchestrator_replies,
     output_replies,
@@ -16,18 +14,14 @@ from fake_models import (
 
 from evals.artifacts import report, score
 from evals.artifacts.run import (
-    RUNNERS,
     Configuration,
     Counter,
     Options,
-    baseline_request,
-    edited_outline,
     open_session,
     parse,
-    route_of,
+    run_agent_case,
     run_exam,
 )
-from evals.ask.run import ExamError
 from gunther.outputs import COMPOSITION_LAYOUTS, join_document
 
 CASES = {case.id: case for case in score.load_cases()}
@@ -56,11 +50,11 @@ def test_the_case_file_is_well_formed() -> None:
     assert len(written.outline) == 5
     # The layouts a case asks for exist.
     wanted = {name for case in cases for name in case.expect.layout.values()}
-    wanted |= {edit.layout for case in cases for edit in case.today.edit if edit.layout}
     assert wanted <= set(COMPOSITION_LAYOUTS["standard"])
     # A fixture's definition names its hash; the outline can be sent as it is.
     assert len({fixture.hash for fixture in FIXTURES.values()}) == 2
     request = deck.request()
+    assert request["type"] == "slides" and written.request()["type"] == "report"
     assert request["outline"][0] == {
         "heading": deck.outline[0].heading,
         "goal": "",
@@ -90,8 +84,8 @@ def test_the_cases_cover_every_kind_of_message_the_plan_names() -> None:
     assert some(lambda c: (c.expect.count_delta or 0) < 0 and c.category == "structure")
     assert some(lambda c: c.expect.order)
     assert some(lambda c: "split" in c.message.lower())
-    assert some(lambda c: c.expect.layout and c.today.route == "outline")
-    assert some(lambda c: c.today.route == "outline" and any(e.heading for e in c.today.edit))
+    assert some(lambda c: c.category == "structure" and c.expect.layout)
+    assert some(lambda c: c.category == "structure" and c.expect.must_contain)
     # upstream, content, whole document, questions
     assert some(lambda c: c.category == "upstream" and "cost" in c.message)
     assert some(lambda c: c.category == "upstream" and "first-year" in c.message)
@@ -124,7 +118,7 @@ def test_loading_refuses_a_mistyped_case(tmp_path: Path) -> None:
         load(base + '[case.expect]\nintent = "wish"\n')
     with pytest.raises(ValueError, match="unknown fields"):
         load(base + "[case.expect]\nchange = [1]\n")
-    with pytest.raises(ValueError, match="unknown route"):
+    with pytest.raises(ValueError, match="unknown fields"):
         load(base + 'today = { route = "magic" }\n')
     with pytest.raises(ValueError, match="not unique"):
         load(base + "\n" + base)
@@ -659,131 +653,6 @@ def test_figures_read_digits_words_and_percents() -> None:
     assert score.figures("CD3D and CO2") == []
 
 
-# The baseline ----------------------------------------------------------------------------------
-
-
-def request_for(
-    case_id: str, head: score.Version, turn: score.Turn | None = None, route: str | None = None
-):
-    c = CASES[case_id]
-    config = Configuration("baseline", "deepseek/deepseek-flash", "high")
-    chosen, _ = route_of(c)
-    return baseline_request(
-        c,
-        turn or score.Turn(c.message, c.focus),
-        head,
-        config,
-        route or chosen,
-        "exam_request_0001",
-    )
-
-
-DECK_HEAD = score.Version(
-    content="x",
-    kind="slides",
-    id="art_1",
-    audience="student",
-    use="talk",
-    brief="A talk.",
-    outline=[{"heading": f"H{n}", "goal": f"G{n}", "layout": "text"} for n in range(1, 13)],
-)
-REPORT_HEAD = score.Version(
-    content="x",
-    kind="report",
-    id="art_2",
-    audience="scientist",
-    style="overview",
-    brief="A report.",
-    outline=[{"heading": f"H{n}", "goal": f"G{n}"} for n in range(1, 6)],
-)
-
-
-def test_a_change_is_a_revision_of_the_selected_part_or_else_of_everything() -> None:
-    plain = request_for("E2", DECK_HEAD)
-    assert plain.route == "revise" and plain.tail == "artifacts/art_1/revise/stream"
-    assert plain.body == {
-        "clientRequestId": "exam_request_0001",
-        "instruction": "Slide 2 is too long. Shorten it.",
-        "model": "deepseek/deepseek-flash",
-        "effort": "high",
-    }
-    # A part that is selected, or has selected text in it, is sent as a section (counted from 0)…
-    assert request_for("F1", DECK_HEAD).body["sectionIndex"] == 4
-    assert request_for("F2", DECK_HEAD).body["sectionIndex"] == 1
-    assert "quote" not in json.dumps(request_for("F2", DECK_HEAD).body)
-    # …but the part that is only on screen is not: the old screen does not know it.
-    assert "sectionIndex" not in request_for("F3", DECK_HEAD).body
-    assert request_for("V1", DECK_HEAD).route == "revise"
-
-
-def test_an_upstream_change_is_a_rebuild_with_the_message_as_the_brief() -> None:
-    deck = request_for("U1", DECK_HEAD)
-    assert (deck.route, deck.tail) == ("rebuild", "outputs/build/stream")
-    assert deck.body == {
-        "clientRequestId": "exam_request_0001",
-        "scope": {"mode": "library"},
-        "model": "deepseek/deepseek-flash",
-        "effort": "high",
-        "kind": "slides",
-        "audience": "student",
-        "supersedesArtifactId": "art_1",
-        "use": "talk",
-        "brief": "Focus on cost instead.",
-    }
-    written = request_for("U2", REPORT_HEAD)
-    assert written.body["brief"] == "Make it for first-year students."
-    assert written.body["style"] == "overview" and "use" not in written.body
-    assert written.body["supersedesArtifactId"] == "art_2" and "outline" not in written.body
-    assert route_of(CASES["U3"]) == ("rebuild", "")
-
-
-def test_a_changed_outline_line_is_a_rebuild_with_the_edited_outline() -> None:
-    layout = request_for("S5", DECK_HEAD)
-    assert layout.route == "outline" and layout.body["brief"] == "A talk."
-    assert layout.body["outline"][6] == {"heading": "H7", "goal": "G7", "layout": "cards"}
-    assert layout.body["outline"][5] == {"heading": "H6", "goal": "G6", "layout": "text"}
-    line = request_for("S6", REPORT_HEAD)
-    assert line.body["outline"][2] == {
-        "heading": "Keep the roof clean and mind the neighbours",
-        "goal": "Cleaning every two years, and glare complaints from the neighbours.",
-    }
-    assert line.body["outline"][1] == {"heading": "H2", "goal": "G2"}
-    edited = edited_outline(DECK_HEAD.outline, CASES["S5"].today.edit)
-    assert DECK_HEAD.outline[6]["layout"] == "text" and edited[6]["layout"] == "cards"
-
-
-def test_a_new_document_is_a_build_with_what_the_person_would_have_picked() -> None:
-    new = request_for("A2", DECK_HEAD)
-    assert (new.route, new.tail) == ("new", "outputs/build/stream")
-    assert new.body["kind"] == "slides" and new.body["audience"] == "collaborator"
-    assert new.body["brief"] == "A 10-minute talk for the lab on the Velmora trial results."
-    assert "supersedesArtifactId" not in new.body and "outline" not in new.body
-
-
-def test_what_the_old_path_cannot_say_is_not_possible_today() -> None:
-    reasons = {}
-    for case_id, c in CASES.items():
-        route, why = route_of(c)
-        if route == "none":
-            reasons[case_id] = why
-    assert set(reasons) == {"S1", "S2", "S3", "S4", "N1", "N2", "Q1", "Q2", "Q3", "A1", "A3"}
-    assert "never asks" in reasons["A1"] and "never asks" in reasons["A3"]
-    assert "cannot answer" in reasons["Q1"] and "cannot answer" in reasons["Q3"]
-    for case_id in ("S1", "S2", "S3", "S4", "N1", "N2"):
-        assert "cannot add, remove or move a part" in reasons[case_id]
-    # Everything else can be sent.
-    routes = {case_id: route_of(c)[0] for case_id, c in CASES.items() if case_id not in reasons}
-    assert set(routes.values()) == {"revise", "rebuild", "outline", "new"}
-    assert routes["E1"] == routes["C3"] == routes["W1"] == "revise"
-    assert routes["U1"] == routes["U2"] == routes["U3"] == "rebuild"
-    assert routes["S5"] == routes["S6"] == "outline" and routes["A2"] == "new"
-    # A case can say why itself.
-    owned = case(
-        expect=score.Expect(count_delta=1), today=score.Today(route="none", why="Because.")
-    )
-    assert route_of(owned) == ("none", "Because.")
-
-
 # The scorecard ---------------------------------------------------------------------------------
 
 
@@ -1051,7 +920,6 @@ id = "A2"
 category = "asking"
 artifact = "none"
 message = "A talk on the trial."
-today = { route = "new", kind = "slides" }
 
 [case.expect]
 intent = "make"
@@ -1144,7 +1012,9 @@ def run_with_fakes(tmp_path: Path, options: Options, fake: FakeProvider | None =
     (library / "plan.md").write_text(f"# The plan\n\n{facts}", encoding="utf-8")
     cases = tmp_path / "cases.toml"
     cases.write_text(TINY_CASES, encoding="utf-8")
-    fake = fake or stand_in_models()
+    fake = fake or agent_models({
+        "actions": [{"do": "reply", "text": "The trial covered 412 buildings."}],
+    })
     said: list[str] = []
     folder = run_exam(
         options,
@@ -1159,24 +1029,17 @@ def run_with_fakes(tmp_path: Path, options: Options, fake: FakeProvider | None =
 
 
 def agent_models(*decisions: dict) -> FakeProvider:
-    """Stand-in models for the agent path: the orchestrator decides as scripted, and the rest
-    (the skill's steps, the judge) are the baseline's stand-ins."""
+    """Use scripted decisions with the stand-in Studio and judge replies."""
 
     inner = stand_in_models().replies[0]
     return FakeProvider(orchestrator_replies(list(decisions), inner))
 
 
-def test_the_agent_path_is_registered_and_unknown_paths_are_refused(tmp_path: Path) -> None:
-    assert callable(RUNNERS["agent"]) and callable(RUNNERS["baseline"])
-    with pytest.raises(ExamError, match="Unknown path"):
-        run_with_fakes(tmp_path, Options(paths=["magic"]), FakeProvider("{}"))
-
-
-def test_the_agent_path_sends_each_case_through_the_conversation_endpoint(tmp_path: Path) -> None:
+def test_the_exam_sends_each_case_through_the_conversation_endpoint(tmp_path: Path) -> None:
     reply = {"actions": [{"do": "reply", "text": "Nothing needed to change."}]}
     fake = agent_models(reply)
     folder, fake, said = run_with_fakes(
-        tmp_path, Options(label="agent", paths=["agent"], only=["F1", "A2"]), fake
+        tmp_path, Options(label="agent", only=["F1", "A2"]), fake
     )
     raw = json.loads((folder / "raw.json").read_text(encoding="utf-8"))
     configuration = raw["configurations"][0]
@@ -1202,11 +1065,11 @@ def test_the_agent_path_sends_each_case_through_the_conversation_endpoint(tmp_pa
     assert records["A2"]["outcome"]["before"] is None
 
 
-def test_the_agent_paths_question_and_saved_version_are_read_back(tmp_path: Path) -> None:
+def test_the_exams_question_and_saved_version_are_read_back(tmp_path: Path) -> None:
     ask = {"actions": [{"do": "ask", "question": "For whom?", "options": ["Lab", "Class"]}]}
     folder, _, _ = run_with_fakes(
         tmp_path,
-        Options(label="agent-ask", paths=["agent"], only=["A2"]),
+        Options(label="agent-ask", only=["A2"]),
         agent_models(ask),
     )
     raw = json.loads((folder / "raw.json").read_text(encoding="utf-8"))
@@ -1221,7 +1084,7 @@ def test_the_agent_paths_question_and_saved_version_are_read_back(tmp_path: Path
     ]
     folder, _, _ = run_with_fakes(
         tmp_path,
-        Options(label="agent-save", paths=["agent"], only=["F1"]),
+        Options(label="agent-save", only=["F1"]),
         agent_models(*edit),
     )
     raw = json.loads((folder / "raw.json").read_text(encoding="utf-8"))
@@ -1232,55 +1095,31 @@ def test_the_agent_paths_question_and_saved_version_are_read_back(tmp_path: Path
 
 
 def test_runner_end_to_end_with_fake_models(tmp_path: Path) -> None:
-    folder, fake, said = run_with_fakes(tmp_path, Options(label="fake"))
+    folder, _, _ = run_with_fakes(tmp_path, Options(label="fake"))
     results = json.loads((folder / "raw.json").read_text(encoding="utf-8"))
     assert results["complete"] is True
     configuration = results["configurations"][0]
-    assert configuration["name"] == "baseline: deepseek/deepseek-flash (write high)"
+    assert configuration["name"] == "agent: deepseek/deepseek-flash (write high)"
     records = configuration["results"]
     assert list(records) == ["E1", "F1", "R1", "S1", "U1", "A2"]
-    # A typo fixed by the whole-document revision: only slide 2 changed, nothing else moved.
-    typo = records["E1"]
-    assert typo["failures"] == [] and typo["why"] == []
-    assert typo["measures"]["changed"] == [2] and typo["measures"]["damaged"] == []
-    assert typo["subs"] == {"typo": "bulidings", "fixed": "buildings"}
-    assert typo["outcome"]["intent"] == "change" and typo["outcome"]["route"] == "revise"
-    assert typo["outcome"]["calls"] > 0 and typo["outcome"]["seconds"] > 0
-    assert typo["judgement"] == {"answer": True, "why": "It did."}
-    # The selected slide gets one writer request. Fitting and design have their own calls.
-    assert records["F1"]["failures"] == [], records["F1"]["why"]
-    assert records["F1"]["measures"]["changed"] == [3]
-    writes = [r["messages"][0]["content"] for r in fake.requests if is_writing(r)]
-    assert sum("Make this one plainer." in text for text in writes) == 1
-    assert sum("Fix the typo" in text for text in writes) == len(SLIDES)
-    # A report section is shortened.
-    assert records["R1"]["failures"] == [], records["R1"]["why"]
-    # An insert cannot be asked of the old path; nothing is sent for it.
-    assert records["S1"]["outcome"]["impossible"].startswith("it cannot add, remove or move")
-    assert (
-        records["S1"]["failures"] == ["not possible today"]
-        and records["S1"]["outcome"]["calls"] == 0
-    )
-    # A rebuild replaces the lot; a new build starts from nothing.
-    assert records["U1"]["outcome"]["route"] == "rebuild" and records["U1"]["failures"] == []
-    new = records["A2"]
-    assert new["outcome"]["intent"] == "make" and new["outcome"]["before"] is None
-    assert new["failures"] == [], new["why"]
-    # The scorecard and the raw record say the same thing and hold no key.
+    for record in records.values():
+        outcome = record["outcome"]
+        assert (outcome["route"], outcome["intent"], outcome["calls"]) == ("agent", "answer", 1)
+        assert outcome["reply"] == "The trial covered 412 buildings."
+        assert outcome["after"] is None
+    assert records["E1"]["judgement"] == {"answer": True, "why": "It did."}
+    assert records["A2"]["outcome"]["before"] is None
     text = (folder / "report.md").read_text(encoding="utf-8")
-    assert "# Artifacts exam: fake" in text and "| Not possible today | 1 |" in text
-    assert "- S1 (structure): Not possible today:" in text
+    assert "# Artifacts exam: fake" in text
     assert "Fixture deck (deepseek/deepseek-flash): built in" in text
     assert "sk-test" not in (folder / "raw.json").read_text(encoding="utf-8")
-    assert configuration["card"]["impossible"] == 1 and configuration["card"]["cases"] == 6
+    assert configuration["card"]["impossible"] == 0 and configuration["card"]["cases"] == 6
     # Template and fixtures are kept for the next run…
     kept = sorted(p.name for p in (tmp_path / "results").iterdir())
     assert any(name.startswith("template-") for name in kept)
     assert sum(name.startswith("fixture-") for name in kept) == 2
     # …and reused, so a second run builds nothing again.
-    again, fake_again, said_again = run_with_fakes(
-        tmp_path, Options(label="again", only=["E1"]), None
-    )
+    again, _, said_again = run_with_fakes(tmp_path, Options(label="again", only=["E1"]))
     assert any("Reusing the deck fixture" in line for line in said_again)
     assert not any("Building the" in line for line in said_again)
     assert again != folder
@@ -1293,9 +1132,13 @@ def test_a_session_clones_a_fixture_and_finds_the_newest_version(tmp_path: Path)
     info = json.loads((template / "template.json").read_text(encoding="utf-8"))
     saved = json.loads(next(results.glob("fixture-deck-*.json")).read_text(encoding="utf-8"))
     assert saved["built"]["attempts"] == 1 and saved["built"]["calls"] > 0
-    config = Configuration("baseline", "deepseek/deepseek-flash", "high")
+    config = Configuration("deepseek/deepseek-flash", "high")
     keys = {"deepseek_api_key": "sk-test-0000000000001234", "stt_provider": "compatible"}
-    with open_session(template, info, None, config, stand_in_models().factory, keys) as session:
+    fake = agent_models(
+        {"actions": [{"do": "write", "parts": [3], "instruction": "Make this one plainer."}]},
+        {"actions": [{"do": "save", "text": "Plainer."}]},
+    )
+    with open_session(template, info, None, config, fake.factory, keys) as session:
         first = session.clone(saved)
         # A copy: the same text, sources and findings, as version 1 of a lineage of its own.
         assert first.number == 1 and first.content == saved["content"]
@@ -1303,30 +1146,29 @@ def test_a_session_clones_a_fixture_and_finds_the_newest_version(tmp_path: Path)
         assert [s["checked"] for s in first.sections] == [True] * len(first.parts)
         second = session.clone(saved)
         assert second.id != first.id and second.number == 1
-        body = {"clientRequestId": "exam_test_0001", "instruction": "Make this one plainer."}
-        name, data = session.stream(
-            f"artifacts/{first.id}/revise/stream", {**body, "sectionIndex": 2}
-        )
-        assert name == "done" and data["versionNumber"] == 2
-        assert session.head(first).id == data["id"] and session.head(first).number == 2
+        cases = {case.id: case for case in score.load_cases(tmp_path / "cases.toml")}
+        outcome = run_agent_case(session, cases["F1"], first)
+        assert outcome.after is not None and outcome.after.number == 2
+        assert session.head(first).id == outcome.after.id and session.head(first).number == 2
         assert session.head(second).number == 1
         # A request that fails says why instead of raising.
-        other = {**body, "clientRequestId": "exam_test_0002"}
-        name, data = session.stream("artifacts/art_missing/revise/stream", other)
+        tail = "artifact-conversations/missing/messages/stream"
+        name, data = session.stream(tail, {"clientRequestId": "exam_test_0002", "text": "Hello"})
         assert name == "error" and data["status"] == 404
-        name, data = session.stream(f"artifacts/{first.id}/revise/stream", {})
+        name, data = session.stream(tail, {})
         assert name == "error" and data["status"] == 422
 
 
 def test_cases_can_run_side_by_side_and_more_than_once(tmp_path: Path) -> None:
     folder, _, _ = run_with_fakes(
-        tmp_path, Options(label="many", only=["E1", "F1", "S1"], jobs=2, repeat=2)
+        tmp_path, Options(label="many", only=["S1", "U1", "A2"], jobs=2, repeat=2)
     )
     raw = json.loads((folder / "raw.json").read_text(encoding="utf-8"))
     results = raw["configurations"][0]["results"]
-    assert list(results) == ["E1#1", "E1#2", "F1#1", "F1#2", "S1#1", "S1#2"]
+    assert list(results) == ["S1#1", "S1#2", "U1#1", "U1#2", "A2#1", "A2#2"]
     card = raw["configurations"][0]["card"]
-    assert card["cases"] == 3 and card["runs"] == 6 and card["passed"] == 2.0
+    assert card["cases"] == 3 and card["runs"] == 6
+    assert all(record["outcome"]["calls"] == 1 for record in results.values())
     # The report can be written again from the raw record.
     (folder / "report.md").unlink()
     assert report.main([str(folder)]) == 0
@@ -1335,11 +1177,13 @@ def test_cases_can_run_side_by_side_and_more_than_once(tmp_path: Path) -> None:
 
 def test_the_command_line() -> None:
     options = parse([])
-    assert options.paths == ["baseline"] and options.jobs == 1 and options.repeat == 1
+    assert options.jobs == 1 and options.repeat == 1
+    with pytest.raises(SystemExit):
+        parse(["--path", "baseline"])
     options = parse(
-        ["--path", "baseline,agent", "--only", "E1, F1", "--jobs", "3", "--writer-effort", "low",
+        ["--only", "E1, F1", "--jobs", "3", "--writer-effort", "low",
          "--rebuild-fixtures", "--fixtures-only", "--label", "x"]
     )  # fmt: skip
-    assert options.paths == ["baseline", "agent"] and options.only == ["E1", "F1"]
+    assert options.only == ["E1", "F1"]
     assert options.jobs == 3 and options.writer_effort == "low" and options.rebuild_fixtures
     assert options.fixtures_only and options.label == "x"
