@@ -6,6 +6,8 @@ Studio makes saved reports and slide decks in a library. Click a tile to start a
 
 Studio prepares a verified evidence pool, reads the material, writes a memo or study map, plans the storyline and drafts the report or slides. Slide building adds format repair, factual verification, fitting, design, and optional rendered review. For scientific decks it plans coverage of the study and figures, reads supplied pixels when it can, and records limitations and review status. The study workflow ties the explanation of methods, results and figures to their passages.
 
+The backend also accepts `flashcards` and `quiz` builds through the conversation API. These types use the direct pipeline. Studio reads the sources, writes a memo, drafts the whole card set, checks its format, verifies each card against its citations and assembles the version. An invalid draft gets one format repair. If it still fails, Studio reports the format error and leaves the saved version intact. Refine can replace a single numbered card in the set. [Cards format](STUDIO_FORMAT.md#3-cards-design-v1)
+
 Studio searches checked key results using the build brief and source selection. A usable result brings its passages into the evidence pool from the original reading. Studio sees the result sentence as orientation with pointers to those passages. Citations and checks use the original passages. Rebuilding an older output with saved answers in its scope keeps those answers as notes. [Key results](LIBRARY.md#key-results)
 
 Each output type has a recipe for what to write and how to organize it. Choose the type on its Studio tile.
@@ -19,9 +21,9 @@ Each output type has a recipe for what to write and how to organize it. Choose t
 | Timeline | `timeline` | 16 sections |
 | Slides | `slides` | 14 slides |
 
-Report and Briefing doc open with a summary box and use exhibits for comparisons that rely on numbers. The Study guide teaches concepts in order, the FAQ uses questions as headings, and the Timeline follows events by date. All six types use the same verification of claims and cited passages. [Studio format](STUDIO_FORMAT.md)
+Report and Briefing doc open with a summary box and use exhibits for comparisons that rely on numbers. The Study guide teaches concepts in order, the FAQ uses questions as headings, and the Timeline follows events by date. The output types share verification of claims and cited passages. Each shape determines the text that reaches the Checker. [Studio format](STUDIO_FORMAT.md)
 
-The build options `short`, `standard` and `long` set targets. Reports aim for 800–1,200, 1,500–3,000 or 3,000–5,000 words. Slides aim for 5–7, 8–12 or 12–14 slides. Studio uses the outline limits as planning guidance and can finish a longer model-generated outline. An explicit language takes priority, then Studio reuses the language chosen during analysis. If analysis supplies none, the prompts ask for the language of the request or the material. Slides default to a talk. Choose `read` for a deck intended for reading on its own.
+The build options `short`, `standard` and `long` set targets. Reports aim for 800–1,200, 1,500–3,000 or 3,000–5,000 words. Slides aim for 5–7, 8–12 or 12–14 slides. Studio uses report and slide outline limits as planning guidance and can finish a longer model-generated outline. Card sets aim for 10, 20 or 40 cards when the brief gives no count, with a limit of 40. An explicit language takes priority, then Studio reuses the language chosen during analysis. If analysis supplies none, the prompts ask for the language of the request or the material. Slides default to a talk. Choose `read` for a deck intended for reading on its own.
 
 Planning uses structured requested count and duration fields. An approved outline supplies stable part IDs, headings, goals and order. Rebuild from Outline in the output's actions sends the approved outline. The outline editor uses the type's submitted outline limit, including when a saved output uses a legacy style. Studio checks format, headings and counts before accepting a draft. The reader shows incomplete checks. Studio reports missing models and failed required work on the output card.
 

@@ -735,3 +735,43 @@ slide-unsupported reconstruction is a concrete learner problem. Also identify so
 planned figures omitted from the draft or explained too shallowly to teach; naming an experiment
 without its setup, comparison or observation is shallow. Return CoverageReview.
 """
+
+FLASHCARDS_RECIPE = """Write each flashcard as a level-two question and a short answer paragraph.
+Each card should recall one useful idea. Cite its answer using the original passages.
+
+Example:
+## What does factor T do in progenitors?
+It steers them toward the red-cell branch [1]."""
+
+QUIZ_RECIPE = """Write each quiz card as a level-two heading beginning with (quiz), followed by
+checkbox choices. Mark one correct choice with [x] and use [ ] for each distractor. End with a
+Why: line that explains the correct choice and cites the original passages. Leave distractors
+without citations.
+
+Example:
+## (quiz) Which branch grows when T is removed?
+- [ ] Red-cell
+- [x] White-cell
+Why: Removing T shifted cells toward the white-cell lineage [1]."""
+
+DIRECT_WRITE = """Write the complete {output_type} in the requested format.
+Brief: {brief}
+Audience: {audience}.
+{length}
+{language}
+
+{recipe}
+
+The analyst's memo:
+{memo}
+
+{truth}
+{header}
+Return only the completed Markdown."""
+
+DIRECT_FIX = """Fix these format problems in the draft. Keep the supported facts and original
+citation numbers. Return the complete Markdown in the requested format.
+{problems}
+
+Draft:
+{draft}"""

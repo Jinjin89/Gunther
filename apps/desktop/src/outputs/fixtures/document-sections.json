@@ -1,0 +1,32 @@
+[
+  {
+    "name": "report headings outside fences",
+    "shape": "report",
+    "content": "# Field report\n\n## Results\n\nObserved results.\n\n```md\n## Example inside code\n```\n\n## Limits\n\nMore evidence is needed.",
+    "preamble": "# Field report",
+    "sections": [
+      "## Results\n\nObserved results.\n\n```md\n## Example inside code\n```",
+      "## Limits\n\nMore evidence is needed."
+    ],
+    "joined": "# Field report\n\n## Results\n\nObserved results.\n\n```md\n## Example inside code\n```\n\n## Limits\n\nMore evidence is needed."
+  },
+  {
+    "name": "slides use separators outside fences",
+    "shape": "slides",
+    "content": "# Evidence\r\n\r\n---\r\n\r\n## Claim\r\n\r\n~~~\r\n---\r\n~~~\r\n\r\n---",
+    "preamble": "",
+    "sections": ["# Evidence", "## Claim\n\n~~~\n---\n~~~"],
+    "joined": "# Evidence\n\n---\n\n## Claim\n\n~~~\n---\n~~~"
+  },
+  {
+    "name": "flashcard and quiz from the notebook plan",
+    "shape": "cards",
+    "content": "<!-- cards: flashcards; design: v1 -->\n## What does factor T do in progenitors?\nIt steers them toward the red-cell branch [1].\n\n## (quiz) Which branch grows when T is removed?\n- [ ] Red-cell\n- [x] White-cell\nWhy: removing T shifted cells toward the white-cell lineage [1].\n",
+    "preamble": "<!-- cards: flashcards; design: v1 -->",
+    "sections": [
+      "## What does factor T do in progenitors?\nIt steers them toward the red-cell branch [1].",
+      "## (quiz) Which branch grows when T is removed?\n- [ ] Red-cell\n- [x] White-cell\nWhy: removing T shifted cells toward the white-cell lineage [1]."
+    ],
+    "joined": "<!-- cards: flashcards; design: v1 -->\n\n## What does factor T do in progenitors?\nIt steers them toward the red-cell branch [1].\n\n## (quiz) Which branch grows when T is removed?\n- [ ] Red-cell\n- [x] White-cell\nWhy: removing T shifted cells toward the white-cell lineage [1]."
+  }
+]

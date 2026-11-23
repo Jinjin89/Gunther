@@ -29,12 +29,11 @@ from gunther.checks import (
     merge_verdicts,
     verdicts_of,
 )
-from gunther.claim_checks import checker_inventory
 from gunther.evidence import Evidence
 from gunther.llm import ModelError
 from gunther.llm import unfence as _unfence
-from gunther.output_checks import check_saved_part, support_inventory
-from gunther.output_types import output_type_for
+from gunther.output_checks import check_saved_part, output_claim_inventory, support_inventory
+from gunther.output_types import SHAPES, output_type_for
 from gunther.outputs import (
     COMPOSITION_LAYOUTS,
     UNCHANGED,
@@ -67,10 +66,15 @@ logger = logging.getLogger(__name__)
 def _single_part(text: str, kind: str, index: int) -> str:
     """Read a complete part with the same boundaries used to save the document."""
     preamble, parts = split_document(text, kind)
-    unit = "slide" if kind == "slides" else "section"
+    shape = SHAPES[kind]
+    unit = shape.unit_label
     if preamble or len(parts) != 1:
         raise ModelError(f"Studio must return one complete {unit} at position {index + 1}.")
     part, = parts
+    if shape.unit_problem:
+        if problem := shape.unit_problem(part):
+            raise ModelError(f"{unit.capitalize()} {index + 1}: {problem}")
+        return part
     mark, body = "##", part
     if kind == "slides":
         layout = fmt.parse_slide(part).layout or ("title" if index == 0 else "")
@@ -277,7 +281,7 @@ class StudioWorkAgents(StudioAgents):
         if spec.kind == "slides":
             deck = "\n\n---\n\n".join(d.text for d in drafts)
             scientific = self._science_run(spec)
-            found = fmt.check_deck(
+            found = SHAPES[spec.kind].format_check(
                 deck,
                 read=self.use == "read",
                 notes_required=False,
@@ -328,7 +332,7 @@ class StudioWorkAgents(StudioAgents):
 
     @staticmethod
     def _what(spec: Spec) -> str:
-        return "a slide deck" if spec.kind == "slides" else "a report"
+        return SHAPES[spec.kind].what
 
     # What WorkSteps calls for edits and checks --------------------------------------------
 
@@ -337,22 +341,28 @@ class StudioWorkAgents(StudioAgents):
         return fallback_unverified_diagram(draft, section, self.skipped)
 
     def check_built(self, model, text, pool: Pool, section) -> Draft:
-        return self._checked_layout(Draft(text, self._claims(model, text, pool.by_ref())), section)
+        checked = self._claims(model, text, pool.by_ref(), kind=self.kind)
+        return self._checked_layout(Draft(text, checked), section)
 
     def check_unbuilt(self, model, text, by_ref, prior=None) -> Verdicts:
         if has_stage(prior or {}, "audit", "support"):
             return check_saved_part(
-                self.ask, model, text, by_ref, prior, limit=self.limits.sentences,
+                self.ask, model, text, by_ref, prior, limit=self.limits.sentences, kind=self.kind,
             )
         findings = {k: row for k, row in (prior or {}).items() if row["stage"] == "finding"}
-        return findings | self._claims(model, text, by_ref, prior=prior)
+        return findings | self._claims(model, text, by_ref, prior=prior, kind=self.kind)
 
     def check_edit(
         self, model, text: str, pool: Pool, part: PartRec, section: int, lines: range | None,
     ) -> Draft:
         prior = part.verdicts or {}
         by_ref, body = pool.by_ref(), _marked(text).body
-        active = checker_inventory(self._claim_text(text), by_ref)
+        if SHAPES[self.kind].pipeline == "direct":
+            # Projected claims can combine several lines of the original unit.
+            lines = None
+        _, active = output_claim_inventory(
+            self.kind, text, by_ref, rest="", scientific=bool(self.scientific_context),
+        )
         if has_stage(prior, "audit"):
             active |= verdicts_of(audit_verdict(body, "unchecked"))
         if has_stage(prior, "support", "audit"):
@@ -365,7 +375,7 @@ class StudioWorkAgents(StudioAgents):
                         if row["stage"] == "checker" and key not in changed)
         active.update({key: row for key, row in prior.items()
                        if row["stage"] == "finding" and claim_text(row["text"]) in retained})
-        checked = self._claims(model, text, by_ref, prior=prior, inventory=changed)
+        checked = self._claims(model, text, by_ref, prior=prior, inventory=changed, kind=self.kind)
         active.update(checked)
         return self._checked_layout(Draft(text, merge_verdicts(active, prior, checked)), section)
 
@@ -437,7 +447,8 @@ class StudioWorkAgents(StudioAgents):
         on_text=None,
     ) -> str:
         deck = spec.kind == "slides"
-        unit = "slide" if deck else "section"
+        shape = SHAPES[spec.kind]
+        unit = shape.unit_label
         use = self.use or "talk"
         # The words are written from the words: a slide's design is not shown to the writer.
         parts = [fmt.without_design(text) for text in parts]
@@ -469,10 +480,12 @@ class StudioWorkAgents(StudioAgents):
         )
         voice = f"{P.VOICE} {P.language_instruction(spec.language, model_language)}"
         output_type = output_type_for(spec.kind, spec.output_type)
-        guide = (
-            DECK_FORMAT + ("\n\n" + READ_NOTE if use == "read" else "")
-            if deck else report_format(output_type.summary_box) + "\n\n" + output_type.write
-        )
+        if deck:
+            guide = DECK_FORMAT + ("\n\n" + READ_NOTE if use == "read" else "")
+        elif shape.pipeline == "direct":
+            guide = output_type.write + f"\nReturn one complete {unit} without a document header."
+        else:
+            guide = report_format(output_type.summary_box) + "\n\n" + output_type.write
         system = PART_WRITE.format(
             unit=unit,
             what=self._what(spec),
@@ -553,7 +566,7 @@ class StudioWorkAgents(StudioAgents):
     def review_parts(
         self, model, effort, spec: Spec, parts: list[str], most: int = 4
     ) -> list[ReviewAsk]:
-        unit = "slide" if spec.kind == "slides" else "section"
+        unit = SHAPES[spec.kind].unit_label
         parts = [fmt.without_design(text) for text in parts]
         whole = "\n\n---\n\n".join(f"[{unit} {n}]\n{text}" for n, text in enumerate(parts, 1))
         system = REVIEW.format(

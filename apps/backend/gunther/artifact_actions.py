@@ -33,6 +33,7 @@ from gunther.artifact_workspace import (
 from gunther.citations import check_citations
 from gunther.evidence import Tool
 from gunther.llm import Turn
+from gunther.output_shapes import SHAPES
 from gunther.outputs import ACCENTS, BuiltOutput, Planned, Pool, Spec, _marked
 from gunther.studio import design as studio_design
 from gunther.studio import format as studio_format
@@ -133,7 +134,7 @@ class Gate:
 
 
 def _unit(work: Work) -> str:
-    return "slide" if work.spec.kind == "slides" else "section"
+    return SHAPES[work.spec.kind].unit_label
 
 
 def _positions(positions: Sequence[int | None], size: int, unit: str) -> str | None:
@@ -376,7 +377,7 @@ class ArtifactActions:
         if wanted.isdigit() and 1 <= int(wanted) <= len(ws.works):
             work = ws.works[int(wanted) - 1]
             ws.active = work.key
-            name = "deck" if work.spec.kind == "slides" else "report"
+            name = SHAPES[work.spec.kind].name
             return (
                 f"Working on the {name}",
                 f"Now working on the {name} “{work.title or 'untitled'}”.",
@@ -453,7 +454,7 @@ class ArtifactActions:
         work = active_work(self.workspace)
         assert work is not None
         self._make(work)
-        name = "deck" if work.spec.kind == "slides" else "report"
+        name = SHAPES[work.spec.kind].name
         return Outcome(
             f"Made the {name}",
             f"Made the {name} as a whole: {len(work.outline)} {_unit(work)}s, each checked "
@@ -479,7 +480,7 @@ class ArtifactActions:
         keep_outline = reuse_plan if request else (
             current != "out_of_date" and outline_state(work).state == "ok"
         )
-        if outline is None and keep_outline:
+        if outline is None and keep_outline and SHAPES[spec.kind].pipeline == "planned":
             outline = [Planned(item.heading, item.goal, id=item.id) for item in work.outline]
         if work.outline and spec.kind == "slides":
             cover = work.parts.get(work.outline[0].id)
@@ -717,7 +718,7 @@ class ArtifactActions:
         c, act = self.ctx, m.act
         work = active_work(self.workspace)
         numbering = self._numbering()
-        kind = ("deck" if work.spec.kind == "slides" else "report") if work else "sources"
+        kind = SHAPES[work.spec.kind].name if work else "sources"
         lines = [f"The question: {c.text}", f"What to answer: {act.about}"]
         cited: list[int] = []
         if work is not None:

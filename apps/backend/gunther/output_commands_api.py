@@ -126,8 +126,12 @@ def _legacy_build(
         assert result.artifact is not None
         return result.artifact
 
+    words = _BUILD_WORDS.get(
+        payload.kind, (f"Building {item.label.lower()}", "Ready", "Couldn't build"),
+    )
     return _output_run(
-        request, workspace_id, base_id, payload.brief, run, _BUILD_WORDS[payload.kind],
+        request, workspace_id, base_id, payload.brief, run,
+        words,
         service.library_title(base_id), conversation_id=conversation_id, type_id=build.type,
         lineage_id=lineage, artifact_id=payload.supersedes_artifact_id,
     )

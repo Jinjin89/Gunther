@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from gunther.evidence import Evidence, key_result_block
 from gunther.llm import ModelError
+from gunther.output_shapes import SHAPES
 from gunther.outputs import Events, Notes, Pool, figure_lines
 from gunther.skill_checks import figures_of
 from gunther.studio import prompts as P
@@ -96,9 +97,14 @@ class StudioMaterial:
         own notes are the same."""
 
         items = sorted(pool.items, key=lambda item: item.ref)
+        shape = SHAPES[run.spec.kind]
         whole = self._material(items)
         extra = self._notes_text(notes)
         if tokens(whole) <= DIRECT_TOKENS:
+            if shape.pipeline == "direct":
+                label = "Reading the material"
+                self._stage(emit, "read", label, "running")
+                self._stage(emit, "read", label, "done", f"{len(items)} passages")
             return extra + whole
         if kept and kept.get("notes") == extra and kept.get("digest"):
             self._stage(emit, "read", "Reading the material", "done", "kept from before")
@@ -114,7 +120,7 @@ class StudioMaterial:
                 size = 0
             parts[-1].append(item)
             size += cost
-        what = "a slide deck" if run.spec.kind == "slides" else "a report"
+        what = shape.what
         system = P.NOTES.format(what=what, brief=run.spec.brief or "(none)", kind=what)
 
         def note(part: list[Evidence]) -> PartNotes | None:

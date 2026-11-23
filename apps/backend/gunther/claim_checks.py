@@ -147,7 +147,10 @@ def check_evidence_hash(refs: Sequence[int], by_ref: Mapping[int | None, Evidenc
     return hashlib.sha256(repr(sources).encode()).hexdigest()
 
 
-def check_claims(text: str, by_ref: Mapping[int | None, Evidence]) -> list[dict[str, Any]]:
+def check_claims(
+    text: str, by_ref: Mapping[int | None, Evidence], *,
+    spans: Sequence[tuple[int, int]] | None = None,
+) -> list[dict[str, Any]]:
     """The claims a check covers, including the header of each table row."""
     rows = {}
     for index, table in enumerate(MARKDOWN_TABLE.finditer(text)):
@@ -156,7 +159,7 @@ def check_claims(text: str, by_ref: Mapping[int | None, Evidence]) -> list[dict[
             rows[table.start() + row.start()] = (index, row_index, header[0].strip())
     claims = []
     line, offset = 0, 0
-    for n, (start, end) in enumerate(sentence_spans(text), 1):
+    for n, (start, end) in enumerate(sentence_spans(text) if spans is None else spans, 1):
         line += text.count("\n", offset, start)
         offset = start
         sentence = " ".join(text[start:end].split())
@@ -176,12 +179,13 @@ def check_claims(text: str, by_ref: Mapping[int | None, Evidence]) -> list[dict[
 
 def checker_inventory(
     text: str, by_ref: Mapping[int | None, Evidence], prior: Verdicts | None = None,
+    *, spans: Sequence[tuple[int, int]] | None = None,
 ) -> Verdicts:
     claims = stage_rows(prior or {}, "checker")
-    if not claims or any(
+    if spans is not None or not claims or any(
         "evidenceHash" not in claim or claim["evidenceHash"] == LEGACY_EVIDENCE for claim in claims
     ):
-        claims = check_claims(collapse_citations(text), by_ref)
+        claims = check_claims(collapse_citations(text), by_ref, spans=spans)
     return verdicts_of(*(
         stored_verdict("checker", {
             **{k: v for k, v in claim.items() if k not in {"label", "issue"}},

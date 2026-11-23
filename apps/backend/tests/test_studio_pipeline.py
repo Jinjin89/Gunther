@@ -1006,15 +1006,15 @@ def test_without_a_renderer_the_step_is_skipped():
 
 
 def test_the_title_slide_borrows_the_citations_other_slides_give_for_its_figures():
-    from gunther.studio.verification import _lend_refs
+    from gunther.output_shapes import lend_refs
 
     rest = (
         "## Weather adjustment halves the saving\n- 9% weather-adjusted saving [3][4]\n"
         "- 2.1 °C cooler [2]\n- Albedo fell [7]"
     )
-    assert _lend_refs("# Cool roofs: 2.1 °C comfort, 9% not 18%", rest).endswith("[3] [4] [2]")
-    assert _lend_refs("Comfort is real [1]", rest) == "Comfort is real [1]"
-    assert _lend_refs("A 40% gain", rest) == "A 40% gain"
+    assert lend_refs("# Cool roofs: 2.1 °C comfort, 9% not 18%", rest).endswith("[3] [4] [2]")
+    assert lend_refs("Comfort is real [1]", rest) == "Comfort is real [1]"
+    assert lend_refs("A 40% gain", rest) == "A 40% gain"
 
 
 def test_the_subtitle_is_rewritten_to_state_what_the_slide_titles_say():

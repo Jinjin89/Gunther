@@ -62,7 +62,7 @@ def test_catalog_types_build_with_their_recipe_and_save_their_label(
         headers = workspace(client)
         catalog = client.get("/api/output-types", headers=headers).raise_for_status().json()
         assert [item["id"] for item in catalog] == [
-            "report", "briefing", "study_guide", "faq", "timeline", "slides",
+            "report", "briefing", "study_guide", "faq", "timeline", "slides", "flashcards", "quiz",
         ]
         [item] = [row for row in catalog if row["id"] == style]
         assert (item["shape"], item["label"]) == (shape, label)

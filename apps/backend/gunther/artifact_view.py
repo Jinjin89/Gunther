@@ -20,7 +20,7 @@ from gunther.artifact_workspace import (
     outline_state,
     status,
 )
-from gunther.output_types import DECK_USES, OUTPUT_TYPES
+from gunther.output_types import DECK_USES, OUTPUT_TYPES, SHAPES
 from gunther.outputs import Notes, Pool, layout_of
 from gunther.studio import format as studio_format
 from gunther.studio.format import without_design
@@ -235,7 +235,11 @@ def build_view(v: View) -> str:
         )
         if kind == "slides":
             options += f". Uses: {', '.join(DECK_USES)}"
-        out.append(f"{kind} in Studio: understand → plan → write → review. {options}")
+        stages = (
+            "make → verify" if SHAPES[kind].pipeline == "direct"
+            else "understand → plan → write → review"
+        )
+        out.append(f"{kind} in Studio: {stages}. {options}")
     out.append("Brief (you said = the user's words; edited = the user typed it; guessed = yours):")
     shown = [
         _line("- goal:", brief.goal, "") if brief.goal else None,
@@ -247,7 +251,7 @@ def build_view(v: View) -> str:
     if ws.works:
         listed = []
         for number, each in enumerate(ws.works, start=1):
-            name = "deck" if each.spec.kind == "slides" else "report"
+            name = SHAPES[each.spec.kind].name
             saved = f"version {v.versions[each.key]}" if each.key in v.versions else "not saved yet"
             active = " (active)" if each.key == ws.active else ""
             listed.append(f'[{number}] {name} "{each.title or "untitled"}" {saved}{active}')
@@ -257,7 +261,7 @@ def build_view(v: View) -> str:
     numbering = Numbering(work.version_map if work else [], [i.ref for i in v.pool.items if i.ref])
     pointed = ""
     if work:
-        name = "deck" if work.spec.kind == "slides" else "report"
+        name = SHAPES[work.spec.kind].name
         spec = work.spec
         out.append(
             f'The active {name} "{work.title or "untitled"}": '
@@ -266,7 +270,7 @@ def build_view(v: View) -> str:
                 for part in (
                     _line("use", spec.use, "not set") if name == "deck" else "",
                     _line("length", spec.length),
-                    _line("output type", spec.output_type) if name == "report" else "",
+                    _line("output type", spec.output_type) if name != "deck" else "",
                 )
                 if part
             )

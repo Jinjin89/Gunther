@@ -29,7 +29,7 @@ from gunther.evidence import Evidence, key_result_lines
 from gunther.llm import ModelError, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.models import ArtifactConversation, ArtifactMessage, utc_now
-from gunther.output_types import OUTPUT_TYPES, output_type_for
+from gunther.output_types import OUTPUT_TYPES, SHAPES, output_type_for
 from gunther.outputs import BuiltOutput, Notes, OutputLimits, Planned, Pool, Spec
 from gunther.run_budget import BudgetedGateway, RunBudget
 from gunther.schemas import (
@@ -635,7 +635,7 @@ class ArtifactTurns:
             saved = record.model_copy(update={
                 "key": artifact.lineage_id, "version_id": artifact.id, "title": artifact.title,
             })
-            name = "deck" if kind == "slides" else "report"
+            name = SHAPES[kind].name
             selects = payload.rebuild is not None or workspace.active == work.key
             state = workspace.model_copy(deep=True)
             state.works = [saved if item.key == work.key else item for item in state.works]

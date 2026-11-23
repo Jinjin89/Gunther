@@ -39,8 +39,8 @@ InboxItemType = Literal["source", "quick_note"]
 InboxItemState = Literal["unfiled", "needs_review"]
 DeviceScope = Literal["api:access", "transcription:stream"]
 # The first three are what the old builder made (versions from before agents keep them);
-# new versions say "report" or "slides".
-ArtifactFormat = Literal["field_guide", "teaching_path", "decision_brief", "report", "slides"]
+# new versions use their shape ID.
+ArtifactFormat = Literal["field_guide", "teaching_path", "decision_brief"] | ShapeId
 ArtifactAudience = Literal["scientist", "student", "collaborator"]
 OutputKind = ShapeId
 # How a version came about; "legacy" is a version from before agents wrote them.

@@ -1,6 +1,7 @@
 """Factual checks for Studio drafts and saved output parts."""
 
 import logging
+import re
 
 from pydantic import BaseModel, Field
 
@@ -17,11 +18,12 @@ from gunther.checks import (
     verdict,
     verdicts_of,
 )
-from gunther.citations import leads_in
+from gunther.citations import collapse_citations, leads_in
 from gunther.claim_checks import check_claims, check_evidence_hash, checker_inventory
 from gunther.evidence import Evidence
 from gunther.llm import ModelError, ModelInfo
-from gunther.outputs import Issue, _marked, _plain, check_heading_refs, cited_sentences
+from gunther.output_shapes import SHAPES
+from gunther.outputs import Issue, _marked, _plain, cited_sentences
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,30 @@ def support_inventory(text: str, by_ref: dict[int, Evidence]) -> Verdicts:
             **{key: table[key] for key in ("tableRow", "tableHeader") if key in table},
         }))
     return verdicts_of(*items)
+
+
+def output_claim_inventory(
+    kind: str, unit: str, by_ref: dict[int, Evidence], prior: Verdicts | None = None, *,
+    rest: str | None = None, saved: bool = False, scientific: bool = False,
+) -> tuple[str, Verdicts]:
+    """Project a unit once, then check that projection against the ordinary evidence pool."""
+    shape = SHAPES[kind]
+    parts = shape.check_text(unit, refs=by_ref if saved else None, rest=rest)
+    if shape.pipeline == "direct":
+        parts = [collapse_citations(part) for part in parts]
+        spans = []
+        start = 0
+        # Each projected claim stays together, including its question and citations.
+        for part in parts:
+            spans.append((start, start + len(part)))
+            start += len(part) + 1
+        text = "\n".join(parts)
+        return text, checker_inventory(text, by_ref, spans=spans)
+    text = "\n".join(parts)
+    if scientific:
+        text = re.sub(r"(?m)^([ \t]*)\d+[.)]\s+", r"\1", text)
+    return text, checker_inventory(text, by_ref, prior)
+
 
 def check_part(
     checker: AskAgent, model: ModelInfo, question: str, text: str,
@@ -140,14 +166,15 @@ def _check_support(
 
 def check_saved_part(
     checker: AskAgent, model: ModelInfo, text: str, by_ref: dict[int, Evidence],
-    prior: Verdicts | None = None, *, limit: int,
+    prior: Verdicts | None = None, *, limit: int, kind: str = "report",
 ) -> Verdicts:
     """Check a saved section and resume the unresolved verdicts for the same text."""
     marked = _marked(text)
     body = marked.body
     previous = prior or {}
     stages = {k: row for k, row in previous.items() if row["stage"] == "finding"}
-    if prior is None or has_stage(previous, "audit", "legacy"):
+    prose = SHAPES[kind].pipeline == "planned"
+    if prose and (prior is None or has_stage(previous, "audit", "legacy")):
         audit = verdicts_of(audit_verdict(body, "unchecked"))
         if not complete(merge_verdicts(audit, previous)):
             found = checker.unsourced_claims(model, body)
@@ -155,13 +182,14 @@ def check_saved_part(
                 body, "unavailable" if found is None else "supported", found
             ))
         stages |= merge_verdicts(audit, previous)
-    if prior is None or has_stage(previous, "support", "audit", "legacy"):
+    if prose and (prior is None or has_stage(previous, "support", "audit", "legacy")):
         stages |= _check_support(
             checker, model, body, by_ref, previous, limit=limit, diagram=marked.layout == "diagram"
         )
+    projected, active = output_claim_inventory(kind, text, by_ref, previous, saved=True)
     stages |= verdicts_of(*(finding(Issue(
         claim, "unverified", "From the model's own knowledge; no source was found."
-    ).out()) for _, _, claim in leads_in(body, 40)))
+    ).out()) for _, _, claim in leads_in(body if prose else projected, 40)))
     checked = check_part(
         checker, model,
         (
@@ -172,8 +200,7 @@ def check_saved_part(
             if marked.layout == "diagram"
             else "Verify this output section"
         ),
-        check_heading_refs(body, body.split("\n"), by_ref),
-        by_ref, limit=limit, prior=previous,
+        projected, by_ref, limit=limit, prior=previous, inventory=active,
     )
     for row in checked.values():
         label = row.get("label", row["verdict"])

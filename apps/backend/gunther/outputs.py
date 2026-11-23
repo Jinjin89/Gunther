@@ -19,6 +19,7 @@ from gunther.citations import CITATION_GROUP, SENTENCE_END, UNSOURCED, renumber_
 from gunther.evidence import Evidence, Step, Tool, ToolFailure, key_result_block
 from gunther.llm import ModelGateway, ModelInfo
 from gunther.model_profiles import Effort
+from gunther.output_shapes import SHAPES, markdown_lines
 from gunther.output_types import OutputLength
 from gunther.schemas import ConversationCitationOut
 from gunther.skill_checks import (
@@ -182,8 +183,6 @@ class OutputLimits:
 #   heading of a slide is the first line under it, the Checker never sees it, and the hash of
 #   the section covers it. A slide without one (older decks) has no layout of its own.
 
-FENCE = re.compile(r"^\s*(```|~~~)")
-KINDS = ("report", "slides")
 ACCENTS = ("ink", "blue", "teal", "red", "amber", "violet")
 THEMES = ("classic", "briefing", "editorial", "keynote")
 # At the start of a slide, after any blank lines: its layout and keyed metadata.
@@ -223,55 +222,18 @@ def marker_attributes(attrs: str) -> dict[str, str]:
     return {match.group("key"): match.group("value") for match in MARK_ATTR.finditer(attrs)}
 
 
-def _lines(content: str, *, keepends: bool = False) -> list[tuple[str, bool]]:
-    """Each line of a document, and whether it is inside a code fence."""
-
-    fenced, out = False, []
-    lines = re.split(r"(?<=\n)|(?<=\r)(?!\n)", content)
-    for raw in lines:
-        line = raw if keepends else raw.rstrip("\r\n")
-        if FENCE.match(line):
-            out.append((line, True))
-            fenced = not fenced
-        else:
-            out.append((line, fenced))
-    return out
-
-
 def document_spans(content: str, kind: str) -> tuple[int, list[tuple[int, int]]]:
     """The preamble end and the exact ranges of trimmed parts in the saved document."""
-    parts = []
-    start = offset = 0
-    for line, fenced in _lines(content, keepends=True):
-        end = offset + len(line)
-        if not fenced and kind == "slides" and line.strip() == "---":
-            parts.append((start, offset))
-            start = end
-        elif not fenced and kind != "slides" and line.startswith("## "):
-            parts.append((start, offset))
-            start = offset
-        offset = end
-    parts.append((start, offset))
-    preamble = 0 if kind == "slides" else parts.pop(0)[1]
-    spans = []
-    for start, end in parts:
-        raw = content[start:end]
-        if raw.strip():
-            spans.append((end - len(raw.lstrip()), start + len(raw.rstrip())))
-    return preamble, spans
+    return SHAPES[kind].spans(content)
 
 
 def split_document(content: str, kind: str) -> tuple[str, list[str]]:
     """A document as its preamble and its sections, each trimmed with LF newlines."""
-    content = content.replace("\r\n", "\n").replace("\r", "\n")
-    preamble, spans = document_spans(content, kind)
-    return content[:preamble].strip(), [content[start:end] for start, end in spans]
+    return SHAPES[kind].split(content)
 
 
 def join_document(preamble: str, sections: Sequence[str], kind: str) -> str:
-    if kind == "slides":
-        return "\n\n---\n\n".join(sections)
-    return "\n\n".join([part for part in (preamble, *sections) if part])
+    return SHAPES[kind].join(preamble, sections)
 
 
 def section_hash(text: str) -> str:
@@ -280,7 +242,7 @@ def section_hash(text: str) -> str:
 
 
 def check_heading_refs(
-    body: str, lines: list[str], by_ref: Mapping[int, Evidence] | None = None
+    body: str, lines: list[str], by_ref: Mapping[int, object] | None = None
 ) -> str:
     """Check a heading's conclusion against the passages used by its section."""
     refs = "".join(
@@ -418,7 +380,7 @@ def heading_of(section: str) -> str:
 def title_of(content: str) -> str | None:
     """The first top-level heading, at most 160 characters."""
 
-    for line, fenced in _lines(content):
+    for line, fenced in markdown_lines(content):
         if not fenced and line.startswith("# "):
             return line[2:].strip()[:160] or None
     return None
@@ -477,7 +439,7 @@ class Pool:
 
 @dataclass(frozen=True)
 class Spec:
-    kind: str  # "report" | "slides"
+    kind: str  # the output shape
     audience: str
     output_type: str | None = None
     brief: str = ""

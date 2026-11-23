@@ -41,7 +41,14 @@ from gunther.checks import (
 )
 from gunther.citations import ANY_CITATION, sentence_spans
 from gunther.evidence import Evidence
-from gunther.output_types import DECK_USES, OUTPUT_TYPES, OutputLength, ShapeId, output_type_for
+from gunther.output_types import (
+    DECK_USES,
+    OUTPUT_TYPES,
+    SHAPES,
+    OutputLength,
+    ShapeId,
+    output_type_for,
+)
 from gunther.outputs import (
     Pool,
     Spec,
@@ -758,7 +765,7 @@ def ready(work: Work, brief: ConversationBrief) -> list[str]:
     outline = outline_state(work)
     if outline.state == "out_of_date":
         problems.append(f"The outline is out of date ({outline.why}).")
-    unit = "Slide" if work.spec.kind == "slides" else "Section"
+    unit = SHAPES[work.spec.kind].unit_label.capitalize()
     for part in status(work, brief):
         if part.state == "not_written":
             problems.append(f"{unit} {part.position} is not written yet.")
@@ -1145,10 +1152,10 @@ def _take_check(
 
 
 def _note_dropped(work: Work, step: str, position: int, dropped: Sequence[int]) -> None:
-    """Say on the work that a section cited numbers its version has no source for."""
+    """Record citations whose numbers have no source in the saved version."""
 
     if dropped:
-        unit = "Slide" if work.spec.kind == "slides" else "Section"
+        unit = SHAPES[work.spec.kind].unit_label.capitalize()
         numbers = ", ".join(f"[{number}]" for number in dict.fromkeys(dropped))
         work.skipped.append(
             {

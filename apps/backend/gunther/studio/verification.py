@@ -15,9 +15,10 @@ from gunther.citations import CITATION_GROUP, MARKDOWN_TABLE, check_citations, c
 from gunther.evidence import Evidence
 from gunther.llm import ModelError
 from gunther.llm import unfence as _unfence
-from gunther.output_checks import check_part
+from gunther.output_checks import check_part, output_claim_inventory
+from gunther.output_shapes import lend_refs
 from gunther.output_types import SHAPES
-from gunther.outputs import Draft, Events, Issue, Pool, _marked, check_heading_refs, split_document
+from gunther.outputs import Draft, Events, Issue, Pool, _marked, split_document
 from gunther.skill_checks import CHARTS
 from gunther.studio import design as D
 from gunther.studio import format as fmt
@@ -112,24 +113,6 @@ def _stating(issues, by_ref: dict[int, Evidence], most: int = 6) -> set[int]:
     return set(found[:most])
 
 
-def _lend_refs(line: str, rest: str, most: int = 6) -> str:
-    """The line with the citations other slides give for the same figures added (for checking
-    only). A line with no figure, or whose figures no other slide cites, is left as it is."""
-
-    plain = re.sub(r"\s*\[\d+\]", "", line)
-    wanted = fmt.numbers_in(plain)
-    if not wanted:
-        return line
-    lent: list[str] = []
-    for other in rest.split("\n"):
-        cited = re.findall(r"\[(\d+)\]", other)
-        if cited and wanted & fmt.numbers_in(re.sub(r"\s*\[\d+\]", "", other)):
-            lent += cited
-    own = re.findall(r"\[(\d+)\]", line)
-    extra = [n for n in dict.fromkeys(lent) if n not in own][:most]
-    return line.rstrip() + "".join(f" [{n}]" for n in extra) if extra else line
-
-
 class StudioVerification:
     # 5. Verifying -------------------------------------------------------------------------
 
@@ -145,7 +128,8 @@ class StudioVerification:
         """Warm with the first part, then check and repair the remaining parts in parallel."""
 
         label = "Checking every claim against its source"
-        unit = SHAPES[run.output_type.shape].unit_label
+        shape = SHAPES[run.output_type.shape]
+        unit = shape.unit_label
         units = unit if len(parts) == 1 else f"{unit}s"
         self._stage(emit, "verify", label, "running", f"{len(parts)} {units}")
         by_ref = pool.by_ref()
@@ -156,7 +140,9 @@ class StudioVerification:
             if run.spec.kind == "report":
                 text = fmt.cite_exhibit_rows(fmt.cite_captions(fmt.table_separators(text)))
             text, _ = check_citations(text, set(by_ref))
-            return Draft(text, self._claims(model, text, by_ref, rest, material=material))
+            return Draft(text, self._claims(
+                model, text, by_ref, rest, material=material, kind=shape.id,
+            ))
 
         def check_and_fix(text: str) -> Draft:
             draft = check(text)
@@ -168,9 +154,11 @@ class StudioVerification:
             )
             if not fixed:
                 return draft
-            if run.plan or run.spec.kind == "report":
+            if run.plan or run.spec.kind == "report" or shape.pipeline == "direct":
                 preamble, repaired = split_document(fixed[0], run.spec.kind)
                 if preamble or len(repaired) != 1 or not _keeps_heading(run, text, repaired):
+                    return draft
+                if shape.unit_problem and shape.unit_problem(repaired[0]):
                     return draft
             return check(fixed[0])
 
@@ -197,22 +185,6 @@ class StudioVerification:
         )
         return drafts
 
-    def _claim_text(self, text: str, rest: str = "") -> str:
-        marked = _marked(text)
-        body = marked.body
-        lines = body.split("\n")
-        if marked.layout == "title":
-            # The title slide's meta line (audience · date) states no claim.
-            content = [n for n, line in enumerate(lines) if line.strip()]
-            if len(content) >= 3:
-                lines[content[2]] = ""
-            lines = [_lend_refs(line, rest) for line in lines]
-        checked = check_heading_refs(body, lines)
-        if self.scientific_context:
-            # A numbered step's own number is not a claim to source.
-            checked = re.sub(r"(?m)^([ \t]*)\d+[.)]\s+", r"\1", checked)
-        return checked
-
     def _claims(
         self,
         model,
@@ -223,6 +195,7 @@ class StudioVerification:
         material: str | None = None,
         prior: Verdicts | None = None,
         inventory: Verdicts | None = None,
+        kind: str = "report",
     ) -> Verdicts:
         """One claim check per part. A title is checked against the passages its own slide or
         section cites (it states their conclusion). The title slide states the whole deck's
@@ -232,7 +205,10 @@ class StudioVerification:
         cited claim its passages do not state, and a specific fact (a number) with no source."""
 
         body = _marked(text).body
-        checked = self._claim_text(text, rest)
+        projected, active = output_claim_inventory(
+            kind, text, by_ref, prior, rest=rest, scientific=bool(self.scientific_context),
+        )
+        direct = SHAPES[kind].pipeline == "direct"
         checker = copy(self.ask)
         checker.gateway = _MaterialCheckerGateway(
             self,
@@ -246,8 +222,9 @@ class StudioVerification:
         checked = check_part(
             checker, model,
             STUDIO_CHECK + ("\n" + P.SCIENCE_TRUTH if self.scientific_context else ""),
-            checked,
-            by_ref, limit=self.limits.sentences, prior=prior or {}, inventory=inventory,
+            projected,
+            by_ref, limit=self.limits.sentences, prior=prior or {},
+            inventory=active if inventory is None else inventory,
         )
         for claim in checked.values():
             label = claim.get("label", claim["verdict"])
@@ -256,13 +233,14 @@ class StudioVerification:
             said = re.sub(r"!\[([^\]]*)\]\(gunther-asset:[^)]*\)", r"\1", plain)
             if label in {"not", "partly"}:
                 claim["issue"] = Issue(plain[:300], "unsupported", claim.get("reason") or "").out()
-            elif label == "unsourced" and re.search(r"\d", said):
+            elif label == "unsourced" and (direct or re.search(r"\d", said)):
                 issue = Issue(plain[:300], "unsourced", "A specific fact with no source.")
                 claim["issue"] = issue.out()
         # Syntax findings come from the current section independently of its model verdicts.
         held = {row["issue"]["claim"][:80] for row in checked.values() if "issue" in row}
         findings = []
-        for line in fmt.uncited_lines([ln for ln in body.split("\n") if not ln.startswith(":::")]):
+        lines = (projected if direct else body).split("\n")
+        for line in fmt.uncited_lines([ln for ln in lines if not ln.startswith(":::")]):
             plain = re.sub(r"\s*\[(?:\?|\d+)\]", "", line).strip()
             if plain[:80] not in held and not re.match(r"^(Source|Sources|来源)\s*[:：]", plain):
                 issue = Issue(plain[:300], "unsourced", "A number with no citation.")
@@ -409,7 +387,7 @@ class StudioVerification:
                 f"Part {number}:\n{draft.text}\n\nUnsupported in part {number}:\n"
                 + "\n".join(f'- "{i.claim}" ({i.note})' for i in flagged)
             )
-            lent = "\n".join(_lend_refs(line, rest) for line in draft.text.split("\n"))
+            lent = "\n".join(lend_refs(line, rest) for line in draft.text.split("\n"))
             refs |= {int(n) for n in re.findall(r"\[(\d+)\]", lent if rest else draft.text)}
             refs |= _stating(flagged, by_ref)
         passages = "\n\n".join(self._passage(by_ref[r], 3000) for r in sorted(refs) if r in by_ref)

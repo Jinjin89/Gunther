@@ -23,6 +23,7 @@ from gunther.llm import ModelInfo
 from gunther.model_profiles import Effort
 from gunther.models import ArtifactCheck
 from gunther.output_checks import check_saved_part
+from gunther.output_types import SHAPES, output_type_for
 from gunther.outputs import (
     OutputLimits,
     join_document,
@@ -296,6 +297,11 @@ class OutputCommands:
             output_library(session, workspace_id, base_id)
             parent = output_version(session, workspace_id, base_id, artifact_id, latest=True)
             self._require_agent_output(parent)
+            if SHAPES[parent.kind].pipeline == "direct":
+                item = output_type_for(parent.kind, parent.style)
+                problems = item.direct_problems(payload.content)
+                if problems:
+                    raise ValueError("\n".join(problems))
             records = latest_check_records(session, parent)
             hashes = dict.fromkeys(
                 section_hash(text) for text in split_document(payload.content, parent.kind)[1]
@@ -369,7 +375,9 @@ class OutputCommands:
                 digest = section_hash(text)
                 state = known.get(digest)
                 if state is None or not complete(state):
-                    state = check_saved_part(checker, model, text, by_ref, state, limit=limit)
+                    state = check_saved_part(
+                        checker, model, text, by_ref, state, limit=limit, kind=artifact_kind,
+                    )
                 checks.append({"hash": digest, "verdicts": state})
         with session_scope(self.sessions) as session:
             session.connection().exec_driver_sql("BEGIN IMMEDIATE")

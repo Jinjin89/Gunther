@@ -24,7 +24,7 @@ from gunther.llm import ModelError, ModelInfo
 from gunther.llm import unfence as _unfence
 from gunther.model_profiles import Effort
 from gunther.output_document import assemble_output
-from gunther.output_types import DECK_USES, output_type_for
+from gunther.output_types import DECK_USES, SHAPES, output_type_for
 from gunther.outputs import (
     BuiltOutput,
     Draft,
@@ -35,6 +35,7 @@ from gunther.outputs import (
     Pool,
     Spec,
     _marked,
+    heading_of,
     split_document,
 )
 from gunther.slide_render import digest
@@ -45,7 +46,7 @@ from gunther.studio import science as S
 from gunther.studio.drafting import StudioDrafting
 from gunther.studio.look import look, vision_model
 from gunther.studio.material import StudioMaterial, tokens
-from gunther.studio.requests import WORKERS
+from gunther.studio.requests import WORKERS, material_request
 from gunther.studio.stages import Checkpoint, checkpoint_stage, stage_event
 from gunther.studio.state import (
     DeckStory,
@@ -369,6 +370,78 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
                 state["memo"] = run.memo.model_dump()
         return run, material, state, saved
 
+    def _make_direct(
+        self, model, effort, run: Run, pool: Pool, material: str, emit: Events,
+        state: dict, saved: dict, checkpoint: Checkpoint | None, fallback_title: str,
+    ) -> tuple[BuiltOutput, int]:
+        spec, item = run.spec, run.output_type
+        shape = SHAPES[item.shape]
+        units = f"{shape.unit_label}s"
+        # Short and standard are smaller practice sets within the shape's hard limit.
+        divisor = {"short": 4, "standard": 2, "long": 1}[spec.length or "standard"]
+        target = max(1, item.part_limit // divisor)
+        header = shape.preamble(item.id)
+        task = P.DIRECT_WRITE.format(
+            output_type=item.label, brief=spec.brief or "(none)", audience=spec.audience,
+            length=f"Aim for {target} {units} if the brief gives no count. "
+            f"Use at most {item.part_limit} {units}.",
+            language=P.language_instruction(spec.language, run.model_language),
+            recipe=item.write, memo=self._memo_text(run.memo) if run.memo else "",
+            truth=P.TRUTH, header=f"Start with {header} on its own line." if header else "",
+        )
+        if run.plan:
+            task += "\nUse these approved headings in order:\n" + "\n".join(
+                f"- {part.heading}" for part in run.plan
+            )
+        system, prompt = material_request(material, task)
+
+        def problems(text: str) -> list[str]:
+            found = item.direct_problems(text)
+            if not _matches_plan(run, shape.split(text)[1]):
+                found.append("Keep the approved headings in order.")
+            return found
+
+        label = f"Writing {item.label.lower()}"
+        text = saved.get("direct_text")
+        if text is None:
+            self._stage(emit, "write", label, "running")
+            text = _unfence(self._text(model, system, prompt, effort, max_tokens=24_000))
+            self._stage(emit, "write", label, "done")
+        else:
+            self._stage(emit, "write", label, "done", "kept from before")
+        with checkpoint_stage(emit, state, checkpoint, "format") as publish:
+            label = f"Checking the {shape.name} format"
+            self._stage(publish, "format", label, "running")
+            found = problems(text)
+            if found:
+                repair = P.DIRECT_FIX.format(
+                    problems="\n".join(f"- {p}" for p in found), draft=text,
+                )
+                try:
+                    text = _unfence(self._text(
+                        model, system, f"{prompt}\n\n{repair}", effort, max_tokens=24_000,
+                    ))
+                except ModelError as error:
+                    self._stage(publish, "format", label, "failed", str(error))
+                    raise ModelError(f"{found[0]} Format repair failed: {error}") from error
+                found = problems(text)
+            if found:
+                self._stage(publish, "format", label, "failed", found[0])
+                raise ModelError("\n".join(found))
+            state["direct_text"] = text
+            self._stage(publish, "format", label, "done")
+
+        preamble, parts = shape.split(text)
+        with checkpoint_stage(emit, state, None, "verify") as publish:
+            drafts = self.verify(model, run, parts, pool, publish, material)
+        label = f"Assembling the {shape.name}"
+        self._stage(emit, "assemble", label, "running")
+        outline = list(run.plan) or [Planned(heading_of(draft.text)) for draft in drafts]
+        title = spec.title or (run.memo.title if run.memo else "") or fallback_title or item.label
+        built = assemble_output(spec, title, preamble, drafts, pool, outline, model, effort)
+        self._stage(emit, "assemble", label, "done", f"{len(drafts)} {units}")
+        return built, len(drafts)
+
     def make(
         self,
         model: ModelInfo,
@@ -399,6 +472,11 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
             model, effort, spec, pool, notes, emit, purpose=purpose, fixed_outline=fixed_outline,
             scope=scope, web=web, resume=resume, checkpoint=checkpoint,
         )
+        if SHAPES[spec.kind].pipeline == "direct":
+            built, count = self._make_direct(
+                model, effort, run, pool, material, emit, state, saved, checkpoint, fallback_title,
+            )
+            return self._finish_build(run, pool, built, count)
         plan = run.plan
         same_science = (
             saved.get("coverage_key") == state.get("coverage_key")
@@ -569,10 +647,13 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
                 _validate_count(run, run.story, count, "assembled report")
                 if count != len(outline):
                     raise ModelError("The assembled report does not match its outline.")
+        return self._finish_build(run, pool, built, len(drafts), looked, snapshot)
+
+    def _finish_build(self, run, pool, built, count, looked=None, snapshot=None) -> BuiltOutput:
         return replace(
             built,
-            approach=self._saved_approach(run, pool, len(drafts)) | {
-                "question": spec.brief,
+            approach=self._saved_approach(run, pool, count) | {
+                "question": run.spec.brief,
                 "ref_map": {str(ref): n for n, ref in enumerate(built.pool_refs, 1)},
             },
             skill={

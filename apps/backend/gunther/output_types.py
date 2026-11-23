@@ -3,26 +3,15 @@
 from dataclasses import dataclass
 from typing import Literal, get_args
 
+from gunther.output_shapes import SHAPES as SHAPES
+from gunther.output_shapes import ShapeId as ShapeId
+from gunther.output_shapes import ShapeSpec as ShapeSpec
 from gunther.studio import prompts
 
-ShapeId = Literal["report", "slides"]
 OutputOption = Literal["focus", "audience", "length", "language", "use"]
 OutputLength = Literal["short", "standard", "long"]
 DeckUse = Literal["talk", "read"]
 DECK_USES = get_args(DeckUse)
-
-
-@dataclass(frozen=True)
-class ShapeSpec:
-    id: ShapeId
-    unit_label: str
-    max_parts: int
-
-
-SHAPES = {
-    shape.id: shape
-    for shape in (ShapeSpec("report", "section", 8), ShapeSpec("slides", "slide", 14))
-}
 
 
 @dataclass(frozen=True)
@@ -42,6 +31,16 @@ class OutputType:
     @property
     def part_limit(self) -> int:
         return self.max_parts if self.max_parts is not None else SHAPES[self.shape].max_parts
+
+    def direct_problems(self, content: str) -> list[str]:
+        shape = SHAPES[self.shape]
+        _, parts = shape.split(content)
+        header = shape.preamble(self.id)
+        format_options = {"header": header} if header else {}
+        problems = list(shape.format_check(content, **format_options))
+        if error := self.part_limit_error(len(parts)):
+            problems.append(error)
+        return problems
 
     @property
     def legacy_styles(self) -> tuple[str, ...]:
@@ -91,6 +90,14 @@ OUTPUT_TYPES = {
             "Presentation",
             options=("focus", "audience", "length", "language", "use"),
         ),
+        OutputType(
+            "flashcards", "Flashcards", "cards", "Practice recalling one idea at a time.",
+            "Layers", write=prompts.FLASHCARDS_RECIPE,
+        ),
+        OutputType(
+            "quiz", "Quiz", "cards", "Test your understanding with explained choices.",
+            "ListChecks", write=prompts.QUIZ_RECIPE,
+        ),
     )
 }
 MAX_OUTPUT_PARTS = max(item.part_limit for item in OUTPUT_TYPES.values())
@@ -108,7 +115,9 @@ LEGACY_OUTPUT_STYLES = {
 def output_type_for(shape: str, style: str | None = None) -> OutputType:
     key = LEGACY_OUTPUT_STYLES.get(style or "", (style, None))[0]
     item = OUTPUT_TYPES.get(key or "")
-    return item if item is not None and item.shape == shape else OUTPUT_TYPES[shape]
+    if item is not None and item.shape == shape:
+        return item
+    return OUTPUT_TYPES[SHAPES[shape].default_type]
 
 
 def output_type_label(shape: ShapeId, style: str | None) -> str:

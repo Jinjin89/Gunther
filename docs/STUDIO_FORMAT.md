@@ -1,4 +1,4 @@
-# Studio format: how a new deck and a new report are written down
+# Studio formats
 
 Studio stores Markdown with a defined grammar for each layout. The backend writer,
 in-app renderer and exporters use that content for citations, checking and editing.
@@ -263,7 +263,25 @@ Report and Briefing doc headings state claims. Sub-headings use `###`. Source ci
 
 Each number identifies a passage from the evidence pool. Studio can use checked key results to locate those passages and frame the draft. The saved citation identifies the original source revision and block. [Build in Studio](OUTPUTS.md#build-in-studio)
 
-## 3. Exports (desktop)
+## 3. Cards (design v1)
+
+A card set begins with `<!-- cards: flashcards; design: v1 -->` or `<!-- cards: quiz; design: v1 -->`. Each card starts with a line beginning `## ` outside code fences. A set contains up to 40 cards. The shape's shared fixture covers split and join for cards, reports and slides. [Document sections fixture](../apps/desktop/src/outputs/fixtures/document-sections.json)
+
+```markdown
+<!-- cards: flashcards; design: v1 -->
+
+## What does factor T do in progenitors?
+It steers them toward the red-cell branch [1].
+
+## (quiz) Which branch grows when T is removed?
+- [ ] Red-cell
+- [x] White-cell
+Why: Removing T shifted cells toward the white-cell lineage [1].
+```
+
+A flashcard has a non-empty question and answer. A quiz heading starts with `(quiz)`. Its options use `- [ ]` and exactly one `- [x]`. After the options, `Why:` begins the explanation and cites its source. The Checker reads a flashcard's question and answer together. For a quiz, it reads the question, checked choice and explanation together. Supported claims from those checks can become key results. [Key results](LIBRARY.md#key-results)
+
+## 4. Exports (desktop)
 
 - **PPTX** uses editable text and tables, native charts for template slides, and speaker
   notes. A designed slide exports a picture of the visual layer with editable text boxes
@@ -272,7 +290,7 @@ Each number identifies a passage from the evidence pool. Studio can use checked 
   Citation marks are superscript numbers. [Report export](../apps/desktop/src/outputs/deck/exportDocx.ts)
 - **PDF** uses the print renderer. The same content can be copied or downloaded as Markdown.
 
-## 4. Gallery
+## 5. Gallery
 
 Developer render and export checks use the short, maximum, CJK and designed fixtures.
 The backend grammar tests share the deck inputs. [Fixtures](../apps/desktop/src/outputs/deck/fixtures/) · [Slide evals](../apps/backend/evals/slides/README.md)

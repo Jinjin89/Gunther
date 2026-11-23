@@ -39,7 +39,7 @@ from gunther.evidence import Evidence, Tool
 from gunther.llm import ModelInfo
 from gunther.model_profiles import Effort
 from gunther.output_document import assemble_output, project_outline
-from gunther.output_types import DECK_USES, output_type_for
+from gunther.output_types import DECK_USES, SHAPES, output_type_for
 from gunther.outputs import (
     ACCENTS,
     CITATION_GROUP,
@@ -159,11 +159,11 @@ class WorkSteps:
 
     @property
     def _kind(self) -> str:
-        return "deck" if self._deck else "report"
+        return SHAPES[self.work.spec.kind].name
 
     @property
     def _unit(self) -> str:
-        return "Slide" if self._deck else "Section"
+        return SHAPES[self.work.spec.kind].unit_label.capitalize()
 
     def _load(self) -> Spec:
         work = self.work
@@ -937,8 +937,9 @@ class WorkSteps:
         agents = self.agents
         final = agents.final_notes(spec, planned, drafts, self.pool)
         title = work.title or (work.outline[0].heading if work.outline else "")
-        preamble = ""
-        if not self._deck:
+        shape = SHAPES[spec.kind]
+        preamble = shape.preamble(output_type_for(spec.kind, spec.output_type).id)
+        if shape.pipeline == "planned" and not self._deck:
             goal = _line(self.brief.goal.text, 1000) if self.brief.goal else ""
             if len(goal) > 200:
                 goal = goal[:199].rstrip() + "…"

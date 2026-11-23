@@ -72,13 +72,13 @@ class StudioDrafting:
     def memo(self, model, effort, run: Run, material: str, emit: Events) -> Memo:
         self._stage(emit, "memo", "Finding what is worth saying", "running")
         spec = run.spec
-        what = "a slide deck" if spec.kind == "slides" else "a report"
+        shape = SHAPES[spec.kind]
         system = P.MEMO.format(
-            what=what,
+            what=shape.what,
             brief=spec.brief or "(none: choose the most valuable question the material answers)",
             audience=spec.audience,
             use_line=f"Use: {run.use}." if run.use else "",
-            kind="deck" if spec.kind == "slides" else "report",
+            kind=shape.name,
         )
         memo = self._json(model, Memo, *material_request(material, system), effort)
         self._stage(emit, "memo", "Finding what is worth saying", "done", memo.answer[:200])
@@ -387,7 +387,7 @@ class StudioDrafting:
         )
         errors: dict[int, str] = {}
         for _ in range(2):
-            found = fmt.check_deck(
+            found = SHAPES[run.spec.kind].format_check(
                 deck, read=read, notes_required=notes, scientific=bool(run.study)
             )
             if not found:
@@ -439,7 +439,7 @@ class StudioDrafting:
             deck = "\n\n---\n\n".join(slides)
             if not changed:
                 break
-        left = fmt.check_deck(
+        left = SHAPES[run.spec.kind].format_check(
             deck, read=read, notes_required=run.use == "talk", scientific=bool(run.study)
         )
         if not run.study and any("units long" in p for _, problems in left for p in problems):
@@ -453,7 +453,7 @@ class StudioDrafting:
 
     def _record_slide_format(self, run: Run, built: BuiltOutput) -> None:
         """Report the format of the deck being saved, after all repairs and fallbacks."""
-        remaining = fmt.check_deck(
+        remaining = SHAPES[run.spec.kind].format_check(
             built.content,
             read=run.use == "read",
             notes_required=run.use == "talk",
@@ -496,7 +496,7 @@ class StudioDrafting:
         if not _matches_plan(run, split_document(text, "report")[1]):
             raise ModelError("The written report did not follow the approved outline.")
         def format_problems(report: str) -> list[str]:
-            return fmt.check_report(
+            return SHAPES[spec.kind].format_check(
                 report, require_exhibits=output_type.require_exhibits,
                 summary_box=output_type.summary_box,
             )
