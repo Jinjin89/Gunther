@@ -1,0 +1,19 @@
+.gx-citation-preview {
+  position: fixed;
+  z-index: 190;
+  width: max-content;
+  max-width: min(310px, calc(100vw - 16px));
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--gx-line-2);
+  border-radius: var(--gx-radius-md);
+  background: var(--gx-surface);
+  color: var(--gx-ink);
+  box-shadow: var(--gx-shadow-md);
+  font: var(--gx-text-sm)/1.4 var(--gx-font-sans);
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+.gx-citation-preview small { color: var(--gx-muted); }
+.gx-citation-preview p { margin: 0; }

@@ -66,6 +66,7 @@ import type {
   WebSearchResult,
   KnowledgeTopic,
   LibraryContents,
+  LibraryOverview,
   ContentsMoveInput,
   ContentsOrderInput,
   TopicInput,
@@ -661,6 +662,10 @@ export const knowledgeApi = {
       body: JSON.stringify({ knowledgeBaseId }),
     }, expectedWorkspaceId),
   knowledgeBases: () => request<KnowledgeBaseMetadata[]>("/knowledge-bases"),
+  libraryOverview: (baseId: string, retry: boolean, signal?: AbortSignal) =>
+    request<LibraryOverview>(`${outputsPath(baseId)}/overview${retry ? "?retry=true" : ""}`, {
+      method: "POST", ...(signal ? { signal } : {}),
+    }),
   createKnowledgeBase: (payload: CreateKnowledgeBaseInput) =>
     request<KnowledgeBaseMetadata>("/knowledge-bases", {
       method: "POST",

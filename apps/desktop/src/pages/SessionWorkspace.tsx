@@ -44,7 +44,7 @@ import { InterruptedNote, isInterrupted } from "./interrupted";
 import { DictationStatus, MicGlyph } from "../components/Dictation";
 import { useDictatedField } from "../services/useDictatedField";
 import { withShortcut } from "../shortcuts/shortcuts";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
 import type { KnowledgeBase } from "../atlas";
 import { ServiceUnavailableError, knowledgeApi } from "../api";
 import { AnswerTrace } from "../developer/AnswerTrace";
@@ -60,7 +60,13 @@ import { BrandMark } from "../design/BrandMark";
 import { createPortal } from "react-dom";
 import { PopMenu } from "../contents/SectionMenu";
 import { EvidencePanel } from "../components/evidence/EvidencePanel";
+import { CitationDetails } from "../components/evidence/CitationButton";
+import { LibraryWelcome } from "./LibraryWelcome";
 import "../session.css";
+
+export interface LibraryChatActions {
+  ask: (text: string, submit: boolean) => void;
+}
 
 interface SessionWorkspaceProps {
   base: KnowledgeBase;
@@ -68,6 +74,7 @@ interface SessionWorkspaceProps {
   sourceScopeEmpty?: boolean;
   visible?: boolean;
   onFocusSources?: () => void;
+  chatActions?: Ref<LibraryChatActions>;
   onNotify: (message: string) => void;
   /** Open a source on its own page. */
   onOpenSource?: (sourceId: string) => void;
@@ -188,15 +195,6 @@ function SessionsSidebar({
   );
 }
 
-function WelcomePanel({ base, sourceCount }: { base: KnowledgeBase; sourceCount: number }) {
-  return <div className="chat-welcome">
-    <h1>{base.title}</h1>
-    <p>{base.question}</p>
-    {base.description && <p>{base.description}</p>}
-    <small>{sourceCount.toLocaleString()} {sourceCount === 1 ? "source" : "sources"}</small>
-  </div>;
-}
-
 /** Which model wrote an answer, at what effort, and anything it has to admit. */
 function AnswerModel({ context }: { context: ConversationContext }) {
   const byModel = context.responderMode !== "local";
@@ -226,7 +224,9 @@ export function ConversationMessage({ message, retryDisabled, onRetry, onEdit, o
       <div className="message-author">{isAssistant ? <span className="assistant-mark"><BrandMark size={14} /></span> : <span className="user-mark"><UserRound size={13} /></span>}<span>{isAssistant ? "Gunther" : "You"}</span><time>{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(message.createdAt))}</time></div>
       {isAssistant && <ResearchPlan context={message.context} />}
       {isAssistant && <AgentSteps steps={message.context.steps ?? []} />}
-      <div className="message-body">{isAssistant ? <AnswerBody content={message.content} numbers={citationNumbers(message.citations)} onCitation={(index) => { onSelect(); const citation = message.citations[index]; if (citation) onCite(citation, index); }} supportNotes={message.context.supportNotes} coverage={message.context.coverage} /> : <MessageContent content={message.content} />}</div>
+      <div className="message-body">{isAssistant ? <CitationDetails.Provider value={message.citations}>
+        <AnswerBody content={message.content} numbers={citationNumbers(message.citations)} onCitation={(index) => { onSelect(); const citation = message.citations[index]; if (citation) onCite(citation, index); }} supportNotes={message.context.supportNotes} coverage={message.context.coverage} />
+      </CitationDetails.Provider> : <MessageContent content={message.content} />}</div>
       {message.context.interrupted && <InterruptedNote message={message} disabled={retryDisabled} onRetry={onRetry} onEdit={onEdit} />}
       {isAssistant && message.context.modelError && <p className="message-model-error" role="note"><CircleAlert size={13} /><span>{message.context.modelError}{message.citations.length > 0 && " The quotes stand in for its answer."}</span></p>}
       {isAssistant && message.context.reasoning && <details className="message-thinking" onClick={(event) => event.stopPropagation()}><summary><ChevronRight size={12} />Thinking</summary><pre>{message.context.reasoning}</pre></details>}
@@ -355,7 +355,7 @@ const startupReads = Object.keys(readLabels) as StartupRead[];
 // The current session supplies the durable destination for a send.
 const sendReads = ["history", "models", "settings"] as const;
 
-export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = false, visible = true, onFocusSources, onNotify, onOpenSource }: SessionWorkspaceProps) {
+export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = false, visible = true, onFocusSources, chatActions, onNotify, onOpenSource }: SessionWorkspaceProps) {
   const [sessions, setSessions] = useState<KnowledgeSessionSummary[]>([]);
   const [archivedSessions, setArchivedSessions] = useState<KnowledgeSessionSummary[]>([]);
   const [showArchived, setShowArchived] = useState(false);
@@ -661,9 +661,10 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
     }
   };
 
+  const canAsk = ready && !activeSession?.archived && !sending && !sourceScopeEmpty;
   const send = async (again?: string, retry?: AskRetryOptions) => {
     const question = (again ?? draft).trim();
-    if (!question || !ready || !activeSession || activeSession.archived || sending || sourceScopeEmpty) return;
+    if (!question || !canAsk || !activeSession) return;
     const skillUsed = again === undefined ? skill : retry?.skill ?? null;
     const budgeted = skillUsed !== null && (askSkills.find((item) => item.command === skillUsed)?.budgets.length ?? 0) > 1;
     if (again === undefined) { setDraft(""); setSkill(null); setBudget("standard"); }
@@ -673,6 +674,17 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
     const options = retry ?? { style: readAnswerStyle(), ...(webSearch.enabled ? { web: true } : {}), ...(skillUsed ? { skill: skillUsed } : {}), ...(budgeted ? { budget } : {}) };
     await sendAnswer(session.id, { content: question, ...chosen, ...options, selectedSourceIds: sourceIds, focusChapterId: null });
   };
+
+  useImperativeHandle(chatActions, () => ({
+    ask(text, submit) {
+      if (submit && canAsk) {
+        void send(text);
+      } else {
+        setDraft(text);
+        window.requestAnimationFrame(() => scrollPane.current?.parentElement?.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus());
+      }
+    },
+  }));
 
   // Reading aloud goes on while its conversation is open, and stops when another one is.
   useEffect(() => { if (activeId) readAloud.focusSession(activeId); }, [activeId]);
@@ -822,7 +834,9 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
             </div>;
           })}
           {error && <div className="conversation-error" role="alert"><CircleAlert size={14} /><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError(null)}><X size={12} /></button></div>}
-          {online && !loading && activeSession?.messages.length === 0 ? <WelcomePanel base={base} sourceCount={base.sourceCount} /> : <h1 className="gx-sr-only">Ask {base.title}</h1>}
+          {online && !loading && !sending && currentChat?.messages.length === 0
+            ? <LibraryWelcome key={currentChat.id} base={base} visible={visible && !currentChat.archived} canAsk={canAsk} onAsk={(question) => void send(question)} />
+            : <h1 className="gx-sr-only">Ask {base.title}</h1>}
           {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} retryDisabled={!ready || sending || sourceScopeEmpty || Boolean(activeSession?.archived)} onRetry={() => void send(message.content, message.context.askFailure?.options)} onEdit={() => setDraft(message.content)} onCite={(citation, index) => setEvidence({ citation, index })} selected={selectedMessageId === message.id} saveAvailable={readReady("proposals")} promoting={answers.busyId === message.id} promoted={answers.isSaved(message.id)} branching={branchingMessageId === message.id} onSelect={() => setSelectedMessageId(message.id)} onCopy={() => void copyMessage(message)} onPromote={() => void answers.save(activeSession, message)} onRemove={() => void answers.remove(message)} onBranch={() => void branchFromMessage(message)} onTrace={traces.on ? () => setTrace({ sessionId: activeSession.id, messageId: message.id }) : undefined} />)}
           {sending && asking && <article className="conversation-message role-user"><div className="message-author"><span className="user-mark"><UserRound size={13} /></span><span>You</span></div><div className="message-body"><MessageContent content={asking} /></div></article>}
           {sending && (live ? <LiveAnswer state={live} /> : <div className="thinking-row"><span className="assistant-mark"><BrandMark size={14} busy /></span><span><i /><i /><i /></span><small>Working out what to look up…</small></div>)}

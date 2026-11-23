@@ -726,10 +726,9 @@ def test_scientific_eval_uses_completeness_not_business_conventions(tmp_path):
 
 def test_selected_revision_figures_quality_and_withheld_formulas_reach_evidence():
     from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session
 
     from gunther.artifact_workspace import evidence_from_citation
-    from gunther.database import Base
+    from gunther.database import Base, create_session_factory
     from gunther.evidence_reader import nearby_figures, passage_block
     from gunther.models import (
         Asset,
@@ -746,7 +745,8 @@ def test_selected_revision_figures_quality_and_withheld_formulas_reach_evidence(
 
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
-    with Session(engine) as session:
+    service = KnowledgeService(create_session_factory(engine))
+    with service.sessions() as session:
         for name in ("selected", "excluded"):
             source_id, revision = f"src_{name}", f"rev_{name}"
             session.add(
@@ -850,7 +850,6 @@ def test_selected_revision_figures_quality_and_withheld_formulas_reach_evidence(
             )
         session.flush()
         pool = Pool(50)
-        service = KnowledgeService.__new__(KnowledgeService)
         service._studio_reading(session, {"src_excluded": "rev_excluded"}, pool)
         assert figures_of(pool.items[0])[0]["assetId"] == "ast_excluded"
         # A new head is published after material preparation pins the previous revision.
@@ -877,14 +876,15 @@ def test_selected_revision_figures_quality_and_withheld_formulas_reach_evidence(
         assert nearby["assetId"] == "ast_selected" and nearby["revisionId"] == "rev_selected"
         foreign = citation.model_copy(update={"source_id": "src_excluded"})
         assert passage_block(session, foreign) is None and nearby_figures(session, foreign) == []
-        ask = service._ask_reader(session, False)(evidence)
+        session.commit()
+        ask = service._ask_reader(False)(evidence)
         assert {span["revisionId"] for span in ask.spans} == {"rev_selected"}
-        more = service._source_reader(session)(evidence)
+        more = service._source_reader()(evidence)
         assert more and more.payload[0].support_spans[0]["revisionId"] == "rev_selected"
         other_scope = {"src_excluded"}
         with pytest.raises(ToolFailure, match="outside the current source selection"):
-            service._source_reader(session, other_scope)(evidence)
-        pinned = service._source_reader(session, other_scope, pinned_keys={evidence.key})(evidence)
+            service._source_reader(other_scope)(evidence)
+        pinned = service._source_reader(other_scope, pinned_keys={evidence.key})(evidence)
         assert pinned and pinned.text == more.text
         figure = figures_of(evidence)[0]
         assert figure["assetId"] == "ast_selected" and figure["caption"] == "Panels A and B"

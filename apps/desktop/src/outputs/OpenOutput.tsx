@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { knowledgeApi } from "../api";
 import { EvidencePanel } from "../components/evidence/EvidencePanel";
+import { CitationDetails } from "../components/evidence/CitationButton";
 import { AnswerBody, citationNumbers, verificationNotice } from "../pages/AnswerBody";
 import { ArtifactMenu } from "./ArtifactMenu";
 import { ArtifactMessageList } from "./ArtifactMessages";
@@ -236,7 +237,7 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   useLayoutEffect(() => onWideReader(deck), [deck, onWideReader]);
   const allowPoint = changeable && latest && !editing;
 
-  return <article className="library-reading output-reader" aria-label="Open output">
+  return <CitationDetails.Provider value={artifact?.citations ?? []}><article className="library-reading output-reader" aria-label="Open output">
     <header className="library-reading-heading">
       <h1>{title}</h1>
       {artifact && <ArtifactMenu label="Output actions" items={[
@@ -310,5 +311,5 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
       <button type="submit" className="gx-btn gx-btn-primary gx-btn-sm" disabled={busy || !draft.trim()}>Refine</button>
     </form>}
     {evidence && <EvidencePanel {...evidence} onClose={() => setEvidence(null)} onOpenSource={onOpenSource} />}
-  </article>;
+  </article></CitationDetails.Provider>;
 }

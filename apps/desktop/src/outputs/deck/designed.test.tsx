@@ -1,6 +1,7 @@
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { CitationDetails } from "../../components/evidence/CitationButton";
 import { restoreUnchangedScenes, parseSlides, splitDesign, withDesignBlock, withoutSceneMarkers } from "../sections";
 import { SlideFace } from "../SlideFace";
 import { DeckSlide } from "./DeckSlide";
@@ -126,11 +127,27 @@ describe("a designed slide", () => {
     expect(root.querySelector("h2")?.textContent).toBe("Savings halve1,6");
     expect(root.querySelector("svg text")?.textContent).toBe("[2]");
     expect(marks[2]!.classList.contains("is-unverified")).toBe(true);
-    expect(root.querySelector<HTMLElement>('button[data-cite="5"]')?.title).toBe(SOURCES[5]);
-    act(() => { root.querySelector<HTMLElement>('button[data-cite="2"]')!.click(); });
+    expect(root.querySelector<HTMLElement>('button[aria-label="Inspect citation 6"]')?.title).toBe(SOURCES[5]);
+    act(() => { root.querySelector<HTMLElement>('button[aria-label="Inspect citation 3"]')!.click(); });
     expect(onCite).toHaveBeenCalledWith(2);
   });
 
+  it("previews a designed slide's citation outside the scaled slide", async () => {
+    const onCite = vi.fn();
+    const { container } = render(<CitationDetails.Provider value={[{
+      id: "source-1", sourceId: "report", sourceTitle: "Original report", assertionId: null,
+      quote: "Review took less time.", locator: "p. 3", status: "verified", confidence: 1,
+    }]}>
+      <DesignedSlide html={sanitizeDesign(html)} style="light" chart={null} numbers={NUMBERS} onCite={onCite} />
+    </CitationDetails.Provider>);
+    await flush();
+    const mark = shadow(container).querySelector<HTMLButtonElement>('button[aria-label="Inspect citation 1"]')!;
+    fireEvent.focus(mark);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Review took less time.");
+    fireEvent.click(mark);
+    expect(onCite).toHaveBeenCalledExactlyOnceWith(0);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
   it("draws plain marks, not buttons, where nothing opens (print)", async () => {
     const { container } = render(<DesignedSlide html={sanitizeDesign(html)} style="light" chart={null} numbers={NUMBERS} />);
     await flush();

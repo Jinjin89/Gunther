@@ -143,16 +143,12 @@
   box-shadow: var(--gx-shadow-md); color: var(--gx-ink); font-size: var(--gx-text-sm); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-.contents-panel-quiet { margin: 0; color: var(--gx-faint); font-size: var(--gx-text-sm); line-height: 1.5; }
-
 .contents-facts { margin: 18px 0 0; }
 .contents-facts > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; padding: 7px 0; border-top: 1px solid var(--gx-line); font-size: var(--gx-text-sm); line-height: 1.45; }
 .contents-facts > div:last-child { border-bottom: 1px solid var(--gx-line); }
 .contents-facts dt { color: var(--gx-faint); }
 .contents-facts dd { margin: 0; color: var(--gx-ink); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 
-.contents-summary p { margin: 0; color: var(--gx-ink-2); font-size: var(--gx-text-sm); line-height: 1.6; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 14; overflow: hidden; }
-.contents-summary small { display: block; margin-top: 8px; color: var(--gx-faint); font-size: var(--gx-text-xs); }
 
 /* Section suggestions */
 .contents-suggestions { margin: 8px 0 12px; padding: 14px 16px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-md); }
@@ -220,5 +216,4 @@
 .contents-add .contents-menu-list { top: auto; bottom: calc(100% + 4px); }
 .contents-note-edit { display: grid; grid-template-columns: 1fr auto; gap: 6px; padding: 6px 8px; }
 .contents-note-edit textarea { grid-column: 1 / -1; width: 100%; resize: vertical; }
-.contents-facts + h2 { margin-top: 20px; }
 @media (hover: none) { .contents-actions { opacity: 1; } }

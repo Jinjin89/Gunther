@@ -1,5 +1,5 @@
-import type { SourceDigest, SourceDigestState } from "@gunther/contracts";
-import { CircleAlert, LoaderCircle, RefreshCw, Sparkles } from "lucide-react";
+import type { DigestCitation, SourceDigest, SourceDigestState } from "@gunther/contracts";
+import { ArrowUp, CircleAlert, LoaderCircle, RefreshCw, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { knowledgeApi } from "../../api";
 
@@ -28,10 +28,14 @@ function engineLabel(digest: SourceDigest): string {
 }
 
 /**
- * A capture's summary, above the original. Each key point can open the
- * passages it came from, so it can be checked before it is trusted.
+ * A capture's summary. Each key point can open the passages it came from.
  */
-export function DigestCard({ sourceId, onWritten }: { sourceId: string; onWritten?: () => void }) {
+export function DigestCard({ sourceId, onWritten, onCite, onAsk }: {
+  sourceId: string;
+  onWritten?: () => void;
+  onCite?: (citation: DigestCitation, revisionId: string) => void;
+  onAsk?: (question: string, submit: boolean) => void;
+}) {
   const [status, setStatus] = useState<SourceDigestState | null>(null);
   const [asking, setAsking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -96,7 +100,7 @@ export function DigestCard({ sourceId, onWritten }: { sourceId: string; onWritte
   if (!status || (status.state === "off" && status.offReason !== "no_key")) return null;
   if (status.state === "off") {
     return <section className="gx-digest is-empty" aria-label="Summary">
-      <p className="gx-digest-waiting"><Sparkles size={14} />Summaries need an API key. Add one in Settings, under Services.</p>
+      <p className="gx-digest-waiting"><Sparkles size={14} />Summaries need an API key. Add one in Settings → Models.</p>
     </section>;
   }
   const digest = status.digest;
@@ -126,7 +130,7 @@ export function DigestCard({ sourceId, onWritten }: { sourceId: string; onWritte
         ? <span className="gx-digest-status"><LoaderCircle className="spin" size={12} />Writing again…</span>
         : <button type="button" className="gx-icon-button" disabled={asking} onClick={() => void writeAgain()} title={status.stale ? "The source changed. Write the summary again" : "Write the summary again"} aria-label="Write the summary again"><RefreshCw size={13} /></button>}
     </header>
-    <p className="gx-digest-overview">{digest.overview}</p>
+    {digest.overview && <p className="gx-digest-overview">{digest.overview}</p>}
     {digest.keyPoints.length > 0 && <>
       <h3>{text.points}</h3>
       <ul className="gx-digest-points">
@@ -135,7 +139,10 @@ export function DigestCard({ sourceId, onWritten }: { sourceId: string; onWritte
           const expanded = open === id;
           return <li key={id}>
             <span>{point.text}</span>
-            {point.citations.length > 0 && <button
+            {onCite ? point.citations.map((citation) => <button key={citation.blockId} type="button"
+              className="gx-digest-cite" aria-label={`Inspect citation ${citation.number}`} data-opens-evidence
+              onClick={() => onCite(citation, digest.revisionId)}>{citation.number}</button>)
+              : point.citations.length > 0 && <button
               type="button"
               className={`gx-digest-cite ${expanded ? "is-open" : ""}`}
               aria-expanded={expanded}
@@ -157,12 +164,24 @@ export function DigestCard({ sourceId, onWritten }: { sourceId: string; onWritte
     </>}
     {digest.openQuestions.length > 0 && <>
       <h3>Open questions</h3>
-      <ul className="gx-digest-list">{digest.openQuestions.map((item) => <li key={item}>{item}</li>)}</ul>
+      <ul className="gx-digest-list">{digest.openQuestions.map((item) => <li key={item}>
+        {onAsk ? <DigestQuestion text={item} onAsk={onAsk} /> : item}
+      </li>)}</ul>
     </>}
-    {digest.terms.length > 0 && <p className="gx-digest-terms">{digest.terms.map((term) => <span key={term}>{term}</span>)}</p>}
+    {digest.terms.length > 0 && (onAsk ? <>
+      <h3>Terms</h3>
+      <ul className="gx-digest-list">{digest.terms.map((term) => <li key={term}><DigestQuestion text={term} onAsk={onAsk} /></li>)}</ul>
+    </> : <p className="gx-digest-terms">{digest.terms.map((term) => <span key={term}>{term}</span>)}</p>)}
     <footer className="gx-digest-foot">
-      {engineLabel(digest)} from the saved original{status.stale ? " · the source has changed since" : ""}. The original below is the evidence.
+      {engineLabel(digest)} from the saved original{status.stale ? " · the source has changed since" : ""}. Use the original to verify the summary.
     </footer>
     {(error ?? status.error) && <p className="gx-digest-error" role="alert">{error ?? `Writing it again failed: ${status.error}`}</p>}
   </section>;
+}
+
+function DigestQuestion({ text, onAsk }: { text: string; onAsk: (question: string, submit: boolean) => void }) {
+  return <span className="gx-digest-question">
+    <button type="button" className="gx-link" onClick={() => onAsk(text, false)}>{text}</button>
+    <button type="button" className="gx-icon-button" aria-label={`Send ${text} to Chat`} onClick={() => onAsk(text, true)}><ArrowUp size={13} /></button>
+  </span>;
 }

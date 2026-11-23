@@ -1,6 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { CitationDetails } from "../components/evidence/CitationButton";
 import { AgentSteps, AnswerBody, citationNumbers, withCitationLinks, withoutMarks } from "./AnswerBody";
 
 describe("AnswerBody", () => {
@@ -16,6 +17,34 @@ describe("AnswerBody", () => {
     expect(screen.getAllByRole("listitem")).toHaveLength(2);
     await userEvent.click(screen.getByRole("button", { name: "Inspect citation 1" }));
     expect(onCitation).toHaveBeenCalledOnce();
+  });
+
+  it("previews a clipped citation on hover or focus and opens the evidence on activation", async () => {
+    const user = userEvent.setup();
+    const onCitation = vi.fn();
+    const quote = "Rain continued through the afternoon. ".repeat(12);
+    render(<CitationDetails.Provider value={[{
+      id: "citation", sourceId: "notes", sourceTitle: "Field notes", assertionId: null,
+      quote, locator: "Page 4", status: "verified", confidence: 1,
+    }]}>
+      <AnswerBody content="The rain continued [1]." numbers={[1]} onCitation={onCitation} />
+    </CitationDetails.Provider>);
+    const button = screen.getByRole("button", { name: "Inspect citation 1" });
+    await user.hover(button);
+    const tip = within(screen.getByRole("tooltip"));
+    expect(tip.getByText("Field notes")).toBeVisible();
+    expect(tip.getByText("Page 4")).toBeVisible();
+    expect(tip.getByText(/…$/)).toHaveTextContent(quote.slice(0, 240).trimEnd());
+    await user.unhover(button);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    await user.tab();
+    expect(button).toHaveFocus();
+    expect(screen.getByRole("tooltip")).toBeVisible();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    await user.click(button);
+    expect(onCitation).toHaveBeenCalledExactlyOnceWith(0);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
   it("numbers sources in list order and marks claims no source backs", async () => {

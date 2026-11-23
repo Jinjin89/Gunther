@@ -78,7 +78,14 @@ def test_trace_text_is_clipped_and_nothing_is_kept_without_a_trace() -> None:
 def test_recent_log_lines_and_background_jobs_are_shown(tmp_path: Path) -> None:
     fake = FakeProvider("unused")
     with app_for(tmp_path, fake) as client:
-        ready_session(client)
+        session_id = ready_session(client)
+        base_id = client.get(
+            f"/api/sessions/{session_id}", headers=SIDECAR,
+        ).raise_for_status().json()["knowledgeBaseId"]
+        overview = client.post(
+            f"/api/knowledge-bases/{base_id}/overview", headers=SIDECAR,
+        ).raise_for_status().json()
+        assert overview["state"] == "writing"
         logging.getLogger("gunther.agent").info("The planning step failed: example")
         logging.getLogger("gunther.processing").warning("Knowledge job failed (RuntimeError)")
         everything = client.get("/api/developer/logs", headers=SIDECAR).json()["lines"]
@@ -90,7 +97,12 @@ def test_recent_log_lines_and_background_jobs_are_shown(tmp_path: Path) -> None:
     assert "The planning step failed: example" in messages
     assert [line["message"] for line in warnings][0] == "Knowledge job failed (RuntimeError)"
     assert all(line["level"] in ("warning", "error") for line in warnings)
-    assert jobs and jobs[0]["sourceTitle"] == "Markers"
-    assert jobs[0]["state"] in ("queued", "completed")
+    source_job = next(job for job in jobs if job["sourceId"])
+    assert source_job["sourceTitle"] == "Markers"
+    assert source_job["state"] in ("queued", "completed")
+    assert source_job["knowledgeBaseId"] is None and source_job["knowledgeBaseTitle"] is None
+    [library_job] = [job for job in jobs if job["kind"] == "library_overview"]
+    assert library_job["sourceId"] is None and library_job["sourceTitle"] is None
+    assert (library_job["knowledgeBaseId"], library_job["knowledgeBaseTitle"]) == (base_id, "Cells")
     assert phone.status_code in (401, 403)
     json.dumps(jobs)

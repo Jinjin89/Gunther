@@ -54,6 +54,7 @@ describe("DigestCard", () => {
     expect(screen.getByRole("heading", { name: "Action items" })).toBeVisible();
     expect(screen.getByText("Dana orders reagents by Friday")).toBeVisible();
     expect(screen.getByText(/Written by DeepSeek deepseek-v4-flash/)).toBeVisible();
+    expect(screen.getByText(/Use the original to verify the summary\./)).toBeVisible();
     expect(screen.queryByText("We will rerun it with fresh controls.")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Show the passage this comes from/ }));
@@ -91,10 +92,10 @@ describe("DigestCard", () => {
     expect(off.container).toBeEmptyDOMElement();
   });
 
-  it("says a key is needed rather than showing a lesser summary", async () => {
+  it("points to Settings → Models when an API key is needed", async () => {
     vi.mocked(knowledgeApi.sourceDigest).mockResolvedValue({ ...ready, state: "off", offReason: "no_key", method: null, digest: null });
     render(<DigestCard sourceId="src_1" />);
-    expect(await screen.findByText(/Summaries need an API key/)).toBeVisible();
+    expect(await screen.findByText("Summaries need an API key. Add one in Settings → Models.")).toBeVisible();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 

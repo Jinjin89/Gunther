@@ -345,6 +345,13 @@ export interface SourceDigestState {
   digest: SourceDigest | null;
 }
 
+export interface LibraryOverview {
+  state: "empty" | "writing" | "ready" | "needs_model" | "failed";
+  summary: string;
+  suggestedQuestions: string[];
+  error: string | null;
+}
+
 export const inboxItemTypes = ["source", "quick_note"] as const;
 export type InboxItemType = typeof inboxItemTypes[number];
 export const inboxItemStates = ["unfiled", "needs_review"] as const;
@@ -726,8 +733,10 @@ export interface BackgroundJob {
   state: "queued" | "running" | "completed" | "failed" | "cancelled" | string;
   attempts: number;
   error: string | null;
-  sourceId: string;
+  sourceId: string | null;
   sourceTitle: string | null;
+  knowledgeBaseId?: string | null;
+  knowledgeBaseTitle?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1859,7 +1868,7 @@ export interface TranscribeAgainStatus {
 }
 
 /** What Gunther is working on in the background (`GET /activity`), shown in the top bar. */
-export type ActivityKind = "transcribe" | "output" | "answer";
+export type ActivityKind = "transcribe" | "output" | "answer" | "overview";
 export type ActivityState = "waiting" | "running" | "done" | "failed";
 
 /** The page an activity row opens. */

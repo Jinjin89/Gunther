@@ -3,6 +3,7 @@ import { BookOpen, ChevronRight, CircleAlert, ClipboardCheck, Globe2, Library, L
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { sourceAssetUrl } from "../api";
+import { CitationButton } from "../components/evidence/CitationButton";
 import type { LiveStep } from "./liveAnswer";
 import { BrandMark } from "../design/BrandMark";
 import type { LiveAnswerState } from "./liveAnswer";
@@ -68,9 +69,11 @@ export function verificationNotice(coverage: OutputSection["coverage"]): string 
 
 /** An answer, as Markdown, with its [n] citations as buttons that open the evidence. */
 export function AnswerBody({ content, numbers, onCitation, supportNotes, coverage }: { content: string; numbers: number[]; onCitation?: ((index: number) => void) | undefined; supportNotes?: string[] | undefined; coverage?: ConversationContext["coverage"] }) {
-  const citation = (number: string, className?: string, title?: string) => {
+  const citation = (number: string, className?: string, note?: string) => {
     const label = `[${number}]`;
-    return <sup key={number}>{onCitation ? <button type="button" className={className} title={title} onClick={(event) => { event.stopPropagation(); onCitation(numbers.indexOf(Number(number))); }} aria-label={`Inspect citation ${number}`}>{label}</button> : <span className={className} title={title}>{label}</span>}</sup>;
+    return <sup key={number}>{onCitation
+      ? <CitationButton number={number} index={numbers.indexOf(Number(number))} className={className} note={note} onCite={onCitation}>{label}</CitationButton>
+      : <span className={className} title={note}>{label}</span>}</sup>;
   };
   const components: Components = {
     a({ href, children }) {

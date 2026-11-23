@@ -3,19 +3,16 @@ import { useSlide } from "../slides/Rich";
 import { scan } from "./parseDeck";
 import { numberPieces, tokens, type Token } from "./inlineTokens";
 import { sourceAssetUrl } from "../../api";
+import { CitationButton } from "../../components/evidence/CitationButton";
 
 function Cite({ token, collapse }: { token: Extract<Token, { t: "cite" }>; collapse: boolean }) {
   const { numbers, onCite } = useSlide();
   if (token.unverified) return <sup className="dk-cite is-unverified" title="From the model's own knowledge; no source was found for it">?</sup>;
-  if (collapse && token.n.length >= 3) {
-    const more = token.n.slice(2);
-    return <sup className="dk-cite">{token.n.slice(0, 2).map((n, at) => <Fragment key={at}>{at > 0 && ","}{onCite
-      ? <button type="button" onClick={(event) => { event.stopPropagation(); onCite(numbers.indexOf(n)); }} aria-label={`Inspect citation ${n}`}>{n}</button>
-      : <span>{n}</span>}</Fragment>)}<span title={`Also ${more.join(", ")}`}> +{more.length}</span></sup>;
-  }
-  return <sup className="dk-cite">{token.n.map((n, at) => <Fragment key={at}>{at > 0 && ","}{onCite
-    ? <button type="button" onClick={(event) => { event.stopPropagation(); onCite(numbers.indexOf(n)); }} aria-label={`Inspect citation ${n}`}>{n}</button>
-    : <span>{n}</span>}</Fragment>)}</sup>;
+  const more = collapse ? token.n.slice(2) : [];
+  const shown = more.length ? token.n.slice(0, 2) : token.n;
+  return <sup className="dk-cite">{shown.map((n, at) => <Fragment key={at}>{at > 0 && ","}{onCite
+    ? <CitationButton number={n} index={numbers.indexOf(n)} onCite={onCite}>{n}</CitationButton>
+    : <span>{n}</span>}</Fragment>)}{more.length > 0 && <span title={`Also ${more.join(", ")}`}> +{more.length}</span>}</sup>;
 }
 
 /** Inline Markdown as React: **bold**, *italic*, `code`, and citation marks as small superscripts that open their evidence (as AnswerBody's do). */

@@ -6,7 +6,13 @@ import { logsFolder, showLogsFolder } from "../log";
 import { useTraces } from "./useTraces";
 
 const time = (value: string) => new Date(value).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
-const JOB_KINDS: Record<string, string> = { parse_asset: "Reading", embed: "Search by meaning", summarize: "Paper details", digest: "Summary" };
+const JOB_KINDS: Record<string, string> = {
+  parse_asset: "Reading",
+  embed: "Search by meaning",
+  summarize: "Paper details",
+  digest: "Summary",
+  library_overview: "Library overview",
+};
 type Level = "info" | "warning" | "error";
 
 /** Settings → Developer: keep how answers are made, and read the backend's recent lines and jobs. */
@@ -73,10 +79,14 @@ export function DeveloperSettings({ onNotify }: { onNotify: (message: string) =>
     </section>
 
     <section>
-      <div className="setting-heading"><Activity size={16} /><span><strong>Background jobs</strong><small>Reading, search by meaning and summaries for each source, newest first.</small></span></div>
+      <div className="setting-heading"><Activity size={16} /><span><strong>Background jobs</strong><small>Source and library jobs, newest first.</small></span></div>
       {jobs && jobs.length === 0 && <div className="setting-row"><span><small>None yet.</small></span></div>}
       {jobs && jobs.length > 0 && <ol className="developer-jobs">{jobs.map((job) => <li key={job.id}>
-        <span><strong>{JOB_KINDS[job.kind] ?? job.kind}</strong><small>{job.sourceTitle ?? job.sourceId}</small>{job.error && <p>{job.error}</p>}</span>
+        <span>
+          <strong>{JOB_KINDS[job.kind] ?? job.kind}</strong>
+          <small>{job.sourceTitle ?? job.knowledgeBaseTitle ?? job.sourceId ?? job.knowledgeBaseId}</small>
+          {job.error && <p>{job.error}</p>}
+        </span>
         <span className={`developer-job-state is-${job.state}`}>{job.state}{job.attempts > 1 ? ` · ${job.attempts} tries` : ""}</span>
         <time>{time(job.updatedAt)}</time>
       </li>)}</ol>}

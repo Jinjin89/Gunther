@@ -807,5 +807,8 @@ input.gx-item-title.is-editable::placeholder { color: var(--gx-ghost); }
 .gx-digest-quote cite { display: block; margin-top: 3px; font-style: normal; font-size: calc(11.5px * var(--gx-fs, 1)); color: var(--gx-muted); }
 .gx-digest-terms { margin: 2px 0 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .gx-digest-terms span { padding: 1px 8px; border: 1px solid var(--gx-line-2); border-radius: 999px; font-size: calc(12px * var(--gx-fs, 1)); color: var(--gx-muted); }
+.gx-digest-question { display: inline-flex; align-items: center; gap: 4px; }
+.gx-digest-question .gx-link { text-align: start; }
+.gx-digest-question .gx-icon-button { width: 24px; height: 24px; }
 .gx-digest-foot { margin-top: 2px; font-size: calc(11.5px * var(--gx-fs, 1)); color: var(--gx-faint); }
 .gx-digest-error { margin: 0; font-size: calc(12.5px * var(--gx-fs, 1)); color: var(--gx-danger, #b42318); }

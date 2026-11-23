@@ -514,15 +514,7 @@ class AskTurns:
                 )
             if payload.title is not None:
                 knowledge_session.title = payload.title.strip()
-            if "focus_chapter_id" in payload.model_fields_set:
-                knowledge_session.focus_chapter_id = payload.focus_chapter_id
-            if payload.selected_source_ids is not None:
-                knowledge_session.selected_source_ids_json = json.dumps(payload.selected_source_ids)
-                self._validate_source_scope(
-                    session,
-                    knowledge_session.knowledge_base_id,
-                    payload.selected_source_ids,
-                )
+            self._apply_session_scope(session, knowledge_session, payload)
             if payload.pinned is not None:
                 knowledge_session.pinned = payload.pinned
             if payload.archived is not None:
@@ -530,6 +522,35 @@ class AskTurns:
             knowledge_session.updated_at = utc_now()
             session.flush()
             return self._session_summary(knowledge_session)
+
+    def _apply_session_scope(
+        self,
+        session: Session,
+        knowledge_session: KnowledgeSession,
+        payload: CreateSessionMessageInput | UpdateKnowledgeSessionInput,
+    ) -> None:
+        if payload.selected_source_ids is not None:
+            self._validate_source_scope(
+                session, knowledge_session.knowledge_base_id, payload.selected_source_ids,
+            )
+            knowledge_session.selected_source_ids_json = json.dumps(payload.selected_source_ids)
+        if "focus_chapter_id" in payload.model_fields_set:
+            knowledge_session.focus_chapter_id = payload.focus_chapter_id
+
+    def _turn_session(
+        self, session: Session, session_id: str,
+    ) -> tuple[KnowledgeSession, KnowledgeBaseRecord | None]:
+        knowledge_session = session.scalar(
+            self._session_query().where(KnowledgeSession.id == session_id)
+        )
+        if knowledge_session is None:
+            raise LookupError(f"Session {session_id} was not found")
+        library = session.get(KnowledgeBaseRecord, knowledge_session.knowledge_base_id)
+        if library is not None and library.trashed_at is not None:
+            raise LookupError(f"Session {session_id} was not found")
+        if knowledge_session.archived:
+            raise ValueError("Restore the archived session before adding another message")
+        return knowledge_session, library
 
     def _answer(
         self,
@@ -610,28 +631,10 @@ class AskTurns:
             if skill is None:
                 raise ValueError(f"Unknown skill: /{payload.skill.strip().lstrip('/')}")
         self._catch_up_brief(session_id)
-        with session_scope(self.sessions) as session:
-            knowledge_session = session.scalar(
-                self._session_query().where(KnowledgeSession.id == session_id)
-            )
-            library = (
-                session.get(KnowledgeBaseRecord, knowledge_session.knowledge_base_id)
-                if knowledge_session
-                else None
-            )
-            if knowledge_session is None or (library and library.trashed_at is not None):
-                raise LookupError(f"Session {session_id} was not found")
-            if knowledge_session.archived:
-                raise ValueError("Restore the archived session before adding another message")
-            if payload.selected_source_ids is not None:
-                knowledge_session.selected_source_ids_json = json.dumps(payload.selected_source_ids)
-                self._validate_source_scope(
-                    session,
-                    knowledge_session.knowledge_base_id,
-                    payload.selected_source_ids,
-                )
-            if "focus_chapter_id" in payload.model_fields_set:
-                knowledge_session.focus_chapter_id = payload.focus_chapter_id
+        # Prepare the evidence and flush the scope only as this transaction closes.
+        with session_scope(self.sessions) as session, session.no_autoflush:
+            knowledge_session, library = self._turn_session(session, session_id)
+            self._apply_session_scope(session, knowledge_session, payload)
 
             selected_source_ids = json.loads(knowledge_session.selected_source_ids_json or "[]")
             if knowledge_session.knowledge_base_id == HOME_SCOPE:
@@ -706,7 +709,7 @@ class AskTurns:
             offered = []
             notes = []
             if scoped_source_ids:
-                offered.append(self._library_tool(session, scope, about))
+                offered.append(self._library_tool(scope, about))
             else:
                 notes.append("there is no library to search here")
             if web_tool:
@@ -716,7 +719,7 @@ class AskTurns:
             toolbox = Toolbox(
                 tuple(offered),
                 tuple(notes),
-                reader=self._ask_reader(session, web_tool is not None, scope),
+                reader=self._ask_reader(web_tool is not None, scope),
             )
             history = conversation_history(knowledge_session.messages)
             stored = briefs.load(knowledge_session.brief_json)
@@ -730,67 +733,71 @@ class AskTurns:
                 for item in everything
                 if item.kind != "library" or item.payload[0].source_id in in_scope
             ]
-            # Settings → Developer: keep how this answer is made, step by step.
-            kept = trace.Trace() if self.tracing else None
-            with usage.job("ask", ref=session_id), trace.tracing(kept):
-                response = self._answer(
-                    question,
-                    history,
-                    toolbox,
-                    payload.model,
-                    payload.effort,
-                    events,
-                    pool,
-                    payload.style,
-                    max((item.ref or 0 for item in everything), default=0),
-                    brief=briefs.render(stored.brief, stored.edited),
-                    skill=skill,
-                    budget=payload.budget,
-                    stopping=stopping,
-                )
-            citations = [
-                item.payload[0].model_copy(update={"ref": item.ref}) for item in response.evidence
-            ]
-            context = ConversationContextOut(
-                sources_considered=len(scoped_sources),
-                assertions_considered=len(available_assertions),
-                verified_assertions=sum(item.status == "verified" for item in available_assertions),
-                retrieval_mode="selected" if selected_source_ids else "all",
-                responder_mode="model",
-                model=response.model_ref,
-                model_label=response.model_label,
-                effort=response.effort,
-                effort_label=response.effort_label,
-                notes=list(response.notes),
-                reasoning=(response.reasoning or "")[:MAX_KEPT_REASONING] or None,
-                style=payload.style if payload.style in STYLES else DEFAULT_STYLE,
-                steps=[step.out() for step in response.steps],
-                web_searched=any(step.tool == "search_web" for step in response.steps),
-                checked=response.checked,
-                support_notes=list(response.support_notes),
-                coverage=response.coverage,
-                budget_usage=response.budget_usage,
-                work=_work_out(response.work, response.evidence),
-                skill=(
-                    {
-                        "name": response.skill.name,
-                        "version": response.skill.version,
-                        "title": response.skill.title,
-                        "auto": False,
-                    }
-                    if response.skill
-                    else None
-                ),
-                research=response.research,
+
+        # Settings → Developer: keep how this answer is made, step by step.
+        kept = trace.Trace() if self.tracing else None
+        with usage.job("ask", ref=session_id), trace.tracing(kept):
+            response = self._answer(
+                question,
+                history,
+                toolbox,
+                payload.model,
+                payload.effort,
+                events,
+                pool,
+                payload.style,
+                max((item.ref or 0 for item in everything), default=0),
+                brief=briefs.render(stored.brief, stored.edited),
+                skill=skill,
+                budget=payload.budget,
+                stopping=stopping,
             )
-            if events:
-                events({"type": "saving"})  # a reader who left by now gets nothing saved
+        citations = [
+            item.payload[0].model_copy(update={"ref": item.ref}) for item in response.evidence
+        ]
+        context = ConversationContextOut(
+            sources_considered=len(scoped_sources),
+            assertions_considered=len(available_assertions),
+            verified_assertions=sum(item.status == "verified" for item in available_assertions),
+            retrieval_mode="selected" if selected_source_ids else "all",
+            responder_mode="model",
+            model=response.model_ref,
+            model_label=response.model_label,
+            effort=response.effort,
+            effort_label=response.effort_label,
+            notes=list(response.notes),
+            reasoning=(response.reasoning or "")[:MAX_KEPT_REASONING] or None,
+            style=payload.style if payload.style in STYLES else DEFAULT_STYLE,
+            steps=[step.out() for step in response.steps],
+            web_searched=any(step.tool == "search_web" for step in response.steps),
+            checked=response.checked,
+            support_notes=list(response.support_notes),
+            coverage=response.coverage,
+            budget_usage=response.budget_usage,
+            work=_work_out(response.work, response.evidence),
+            skill=(
+                {
+                    "name": response.skill.name,
+                    "version": response.skill.version,
+                    "title": response.skill.title,
+                    "auto": False,
+                }
+                if response.skill
+                else None
+            ),
+            research=response.research,
+        )
+        if events:
+            events({"type": "saving"})  # a reader who left by now gets nothing saved
+
+        with session_scope(self.sessions) as session:
+            knowledge_session, _ = self._turn_session(session, session_id)
             now = utc_now()
             user_message = SessionMessage(
                 id=_id("msg"),
                 session_id=knowledge_session.id,
                 role="user",
-                content=payload.content.strip(),
+                content=question,
                 created_at=now,
             )
             assistant_message = SessionMessage(
@@ -806,7 +813,7 @@ class AskTurns:
             )
             knowledge_session.messages.extend([user_message, assistant_message])
             if knowledge_session.title == "New session":
-                title = re.sub(r"\s+", " ", payload.content.strip())
+                title = re.sub(r"\s+", " ", question)
                 knowledge_session.title = title[:62] + ("…" if len(title) > 62 else "")
             knowledge_session.summary = re.sub(r"\s+", " ", response.content)[:220]
             knowledge_session.updated_at = now

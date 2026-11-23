@@ -1,16 +1,25 @@
-import type { ContentsSource, SourceDigestState } from "@gunther/contracts";
+import type { ContentsSource, ConversationCitation, DigestCitation } from "@gunther/contracts";
 import { ArrowUpRight } from "lucide-react";
-import { useEffect, useState } from "react";
-import { knowledgeApi } from "../api";
+import { useState } from "react";
+import { EvidencePanel } from "../components/evidence/EvidencePanel";
+import { DigestCard } from "../items/views/DigestCard";
 import { PaperCard } from "../items/views/PaperCard";
 import { kindIcon } from "./ContentsRow";
 import { addedOn, fileDetail, recordingLength } from "./contentsTree";
 
-const message = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
-
-export function SourceSummary({ source, onOpen }: { source: ContentsSource; onOpen: () => void }) {
+export function SourceSummary({ source, onOpen, onAsk }: {
+  source: ContentsSource;
+  onOpen: () => void;
+  onAsk: (question: string, submit: boolean) => void;
+}) {
   const Icon = kindIcon[source.kind];
   const file = fileDetail(source);
+  const [evidence, setEvidence] = useState<(ConversationCitation & { ref: number }) | null>(null);
+  const cite = (citation: DigestCitation, revisionId: string) => setEvidence({
+    id: `${revisionId}:${citation.blockId}`, sourceId: source.id, sourceTitle: source.title,
+    assertionId: null, quote: citation.quote, locator: citation.locator, status: "provisional",
+    confidence: 0, sourceRevisionId: revisionId, blockId: citation.blockId, ref: citation.number,
+  });
   return <article className="library-reading" aria-label="Source summary">
     <header className="library-reading-heading">
       <span className={`gx-kind-icon kind-${source.kind}`}><Icon size={16} /></span>
@@ -26,39 +35,9 @@ export function SourceSummary({ source, onOpen }: { source: ContentsSource; onOp
       {source.host && <div><dt>Site</dt><dd>{source.host}</dd></div>}
       <div><dt>Status</dt><dd>{source.processing === "reading" ? "Being read…" : source.processing === "failed" ? "Couldn’t be read" : "Ready"}</dd></div>
     </dl>
-    <h2>Summary</h2>
-    <Overview key={source.id} id={source.id} />
-    {source.kind === "paper" && <PaperCard sourceId={source.id} revisionId={null} />}
+    <DigestCard sourceId={source.id} onCite={cite} onAsk={onAsk} />
+    {(source.kind === "paper" || source.mediaType === "application/pdf") && <PaperCard sourceId={source.id} revisionId={null} />}
+    {evidence && <EvidencePanel citation={evidence} index={evidence.ref - 1}
+      onClose={() => setEvidence(null)} onOpenSource={onOpen} />}
   </article>;
-}
-
-/** The source's written summary, or plainly why there is none (no model, still reading, failed). */
-function Overview({ id }: { id: string }) {
-  const [state, setState] = useState<SourceDigestState | null>(null);
-  const [failed, setFailed] = useState("");
-  const [asking, setAsking] = useState(false);
-  useEffect(() => {
-    let active = true;
-    void knowledgeApi.sourceDigest(id).then((next) => { if (active) setState(next); }).catch((reason) => { if (active) setFailed(message(reason, "The summary could not be loaded.")); });
-    return () => { active = false; };
-  }, [id]);
-  const write = async () => {
-    setAsking(true); setFailed("");
-    try { setState(await knowledgeApi.writeSourceDigest(id)); } catch (reason) { setFailed(message(reason, "The summary could not be started.")); } finally { setAsking(false); }
-  };
-  if (failed) return <p className="contents-panel-quiet" role="alert">{failed}</p>;
-  if (!state) return <p className="contents-panel-quiet">Loading…</p>;
-  if (state.digest && state.digest.overview) {
-    return <div className="contents-summary">
-      <p>{state.digest.overview}</p>
-      <small>{state.digest.engine ? `Written by ${state.digest.engine}` : "Written by a model"}{state.stale ? " · the source changed since" : ""}</small>
-    </div>;
-  }
-  if (state.state === "reading") return <p className="contents-panel-quiet">Gunther is still reading this source.</p>;
-  if (state.state === "writing") return <p className="contents-panel-quiet">The summary is being written…</p>;
-  if (state.state === "off") return <p className="contents-panel-quiet">{state.offReason === "no_key" ? "Summaries need a model. Add a key in Settings → Models." : "Summaries are turned off in Settings."}</p>;
-  return <div className="contents-panel-quiet">
-    <p>{state.state === "failed" ? `The summary could not be written${state.error ? `: ${state.error}` : "."}` : "No summary yet."}</p>
-    <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={asking} onClick={() => void write()}>{state.state === "failed" ? "Try again" : "Write a summary"}</button>
-  </div>;
 }

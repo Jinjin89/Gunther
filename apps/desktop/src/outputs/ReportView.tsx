@@ -6,6 +6,7 @@ import { AnswerBody, citationNumbers, verificationNotice } from "../pages/Answer
 import { splitDocument, withoutTitle } from "./sections";
 import { isReportV2 } from "./deck/detect";
 import { ReportV2Section } from "./deck/ReportV2";
+import { CitationDetails } from "../components/evidence/CitationButton";
 
 const VERDICT: Record<OutputIssue["verdict"], string> = {
   unsupported: "Its sources don’t state this",
@@ -92,7 +93,7 @@ export function ReportView({ artifact, onCite, onAsk, goTo, changed }: {
   }
   const v2 = isReportV2(artifact.content);
   const brief = withoutTitle(parts.preamble).replace(/^\s*<!--\s*report:\s*v2\s*-->\s*/, "");
-  return <div ref={body} className="outputs-body">
+  return <CitationDetails.Provider value={artifact.citations}><div ref={body} className="outputs-body">
     {brief && <div className="outputs-brief"><AnswerBody content={brief} numbers={[]} /></div>}
     {parts.sections.length === 0 && <section className="outputs-section"><AnswerBody content={withoutTitle(artifact.content)} numbers={numbers} onCitation={cite} /></section>}
     {parts.sections.map((text, index) => <section key={index} className={`outputs-section${changed?.includes(index) ? " is-changed" : ""}`} data-section={index}>
@@ -112,5 +113,5 @@ export function ReportView({ artifact, onCite, onAsk, goTo, changed }: {
       </button>,
       document.body,
     )}
-  </div>;
+  </div></CitationDetails.Provider>;
 }

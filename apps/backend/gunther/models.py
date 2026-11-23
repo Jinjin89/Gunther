@@ -105,6 +105,22 @@ class KnowledgeBaseRecord(Base):
     trash_batch_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
 
 
+class LibraryOverview(Base):
+    """The most recent Analysis result for a library's live sources."""
+
+    __tablename__ = "library_overviews"
+
+    knowledge_base_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"), primary_key=True
+    )
+    summary: Mapped[str] = mapped_column(Text, default="")
+    suggested_questions_json: Mapped[str] = mapped_column(Text, default="[]")
+    source_fingerprint: Mapped[str] = mapped_column(String(64))
+    method: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
 class Asset(Base):
     """An immutable original file stored by content hash on the local device."""
 
@@ -442,8 +458,15 @@ class BlockEmbedding(Base):
 
 class ProcessingJob(Base):
     __tablename__ = "processing_jobs"
+    __table_args__ = (CheckConstraint("(source_id IS NULL) != (knowledge_base_id IS NULL)"),)
+
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    source_id: Mapped[str] = mapped_column(ForeignKey("sources.id", ondelete="CASCADE"), index=True)
+    source_id: Mapped[str | None] = mapped_column(
+        ForeignKey("sources.id", ondelete="CASCADE"), index=True
+    )
+    knowledge_base_id: Mapped[str | None] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"), index=True
+    )
     kind: Mapped[str] = mapped_column(String(32))
     dedupe_key: Mapped[str] = mapped_column(String(240), unique=True)
     revision_id: Mapped[str | None] = mapped_column(

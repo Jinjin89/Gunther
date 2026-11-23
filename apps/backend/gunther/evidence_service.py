@@ -245,133 +245,140 @@ class EvidenceService:
             }
         return _LibraryScope(source_ids, assertions, block_scope, topic_evidence)
 
-    def _library_tool(self, session: Session, scope: _LibraryScope, about: str) -> Tool:
+    def _library_tool(self, scope: _LibraryScope, about: str) -> Tool:
         """Searching the library as a tool. Whoever uses it numbers what it finds."""
 
         def search_library(query: str) -> list[Evidence]:
             """The library's passages and claims for one search, numbered by the agent."""
 
-            found: list[Evidence] = []
-            ranked_assertions = self._rank_assertions(scope.assertions, query)
-            citations: list[ConversationCitationOut] = []
-            for assertion in ranked_assertions:
-                evidence = next(
-                    (
-                        item
-                        for item in assertion.evidence_links
-                        if item.fragment.source_id == assertion.source_id
-                        and (
-                            scope.block_scope is None
-                            or (assertion.source_id, item.fragment.content) in scope.topic_evidence
-                        )
-                    ),
-                    None,
-                )
-                if evidence is None:
-                    continue
-                if scope.block_scope is not None:
-                    evidence_block = scope.topic_evidence[
-                        (assertion.source_id, evidence.fragment.content)
-                    ]
-                else:
-                    evidence_block = session.scalar(
-                        select(ContentBlock)
-                        .join(
-                            SourceIndexHead, SourceIndexHead.revision_id == ContentBlock.revision_id
-                        )
-                        .where(
-                            SourceIndexHead.source_id == assertion.source.id,
-                            ContentBlock.content == evidence.fragment.content,
-                        )
-                        .limit(1)
+            with self.sessions() as session:
+                found: list[Evidence] = []
+                ranked_assertions = self._rank_assertions(scope.assertions, query)
+                citations: list[ConversationCitationOut] = []
+                for assertion in ranked_assertions:
+                    evidence = next(
+                        (
+                            item
+                            for item in assertion.evidence_links
+                            if item.fragment.source_id == assertion.source_id
+                            and (
+                                scope.block_scope is None
+                                or (assertion.source_id, item.fragment.content)
+                                in scope.topic_evidence
+                            )
+                        ),
+                        None,
                     )
-                citation = ConversationCitationOut(
-                    id=_id("cit"),
-                    source_id=assertion.source.id,
-                    source_title=assertion.source.title,
-                    assertion_id=assertion.id,
-                    quote=evidence.fragment.content,
-                    locator=evidence.fragment.locator,
-                    status=assertion.status,
-                    confidence=assertion.confidence,
-                    source_revision_id=evidence_block.revision_id if evidence_block else None,
-                    block_id=evidence_block.id if evidence_block else None,
-                    anchor=json.loads(evidence_block.anchor_json) if evidence_block else {},
-                )
-                citations.append(citation)
-
-            # Original passages participate even when an extracted claim matched.
-            # Competing evidence must not disappear behind an assertion-only fallback.
-            seen_quotes = {(c.source_id, c.quote) for c in citations}
-            for hit in self.index.retrieve(
-                session,
-                scope.source_ids,
-                query,
-                block_ids=scope.block_scope,
-            ):
-                if (hit.source.id, hit.block.content) in seen_quotes:
-                    continue
-                seen_quotes.add((hit.source.id, hit.block.content))
-                citations.append(
-                    ConversationCitationOut(
+                    if evidence is None:
+                        continue
+                    if scope.block_scope is not None:
+                        evidence_block = scope.topic_evidence[
+                            (assertion.source_id, evidence.fragment.content)
+                        ]
+                    else:
+                        evidence_block = session.scalar(
+                            select(ContentBlock)
+                            .join(
+                                SourceIndexHead,
+                                SourceIndexHead.revision_id == ContentBlock.revision_id,
+                            )
+                            .where(
+                                SourceIndexHead.source_id == assertion.source.id,
+                                ContentBlock.content == evidence.fragment.content,
+                            )
+                            .limit(1)
+                        )
+                    citation = ConversationCitationOut(
                         id=_id("cit"),
-                        source_id=hit.source.id,
-                        source_title=hit.source.title,
-                        quote=hit.block.content,
-                        locator=hit.block.locator,
-                        status="provisional",
-                        confidence=0.0,
-                        source_revision_id=hit.block.revision_id,
-                        block_id=hit.block.id,
-                        anchor=json.loads(hit.block.anchor_json),
+                        source_id=assertion.source.id,
+                        source_title=assertion.source.title,
+                        assertion_id=assertion.id,
+                        quote=evidence.fragment.content,
+                        locator=evidence.fragment.locator,
+                        status=assertion.status,
+                        confidence=assertion.confidence,
+                        source_revision_id=evidence_block.revision_id if evidence_block else None,
+                        block_id=evidence_block.id if evidence_block else None,
+                        anchor=json.loads(evidence_block.anchor_json) if evidence_block else {},
                     )
-                )
+                    citations.append(citation)
 
-            # In a large library a broad question needs the papers, not only the few
-            # passages that match best: add the abstracts of the closest papers.
-            if scope.block_scope is None and len(scope.source_ids) >= PAPER_OVERVIEW_MIN_SOURCES:
-                for paper, block in self.index.nearest_papers(
+                # Original passages participate even when an extracted claim matched.
+                # Competing evidence must not disappear behind an assertion-only fallback.
+                seen_quotes = {(c.source_id, c.quote) for c in citations}
+                for hit in self.index.retrieve(
                     session,
                     scope.source_ids,
                     query,
-                    limit=PAPER_OVERVIEWS,
-                    exclude={c.source_id for c in citations},
+                    block_ids=scope.block_scope,
                 ):
-                    source = session.get(Source, paper.source_id)
+                    if (hit.source.id, hit.block.content) in seen_quotes:
+                        continue
+                    seen_quotes.add((hit.source.id, hit.block.content))
                     citations.append(
                         ConversationCitationOut(
                             id=_id("cit"),
-                            source_id=source.id,
-                            source_title=source.title,
-                            quote=paper.abstract[:900],
-                            locator="Abstract",
+                            source_id=hit.source.id,
+                            source_title=hit.source.title,
+                            quote=hit.block.content,
+                            locator=hit.block.locator,
                             status="provisional",
                             confidence=0.0,
-                            source_revision_id=paper.revision_id,
-                            block_id=block.id if block else None,
-                            anchor=json.loads(block.anchor_json) if block else {},
+                            source_revision_id=hit.block.revision_id,
+                            block_id=hit.block.id,
+                            anchor=json.loads(hit.block.anchor_json),
                         )
                     )
 
-            for citation in citations:
-                paper = session.get(SourcePaper, citation.source_id)
-                if paper and (paper.doi or paper.arxiv_id):
-                    citation.work_identifier = (
-                        f"doi:{paper.doi.casefold()}" if paper.doi else f"arxiv:{paper.arxiv_id}"
+                # In a large library a broad question needs the papers, not only the few
+                # passages that match best: add the abstracts of the closest papers.
+                if (
+                    scope.block_scope is None
+                    and len(scope.source_ids) >= PAPER_OVERVIEW_MIN_SOURCES
+                ):
+                    for paper, block in self.index.nearest_papers(
+                        session,
+                        scope.source_ids,
+                        query,
+                        limit=PAPER_OVERVIEWS,
+                        exclude={c.source_id for c in citations},
+                    ):
+                        source = session.get(Source, paper.source_id)
+                        citations.append(
+                            ConversationCitationOut(
+                                id=_id("cit"),
+                                source_id=source.id,
+                                source_title=source.title,
+                                quote=paper.abstract[:900],
+                                locator="Abstract",
+                                status="provisional",
+                                confidence=0.0,
+                                source_revision_id=paper.revision_id,
+                                block_id=block.id if block else None,
+                                anchor=json.loads(block.anchor_json) if block else {},
+                            )
+                        )
+
+                for citation in citations:
+                    paper = session.get(SourcePaper, citation.source_id)
+                    if paper and (paper.doi or paper.arxiv_id):
+                        citation.work_identifier = (
+                            f"doi:{paper.doi.casefold()}"
+                            if paper.doi else f"arxiv:{paper.arxiv_id}"
+                        )
+                    citation.figures = nearby_figures(session, citation)
+                    found.append(
+                        Evidence(
+                            kind="library",
+                            title=citation.source_title,
+                            text=citation.quote,
+                            locator=citation.locator,
+                            status=citation.status,
+                            confidence=citation.confidence,
+                            payload=(citation, None),
+                        )
                     )
-                citation.figures = nearby_figures(session, citation)
-                found.append(
-                    Evidence(
-                        kind="library",
-                        title=citation.source_title,
-                        text=citation.quote,
-                        locator=citation.locator,
-                        status=citation.status,
-                        confidence=citation.confidence,
-                        payload=(citation, None),
-                    )
-                )
-            return found
+                return found
 
         return Tool(
             "search_library",
@@ -384,7 +391,7 @@ class EvidenceService:
     def _output_search_tool(
         self, session: Session, source_ids: list[str], about: str
     ) -> Tool:
-        tool = self._library_tool(session, self._library_scope(session, source_ids), about)
+        tool = self._library_tool(self._library_scope(session, source_ids), about)
 
         def search(query: str) -> list[Evidence]:
             found = []
@@ -401,7 +408,7 @@ class EvidenceService:
         return replace(tool, run=search)
 
     def _ask_reader(
-        self, session: Session, web_on: bool, scope: _LibraryScope | None = None,
+        self, web_on: bool, scope: _LibraryScope | None = None,
     ) -> Callable[[Evidence], str | ReadResult]:
         """Reading more of a source in Ask's pool (read_source): the section around a library
         passage, or the whole web page. Only a source already in the pool is read, and a web
@@ -410,11 +417,12 @@ class EvidenceService:
 
         def read(item: Evidence) -> str | ReadResult:
             if item.kind == "library":
-                _, snapshot = read_passage(
-                    session, item, window="section",
-                    source_ids=scope.source_ids if scope else None,
-                    block_ids=scope.block_scope if scope else None,
-                )
+                with self.sessions() as session:
+                    _, snapshot = read_passage(
+                        session, item, window="section",
+                        source_ids=scope.source_ids if scope else None,
+                        block_ids=scope.block_scope if scope else None,
+                    )
                 return snapshot
             if item.kind == "web" and item.url:
                 if not web_on:
@@ -435,15 +443,16 @@ class EvidenceService:
         return read
 
     def _source_reader(
-        self, session: Session, source_ids: Collection[str] | None = None, *,
+        self, source_ids: Collection[str] | None = None, *,
         pinned_keys: Collection[tuple[str, str, str]] = (),
     ) -> Callable[[Evidence], Evidence | None]:
         """Offer the neighboring blocks as a new Artifacts passage."""
 
         def read(item: Evidence) -> Evidence | None:
-            citation, snapshot = read_passage(
-                session, item, window="adjacent", source_ids=source_ids, pinned_keys=pinned_keys,
-            )
+            with self.sessions() as session:
+                citation, snapshot = read_passage(
+                    session, item, window="adjacent", source_ids=source_ids, pinned_keys=pinned_keys
+                )
             text = snapshot.text
             if text.strip() == citation.quote.strip():
                 return None

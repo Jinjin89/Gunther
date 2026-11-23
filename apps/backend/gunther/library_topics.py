@@ -22,14 +22,16 @@ from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from gunther import usage, vector_index
 from gunther.content import search_tokens
+from gunther.database import session_scope
 from gunther.llm import AnalysisNeedsModel, ModelError, ModelGateway, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.models import (
     ContentBlock,
+    KnowledgeBaseRecord,
     KnowledgeBaseSource,
     Source,
     SourcePaper,
@@ -39,7 +41,7 @@ from gunther.models import (
     utc_now,
 )
 from gunther.papers import title_key
-from gunther.topics import subtree_ids, topic_source_ids
+from gunther.topics import topic_source_ids
 
 MIN_PAPERS = 6
 MAX_SUGGESTIONS = 15
@@ -321,63 +323,74 @@ def topic_papers(session: Session, base_id: str, topic_id: str) -> list[Paper]:
     return papers
 
 
+def _overview_topic(session: Session, base_id: str, topic_id: str) -> TopicNode:
+    library = session.get(KnowledgeBaseRecord, base_id)
+    if library is None or library.trashed_at is not None:
+        raise LookupError("Knowledge base was not found")
+    topic = session.get(TopicNode, topic_id)
+    if topic is None or topic.knowledge_base_id != base_id:
+        raise LookupError("Topic was not found in this knowledge base")
+    return topic
+
+
 def write_overview(
-    session: Session, base_id: str, topic_id: str,
+    sessions: sessionmaker[Session], base_id: str, topic_id: str,
     writer: ModelTopicWriter | None, model: str | None,
 ) -> TopicSynthesis:
-    topic = session.get(TopicNode, topic_id)
-    subtree_ids(session, base_id, topic_id)  # raises LookupError outside this library
-    papers = topic_papers(session, base_id, topic_id)
-    if not papers:
-        raise ValueError("File papers under this topic before writing its overview")
-    if writer is None:
-        raise AnalysisNeedsModel()
-    read = [paper for paper in papers if paper.abstract.strip()]
-    if not read:
-        raise ValueError("File papers with abstracts before writing this overview")
-    if len(read) > MAX_WRITER_PAPERS:
-        vectors = (
-            vector_index.paper_vectors(
-                session, model=model, source_ids=[paper.source_id for paper in read]
+    with sessions() as session:
+        topic = _overview_topic(session, base_id, topic_id)
+        title, description = topic.title, topic.description
+        papers = topic_papers(session, base_id, topic_id)
+        if not papers:
+            raise ValueError("File papers under this topic before writing its overview")
+        if writer is None:
+            raise AnalysisNeedsModel()
+        read = [paper for paper in papers if paper.abstract.strip()]
+        if not read:
+            raise ValueError("File papers with abstracts before writing this overview")
+        if len(read) > MAX_WRITER_PAPERS:
+            vectors = (
+                vector_index.paper_vectors(
+                    session, model=model, source_ids=[paper.source_id for paper in read]
+                )
+                if model
+                else {}
             )
-            if model
-            else {}
-        )
-        if vectors:
-            import numpy
+            if vectors:
+                import numpy
 
-            known = [paper for paper in read if paper.source_id in vectors]
-            matrix = _normalized(numpy.stack([vectors[p.source_id] for p in known]))
-            centre = matrix.mean(axis=0)
-            central = numpy.argsort(-(matrix @ centre))[:MAX_WRITER_PAPERS]
-            read = sorted((known[i] for i in central), key=lambda p: (p.year or 9999, p.title))
-        else:
-            read = read[-MAX_WRITER_PAPERS:]
+                known = [paper for paper in read if paper.source_id in vectors]
+                matrix = _normalized(numpy.stack([vectors[p.source_id] for p in known]))
+                centre = matrix.mean(axis=0)
+                central = numpy.argsort(-(matrix @ centre))[:MAX_WRITER_PAPERS]
+                read = sorted((known[i] for i in central), key=lambda p: (p.year or 9999, p.title))
+            else:
+                read = read[-MAX_WRITER_PAPERS:]
 
-    citations = []
-    for number, paper in enumerate(read, start=1):
-        block = (
-            session.get(ContentBlock, paper.abstract_block_ids[0])
-            if paper.abstract_block_ids
-            else None
-        )
-        source = session.get(Source, paper.source_id)
-        citations.append({
-            "number": number,
-            "sourceId": paper.source_id,
-            "sourceTitle": source.title if source else paper.title,
-            "blockId": block.id if block else None,
-            "revisionId": paper.revision_id,
-            "quote": paper.abstract[:1500],
-        })
+        citations = []
+        for number, paper in enumerate(read, start=1):
+            block = (
+                session.get(ContentBlock, paper.abstract_block_ids[0])
+                if paper.abstract_block_ids
+                else None
+            )
+            source = session.get(Source, paper.source_id)
+            citations.append({
+                "number": number,
+                "sourceId": paper.source_id,
+                "sourceTitle": source.title if source else paper.title,
+                "blockId": block.id if block else None,
+                "revisionId": paper.revision_id,
+                "quote": paper.abstract[:1500],
+            })
 
     years = [paper.year for paper in papers if paper.year]
     span = f", {min(years)}–{max(years)}" if years and min(years) != max(years) else (
         f", {years[0]}" if years else ""
     )
-    lines = [f"# {topic.title}", ""]
-    if topic.description.strip():
-        lines += [topic.description.strip(), ""]
+    lines = [f"# {title}", ""]
+    if description.strip():
+        lines += [description.strip(), ""]
     shared = _names([papers], {paper.source_id: Counter(_terms(paper)) for paper in papers})[0]
     lines += [
         f"{len(papers)} paper{'s' if len(papers) != 1 else ''}{span}."
@@ -385,7 +398,7 @@ def write_overview(
         "",
     ]
     with usage.job("analysis", "topic", ref=topic_id):
-        written = writer.write(topic.title, topic.description, read)
+        written = writer.write(title, description, read)
     if len(read) < len(papers):
         lines += [f"_Written from {len(read)} abstracts across {len(papers)} filed papers._", ""]
     lines += [written, "", "## Papers", ""]
@@ -396,16 +409,17 @@ def write_overview(
     ]
     markdown = "\n".join(lines).rstrip() + "\n"
 
-    row = session.get(TopicSynthesis, topic_id)
-    if row is None:
-        row = TopicSynthesis(topic_id=topic_id, markdown=markdown, method=writer.method)
-        session.add(row)
-    row.markdown = markdown
-    row.citations_json = json.dumps(citations, ensure_ascii=False)
-    row.method = writer.method
-    row.source_count = len(papers)
-    row.created_at = utc_now()
-    session.flush()
+    with session_scope(sessions) as session:
+        _overview_topic(session, base_id, topic_id)
+        row = session.get(TopicSynthesis, topic_id)
+        if row is None:
+            row = TopicSynthesis(topic_id=topic_id, markdown=markdown, method=writer.method)
+            session.add(row)
+        row.markdown = markdown
+        row.citations_json = json.dumps(citations, ensure_ascii=False)
+        row.method = writer.method
+        row.source_count = len(papers)
+        row.created_at = utc_now()
     return row
 
 

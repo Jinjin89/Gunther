@@ -217,25 +217,23 @@ def topic_overview(base_id: str, topic_id: str, request: Request):
 @router.post("/knowledge-bases/{base_id}/topics/{topic_id}/overview")
 def write_topic_overview(base_id: str, topic_id: str, request: Request):
     index = request.app.state.knowledge_service.index
-    with session_scope(index.sessions) as session:
-        _live_library(session, base_id)
-        try:
-            row = library_topics.write_overview(
-                session,
-                base_id,
-                topic_id,
-                request.app.state.topic_writer,
-                index.embedder.model_id if index.embedder else None,
-            )
-        except AnalysisNeedsModel as error:
-            raise HTTPException(409, str(error)) from error
-        except ModelError as error:
-            raise HTTPException(
-                502, "Analysis could not write this overview. Try again."
-            ) from error
-        except (LookupError, ValueError) as error:
-            raise structure_error(error) from error
-        return library_topics.overview_out(row)
+    try:
+        row = library_topics.write_overview(
+            index.sessions,
+            base_id,
+            topic_id,
+            request.app.state.topic_writer,
+            index.embedder.model_id if index.embedder else None,
+        )
+    except AnalysisNeedsModel as error:
+        raise HTTPException(409, str(error)) from error
+    except ModelError as error:
+        raise HTTPException(
+            502, "Analysis could not write this overview. Try again."
+        ) from error
+    except (LookupError, ValueError) as error:
+        raise structure_error(error) from error
+    return library_topics.overview_out(row)
 
 
 @router.get("/sources/{source_id}/paper")

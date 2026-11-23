@@ -520,14 +520,14 @@ def test_migration_29_upgrades_existing_database_idempotently(tmp_path):
                 table.to_metadata(legacy)
         run_migrations(engine, legacy, MIGRATIONS[:28])
         assert not inspect(engine).has_table("model_usage")
-        run_migrations(engine, Base.metadata)
+        run_migrations(engine, Base.metadata, MIGRATIONS[:29])
         assert get_schema_version(engine) == 29
         assert {i["name"] for i in inspect(engine).get_indexes("model_usage")} == {
             "ix_model_usage_at"
         }
         sessions = create_session_factory(engine)
         ask(gateway(FakeProvider("OK"), partial(usage.record, sessions)))
-        run_migrations(engine, Base.metadata)
+        run_migrations(engine, Base.metadata, MIGRATIONS[:29])
         with session_scope(sessions) as session:
             assert len(session.scalars(select(ModelUsage)).all()) == 1
     finally:

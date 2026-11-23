@@ -21,7 +21,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import Engine, MetaData, Table, inspect, text
+from sqlalchemy import Engine, MetaData, Table, inspect, select, text
 from sqlalchemy.engine import Connection
 
 from gunther.database import connection_transaction
@@ -650,6 +650,41 @@ def _create_model_usage(connection: Connection, metadata: MetaData) -> None:
         metadata.tables["model_usage"].create(bind=connection, checkfirst=True)
 
 
+def _create_library_overviews(connection: Connection, metadata: MetaData) -> None:
+    overview = metadata.tables.get("library_overviews")
+    if overview is None:
+        return
+    overview.create(bind=connection, checkfirst=True)
+    jobs = metadata.tables["processing_jobs"]
+    if has_column(connection, jobs.name, "knowledge_base_id"):
+        return
+
+    # Move the child table first so staged originals can follow their jobs to the new queue.
+    assets = metadata.tables["processing_assets"]
+    legacy_assets = (
+        _set_aside_as_legacy(connection, assets.name)
+        if inspect(connection).has_table(assets.name) else None
+    )
+    legacy_jobs = _set_aside_as_legacy(connection, jobs.name)
+
+    def copy_rows(table: Table, legacy_name: str) -> Table:
+        table.create(bind=connection)
+        legacy = Table(legacy_name, MetaData(), autoload_with=connection, resolve_fks=False)
+        columns = [column.name for column in table.columns if column.name in legacy.c]
+        connection.execute(
+            table.insert().from_select(columns, select(*(legacy.c[name] for name in columns)))
+        )
+        return legacy
+
+    # Keep the old job table until the staging table has been copied and dropped.
+    legacy = copy_rows(jobs, legacy_jobs)
+    if legacy_assets:
+        copy_rows(assets, legacy_assets).drop(connection)
+    else:
+        assets.create(bind=connection)
+    legacy.drop(connection)
+
+
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
 MIGRATIONS: tuple[Migration, ...] = (
@@ -682,6 +717,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(27, "artifact_conversations", _create_artifact_conversations),
     Migration(28, "recording_audio_duration", _add_recording_audio_duration),
     Migration(29, "model_usage", _create_model_usage),
+    Migration(30, "library_overviews", _create_library_overviews),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

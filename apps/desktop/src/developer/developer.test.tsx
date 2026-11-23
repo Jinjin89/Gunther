@@ -1,4 +1,4 @@
-import type { AnswerTrace as Trace } from "@gunther/contracts";
+import type { AnswerTrace as Trace, BackgroundJob } from "@gunther/contracts";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -61,7 +61,14 @@ describe("Settings → Developer", () => {
     api.developerSettings.mockResolvedValue({ traces: false });
     api.saveDeveloperSettings.mockResolvedValue({ traces: true });
     api.developerLogs.mockResolvedValue([{ at: "2026-09-30T08:00:00Z", level: "warning", logger: "gunther.processing", message: "Knowledge job failed (RuntimeError)" }]);
-    api.developerJobs.mockResolvedValue([{ id: "job_1", kind: "digest", state: "failed", attempts: 3, error: "The model could not write the summary.", sourceId: "src_1", sourceTitle: "Markers", createdAt: "2026-09-30T08:00:00Z", updatedAt: "2026-09-30T08:01:00Z" }]);
+    api.developerJobs.mockResolvedValue([
+      { id: "job_1", kind: "digest", state: "failed", attempts: 3, error: "The model could not write the summary.", sourceId: "src_1", sourceTitle: "Markers", createdAt: "2026-09-30T08:00:00Z", updatedAt: "2026-09-30T08:01:00Z" },
+      {
+        id: "job_2", kind: "library_overview", state: "queued", attempts: 0, error: null,
+        sourceId: null, sourceTitle: null, knowledgeBaseId: "kb_1", knowledgeBaseTitle: "Cell biology",
+        createdAt: "2026-09-30T08:02:00Z", updatedAt: "2026-09-30T08:02:00Z",
+      },
+    ] satisfies BackgroundJob[]);
   });
 
   it("turns traces on and shows recent lines and jobs", async () => {
@@ -71,6 +78,9 @@ describe("Settings → Developer", () => {
     expect(await screen.findByText("Knowledge job failed (RuntimeError)")).toBeTruthy();
     expect(api.developerLogs).toHaveBeenCalledWith("warning");
     expect(screen.getByText("Summary")).toBeTruthy();
+    expect(screen.getByText("Markers")).toBeTruthy();
+    expect(screen.getByText("Library overview")).toBeTruthy();
+    expect(screen.getByText("Cell biology")).toBeTruthy();
     expect(screen.getByText("failed · 3 tries")).toBeTruthy();
     expect(screen.queryByLabelText("Method")).toBeNull();
     expect(screen.queryByRole("switch", { name: "Make outputs with skills" })).toBeNull();

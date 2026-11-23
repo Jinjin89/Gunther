@@ -5,6 +5,8 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from gunther.api_common import _service
+from gunther.database import session_scope
+from gunther.library_overview import LibraryOverviewOut, live_library, request_overview
 from gunther.schemas import (
     CreateKnowledgeBaseInput,
     InboxItemOut,
@@ -69,6 +71,23 @@ def update_knowledge_base(
         return _service(request).update_knowledge_base(knowledge_base_id, payload)
     except LookupError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.post("/knowledge-bases/{knowledge_base_id}/overview", response_model=LibraryOverviewOut)
+def library_overview(
+    knowledge_base_id: str, request: Request, retry: bool = False,
+) -> LibraryOverviewOut:
+    service = _service(request)
+    models = service.models
+    with session_scope(service.sessions) as session:
+        # Serialize the freshness check and enqueue across overlapping Chat opens.
+        session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        if live_library(session, knowledge_base_id) is None:
+            raise HTTPException(status_code=404, detail="Library was not found")
+        return request_overview(
+            session, knowledge_base_id, has_model=bool(models and models.for_role("analysis")),
+            retry=retry,
+        )
 
 
 @router.get("/overview", response_model=OverviewOut)

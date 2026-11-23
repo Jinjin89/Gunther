@@ -15,6 +15,7 @@ import { designCss } from "./designStyles";
 import { measureDesigned } from "./measureDesigned";
 import type { DeckData } from "./parseDeck";
 import { sanitizeDesign } from "./sanitizeDesign";
+import { CitationButton } from "../../components/evidence/CitationButton";
 
 type ChartData = Extract<DeckData, { layout: "chart" }>;
 
@@ -25,11 +26,10 @@ const FACES = ['400 20px Inter', '500 20px Inter', '600 20px Inter', '700 20px I
 const CITE_RUN = /(?:[ \t ]*(?:\[(?:[ipd]:)?\d+(?:\s*[,，、]\s*\d+)*\]|\[\?\]))+/g;
 const CITE_ONE = /\[(?:[ipd]:)?(\d+(?:\s*[,，、]\s*\d+)*)\]|\[\?\]/g;
 
-/**
- * Citation marks in the slide's text become the small raised marks the template slides draw (outputs/deck/Inline.tsx): a
- * button per source number that opens its evidence, and a "?" for the model's own knowledge. `sources` is titled on hover.
- */
-export function markCitations(root: ParentNode, numbers: number[], sources: string[] | undefined, interactive: boolean): void {
+type CitationSlot = { target: HTMLElement; number: number; index: number };
+
+/** Replace citation text with raised marks. Interactive marks receive the shared React control. */
+function markCitations(root: ParentNode, numbers: number[], sources: string[] | undefined, interactive: boolean): CitationSlot[] {
   const walker = document.createTreeWalker(root as Node, NodeFilter.SHOW_TEXT);
   const found: Text[] = [];
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
@@ -38,6 +38,7 @@ export function markCitations(root: ParentNode, numbers: number[], sources: stri
     if (CITE_RUN.test(text.data)) found.push(text);
     CITE_RUN.lastIndex = 0;
   }
+  const slots: CitationSlot[] = [];
   for (const text of found) {
     const parts: Array<string | HTMLElement> = [];
     let last = 0;
@@ -61,11 +62,15 @@ export function markCitations(root: ParentNode, numbers: number[], sources: stri
           if (index > 0) verified!.append(",");
           const n = Number(part.trim());
           const place = numbers.indexOf(n);
-          const label = document.createElement(interactive ? "button" : "span");
-          label.textContent = String(n);
-          const source = sources?.[place];
-          if (source) label.title = source;
-          if (interactive) { label.setAttribute("type", "button"); label.setAttribute("aria-label", `Inspect citation ${n}`); label.dataset.cite = String(place); }
+          const label = document.createElement("span");
+          if (interactive) {
+            label.style.display = "contents";
+            slots.push({ target: label, index: place, number: n });
+          } else {
+            label.textContent = String(n);
+            const source = sources?.[place];
+            if (source) label.title = source;
+          }
           verified!.append(label);
         });
       }
@@ -74,6 +79,7 @@ export function markCitations(root: ParentNode, numbers: number[], sources: stri
     if (last < text.data.length) parts.push(text.data.slice(last));
     text.replaceWith(...parts);
   }
+  return slots;
 }
 
 /** The whole slide's HTML ready to draw, or null when nothing of it is left after cleaning. */
@@ -104,9 +110,9 @@ export function DesignedSlide({ html, style, brand = null, chart, numbers, sourc
 }) {
   const host = useRef<HTMLDivElement>(null);
   const [slot, setSlot] = useState<HTMLElement | null>(null);
+  const [citationSlots, setCitationSlots] = useState<CitationSlot[]>([]);
   const [fonts, setFonts] = useState(false);
-  const cite = useRef(onCite);
-  cite.current = onCite;
+  const interactive = Boolean(onCite);
   const css = useMemo(() => designCss(style, brand), [style, brand]);
 
   useLayoutEffect(() => {
@@ -125,19 +131,11 @@ export function DesignedSlide({ html, style, brand = null, chart, numbers, sourc
     // The chart goes where the first placeholder is; any other is dropped.
     const places = frame.querySelectorAll("gunther-chart");
     places.forEach((place, at) => { if (at > 0) place.remove(); });
-    markCitations(frame, numbers, sources, !!cite.current);
+    const citations = markCitations(frame, numbers, sources, interactive);
     root.replaceChildren(sheet, frame);
+    setCitationSlots(citations);
     setSlot(frame.querySelector<HTMLElement>("gunther-chart"));
-    const click = (event: Event) => {
-      const button = (event.target as Element | null)?.closest?.("button[data-cite]");
-      if (!button) return;
-      event.stopPropagation();
-      cite.current?.(Number((button as HTMLElement).dataset.cite));
-    };
-    root.addEventListener("click", click);
-    return () => root.removeEventListener("click", click);
-    // `onCite` is read through a ref; whether there is one decides button or plain mark.
-  }, [html, css, numbers, sources, lang, !!onCite]);
+  }, [html, css, numbers, sources, lang, interactive]);
 
   // Scaled to fit its box: the stage is 1280 x 720 whatever the box is.
   useLayoutEffect(() => {
@@ -174,5 +172,9 @@ export function DesignedSlide({ html, style, brand = null, chart, numbers, sourc
   useLayoutEffect(() => { if (slot) slot.dataset.highlight = String(highlighted); }, [slot, highlighted]);
   return <div ref={host} className="dk-designed" data-design-style={style} data-layout={layout ?? undefined} data-drawn="designed" data-ready={fonts ? "true" : "false"} data-designed="true">
     {slot && chart ? createPortal(<Chart data={chart} />, slot) : null}
+    {onCite && citationSlots.map(({ target, number, index }, at) => createPortal(
+      <CitationButton number={number} index={index} onCite={onCite} title={sources?.[index]}>{number}</CitationButton>,
+      target, at,
+    ))}
   </div>;
 }

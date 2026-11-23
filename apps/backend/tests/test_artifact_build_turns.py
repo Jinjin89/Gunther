@@ -146,7 +146,11 @@ def test_conversations_in_one_library_build_and_follow_independently(tmp_path, s
 def test_explicit_build_uses_the_selected_type_scope_and_options(
     tmp_path, monkeypatch, type_id, shape, label
 ):
-    fake = FakeProvider(lambda request: router(request, DECK.replace("[2]", "[1]")))
+    fake = FakeProvider(
+        lambda request: router(request, DECK.replace("[2]", "[1]")),
+        # The one-section report runs its model calls serially.
+        write_lock_path=tmp_path / "gunther.sqlite" if shape == "report" else None,
+    )
     searches = []
 
     def search(query):
@@ -238,6 +242,8 @@ def test_explicit_build_uses_the_selected_type_scope_and_options(
         )
         assert conflict[-1][1]["status"] == 409 and len(fake.requests) == calls
     assert searches == ["Summarize the cooling trial"]
+    if shape == "report":
+        assert fake.requests and not fake.write_lock_failures, fake.write_lock_failures
 
 
 def test_retry_reuses_a_failed_builds_memo_and_story(tmp_path):

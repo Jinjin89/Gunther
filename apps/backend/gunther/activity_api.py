@@ -13,7 +13,7 @@ WAIT_SECONDS = 25.0
 
 class ActivityItemOut(ApiModel):
     id: str
-    kind: Literal["transcribe", "output", "answer"]
+    kind: Literal["transcribe", "output", "answer", "overview"]
     title: str
     about: str
     state: Literal["waiting", "running", "done", "failed"]

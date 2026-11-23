@@ -5,6 +5,7 @@ import { Check, Circle, type LucideIcon, Maximize2, MessageSquarePlus, Palette, 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { citationNumbers } from "../pages/AnswerBody";
+import { CitationDetails } from "../components/evidence/CitationButton";
 import { ArtifactMenu } from "./ArtifactMenu";
 import { SectionStatus } from "./ReportView";
 import { SlideFace } from "./SlideFace";
@@ -174,7 +175,7 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
 
   if (!hasSlides) return <p className="outputs-noslides">This deck has no slides yet.</p>;
   const here = slides[Math.min(current, slides.length - 1)];
-  return <div className="outputs-slides">
+  return <CitationDetails.Provider value={artifact.citations}><div className="outputs-slides">
     <div className="outputs-slides-bar">
       <span aria-live="polite">Slide {Math.min(current, slides.length - 1) + 1} of {slides.length}{changed?.includes(Math.min(current, slides.length - 1)) && <em className="outputs-changed"> · Changed</em>}</span>
       <span className="outputs-slides-tools">
@@ -244,5 +245,5 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
       {here?.notes ? <p>{here.notes}</p> : <p className="is-empty">No notes for this slide.</p>}
     </section>
     <SectionStatus info={artifact.sections[Math.min(current, slides.length - 1)]} />
-  </div>;
+  </div></CitationDetails.Provider>;
 }

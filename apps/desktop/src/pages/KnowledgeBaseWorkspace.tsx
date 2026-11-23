@@ -13,7 +13,7 @@ import { StudioColumn } from "../outputs/StudioColumn";
 import { type OutputTarget, useStudio } from "../outputs/useStudio";
 import { persistentStorage } from "../persistentStorage";
 import { LibraryColumn } from "./LibraryColumn";
-import { SessionWorkspace } from "./SessionWorkspace";
+import { SessionWorkspace, type LibraryChatActions } from "./SessionWorkspace";
 import "./libraryWorkspace.css";
 
 type Middle = { kind: "chat" } | { kind: "source"; id: string } | { kind: "output"; target: OutputTarget };
@@ -56,6 +56,7 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
   const scopeEmpty = selection.mode === "selected" && sourceIds.length === 0;
   const studio = useStudio(base.id, workspaceId);
   const workspace = useRef<HTMLDivElement>(null);
+  const chatActions = useRef<LibraryChatActions>(null);
   const target = middle.kind === "output" ? middle.target : null;
   const readerKey = target ? outputKey(target) : null;
   const wideReader = readerKey !== null && readerKey === wideReaderKey;
@@ -115,11 +116,12 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
       <div className="library-chat" hidden={!chatVisible}>
         <SessionWorkspace base={contents ? { ...base, sourceCount: sources.length } : base} visible={chatVisible}
           sourceIds={scope.sourceIds} sourceScopeEmpty={scopeEmpty} onFocusSources={focusSources}
-          onNotify={onNotify} onOpenSource={openFullSource} />
+          chatActions={chatActions} onNotify={onNotify} onOpenSource={openFullSource} />
       </div>
       {!chatVisible && <div className="library-middle-page">
         <div className="library-middle-bar"><button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => choose(chat)}><ArrowLeft size={14} />Back to chat</button></div>
-        {source && <SourceSummary key={source.id} source={source} onOpen={() => openFullSource(source.id)} />}
+        {source && <SourceSummary key={source.id} source={source} onOpen={() => openFullSource(source.id)}
+          onAsk={(question, submit) => { setMiddle(chat); chatActions.current?.ask(question, submit); }} />}
         {middle.kind === "source" && !source && <p className="library-reading">{contents ? "Source unavailable." : "Loading source…"}</p>}
         {target && workspaceId && <OpenOutput key={outputKey(target)} baseId={base.id} workspaceId={workspaceId}
           target={target} studio={studio} scope={scope} scopeEmpty={scopeEmpty} dirty={dirty} onNotify={onNotify}

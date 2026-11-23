@@ -236,13 +236,13 @@ def test_retained_output_search_stays_in_its_source_scope(tmp_path):
         base_id, ids = library(client)
         _, other = library(client, "Unrelated", {"Foreign": "CD19 is a marker of B cells."})
         service = client.app.state.knowledge_service
-        with session_scope(service.sessions) as session:
-            primary = [ids["Markers"]]
+        primary = [ids["Markers"]]
+        with service.sessions() as session:
             tool = service._output_search_tool(session, primary, "selection")
-            results = tool.run("marker")
-            assert {item.payload[0].source_id for item in results} == set(primary)
-            assert not set(other.values()) & {item.payload[0].source_id for item in results}
-            assert all(item.payload[0].source_origin == "selected" for item in results)
+        results = tool.run("marker")
+        assert {item.payload[0].source_id for item in results} == set(primary)
+        assert not set(other.values()) & {item.payload[0].source_id for item in results}
+        assert all(item.payload[0].source_origin == "selected" for item in results)
 
 
 def test_invented_chart_values_are_never_drawn_as_a_chart(tmp_path):

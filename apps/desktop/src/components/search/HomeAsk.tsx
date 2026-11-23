@@ -5,6 +5,7 @@ import type { KnowledgeBase } from "../../atlas";
 import { SpeakerButton } from "../../speech/SpeakerButton";
 import { AgentSteps, AnswerBody, LiveAnswer, ResearchPlan, citationNumbers, usedSkill } from "../../pages/AnswerBody";
 import { EvidencePanel } from "../evidence/EvidencePanel";
+import { CitationDetails } from "../evidence/CitationButton";
 import type { LiveAnswerState } from "../../pages/liveAnswer";
 import type { ItemRef } from "../../items/itemRef";
 import { useAutosize } from "../../services/useAutosize";
@@ -122,7 +123,9 @@ export function HomeAsk({ query, bases, messages, pending, live, error, active, 
         : <article key={message.id} className="gx-home-answer">
             <ResearchPlan context={message.context} />
             <AgentSteps steps={message.context.steps ?? []} />
-            <AnswerBody content={message.content} numbers={citationNumbers(message.citations)} onCitation={(index) => { const citation = message.citations[index]; if (citation) setEvidence({ citation, index }); }} supportNotes={message.context.supportNotes} coverage={message.context.coverage} />
+            <CitationDetails.Provider value={message.citations}>
+              <AnswerBody content={message.content} numbers={citationNumbers(message.citations)} onCitation={(index) => { const citation = message.citations[index]; if (citation) setEvidence({ citation, index }); }} supportNotes={message.context.supportNotes} coverage={message.context.coverage} />
+            </CitationDetails.Provider>
             {message.context.modelError && <p className="message-model-error" role="note">{message.context.modelError}{message.citations.length > 0 && " The quotes stand in for its answer."}</p>}
             <Sources citations={message.citations} onOpen={(citation, index) => setEvidence({ citation, index })} />
             <footer><SpeakerButton message={message} /><small>{[message.context.modelLabel, message.context.effortLabel, message.context.skill ? usedSkill(message.context.skill) : null].filter(Boolean).join(" · ")}</small></footer>

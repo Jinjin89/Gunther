@@ -217,7 +217,7 @@ class ArtifactTurns:
         turn_key = self._turn_fingerprint(workspace_id, base_id, conversation_id, payload)
         fingerprint = legacy_fingerprint or turn_key
         needs_conversation = False
-        with usage.job("outputs", ref=conversation_id), session_scope(self.sessions) as session:
+        with self.sessions() as session:
             output_library(session, workspace_id, base_id)
             try:
                 row = self._artifact_conversation_row(
@@ -267,8 +267,9 @@ class ArtifactTurns:
         result: TurnResult | None = None
         draft: workspaces.Work | None = None
         preserve_on_failure = build is not None or payload.rebuild is not None
-        with usage.job("outputs", ref=conversation_id), session_scope(self.sessions) as session:
+        with self.sessions() as session:
             library = output_library(session, workspace_id, base_id)
+            library_title = library.title
             row = self._artifact_conversation_row(session, workspace_id, base_id, conversation_id)
             workspace, brief = self._load_workspace(row)
             began = (
@@ -330,10 +331,11 @@ class ArtifactTurns:
             )
             web, web_reason = self._web_tool(web_enabled)
             pinned_keys = {item.key for item in material.seeds}
-            reader = self._source_reader(
-                session, material.source_revisions, pinned_keys=pinned_keys,
-            )
+            reader = self._source_reader(material.source_revisions, pinned_keys=pinned_keys)
             history = self._turn_history(session, row.id, agent_limits.history)
+            figure_readings = self._reusable_figure_readings(session, base_id)
+
+        with usage.job("outputs", ref=conversation_id):
             budget = RunBudget(
                 agent_limits.searches,
                 agent_limits.searches,
@@ -350,7 +352,7 @@ class ArtifactTurns:
                 return StudioWorkAgents(
                     gateway, kind, limits, tools=[tool, *([web] if web else [])],
                     asset_reader=self.asset_reader,
-                    reusable_figures=self._reusable_figure_readings(session, base_id),
+                    reusable_figures=figure_readings,
                 )
 
             def evidence_allowed(item: Evidence) -> bool:
@@ -359,9 +361,10 @@ class ArtifactTurns:
                 )
 
             def studio_reading(made: Pool) -> Notes:
-                reading_gaps = self._studio_reading(
-                    session, material.source_revisions, made, pinned=material.seeds
-                )
+                with self.sessions() as session:
+                    reading_gaps = self._studio_reading(
+                        session, material.source_revisions, made, pinned=material.seeds
+                    )
                 return replace(material.notes, extraction_gaps=tuple(reading_gaps))
 
             def studio(
@@ -375,7 +378,7 @@ class ArtifactTurns:
                     use=use,
                     renderer=self.slide_renderer,
                     asset_reader=self.asset_reader,
-                    reusable_figures=self._reusable_figure_readings(session, base_id),
+                    reusable_figures=figure_readings,
                 )
                 if (build is not None or payload.rebuild) and web_enabled:
                     warning = self._studio_web(
@@ -390,7 +393,7 @@ class ArtifactTurns:
                     made,
                     scoped_notes,
                     emit,
-                    fallback_title=library.title,
+                    fallback_title=library_title,
                     purpose=purpose,
                     fixed_outline=fixed_outline,
                     outline_approved=payload.rebuild is not None or bool(build and build.outline),
@@ -428,7 +431,7 @@ class ArtifactTurns:
                     web_tool=web,
                     web_reason=web_reason or "",
                     reader=reader,
-                    library=library.title,
+                    library=library_title,
                     kind=payload.kind,
                     text=payload.text,
                     focus=payload.focus.model_dump() if payload.focus else None,
@@ -452,11 +455,13 @@ class ArtifactTurns:
                     result = agent.run()
                 else:
                     action = payload.rebuild
-                    parent = output_version(
-                        session, workspace_id, base_id, action.artifact_id, latest=True,
-                    )
-                    owner = json.loads(parent.provenance_json).get("conversation_id")
-                    work = next((w for w in workspace.works if w.key == parent.lineage_id), None)
+                    with self.sessions() as session:
+                        parent = output_version(
+                            session, workspace_id, base_id, action.artifact_id, latest=True,
+                        )
+                        owner = json.loads(parent.provenance_json).get("conversation_id")
+                        lineage = parent.lineage_id
+                    work = next((w for w in workspace.works if w.key == lineage), None)
                     if work is None or (owner and owner != conversation_id):
                         raise LookupError("This artifact was not found in this conversation.")
                     result = agent.rebuild(

@@ -20,7 +20,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from gunther import digest, papers, vector_index
+from gunther import digest, library_overview, papers, vector_index
+from gunther.activity import Activity
 from gunther.asset_service import AssetService, read_initial_asset
 from gunther.audio_decode import audio_duration_ms
 from gunther.content import ParsedBlock
@@ -55,7 +56,7 @@ MAX_RETRY_SECONDS = 60.0
 FAILURE_LOG_EVERY = 30
 HEARTBEAT_SECONDS = 10
 # Jobs that may wait on a model over the network.
-AI_KINDS = ("digest", "extract_assertions")
+AI_KINDS = ("digest", "extract_assertions", library_overview.KIND)
 
 
 def retry_delay_seconds(failures: int) -> float:
@@ -177,6 +178,7 @@ class ProcessingWorker:
         self.structure_reviser = structure_reviser
         self.recordings_dir = recordings_dir
         self.stopping = Event()
+        self.activity = Activity()
 
     def claim(self, ai: bool | None = None) -> tuple[str, str] | None:
         """The oldest eligible job: any job, or only (``ai``) or never model-bound ones."""
@@ -220,7 +222,8 @@ class ProcessingWorker:
                     ProcessingJob.attempts >= 3,
                 )
                 .values(
-                    state="failed", error="Processing was interrupted repeatedly. Retry to resume."
+                    state="failed", error="Processing was interrupted repeatedly. Retry to resume.",
+                    lease_token=None, lease_until=None, updated_at=now,
                 )
             )
         self.assets.release_abandoned()
@@ -255,10 +258,71 @@ class ProcessingWorker:
         heartbeat = Thread(target=renew, daemon=True)
         heartbeat.start()
         try:
-            self._process(job_id, token, lease_lost)
+            with session_scope(self.sessions) as session:
+                job = session.get(ProcessingJob, job_id)
+            if job is None or job.lease_token != token or job.state != "running":
+                return
+            if job.knowledge_base_id is not None:
+                self._process_library_overview(job, job.knowledge_base_id, token, lease_lost)
+            else:
+                self._process(job, token, lease_lost)
         finally:
             finished.set()
             heartbeat.join()
+
+    def _process_library_overview(
+        self, claimed: ProcessingJob, library_id: str, token: str, lease_lost: Event,
+    ) -> None:
+        with session_scope(self.sessions) as session:
+            library = library_overview.live_library(session, library_id)
+            inputs = library_overview.material(session, library_id) if library else None
+            if library is None or inputs is None:
+                job = self._publication_job(session, claimed.id, token)
+                if job:
+                    _finish_job(job, "cancelled")
+                return
+
+            # Count interrupted attempts against the material this call will read.
+            key = library_overview.job_key(library_id, inputs.fingerprint)
+            if claimed.dedupe_key != key:
+                job = self._publication_job(session, claimed.id, token)
+                if job is None or lease_lost.is_set():
+                    return
+                job.dedupe_key, job.attempts = key, 1
+
+        with self.activity.track(
+            claimed.id, "overview", "Writing library overview", library.title,
+            open={"view": "library", "libraryId": library_id, "tab": "ask"}, stop=None,
+        ) as tracked:
+            written = library_overview.write(
+                self.assets.knowledge_service.models, library_id, inputs,
+            )
+            error = None
+            published = False
+            with session_scope(self.sessions) as session:
+                job = self._publication_job(session, claimed.id, token)
+                if job is not None and not lease_lost.is_set():
+                    live = library_overview.live_library(session, library_id)
+                    current = library_overview.material(session, library_id) if live else None
+                    if current is None:
+                        _finish_job(job, "cancelled")
+                    elif current.fingerprint != inputs.fingerprint:
+                        _finish_job(job, "queued")
+                        job.attempts = 0
+                        job.dedupe_key = library_overview.job_key(library_id, current.fingerprint)
+                    elif written is None:
+                        _finish_job(job, "needs_model")
+                    else:
+                        result, method, error = written
+                        library_overview.publish(session, library_id, inputs, result, method, error)
+                        _finish_job(job, "failed" if error else "completed", error)
+                        published = True
+            if error:
+                tracked.failed("Library overview failed", error)
+            elif published:
+                tracked.done("Library overview ready")
+            else:
+                tracked.stopped()
 
     def _stage_reading(
         self, document: ParsedDocument, job_id: str, token: str, *,
@@ -338,12 +402,14 @@ class ProcessingWorker:
             warning=draft.warning, document=draft.document,
         ).id
 
-    def _process(self, job_id: str, token: str, lease_lost: Event) -> None:
+    def _process(self, job: ProcessingJob, token: str, lease_lost: Event) -> None:
+        job_id = job.id
         layout_started = False
         try:
             with session_scope(self.sessions) as session:
-                job = session.get(ProcessingJob, job_id)
                 source = session.get(Source, job.source_id)
+                if source is None:
+                    return
                 kind, source_id = job.kind, source.id
                 asset = session.get(Asset, source.asset_id) if source.asset_id else None
                 if kind == "parse_asset":

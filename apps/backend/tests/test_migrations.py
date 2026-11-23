@@ -26,6 +26,8 @@ from gunther.models import (
     KnowledgeSession,
     KnowledgeUnit,
     KnowledgeUnitRevision,
+    ProcessingAsset,
+    ProcessingJob,
     RecordingSession,
     SessionMessage,
     Source,
@@ -85,6 +87,7 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (27, "artifact_conversations"),
             (28, "recording_audio_duration"),
             (29, "model_usage"),
+            (30, "library_overviews"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
@@ -123,6 +126,56 @@ def test_repeated_startup_is_idempotent(tmp_path: Path) -> None:
                 text(f"SELECT COUNT(*) FROM {MIGRATION_TABLE}")
             ).scalar_one()
         assert migration_count == LATEST_SCHEMA_VERSION
+    finally:
+        engine.dispose()
+
+
+def test_library_overview_upgrade_preserves_the_existing_queue_and_staged_assets(tmp_path: Path):
+    engine = make_engine(tmp_path)
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql("""
+                CREATE TABLE processing_jobs (
+                    id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES sources(id)
+                    ON DELETE CASCADE, kind TEXT NOT NULL, dedupe_key TEXT NOT NULL UNIQUE,
+                    revision_id TEXT REFERENCES source_revisions(id) ON DELETE CASCADE,
+                    model_id TEXT, state TEXT NOT NULL, attempts INTEGER NOT NULL,
+                    lease_token TEXT, lease_until DATETIME, available_at DATETIME NOT NULL,
+                    error TEXT, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL
+                )
+            """)
+        run_migrations(engine, Base.metadata, MIGRATIONS[:-1])
+        with engine.begin() as connection:
+            connection.exec_driver_sql("""
+                INSERT INTO sources (id, title, kind, content, content_hash, created_at)
+                VALUES ('src', 'Original', 'file', '', 'source-hash', CURRENT_TIMESTAMP)
+            """)
+            connection.exec_driver_sql("""
+                INSERT INTO assets (id, content_hash, original_name, media_type, size_bytes,
+                                    relative_path, created_at)
+                VALUES ('asset', 'asset-hash', 'original.pdf', 'application/pdf', 1,
+                        'original.pdf', CURRENT_TIMESTAMP)
+            """)
+            connection.exec_driver_sql("""
+                INSERT INTO processing_jobs (id, source_id, kind, dedupe_key, state, attempts,
+                                             lease_token, available_at, created_at, updated_at)
+                VALUES ('job', 'src', 'parse_asset', 'parse:src', 'running', 1, 'lease',
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """)
+            connection.exec_driver_sql("""
+                INSERT INTO processing_assets (job_id, lease_token, asset_id)
+                VALUES ('job', 'lease', 'asset')
+            """)
+        run_migrations(engine, Base.metadata)
+        with session_scope(create_session_factory(engine)) as session:
+            job = session.get(ProcessingJob, "job")
+            assert (job.source_id, job.knowledge_base_id, job.state, job.attempts) == (
+                "src", None, "running", 1,
+            )
+            assert session.get(ProcessingAsset, ("job", "lease", "asset")) is not None
+        with engine.connect() as connection:
+            assert inspect(connection).has_table("library_overviews")
+            assert connection.exec_driver_sql("PRAGMA foreign_key_check").all() == []
     finally:
         engine.dispose()
 
@@ -1172,7 +1225,7 @@ def test_v20_database_gains_session_briefs_without_losing_conversations(tmp_path
             assert connection.execute(
                 text("SELECT title, brief_json FROM knowledge_sessions WHERE id = 'ses_old'")
             ).one() == ("Kept", "{}")
-        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 29
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()
 
@@ -1231,7 +1284,7 @@ def test_v22_database_gains_transcript_segments_without_losing_recordings(tmp_pa
                     "WHERE id = 'rec_old'"
                 )
             ).one() == ("[00:00] Hello", None)
-        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 29
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()
 
@@ -1265,7 +1318,7 @@ def test_v25_database_loses_the_upgrade_table_and_keeps_its_recordings(tmp_path:
             assert connection.execute(
                 text("SELECT transcript FROM recording_sessions WHERE id = 'rec_old'")
             ).scalar_one() == "[00:00] Hello"
-        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION == 29
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
         engine.dispose()
 
@@ -1318,7 +1371,7 @@ def test_v24_database_gets_one_place_per_source_and_a_shared_order(tmp_path: Pat
                     f"('{link}', '{topic}', '{source}', '{created}')"
                 )
         history = run_migrations(engine, Base.metadata)
-        assert [item.name for item in history[-5:]] == [
+        assert [item.name for item in history[24:29]] == [
             "library_contents",
             "drop_transcript_upgrades",
             "artifact_conversations",

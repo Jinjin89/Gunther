@@ -740,21 +740,27 @@ def test_without_a_model_the_reply_says_a_model_is_needed(tmp_path: Path) -> Non
 # Streaming and Home --------------------------------------------------------------------
 
 
-def test_an_answer_can_be_streamed_as_it_is_worked_out(tmp_path: Path) -> None:
+@pytest.mark.parametrize("explicit_sources", [False, True])
+def test_an_answer_can_be_streamed_as_it_is_worked_out(
+    tmp_path: Path, explicit_sources: bool,
+) -> None:
     fake = FakeProvider(
         agent_replies(
             "CD3D marks T cells [1].",
             {"action": "search_library", "query": "CD3D"},
             {"action": "answer"},
-        )
+        ),
+        write_lock_path=tmp_path / "gunther.sqlite",
     )
     with app_for(tmp_path, fake) as client:
         session_id = ready_session(client)
+        sources = client.get("/api/sources", headers=SIDECAR).raise_for_status().json()
+        selected = [source["id"] for source in sources] if explicit_sources else []
         with client.stream(
             "POST",
             f"/api/sessions/{session_id}/messages/stream",
             headers=SIDECAR,
-            json={"content": "CD3D?"},
+            json={"content": "CD3D?", "selectedSourceIds": selected, "focusChapterId": None},
         ) as response:
             assert response.headers["content-type"].startswith("text/event-stream")
             events = read_events(response)
@@ -769,6 +775,8 @@ def test_an_answer_can_be_streamed_as_it_is_worked_out(tmp_path: Path) -> None:
     turn = events[-1][1]
     assert turn["assistantMessage"]["content"] == "CD3D marks T cells [1]."
     assert [m["role"] for m in saved["messages"]] == ["user", "assistant"]
+    assert saved["selectedSourceIds"] == selected
+    assert fake.requests and not fake.write_lock_failures, fake.write_lock_failures
 
 
 def test_the_checker_s_labels_and_notes_are_saved_with_the_answer(tmp_path: Path) -> None:

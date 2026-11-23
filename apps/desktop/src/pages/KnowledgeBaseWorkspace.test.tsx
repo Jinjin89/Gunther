@@ -1,12 +1,12 @@
 import type {
   Artifact, ArtifactConversationDetail, ArtifactTurnOut, BuildTurnInput, ContentsSource, KnowledgeSession,
-  LibraryContents, ModelMenu, OutputScope, OutputType, SessionMessage,
+  LibraryContents, LibraryOverview, ModelMenu, OutputScope, OutputType, SessionMessage, SourceDigest,
 } from "@gunther/contracts";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiRequestError, knowledgeApi } from "../api";
-import { announceModelsChanged } from "../models/askModel";
+import { announceModelsChanged, OPEN_SETTINGS_EVENT } from "../models/askModel";
 import { libraryScope } from "../outputs/artifactConversations";
 import { makeBase, makeSource } from "../test/fixtures";
 import { KnowledgeBaseWorkspace } from "./KnowledgeBaseWorkspace";
@@ -74,6 +74,13 @@ const done = (artifact: Artifact | null = null): ArtifactTurnOut => ({
   outcome: artifact ? "saved" : "replied", artifact, reply: "Done.", changes: [], question: null, message: null,
 });
 
+const emptyOverview: LibraryOverview = { state: "empty", summary: "", suggestedQuestions: [], error: null };
+const suggestedQuestion = "Which changes are measured?";
+const readyOverview: LibraryOverview = {
+  ...emptyOverview, state: "ready", summary: "The sources compare three ways to record changes.",
+  suggestedQuestions: [suggestedQuestion],
+};
+
 function setup({ artifacts = [], conversations = [] }: { artifacts?: Artifact[]; conversations?: ArtifactConversationDetail[] } = {}) {
   const stored = new Map(conversations.map((item) => [item.id, item]));
   const create = vi.spyOn(knowledgeApi, "createArtifactConversation").mockImplementation(async (_base, payload) => {
@@ -112,6 +119,7 @@ beforeEach(() => {
   vi.spyOn(knowledgeApi, "session").mockImplementation(async (id) => id === secondSession.id ? secondSession : originalSession);
   vi.spyOn(knowledgeApi, "followAnswer").mockResolvedValue(null);
   vi.spyOn(knowledgeApi, "modelMenu").mockResolvedValue(readyModels);
+  vi.spyOn(knowledgeApi, "libraryOverview").mockResolvedValue(emptyOverview);
   vi.spyOn(knowledgeApi, "outputTypes").mockResolvedValue([report, slides]);
   vi.spyOn(knowledgeApi, "sourceDigest").mockResolvedValue({ sourceId: "s1", state: "off", stale: false, method: null, offReason: "no_key", error: null, digest: null });
 });
@@ -157,14 +165,61 @@ it("disables Studio builds until Models settings provide a model", async () => {
   expect(studio.queryByText("Studio needs a model.")).toBeNull();
 });
 
-it("shares all sources, blocks an empty selection, and uses section ticks for each Ask turn", async () => {
-  const user = userEvent.setup();
-  const send = vi.spyOn(knowledgeApi, "sendMessageStream").mockImplementation(async (id, request) => {
+function mockAnswers() {
+  vi.spyOn(knowledgeApi, "refreshBrief").mockResolvedValue({ goal: "", constraints: [], settled: [], open: [], edited: [], error: null });
+  return vi.spyOn(knowledgeApi, "sendMessageStream").mockImplementation(async (id, request) => {
     const session = id === secondSession.id ? secondSession : originalSession;
     const question: SessionMessage = { id: "question", sessionId: id, role: "user", content: request.content, citations: [], context: { sourcesConsidered: 0, assertionsConsidered: 0, verifiedAssertions: 0, retrievalMode: "all", responderMode: "model" }, createdAt: at };
     return { session, userMessage: question, assistantMessage: { ...question, id: "answer", role: "assistant", content: "Here are the findings." } };
   });
-  vi.spyOn(knowledgeApi, "refreshBrief").mockResolvedValue({ goal: "", constraints: [], settled: [], open: [], edited: [], error: null });
+}
+
+it("shows the overview and sends a suggested question with the current scope", async () => {
+  const user = userEvent.setup();
+  const send = mockAnswers();
+  vi.mocked(knowledgeApi.libraryOverview).mockResolvedValue(readyOverview);
+  setup();
+  expect(await screen.findByText(readyOverview.summary)).toBeVisible();
+  expect(screen.queryByText(base.description)).not.toBeInTheDocument();
+  await user.click(await screen.findByRole("checkbox", { name: "All sources" }));
+  const suggestion = screen.getByRole("button", { name: suggestedQuestion });
+  expect(suggestion).toBeDisabled();
+  await user.click(screen.getByRole("checkbox", { name: "Select Field notes" }));
+  await user.click(suggestion);
+  expect(send).toHaveBeenCalledExactlyOnceWith(originalSession.id, expect.objectContaining({
+    content: suggestedQuestion, selectedSourceIds: ["s2"], focusChapterId: null,
+  }), expect.any(Function), expect.any(AbortSignal));
+});
+
+it("shows the library details and a Models link when the overview needs a model", async () => {
+  const user = userEvent.setup();
+  const settings = vi.fn();
+  window.addEventListener(OPEN_SETTINGS_EVENT, settings, { once: true });
+  vi.mocked(knowledgeApi.libraryOverview).mockResolvedValue({ ...emptyOverview, state: "needs_model" });
+  setup();
+  expect(await screen.findByText("The library overview needs a model.")).toBeVisible();
+  expect(screen.getByText(base.description)).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Open Models settings" }));
+  expect(settings).toHaveBeenCalledWith(expect.objectContaining({ detail: { pane: "models" } }));
+});
+
+it("shows the overview failure with Retry and replaces the fallback after success", async () => {
+  const user = userEvent.setup();
+  const error = "The Analysis model could not write the library overview.";
+  const overview = vi.mocked(knowledgeApi.libraryOverview).mockImplementation(async (_id, retry) =>
+    retry ? readyOverview : { ...emptyOverview, state: "failed", error });
+  setup();
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(error);
+  expect(screen.getByText(base.description)).toBeVisible();
+  await user.click(within(alert).getByRole("button", { name: "Retry" }));
+  expect(await screen.findByText(readyOverview.summary)).toBeVisible();
+  expect(overview).toHaveBeenLastCalledWith(base.id, true, expect.any(AbortSignal));
+});
+
+it("shares all sources, blocks an empty selection, and uses section ticks for each Ask turn", async () => {
+  const user = userEvent.setup();
+  const send = mockAnswers();
   const { turn } = setup();
   const wholeLibrary = await screen.findByRole("checkbox", { name: "All sources" });
   const field = await screen.findByRole("checkbox", { name: "Select Field notes" });
@@ -263,6 +318,58 @@ it("opens a source independently of scope and keeps the Chat draft and scroll po
   expect(screen.getByRole("textbox", { name: "Message Gunther" })).toBe(draft);
   expect(draft).toHaveValue("A thought to keep");
   expect(chatScroll.scrollTop).toBe(128);
+});
+
+it("shows a digest beside paper metadata, opens its cited revision, and brings its questions to Chat", async () => {
+  const user = userEvent.setup();
+  const send = mockAnswers();
+  const lab = { ...contents.sources[0]!, mediaType: "application/pdf" };
+  vi.mocked(knowledgeApi.contents).mockResolvedValue({ ...contents, sources: [lab, ...contents.sources.slice(1)] });
+  const quote = "The gauge is emptied each morning.";
+  const digest: SourceDigest = {
+    sourceId: lab.id, revisionId: "revision-1", profile: "paper", method: "analysis",
+    engine: "Local", model: "Model", suggestedTitle: null, overview: "A daily record of rain.",
+    keyPoints: [{ text: "Daily checks", citations: [{ number: 1, blockId: "block-1", quote, locator: "Page 2" }] }],
+    actionItems: [], openQuestions: ["How are readings recorded?"], terms: ["Rain gauge"],
+    markdown: "", updatedAt: at,
+  };
+  vi.mocked(knowledgeApi.sourceDigest).mockResolvedValue({
+    sourceId: lab.id, state: "ready", stale: false, method: "analysis", offReason: null, error: null, digest,
+  });
+  vi.spyOn(knowledgeApi, "sourcePaper").mockResolvedValue({
+    sourceId: lab.id, revisionId: digest.revisionId, title: lab.title, authors: "A. Reader", year: 2024,
+    doi: null, arxivId: null, abstract: "A paper about observation.", abstractBlockIds: [], outline: [], summaryMarkdown: "", copies: [],
+  });
+  vi.spyOn(knowledgeApi, "source").mockResolvedValue({
+    ...makeSource({ id: lab.id, title: lab.title, kind: lab.kind }), content: quote, assertions: [], webSnapshot: null,
+  });
+  const structure = vi.spyOn(knowledgeApi, "sourceStructure").mockResolvedValue({
+    sourceId: lab.id, revisionId: digest.revisionId, processing: { state: "ready", jobId: null, revisionId: digest.revisionId, warning: null },
+    parser: null, nextOffset: null, blocks: [],
+  });
+  setup();
+  await user.click(await screen.findByRole("checkbox", { name: "Select Field notes" }));
+  const openSummary = () => user.click(screen.getByRole("button", { name: /^Lab notes/ }));
+  await openSummary();
+  const summary = within(screen.getByRole("article", { name: "Source summary" }));
+  expect(await summary.findByText(digest.overview)).toBeVisible();
+  expect(summary.getByText("Daily checks")).toBeVisible();
+  expect(await summary.findByText("A paper about observation.")).toBeVisible();
+  expect(summary.queryByRole("heading", { name: "To do" })).not.toBeInTheDocument();
+  await user.click(summary.getByRole("button", { name: "Inspect citation 1" }));
+  const evidence = within(screen.getByRole("complementary", { name: "Evidence" }));
+  expect(evidence.getByText(quote)).toBeVisible();
+  expect(structure).toHaveBeenCalledWith(lab.id, 0, digest.revisionId, null, 500);
+  await user.click(evidence.getByRole("button", { name: "Close evidence" }));
+  await user.click(summary.getByRole("button", { name: "Rain gauge" }));
+  expect(screen.getByRole("textbox", { name: "Message Gunther" })).toHaveValue("Rain gauge");
+  expect(send).not.toHaveBeenCalled();
+
+  await openSummary();
+  await user.click(await screen.findByRole("button", { name: "Send How are readings recorded? to Chat" }));
+  expect(send).toHaveBeenCalledExactlyOnceWith(originalSession.id, expect.objectContaining({
+    content: "How are readings recorded?", selectedSourceIds: ["s1", "s3"],
+  }), expect.any(Function), expect.any(AbortSignal));
 });
 
 it("keeps an unsaved document edit until leaving is confirmed", async () => {

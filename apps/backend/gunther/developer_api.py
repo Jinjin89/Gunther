@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from gunther.database import session_scope
 from gunther.log_buffer import RecentLog
-from gunther.models import ProcessingJob, Source
+from gunther.models import KnowledgeBaseRecord, ProcessingJob, Source
 from gunther.schemas import ApiModel
 from gunther.service import KnowledgeService
 from gunther.settings_api_common import require_desktop_owner, service_settings
@@ -71,13 +71,16 @@ def recent_logs(
 
 @router.get("/developer/jobs")
 def recent_jobs(request: Request, limit: int = Query(50, ge=1, le=200)) -> dict[str, Any]:
-    """Background work (reading, embedding, summaries), newest first."""
+    """Background work for sources and libraries, newest first."""
 
     require_desktop_owner(request, OWNER_REQUIRED)
     with session_scope(_service(request).sessions) as session:
         rows = session.execute(
-            select(ProcessingJob, Source.title)
-            .join(Source, Source.id == ProcessingJob.source_id, isouter=True)
+            select(ProcessingJob, Source.title, KnowledgeBaseRecord.title)
+            .outerjoin(Source, Source.id == ProcessingJob.source_id)
+            .outerjoin(
+                KnowledgeBaseRecord, KnowledgeBaseRecord.id == ProcessingJob.knowledge_base_id,
+            )
             .order_by(ProcessingJob.updated_at.desc())
             .limit(limit)
         ).all()
@@ -90,10 +93,12 @@ def recent_jobs(request: Request, limit: int = Query(50, ge=1, le=200)) -> dict[
                     "attempts": job.attempts,
                     "error": job.error,
                     "sourceId": job.source_id,
-                    "sourceTitle": title,
+                    "sourceTitle": source_title,
+                    "knowledgeBaseId": job.knowledge_base_id,
+                    "knowledgeBaseTitle": library_title,
                     "createdAt": job.created_at.isoformat(),
                     "updatedAt": job.updated_at.isoformat(),
                 }
-                for job, title in rows
+                for job, source_title, library_title in rows
             ]
         }

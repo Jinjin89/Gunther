@@ -8,7 +8,10 @@ request, and can enforce a provider's rules, e.g. GLM refusing ``medium``.
 from __future__ import annotations
 
 import re
+import sqlite3
 from collections.abc import Callable, Iterator
+from contextlib import closing
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -71,11 +74,18 @@ def _chunks(content: str, reasoning: str | None, finish: str) -> Iterator[ChatCo
 
 
 class FakeProvider:
-    def __init__(self, *replies: Reply, rule: Callable[[dict[str, Any]], None] | None = None):
+    def __init__(
+        self,
+        *replies: Reply,
+        rule: Callable[[dict[str, Any]], None] | None = None,
+        write_lock_path: Path | None = None,
+    ):
         self.replies = list(replies)
         self.requests: list[dict[str, Any]] = []
         # Raises for a request this provider would refuse.
         self.rule = rule
+        self.write_lock_path = write_lock_path
+        self.write_lock_failures: list[str] = []
 
     # Looks like an OpenAI client: client.chat.completions.create(...)
     @property
@@ -91,6 +101,15 @@ class FakeProvider:
 
     def create(self, **request: Any) -> Iterator[ChatCompletionChunk]:
         self.requests.append(request)
+        if self.write_lock_path is not None:
+            database = self.write_lock_path.resolve().as_uri() + "?mode=rw"
+            try:
+                with closing(sqlite3.connect(database, uri=True, timeout=0)) as connection:
+                    connection.execute("PRAGMA busy_timeout=0")
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.rollback()
+            except sqlite3.OperationalError as error:
+                self.write_lock_failures.append(str(error))
         if self.rule:
             self.rule(request)
         # Replies are used in turn; the last one keeps answering.

@@ -21,7 +21,6 @@ from gunther import (
     usage,
     vector_index,
 )
-from gunther.activity import Activity
 from gunther.activity_api import router as activity_router
 from gunther.answer_runs import AnswerRuns
 from gunther.api import router
@@ -365,7 +364,7 @@ def create_app(
     application.state.service_settings = service_store
     application.state.tts = TtsService(sessions, active_settings.speech_dir)
     application.state.answer_runs = AnswerRuns()
-    application.state.activity = Activity()
+    application.state.activity = worker.activity
     # A recording's Transcribe again button.
     retranscriber = Retranscriber(application.state, sessions, active_settings.recordings_dir)
     application.state.retranscriber = retranscriber

@@ -75,6 +75,8 @@
 .chat-welcome { width: 100%; max-width: 690px; min-height: 100%; margin: 0 auto; padding: clamp(45px, 8vh, 82px) 0 36px; display: flex; flex-direction: column; align-items: center; text-align: center; }
 .chat-welcome h1 { margin: 11px 0 12px; font-family: var(--atlas-serif); font-size: clamp(33px, 3.4vw, 47px); font-weight: 520; letter-spacing: -.045em; line-height: 1.02; }
 .chat-welcome > p { max-width: 570px; color: var(--atlas-muted); font-family: var(--atlas-serif); font-size: calc(13px * var(--gx-fs, 1)); font-style: italic; line-height: 1.55; }
+.chat-welcome-questions { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; list-style: none; margin: 10px 0 0; padding: 0; }
+.chat-welcome-questions button { height: auto; min-height: 30px; white-space: normal; text-align: start; }
 .conversation-message { max-width: 760px; margin: 0 auto; padding: 24px 5px; border-bottom: 1px solid var(--atlas-line); position: relative; }
 .conversation-message.role-user { padding-top: 30px; padding-bottom: 20px; }
 .conversation-message.role-assistant { cursor: default; }

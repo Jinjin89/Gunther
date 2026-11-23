@@ -147,7 +147,8 @@ export function EvidencePanel({ citation, index, onClose, onOpenSource }: {
   useEffect(() => {
     const away = (event: PointerEvent) => {
       const target = event.target instanceof Element ? event.target : null;
-      if (!target || panel.current?.contains(target) || target.closest(OPENS_EVIDENCE)) return;
+      if (!target || panel.current?.contains(target)
+        || event.composedPath().some((node) => node instanceof Element && node.matches(OPENS_EVIDENCE))) return;
       latestClose.current();
     };
     document.addEventListener("pointerdown", away);

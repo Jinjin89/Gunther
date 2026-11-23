@@ -194,8 +194,9 @@ def test_consumers_share_policy_and_keep_canonical_elements(service, monkeypatch
         assert blocks[1] in expanded
         assert all("Furniturezircon" not in b.content for b in expanded)
         assert section_blocks(session, blocks[2]) == []
-        assert "Furniturezircon" not in service._ask_reader(session, False)(pool.items[0]).text
-        extra = service._source_reader(session)(pool.items[0])
+        session.commit()
+        assert "Furniturezircon" not in service._ask_reader(False)(pool.items[0]).text
+        extra = service._source_reader()(pool.items[0])
         assert extra is None or "Furniturezircon" not in extra.text
 
         # Simulate legacy FTS/vector entries created before the policy existed.
