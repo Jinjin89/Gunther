@@ -4,6 +4,7 @@ import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { sourceAssetUrl } from "../api";
 import { CitationButton } from "../components/evidence/CitationButton";
+import { withoutMarks } from "../components/evidence/citationMarks";
 import type { LiveStep } from "./liveAnswer";
 import { BrandMark } from "../design/BrandMark";
 import type { LiveAnswerState } from "./liveAnswer";
@@ -25,10 +26,7 @@ export function citationNumbers(citations: unknown[]): number[] {
   return citations.map((_, index) => index + 1);
 }
 
-/** While an answer is written its numbers are not final, so they and the unverified marks wait for the finished text. */
-export function withoutMarks(text: string): string {
-  return text.replace(/\s?\[(?:(?:[ipd]:)?\d+(?:\s*[,，、]\s*\d+)*|\?)\]/g, "");
-}
+export { withoutMarks };
 
 /**
  * `[2]` becomes a link to `#cite-2`, so the Markdown renderer can turn it into a button, and

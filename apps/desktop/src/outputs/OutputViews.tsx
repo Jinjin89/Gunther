@@ -3,6 +3,7 @@ import { lazy, Suspense, type ComponentProps, type ComponentType, type ReactNode
 import { AnswerBody, citationNumbers } from "../pages/AnswerBody";
 import { CardsList, CardsView } from "./CardsView";
 import { LazySlidesView } from "./LazySlides";
+import { MindMapOutline, MindMapView } from "./MindMapView";
 import { ReportView } from "./ReportView";
 import { SlideReviewPanel } from "./SlideReviewPanel";
 import { isReportV2 } from "./deck/detect";
@@ -19,6 +20,7 @@ type ReaderProps = {
   artifact: Artifact;
   onCite: (citation: ConversationCitation, index: number) => void;
   onAsk?: ((index: number, quote?: string) => void) | undefined;
+  onAskChat?: ((question: string) => void) | undefined;
   onPart?: ((index: number | null) => void) | undefined;
   goTo?: { index: number; nonce: number } | null | undefined;
   changed?: readonly number[] | undefined;
@@ -41,6 +43,10 @@ function SlideReader({ onPart, design, ...props }: ReaderProps) {
 
 function CardReader({ compact, ...props }: ReaderProps) {
   return compact ? <CardsList {...props} /> : <CardsView key={props.artifact.id} {...props} />;
+}
+
+function MapReader({ compact, ...props }: ReaderProps) {
+  return compact ? <MindMapOutline {...props} /> : <MindMapView key={props.artifact.id} {...props} />;
 }
 
 function PrintSources({ artifact }: { artifact: Artifact }) {
@@ -100,8 +106,13 @@ function PrintCards({ artifact }: { artifact: Artifact }) {
   return <PrintDocument artifact={artifact}><CardsList artifact={artifact} /></PrintDocument>;
 }
 
+function PrintMap({ artifact }: { artifact: Artifact }) {
+  return <PrintDocument artifact={artifact}><MindMapOutline artifact={artifact} /></PrintDocument>;
+}
+
 export const outputViews: Record<OutputKind, OutputView> = {
   report: { Reader: ReportView, Print: PrintReport },
   slides: { Reader: SlideReader, Print: PrintDeck, wide: true, Review: SlideReviewPanel, pageRule: "@page { size: 13.333in 7.5in; margin: 0; }" },
   cards: { Reader: CardReader, Print: PrintCards },
+  map: { Reader: MapReader, Print: PrintMap, wide: true },
 };

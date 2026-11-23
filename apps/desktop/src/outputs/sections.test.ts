@@ -1,15 +1,16 @@
 import type { Artifact, OutlineItem, OutputKind } from "@gunther/contracts";
 import { describe, expect, it } from "vitest";
 import documentSections from "./fixtures/document-sections.json";
-import { headingOf, joinDocument, layoutOf, parseSlides, restoreUnchangedScenes, sectionHash, slideLayouts, splitDocument, splitNotes, titleOf, withAccent, withDraft, withTheme, withoutSceneMarkers } from "./sections";
+import { documentUnits, headingOf, joinDocument, layoutOf, parseSlides, restoreUnchangedScenes, sectionHash, slideLayouts, splitDocument, splitNotes, titleOf, withAccent, withDraft, withTheme, withoutSceneMarkers } from "./sections";
 
 // The same cases as tests/test_outputs.py: the service and the app split a document alike.
 
-it.each(documentSections)("matches the backend's split and join for $name", ({ shape, content, preamble, sections, joined }) => {
+it.each(documentSections)("matches the backend's split and join for $name", ({ shape, content, preamble, sections, joined, paths }) => {
   const kind = shape as OutputKind;
   const split = splitDocument(content, kind);
   expect(split).toEqual({ preamble, sections });
   expect(joinDocument(split.preamble, split.sections, kind)).toBe(joined);
+  if (paths) expect(documentUnits(content, kind).map(({ node }) => [...(node?.ancestors ?? []), node?.label])).toEqual(paths);
 });
 
 // A slide's marker: [text, its layout, its accent, the slide without the marker]. The same list as

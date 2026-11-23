@@ -54,9 +54,9 @@ def check_citations(content: str, valid: set[int]) -> tuple[str, list[int]]:
         return "".join(kept)
 
     text = _ANY_GROUP.sub(replace, content)
-    # A citation that vanished can leave a doubled space or a space before punctuation.
-    text = re.sub(r"[ \t]{2,}", " ", text)
-    text = re.sub(r"[ \t]+([,.;:!?，。；：！？])", r"\1", text)
+    # Clean spacing within a line while keeping its Markdown indentation.
+    text = re.sub(r"(?<=\S)[ \t]{2,}", " ", text)
+    text = re.sub(r"(?<=\S)[ \t]+([,.;:!?，。；：！？])", r"\1", text)
     return text, order
 
 

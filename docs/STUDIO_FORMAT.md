@@ -281,7 +281,20 @@ Why: Removing T shifted cells toward the white-cell lineage [1].
 
 A flashcard has a non-empty question and answer. A quiz heading starts with `(quiz)`. Its options use `- [ ]` and exactly one `- [x]`. After the options, `Why:` begins the explanation and cites its source. The Checker reads a flashcard's question and answer together. For a quiz, it reads the question, checked choice and explanation together. Supported claims from those checks can become key results. [Key results](LIBRARY.md#key-results)
 
-## 4. Exports (desktop)
+## 4. Mind maps (design v1)
+
+A mind map starts with `<!-- map: mind_map; design: v1 -->`. Write one non-empty `- ` bullet per node, with one root at the left margin and two spaces per nesting level. Each child has a parent one level above it. A map can have up to 60 nodes.
+
+```markdown
+<!-- map: mind_map; design: v1 -->
+- Thermal insulation
+  - Heat transfer
+    - Reduces heat flow through the wall [1]
+```
+
+Citations follow the node they support. The Checker reads the cited node with its ancestor labels as context, using the citations on that node. Uncited labels provide structure. Map Markdown preserves the node indentation, and PDF print shows the whole tree as a nested outline. [Mind map reader](OUTPUTS.md#explore-a-mind-map)
+
+## 5. Exports (desktop)
 
 - **PPTX** uses editable text and tables, native charts for template slides, and speaker
   notes. A designed slide exports a picture of the visual layer with editable text boxes
@@ -290,7 +303,7 @@ A flashcard has a non-empty question and answer. A quiz heading starts with `(qu
   Citation marks are superscript numbers. [Report export](../apps/desktop/src/outputs/deck/exportDocx.ts)
 - **PDF** uses the print renderer. A card set prints as a list with its answers, marked correct choices, explanations and sources. The stored content can be copied or downloaded as Markdown.
 
-## 5. Gallery
+## 6. Gallery
 
 Developer render and export checks use the short, maximum, CJK and designed fixtures.
 The backend grammar tests share the deck inputs. [Fixtures](../apps/desktop/src/outputs/deck/fixtures/) · [Slide evals](../apps/backend/evals/slides/README.md)

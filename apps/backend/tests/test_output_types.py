@@ -35,6 +35,9 @@ def test_the_catalog_publishes_shape_capabilities(tmp_path):
     assert types["flashcards"] == types["quiz"] == {
         "unitLabel": "card", "outline": False, "design": False, "exports": ["markdown", "pdf"],
     }
+    assert types["mind_map"] == {
+        "unitLabel": "node", "outline": False, "design": False, "exports": ["markdown", "pdf"],
+    }
 
 
 @pytest.mark.parametrize(
@@ -81,6 +84,7 @@ def test_catalog_types_build_with_their_recipe_and_save_their_label(
         catalog = client.get("/api/output-types", headers=headers).raise_for_status().json()
         assert [item["id"] for item in catalog] == [
             "report", "briefing", "study_guide", "faq", "timeline", "slides", "flashcards", "quiz",
+            "mind_map",
         ]
         [item] = [row for row in catalog if row["id"] == style]
         assert (item["shape"], item["label"]) == (shape, label)

@@ -1283,9 +1283,9 @@ export interface ArtifactUnitSnapshot {
 }
 
 /** The saved document shapes supported by the output readers. */
-export const outputKinds = ["report", "slides", "cards"] as const;
+export const outputKinds = ["report", "slides", "cards", "map"] as const;
 export type OutputKind = (typeof outputKinds)[number];
-export const outputTypeIds = ["report", "briefing", "study_guide", "faq", "timeline", "slides", "flashcards", "quiz"] as const;
+export const outputTypeIds = ["report", "briefing", "study_guide", "faq", "timeline", "slides", "flashcards", "quiz", "mind_map"] as const;
 export type OutputTypeId = (typeof outputTypeIds)[number];
 /** A Studio type ID or a style accepted from earlier clients. */
 export const outputStyles = [...outputTypeIds, "auto", "overview", "field_guide", "teaching_path", "decision_brief"] as const;

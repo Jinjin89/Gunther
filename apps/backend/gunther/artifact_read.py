@@ -22,7 +22,7 @@ from gunther.models import (
     KnowledgeUnitRevision,
 )
 from gunther.output_types import output_type_label
-from gunther.outputs import _marked, heading_of, section_hash, split_document
+from gunther.outputs import _marked, document_units, heading_of, section_hash
 from gunther.schemas import (
     ArtifactOut,
     ArtifactProvenanceOut,
@@ -160,8 +160,8 @@ def latest_check_records(session: Session, artifact: Artifact) -> dict[str, dict
     texts = {}
     if any("verdicts" not in record for record in records):
         texts = {
-            section_hash(text): _marked(text).body
-            for text in split_document(artifact.content, artifact.kind)[1]
+            section_hash(unit): _marked(unit.text).body
+            for unit in document_units(artifact.content, artifact.kind)
         }
     return {
         record["hash"]: {
@@ -174,13 +174,13 @@ def latest_check_records(session: Session, artifact: Artifact) -> dict[str, dict
 
 def _output_sections(artifact: Artifact, records: dict[str, dict]) -> list[OutputSectionOut]:
     sections = []
-    for index, text in enumerate(split_document(artifact.content, artifact.kind)[1]):
-        digest = section_hash(text)
+    for index, unit in enumerate(document_units(artifact.content, artifact.kind)):
+        digest = section_hash(unit)
         state = records.get(digest, {}).get("verdicts")
         sections.append(
             OutputSectionOut(
                 index=index,
-                heading=heading_of(text),
+                heading=heading_of(unit),
                 checked=state is not None and complete(state),
                 issues=[OutputIssueOut(**issue) for issue in issue_view(state or {})],
                 coverage=coverage_of(state, digest) if state is not None else None,

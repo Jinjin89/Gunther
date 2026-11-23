@@ -22,7 +22,7 @@ from gunther.citations import collapse_citations, leads_in
 from gunther.claim_checks import check_claims, check_evidence_hash, checker_inventory
 from gunther.evidence import Evidence
 from gunther.llm import ModelError, ModelInfo
-from gunther.output_shapes import SHAPES
+from gunther.output_shapes import SHAPES, OutputUnit
 from gunther.outputs import Issue, _marked, _plain, cited_sentences
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,8 @@ def support_inventory(text: str, by_ref: dict[int, Evidence]) -> Verdicts:
 
 
 def output_claim_inventory(
-    kind: str, unit: str, by_ref: dict[int, Evidence], prior: Verdicts | None = None, *,
+    kind: str, unit: str | OutputUnit, by_ref: dict[int, Evidence], prior: Verdicts | None = None,
+    *,
     rest: str | None = None, saved: bool = False, scientific: bool = False,
 ) -> tuple[str, Verdicts]:
     """Project a unit once, then check that projection against the ordinary evidence pool."""
@@ -165,11 +166,11 @@ def _check_support(
     return merge_verdicts(active, prior, updates)
 
 def check_saved_part(
-    checker: AskAgent, model: ModelInfo, text: str, by_ref: dict[int, Evidence],
+    checker: AskAgent, model: ModelInfo, text: str | OutputUnit, by_ref: dict[int, Evidence],
     prior: Verdicts | None = None, *, limit: int, kind: str = "report",
 ) -> Verdicts:
     """Check a saved section and resume the unresolved verdicts for the same text."""
-    marked = _marked(text)
+    marked = _marked(text.text if isinstance(text, OutputUnit) else text)
     body = marked.body
     previous = prior or {}
     stages = {k: row for k, row in previous.items() if row["stage"] == "finding"}

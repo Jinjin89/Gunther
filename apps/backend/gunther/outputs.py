@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -19,7 +20,7 @@ from gunther.citations import CITATION_GROUP, SENTENCE_END, UNSOURCED, renumber_
 from gunther.evidence import Evidence, Step, Tool, ToolFailure, key_result_block
 from gunther.llm import ModelGateway, ModelInfo
 from gunther.model_profiles import Effort
-from gunther.output_shapes import SHAPES, markdown_lines
+from gunther.output_shapes import SHAPES, OutputUnit, markdown_lines
 from gunther.output_types import OutputLength
 from gunther.schemas import ConversationCitationOut
 from gunther.skill_checks import (
@@ -228,16 +229,24 @@ def document_spans(content: str, kind: str) -> tuple[int, list[tuple[int, int]]]
 
 
 def split_document(content: str, kind: str) -> tuple[str, list[str]]:
-    """A document as its preamble and its sections, each trimmed with LF newlines."""
-    return SHAPES[kind].split(content)
+    """A document as its preamble and the stored Markdown of each section."""
+    preamble, units = SHAPES[kind].split(content)
+    return preamble, [unit.text for unit in units]
+
+
+def document_units(content: str, kind: str) -> list[OutputUnit]:
+    return SHAPES[kind].split(content)[1]
 
 
 def join_document(preamble: str, sections: Sequence[str], kind: str) -> str:
     return SHAPES[kind].join(preamble, sections)
 
 
-def section_hash(text: str) -> str:
-    normal = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+def section_hash(section: str | OutputUnit) -> str:
+    unit = section if isinstance(section, OutputUnit) else OutputUnit(section)
+    normal = unit.text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if unit.ancestors:
+        normal = json.dumps((*unit.ancestors, normal), ensure_ascii=False)
     return hashlib.sha256(normal.encode("utf-8")).hexdigest()
 
 
@@ -369,7 +378,11 @@ def unmarked(text: str, spec: Spec) -> str:
     return layout_of(text)[1] if spec.kind == "slides" else text
 
 
-def heading_of(section: str) -> str:
+def heading_of(section: str | OutputUnit) -> str:
+    if isinstance(section, OutputUnit):
+        if section.label is not None:
+            return section.label[:160]
+        section = section.text
     for line in layout_of(section)[1].splitlines():
         line = line.strip()
         if line:
@@ -615,7 +628,9 @@ class Draft:
         return coverage_of(self.verdicts, section_hash(self.text))
 
 
-def numbered_check(draft: Draft, text: str, numbers: Mapping[int, int]) -> dict[str, Any]:
+def numbered_check(
+    draft: Draft, text: str | OutputUnit, numbers: Mapping[int, int],
+) -> dict[str, Any]:
     state = map_refs(draft.verdicts or {}, numbers, lambda t: renumber_citations(t, numbers))
     return {"hash": section_hash(text), "verdicts": state}
 

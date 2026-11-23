@@ -377,7 +377,7 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
         spec, item = run.spec, run.output_type
         shape = SHAPES[item.shape]
         units = f"{shape.unit_label}s"
-        # Short and standard are smaller practice sets within the shape's hard limit.
+        # Short and standard use a fraction of the shape's part limit.
         divisor = {"short": 4, "standard": 2, "long": 1}[spec.length or "standard"]
         target = max(1, item.part_limit // divisor)
         header = shape.preamble(item.id)
@@ -397,7 +397,7 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
 
         def problems(text: str) -> list[str]:
             found = item.direct_problems(text)
-            if not _matches_plan(run, shape.split(text)[1]):
+            if not _matches_plan(run, split_document(text, spec.kind)[1]):
                 found.append("Keep the approved headings in order.")
             return found
 
@@ -431,12 +431,14 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
             state["direct_text"] = text
             self._stage(publish, "format", label, "done")
 
-        preamble, parts = shape.split(text)
+        preamble, parts = split_document(text, spec.kind)
         with checkpoint_stage(emit, state, None, "verify") as publish:
             drafts = self.verify(model, run, parts, pool, publish, material)
         label = f"Assembling the {shape.name}"
         self._stage(emit, "assemble", label, "running")
-        outline = list(run.plan) or [Planned(heading_of(draft.text)) for draft in drafts]
+        outline = list(run.plan) or [
+            Planned(heading_of(unit)) for unit in shape.units([draft.text for draft in drafts])
+        ]
         title = spec.title or (run.memo.title if run.memo else "") or fallback_title or item.label
         built = assemble_output(spec, title, preamble, drafts, pool, outline, model, effort)
         self._stage(emit, "assemble", label, "done", f"{len(drafts)} {units}")

@@ -21,8 +21,8 @@
 .outputs-section .answer-markdown h3 { font-size: 1.08em; font-weight: 600; }
 .outputs-section .answer-markdown p + p { margin-top: 0.9em; }
 /* A number is a quiet superscript, as in Ask, not a boxed button. */
-.outputs-section .answer-markdown sup button { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
-.outputs-section .answer-markdown sup button:hover { text-decoration: underline; }
+:is(.outputs-section, .mind-map-node, .mind-map-outline) .answer-markdown sup button { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+:is(.outputs-section, .mind-map-node, .mind-map-outline) .answer-markdown sup button:hover { text-decoration: underline; }
 .outputs-status { margin-top: 8px; display: grid; gap: 6px; font-size: var(--gx-text-xs); }
 .outputs-flag { width: fit-content; padding: 2px 8px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-pill); color: var(--gx-muted); font-weight: 560; }
 .outputs-issues { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
@@ -56,6 +56,24 @@
 .cards-list { margin: 0; padding-inline-start: 1.5em; }
 .cards-list-item { padding: 12px 0; border-bottom: 1px solid var(--gx-line); }
 .cards-list-item > .answer-markdown { margin-bottom: 5px; }
+
+.mind-map-scroll { max-block-size: min(65vh, 650px); overflow: auto; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-lg); background: var(--gx-surface-2); }
+.mind-map-canvas { position: relative; }
+.mind-map-links { position: absolute; inset: 0; fill: none; stroke: var(--gx-line-3); pointer-events: none; }
+.mind-map-node { position: absolute; transform: translateY(-50%); box-sizing: border-box; min-height: 64px; padding: 9px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-md); background: var(--gx-surface); }
+.mind-map-node:focus-within, .mind-map-node:hover { border-color: var(--gx-line-3); }
+.mind-map-node:has(.mind-map-toggle) { cursor: pointer; }
+.mind-map-node-label { display: flex; align-items: start; gap: 5px; }
+.mind-map-node-label .answer-markdown { min-width: 0; overflow-wrap: anywhere; font-size: var(--gx-text-sm); }
+.mind-map-node-label .answer-markdown p { margin: 0; }
+.mind-map-node .answer-markdown a { color: inherit; }
+.mind-map-toggle.gx-icon-button { width: 23px; height: 23px; flex: none; }
+.mind-map-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 4px; }
+.mind-map-ask { opacity: 0; pointer-events: none; }
+.mind-map-node:is(:hover, :focus-within) .mind-map-ask { opacity: 1; pointer-events: auto; }
+.mind-map-node .outputs-issues li { border-left-color: var(--gx-line-3); }
+.mind-map-outline ul { margin: 0; padding-inline-start: 1.4em; }
+.mind-map-outline .answer-markdown p { margin: 0.2em 0; }
 
 /* Slides: a deck in the page (reveal.js), thumbnails, and the presenter's notes. */
 .outputs-slides { display: grid; gap: 14px; }
@@ -231,6 +249,7 @@
   .outputs-print-report .answer-markdown a { color: inherit; text-decoration: none; }
   .outputs-print-report .cards-list-item { break-inside: avoid; }
   .outputs-print-report .cards-list .answer-markdown h2 { margin: 0 0 6pt; }
+  .outputs-print-report .mind-map-outline li > .answer-markdown { break-inside: avoid; }
 
   .outputs-print-sources { margin-top: 22pt; padding-top: 10pt; border-top: 0.5pt solid #b8b7b1; font-family: var(--gx-font-sans); font-size: 8.5pt; line-height: 1.45; }
   .outputs-print-sources h2 { margin: 0 0 6pt; font-size: 10.5pt; font-weight: 600; }

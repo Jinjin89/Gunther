@@ -16,7 +16,7 @@ from gunther.evidence import Evidence
 from gunther.llm import ModelError
 from gunther.llm import unfence as _unfence
 from gunther.output_checks import check_part, output_claim_inventory
-from gunther.output_shapes import lend_refs
+from gunther.output_shapes import OutputUnit, lend_refs
 from gunther.output_types import SHAPES
 from gunther.outputs import Draft, Events, Issue, Pool, _marked, split_document
 from gunther.skill_checks import CHARTS
@@ -136,16 +136,19 @@ class StudioVerification:
 
         rest = "\n".join(parts[1:])
 
-        def check(text: str) -> Draft:
+        def check(unit: OutputUnit) -> Draft:
+            text = unit.text
             if run.spec.kind == "report":
                 text = fmt.cite_exhibit_rows(fmt.cite_captions(fmt.table_separators(text)))
             text, _ = check_citations(text, set(by_ref))
+            claim = replace(unit, text=text) if unit.ancestors else text
             return Draft(text, self._claims(
-                model, text, by_ref, rest, material=material, kind=shape.id,
+                model, claim, by_ref, rest, material=material, kind=shape.id,
             ))
 
-        def check_and_fix(text: str) -> Draft:
-            draft = check(text)
+        def check_and_fix(unit: OutputUnit) -> Draft:
+            text = unit.text
+            draft = check(unit)
             if not any(issue.verdict in FIXABLE for issue in draft.issues or []):
                 return draft
             title = fmt.MARK.match(text) and fmt.parse_slide(text).layout == "title"
@@ -160,16 +163,27 @@ class StudioVerification:
                     return draft
                 if shape.unit_problem and shape.unit_problem(repaired[0]):
                     return draft
-            return check(fixed[0])
+                if shape.node:
+                    if shape.node(repaired[0]) is None:
+                        return draft
+                    fixed = shape.at_depth(text, repaired)
+            return check(replace(unit, text=fixed[0]))
 
+        original = shape.units(parts)
         drafts = warm_map(
             check_and_fix,
-            parts,
+            original,
             WORKERS,
             lambda done, total: self._progress(
                 emit, "verify", label, f"{done} of {total} {units} checked"
             ),
         )
+        if shape.node:
+            # An ancestor repaired above can change the claim made by an unchanged child.
+            final = shape.units([draft.text for draft in drafts])
+            for at, unit in enumerate(final):
+                if unit.ancestors != original[at].ancestors:
+                    drafts[at] = check(unit)
         left = sum(
             1
             for d in drafts
@@ -188,7 +202,7 @@ class StudioVerification:
     def _claims(
         self,
         model,
-        text: str,
+        text: str | OutputUnit,
         by_ref: dict[int, Evidence],
         rest: str = "",
         *,
@@ -204,7 +218,7 @@ class StudioVerification:
         follow from cited facts are the author's judgement, not findings; what is flagged is a
         cited claim its passages do not state, and a specific fact (a number) with no source."""
 
-        body = _marked(text).body
+        body = _marked(text.text if isinstance(text, OutputUnit) else text).body
         projected, active = output_claim_inventory(
             kind, text, by_ref, prior, rest=rest, scientific=bool(self.scientific_context),
         )

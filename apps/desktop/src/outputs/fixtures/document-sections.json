@@ -28,5 +28,23 @@
       "## (quiz) Which branch grows when T is removed?\n- [ ] Red-cell\n- [x] White-cell\nWhy: removing T shifted cells toward the white-cell lineage [1]."
     ],
     "joined": "<!-- cards: flashcards; design: v1 -->\n\n## What does factor T do in progenitors?\nIt steers them toward the red-cell branch [1].\n\n## (quiz) Which branch grows when T is removed?\n- [ ] Red-cell\n- [x] White-cell\nWhy: removing T shifted cells toward the white-cell lineage [1]."
+  },
+  {
+    "name": "mind map from the notebook plan",
+    "shape": "map",
+    "content": "<!-- map: mind_map; design: v1 -->\n- Blood cell development\n  - Factor T\n    - Steers progenitors toward the red-cell branch [1]",
+    "preamble": "<!-- map: mind_map; design: v1 -->",
+    "sections": ["- Blood cell development", "  - Factor T", "    - Steers progenitors toward the red-cell branch [1]"],
+    "joined": "<!-- map: mind_map; design: v1 -->\n- Blood cell development\n  - Factor T\n    - Steers progenitors toward the red-cell branch [1]",
+    "paths": [["Blood cell development"], ["Blood cell development", "Factor T"], ["Blood cell development", "Factor T", "Steers progenitors toward the red-cell branch"]]
+  },
+  {
+    "name": "mind map siblings with Windows newlines and blank lines",
+    "shape": "map",
+    "content": "<!-- map: mind_map; design: v1 -->\r\n\r\n- Trial [1]\r\n  - Setup\r\n    - Timing [2] \r\n\r\n  - Results\r\n    - Timing [2]\r\n",
+    "preamble": "<!-- map: mind_map; design: v1 -->",
+    "sections": ["- Trial [1]", "  - Setup", "    - Timing [2]", "  - Results", "    - Timing [2]"],
+    "joined": "<!-- map: mind_map; design: v1 -->\n- Trial [1]\n  - Setup\n    - Timing [2]\n  - Results\n    - Timing [2]",
+    "paths": [["Trial"], ["Trial", "Setup"], ["Trial", "Setup", "Timing"], ["Trial", "Results"], ["Trial", "Results", "Timing"]]
   }
 ]

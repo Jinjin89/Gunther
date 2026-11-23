@@ -1,5 +1,5 @@
 import { artifactAudiences, type BuildTurnInput, type OutputScope, type OutputType } from "@gunther/contracts";
-import { BookOpen, CalendarDays, CircleHelp, ClipboardList, FileText, Layers, ListChecks, LoaderCircle, Pencil, Presentation, Trash2, X } from "lucide-react";
+import { BookOpen, CalendarDays, CircleHelp, ClipboardList, FileText, Layers, ListChecks, LoaderCircle, Network, Pencil, Presentation, Trash2, X } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { openSettings } from "../components/SettingsLayout";
 import { useModelMenu } from "../models/askModel";
@@ -8,7 +8,7 @@ import { artifactRequestId } from "./artifactConversations";
 import { outputActivity } from "./liveOutput";
 import { latestVersions, type OutputTarget, type OutputTrashTarget, type useStudio } from "./useStudio";
 
-const icons = { BookOpen, CalendarDays, CircleHelp, ClipboardList, FileText, Layers, ListChecks, Presentation };
+const icons = { BookOpen, CalendarDays, CircleHelp, ClipboardList, FileText, Layers, ListChecks, Network, Presentation };
 type Card = {
   id: string; title: string; label: string; at: string; target: OutputTarget; status: "saved" | "running" | "failed";
   detail: string; retry?: BuildTurnInput | undefined;

@@ -60,6 +60,10 @@ const flashcards: OutputType = {
   capabilities: { unitLabel: "card", outline: false, design: false, exports: ["markdown", "pdf"] },
 };
 const quiz: OutputType = { ...flashcards, id: "quiz", label: "Quiz", icon: "ListChecks" };
+const mindMap: OutputType = {
+  ...flashcards, id: "mind_map", label: "Mind map", icon: "Network", shape: "map", partLimit: 60,
+  capabilities: { ...flashcards.capabilities, unitLabel: "node" },
+};
 const readyModels: ModelMenu = {
   models: [{ ref: "local/model", provider: "Local", label: "Model", display: "Local Model", vision: false, levels: [] }],
   default: { model: "local/model", effort: "high" }, efforts: [],
@@ -162,6 +166,7 @@ it("renders each catalog icon on its Studio tile", async () => {
     [slides, "lucide-presentation"],
     [flashcards, "lucide-layers"],
     [quiz, "lucide-list-checks"],
+    [mindMap, "lucide-network"],
   ];
   vi.mocked(knowledgeApi.outputTypes).mockResolvedValue(catalog.map(([type]) => type));
   setup();
@@ -200,6 +205,39 @@ function mockAnswers() {
     return { session, userMessage: question, assistantMessage: { ...question, id: "answer", role: "assistant", content: "Here are the findings." } };
   });
 }
+
+it("asks about a map path in Chat using the current source selection", async () => {
+  const user = userEvent.setup();
+  const send = mockAnswers();
+  vi.mocked(knowledgeApi.outputTypes).mockResolvedValue([report, mindMap]);
+  const saved = version({
+    kind: "map", format: "map", outputType: "Mind map", style: "mind_map", title: "Field map",
+    content: "<!-- map: mind_map; design: v1 -->\n- Trial\n  - Weather\n    - Midday observations [1]",
+    scope: selected("s1"),
+    citations: [{
+      id: "map-passage", sourceId: "s1", sourceTitle: "Lab notes", assertionId: null,
+      quote: "Observations were recorded at noon.", locator: "Page 3", status: "verified", confidence: 1,
+    }],
+  });
+  setup({ artifacts: [saved] });
+  resizeWindow(1199);
+  await user.click(await screen.findByRole("checkbox", { name: "All sources" }));
+  await user.click(screen.getByRole("checkbox", { name: "Select Field notes" }));
+  await user.click(await screen.findByRole("button", { name: /Field map Mind map Version 1/ }));
+  const reader = within(await screen.findByRole("region", { name: "Mind map" }));
+  expect(screen.getByRole("button", { name: "Expand Sources" })).toBeVisible();
+  await user.click(reader.getByRole("button", { name: "Inspect citation 1" }));
+  const evidence = within(screen.getByRole("complementary", { name: "Evidence" }));
+  expect(evidence.getByText("Observations were recorded at noon.")).toBeVisible();
+  expect(send).not.toHaveBeenCalled();
+  await user.click(evidence.getByRole("button", { name: "Close evidence" }));
+  await user.click(reader.getByRole("button", { name: "Ask about Midday observations" }));
+  expect(screen.queryByRole("region", { name: "Mind map" })).not.toBeInTheDocument();
+  expect(await screen.findByRole("textbox", { name: "Message Gunther" })).toBeVisible();
+  expect(send).toHaveBeenCalledExactlyOnceWith(originalSession.id, expect.objectContaining({
+    content: "Tell me about Trial › Weather › Midday observations", selectedSourceIds: ["s2"], focusChapterId: null,
+  }), expect.any(Function), expect.any(AbortSignal));
+});
 
 it("shows the overview and sends a suggested question with the current scope", async () => {
   const user = userEvent.setup();

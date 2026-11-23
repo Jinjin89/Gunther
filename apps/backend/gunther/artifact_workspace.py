@@ -24,7 +24,7 @@ import json
 import logging
 import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
@@ -41,6 +41,7 @@ from gunther.checks import (
 )
 from gunther.citations import ANY_CITATION, sentence_spans
 from gunther.evidence import Evidence
+from gunther.output_shapes import OutputUnit
 from gunther.output_types import (
     DECK_USES,
     OUTPUT_TYPES,
@@ -53,6 +54,7 @@ from gunther.outputs import (
     Pool,
     Spec,
     _marked,
+    document_units,
     heading_of,
     layout_of,
     section_hash,
@@ -178,7 +180,7 @@ class PartRec(BaseModel):
     def coverage(self) -> dict | None:
         if self.verdicts is None:
             return None
-        return coverage_of(self.verdicts, section_hash(self.text))
+        return coverage_of(self.verdicts, self.checked or section_hash(self.text))
 
 
 class Work(BaseModel):
@@ -710,12 +712,19 @@ def outline_state(work: Work) -> StepState:
     return StepState(state="ok")
 
 
+def work_units(work: Work) -> dict[str, OutputUnit]:
+    ids = [item.id for item in work.outline if item.id in work.parts]
+    units = SHAPES[work.spec.kind].units([work.parts[identity].text for identity in ids])
+    return dict(zip(ids, units, strict=True))
+
+
 def status(work: Work, brief: ConversationBrief) -> list[PartStatus]:
     """Each part, in outline order: not written, out of date (its item, cards, the audience,
     the kind or the use are not what it was written from), not checked (its check is of other
     text, or there is none), or ok."""
 
     found: list[PartStatus] = []
+    units = work_units(work)
     for position, item in enumerate(work.outline, start=1):
         part = work.parts.get(item.id)
         state: PartState = "ok"
@@ -727,7 +736,7 @@ def status(work: Work, brief: ConversationBrief) -> list[PartStatus]:
             if part.inputs != now:
                 state, why = "out_of_date", _what_changed(part.inputs, now, PART_FROM)
             elif (
-                part.verdicts is None or part.checked != section_hash(part.text)
+                part.verdicts is None or part.checked != section_hash(units[item.id])
                 or not complete(part.verdicts)
             ):
                 state = "not_checked"
@@ -1128,14 +1137,16 @@ def _layout_of(kind: str, position: int, section: str, planned: str | None = Non
 
 
 def _take_check(
-    part: PartRec, section: str, record: Mapping[str, Any] | None, version_map: Sequence[int]
+    part: PartRec, section: str | OutputUnit, record: Mapping[str, Any] | None,
+    version_map: Sequence[int],
 ) -> bool:
     """Merge verdicts for a version's unchanged section in the workspace's citation numbers."""
     if not record or record.get("hash") != section_hash(section):
         return False
-    digest = section_hash(part.text)
+    unit = section if isinstance(section, OutputUnit) else OutputUnit(section)
+    digest = section_hash(replace(unit, text=part.text))
     numbers = dict(enumerate(version_map, 1))
-    saved = map_refs(read_verdicts(record, _marked(section).body), numbers,
+    saved = map_refs(read_verdicts(record, _marked(unit.text).body), numbers,
                      lambda text: pool_numbered(text, version_map))
     prior = (part.verdicts or {}) if part.checked == digest else {}
     active = prior | saved
@@ -1193,12 +1204,15 @@ def _spec_of_version(version: ArtifactOut) -> WorkSpec:
 
 
 def _section_item(
-    kind: str, position: int, section: str, text: str, identity: str, plan: OutlineItem | None
+    kind: str, position: int, section: str | OutputUnit, text: str,
+    identity: str, plan: OutlineItem | None,
 ) -> ItemRec:
+    raw = section.text if isinstance(section, OutputUnit) else section
     return ItemRec(
         id=identity, heading=heading_of(section) or (plan.heading if plan else ""),
         goal=plan.goal if plan else "",
-        layout=_layout_of(kind, position, section), refs=_cited(text),
+        layout=_layout_of(kind, position, raw),
+        refs=_cited(text),
     )
 
 
@@ -1265,7 +1279,7 @@ def import_work(
     if any(work.key == version.lineage_id for work in workspace.works):
         raise ValueError(f"The workspace already has a work for {version.lineage_id}.")
     kind = version.kind
-    sections = split_document(version.content, kind)[1]
+    sections = document_units(version.content, kind)
     pool = pool_from(workspace)
     version_map = _adopt(pool, version.citations)
     work = Work(
@@ -1290,8 +1304,8 @@ def import_work(
         if not identity:
             identity = f"p{work.next_item}"
             work.next_item += 1
-        text, dropped = _translate(section, version_map)
-        marked = _marked(section) if kind == "slides" else None
+        text, dropped = _translate(section.text, version_map)
+        marked = _marked(section.text) if kind == "slides" else None
         design = plan.design.model_dump(exclude_none=True) if plan and plan.design else None
         if marked and marked.composition != "standard":
             design = {**(design or {}), "composition": marked.composition}
@@ -1302,7 +1316,7 @@ def import_work(
             message=plan.message if plan else "",
             question=plan.question if plan else "",
             requires=list(plan.requires) if plan else [],
-            layout=_layout_of(kind, position, section, plan.layout if plan else None),
+            layout=_layout_of(kind, position, section.text, plan.layout if plan else None),
             link=plan.link if plan else "",
             design=design,
             layout_locked=plan.layout_locked if plan else False,
@@ -1329,7 +1343,9 @@ def import_work(
     return work
 
 
-def _match(work: Work, sections: Sequence[str], texts: Sequence[str]) -> list[ItemRec | None]:
+def _match(
+    work: Work, sections: Sequence[OutputUnit], texts: Sequence[str],
+) -> list[ItemRec | None]:
     """The item each section of a changed document belongs to: the one whose part has exactly
     this text; else the one with the same heading; else, when there are as many sections as
     items, the one in the same place. A section that matches none is new, and an item that no
@@ -1338,6 +1354,7 @@ def _match(work: Work, sections: Sequence[str], texts: Sequence[str]) -> list[It
 
     found: list[ItemRec | None] = [None] * len(sections)
     free = list(work.outline)
+    units = work_units(work)
 
     def take(wanted: Callable[[int, ItemRec], bool]) -> None:
         for position in range(len(sections)):
@@ -1349,7 +1366,8 @@ def _match(work: Work, sections: Sequence[str], texts: Sequence[str]) -> list[It
                 free.remove(item)
 
     take(
-        lambda position, item: item.id in work.parts and work.parts[item.id].text == texts[position]
+        lambda position, item: item.id in units and units[item.id].text == texts[position]
+        and units[item.id].ancestors == sections[position].ancestors
     )
     take(lambda position, item: _fold(item.heading) == _fold(heading_of(sections[position])))
     if len(sections) == len(work.outline):
@@ -1362,12 +1380,13 @@ def _refresh_checks(work: Work, head: ArtifactOut, checks: Mapping[str, Mapping[
     pressed Check again): a part whose text is a section of the head takes its findings."""
 
     by_text = {
-        pool_numbered(section, work.version_map): section
-        for section in split_document(head.content, work.spec.kind)[1]
+        section_hash(replace(unit, text=pool_numbered(unit.text, work.version_map))): unit
+        for unit in document_units(head.content, work.spec.kind)
     }
     changed = False
-    for part in work.parts.values():
-        section = by_text.get(part.text)
+    for identity, unit in work_units(work).items():
+        part = work.parts[identity]
+        section = by_text.get(section_hash(unit))
         if section is not None and _take_check(
             part, section, checks.get(section_hash(section)), work.version_map
         ):
@@ -1406,9 +1425,9 @@ def sync(
     pool = pool_from(workspace)
     version_map = _adopt(pool, head.citations)
     store_pool(workspace, pool)
-    sections = split_document(head.content, kind)[1]
+    sections = document_units(head.content, kind)
     reserved = work.parts.keys()
-    translated = [_translate(section, version_map) for section in sections]
+    translated = [_translate(section.text, version_map) for section in sections]
     texts = [text for text, _ in translated]
     matched = _match(work, sections, texts)
     items: list[ItemRec] = []
@@ -1433,7 +1452,7 @@ def sync(
                 item = item.model_copy(
                     update={
                         "heading": heading_of(section) or item.heading,
-                        "layout": _layout_of(kind, position, section, item.layout),
+                        "layout": _layout_of(kind, position, section.text, item.layout),
                     }
                 )
             part = PartRec(text=text, inputs="")

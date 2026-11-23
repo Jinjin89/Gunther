@@ -90,13 +90,14 @@ def assemble_output(
     valid = set(by_ref)
     final = [number_output_part(check_citations(draft.text, valid)[0], numbers) for draft in drafts]
     content = join_document(preamble, final, spec.kind)
-    if SHAPES[spec.kind].pipeline == "direct":
+    shape = SHAPES[spec.kind]
+    if shape.pipeline == "direct":
         problems = output_type_for(spec.kind, spec.output_type).direct_problems(content)
         if problems:
             raise ModelError("\n".join(problems))
     checks = [
         numbered_check(draft, text, numbers)
-        for text, draft in zip(final, drafts, strict=True)
+        for text, draft in zip(shape.units(final), drafts, strict=True)
         if draft.issues is not None
     ]
     return BuiltOutput(

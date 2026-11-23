@@ -5,6 +5,7 @@
  * - Report sections and cards start at lines beginning with "## ". What comes before the first
  *   one is the preamble.
  * - A deck's slides are the parts between lines that are only "---". Empty ones are left out.
+ * - A mind map preserves the indentation of each bullet line and the labels of its ancestors.
  * - A "## " or "---" inside a code fence (a line starting with ``` or ~~~) does not count.
  * - A section's hash is the sha256 of its text with "\n" line ends, trimmed.
  * - A slide's speaker notes start at a line beginning with "Note:".
@@ -14,6 +15,7 @@
  *   covers it. A slide without one (an older deck) takes its outline's layout (see slideLayouts).
  */
 import type { Artifact, OutputKind, OutputSection } from "@gunther/contracts";
+import { withoutMarks } from "../components/evidence/citationMarks";
 import { decodeScene, visibleMarkdown } from "./slides/scene";
 
 const FENCE = /^\s*(```|~~~)/;
@@ -75,16 +77,42 @@ function lines(content: string): Array<{ line: string; fenced: boolean }> {
   });
 }
 
-const headed = { startsUnit: (line: string) => line.startsWith("## "), keepsPreamble: true, joiner: "\n\n" };
-const sectionFormats = {
+const MAP_NODE = /^((?:  )*)- +(\S.*)$/;
+
+function parseNode(text: string) {
+  const match = MAP_NODE.exec(text);
+  if (!match?.[2]) return null;
+  const label = withoutMarks(match[2]).trim().replace(/\s+/g, " ").replace(/\s+([,.;:!?，。；：！？])/g, "$1");
+  return label ? { depth: match[1]!.length / 2, label, markdown: match[2] } : null;
+}
+
+type SectionFormat = {
+  startsUnit: (line: string) => boolean;
+  keepsPreamble: boolean;
+  joiner: string;
+  eachLine?: boolean;
+  node?: typeof parseNode;
+};
+const headed: SectionFormat = { startsUnit: (line) => line.startsWith("## "), keepsPreamble: true, joiner: "\n\n" };
+const sectionFormats: Record<OutputKind, SectionFormat> = {
   report: headed,
   slides: { startsUnit: (line: string) => line.trim() === "---", keepsPreamble: false, joiner: "\n\n---\n\n" },
   cards: headed,
-} satisfies Record<OutputKind, typeof headed>;
+  map: { startsUnit: (line) => line.trimStart().startsWith("-"), keepsPreamble: true, joiner: "\n", eachLine: true, node: parseNode },
+};
 
 /** A document as its preamble and its sections, each trimmed. */
 export function splitDocument(content: string, kind: OutputKind): { preamble: string; sections: string[] } {
-  const { startsUnit, keepsPreamble } = sectionFormats[kind];
+  const { startsUnit, keepsPreamble, eachLine } = sectionFormats[kind];
+  if (eachLine) {
+    const rows = content.replace(/\r\n?/g, "\n").split("\n");
+    const first = rows.findIndex(startsUnit);
+    const start = first === -1 ? rows.length : first;
+    return {
+      preamble: rows.slice(0, start).join("\n").trim(),
+      sections: rows.slice(start).map((line) => line.trimEnd()).filter(Boolean),
+    };
+  }
   const preamble: string[] = [];
   const parts: string[][] = [[]];
   for (const { line, fenced } of lines(content)) {
@@ -100,6 +128,23 @@ export function splitDocument(content: string, kind: OutputKind): { preamble: st
     preamble: preamble.join("\n").trim(),
     sections: parts.slice(keepsPreamble ? 1 : 0).map((part) => part.join("\n").trim()).filter(Boolean),
   };
+}
+
+type SectionNode = { depth: number; label: string; markdown: string; ancestors: string[]; parents: number[] };
+type DocumentUnit = { text: string; node?: SectionNode };
+
+export function documentUnits(content: string, kind: OutputKind): DocumentUnit[] {
+  const parse = sectionFormats[kind].node;
+  const path: { label: string; position: number }[] = [];
+  return splitDocument(content, kind).sections.map((text, position) => {
+    const node = parse?.(text);
+    if (!node || node.depth > path.length) return { text };
+    path.length = node.depth;
+    const ancestors = path.map((parent) => parent.label);
+    const parents = path.map((parent) => parent.position);
+    path.push({ label: node.label, position });
+    return { text, node: { ...node, ancestors, parents } };
+  });
 }
 
 /** The pieces put back together as the service writes them. */
@@ -361,15 +406,19 @@ export function slideLayouts(artifact: Pick<Artifact, "content" | "outline">): A
  * keeps what the Checker found in it; one that was typed is "not re-checked" until it is.
  */
 export function withDraft(artifact: Artifact, draft: string): Artifact {
-  const before = splitDocument(artifact.content, artifact.kind).sections;
+  const keyOf = (unit: DocumentUnit) => unit.node?.ancestors.length
+    ? JSON.stringify([...unit.node.ancestors, normalizeSection(unit.text)]) : normalizeSection(unit.text);
+  const before = documentUnits(artifact.content, artifact.kind);
   const known = new Map<string, OutputSection>();
-  before.forEach((text, index) => {
+  before.forEach((unit, index) => {
     const info = artifact.sections[index];
-    if (info && !known.has(normalizeSection(text))) known.set(normalizeSection(text), info);
+    const key = keyOf(unit);
+    if (info && !known.has(key)) known.set(key, info);
   });
-  const sections = splitDocument(draft, artifact.kind).sections.map((text, index): OutputSection => {
-    const info = known.get(normalizeSection(text));
-    return info ? { ...info, index, heading: headingOf(text) } : { index, heading: headingOf(text), checked: false, issues: [] };
+  const sections = documentUnits(draft, artifact.kind).map((unit, index): OutputSection => {
+    const info = known.get(keyOf(unit));
+    const heading = unit.node?.label ?? headingOf(unit.text);
+    return info ? { ...info, index, heading } : { index, heading, checked: false, issues: [] };
   });
   // One id for every keystroke, so a deck is not rebuilt each time.
   return { ...artifact, id: `${artifact.id}:draft`, content: draft, sections };

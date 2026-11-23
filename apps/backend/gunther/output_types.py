@@ -38,13 +38,11 @@ class OutputType:
 
     def direct_problems(self, content: str) -> list[str]:
         shape = SHAPES[self.shape]
-        _, parts = shape.split(content)
         header = shape.preamble(self.id)
         format_options = {"header": header} if header else {}
-        problems = list(shape.format_check(content, **format_options))
-        if error := self.part_limit_error(len(parts)):
-            problems.append(error)
-        return problems
+        return shape.format_check(
+            content, part_limit=(self.label, self.part_limit), **format_options,
+        )
 
     @property
     def legacy_styles(self) -> tuple[str, ...]:
@@ -53,11 +51,7 @@ class OutputType:
         )
 
     def part_limit_error(self, count: int) -> str | None:
-        limit = self.part_limit
-        if count > limit:
-            unit = SHAPES[self.shape].unit_label
-            return f"The limit for {self.label} is {limit} {unit}s."
-        return None
+        return SHAPES[self.shape].limit_error(count, self.label, self.part_limit)
 
 
 OUTPUT_TYPES = {
@@ -101,6 +95,10 @@ OUTPUT_TYPES = {
         OutputType(
             "quiz", "Quiz", "cards", "Test your understanding with explained choices.",
             "ListChecks", write=prompts.QUIZ_RECIPE,
+        ),
+        OutputType(
+            "mind_map", "Mind map", "map", "Explore a topic through connected ideas.",
+            "Network", write=prompts.MIND_MAP_RECIPE,
         ),
     )
 }

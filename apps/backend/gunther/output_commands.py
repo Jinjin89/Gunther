@@ -26,6 +26,7 @@ from gunther.output_checks import check_saved_part
 from gunther.output_types import SHAPES, output_type_for
 from gunther.outputs import (
     OutputLimits,
+    document_units,
     join_document,
     section_hash,
     split_document,
@@ -304,7 +305,7 @@ class OutputCommands:
                     raise ValueError("\n".join(problems))
             records = latest_check_records(session, parent)
             hashes = dict.fromkeys(
-                section_hash(text) for text in split_document(payload.content, parent.kind)[1]
+                section_hash(unit) for unit in document_units(payload.content, parent.kind)
             )
             checks = [records[digest] for digest in hashes if digest in records]
             fields = {
@@ -353,7 +354,7 @@ class OutputCommands:
             records = latest_check_records(session, artifact)
             known = {key: row["verdicts"] for key, row in records.items()}
             artifact_kind = artifact.kind
-            sections = split_document(artifact.content, artifact.kind)[1]
+            sections = document_units(artifact.content, artifact.kind)
             if all(
                 (key := section_hash(text)) in known and complete(known[key]) for text in sections
             ):

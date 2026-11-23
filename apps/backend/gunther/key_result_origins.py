@@ -30,7 +30,7 @@ from gunther.models import (
     KnowledgeUnitRevision,
     SessionMessage,
 )
-from gunther.outputs import section_hash, split_document
+from gunther.outputs import document_units, section_hash
 from gunther.schemas import ConversationCitationOut
 
 
@@ -105,7 +105,7 @@ def _answer_claims(message: SessionMessage, text: str) -> list[Claim]:
 def _output_claims(
     artifact: Artifact, records: dict[str, dict],
 ) -> list[Claim]:
-    hashes = {section_hash(text) for text in split_document(artifact.content, artifact.kind)[1]}
+    hashes = {section_hash(unit) for unit in document_units(artifact.content, artifact.kind)}
     citations = _citations(artifact.citations_json)
     return _claims(
         (

@@ -1,6 +1,6 @@
 # One library screen, Studio types and key results
 
-Status: agreed and final (2026-11-23). Phases 1–4 are built; the rest is unbuilt. Read [AGENTS.md](../AGENTS.md) first. When a phase ships, move
+Status: agreed and final (2026-11-23). Phases 1–5 are built; the rest is unbuilt. Read [AGENTS.md](../AGENTS.md) first. When a phase ships, move
 what it built into the shipped docs ([Outputs](OUTPUTS.md), [Ask](ASK.md), [Library](LIBRARY.md),
 [Studio format](STUDIO_FORMAT.md)) and delete that phase from this file.
 
@@ -41,10 +41,9 @@ These follow from AGENTS.md and are not open questions:
 The existing shapes and types, build options and saved-version rules are in [Outputs](OUTPUTS.md).
 Extend the type options from `GET /api/output-types` with `voices` when audio ships.
 
-- Mind maps and audio overviews use Studio's direct pipeline. Each shape adds a `check_text`
-  projection into checkable claims and extends the shared split and join fixtures. The catalog
-  supplies outline, design and export capabilities to the readers. Mind maps allow 60 nodes and
-  audio overviews allow 120 lines. [Outputs](OUTPUTS.md)
+- Audio overviews use Studio's direct pipeline with up to 120 lines. The audio shape adds a
+  `check_text` projection, extends the shared split and join fixtures, and declares its reader
+  capabilities in the catalog. [Outputs](OUTPUTS.md)
 
 ### 3.2 One way to build and refine
 
@@ -104,18 +103,12 @@ The shared selection, columns, Chat and current readers are described in
 [Library](LIBRARY.md#sources-chat-and-studio), [Ask](ASK.md) and [Outputs](OUTPUTS.md).
 
 - **Key results (N)** sits below the Sources tree in Phase 3a. Each row shows source chips and opens `EvidencePanel` with passages and origin such as “from your question on 20 Nov”. Mark its evidence triggers with `data-opens-evidence`. The row actions include Remove.
-- **Output reader** chooses the view by shape. The map reader also collapses Sources below 1200 px.
+- **Output reader** chooses the view by shape.
 
 ## 5. New shapes
 
 Each shape adds its grammar to [STUDIO_FORMAT.md](STUDIO_FORMAT.md), a `ShapeSpec` row, a reader, a
 `check_text` projection and exports.
-
-**Mind map (phase 5).** `pipeline = "direct"`, `unit_label = "node"`, exports = Markdown + PDF print.
-
-- Grammar: a nested Markdown list (`- Root` / `  - Branch [1]` / `    - Leaf [2]`), one node per line with optional citations.
-- `split` yields each node with its ancestor path; `check_text` projects `"<Root › Branch › Node>"` so leaf claims keep parent context when checked.
-- Reader: `d3-hierarchy` tree drawn with Gunther's monochrome node cards. Clicking a branch node (or chevron) expands or collapses it. A hover/focus Ask button on each node switches Middle to Chat and sends `"Tell me about <Root › Branch › Node>"` with the current selection. Clicking `[n]` opens `EvidencePanel`.
 
 **Audio overview (phase 6).** `pipeline = "direct"`, `unit_label = "line"`, exports = Markdown script + WAV audio.
 
@@ -129,17 +122,6 @@ Each shape adds its grammar to [STUDIO_FORMAT.md](STUDIO_FORMAT.md), a `ShapeSpe
 
 The builder may split a phase into batches. Each batch keeps every test green and is reviewed on
 its own. Codex builds; Claude and the checker review each diff.
-
-### Phase 5 — Mind map (`mind_map`)
-**Adds:**
-- `map` `ShapeSpec` (`direct` pipeline, nested-list format check, ancestor-path `check_text`).
-- `mind_map` `OutputType` row with recipe and example; grammar in `STUDIO_FORMAT.md`.
-- Monochrome `d3-hierarchy` reader (click branch to expand/collapse, hover Ask icon sending `"Tell me about <Root › Branch › Node>"`, `[n]` opens `EvidencePanel`) and Markdown + PDF print exports.
-
-**Removes:** Nothing.
-
-**Tests (no live model calls):**
-- Shared split/join fixture tests, fake-gateway build + ancestor-context Checker test, and desktop tests for expand/collapse vs Ask vs citation click.
 
 ### Phase 6 — Audio overview (`audio`)
 **Adds:**

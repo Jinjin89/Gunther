@@ -40,12 +40,13 @@ function scopeLabel(scope: OutputScope) {
 }
 
 export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEmpty,
-  dirty, onNotify, onCite: cite, onOpen, onWideReader, onTrash }: {
+  dirty, onNotify, onCite: cite, onOpen, onWideReader, onAskChat, onTrash }: {
   baseId: string; workspaceId: string; target: OutputTarget; studio: ReturnType<typeof useStudio>;
   scope: OutputScope; scopeEmpty: boolean; dirty: { current: boolean };
   onNotify: (message: string) => void; onCite: (citation: ConversationCitation, index: number) => void;
   onOpen: (target: OutputTarget) => void;
   onWideReader: (wide: boolean) => void;
+  onAskChat: (question: string) => void;
   onTrash: (target: OutputTrashTarget) => void;
 }) {
   const [picked, pickVersion] = useState(target.artifactId ?? null);
@@ -303,7 +304,7 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
         onCancel={() => { if (discardOutputEdit(dirty)) { setEditing(false); pickVersion(null); } }} onCite={cite} onDirtyChange={onDirtyChange} />
         : <>
           {Review && capabilities?.design && <Review artifact={artifact} baseId={baseId} workspaceId={workspaceId} disabled={busy || !latest || !changeable} onReview={() => void reviewSlides()} onFollowUp={refineOutput} />}
-          <Reader artifact={artifact} onCite={cite} onPart={onPart}
+          <Reader artifact={artifact} onCite={cite} onPart={onPart} onAskChat={onAskChat}
             onAsk={allowPoint ? point : undefined} goTo={jump} changed={changed} onNotice={onNotify}
             design={styling ? {
               onAccent: (accent) => void save(withAccent(artifact.content, accent)),

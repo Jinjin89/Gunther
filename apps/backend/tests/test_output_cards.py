@@ -36,7 +36,7 @@ def test_split_and_join_match_the_shared_fixture(case):
 
 
 def test_the_cards_format_accepts_the_plan_and_enforces_the_limit():
-    case = EXAMPLES[-1]
+    case = next(case for case in EXAMPLES if case["shape"] == "cards")
     shape = SHAPES[case["shape"]]
     assert shape.format_check(case["content"]) == []
     assert shape.exports == ("markdown", "pdf")

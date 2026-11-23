@@ -33,6 +33,7 @@ from gunther.artifact_workspace import (
     locate,
     rebind_approach_refs,
     spec_of,
+    work_units,
 )
 from gunther.citations import check_citations
 from gunther.evidence import Evidence, Tool
@@ -55,6 +56,7 @@ from gunther.outputs import (
     _notes_block,
     heading_of,
     section_hash,
+    split_document,
     with_layout,
 )
 from gunther.skill_checks import CHARTS
@@ -227,12 +229,6 @@ class WorkSteps:
             for item in self.work.outline
         ]
 
-    def _draft(self, item: ItemRec) -> Draft:
-        """A part and its check, when the check is of this text."""
-
-        part = self.work.parts[item.id]
-        return Draft(part.text, part.verdicts if part.checked == section_hash(part.text) else None)
-
     def _written(self) -> list[Draft]:
         """Every part, in outline order. Raises ValueError when nothing is planned or one part
         is not written yet."""
@@ -242,7 +238,13 @@ class WorkSteps:
         for position, item in enumerate(self.work.outline, start=1):
             if item.id not in self.work.parts:
                 raise ValueError(f"{self._unit} {position} is not written yet.")
-        return [self._draft(item) for item in self.work.outline]
+        drafts = []
+        for identity, unit in work_units(self.work).items():
+            part = self.work.parts[identity]
+            drafts.append(Draft(
+                unit.text, part.verdicts if part.checked == section_hash(unit) else None,
+            ))
+        return drafts
 
     def _keep_part(self, item: ItemRec, draft: Draft, inputs: str) -> None:
         self.work.parts[item.id] = PartRec(
@@ -541,8 +543,13 @@ class WorkSteps:
             return []
         tool = self._tool()
         spec = self._load()
+        shape = SHAPES[spec.kind]
         wrote: list[str] = []
-        for index in positions:
+        selected = [work.outline[index].id for index in positions]
+        for identity in selected:
+            index = next((n for n, item in enumerate(work.outline) if item.id == identity), None)
+            if index is None or identity in wrote:
+                continue
             item = work.outline[index]
             part = work.parts.get(item.id)
             pool = self._part_pool()
@@ -572,6 +579,13 @@ class WorkSteps:
                 notes=self.notes,
                 approach=work.approach,
             )
+            if shape.node:
+                text, _ = check_citations(text, set(pool.by_ref()))
+                wrote.extend(self._replace_subtree(
+                    spec, index, text, whole=True, keep_inputs=review,
+                ))
+                self.emit({"type": "section", "index": index, "state": "done"})
+                continue
             if part is not None and section_hash(text) == section_hash(without_design(part.text)):
                 self.emit({"type": "section", "index": index, "state": "done"})
                 continue
@@ -599,6 +613,68 @@ class WorkSteps:
             item.refs = list(dict.fromkeys(_cited(draft.text)))
             wrote.append(item.id)
             self.emit({"type": "section", "index": index, "state": "done"})
+        return wrote
+
+    def _replace_subtree(
+        self, spec: Spec, start: int, text: str, *, whole: bool, keep_inputs: bool,
+    ) -> list[str]:
+        """Check a proposed subtree in its final context, then publish it in one step."""
+        work = self.work
+        shape = SHAPES[spec.kind]
+        output_type = output_type_for(spec.kind, spec.output_type)
+        before = [draft.text for draft in self._written()]
+        stop = shape.subtree_end(before, start)
+        _, replacement = split_document(text, spec.kind)
+        if not whole:
+            replacement.extend(before[start + 1:stop])
+        if replacement == before[start:stop]:
+            return []
+        final = [*before[:start], *replacement, *before[stop:]]
+        content = shape.join(shape.preamble(output_type.id), final)
+        if problems := output_type.direct_problems(content):
+            raise ValueError("\n".join(problems))
+
+        old = work.outline[start:stop]
+        units = shape.units(final)[start:start + len(replacement)]
+        outline, parts, wrote = [], {}, []
+        next_item = work.next_item
+        taken = {item.id for item in work.outline}
+        with self._noting():
+            for offset, unit in enumerate(units):
+                item = old[offset] if offset < len(old) else None
+                prior = work.parts[item.id] if item is not None else None
+                digest = section_hash(unit)
+                if prior is not None and prior.text == unit.text and prior.checked == digest:
+                    outline.append(item)
+                    parts[item.id] = prior
+                    continue
+                heading, refs = heading_of(unit), _cited(unit.text)
+                if item is None:
+                    identity, next_item = self._fresh("p", next_item, taken)
+                    item = ItemRec(id=identity, heading=heading, refs=refs)
+                    taken.add(identity)
+                else:
+                    item = item.model_copy(update={"heading": heading, "refs": refs})
+                at = start + offset
+                self.emit({"type": "section", "index": at, "state": "checking"})
+                draft = self.agents.check_built(self.model, unit, self._part_pool(refs), at)
+                stamp = digest_part_inputs(self.brief, work, item)
+                if keep_inputs and prior and prior.inputs != digest_part_inputs(
+                    self.brief, work, old[offset],
+                ):
+                    stamp = prior.inputs
+                outline.append(item)
+                parts[item.id] = PartRec(
+                    text=draft.text, inputs=stamp, checked=digest, verdicts=draft.verdicts,
+                )
+                wrote.append(item.id)
+                self.emit({"type": "section", "index": at, "state": "done"})
+        work.outline[start:stop] = outline
+        for item in old:
+            work.parts.pop(item.id)
+        work.parts.update(parts)
+        work.next_item = next_item
+        self._announce()
         return wrote
 
     @usage.job("outputs")
@@ -672,6 +748,11 @@ class WorkSteps:
             return False
         plain = without_design(part.text) if self._deck else part.text
         shaped = plain[:len(plain) - len(body)] + spliced
+        shape = SHAPES[spec.kind]
+        if shape.node:
+            shaped, = shape.at_depth(part.text, [shaped.lstrip()])
+            _single_part(shaped, spec.kind, at)
+            return bool(self._replace_subtree(spec, at, shaped, whole=False, keep_inputs=True))
         _single_part(shaped, spec.kind, at)
         self.emit({"type": "section", "index": at, "state": "checking"})
         with self._noting():
@@ -855,14 +936,19 @@ class WorkSteps:
         self._tool()
         self._load()
         done: list[str] = []
+        units = work_units(work)
         for at in positions:
             item = work.outline[at]
             part = work.parts[item.id]
             self.emit({"type": "section", "index": at, "state": "checking"})
-            prior = part.verdicts if part.checked == section_hash(part.text) else None
+            unit = units[item.id]
+            digest = section_hash(unit)
+            prior = part.verdicts if part.checked == digest else None
             by_ref = self._part_pool(_cited(part.text)).by_ref()
-            part.verdicts = self.agents.check_unbuilt(self.model, part.text, by_ref, prior)
-            part.checked = section_hash(part.text)
+            part.verdicts = self.agents.check_unbuilt(
+                self.model, unit if unit.ancestors else unit.text, by_ref, prior,
+            )
+            part.checked = digest
             done.append(item.id)
             self.emit({"type": "section", "index": at, "state": "done"})
         return done

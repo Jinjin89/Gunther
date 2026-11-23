@@ -6,10 +6,10 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Literal
 
-from gunther import outputs_cards
+from gunther import outputs_cards, outputs_map
 from gunther.studio import format as fmt
 
-ShapeId = Literal["report", "slides", "cards"]
+ShapeId = Literal["report", "slides", "cards", "map"]
 OutputPipeline = Literal["planned", "direct"]
 OutputExport = Literal["markdown", "pdf", "docx", "pptx"]
 FENCE = re.compile(r"^\s*(```|~~~)")
@@ -107,6 +107,13 @@ def prose_check_text(
 
 
 @dataclass(frozen=True)
+class OutputUnit:
+    text: str
+    ancestors: tuple[str, ...] = ()
+    label: str | None = None
+
+
+@dataclass(frozen=True)
 class ShapeSpec:
     id: ShapeId
     default_type: str
@@ -117,16 +124,65 @@ class ShapeSpec:
     pipeline: OutputPipeline
     spans: Callable[[str], tuple[int, list[tuple[int, int]]]]
     join: Callable[[str, Sequence[str]], str]
-    format_check: Callable[..., list[str] | list[tuple[int, list[str]]]]
-    check_text: Callable[..., list[str]]
+    grammar: Callable[..., list[str] | list[tuple[int, list[str]]]]
+    project: Callable[..., list[str]]
     exports: tuple[OutputExport, ...]
     outline: bool = False
     design: bool = False
     header: str = ""
     unit_problem: Callable[[str], str | None] | None = None
+    node: Callable[[str], tuple[int, str] | None] | None = None
 
-    def split(self, content: str) -> tuple[str, list[str]]:
-        return split_spans(content, self.spans)
+    def split(self, content: str) -> tuple[str, list[OutputUnit]]:
+        preamble, texts = split_spans(content, self.spans)
+        return preamble, self.units(texts)
+
+    def units(self, texts: Sequence[str]) -> list[OutputUnit]:
+        result, path = [], []
+        for text in texts:
+            parsed = self.node(text) if self.node else None
+            if parsed is None:
+                result.append(OutputUnit(text))
+                continue
+            depth, label = parsed
+            del path[depth:]
+            result.append(OutputUnit(text, tuple(path), label))
+            path.append(label)
+        return result
+
+    def check_text(self, unit: str | OutputUnit, **options) -> list[str]:
+        if isinstance(unit, OutputUnit):
+            if unit.ancestors:
+                options["ancestors"] = unit.ancestors
+            unit = unit.text
+        return self.project(unit, **options)
+
+    def limit_error(self, count: int, label: str, limit: int) -> str | None:
+        if count > limit:
+            return f"The limit for {label} is {limit} {self.unit_label}s."
+        return None
+
+    def format_check(self, content: str, *, part_limit: tuple[str, int] | None = None, **options):
+        problems = self.grammar(content, **options)
+        if self.pipeline == "direct":
+            label, limit = part_limit or (self.name.capitalize(), self.max_parts)
+            if error := self.limit_error(len(self.spans(content)[1]), label, limit):
+                return [*problems, error]
+        return problems
+
+    def subtree_end(self, parts: Sequence[str], start: int) -> int:
+        root = self.node(parts[start]) if self.node else None
+        if root is not None:
+            for at in range(start + 1, len(parts)):
+                parsed = self.node(parts[at])
+                if parsed is None or parsed[0] <= root[0]:
+                    return at
+            return len(parts)
+        return start + 1
+
+    def at_depth(self, root: str, units: Sequence[str]) -> list[str]:
+        indent = root[:len(root) - len(root.lstrip())] if self.node else ""
+        return [indent + unit for unit in units]
 
     def preamble(self, type_id: str) -> str:
         return self.header.format(type_id=type_id)
@@ -150,6 +206,12 @@ SHAPES = {
             markdown_spans, join_headed, outputs_cards.check_cards, outputs_cards.check_text,
             ("markdown", "pdf"), header=outputs_cards.HEADER,
             unit_problem=outputs_cards.card_problem,
+        ),
+        ShapeSpec(
+            "map", "mind_map", "mind map", "a mind map", "node", 60, "direct",
+            outputs_map.node_spans, outputs_map.join_nodes, outputs_map.check_map,
+            outputs_map.check_text, ("markdown", "pdf"), header=outputs_map.HEADER,
+            node=outputs_map.node_of,
         ),
     )
 }

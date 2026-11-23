@@ -1,18 +1,18 @@
 # Outputs
 
-Studio makes saved reports, slide decks, flashcards and quizzes in a library. Click a tile to start a build from the library's Sources ticks. Click its pencil to set options such as focus, audience, length, language and slide use when offered. Each tile build starts a new conversation. Studio disables its build tiles until a model is available and links to Models settings when setup is needed.
+Studio makes saved reports, slide decks, flashcards, quizzes and mind maps in a library. Click a tile to start a build from the library's Sources ticks. Click its pencil to set options such as focus, audience, length, language and slide use when offered. Each tile build starts a new conversation. Studio disables its build tiles until a model is available and links to Models settings when setup is needed.
 
 ## Build in Studio
 
 Studio prepares a verified evidence pool, reads the material, writes a memo or study map, plans the storyline and drafts the report or slides. Slide building adds format repair, factual verification, fitting, design, and optional rendered review. For scientific decks it plans coverage of the study and figures, reads supplied pixels when it can, and records limitations and review status. The study workflow ties the explanation of methods, results and figures to their passages.
 
-Flashcards and Quiz use the direct pipeline. Studio reads the sources, writes a memo, drafts the whole card set, checks its format, verifies each card against its citations and assembles the version. An invalid draft gets one format repair. If it still fails, Studio reports the format error and leaves the saved version intact. [Cards format](STUDIO_FORMAT.md#3-cards-design-v1)
+Flashcards, Quiz and Mind map use the direct pipeline. Studio reads the sources, writes a memo, drafts the whole output, checks its format, verifies the claims against their citations and assembles the version. An invalid draft gets one format repair. If it still fails, Studio reports the format error and leaves the saved version intact. [Cards format](STUDIO_FORMAT.md#3-cards-design-v1) · [Mind map format](STUDIO_FORMAT.md#4-mind-maps-design-v1)
 
 Studio searches checked key results using the build brief and source selection. A usable result brings its passages into the evidence pool from the original reading. Studio sees the result sentence as orientation with pointers to those passages. Citations and checks use the original passages. Rebuilding an older output with saved answers in its scope keeps those answers as notes. [Key results](LIBRARY.md#key-results)
 
 Each output type has a recipe for what to write and how to organize it. Choose the type on its Studio tile.
 
-| Output type | ID | Outline or card limit |
+| Output type | ID | Part limit |
 | --- | --- | --- |
 | Report | `report` | 8 sections |
 | Briefing doc | `briefing` | 8 sections |
@@ -22,10 +22,11 @@ Each output type has a recipe for what to write and how to organize it. Choose t
 | Slides | `slides` | 14 slides |
 | Flashcards | `flashcards` | 40 cards |
 | Quiz | `quiz` | 40 cards |
+| Mind map | `mind_map` | 60 nodes |
 
 Report and Briefing doc open with a summary box and use exhibits for comparisons that rely on numbers. The Study guide teaches concepts in order, the FAQ uses questions as headings, and the Timeline follows events by date. The output types share verification of claims and cited passages. Each shape determines the text that reaches the Checker. [Studio format](STUDIO_FORMAT.md)
 
-The build options `short`, `standard` and `long` set targets. Reports aim for 800–1,200, 1,500–3,000 or 3,000–5,000 words. Slides aim for 5–7, 8–12 or 12–14 slides. Studio uses report and slide outline limits as planning guidance and can finish a longer model-generated outline. Card sets aim for 10, 20 or 40 cards when the brief gives no count, with a limit of 40. An explicit language takes priority, then Studio reuses the language chosen during analysis. If analysis supplies none, the prompts ask for the language of the request or the material. Slides default to a talk. Choose `read` for a deck intended for reading on its own.
+The build options `short`, `standard` and `long` set targets. Reports aim for 800–1,200, 1,500–3,000 or 3,000–5,000 words. Slides aim for 5–7, 8–12 or 12–14 slides. Studio uses report and slide outline limits as planning guidance and can finish a longer model-generated outline. Card sets aim for 10, 20 or 40 cards and mind maps for 15, 30 or 60 nodes when the brief gives no count. An explicit language takes priority, then Studio reuses the language chosen during analysis. If analysis supplies none, the prompts ask for the language of the request or the material. Slides default to a talk. Choose `read` for a deck intended for reading on its own.
 
 Planning uses structured requested count and duration fields. An approved outline supplies stable part IDs, headings, goals and order. Rebuild from Outline in the output's actions sends the approved outline. The outline editor uses the type's submitted outline limit, including when a saved output uses a legacy style. Studio checks format, headings and counts before accepting a draft. The reader shows incomplete checks. Studio reports missing models and failed required work on the output card.
 
@@ -52,6 +53,14 @@ Click a flashcard or press Space on its flip button to reveal the answer. Use Pr
 In a quiz, choose one answer to see the result, the correct choice and the explanation with citations. The score counts correct choices among the questions you have answered. Start again clears those choices. List view shows every question and answer so you can review the full set. Versions opens earlier saved sets, and Refine this card points the shared Refine box at that card.
 
 Download Markdown saves the version's stored text. Export PDF opens the print dialog with all the cards, including the choices, marked correct answer and explanation for each quiz card. The printout includes numbered citations and a source list. [Cards format](STUDIO_FORMAT.md#3-cards-design-v1)
+
+## Explore a mind map
+
+The root and its first-level branches start expanded. Click a branch or its chevron to expand or collapse it. Use Tab to reach nodes and Enter on a branch control to toggle it. Scroll in either direction to reach the rest of the tree. Below 1200 px, Sources collapses to give the map room.
+
+Hover over or focus a node to reveal Ask. It opens Chat and asks about the node along its full path using the current Sources selection. A citation number opens its passage in Evidence. The Checker reads a cited node with its ancestor labels and uses that node's own citations. Refine rewrites the selected node and its descendants together. Rewriting an ancestor rechecks any cited descendants whose path changed.
+
+Download Markdown saves the nested list. Export PDF prints the full indented outline with its citations and sources. [Mind map format](STUDIO_FORMAT.md#4-mind-maps-design-v1)
 
 ## Trash
 

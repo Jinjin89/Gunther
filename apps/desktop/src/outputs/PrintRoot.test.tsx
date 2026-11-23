@@ -14,6 +14,18 @@ const drawn = () => Array.from(document.querySelectorAll("#print-root .outputs-s
 
 afterEach(cleanup);
 
+it("prints the full mind map as a nested outline with sources", () => {
+  const fixture = documentSections.find((item) => item.shape === "map")!;
+  const artifact: Artifact = { ...deck(fixture.content, [], [{ sourceTitle: "Trial log", quote: "Supporting passage." }]), kind: "map" };
+  render(<PrintRoot artifact={artifact} />);
+  const paper = document.getElementById("print-root")!;
+  expect(paper).toHaveAttribute("data-kind", "map");
+  const outline = paper.querySelector(".mind-map-outline")!;
+  expect(outline.querySelector("ul > li > ul > li > ul > li")).toHaveTextContent("Steers progenitors toward the red-cell branch [1]");
+  expect(paper.querySelector(".outputs-print-sources")).toHaveTextContent("Trial log");
+  expect(within(outline as HTMLElement).queryByRole("button", { hidden: true })).not.toBeInTheDocument();
+});
+
 it("prints every card with static citations, the correct choice and the explanation", () => {
   const fixture = documentSections.find((item) => item.shape === "cards")!;
   const artifact: Artifact = { ...deck(fixture.content, [], [{ sourceTitle: "Lab notes", quote: "A source passage." }]), kind: "cards" };

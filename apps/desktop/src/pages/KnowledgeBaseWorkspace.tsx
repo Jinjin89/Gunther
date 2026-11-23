@@ -77,10 +77,16 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
     window.requestAnimationFrame(() => workspace.current?.querySelector<HTMLInputElement>(".contents-filter input")?.focus());
   };
   const choose = useCallback((next: Middle) => {
-    if (middle.kind === "output" && next.kind === "output" && outputKey(middle.target) === outputKey(next.target)) return;
-    if (discardOutputEdit(dirty)) { setMiddle(next); setEvidence(null); }
+    if (middle.kind === "output" && next.kind === "output" && outputKey(middle.target) === outputKey(next.target)) return true;
+    if (!discardOutputEdit(dirty)) return false;
+    setMiddle(next);
+    setEvidence(null);
+    return true;
   }, [dirty, middle]);
   const openOutput = (target: OutputTarget) => choose({ kind: "output", target });
+  const askFromReader = (question: string, submit: boolean) => {
+    if (choose(chat)) chatActions.current?.ask(question, submit);
+  };
   const openFullSource = (id: string) => onOpenSource(id, sources.map((source) => source.id));
   const cite = (citation: ConversationCitation | null, index?: number) =>
     setEvidence(citation ? { citation, index } : null);
@@ -157,11 +163,11 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
       {!chatVisible && <div className="library-middle-page">
         <div className="library-middle-bar"><button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => choose(chat)}><ArrowLeft size={14} />Back to chat</button></div>
         {source && <SourceSummary key={source.id} source={source} onOpen={() => openFullSource(source.id)} onCite={cite}
-          onAsk={(question, submit) => { setMiddle(chat); chatActions.current?.ask(question, submit); }} />}
+          onAsk={askFromReader} />}
         {middle.kind === "source" && !source && <p className="library-reading">{contents ? "Source unavailable." : "Loading source…"}</p>}
         {target && workspaceId && <OpenOutput key={outputKey(target)} baseId={base.id} workspaceId={workspaceId}
           target={target} studio={studio} scope={scope} scopeEmpty={scopeEmpty} dirty={dirty} onNotify={onNotify}
-          onCite={cite} onOpen={openOutput} onWideReader={onWideReader}
+          onCite={cite} onOpen={openOutput} onWideReader={onWideReader} onAskChat={(question) => askFromReader(question, true)}
           onTrash={(item) => void trashOutput(item, true)} />}
       </div>}
     </section>

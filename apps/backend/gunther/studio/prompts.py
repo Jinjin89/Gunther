@@ -754,6 +754,16 @@ Example:
 - [x] White-cell
 Why: Removing T shifted cells toward the white-cell lineage [1]."""
 
+MIND_MAP_RECIPE = """Use one nested Markdown bullet list with one node per line. Put the root
+at the left margin and indent each child by exactly two more spaces than its parent. Use
+uncited branch labels to group ideas. Cite each factual node with its own sources [n]. Write
+each node so the path from the root through its parents gives the claim its meaning.
+
+Example:
+- Thermal insulation
+  - Heat transfer
+    - Reduces heat flow through the wall [1]"""
+
 DIRECT_WRITE = """Write the complete {output_type} in the requested format.
 Brief: {brief}
 Audience: {audience}.

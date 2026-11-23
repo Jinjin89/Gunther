@@ -33,6 +33,7 @@ from gunther.evidence import Evidence
 from gunther.llm import ModelError
 from gunther.llm import unfence as _unfence
 from gunther.output_checks import check_saved_part, output_claim_inventory, support_inventory
+from gunther.output_shapes import OutputUnit
 from gunther.output_types import SHAPES, output_type_for
 from gunther.outputs import (
     COMPOSITION_LAYOUTS,
@@ -45,6 +46,7 @@ from gunther.outputs import (
     Spec,
     _marked,
     _notes_block,
+    document_units,
     fallback_unverified_diagram,
     section_hash,
     split_document,
@@ -71,6 +73,10 @@ def _single_part(text: str, kind: str, index: int) -> str:
     if preamble or len(parts) != 1:
         raise ModelError(f"Studio must return one complete {unit} at position {index + 1}.")
     part, = parts
+    if shape.node:
+        if shape.node(part) is None:
+            raise ModelError(f"Studio did not return a valid {unit} at position {index + 1}.")
+        return part
     if shape.unit_problem:
         if problem := shape.unit_problem(part):
             raise ModelError(f"{unit.capitalize()} {index + 1}: {problem}")
@@ -340,9 +346,10 @@ class StudioWorkAgents(StudioAgents):
         draft = self._chart_fallback(draft, section)
         return fallback_unverified_diagram(draft, section, self.skipped)
 
-    def check_built(self, model, text, pool: Pool, section) -> Draft:
+    def check_built(self, model, text: str | OutputUnit, pool: Pool, section) -> Draft:
         checked = self._claims(model, text, pool.by_ref(), kind=self.kind)
-        return self._checked_layout(Draft(text, checked), section)
+        raw = text.text if isinstance(text, OutputUnit) else text
+        return self._checked_layout(Draft(raw, checked), section)
 
     def check_unbuilt(self, model, text, by_ref, prior=None) -> Verdicts:
         if has_stage(prior or {}, "audit", "support"):
@@ -453,6 +460,9 @@ class StudioWorkAgents(StudioAgents):
         # The words are written from the words: a slide's design is not shown to the writer.
         parts = [fmt.without_design(text) for text in parts]
         current = parts[index] if index < len(parts) else ""
+        if shape.node and current:
+            end = shape.subtree_end(parts, index)
+            current = shape.join("", parts[index:end])
         whole = "\n\n---\n\n".join(
             f"[{unit} {n}]\n{text}"
             if text
@@ -483,7 +493,11 @@ class StudioWorkAgents(StudioAgents):
         if deck:
             guide = DECK_FORMAT + ("\n\n" + READ_NOTE if use == "read" else "")
         elif shape.pipeline == "direct":
-            guide = output_type.write + f"\nReturn one complete {unit} without a document header."
+            guide = output_type.write + (
+                f"\nReturn the selected {unit} and its complete replacement subtree only. "
+                "Start that subtree's root at the left margin and omit the document header."
+                if shape.node else f"\nReturn one complete {unit} without a document header."
+            )
         else:
             guide = report_format(output_type.summary_box) + "\n\n" + output_type.write
         system = PART_WRITE.format(
@@ -518,6 +532,15 @@ class StudioWorkAgents(StudioAgents):
             text = _unfence(self._text(model, system, prompt, effort, 6000, on_text=on_text))
             if instruction and current and text.upper() == UNCHANGED:
                 return current
+            if shape.node:
+                if not current:
+                    raise ModelError("Build the whole output before writing a subtree.")
+                candidate = shape.join(shape.preamble(output_type.id), [text])
+                problems = output_type.direct_problems(candidate)
+                if problems:
+                    raise ModelError("\n".join(problems))
+                _, replacement = split_document(text, spec.kind)
+                return shape.join("", shape.at_depth(parts[index], replacement))
             text = _single_part(fmt.strip_labels(text) if deck else text, spec.kind, index)
             if deck and index == 0 and current:
                 text = fmt.with_marker(text, "title", **fmt.parse_slide(current).attrs)
@@ -603,7 +626,7 @@ def load_built(work: Work, built: BuiltOutput, made: Pool, pool: Pool, brief) ->
     numbers. Only the passages the build cites join the conversation pool (``made`` is the
     larger pool the studio read; ``built.pool_refs`` are its numbers)."""
 
-    sections = split_document(built.content, work.spec.kind)[1]
+    sections = document_units(built.content, work.spec.kind)
     plans = [OutlineItem.model_validate(row) for row in built.outline]
     ids = [plan.id for plan in plans if plan.id]
     if len(sections) != len(plans) or len(ids) != len(set(ids)):
@@ -629,7 +652,7 @@ def load_built(work: Work, built: BuiltOutput, made: Pool, pool: Pool, brief) ->
     next_item = work.next_item
     reserved = set(ids)
     for position, (section, plan) in enumerate(zip(sections, plans, strict=True)):
-        text, _ = _translate(section, version_map)
+        text, _ = _translate(section.text, version_map)
         while f"p{next_item}" in reserved:
             next_item += 1
         item = _section_item(
