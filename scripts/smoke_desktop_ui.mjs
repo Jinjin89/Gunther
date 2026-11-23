@@ -867,7 +867,15 @@ async function run() {
         promote: [...document.querySelectorAll('button.promote-answer')].map((button) => ({ text: button.textContent.replace(/\\s+/g, ' ').trim(), disabled: button.disabled })),
         errors: [...document.querySelectorAll('.conversation-error')].map((item) => item.textContent.replace(/\\s+/g, ' ').trim()),
       }))()`);
-      throw new SmokeFailure(`${error instanceof Error ? error.message : String(error)}; diagnostics=${JSON.stringify(diagnostics)}`);
+      // What the backend holds tells a stuck answer apart from one the screen did not show.
+      const saved = await jsonFrom(`${backendOrigin}/api/knowledge-bases/${encodeURIComponent(knowledgeBase.id)}/sessions`)
+        .then((sessions) => Promise.all(sessions.map((item) => jsonFrom(`${backendOrigin}/api/sessions/${encodeURIComponent(item.id)}`))))
+        .then((details) => details.map((detail) => ({ id: detail.id, messages: detail.messages.map((message) => ({ role: message.role, content: String(message.content).slice(0, 80), citations: message.citations?.length ?? 0 })) })))
+        .catch((reason) => ({ requestError: String(reason) }));
+      const activity = await jsonFrom(`${backendOrigin}/api/activity`)
+        .then((list) => (list.items ?? list).map((item) => ({ id: item.id, state: item.state, label: item.label })))
+        .catch((reason) => ({ requestError: String(reason) }));
+      throw new SmokeFailure(`${error instanceof Error ? error.message : String(error)}; diagnostics=${JSON.stringify({ ...diagnostics, saved, activity })}`);
     }
     if (!await cdp.evaluate(clickExpression(".message-sources summary", "1 source"))
       || !await cdp.evaluate(clickExpression(".message-sources button[data-opens-evidence]", noteTitle))) {
@@ -1126,7 +1134,9 @@ try {
   console.error(JSON.stringify({ status: "failed", error: message }, null, 2));
   if (process.env.GITHUB_ACTIONS) {
     // An annotation shows the reason on the run page without opening the job log.
-    const text = message.slice(0, 4000).replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
+    // The start says what failed; the end of the backend log says what it was doing.
+    const brief = message.length > 6000 ? `${message.slice(0, 2500)}\n…\n${message.slice(-3500)}` : message;
+    const text = brief.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
     console.log(`::error title=Chrome journey::${text}`);
   }
   process.exitCode = 1;
