@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from gunther.evidence import Evidence
 from gunther.llm import ModelError
-from gunther.outputs import Events, Notes, Pool, Spec, figure_lines
+from gunther.outputs import Events, Notes, Pool, figure_lines
 from gunther.skill_checks import figures_of
 from gunther.studio import prompts as P
 from gunther.studio import science as S
@@ -80,11 +80,6 @@ class StudioMaterial:
 
     def _material(self, items: list[Evidence]) -> str:
         return "\n\n".join(self._passage(item) for item in items)
-
-    def _language(self, spec: Spec, pool: Pool) -> str:
-        sample = spec.brief or " ".join(item.text[:200] for item in pool.items[:10])
-        cjk = sum(1 for char in sample if "一" <= char <= "鿿")
-        return "Chinese (简体中文)" if cjk > len(sample) * 0.15 else "English"
 
     # 1. Reading ---------------------------------------------------------------------------
 

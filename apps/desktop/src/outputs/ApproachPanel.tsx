@@ -3,7 +3,7 @@ import { ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { StudioBrief } from "./StudioBrief";
 
-export const STRUCTURE_LABEL: Record<string, string> = {
+const STRUCTURE_LABEL: Record<string, string> = {
   what: "Its parts, the most important first",
   why: "Causes, the main one first",
   how: "Steps, in order",

@@ -1,4 +1,4 @@
-import type { Artifact, ArtifactBriefState, ArtifactConversationMessage, ArtifactSummary, ArtifactTurnInput, ArtifactTurnOut, ConversationCitation, EditArtifactBriefRequest, OutlineItem, OutputKind, OutputScope, OutputStyle } from "@gunther/contracts";
+import type { Artifact, ArtifactBriefState, ArtifactConversationMessage, ArtifactSummary, ArtifactTurnInput, ArtifactTurnOut, ConversationCitation, EditArtifactBriefRequest, OutlineItem, OutputScope } from "@gunther/contracts";
 import { invoke } from "@tauri-apps/api/core";
 import { ArrowRight, ChevronDown, CircleAlert, Copy, Download, FileDown, History, ListChecks, LoaderCircle, Maximize2, MessageSquare, Minimize2, PanelsTopLeft, Pencil, Plus, Presentation, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -41,9 +41,7 @@ export interface OutputsPageProps {
   /** Embedders without a transcription service can keep the microphone inactive. */
   allowVoiceInput?: boolean;
 }
-const kindLabel = (kind: OutputKind) => kind === "slides" ? "Slides" : "Report";
-const styles: Record<OutputStyle, string> = { auto: "Auto", overview: "Overview", field_guide: "Field guide", teaching_path: "Teaching path", decision_brief: "Decision brief" };
-const describe = (item: ArtifactSummary) => [kindLabel(item.kind), item.style ? styles[item.style as OutputStyle] ?? item.style.replaceAll("_", " ") : "", item.audience[0]!.toUpperCase() + item.audience.slice(1), item.origin === "edit" ? "Edited" : item.origin === "revise" ? "Revised" : ""].filter(Boolean).join(" · ");
+const describe = (item: ArtifactSummary) => [item.outputType, item.audience[0]!.toUpperCase() + item.audience.slice(1), item.origin === "edit" ? "Edited" : item.origin === "revise" ? "Revised" : ""].filter(Boolean).join(" · ");
 const messageOf = (reason: unknown) => reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "The request could not be completed.";
 const USER_WORDS = { start: "Just start", continue: "Continue" } as const;
 const clip = (text: string, length: number) => text.length > length ? `${text.slice(0, length - 1)}…` : text;
@@ -227,7 +225,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
     await refreshArtifacts(done.artifact ?? undefined);
     await store.sync(conversationId).catch((reason) => setGeneralError(messageOf(reason)));
     if (done.artifact && store.snapshot().activeId === conversationId) show(done.artifact);
-    if (done.artifact) onNotify(`${kindLabel(done.artifact.kind)} version ${done.artifact.versionNumber} saved.`);
+    if (done.artifact) onNotify(`${done.artifact.outputType} version ${done.artifact.versionNumber} saved.`);
   };
   /** Open a saved version and refresh its conversation. */
   const finishBuild = async (artifact: Artifact, conversationId: string | null) => {
@@ -236,7 +234,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
     if (owner) await store.sync(owner).catch(() => undefined);
     if (!conversationId && owner && store.get(owner)) store.select(owner);
     if (!conversationId || store.snapshot().activeId === owner) show(artifact);
-    onNotify(`${kindLabel(artifact.kind)} version ${artifact.versionNumber} saved.`);
+    onNotify(`${artifact.outputType} version ${artifact.versionNumber} saved.`);
   };
 
   useEffect(() => {
@@ -476,7 +474,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
   </>;
   const preview = <>
     <div className="aw-preview-toolbar aw-main-preview-toolbar"><strong>Preview</strong><select aria-label="Preview artifact" value={open?.lineageId ?? ""} disabled={loading || editing || saving || opening} onChange={(event) => { const item = activeGroups.find((items) => items[0]?.lineageId === event.target.value)?.[0]; if (item) void openVersion(item); }}>
-      {!open && <option value="">{loading ? "Loading…" : "Choose an artifact"}</option>}{activeGroups.map((items) => <option key={items[0]!.lineageId} value={items[0]!.lineageId}>{items[0]!.title} · {kindLabel(items[0]!.kind)}</option>)}</select>
+      {!open && <option value="">{loading ? "Loading…" : "Choose an artifact"}</option>}{activeGroups.map((items) => <option key={items[0]!.lineageId} value={items[0]!.lineageId}>{items[0]!.title} · {items[0]!.outputType}</option>)}</select>
       {open && <select aria-label="Artifact versions" value={open.id} disabled={editing || saving || opening} onChange={(event) => { const item = versions.find((entry) => entry.id === event.target.value); if (item) void openVersion(item); }}>{versions.map((item) => <option key={item.id} value={item.id}>v{item.versionNumber}</option>)}</select>}
       <button type="button" className={`aw-toolbar-details${controlsExpanded ? " is-selected" : ""}`} aria-label={controlsExpanded ? "Hide preview controls" : "Show preview controls"} aria-expanded={controlsExpanded} onClick={() => setControlsExpanded(!controlsExpanded)}><PanelsTopLeft size={14} /><span>Details</span></button>
       {open?.outline.length ? <button type="button" className="gx-icon-button" aria-label="Show outline" title="Outline" onClick={() => { setControlsExpanded(true); requestAnimationFrame(() => outlinePanel.current?.scrollIntoView({ block: "nearest" })); }}><ListChecks size={15} /></button> : null}
@@ -485,7 +483,7 @@ export function OutputsPage({ base, workspaceId, onNotify, onAdd, onOpenSource, 
     </div>
     <div className="aw-preview-controls" id="artifact-preview-controls" hidden={!controlsExpanded} style={{ height: "var(--aw-controls-height)" }}>
       <header className="aw-controls-heading"><strong>Artifacts</strong><span>{activeGroups.length} from this conversation</span><button type="button" className="gx-icon-button" aria-label="Collapse details area" onClick={() => setControlsExpanded(false)}><ChevronDown size={14} /></button></header>
-      <aside className="artifact-saved-artifacts" aria-label="Saved artifacts"><ul className="aw-artifact-tray">{activeGroups.map((items) => { const item = items[0]!; return <li className="artifact-tray-entry" key={item.lineageId}><button type="button" className={`aw-artifact-card${open?.lineageId === item.lineageId ? " is-active" : ""}`} aria-current={open?.lineageId === item.lineageId ? "page" : undefined} aria-label={`Preview ${item.title}`} disabled={editing || saving || opening} onClick={() => void openVersion(item)}><span className="aw-file-icon">{item.kind === "slides" ? <Presentation size={19} /> : <FileDown size={19} />}</span><strong>{item.title}</strong><small>{kindLabel(item.kind)}<span>v{item.versionNumber}</span></small></button>{artifactMenu(item)}</li>; })}</ul>{activeGroups.length === 0 && <p className="outputs-hint">No artifacts yet.</p>}</aside>
+      <aside className="artifact-saved-artifacts" aria-label="Saved artifacts"><ul className="aw-artifact-tray">{activeGroups.map((items) => { const item = items[0]!; return <li className="artifact-tray-entry" key={item.lineageId}><button type="button" className={`aw-artifact-card${open?.lineageId === item.lineageId ? " is-active" : ""}`} aria-current={open?.lineageId === item.lineageId ? "page" : undefined} aria-label={`Preview ${item.title}`} disabled={editing || saving || opening} onClick={() => void openVersion(item)}><span className="aw-file-icon">{item.kind === "slides" ? <Presentation size={19} /> : <FileDown size={19} />}</span><strong>{item.title}</strong><small>{item.outputType}<span>v{item.versionNumber}</span></small></button>{artifactMenu(item)}</li>; })}</ul>{activeGroups.length === 0 && <p className="outputs-hint">No artifacts yet.</p>}</aside>
       <div className="aw-controls-brief"><ArtifactBriefPanel state={briefState} disabled={building} error={briefError} onEdit={(change) => void editBrief(change)} /></div>
       {open && <div ref={outlinePanel} className="aw-controls-outline"><ApproachPanel artifact={open} onCite={(index) => { const citation = open.citations[index]; if (citation) cite(citation, index); }} /><OutlineEditor key={open.id} review={open.provenance.skill?.outlineReview} outline={open.outline} label={open.kind === "slides" ? "slides" : "sections"} max={open.kind === "slides" ? 14 : 8} busy={busy || !latest || !changeable} onRebuild={rebuildOutline} /></div>}
       {versionsOpen && <section className="artifacts-version-list" aria-label="Artifact version history">{versions.map((item) => <button type="button" key={item.id} disabled={item.id === open?.id} className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => void openVersion(item)}>v{item.versionNumber} · {item.title}</button>)}</section>}

@@ -39,10 +39,10 @@ from gunther.evidence import Evidence, Tool
 from gunther.llm import ModelInfo
 from gunther.model_profiles import Effort
 from gunther.output_document import assemble_output, project_outline
+from gunther.output_types import DECK_USES, output_type_for
 from gunther.outputs import (
     ACCENTS,
     CITATION_GROUP,
-    DECK_USES,
     UNSOURCED,
     BuiltOutput,
     Draft,
@@ -422,6 +422,9 @@ class WorkSteps:
         (it is not written) and will be searched for by its heading and goal. Returns it."""
 
         work, outline = self.work, self.work.outline
+        output_type = output_type_for(work.spec.kind, work.spec.chosen_output_type)
+        if error := output_type.part_limit_error(len(outline) + 1):
+            raise ValueError(error)
         heading, goal = _line(heading, 160), _line(goal, 400)
         if not heading:
             raise ValueError("A new part needs a heading.")
@@ -567,6 +570,7 @@ class WorkSteps:
                 instruction=instruction if part is not None else None,
                 refs=refs,
                 notes=self.notes,
+                approach=work.approach,
             )
             if part is not None and section_hash(text) == section_hash(without_design(part.text)):
                 self.emit({"type": "section", "index": index, "state": "done"})

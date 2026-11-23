@@ -1,7 +1,8 @@
 import json
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
@@ -15,6 +16,16 @@ from pydantic.json_schema import SkipJsonSchema
 
 from gunther.brief import SettledItem
 from gunther.model_profiles import Effort
+from gunther.output_types import (
+    LEGACY_OUTPUT_STYLES,
+    MAX_OUTPUT_PARTS,
+    OUTPUT_TYPES,
+    DeckUse,
+    OutputLength,
+    OutputOption,
+    ShapeId,
+    output_type_for,
+)
 
 SourceKind = Literal["note", "paper", "link", "file", "image", "table", "recording", "course"]
 AssertionStatus = Literal["provisional", "verified", "disputed"]
@@ -31,11 +42,22 @@ DeviceScope = Literal["api:access", "transcription:stream"]
 # new versions say "report" or "slides".
 ArtifactFormat = Literal["field_guide", "teaching_path", "decision_brief", "report", "slides"]
 ArtifactAudience = Literal["scientist", "student", "collaborator"]
-OutputKind = Literal["report", "slides"]
-# "auto": Studio chooses how the report unfolds.
-OutputStyle = Literal["auto", "overview", "field_guide", "teaching_path", "decision_brief"]
+OutputKind = ShapeId
 # How a version came about; "legacy" is a version from before agents wrote them.
 OutputOrigin = Literal["legacy", "build", "rebuild", "edit", "revise"]
+
+
+def _known_output_style(value: str) -> str:
+    if value not in OUTPUT_TYPES and value not in LEGACY_OUTPUT_STYLES:
+        raise ValueError("Choose a known output type or legacy style")
+    return value
+
+
+OutputStyle = Annotated[
+    str,
+    AfterValidator(_known_output_style),
+    Field(json_schema_extra={"enum": [*OUTPUT_TYPES, *LEGACY_OUTPUT_STYLES]}),
+]
 
 
 def to_camel(value: str) -> str:
@@ -891,7 +913,9 @@ class OutputProvenanceOut(ArtifactProvenanceOut):
     # Made by a skill (see skillbook): which, the approach it followed, and a deck's use.
     skill: SkillRunOut | None = None
     approach: OutputApproachOut | None = None
-    use: Literal["talk", "read"] | None = None
+    use: DeckUse | None = None
+    length: OutputLength | None = None
+    language: str | None = None
     # The option can still appear in earlier sealed versions.
     library_supplements: bool = False
     conversation_id: str | None = None
@@ -1016,6 +1040,15 @@ class OutputInputsOut(ApiModel):
 REQUEST_ID = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
 
 
+class OutputTypeOut(ApiModel):
+    id: str
+    label: str
+    shape: ShapeId
+    description: str
+    icon: str
+    options: tuple[OutputOption, ...]
+
+
 class OutputRequestInput(ApiModel):
     model: str | None = Field(default=None, min_length=1, max_length=200)
     effort: Effort | None = None
@@ -1039,7 +1072,7 @@ class OutputRequestInput(ApiModel):
 class BuildOutputInput(OutputRequestInput):
     client_request_id: str = REQUEST_ID
     kind: OutputKind
-    # Reports only. A rebuild inherits an omitted style.
+    # The type ID. Earlier clients can send a legacy style.
     style: OutputStyle | None = "auto"
     # Slides only: a visual theme, separate from a report's structural style.
     theme: Literal[
@@ -1048,15 +1081,19 @@ class BuildOutputInput(OutputRequestInput):
     design_version: Literal[0, 1] | None = None
     audience: ArtifactAudience
     brief: str = Field(default="", max_length=2_000)
+    length: OutputLength | None = None
+    language: str | None = Field(default=None, max_length=100)
     title: str | None = Field(default=None, min_length=1, max_length=160)
     scope: OutputScope = Field(default_factory=OutputScope)
     # A rebuild with the outline as the person edited it.
-    outline: list[OutlineItem] | None = Field(default=None, min_length=1, max_length=14)
+    outline: list[OutlineItem] | None = Field(
+        default=None, min_length=1, max_length=MAX_OUTPUT_PARTS
+    )
     supersedes_artifact_id: str | None = Field(default=None, min_length=1, max_length=80)
     # Retained for replay of requests made by earlier clients.
     approach: ApproachInput | None = None
-    # A deck's use: for a talk, or to be read; "auto" lets the skill tell from the brief.
-    use: Literal["auto", "talk", "read"] = "auto"
+    # Earlier clients sent "auto" when they left the use unset.
+    use: Literal["auto"] | DeckUse = "auto"
     # Whether the web may be searched to add to the chosen material (when it is set up).
     web: bool = False
     # Accepted for compatibility with earlier clients and saved request fingerprints.
@@ -1064,20 +1101,29 @@ class BuildOutputInput(OutputRequestInput):
 
     @model_validator(mode="after")
     def tidy(self) -> "BuildOutputInput":
-        if self.kind == "slides" or self.style is None:
-            self.style = "auto" if self.kind == "report" else None
+        if self.style in OUTPUT_TYPES and OUTPUT_TYPES[self.style].shape != self.kind:
+            raise ValueError(f"{self.style} is incompatible with the {self.kind} shape")
+        if self.kind == "slides" and self.style != "slides":
+            self.style = None  # keep earlier request fingerprints
         if self.kind == "report":
+            if self.style is None:
+                self.style = "auto"
             self.use = "auto"
             self.theme = None
         self.brief = self.brief.strip()
+        if self.language is not None:
+            self.language = self.language.strip()
+            if not self.language:
+                raise ValueError("language must not be blank")
         if self.title is not None:
             self.title = self.title.strip()
             if not self.title:
                 raise ValueError("title must not be blank")
-        if self.outline is not None:
-            limit = 8 if self.kind == "report" else 14
-            if len(self.outline) > limit:
-                raise ValueError(f"A {self.kind} has at most {limit} sections")
+        inherits = self.supersedes_artifact_id and "style" not in self.model_fields_set
+        if self.outline is not None and (self.kind == "slides" or not inherits):
+            output_type = output_type_for(self.kind, self.style)
+            if error := output_type.part_limit_error(len(self.outline)):
+                raise ValueError(error)
         return self
 
 
@@ -1128,6 +1174,7 @@ class ArtifactSummaryOut(ApiModel):
     created_at: str
     kind: OutputKind = "report"
     style: str | None = None
+    output_type: str
     origin: OutputOrigin = "legacy"
     conversation_id: str | None = None
     conversation_title: str | None = None
@@ -1180,7 +1227,7 @@ class ArtifactSpecOut(ApiModel):
     kind: OutputKind
     use: ArtifactLineOut | None = None
     length: ArtifactLineOut | None = None
-    structure: ArtifactLineOut | None = None
+    output_type: ArtifactLineOut | None = None
 
 
 class ArtifactBriefStateOut(ApiModel):
@@ -1277,7 +1324,7 @@ class UpdateArtifactConversationInput(ApiModel):
 class ArtifactSpecInput(ApiModel):
     use: str | None = Field(default=None, max_length=300)
     length: str | None = Field(default=None, max_length=300)
-    structure: str | None = Field(default=None, max_length=300)
+    output_type: str | None = Field(default=None, max_length=300)
 
 
 class EditArtifactBriefInput(ApiModel):
@@ -1309,7 +1356,7 @@ class ArtifactFocusInput(ApiModel):
 
 class OutlineRebuildInput(ApiModel):
     artifact_id: str = Field(min_length=1, max_length=80)
-    outline: list[OutlineItem] = Field(min_length=1, max_length=14)
+    outline: list[OutlineItem] = Field(min_length=1, max_length=MAX_OUTPUT_PARTS)
 
 
 class ArtifactTurnInput(ApiModel):

@@ -26,6 +26,7 @@ from gunther.llm import ModelInfo
 from gunther.model_profiles import Effort
 from gunther.models import ArtifactCheck
 from gunther.output_checks import check_saved_part
+from gunther.output_types import output_type_for
 from gunther.outputs import (
     OutputLimits,
     Planned,
@@ -87,6 +88,9 @@ class OutputCommands:
         # Requests made before the conversation UI retain their original fingerprint.
         for name in ("model", "effort", "conversation_id", "conversation_title", "theme"):
             if fields.get(name) is None:
+                fields.pop(name, None)
+        for name in ("length", "language"):
+            if name not in payload.model_fields_set:
                 fields.pop(name, None)
         return fields
 
@@ -151,7 +155,13 @@ class OutputCommands:
             )
             style = payload.style
             if inherits_style and parent and parent.kind == "report":
-                style = parent.style or "auto"
+                style = parent.style
+            output_type = output_type_for(payload.kind, style)
+            if error := output_type.part_limit_error(len(payload.outline or ())):
+                raise ValueError(error)
+            parent_provenance = (
+                json.loads(parent.provenance_json) if parent and parent.kind == payload.kind else {}
+            )
             parent_theme = None
             parent_sections = []
             if parent and parent.kind == payload.kind == "slides":
@@ -165,11 +175,15 @@ class OutputCommands:
             spec = Spec(
                 payload.kind,
                 payload.audience,
-                style,
+                output_type.id,
                 payload.brief,
                 payload.title,
                 theme,
                 design_version,
+                length=(payload.length if "length" in payload.model_fields_set
+                        else parent_provenance.get("length")),
+                language=(payload.language if "language" in payload.model_fields_set
+                          else parent_provenance.get("language")),
             )
             if parent and payload.conversation_id:
                 owner = json.loads(parent.provenance_json).get("conversation_id")
@@ -196,18 +210,28 @@ class OutputCommands:
                 session, material.source_revisions, pool, pinned=material.seeds
             )
             notes = replace(material.notes, extraction_gaps=tuple(reading_gaps))
+            use = parent_provenance.get("use") if payload.use == "auto" else payload.use
             studio = StudioAgents(
                 self.models,
                 limits,
-                use=None if payload.use == "auto" else payload.use,
+                use=use,
                 renderer=self.slide_renderer,
                 asset_reader=self.asset_reader,
                 reusable_figures=self._reusable_figure_readings(session, base_id),
             )
             purpose = None
-            same_plan = parent and (outline is not None or payload.brief == parent.brief)
-            if same_plan and parent.kind == payload.kind:
-                saved = json.loads(parent.provenance_json).get("approach") or {}
+            same_plan = parent_provenance and (
+                outline is not None
+                or (
+                    payload.brief == parent.brief
+                    and output_type_for(parent.kind, parent.style).id == output_type.id
+                    and spec.length == parent_provenance.get("length")
+                    and spec.language == parent_provenance.get("language")
+                    and use == parent_provenance.get("use")
+                )
+            )
+            if same_plan:
+                saved = parent_provenance.get("approach") or {}
                 purpose = "explain_study" if saved.get("study_map") else saved.get("purpose")
                 if outline is None:
                     outline = [
@@ -225,6 +249,7 @@ class OutputCommands:
                 fallback_title=fallback_title,
                 purpose=purpose,
                 fixed_outline=outline,
+                outline_approved=payload.outline is not None,
                 scope={"selection": payload.scope.model_dump(), "inputs": material.inputs},
                 web=payload.web,
             )
@@ -232,7 +257,9 @@ class OutputCommands:
                 "generator": "gunther.studio.v1",
                 "skill": built.skill,
                 "approach": built.approach,
-                "use": studio.use or (built.approach or {}).get("use"),
+                "use": (built.approach or {}).get("use"),
+                "length": spec.length,
+                "language": spec.language,
                 "conversation_id": payload.conversation_id,
                 "conversation_title": payload.conversation_title,
                 "request": payload.brief,
@@ -248,7 +275,7 @@ class OutputCommands:
             fingerprint=fingerprint,
             parent_id=parent_id,
             kind=payload.kind,
-            style=style,
+            style=output_type.id,
             audience=payload.audience,
             title=built.title,
             brief=payload.brief,
@@ -354,6 +381,8 @@ class OutputCommands:
                         parent.style,
                         parent.brief,
                         title=parent.title,
+                        length=made_by.get("length"),
+                        language=made_by.get("language"),
                     ),
                     parent.content,
                     json.loads(parent.outline_json),
@@ -364,6 +393,7 @@ class OutputCommands:
                     pool,
                     material.notes,
                     events,
+                    approach=saved,
                 )
             made_by = {
                 **made_by,

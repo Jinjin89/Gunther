@@ -1228,9 +1228,23 @@ export interface ArtifactUnitSnapshot {
 /** A report is read on the page; slides are shown in a viewer. */
 export const outputKinds = ["report", "slides"] as const;
 export type OutputKind = (typeof outputKinds)[number];
-/** A report's style; slides have none. "auto": the skill chooses how the report unfolds. */
-export const outputStyles = ["auto", "overview", "field_guide", "teaching_path", "decision_brief"] as const;
+export const outputTypeIds = ["report", "briefing", "study_guide", "faq", "timeline", "slides"] as const;
+export type OutputTypeId = (typeof outputTypeIds)[number];
+/** A Studio type ID or a style accepted from earlier clients. */
+export const outputStyles = [...outputTypeIds, "auto", "overview", "field_guide", "teaching_path", "decision_brief"] as const;
 export type OutputStyle = (typeof outputStyles)[number];
+export type OutputLength = "short" | "standard" | "long";
+export type OutputOption = "focus" | "audience" | "length" | "language" | "use";
+
+export interface OutputType {
+  id: OutputTypeId;
+  label: string;
+  shape: OutputKind;
+  description: string;
+  icon: string;
+  options: OutputOption[];
+}
+
 /** How a version came about. "legacy" is a version from before agents wrote them. */
 export type OutputOrigin = "legacy" | "build" | "rebuild" | "edit" | "revise";
 
@@ -1260,6 +1274,8 @@ export interface ArtifactProvenance {
   skill?: SkillRun | null;
   approach?: OutputApproach | null;
   use?: DeckUse | null;
+  length?: OutputLength | null;
+  language?: string | null;
   conversationId?: string | null;
   conversationTitle?: string | null;
   /** The instruction which produced this version. */
@@ -1468,8 +1484,10 @@ export interface ArtifactSummary {
   unitCount: number;
   createdAt: string;
   kind: OutputKind;
-  /** A report's style (a legacy version's old format); none for slides. */
+  /** Stored type ID or legacy style. */
   style: string | null;
+  /** Display label resolved by the service. */
+  outputType: string;
   origin: OutputOrigin;
   conversationId?: string | null;
   conversationTitle?: string | null;
@@ -1500,20 +1518,22 @@ export interface BuildOutputRequest {
   conversationId?: string;
   conversationTitle?: string;
   kind: OutputKind;
-  /** Reports only. A rebuild inherits an omitted style. */
-  style?: OutputStyle;
+  /** Output type. A report rebuild inherits an omitted style. */
+  style?: OutputStyle | null;
   /** Slides only: the visual theme to retain when rebuilding an existing deck. */
   theme?: "classic" | "briefing" | "editorial" | "keynote" | "paper" | "ink" | "brand";
   designVersion?: 0 | 1;
   audience: ArtifactAudience;
   brief?: string;
+  length?: OutputLength | null;
+  language?: string | null;
   title?: string;
   scope: OutputScope;
   /** The headings, goals and order for a Studio rebuild. */
   outline?: Pick<OutlineItem, "id" | "heading" | "goal">[];
   /** Makes it the next version of an existing output. */
   supersedesArtifactId?: string;
-  /** A deck's use; the skill tells from the brief when left out. */
+  /** A deck's use. New decks default to a talk. */
   use?: "auto" | DeckUse;
   /** The web may be searched to add to the chosen material (when it is set up). */
   web?: boolean;
@@ -1567,8 +1587,7 @@ export interface ArtifactSpec {
   /** A deck's: "talk" or "read". */
   use: ArtifactLine | null;
   length: ArtifactLine | null;
-  /** A structure id of the kind's skill (what, why, how, guide, which, change, learn). */
-  structure: ArtifactLine | null;
+  outputType: ArtifactLine | null;
 }
 
 /** The brief, and the spec of the artifact being worked on (none before there is one). */
@@ -1671,7 +1690,7 @@ export interface EditArtifactBriefRequest {
   constraints?: string[];
   open?: string[];
   /** Belongs to the artifact being worked on. */
-  spec?: { use?: string; length?: string; structure?: string };
+  spec?: { use?: string; length?: string; outputType?: OutputTypeId | "" };
 }
 
 /** One turn of a conversation a device kept: what was asked and how it ended. */

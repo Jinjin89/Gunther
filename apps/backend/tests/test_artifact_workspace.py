@@ -1,7 +1,9 @@
 """The Artifacts agent's workspace: what is out of date (computed), the brief's rules, and
 bringing versions in (import_work) and back in line (sync)."""
 
+import hashlib
 import itertools
+import json
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -84,7 +86,7 @@ def made(kind: str = "slides") -> tuple[ConversationBrief, Work]:
             kind=kind,
             use=Line(text="talk") if kind == "slides" else None,
             length=Line(text="10 minutes"),
-            structure=Line(text="what"),
+            output_type=Line(text="report") if kind == "report" else None,
         ),
         title="The trial",
         approach={"question": "What did the trial find?", "answer": "A 3 degree drop"},
@@ -172,8 +174,8 @@ def set_length(brief: ConversationBrief, work: Work) -> None:
     work.spec.length = Line(text="20 minutes", mark="you")
 
 
-def set_structure(brief: ConversationBrief, work: Work) -> None:
-    work.spec.structure = Line(text="which", mark="you")
+def set_output_type(brief: ConversationBrief, work: Work) -> None:
+    work.spec.output_type = Line(text="slides", mark="you")
 
 
 @pytest.mark.parametrize(
@@ -184,7 +186,7 @@ def set_structure(brief: ConversationBrief, work: Work) -> None:
         (set_kind, "the kind"),
         (set_use, "the use"),
         (set_length, "the length"),
-        (set_structure, "the structure"),
+        (set_output_type, "the output type"),
     ],
 )
 def test_the_approach_is_out_of_date_when_a_field_it_was_written_from_changes(
@@ -321,11 +323,11 @@ def test_every_part_is_out_of_date_when_the_audience_kind_or_use_changes(
     assert all(named in part.why for part in status(work, brief))
 
 
-def test_the_goal_length_and_structure_do_not_touch_the_parts() -> None:
+def test_the_goal_length_and_output_type_do_not_touch_the_parts() -> None:
     brief, work = made()
     set_goal(brief, work)
     set_length(brief, work)
-    set_structure(brief, work)
+    set_output_type(brief, work)
     assert states(work, brief) == ["ok", "ok", "ok"]
 
 
@@ -560,9 +562,9 @@ def test_constraints_and_questions_are_added_once_and_the_limit_keeps_your_lines
     assert len(texts) == 8 and "guess 0" not in texts and texts[-1] == "new one"
 
 
-def test_use_length_and_structure_belong_to_the_active_artifact() -> None:
+def test_use_length_and_output_type_belong_to_the_active_artifact() -> None:
     brief, work = made()
-    work.spec.use = work.spec.length = work.spec.structure = None
+    work.spec.use = work.spec.length = None
     work.approach = None  # still being worked out: the agent may guess
     result = apply_brief_updates(
         brief,
@@ -570,38 +572,35 @@ def test_use_length_and_structure_belong_to_the_active_artifact() -> None:
         [
             update("use", "Talk", "a talk"),
             update("length", "about 12 slides"),
-            update("structure", "Which", "a decision"),
         ],
         "A talk, for a decision",
     )
     assert result.spec is not None
     assert result.spec.use == Line(text="talk", mark="you")
     assert result.spec.length == Line(text="about 12 slides", mark="guessed")
-    assert result.spec.structure == Line(text="which", mark="you")
     # The work itself is not changed: the caller decides what to keep.
     assert work.spec.use is None
     nothing = apply_brief_updates(brief, None, [update("length", "3 pages")], "x")
     assert nothing.spec is None and "no artifact yet" in nothing.notes[0]
-    # A report's style names the structure it fixes.
     report = made("report")[1]
     styled = apply_brief_updates(
-        brief, report, [update("structure", "decision brief", "decision brief")], "a decision brief"
+        brief, report, [update("output_type", "briefing", "decision brief")], "a decision brief"
     )
     assert styled.spec is not None
-    assert styled.spec.structure == Line(text="which", mark="you")
+    assert styled.spec.output_type == Line(text="briefing", mark="you")
 
 
-def test_a_use_or_structure_the_skill_does_not_have_is_refused() -> None:
+def test_a_use_or_output_type_the_skill_does_not_have_is_refused() -> None:
     brief, deck = made()
     deck.approach = None
     refused = apply_brief_updates(
         brief,
         deck,
-        [update("use", "pecha kucha"), update("structure", "a poem")],
+        [update("use", "pecha kucha"), update("output_type", "faq")],
         "x",
     )
     assert refused.notes[0].startswith("“pecha kucha” is not a use")
-    assert refused.notes[1].startswith("“a poem” is not a structure")
+    assert refused.notes[1].startswith("“faq” is not an output type")
     report = made("report")[1]
     report.approach = None
     assert (
@@ -673,26 +672,32 @@ def test_the_brief_becomes_the_skills_request() -> None:
         "Audience: lab members\n"
         "Use: talk\n"
         "Length: 10 minutes\n"
-        "Structure: what\n"
         "Constraints:\n"
         "- at most 3 bullets"
     )
     spec = spec_of(brief, work)
     assert (spec.kind, spec.audience) == ("slides", "lab members")
-    assert (spec.style, spec.title) == (None, None)
+    assert (spec.output_type, spec.title) == (None, None)
     assert spec.brief == render_brief(brief, work)
     assert spec_of(ConversationBrief(), work).audience == "scientist"
     assert render_brief(ConversationBrief()) == ""
 
 
-def test_a_structure_the_user_chose_fixes_a_reports_style_but_a_guess_does_not() -> None:
+def test_an_explicit_output_type_is_kept_when_the_agent_guesses() -> None:
     brief, report = made("report")
-    report.spec.structure = Line(text="which", mark="you")
-    assert spec_of(brief, report).style == "decision_brief"
-    report.spec.structure = Line(text="which", mark="guessed")
-    assert spec_of(brief, report).style is None
-    report.spec.structure = Line(text="how", mark="you")  # no style names it
-    assert spec_of(brief, report).style is None
+    report.approach = None
+    report.spec.output_type = Line(text="briefing", mark="you")
+    result = apply_brief_updates(brief, report, [update("output_type", "timeline")], "x")
+    assert result.spec == report.spec
+    assert spec_of(brief, report).output_type == "briefing"
+
+
+def test_a_guessed_output_type_does_not_enter_the_studio_request() -> None:
+    brief, report = made("report")
+    report.spec.output_type = Line(text="timeline")
+    spec = spec_of(brief, report)
+    assert spec.output_type is None
+    assert "timeline" not in spec.brief
 
 
 # The workspace as stored -------------------------------------------------------------------------
@@ -720,6 +725,32 @@ def test_a_workspace_survives_a_trip_through_json() -> None:
 def test_an_unreadable_workspace_starts_again_empty() -> None:
     assert load_workspace("not json at all") == Workspace()
     assert load_workspace('{"works": [{"key": 3}]}') == Workspace()
+
+
+@pytest.mark.parametrize("was", ["which", "what"])
+def test_legacy_workspaces_convert_the_type_and_keep_the_saved_plan(was) -> None:
+    brief, work = made("report")
+    encoded = work.model_dump()
+    spec = encoded["spec"]
+    spec.pop("output_type")
+    spec["structure"] = {"text": "which", "mark": "edited"}
+    inputs = json.loads(encoded["approach_inputs"])
+    inputs.pop("output_type")
+    inputs["structure"] = hashlib.sha256(json.dumps(was).encode()).hexdigest()[:12]
+    encoded["approach_inputs"] = json.dumps(inputs)
+    raw = json.dumps({"works": [encoded], "active": work.key})
+
+    workspace = load_workspace(raw)
+    [loaded] = workspace.works
+    assert loaded.spec.output_type == Line(text="briefing", mark="edited")
+    assert loaded.outline == work.outline and loaded.parts == work.parts
+    assert outline_state(loaded).state == "ok"
+    state = approach_state(loaded, brief)
+    assert (state.state, state.why) == (
+        ("ok", "") if was == "which" else ("out_of_date", "the output type changed")
+    )
+    saved = dump_workspace(workspace)
+    assert '"structure"' not in saved and load_workspace(saved) == workspace
 
 
 def test_the_pool_keeps_its_numbers_and_grows_from_the_top() -> None:
@@ -948,7 +979,7 @@ def test_a_saved_deck_becomes_a_work_that_is_up_to_date(tmp_path: Path) -> None:
     )
     assert work.spec.kind == "slides" and work.spec.use == Line(text="talk", mark="guessed")
     assert work.spec.theme == "editorial"
-    assert work.spec.structure is not None and work.spec.structure.text == "what"
+    assert work.spec.output_type == Line(text="slides", mark="edited")
     assert work.approach is not None and work.approach["question"] == APPROACH["question"]
     assert work.cards == [] and work.next_card == 1
     # The outline is the version's, zipped with its sections; ids run p1, p2, p3.
@@ -998,8 +1029,7 @@ def test_a_saved_report_becomes_a_work_that_is_up_to_date(tmp_path: Path) -> Non
     work = import_work(version, checks, state, brief)
 
     assert work.spec.kind == "report" and work.spec.use is None
-    # A style the person picked fixes the structure, and it is theirs.
-    assert work.spec.structure == Line(text="which", mark="edited")
+    assert work.spec.output_type == Line(text="briefing", mark="edited")
     assert [item.heading for item in work.outline] == [item.heading for item in version.outline]
     assert all(item.layout == "" for item in work.outline)
     assert [part.text.splitlines()[0] for part in work.parts.values()] == [

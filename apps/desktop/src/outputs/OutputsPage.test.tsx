@@ -41,7 +41,7 @@ function version(number = 1, overrides: Partial<Artifact> = {}): Artifact {
     id: `art_${number}`, workspaceId: "wsp_primary", knowledgeBaseId: "biology", lineageId: "arl_1", versionNumber: number,
     supersedesArtifactId: number > 1 ? `art_${number - 1}` : null, format: "report", audience: "scientist", title: `Immune markers v${number}`,
     contentHash: "a".repeat(64), manifestHash: "ab".repeat(32), acceptedUnitIds: [], unitCount: 0, createdAt: `2026-10-01T00:0${number}:00.000Z`,
-    kind: "report", style: "overview", origin: "build", content: "# Immune markers\n\n_For the lab_\n\n## T cells\n\nCD3D marks T cells [1].\n\n## B cells\n\nCD19 marks B cells [?].",
+    kind: "report", style: "overview", outputType: "Report", origin: "build", content: "# Immune markers\n\n_For the lab_\n\n## T cells\n\nCD3D marks T cells [1].\n\n## B cells\n\nCD19 marks B cells [?].",
     unitSnapshots: [],
     provenance: { schemaVersion: 2, generator: "gunther.output-agents.v1", workspaceId: "wsp_primary", knowledgeBaseId: "biology", knowledgeBaseQuestion: "What marks cells?", acceptedOnly: false, acceptedUnitIds: [], revisionIds: [] },
     brief: "For the lab", outline: [{ heading: "T cells", goal: "How T cells are told apart" }, { heading: "B cells", goal: "" }],
@@ -54,13 +54,13 @@ function version(number = 1, overrides: Partial<Artifact> = {}): Artifact {
 const summary = (value: Artifact): ArtifactSummary => ({
   id: value.id, workspaceId: value.workspaceId, knowledgeBaseId: value.knowledgeBaseId, lineageId: value.lineageId, versionNumber: value.versionNumber,
   supersedesArtifactId: value.supersedesArtifactId, format: value.format, audience: value.audience, title: value.title, contentHash: value.contentHash,
-  manifestHash: value.manifestHash, acceptedUnitIds: value.acceptedUnitIds, unitCount: value.unitCount, createdAt: value.createdAt, kind: value.kind, style: value.style, origin: value.origin, conversationId: value.conversationId ?? null, conversationTitle: value.conversationTitle ?? null, clientRequestId: value.clientRequestId ?? null, request: value.request ?? null,
+  manifestHash: value.manifestHash, acceptedUnitIds: value.acceptedUnitIds, unitCount: value.unitCount, createdAt: value.createdAt, kind: value.kind, style: value.style, outputType: value.outputType, origin: value.origin, conversationId: value.conversationId ?? null, conversationTitle: value.conversationTitle ?? null, clientRequestId: value.clientRequestId ?? null, request: value.request ?? null,
 });
 
 const library = { mode: "library" as const, sourceIds: [], unitIds: [], sessionIds: [] };
 const emptyBrief = { goal: null, audience: null, constraints: [], open: [] };
 const AT = "2026-10-01T00:05:00.000Z";
-const workOf = (artifact: Artifact): ArtifactWork => ({ key: artifact.lineageId, kind: artifact.kind, title: artifact.title, versionId: artifact.id, spec: { kind: artifact.kind, use: null, length: null, structure: null }, approach: { state: "ok", why: "" }, outline: { state: "ok", why: "" }, parts: [] });
+const workOf = (artifact: Artifact): ArtifactWork => ({ key: artifact.lineageId, kind: artifact.kind, title: artifact.title, versionId: artifact.id, spec: { kind: artifact.kind, use: null, length: null, outputType: null }, approach: { state: "ok", why: "" }, outline: { state: "ok", why: "" }, parts: [] });
 const conversation = (id: string, overrides: Partial<ArtifactConversationDetail> = {}): ArtifactConversationDetail => ({ id, title: "Make notes", updatedAt: AT, artifactCount: overrides.works?.length ?? 0, waiting: false, scope: library, brief: emptyBrief, messages: [], works: [], active: null, pending: null, archived: false, createdAt: AT, ...overrides });
 const said = (id: string, text: string, overrides: Partial<ArtifactConversationMessage> = {}): ArtifactConversationMessage => ({ id, role: "user", kind: "message", text, payload: {}, artifactId: null, clientRequestId: id, createdAt: AT, ...overrides });
 const replied = (id: string, kind: string, text: string, overrides: Partial<ArtifactConversationMessage> = {}): ArtifactConversationMessage => ({ id, role: "assistant", kind, text, payload: {}, artifactId: null, clientRequestId: null, createdAt: AT, ...overrides });
@@ -68,7 +68,7 @@ const turnOut = (outcome: ArtifactTurnOut["outcome"], reply: string, artifact: A
 
 const deckContent = "<!-- layout: title -->\n# Deck\n\nOne line\n\n---\n\n<!-- layout: takeaways -->\n## Costs\n\n- Labour is most of the cost [1]\n\n---\n\n## Results\n\n- A point [1]";
 const deck = (number = 1, overrides: Partial<Artifact> = {}) => version(number, {
-  id: `deck_${number}`, lineageId: "deck_lineage", kind: "slides", format: "slides", style: null, title: `Deck v${number}`, content: deckContent, conversationId: "conv", conversationTitle: "A talk",
+  id: `deck_${number}`, lineageId: "deck_lineage", kind: "slides", format: "slides", style: null, outputType: "Slides", title: `Deck v${number}`, content: deckContent, conversationId: "conv", conversationTitle: "A talk",
   outline: [{ heading: "Deck", goal: "" }, { heading: "Costs", goal: "" }, { heading: "Results", goal: "" }],
   sections: [{ index: 0, heading: "Deck", checked: true, issues: [] }, { index: 1, heading: "Costs", checked: true, issues: [] }, { index: 2, heading: "Results", checked: true, issues: [] }],
   ...overrides,
@@ -102,6 +102,9 @@ async function setup(options: { from?: string; history?: Artifact[]; conversatio
   }
   const created: Context["created"] = []; const imports: Context["imports"] = [];
   vi.spyOn(knowledgeApi, "modelMenu").mockResolvedValue(options.menu ?? menu);
+  vi.spyOn(knowledgeApi, "outputTypes").mockResolvedValue([
+    { id: "briefing", label: "Briefing doc", shape: "report", description: "", icon: "ClipboardList", options: [] },
+  ]);
   const sources = Array.from({ length: options.sources ?? 2 }, (_, index) => makeSource({ id: `src_${index + 1}`, title: index === 0 ? "Markers" : `Source ${index + 1}`, kind: "note" }));
   vi.spyOn(knowledgeApi, "sources").mockResolvedValue(sources);
   vi.spyOn(knowledgeApi, "contents").mockResolvedValue({ sections: [], placements: [], sources: sources.map((source) => ({ ...source, durationSeconds: null, authors: null, year: null, pages: null, mediaType: null, host: null, processing: "ready" })) });
@@ -484,7 +487,7 @@ describe("pointing and the one message box", () => {
 
 describe("the brief", () => {
   const brief = { goal: { text: "Show the Velmora trial results", mark: "you" as const }, audience: { text: "Lab members", mark: "guessed" as const }, constraints: [{ text: "At most 10 slides", mark: "edited" as const }], open: [] };
-  const work = (artifact: Artifact) => ({ ...workOf(artifact), spec: { kind: "slides" as const, use: { text: "talk", mark: "you" as const }, length: { text: "10 minutes", mark: "guessed" as const }, structure: null } });
+  const work = (artifact: Artifact) => ({ ...workOf(artifact), spec: { kind: "slides" as const, use: { text: "talk", mark: "you" as const }, length: { text: "10 minutes", mark: "guessed" as const }, outputType: null } });
   const withBrief = (overrides: Partial<ArtifactConversationDetail> = {}) => conversation("conv", { title: "A talk", brief, works: [work(deck(1))], active: "deck_lineage", ...overrides });
 
   it("shows what the conversation is for and what the deck should be, and whose each line is", async () => {
@@ -516,6 +519,22 @@ describe("the brief", () => {
     const panel = within(screen.getByRole("region", { name: "Brief" }));
     await user.type(panel.getByRole("textbox", { name: "Add to the brief" }), "No jargon{Enter}");
     expect(edit).toHaveBeenCalledWith("biology", "conv", { constraints: ["At most 10 slides", "No jargon"] }, "wsp_primary");
+  });
+
+  it("shows the saved type label and edits the active report type from the catalog", async () => {
+    const user = userEvent.setup();
+    const report = version(1, { conversationId: "conv", style: "faq", outputType: "FAQ" });
+    await setup({ history: [report] });
+    await showControls(user);
+    const edit = vi.spyOn(knowledgeApi, "editArtifactBrief").mockResolvedValue({
+      brief: emptyBrief,
+      spec: { ...workOf(report).spec, outputType: { text: "briefing", mark: "edited" } },
+    });
+    expect(screen.getByRole("combobox", { name: "Preview artifact" })).toHaveDisplayValue(/FAQ/);
+    const select = await screen.findByRole("combobox", { name: "Output type" });
+    await user.selectOptions(select, "Briefing doc");
+    expect(edit).toHaveBeenCalledWith("biology", "conv", { spec: { outputType: "briefing" } }, "wsp_primary");
+    expect(select).toHaveValue("briefing");
   });
 
   it("says so when a change was refused, and is locked while the agent works", async () => {
@@ -642,7 +661,7 @@ describe("reading, versions and editing", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("The edit wasn’t saved"); expect(screen.getByRole("textbox", { name: "Report, as Markdown" })).toHaveValue(`${version().content} More.`);
     await user.click(screen.getByRole("button", { name: /Save as new version/ })); expect(await screen.findByRole("heading", { level: 2, name: "Immune markers v2" })).toBeVisible(); expect(edit.mock.calls[1]?.[2].content).toBe(`${version().content} More.`);
   });
-  const accentDeck = (number = 1, overrides: Partial<Artifact> = {}) => version(number, { kind: "slides", format: "slides", style: null, title: `Deck v${number}`, content: "<!-- layout: title -->\n# Deck\n\nOne line\n\n---\n\n<!-- layout: takeaways -->\n## Done\n\n- A point [1]", ...overrides });
+  const accentDeck = (number = 1, overrides: Partial<Artifact> = {}) => version(number, { kind: "slides", format: "slides", style: null, outputType: "Slides", title: `Deck v${number}`, content: "<!-- layout: title -->\n# Deck\n\nOne line\n\n---\n\n<!-- layout: takeaways -->\n## Done\n\n- A point [1]", ...overrides });
   it("saves a deck's accent as a new version, written in its title slide's marker", async () => {
     const user = userEvent.setup(); const edit = vi.spyOn(knowledgeApi, "editOutput").mockResolvedValue(accentDeck(2, { origin: "edit", content: "<!-- layout: title; accent: blue -->\n# Deck\n\nOne line" }));
     const { onNotify } = await setup({ history: [accentDeck()] });

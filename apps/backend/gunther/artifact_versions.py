@@ -25,6 +25,7 @@ from gunther.models import (
     KnowledgeBaseRecord,
     WorkspaceIdentity,
 )
+from gunther.output_types import output_type_for
 from gunther.schemas import (
     ArtifactOut,
     ArtifactUnitSnapshotOut,
@@ -160,6 +161,7 @@ def commit_version(
                     ),
                 }
             parent_provenance = json.loads(parent.provenance_json) if parent else {}
+            style = output_type_for(kind, style).id
             conversation_id = skilled.get("conversation_id") or parent_provenance.get(
                 "conversation_id"
             )
@@ -186,6 +188,8 @@ def commit_version(
                 skill=skilled.get("skill"),
                 approach=skilled.get("approach"),
                 use=skilled.get("use"),
+                length=skilled.get("length"),
+                language=skilled.get("language"),
                 conversation_id=conversation_id,
                 conversation_title=skilled.get("conversation_title")
                 or parent_provenance.get("conversation_title"),
@@ -201,6 +205,8 @@ def commit_version(
                 "skill",
                 "approach",
                 "use",
+                "length",
+                "language",
                 "conversation_id",
                 "conversation_title",
                 "request",

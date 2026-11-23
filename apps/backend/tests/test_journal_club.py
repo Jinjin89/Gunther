@@ -36,7 +36,6 @@ def run():
     return Run(
         Spec("slides", "Researchers", brief="Explain this study"),
         "read",
-        "English",
         study=S.StudyMap.model_validate(STUDY),
         figure_readings=[S.FigureReading.model_validate(READING)],
         reviews=[],

@@ -1,7 +1,7 @@
-import type { ArtifactBriefState, ArtifactLine, ArtifactMark, EditArtifactBriefRequest } from "@gunther/contracts";
-import { useState } from "react";
+import type { ArtifactBriefState, ArtifactLine, ArtifactMark, EditArtifactBriefRequest, OutputType } from "@gunther/contracts";
+import { useEffect, useState } from "react";
+import { knowledgeApi } from "../api";
 import { Line } from "../pages/ConversationBrief";
-import { STRUCTURE_LABEL } from "./ApproachPanel";
 
 const MARK_WORDS: Record<ArtifactMark, string> = { you: "you said", edited: "edited", guessed: "guessed" };
 type Part = "goal" | "audience" | "constraint" | "open";
@@ -15,7 +15,7 @@ function Mark({ line }: { line: ArtifactLine }) {
 /**
  * What the conversation is for, and what the artifact being worked on should be: the goal, the
  * audience, the constraints and what is still open, then the artifact's use, length and
- * structure. Each line says whose it is. Every line can be changed here; what is typed here is
+ * output type. Each line says whose it is. Every line can be changed here; what is typed here is
  * the person's, and the agent does not change it by guessing. Locked while the agent works on a
  * message, so that its turn does not overwrite what is typed.
  */
@@ -27,6 +27,16 @@ export function ArtifactBriefPanel({ state, disabled, error, onEdit }: {
 }) {
   const [part, setPart] = useState<Part>("constraint");
   const [adding, setAdding] = useState("");
+  const [types, setTypes] = useState<OutputType[]>([]);
+  const report = state?.spec?.kind === "report";
+  useEffect(() => {
+    if (!report) return;
+    const controller = new AbortController();
+    void knowledgeApi.outputTypes(controller.signal).then((types) => {
+      if (!controller.signal.aborted) setTypes(types.filter((type) => type.shape === "report"));
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, [report]);
   if (!state) return null;
   const { brief, spec } = state;
   const filled = Boolean(brief.goal || brief.audience || brief.constraints.length || brief.open.length || spec);
@@ -67,10 +77,13 @@ export function ArtifactBriefPanel({ state, disabled, error, onEdit }: {
           {spec.length
             ? <Line text={spec.length.text} label="length" readOnly={disabled} onSave={(text) => onEdit({ spec: { length: text } })} onRemove={() => onEdit({ spec: { length: "" } })}><Mark line={spec.length} /></Line>
             : <LengthAdd disabled={disabled} onSave={(text) => onEdit({ spec: { length: text } })} />}</li>
-        {spec.kind === "report" && <li className="brief-row"><span className="brief-key">Structure</span>
-          <select aria-label="Structure" value={spec.structure?.text ?? ""} disabled={disabled} onChange={(event) => onEdit({ spec: { structure: event.target.value } })}>
-            <option value="">Not decided</option>{Object.entries(STRUCTURE_LABEL).map(([id, words]) => <option key={id} value={id}>{words}</option>)}
-          </select>{spec.structure && <Mark line={spec.structure} />}</li>}
+        {report && types.length > 0 && <li className="brief-row"><span className="brief-key">Output type</span>
+          <select aria-label="Output type" value={spec.outputType?.text ?? ""} disabled={disabled} onChange={(event) => {
+            const type = types.find((item) => item.id === event.target.value);
+            onEdit({ spec: { outputType: type?.id ?? "" } });
+          }}>
+            <option value="">Default</option>{types.map((type) => <option key={type.id} value={type.id}>{type.label}</option>)}
+          </select>{spec.outputType && <Mark line={spec.outputType} />}</li>}
       </ul>
     </div>}
     {!disabled && <form className="brief-add" onSubmit={(event) => { event.preventDefault(); add(); }}>

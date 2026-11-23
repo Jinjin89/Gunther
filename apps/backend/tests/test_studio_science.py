@@ -354,6 +354,7 @@ def make(
     writer=None,
     design=False,
     read_error=False,
+    language=None,
 ):
     writer = writer or model()
     fake = FakeProvider(science_router(study, first=first, revised=revised, read_error=read_error))
@@ -364,7 +365,7 @@ def make(
     built = agents.make(
         writer,
         "low",
-        Spec("slides", "Researchers", brief="Explain this study"),
+        Spec("slides", "Researchers", brief="Explain this study", language=language),
         science_pool(figures=figures, warning=warning),
         Notes(),
         checkpoint=saved.update,
@@ -372,8 +373,12 @@ def make(
     return built, agents, fake, saved
 
 
-def test_multi_experiment_map_pixels_story_writer_revision_and_design(tmp_path):
-    built, agents, fake, saved = make(tmp_path, first=NO_IMAGE, design=True)
+@pytest.mark.parametrize("language", [None, "German"])
+def test_multi_experiment_map_pixels_story_writer_revision_and_design(tmp_path, language):
+    study = {**STUDY, "language": "Dutch"}
+    built, agents, fake, saved = make(
+        tmp_path, study=study, first=NO_IMAGE, design=True, language=language,
+    )
     assert built.approach["purpose"] == "explain_study"
     assert len(built.approach["study_map"]["claims"]) == 2
     assert built.approach["figure_readings"][0]["panels"][1]["label"] == "B"
@@ -381,6 +386,7 @@ def test_multi_experiment_map_pixels_story_writer_revision_and_design(tmp_path):
     assert sum(t.startswith("Revise only the scientific slides") for t in tasks) == 1
     for marker in ("Plan a scientific", "Write the scientific"):
         prompt = next(t for t in tasks if t.startswith(marker))
+        assert f"Write in {language or 'Dutch'}." in prompt
         assert "ast_signal" in prompt and "Actual FigureReadings" in prompt
         assert "Ablation" in prompt or "ablation" in prompt
     assert "gunther-asset:ast_signal" in built.content

@@ -22,12 +22,12 @@ def main(argv: list[str] | None = None) -> int:
 
     loaded = [importlib.import_module(f"gunther.studio.{name}").__name__ for name in MODULES]
     from gunther.studio import format as fmt
-    from gunther.studio.reference import DECK_FORMAT, REPORT_FORMAT
+    from gunther.studio.reference import DECK_FORMAT, report_format
 
     slides = fmt.split_slides(content)
     parsed = [fmt.parse_slide(text) for text in slides]
     checked = fmt.check_deck(content)
-    ok = not checked and bool(DECK_FORMAT) and bool(REPORT_FORMAT)
+    ok = not checked and bool(DECK_FORMAT) and bool(report_format(summary_box=True))
     print(
         json.dumps(
             {

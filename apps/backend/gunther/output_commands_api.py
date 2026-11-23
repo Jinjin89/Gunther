@@ -11,10 +11,12 @@ from gunther.artifact_api_common import (
     _outputs_key,
 )
 from gunther.llm import ModelError
+from gunther.output_types import OUTPUT_TYPES
 from gunther.schemas import (
     ArtifactOut,
     BuildOutputInput,
     EditOutputInput,
+    OutputTypeOut,
     RestyleSlidesInput,
     ReviewSlidesInput,
     ReviseOutputInput,
@@ -22,6 +24,11 @@ from gunther.schemas import (
 
 stream_router = APIRouter()
 router = APIRouter()
+
+
+@router.get("/output-types", response_model=list[OutputTypeOut])
+def output_types() -> list[OutputTypeOut]:
+    return [OutputTypeOut.model_validate(item) for item in OUTPUT_TYPES.values()]
 
 
 # The words for an output's entry in the top bar: running, done, failed.

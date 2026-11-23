@@ -128,7 +128,7 @@ class ArtifactConversations:
             kind=spec.kind,
             use=cls._artifact_line_out(spec.use),
             length=cls._artifact_line_out(spec.length),
-            structure=cls._artifact_line_out(spec.structure),
+            output_type=cls._artifact_line_out(spec.output_type),
         )
 
     @classmethod
@@ -570,7 +570,7 @@ class ArtifactConversations:
         payload: EditArtifactBriefInput,
     ) -> ArtifactBriefStateOut:
         """Set the lines the user typed in the Brief panel. They are marked as theirs, so no
-        later guess replaces them. Use, length and structure belong to the artifact being
+        later guess replaces them. Use, length and output type belong to the artifact being
         worked on."""
 
         with session_scope(self.sessions) as session:
@@ -588,7 +588,7 @@ class ArtifactConversations:
                 open=payload.open,
                 use=spec.use if spec else None,
                 length=spec.length if spec else None,
-                structure=spec.structure if spec else None,
+                output_type=spec.output_type if spec else None,
             )
             if work is not None and edited is not None:
                 work.spec = edited

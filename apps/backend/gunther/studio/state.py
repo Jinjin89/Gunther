@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from gunther.llm import ModelError
+from gunther.output_types import SHAPES, OutputType, output_type_for
 from gunther.outputs import Planned, Spec, heading_of
 from gunther.studio import science as S
 
@@ -80,6 +81,15 @@ class ReportStory(StoryLength):
     summary_points: list[str] = Field(default_factory=list)
     sections: list[StorySection]
 
+    def parts(self, summary_box: bool) -> list[StorySection]:
+        if not summary_box:
+            return self.sections
+        summary = StorySection(
+            heading=self.summary_heading.strip() or "Summary", id=self.summary_id,
+            job=self.summary_job,
+        )
+        return [summary, *self.sections]
+
 
 class Problem(BaseModel):
     where: str = ""
@@ -99,7 +109,6 @@ class Run:
 
     spec: Spec
     use: str  # "talk" | "read" (decks); "" for reports
-    language: str
     memo: Memo | None = None
     story: DeckStory | ReportStory | None = None
     reviews: list[Review | S.ScientificReview] | None = None
@@ -116,6 +125,15 @@ class Run:
     # Latest request errors by one-based slide position in the accepted deck.
     format_repair_errors: dict[int, str] = field(default_factory=dict)
 
+    @property
+    def output_type(self) -> OutputType:
+        return output_type_for(self.spec.kind, self.spec.output_type)
+
+    @property
+    def model_language(self) -> str | None:
+        analysis = self.study or self.memo
+        return analysis.language if analysis else None
+
 
 def _no_events(_event: dict[str, Any]) -> None:
     return None
@@ -125,16 +143,20 @@ def _matches_plan(run: Run, parts: Sequence[str]) -> bool:
     return not run.plan or [heading_of(part) for part in parts] == [p.heading for p in run.plan]
 
 
-def _validate_count(story: DeckStory | ReportStory, actual: int, stage: str) -> None:
+def _validate_count(run: Run, story: DeckStory | ReportStory, actual: int, stage: str) -> None:
+    unit = SHAPES[run.output_type.shape].unit_label
+    if actual < 1:
+        raise ModelError(f"The {stage} has no {unit}s.")
     count = story.requested_count
     if count is not None and actual != count:
-        unit = "slides" if isinstance(story, DeckStory) else "sections"
-        raise ModelError(f"The {stage} has {actual} {unit}. The brief asks for {count}.")
+        raise ModelError(f"The {stage} has {actual} {unit}s. The brief asks for {count}.")
 
 
 def _validate_storyline(run: Run, story: DeckStory | ReportStory) -> None:
-    parts = len(story.slides) if isinstance(story, DeckStory) else 1 + len(story.sections)
-    _validate_count(story, len(run.plan) if run.plan else parts, "outline")
+    parts = (
+        story.slides if isinstance(story, DeckStory) else story.parts(run.output_type.summary_box)
+    )
+    _validate_count(run, story, len(run.plan or parts), "outline")
 
 
 def _keeps_heading(run: Run, original: str, repaired: Sequence[str]) -> bool:

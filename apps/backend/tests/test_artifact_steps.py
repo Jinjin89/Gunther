@@ -213,16 +213,16 @@ def test_studio_work_steps_make_and_assemble_a_report(goal) -> None:
 
     def reply(request):
         if is_outlining(request):
+            if goal:
+                task = studio_task(request)
+                assert goal in task and "Set out the options, the evidence for and against" in task
             return json.dumps(story)
-        if "lead analyst" in studio_task(request) and goal:
-            task = studio_task(request)
-            assert goal in task and "Report style (decision_brief)" in task
         return replies(request)
 
     steps = steps_for(FakeProvider(reply))
     if goal:
         steps.brief.goal = Line(text=goal, mark="you")
-        steps.work.spec.structure = Line(text="which", mark="you")
+        steps.work.spec.output_type = Line(text="briefing", mark="you")
     steps.understand()
     steps.plan_whole()
     assert steps.write(["p1", "p2", "p3"]) == ["p1", "p2", "p3"]

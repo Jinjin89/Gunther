@@ -37,6 +37,7 @@ from gunther.llm import ModelError
 from gunther.llm import unfence as _unfence
 from gunther.output_checks import check_saved_part, support_inventory
 from gunther.output_document import number_output_citations, number_output_part
+from gunther.output_types import output_type_for
 from gunther.outputs import (
     COMPOSITION_LAYOUTS,
     UNCHANGED,
@@ -65,7 +66,7 @@ from gunther.studio import prompts as P
 from gunther.studio import science as S
 from gunther.studio.drafting import source_images_kept
 from gunther.studio.pipeline import StudioAgents
-from gunther.studio.reference import DECK_FORMAT, READ_NOTE, REPORT_FORMAT, STUDY_DECK_FORMAT
+from gunther.studio.reference import DECK_FORMAT, READ_NOTE, STUDY_DECK_FORMAT, report_format
 from gunther.studio.state import DeckStory, Insight, Memo, Run, _no_events
 
 logger = logging.getLogger(__name__)
@@ -206,7 +207,6 @@ class StudioWorkAgents(StudioAgents):
         return Run(
             spec,
             self.use or "talk",
-            "",
             purpose=S.Purpose(
                 purpose="explain_study", reason=data.get("purpose_reason") or "Kept from this deck"
             ),
@@ -257,7 +257,7 @@ class StudioWorkAgents(StudioAgents):
             )
             run = Run(
                 spec, (self.use or "talk") if spec.kind == "slides" else "",
-                memo.language or self._language(spec, pool), memo=memo,
+                memo=memo,
             )
         run.story = self.storyline(
             model, effort, run, material, emit, previous_outline=outline, instruction=instruction,
@@ -270,13 +270,8 @@ class StudioWorkAgents(StudioAgents):
             ]
         else:
             planned = [
-                Planned(
-                    run.story.summary_heading.strip() or "Summary", run.story.summary_job,
-                    id=run.story.summary_id or "",
-                )
-            ] + [
                 Planned(s.heading.strip(), s.job, id=s.id or "", refs=tuple(s.refs))
-                for s in run.story.sections
+                for s in run.story.parts(run.output_type.summary_box)
             ]
         if any(len(item.heading.splitlines()) != 1 for item in planned):
             raise ModelError("Outline headings must be single lines.")
@@ -446,6 +441,7 @@ class StudioWorkAgents(StudioAgents):
         instruction: str | None = None,
         notes: Notes | None = None,
         refs: Sequence[int] = (),
+        approach: dict | None = None,
         on_text=None,
     ) -> str:
         deck = spec.kind == "slides"
@@ -474,6 +470,17 @@ class StudioWorkAgents(StudioAgents):
             )
         cited = [*refs, *(int(n) for n in re.findall(r"\[(\d+)\]", whole))]
         material = self._part_material(pool, cited, f"{headings[index]} {goal} {instruction or ''}")
+        scientific = self._science_run(spec)
+        model_language = (
+            scientific.model_language if scientific
+            else ((approach or {}).get("memo") or {}).get("language")
+        )
+        voice = f"{P.VOICE} {P.language_instruction(spec.language, model_language)}"
+        output_type = output_type_for(spec.kind, spec.output_type)
+        guide = (
+            DECK_FORMAT + ("\n\n" + READ_NOTE if use == "read" else "")
+            if deck else report_format(output_type.summary_box) + "\n\n" + output_type.write
+        )
         system = PART_WRITE.format(
             unit=unit,
             what=self._what(spec),
@@ -481,20 +488,17 @@ class StudioWorkAgents(StudioAgents):
             audience=spec.audience,
             use_line=f" Use: {use}." if deck else "",
             task=task,
-            voice=P.VOICE.format(language=self._language(spec, pool)),
+            voice=voice,
             truth=P.TRUTH,
-            format=(DECK_FORMAT + ("\n\n" + READ_NOTE if use == "read" else ""))
-            if deck
-            else REPORT_FORMAT,
+            format=guide,
         )
-        scientific = self._science_run(spec)
         if scientific:
             system = SCIENCE_PART_WRITE.format(
                 brief=spec.brief or "(none)",
                 audience=spec.audience,
                 use=use,
                 task=task,
-                voice=P.VOICE.format(language=self._language(spec, pool)),
+                voice=voice,
                 truth=P.TRUTH + "\n\n" + P.SCIENCE_TRUTH,
                 format=STUDY_DECK_FORMAT + ("\n\n" + READ_NOTE if use == "read" else ""),
                 study=self._study_text(scientific),
@@ -532,6 +536,7 @@ class StudioWorkAgents(StudioAgents):
     def revise(
         self, model, effort, spec: Spec, content: str, outline, records, instruction: str,
         target: int | None, tool, pool: Pool, notes: Notes, events=None,
+        *, approach: dict | None = None,
     ) -> BuiltOutput:
         """Rewrite selected parts with the saved version's text and citation numbers."""
         emit = events or _no_events
@@ -561,7 +566,7 @@ class StudioWorkAgents(StudioAgents):
             text = self.write_part(
                 model, effort, spec, parts, headings, index, pool,
                 goal=plans[index].get("goal", ""), instruction=instruction, notes=notes,
-                on_text=stream,
+                approach=approach, on_text=stream,
             )
             if section_hash(text) == section_hash(fmt.without_design(old)):
                 emit({"type": "section", "index": index, "state": "done"})

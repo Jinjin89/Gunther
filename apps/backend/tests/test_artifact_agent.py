@@ -1384,7 +1384,7 @@ def test_a_reports_view_numbers_its_paragraphs_and_a_question_is_shown_with_its_
         )  # fmt: skip
     )
     assert "Web: on." in text.splitlines()[0]
-    assert text.splitlines()[1].startswith("report in Studio:") and "Structures: what," in text
+    assert text.splitlines()[1].startswith("report in Studio:") and "Types: report (Report)," in text
     assert 'Artifacts: [1] report "The trial" not saved yet (active)' in text
     assert (
         "  2 Heat fell · not re-checked · sources 1, 2 · cards C1\n      ¶1 First paragraph [1].\n      ¶2 Second one"
@@ -2066,7 +2066,7 @@ def test_a_report_made_from_a_deck_starts_from_the_decks_approach(tmp_path: Path
                     {
                         "brief": [
                             {"field": "length", "text": "3 pages", "quote": "3 pages"},
-                            {"field": "structure", "text": "decision", "quote": ""},
+                            {"field": "output_type", "text": "briefing", "quote": ""},
                         ],
                         "actions": [{"do": "select", "artifact": "new:report"}],
                     },
@@ -2088,7 +2088,7 @@ def test_a_report_made_from_a_deck_starts_from_the_decks_approach(tmp_path: Path
         assert stored.active == deck.key  # the second decision selected the first artifact
         view = seen_by_the_orchestrator(fake, start)[1]
         assert '[2] report "untitled" not saved yet (active)' in view
-        assert "report in Studio:" in view and "Structures:" in view
+        assert "report in Studio:" in view and "Types: report (Report)," in view
         assert "Choosing" not in view
 
 

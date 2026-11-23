@@ -19,6 +19,7 @@ from gunther.citations import CITATION_GROUP, SENTENCE_END, UNSOURCED, renumber_
 from gunther.evidence import Evidence, Step, Tool, ToolFailure
 from gunther.llm import ModelGateway, ModelInfo
 from gunther.model_profiles import Effort
+from gunther.output_types import OutputLength
 from gunther.schemas import ConversationCitationOut
 from gunther.skill_checks import (
     Context,
@@ -156,8 +157,6 @@ def _with_metadata(kept: Evidence, other: Evidence) -> Evidence:
 class OutputLimits:
     """How far one build may go. Defaults suit most; nothing else depends on them."""
 
-    sections: int = 8  # in a report
-    slides: int = 14  # in a deck, the title slide included
     queries: int = 3  # searches per section
     results: int = 40  # search results one section grades
     per_section: int = 8  # new passages per section
@@ -480,12 +479,14 @@ class Pool:
 class Spec:
     kind: str  # "report" | "slides"
     audience: str
-    style: str | None = None  # a report's; slides have none
+    output_type: str | None = None
     brief: str = ""
     title: str | None = None  # asked for; otherwise the planner's
-    theme: str | None = None  # a slides deck's visual theme; never a report structure
+    theme: str | None = None  # a deck's visual theme
     design_version: int | None = None
     deck_style: str | None = None
+    length: OutputLength | None = None
+    language: str | None = None
 
 
 @dataclass(frozen=True)
@@ -542,24 +543,6 @@ Events = Callable[[dict[str, Any]], None]
 
 
 # Prompts ----------------------------------------------------------------------------------
-
-DECK_USES = ("talk", "read")
-OUTPUT_STRUCTURES = ("what", "why", "how", "guide", "which", "change", "learn")
-REPORT_STYLE_STRUCTURES = {
-    "overview": "what",
-    "field_guide": "guide",
-    "teaching_path": "learn",
-    "decision_brief": "which",
-}
-
-STYLES = {
-    "overview": "Explain the subject and lead with the main point, then the support.",
-    "field_guide": "Cover what it is, when to use it, how to use it, and the pitfalls.",
-    "teaching_path": "Go from the basics to the advanced, defining terms as they appear, "
-    "and end each section with one question the reader can check themselves against.",
-    "decision_brief": "Set out the options, the evidence for and against each, a "
-    "recommendation, and the risks.",
-}
 
 def _origin(item: Evidence) -> str:
     return " · ".join(

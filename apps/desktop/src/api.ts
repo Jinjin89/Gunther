@@ -19,6 +19,7 @@ import type {
   RestyleSlidesRequest,
   OutlineItem,
   OutputApproach,
+  OutputType,
   StudioMemo,
   StudioReview,
   DeckUse,
@@ -877,6 +878,7 @@ export const knowledgeApi = {
     request<KnowledgeProposal[]>(`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/proposals${status ? `?status=${status}` : ""}`),
   knowledgeUnits: (knowledgeBaseId: string) =>
     request<KnowledgeUnit[]>(`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/units`),
+  outputTypes: (signal: AbortSignal) => request<OutputType[]>("/output-types", { signal }),
   artifacts: (knowledgeBaseId: string, expectedWorkspaceId: string) =>
     request<ArtifactSummary[]>(
       `/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/artifacts`,

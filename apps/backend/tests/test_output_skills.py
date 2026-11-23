@@ -262,4 +262,4 @@ def test_studio_builds_with_retired_output_settings_on_disk(tmp_path: Path) -> N
         version = built(build(client, base_id, body()))
     assert version["provenance"]["generator"] == "gunther.studio.v1"
     assert version["provenance"]["skill"]["name"] == "studio"
-    assert version["style"] == "auto"
+    assert version["style"] == "report"

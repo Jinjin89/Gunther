@@ -46,6 +46,7 @@ from gunther.artifact_workspace import (
 from gunther.evidence import Evidence, Tool, ToolFailure
 from gunther.llm import ModelError, ModelGateway, ModelInfo
 from gunther.model_profiles import Effort
+from gunther.output_types import output_type_for
 from gunther.outputs import BuiltOutput, Notes, Planned, Pool, _marked
 from gunther.run_budget import RunBudget
 from gunther.studio.work import StudioWorkAgents
@@ -66,8 +67,8 @@ Return a JSON object with:
 - "brief": what the latest message says about the work, one update per point: the field, the \
 text, and "quote", the user's exact words that say it. Leave "quote" empty for your own guess. \
 goal, audience, constraint, drop_constraint, open and close_open belong to the conversation; use, \
-length and structure to the active artifact (a deck's use is one of the "Uses" listed, a \
-report's structure one of its "Structures").
+length and output_type to the active artifact (a deck's use is one of the "Uses" listed, a \
+report's output_type one of its "Types" IDs).
 - "actions": the next 1 to 3 actions, in order (up to 8 when they are edits of different \
 parts).
 
@@ -153,7 +154,7 @@ Reply with the JSON object only."""
 
 TERMINAL = ("ask", "answer", "save", "reply")
 # What the whole work is about, for or like: a request about some of its parts does not set it.
-WORK_WIDE = ("goal", "audience", "constraint", "use", "length", "structure")
+WORK_WIDE = ("goal", "audience", "constraint", "use", "length", "output_type")
 SEARCHES = ("search_library", "search_web", "read_source")
 
 
@@ -355,7 +356,7 @@ class ArtifactAgent(ArtifactActions, ArtifactTurnResults):
             self.next_id += 1
             return made
 
-        # A first "select" runs before the brief is applied, so that use, length and structure
+        # A first "select" runs before the brief is applied, so that use, length and output type
         # land on the artifact it selects.
         for at in range(len(acts)):
             ids[at] = action_id()
@@ -657,8 +658,9 @@ class ArtifactAgent(ArtifactActions, ArtifactTurnResults):
 
     def rebuild(self, work: Work, outline: Sequence[Planned]) -> TurnResult:
         """Build the approved outline on a copy until the version and turn can be saved."""
-        if work.spec.kind == "report" and len(outline) > 8:
-            raise ValueError("A report has at most 8 sections")
+        output_type = output_type_for(work.spec.kind, work.spec.chosen_output_type)
+        if error := output_type.part_limit_error(len(outline)):
+            raise ValueError(error)
         candidate = work.model_copy(deep=True)
         candidate.cards = []
         built = self._make(candidate, outline)

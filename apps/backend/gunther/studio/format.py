@@ -543,6 +543,7 @@ def with_marker(text: str, layout: str, **attrs: str) -> str:
 
 REPORT_HEADING_UNITS = 90
 SUMMARY_MARK = "<!-- block: summary -->"
+SUMMARY_LINE = re.compile(r"^[ \t]*<!--[ \t]*block:[ \t]*summary[ \t]*-->[ \t]*(?:\r?\n|\Z)", re.M)
 EXHIBIT = re.compile(
     r"^[ \t]*:::exhibit\b(?P<attrs>[^\n]*)\n(?P<body>.*?)(?:\n[ \t]*:::[ \t]*$|\Z)",
     re.M | re.S,
@@ -550,7 +551,9 @@ EXHIBIT = re.compile(
 EXHIBIT_CHART = re.compile(r"\bchart\s*=\s*(?:" + "|".join(CHART_KINDS) + r")\b")
 
 
-def check_report(text: str) -> list[str]:
+def check_report(
+    text: str, *, require_exhibits: bool = True, summary_box: bool = True,
+) -> list[str]:
     """What is wrong with a report as a whole, as instructions the writer can act on."""
 
     problems: list[str] = []
@@ -562,9 +565,10 @@ def check_report(text: str) -> list[str]:
         if not size:
             problems.append(f'Section {number} needs text after "## ".')
         elif size > REPORT_HEADING_UNITS:
+            instruction = "Shorten it to one claim" if summary_box else "Shorten it"
             problems.append(
                 f"Section {number} heading is {size} units; the limit is {REPORT_HEADING_UNITS}. "
-                f'Shorten it to one claim: "{heading[:80]}"'
+                f'{instruction}: "{heading[:80]}"'
             )
     body_text = re.sub(r"^:::exhibit.*?^:::\s*$", "", text, flags=re.M | re.S)
     body_text = re.sub(r"^#{1,2}[ \t]+.*$", "", body_text, flags=re.M)
@@ -574,24 +578,27 @@ def check_report(text: str) -> list[str]:
             "finding itself and cite the passage."
         )
         break
-    if re.search(r"^- \*\*(Finding|发现|Key finding)\*\*", text, re.M | re.I):
+    if summary_box and re.search(r"^- \*\*(Finding|发现|Key finding)\*\*", text, re.M | re.I):
         problems.append(
             'Summary bullets start with a label ("**Finding**"); make each bold lead the '
             "finding itself."
         )
     exhibits = EXHIBIT.findall(text)
-    numeric_sections = sum(
-        1
-        for chunk in re.split(r"^## ", text, flags=re.M)[2:]
-        if len(re.findall(r"\d[\d.,]*\s?(?:%|°C|€|\$|m²|kWh|million|billion|万|亿)", chunk)) >= 3
-    )
-    wanted = min(4, (numeric_sections + 1) // 2)
-    if len(exhibits) < wanted:
-        problems.append(
-            f"The report has {len(exhibits)} exhibits but {numeric_sections} sections rest on "
-            f"compared numbers: add at least {wanted - len(exhibits)} exhibit(s) "
-            "(:::exhibit chart table with caption and Source line) where numbers are compared."
+    if require_exhibits:
+        numeric_sections = sum(
+            1
+            for chunk in re.split(r"^## ", text, flags=re.M)[2 if summary_box else 1:]
+            if len(re.findall(
+                r"\d[\d.,]*\s?(?:%|°C|€|\$|m²|kWh|million|billion|万|亿)", chunk,
+            )) >= 3
         )
+        wanted = min(4, (numeric_sections + 1) // 2)
+        if len(exhibits) < wanted:
+            problems.append(
+                f"The report has {len(exhibits)} exhibits but {numeric_sections} sections rest on "
+                f"compared numbers: add at least {wanted - len(exhibits)} exhibit(s) "
+                "(:::exhibit chart table with caption and Source line) where numbers are compared."
+            )
     for number, (_attrs, body) in enumerate(exhibits, 1):
         lines = [line for line in body.split("\n") if line.strip()]
         if not lines or lines[0].startswith("|"):
@@ -603,13 +610,13 @@ def check_report(text: str) -> list[str]:
     return problems
 
 
-def ensure_summary_mark(text: str) -> str:
-    """The first section is the executive summary: it carries the summary marker."""
-
-    if SUMMARY_MARK in text:
+def ensure_summary_mark(text: str, *, enabled: bool = True) -> str:
+    """Set the report's summary marker according to its type."""
+    text = SUMMARY_LINE.sub("", text)
+    if not enabled:
         return text
     return re.sub(
-        r"^(## .+)$", lambda m: m.group(1) + "\n" + SUMMARY_MARK, text, count=1, flags=re.M
+        r"^(##[ \t]+.+)$", lambda m: m.group(1) + "\n" + SUMMARY_MARK, text, count=1, flags=re.M
     )
 
 

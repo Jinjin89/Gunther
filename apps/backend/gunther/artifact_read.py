@@ -14,6 +14,7 @@ from gunther.artifact_manifest import artifact_manifest_hash
 from gunther.checks import complete, coverage_of, issue_view, read_verdicts
 from gunther.database import session_scope
 from gunther.models import Artifact, ArtifactCheck, ArtifactUnitBinding, KnowledgeUnitRevision
+from gunther.output_types import output_type_label
 from gunther.outputs import _marked, heading_of, section_hash, split_document
 from gunther.schemas import (
     ArtifactOut,
@@ -187,6 +188,7 @@ def _summary(
         created_at=f"{artifact.created_at.isoformat(timespec='milliseconds')}Z",
         kind=artifact.kind,
         style=artifact.style,
+        output_type=output_type_label(artifact.kind, artifact.style),
         origin=artifact.origin,
         conversation_id=saved.get("conversation_id"),
         conversation_title=saved.get("conversation_title"),
@@ -340,4 +342,6 @@ class ArtifactReader:
                          if key in skill}},
             "approach": provenance.get("approach"),
             "use": provenance.get("use"),
+            "length": provenance.get("length"),
+            "language": provenance.get("language"),
         }

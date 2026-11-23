@@ -527,7 +527,7 @@ def test_a_studio_report_is_planned_written_checked_and_saved(tmp_path: Path) ->
     assert (artifact["title"], artifact["kind"], artifact["style"]) == (
         "Immune markers",
         "report",
-        "auto",
+        "report",
     )
     assert (artifact["origin"], artifact["versionNumber"], artifact["format"]) == (
         "build",
@@ -563,7 +563,7 @@ def test_a_studio_report_is_planned_written_checked_and_saved(tmp_path: Path) ->
     )
     assert stored == artifact
     assert [(item["kind"], item["style"], item["origin"]) for item in listed] == [
-        ("report", "auto", "build")
+        ("report", "report", "build")
     ]
     assert "content" not in listed[0]
 
@@ -582,7 +582,7 @@ def test_a_studio_deck_keeps_its_speaker_notes(tmp_path: Path) -> None:
         events = build(client, base_id, body(kind="slides", audience="student"))
         artifact = built(events)
 
-    assert artifact["kind"] == "slides" and artifact["style"] is None
+    assert artifact["kind"] == artifact["style"] == "slides"
     assert artifact["format"] == "slides"
     assert artifact["title"] == "Immune markers"
     assert "layout: title; design: v2" in artifact["content"]
@@ -1195,6 +1195,7 @@ def test_a_version_from_the_old_builder_cannot_be_changed_but_can_be_rebuilt(
     assert revised[-1][0] == "error" and revised[-1][1]["status"] == 400
     assert "old builder" in revised[-1][1]["detail"]
     assert legacy["origin"] == "legacy"
+    assert legacy["outputType"] == "Field guide"
     assert (rebuilt["versionNumber"], rebuilt["origin"]) == (2, "rebuild")
     assert rebuilt["provenance"]["generator"] == "gunther.studio.v1"
     assert rebuilt["lineageId"] == legacy["lineageId"]

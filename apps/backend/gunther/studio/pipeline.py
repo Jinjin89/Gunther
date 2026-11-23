@@ -24,8 +24,8 @@ from gunther.llm import ModelError, ModelInfo
 from gunther.llm import unfence as _unfence
 from gunther.model_profiles import Effort
 from gunther.output_document import assemble_output
+from gunther.output_types import DECK_USES, output_type_for
 from gunther.outputs import (
-    STYLES,
     BuiltOutput,
     Draft,
     Events,
@@ -64,7 +64,6 @@ logger = logging.getLogger(__name__)
 
 # Every slide of a deck is also designed as HTML (studio/design.py); False: the template draws.
 DESIGN_SLIDES = True
-READ_HINT = r"\b(pre-?read|handout|to read|send|email)\b|阅读|发给|会后"
 
 
 class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerification, OutputAgents):
@@ -87,7 +86,7 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
         self.renderer = renderer
         self.asset_reader = asset_reader or getattr(renderer, "asset_reader", None)
         self.scientific_context: dict[str, Any] | None = None
-        self.use = use if use in ("talk", "read") else None
+        self.use = use if use in DECK_USES else None
         self.trail: list[dict[str, Any]] = []
         self._started: dict[str, float] = {}
         self._active_stages: list[str] = []
@@ -255,16 +254,12 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
 
         if not (pool.items or notes.knowledge or notes.discussions):
             raise ModelError("There is no material to work from: choose some sources first.")
-        use = self.use or ("read" if re.search(READ_HINT, spec.brief, re.I) else "talk")
+        use = (self.use or "talk") if spec.kind == "slides" else ""
         plan = tuple(Planned(p.heading.strip(), p.goal, id=p.id) for p in fixed_outline or ())
         ids = [p.id for p in plan if p.id]
         if len(set(ids)) != len(ids) or any(len(p.heading.splitlines()) != 1 for p in plan):
             raise ModelError("Approved outline headings must be single lines with unique part IDs.")
-        brief = spec.brief
-        if spec.kind == "report" and spec.style in STYLES:
-            brief += f"\n\nReport style ({spec.style}): {STYLES[spec.style]}"
-        run = Run(replace(spec, brief=brief), use if spec.kind == "slides" else "",
-                  self._language(spec, pool), plan=plan)
+        run = Run(spec, use, plan=plan)
         printed = S.pool_print(pool.items)
         resumed = resume or {}
         eye = vision_model(self.gateway, model, effort) if spec.kind == "slides" else None
@@ -359,8 +354,6 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
                     )
                 state["coverage_plan"] = run.coverage_plan.model_dump()
             self.scientific_context = {**state, "purpose": "explain_study"}
-            if run.study.language:
-                run.language = run.study.language
         else:
             with checkpoint_stage(emit, state, checkpoint, "memo") as publish:
                 if saved.get("memo"):
@@ -371,8 +364,6 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
                 else:
                     run.memo = self.memo(model, effort, run, material, publish)
                 state["memo"] = run.memo.model_dump()
-            if run.memo.language:
-                run.language = run.memo.language
         return run, material, state, saved
 
     def make(
@@ -387,6 +378,7 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
         fallback_title: str = "",
         purpose: str | None = None,
         fixed_outline: Sequence[Planned] | None = None,
+        outline_approved: bool = True,
         scope: Mapping[str, Any] | None = None,
         web: bool = False,
         resume: dict[str, Any] | None = None,
@@ -395,6 +387,10 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
     ) -> BuiltOutput:
         """Reuse completed stages only when their material and request still match."""
 
+        if outline_approved and fixed_outline:
+            output_type = output_type_for(spec.kind, spec.output_type)
+            if error := output_type.part_limit_error(len(fixed_outline)):
+                raise ModelError(error)
         emit = events or _no_events
         run, material, state, saved = self._prepare(
             model, effort, spec, pool, notes, emit, purpose=purpose, fixed_outline=fixed_outline,
@@ -524,7 +520,7 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
             )
 
             def assemble_deck(parts: list[Draft]) -> BuiltOutput:
-                _validate_count(run.story, len(parts), "assembled deck")
+                _validate_count(run, run.story, len(parts), "assembled deck")
                 if not _matches_plan(run, [d.text for d in parts]):
                     raise ModelError("The deck no longer follows the approved outline.")
                 planned = [
@@ -555,8 +551,7 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
         else:
             text = self.write_report(model, effort, run, pool, material, emit)
             preamble, sections = split_document(text, "report")
-            if not sections:
-                raise ModelError("The report came back without sections.")
+            _validate_count(run, run.story, len(sections), "written report")
             with checkpoint_stage(emit, state, None, "verify") as publish:
                 drafts = self.verify(model, run, sections, pool, publish, material)
             with checkpoint_stage(emit, state, None):
@@ -568,7 +563,7 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
                 title = run.story.title or fallback_title
                 built = assemble_output(spec, title, preamble, drafts, pool, outline, model, effort)
                 count = len(split_document(built.content, "report")[1])
-                _validate_count(run.story, count, "assembled report")
+                _validate_count(run, run.story, count, "assembled report")
                 if count != len(outline):
                     raise ModelError("The assembled report does not match its outline.")
         return replace(
@@ -604,8 +599,6 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
             "limitations": (run.limitations or []) if run.study else None,
             "review_status": run.review_status,
             "allowed_assets": S.allowed_assets(pool.items) if run.study else None,
-            "structure": "",
-            "structure_reason": "",
             "pages": pages if run.spec.kind == "slides" else None,
             "supplements": [],
             "gaps": run.study.limitations

@@ -25,7 +25,7 @@ import logging
 import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
@@ -41,10 +41,8 @@ from gunther.checks import (
 )
 from gunther.citations import ANY_CITATION, sentence_spans
 from gunther.evidence import Evidence
+from gunther.output_types import DECK_USES, OUTPUT_TYPES, OutputLength, ShapeId, output_type_for
 from gunther.outputs import (
-    DECK_USES,
-    OUTPUT_STRUCTURES,
-    REPORT_STYLE_STRUCTURES,
     Pool,
     Spec,
     _marked,
@@ -66,8 +64,17 @@ MAX_LINES = 8
 DEFAULT_AUDIENCE = "scientist"
 
 Mark = Literal["you", "guessed", "edited"]
-Kind = Literal["report", "slides"]
+Kind = ShapeId
 PartState = Literal["ok", "not_written", "out_of_date", "not_checked"]
+
+# Read old workspace specs and their stored approach inputs. Decks had a single type.
+_LEGACY_REPORT_TYPES = {
+    "what": "report",
+    "guide": "report",
+    "which": "briefing",
+    "learn": "study_guide",
+}
+_SPEC_LINES = ("use", "length", "output_type")
 
 
 # The workspace ---------------------------------------------------------------------------------
@@ -96,9 +103,15 @@ class WorkSpec(BaseModel):
     kind: Kind
     use: Line | None = None  # decks: "talk" | "read"
     length: Line | None = None  # "10 minutes", "about 12 slides", "3 pages"
-    structure: Line | None = None  # a structure id of the kind's skill
-    theme: str | None = None  # slide visual theme, kept apart from report structure
+    output_type: Line | None = None
+    language: str | None = None
+    theme: str | None = None
     design_version: int | None = None
+
+    @property
+    def chosen_output_type(self) -> str | None:
+        line = self.output_type
+        return line.text if line and line.mark != "guessed" else None
 
 
 class CardRec(BaseModel):
@@ -181,6 +194,31 @@ class Work(BaseModel):
     skipped: list[dict] = Field(default_factory=list)  # the skill's notes since the last save
     next_card: int = 1
     next_item: int = 1
+
+    @model_validator(mode="before")
+    @classmethod
+    def read_legacy_structure(cls, data: Any) -> Any:
+        spec = data.get("spec") if isinstance(data, dict) else None
+        if not isinstance(spec, dict) or "structure" not in spec or "output_type" in spec:
+            return data
+        line = Line.model_validate(spec["structure"]) if spec["structure"] is not None else None
+        chosen = line is not None and line.mark != "guessed"
+        mapping = _LEGACY_REPORT_TYPES if spec.get("kind") == "report" and chosen else {}
+        output_type = mapping.get(_same_words(line))
+        choice = Line(text=output_type, mark=line.mark) if output_type and line else None
+        converted = {**data, "spec": {**spec, "output_type": choice}}
+        try:
+            inputs = json.loads(data.get("approach_inputs") or "{}")
+        except (TypeError, ValueError):
+            return converted
+        if isinstance(inputs, dict) and "structure" in inputs:
+            previous = inputs.pop("structure")
+            previous_type = next(
+                (type_id for old, type_id in mapping.items() if _short(old) == previous), ""
+            )
+            inputs["output_type"] = _short(previous_type)
+            converted["approach_inputs"] = json.dumps(inputs, sort_keys=True, separators=(",", ":"))
+        return converted
 
 
 class Pending(BaseModel):
@@ -513,7 +551,7 @@ APPROACH_FROM = {
     "kind": "the kind",
     "use": "the use",
     "length": "the length",
-    "structure": "the structure",
+    "output_type": "the output type",
 }
 OUTLINE_FROM = {"approach": "the approach", "cards": "the material cards"}
 PART_FROM = {
@@ -527,7 +565,7 @@ PART_FROM = {
 
 def digest_approach_inputs(brief: ConversationBrief, work: Work) -> str:
     """What the approach is written from: the brief's goal and audience (a scientist when it
-    has none), and the artifact's kind, use, length and structure; spacing and capitals are
+    has none), and the artifact's kind, use, length and output type; spacing and capitals are
     no change. Constraints are not part of it (§2.5)."""
 
     return _digest(
@@ -537,7 +575,7 @@ def digest_approach_inputs(brief: ConversationBrief, work: Work) -> str:
             "kind": work.spec.kind,
             "use": _same_words(work.spec.use),
             "length": _same_words(work.spec.length),
-            "structure": _same_words(work.spec.structure),
+            "output_type": work.spec.chosen_output_type or "",
         }
     )
 
@@ -735,7 +773,7 @@ class BriefUpdate(BaseModel):
         "close_open",
         "use",
         "length",
-        "structure",
+        "output_type",
     ]
     text: str = Field(default="", max_length=300)
     # The user's own words that say it; empty for the model's own guess.
@@ -777,16 +815,16 @@ def _find(lines: Sequence[Line], text: str) -> int | None:
     return near[0] if len(near) == 1 else None
 
 
-def _brief_value(kind: Kind, name: str, text: str) -> str | None:
-    wanted = _fold(text)
+def _brief_choices(kind: Kind, name: str) -> tuple[str, ...]:
     if name == "use":
-        return wanted if kind == "slides" and wanted in DECK_USES else None
-    if name == "structure":
-        if wanted in OUTPUT_STRUCTURES:
-            return wanted
-        if kind == "report":
-            return REPORT_STYLE_STRUCTURES.get(wanted.replace(" ", "_"))
-        return None
+        return DECK_USES if kind == "slides" else ()
+    return tuple(item.id for item in OUTPUT_TYPES.values() if item.shape == kind)
+
+
+def _brief_value(kind: Kind, name: str, text: str) -> str | None:
+    if name in ("use", "output_type"):
+        wanted = _fold(text)
+        return wanted if wanted in _brief_choices(kind, name) else None
     return " ".join(text.split())
 
 
@@ -837,7 +875,7 @@ def apply_brief_updates(
     - A ``you`` or ``edited`` line is replaced only by an update marked ``you``.
     - Dropping a constraint or closing an open question needs the user's words; the agent may
       close one of its own guessed questions without them.
-    - ``use``, ``length`` and ``structure`` belong to the active artifact (``work``).
+    - ``use``, ``length`` and ``output_type`` belong to the active artifact (``work``).
 
     Nothing is changed in place. An update that is not made says why in ``notes``.
     """
@@ -891,10 +929,11 @@ def apply_brief_updates(
         elif name == "use" and spec.kind != "slides":
             note = "A report has no use; it was left out."
         elif (value := _brief_value(spec.kind, name, text)) is None:
-            known = DECK_USES if name == "use" else OUTPUT_STRUCTURES
-            note = f"“{text[:60]}” is not a {name} for {spec.kind}. Choose from {', '.join(known)}."
+            known = ", ".join(_brief_choices(spec.kind, name))
+            field = "a use" if name == "use" else "an output type"
+            note = f"“{text[:60]}” is not {field} for {spec.kind}. Choose from {known}."
         else:
-            line, note = _set_line(getattr(spec, name), value, mark, name)
+            line, note = _set_line(getattr(spec, name), value, mark, name.replace("_", " "))
             setattr(spec, name, line)
         if note:
             notes.append(note)
@@ -912,11 +951,11 @@ def edit_brief(
     open: Sequence[str] | None = None,
     use: str | None = None,
     length: str | None = None,
-    structure: str | None = None,
+    output_type: str | None = None,
 ) -> tuple[ConversationBrief, WorkSpec | None]:
     """The brief and spec after the user typed in the panel. A line they set is ``edited``;
     one they left as it was keeps its mark. ``None`` leaves a field alone, empty text clears
-    it, and a list is the whole new list. Raises ValueError for a use or structure the skill
+    it, and a list is the whole new list. Raises ValueError for a use or type the skill
     does not have, or when there is no artifact to set one on."""
 
     brief = brief.model_copy(deep=True)
@@ -949,7 +988,7 @@ def edit_brief(
         brief.constraints = listed(brief.constraints, constraints)
     if open is not None:
         brief.open = listed(brief.open, open)
-    for name, text in (("use", use), ("length", length), ("structure", structure)):
+    for name, text in zip(_SPEC_LINES, (use, length, output_type), strict=True):
         if text is None:
             continue
         if spec is None:
@@ -959,7 +998,7 @@ def edit_brief(
         elif name == "use" and spec.kind != "slides":
             raise ValueError("A report has no use.")
         elif (value := _brief_value(spec.kind, name, text)) is None:
-            raise ValueError(f"“{text[:60]}” is not a {name} of the {spec.kind} skill.")
+            raise ValueError(f"“{text[:60]}” is not a {name.replace('_', ' ')} for {spec.kind}.")
         else:
             setattr(spec, name, typed(getattr(spec, name), value))
     return brief, spec
@@ -997,7 +1036,7 @@ def keep_spec_edits(base: WorkSpec, mine: WorkSpec, theirs: WorkSpec) -> WorkSpe
     """An artifact's spec at the end of a turn, keeping the fields the user changed meanwhile."""
 
     kept = mine.model_copy(deep=True)
-    for name in ("use", "length", "structure"):
+    for name in _SPEC_LINES:
         if getattr(theirs, name) != getattr(base, name):
             setattr(kept, name, getattr(theirs, name))
     return kept
@@ -1014,39 +1053,31 @@ def render_brief(brief: ConversationBrief, work: Work | None = None) -> str:
     if brief.audience:
         lines.append(f"Audience: {_words(brief.audience)}")
     if work is not None:
-        for name in ("use", "length", "structure"):
-            if getattr(work.spec, name):
-                lines.append(f"{name.capitalize()}: {_words(getattr(work.spec, name))}")
+        for name in ("use", "length"):
+            if line := getattr(work.spec, name):
+                lines.append(f"{name.capitalize()}: {_words(line)}")
+        if output_type := work.spec.chosen_output_type:
+            lines.append(f"Output type: {output_type}")
     if brief.constraints:
         lines.append("Constraints:")
         lines += [f"- {_words(line)}" for line in brief.constraints]
     return "\n".join(lines)
 
 
-def _style_of(work: Work) -> str | None:
-    """The report style whose structure the user chose, which it fixes. A structure the
-    agent guessed fixes nothing."""
-
-    line = work.spec.structure
-    if work.spec.kind != "report" or line is None or line.mark == "guessed":
-        return None
-    return next(
-        (style for style, structure in REPORT_STYLE_STRUCTURES.items()
-         if structure == _fold(line.text)), None
-    )
-
-
 def spec_of(brief: ConversationBrief, work: Work) -> Spec:
     """The request Studio receives, with the brief's audience (a scientist when there
-    is none), the brief as lines, and for a report the style that fixes the chosen structure."""
+    is none), the brief as lines and the options for this work."""
 
+    length = _same_words(work.spec.length)
     return Spec(
         kind=work.spec.kind,
         audience=_audience(brief),
-        style=_style_of(work),
+        output_type=work.spec.chosen_output_type,
         brief=render_brief(brief, work),
         theme=work.spec.theme,
         design_version=work.spec.design_version,
+        length=length if length in get_args(OutputLength) else None,
+        language=work.spec.language,
     )
 
 
@@ -1109,9 +1140,16 @@ def _note_dropped(work: Work, step: str, position: int, dropped: Sequence[int]) 
 
 
 def _spec_of_version(version: ArtifactOut) -> WorkSpec:
-    """The spec a version was made to: its kind, a deck's use, and the structure it follows."""
+    """The type and options a saved version was made with."""
 
-    spec = WorkSpec(kind=version.kind)
+    spec = WorkSpec(
+        kind=version.kind,
+        output_type=Line(
+            text=output_type_for(version.kind, version.style).id,
+            mark="edited" if version.style and version.style != "auto" else "guessed",
+        ),
+        language=getattr(version.provenance, "language", None),
+    )
     if version.kind == "slides":
         first = split_document(version.content, version.kind)[1]
         if first:
@@ -1120,12 +1158,9 @@ def _spec_of_version(version: ArtifactOut) -> WorkSpec:
     use = getattr(version.provenance, "use", None)
     if use:
         spec.use = Line(text=use, mark="guessed")
-    approach = getattr(version.provenance, "approach", None)
-    if version.kind == "report" and version.style in REPORT_STYLE_STRUCTURES:
-        # A report style the person picked fixes its structure; "auto" does not.
-        spec.structure = Line(text=REPORT_STYLE_STRUCTURES[version.style], mark="edited")
-    elif approach is not None and approach.structure:
-        spec.structure = Line(text=approach.structure, mark="guessed")
+    length = getattr(version.provenance, "length", None)
+    if length:
+        spec.length = Line(text=length, mark="edited")
     return spec
 
 

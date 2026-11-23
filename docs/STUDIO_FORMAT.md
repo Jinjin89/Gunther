@@ -230,9 +230,12 @@ A report is Markdown: `# Title`, an optional italic line, then `## ` sections. A
 design starts with a line `<!-- report: v2 -->` before the title. It supports a summary,
 exhibits and callouts.
 
-**Executive summary**: the first section is `## <heading>` immediately followed by the marker
+**Executive summary for Report and Briefing doc.** The first section is `## <heading>` immediately followed by the marker
 line `<!-- block: summary -->`. The renderer draws it as a summary box. It holds 1 short
 paragraph (the answer) and 3–5 bullets `**finding**: detail [n]`.
+
+Study guide, FAQ and Timeline start with their first topic, question or dated event. The
+summary marker and numeric exhibit requirement apply to Report and Briefing doc.
 
 **Exhibit** (numbered chart or table with a source line):
 ```
@@ -256,7 +259,7 @@ A city budgeting on 18% would overestimate savings by half [2].
 :::
 ```
 
-Headings are claims. Sub-headings use `###`. Footnotes are not used; citations are `[n]`.
+Report and Briefing doc headings state claims. Sub-headings use `###`. Source citations use `[n]`.
 
 ## 3. Exports (desktop)
 

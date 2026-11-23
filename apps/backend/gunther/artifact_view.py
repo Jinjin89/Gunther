@@ -20,7 +20,8 @@ from gunther.artifact_workspace import (
     outline_state,
     status,
 )
-from gunther.outputs import DECK_USES, OUTPUT_STRUCTURES, Notes, Pool, layout_of
+from gunther.output_types import DECK_USES, OUTPUT_TYPES
+from gunther.outputs import Notes, Pool, layout_of
 from gunther.studio import format as studio_format
 from gunther.studio.format import without_design
 
@@ -228,7 +229,9 @@ def build_view(v: View) -> str:
         options = (
             f"Layouts: {', '.join(studio_format.LAYOUTS)}"
             if kind == "slides"
-            else f"Structures: {', '.join(OUTPUT_STRUCTURES)}"
+            else "Types: " + ", ".join(
+                f"{item.id} ({item.label})" for item in OUTPUT_TYPES.values() if item.shape == kind
+            )
         )
         if kind == "slides":
             options += f". Uses: {', '.join(DECK_USES)}"
@@ -263,7 +266,7 @@ def build_view(v: View) -> str:
                 for part in (
                     _line("use", spec.use, "not set") if name == "deck" else "",
                     _line("length", spec.length),
-                    _line("structure", spec.structure) if name == "report" else "",
+                    _line("output type", spec.output_type) if name == "report" else "",
                 )
                 if part
             )
@@ -380,6 +383,6 @@ def _brief_json(brief: ConversationBrief, spec: WorkSpec | None) -> dict[str, An
             "kind": spec.kind,
             "use": line(spec.use),
             "length": line(spec.length),
-            "structure": line(spec.structure),
+            "outputType": line(spec.output_type),
         },
     }

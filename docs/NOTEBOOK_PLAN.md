@@ -1,6 +1,6 @@
 # One library screen, Studio types and key results
 
-Status: agreed and final (2026-11-23), unbuilt. Read [AGENTS.md](../AGENTS.md) first. When a phase ships, move
+Status: agreed and final (2026-11-23). Phase 1a is built; the rest is unbuilt. Read [AGENTS.md](../AGENTS.md) first. When a phase ships, move
 what it built into the shipped docs ([Outputs](OUTPUTS.md), [Ask](ASK.md), [Library](LIBRARY.md),
 [Studio format](STUDIO_FORMAT.md)) and delete that phase from this file.
 
@@ -11,7 +11,7 @@ Gunther's outputs work like Google NotebookLM, but they are harder to use:
 - The library page has three tabs: Ask, Contents and Outputs. Each tab has its own source picker and its own conversations.
 - To make something, you type a request into a chat. The Report and Slides buttons only fill in text.
 - Outputs hide behind four panes: a preview dropdown, a version dropdown, a Details drawer (artifacts, brief, approach, outline, versions) and a conversations list.
-- There are only two kinds: report and slides.
+- The desktop starts outputs through the Report and Slides conversation shortcuts.
 - Knowledge does not grow. Save as knowledge copies a whole answer, chatter included. Ask never reads saved knowledge, and outputs never become knowledge.
 
 Gunther stays ahead in checked citations, versions, refining by chat, real exports and designed
@@ -42,70 +42,20 @@ These follow from AGENTS.md and are not open questions:
 
 ## 3. The abstractions
 
-### 3.1 Output shapes and output types
+### 3.1 Extend the output catalog
 
-One backend module, `apps/backend/gunther/output_types.py`, holds two registries: `SHAPES` and
-`OUTPUT_TYPES`. Every tile, build, check, reader choice and Activity label comes from them. Adding
-a new type such as "Glossary" means adding one `OutputType` row and its recipe, and nothing else.
+The existing shapes and types, build options and saved-version rules are in [Outputs](OUTPUTS.md).
+Use `GET /api/output-types` for the Studio tiles in Phase 2a. Extend the type options with
+`voices` when audio ships.
 
-```python
-@dataclass(frozen=True)
-class ShapeSpec:
-    id: ShapeId                           # "report" | "slides" | "cards" | "map" | "audio"
-    unit_label: str                       # "section" | "slide" | "card" | "node" | "line"
-    max_parts: int                        # default ceiling (overridable per OutputType)
-    pipeline: Literal["planned", "direct"]
-    activity_words: tuple[str, str, str]  # running, done, failed
-    split: Callable[[str], tuple[str, list[str]]]
-    join: Callable[[str, list[str]], str]
-    format_check: Callable[..., list[str]]
-    check_text: Callable[[str], str]      # projects one unit for ClaimChecks
-    supports_outline: bool
-    supports_design: bool
-    exports: tuple[str, ...]              # e.g. ("markdown", "pdf") or ("markdown", "audio")
-```
-
-- **Two Studio pipelines.** `planned` runs `read → memo/study → storyline + critic → write → format fix → verify → assemble`. It is used for `report` and `slides`. `direct` runs `read → memo → draft → format fix → verify → assemble`, skipping Storyline and Critic. It is used for `cards`, `map` and `audio`.
-- **One general Checker.** `ClaimChecks` never learns shape syntax. Each `ShapeSpec.check_text` turns one unit into plain checkable claims (see §5). Shared fixture tests keep backend `split`/`join` identical to `apps/desktop/src/outputs/sections.ts`.
-
-```python
-@dataclass(frozen=True)
-class OutputType:
-    id: str                          # "briefing"
-    label: str                       # "Briefing doc"
-    shape: ShapeId
-    description: str                 # one line under the tile
-    icon: str                        # Lucide icon name
-    recipe: str                      # prompt text (lives with the prompts)
-    options: tuple[Option, ...]      # "focus", "audience", "length", "language", "use", "voices"
-    summary_box: bool = False        # wrap section 1 in <!-- block: summary -->
-    require_exhibits: bool = False   # require :::exhibit tables on numeric sections
-    max_parts: int | None = None     # e.g. 16 for faq/timeline, 12 for study_guide, 8 for report
-```
-
-| id | Shape | Replaces or adds | `summary_box` | `require_exhibits` | `max_parts` |
-| --- | --- | --- | --- | --- | --- |
-| `report` | report | Today's `auto` and `overview` | yes | yes | 8 |
-| `briefing` | report | `decision_brief` | yes | yes | 8 |
-| `study_guide` | report | `teaching_path` | no | no | 12 |
-| `faq` | report | New row | no | no | 16 |
-| `timeline` | report | New row | no | no | 16 |
-| `slides` | slides | Today's slides | — | — | 14 |
-| `flashcards`, `quiz` | cards | New shape (phase 4) | — | — | 40 |
-| `mind_map` | map | New shape (phase 5) | — | — | 60 |
-| `audio` | audio | New shape (phase 6) | — | — | 120 |
-
-- **Storage and labels.** `Artifact.kind` stores `shape.id`. `Artifact.style` stores `type.id` for every shape. Widen `OutputStyle` to accept any `OUTPUT_TYPES` id plus old styles (`auto`, `overview`, `field_guide`, `teaching_path`, `decision_brief`). Project a computed `outputType` label on `ArtifactSummaryOut`. Existing sealed versions keep their exact `manifest_hash` (`artifact_manifest.py:23-33`). A saved `field_guide` has no tile, opens as a report and shows its stored label.
-- **Delete `OUTPUT_STRUCTURES`.** Remove `OUTPUT_STRUCTURES` and `REPORT_STYLE_STRUCTURES` (`outputs.py:547-553`). Replace `WorkSpec.structure` with `WorkSpec.output_type: str | None`. Keep a small read-only map in `artifact_workspace.py` so old saved workspaces still open.
-- **Prompts (AGENTS.md R13).** Do not reword existing prompt text, and keep all teaching examples.
-  - Move the existing `STYLES` recipe sentences (`outputs.py:555-562`) into the type rows word for word.
-  - Add one `{recipe}` slot to `REPORT_STORY`, `REPORT_WRITE` and `CRITIC` (`studio/prompts.py:136-190,242-280`). Move the consulting-specific lines ("answer first", claim headings, exhibits) word for word out of those prompts into the `report` and `briefing` recipes. Keep deck criteria intact when `CRITIC` reviews a `DeckStory`.
-  - Allow an empty `summary_heading` in `ReportStory` (`studio/state.py:75-81`, `studio/drafting.py:209,447`) when `summary_box` is false. Gate `ensure_summary_mark` (`studio/drafting.py:513`) on `summary_box`. Gate the exhibit-count check in `check_report` (`studio/format.py:582-594`) on `require_exhibits`.
-  - Give `faq`, `timeline` and `study_guide` one short teaching example each in their recipes.
-- **Options and language.** `GET /api/output-types` returns `id`, `label`, `shape`, `description`, `icon` and `options`. Desktop renders tiles directly from this response.
-  - Options: `focus` (free text), `audience` (`scientist` | `student` | `collaborator`), `length` (`short` | `standard` | `long`), `language` (`str | None`), `use` (`talk` | `read` on `slides`), and `voices` (on `audio`).
-  - Map `length` to soft target ranges in `StudioDrafting._length()` (example: report short 800–1,200 words, standard 1,500–3,000, long 3,000–5,000; slides short 5–7, standard 8–12, long 12–14). Never map `length` to `requested_count` (`studio/state.py:56-59,128-132`), which hard-fails when the exact count differs by 1.
-  - Delete `_language` (`studio/material.py:84-87`) and `READ_HINT` (`studio/pipeline.py:67,258`). An explicit `language` option always wins; guard `studio/pipeline.py:362-363,374-375` so `memo.language` and `study.language` never overwrite it. When `language` is unset, the writer prompt says: `"Write in the language of the request. With no request, use the language most of the material is in."`
+- **Two Studio pipelines.** Report and slides use the planned pipeline. Add the direct pipeline
+  for cards, map and audio. It runs read → memo → draft → format fix → verify → assemble.
+- **One general Checker.** For each new shape, add a `check_text` projection that turns one unit
+  into plain checkable claims. Keep the backend split and join rules aligned with
+  [desktop section parsing](../apps/desktop/src/outputs/sections.ts) through shared fixtures.
+- Register the remaining shapes and types in their phases. Cards allow 40 cards, mind maps allow
+  60 nodes and audio overviews allow 120 lines. Use shape metadata for outline, design and export
+  capabilities when the readers use those capabilities.
 
 ### 3.2 One way to build and refine
 
@@ -270,20 +220,6 @@ Why: removing T shifted cells toward the white-cell lineage [1].
 
 The builder may split a phase into batches. Each batch keeps every test green and is reviewed on
 its own. Codex builds; Claude and the checker review each diff.
-
-### Phase 1a — Types and recipes
-**Adds:**
-- `gunther/output_types.py` with `SHAPES` and `OUTPUT_TYPES` (`report`, `briefing`, `study_guide`, `faq`, `timeline`, `slides`) and `GET /api/output-types`.
-- Persist `type.id` in `Artifact.style`, widen `OutputStyle`, project `outputType` on `ArtifactSummaryOut`, and replace `WorkSpec.structure` with `WorkSpec.output_type` (with a small read-only map for old saved workspaces).
-- `summary_box`, `require_exhibits` and `max_parts` knobs on `OutputType`; `{recipe}` slot in `REPORT_STORY`, `REPORT_WRITE` and `CRITIC` (consulting lines moved word for word into `report`/`briefing`; short examples added to `faq`/`timeline`/`study_guide`; empty `summary_heading` allowed when `summary_box=False`).
-- `length` (`short`/`standard`/`long` soft ranges), `language` (explicit wins; prompt fallback when unset) and slides `use` (`talk`/`read`).
-
-**Removes:**
-- `OUTPUT_STRUCTURES` and `REPORT_STYLE_STRUCTURES` (`outputs.py:547-553`).
-- `_language` CJK ratio (`studio/material.py:84-87`) and `READ_HINT` regex (`studio/pipeline.py:67`).
-
-**Tests (no live model calls):**
-- Fake `ModelGateway` tests for `/api/output-types`, all 6 types building with their recipes, `faq`/`timeline` skipping summary box and exhibit checks, explicit vs unset `language`, slides `use`, and old sealed artifacts + workspaces opening unchanged.
 
 ### Phase 1b — One way to build
 **Adds:**

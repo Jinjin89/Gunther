@@ -6,7 +6,7 @@ import { ArtifactConversationStore, EARLIER_WORK, libraryScope } from "./artifac
 const summary = (id: string, title = "A conversation"): ArtifactConversationSummary => ({ id, title, updatedAt: "2026-10-01T00:00:00Z", artifactCount: 0, waiting: false });
 const detail = (id: string, title = "A conversation"): ArtifactConversationDetail => ({ ...summary(id, title), scope: libraryScope(), brief: { goal: null, audience: null, constraints: [], open: [] }, messages: [], works: [], active: null, pending: null, archived: false, createdAt: "2026-10-01T00:00:00Z" });
 const item = (id: string, overrides: Partial<ArtifactSummary> = {}): ArtifactSummary => ({
-  id, workspaceId: "workspace", knowledgeBaseId: "library", lineageId: `lineage_${id}`, versionNumber: 1, supersedesArtifactId: null, format: "report", kind: "report", audience: "student", style: "overview", origin: "build", title: `Document ${id}`, contentHash: "hash", manifestHash: "seal", acceptedUnitIds: [], unitCount: 0, createdAt: "2026-10-01T00:00:00Z", ...overrides,
+  id, workspaceId: "workspace", knowledgeBaseId: "library", lineageId: `lineage_${id}`, versionNumber: 1, supersedesArtifactId: null, format: "report", kind: "report", audience: "student", style: "overview", outputType: "Report", origin: "build", title: `Document ${id}`, contentHash: "hash", manifestHash: "seal", acceptedUnitIds: [], unitCount: 0, createdAt: "2026-10-01T00:00:00Z", ...overrides,
 });
 /** What version 1 of the device store kept: whole conversations with their turns. */
 const oldDevice = (conversations: unknown[], activeId: string) => JSON.stringify({ version: 1, activeId, conversations, problem: null });

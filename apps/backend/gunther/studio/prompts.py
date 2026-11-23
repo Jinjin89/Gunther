@@ -25,13 +25,22 @@ contested, say exactly what is unknown, once, where it matters — never generic
 never hedging words for safety ("may potentially", "it could be argued", "to some extent"). \
 Concrete beats abstract: numbers with what they are compared to, names, places, dates. No \
 filler ("it is worth noting", "plays a crucial role", "in today's world", "综上所述", \
-"具有重要意义", "值得关注"). Write in {language}."""
+"具有重要意义", "值得关注")."""
 
-# Roles differ by step; language is chosen by the memo. Neither belongs in the
-# build-independent prefix. Keep the shared sentences verbatim.
-STUDIO_BASE = TRUTH + "\n\n" + VOICE.removesuffix(" Write in {language}.")
+# Roles and language vary by request. Keep the build-independent prefix verbatim.
+STUDIO_BASE = TRUTH + "\n\n" + VOICE
 LANGUAGE = "Write in {language}."
+LANGUAGE_FALLBACK = (
+    "Write in the language of the request. With no request, "
+    "use the language most of the material is in."
+)
 TASK_BOUNDARY = "\n\n── Your task now ──\n\n"
+
+
+def language_instruction(language: str | None, model_language: str | None = None) -> str:
+    chosen = (language or "").strip() or (model_language or "").strip()
+    return LANGUAGE.format(language=chosen) if chosen else LANGUAGE_FALLBACK
+
 
 # 1. Reading ---------------------------------------------------------------------------------
 
@@ -140,16 +149,7 @@ for: {audience}. Brief: {brief}
 Default length: {pages}.
 
 How great reports are planned:
-- Answer first. The executive summary states the answer and the 3–5 findings that support \
-it, each with its key number.
-- Sections follow the argument, not the material: each section heading is a claim (a full \
-sentence the reader could repeat), and the headings read in order are the argument.
-- Each section proves its claim: strongest evidence first, one concrete case, the limits \
-that matter, what it means for the answer.
-- Plan exhibits (a chart or a table) wherever numbers are compared: at least one in any \
-section that rests on numbers. An exhibit has a caption that states what it shows.
-- End with implications or recommendations that follow from the sections, and open \
-questions if they matter.
+{recipe}
 
 The analyst's memo:
 {memo}
@@ -161,6 +161,73 @@ Reply with a JSON object:
  "summary_points": ["finding with number"],
  "sections": [{{"heading": "claim", "id": null, "job": "what it proves and with which evidence", \
 "exhibits": ["what each exhibit shows"], "refs": [n]}}]}}"""
+
+REPORT_PLAN = """\
+- Answer first. The executive summary states the answer and the 3–5 findings that support \
+it, each with its key number.
+- Sections follow the argument, not the material: each section heading is a claim (a full \
+sentence the reader could repeat), and the headings read in order are the argument.
+- Each section proves its claim: strongest evidence first, one concrete case, the limits \
+that matter, what it means for the answer.
+- Plan exhibits (a chart or a table) wherever numbers are compared: at least one in any \
+section that rests on numbers. An exhibit has a caption that states what it shows.
+- End with implications or recommendations that follow from the sections, and open \
+questions if they matter."""
+
+REPORT_CALLOUT = """\
+- Use a callout only for the one thing a skimming reader must not miss in a section; at \
+most one per section, often none."""
+
+REPORT_CRAFT = """\
+- Executive summary first: one short paragraph with the answer, then the findings as \
+bullets "**finding**: detail [n]", each with its key number.
+- Each section: the first sentence states the section's claim and links it to the one \
+before. Then the strongest evidence, with numbers and what they are compared to; one \
+concrete case (who, where, what happened); the limit that matters; what it means for the \
+answer. One idea per paragraph; the paragraph's first sentence is its point.
+- Exhibits: every comparison of numbers goes in an exhibit (chart or table) with a \
+caption that states what it shows and a Source line; the text then interprets it, not \
+repeats it. Number exhibits in order. A typical report has 2–4 exhibits; a report that \
+compares numbers without any exhibit is not finished.
+- Headings: one claim each, ideally 6–12 words. The summary bullets' bold leads are the \
+findings themselves.
+""" + REPORT_CALLOUT + """
+- End with implications or recommendations that follow from the sections; no repeated \
+summary."""
+
+BRIEFING_STYLE = (
+    "Set out the options, the evidence for and against each, a recommendation, and the risks."
+)
+
+STUDY_GUIDE_RECIPE = """\
+Go from the basics to the advanced, defining terms as they appear, \
+and end each section with one question the reader can check themselves against.
+Use section headings that name the concept being learned.
+
+Example:
+## What a control group shows
+A control group gives you a baseline for interpreting the treatment [1].
+Self-check: What can you conclude if both groups change by the same amount?"""
+
+FAQ_RECIPE = """\
+Use one reader question as the heading of each section. Give a direct, cited answer, \
+then explain any conditions or exceptions the evidence supports.
+
+Example:
+## What counts as a late return?
+A return recorded after the service desk closes counts toward the next day [1]."""
+
+TIMELINE_RECIPE = """\
+Put events in chronological order. Start each section heading with the date or period \
+supported by the source. Describe the change and its significance, and cite the event.
+
+Example:
+## May 2021 — The trial opens
+The first groups enrolled in May [1]."""
+
+WITHOUT_SUMMARY = """\
+Plan the first section as part of the main outline. Return an empty summary_heading, \
+summary_job and summary_points, and a null summary_id. Use the recipe's headings in sections."""
 
 CRITIC = """\
 You are a demanding senior partner reviewing a storyline before any slide is written. You \
@@ -179,7 +246,7 @@ vague, titles with no specific (number, name, comparison), slides that repeat ea
 gaps or jumps in the logic, the answer coming too late, weak opening, weak ending, a \
 layout that does not fit the evidence, too many or too few slides for the length, \
 anything generic or obvious to this audience, anything that sounds like a disclaimer or \
-talks about "the material" instead of the world.
+talks about "the material" instead of the world.{recipe}
 
 Reply with a JSON object:
 {{"understood": "...", "verdict": "ready" or "revise",
@@ -248,22 +315,7 @@ Brief: {brief}
 Audience: {audience}.
 
 Craft:
-- Executive summary first: one short paragraph with the answer, then the findings as \
-bullets "**finding**: detail [n]", each with its key number.
-- Each section: the first sentence states the section's claim and links it to the one \
-before. Then the strongest evidence, with numbers and what they are compared to; one \
-concrete case (who, where, what happened); the limit that matters; what it means for the \
-answer. One idea per paragraph; the paragraph's first sentence is its point.
-- Exhibits: every comparison of numbers goes in an exhibit (chart or table) with a \
-caption that states what it shows and a Source line; the text then interprets it, not \
-repeats it. Number exhibits in order. A typical report has 2–4 exhibits; a report that \
-compares numbers without any exhibit is not finished.
-- Headings: one claim each, ideally 6–12 words. The summary bullets' bold leads are the \
-findings themselves.
-- Use a callout only for the one thing a skimming reader must not miss in a section; at \
-most one per section, often none.
-- End with implications or recommendations that follow from the sections; no repeated \
-summary.
+{recipe}
 - {length}
 
 {language}

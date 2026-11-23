@@ -289,6 +289,7 @@ class ArtifactTurns:
                     fallback_title=library.title,
                     purpose=purpose,
                     fixed_outline=fixed_outline,
+                    outline_approved=payload.rebuild is not None,
                     scope={"selection": scope.model_dump(), "inputs": material.inputs},
                     web=payload.web,
                     resume=resume,
@@ -458,7 +459,8 @@ class ArtifactTurns:
         request = result.save
         assert request is not None
         work, built = request.work, request.built
-        kind = work.spec.kind
+        spec = workspaces.spec_of(brief, work)
+        kind = spec.kind
         title = self.artifact_conversation_title(base_id, workspace_id, conversation_id)
         record = work.model_copy(deep=True)
         record.version_id, record.version_map, record.skipped = None, request.version_map, []
@@ -488,10 +490,10 @@ class ArtifactTurns:
             fingerprint=self._turn_fingerprint(workspace_id, base_id, conversation_id, payload),
             parent_id=parent,
             kind=kind,
-            style=(workspaces._style_of(work) or "auto") if kind == "report" else None,
+            style=spec.output_type,
             audience=audience_of(brief),
             title=built.title,
-            brief=workspaces.render_brief(brief, work),
+            brief=spec.brief,
             origin="rebuild" if payload.rebuild else "revise" if parent else "build",
             content=built.content,
             scope=scope.model_dump(),
@@ -510,6 +512,8 @@ class ArtifactTurns:
                     if work.spec.use and work.spec.use.text in ("talk", "read")
                     else None
                 ),
+                "length": spec.length,
+                "language": spec.language,
                 "conversation_id": conversation_id,
                 "conversation_title": title,
                 "request": payload.text,

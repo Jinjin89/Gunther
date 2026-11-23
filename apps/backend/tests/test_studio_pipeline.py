@@ -512,7 +512,7 @@ def test_storyline_repair_keeps_the_requested_count_and_evidence_context(drops_p
         raise AssertionError(task)
 
     agents = StudioAgents(gateway(FakeProvider(reply)))
-    run = Run(Spec("slides", "Everyone"), "talk", "en")
+    run = Run(Spec("slides", "Everyone"), "talk")
     evidence = "[1] The trial ran for three summers.\n[2] Quality was not measured."
     if drops_part:
         with pytest.raises(ModelError, match="outline has 2 slides. The brief asks for 3"):
@@ -807,14 +807,14 @@ def test_report_rebuild_fingerprints_style_intent_and_replays_legacy(tmp_path, m
         first = built(build(client, base, body(style="decision_brief", outline=outline)))
         request = body(supersedesArtifactId=first["id"], outline=outline, brief="Budget", web=True)
         inherited = built(build(client, base, request))
-        assert inherited["style"] == "decision_brief" and queries == ["Budget"]
+        assert inherited["style"] == "briefing" and queries == ["Budget"]
         assert inherited["outline"] == [{"heading": "Results", "id": "results",
                                          "goal": "Explain the result"}]
         assert built(build(client, base, request))["id"] == inherited["id"]
         assert build(client, base, dict(request, style="auto"))[-1][1]["status"] == 409
 
         reset = body(style="auto", supersedesArtifactId=inherited["id"], outline=outline)
-        assert built(build(client, base, reset))["style"] == "auto"
+        assert built(build(client, base, reset))["style"] == "report"
         assert build(client, base, {k: v for k, v in reset.items() if k != "style"})[-1][1][
             "status"
         ] == 409

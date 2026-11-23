@@ -150,12 +150,13 @@ READ_NOTE = (
     "short sentences are fine; notes are optional."
 )
 
-REPORT_FORMAT = """\
+REPORT_HEADER = """\
 GUNTHER REPORT FORMAT
 <!-- report: v2 -->
 # Report title
-_One line saying who it is for and what it answers._
+_One line saying who it is for and what it answers._"""
 
+REPORT_SUMMARY = """\
 ## Fund cool roofs, but plan on a 9% saving
 <!-- block: summary -->
 One short paragraph with the answer [n].
@@ -164,7 +165,9 @@ One short paragraph with the answer [n].
 (Each bullet's bold lead is the finding itself, never a label like "Finding".)
 
 ## Weather, not the coating, explains half the saving
-(Headings: one claim, ideally 6–12 words, at most 90 units.)
+(Headings: one claim, ideally 6–12 words, at most 90 units.)"""
+
+REPORT_BODY = """\
 Paragraphs. Citations [n] right after each claim. "###" for sub-headings only.
 
 :::exhibit chart=column
@@ -181,7 +184,14 @@ numbers with the unit in the header; 2–12 rows; 1–3 series.)
 
 :::callout Short label
 One or two sentences the reader must not miss [n].
-:::
+:::"""
 
+REPORT_END = """\
 ## Implications / Recommendations heading as a claim
 ..."""
+
+
+def report_format(summary_box: bool) -> str:
+    opening = REPORT_SUMMARY if summary_box else "## Section heading"
+    body = f"{REPORT_HEADER}\n\n{opening}\n{REPORT_BODY}"
+    return f"{body}\n\n{REPORT_END}" if summary_box else body
