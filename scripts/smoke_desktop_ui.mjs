@@ -1050,9 +1050,12 @@ async function run() {
 try {
   console.log(JSON.stringify(await run(), null, 2));
 } catch (error) {
-  console.error(JSON.stringify({
-    status: "failed",
-    error: error instanceof Error ? error.message : String(error),
-  }, null, 2));
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(JSON.stringify({ status: "failed", error: message }, null, 2));
+  if (process.env.GITHUB_ACTIONS) {
+    // An annotation shows the reason on the run page without opening the job log.
+    const text = message.slice(0, 4000).replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
+    console.log(`::error title=Chrome journey::${text}`);
+  }
   process.exitCode = 1;
 }
