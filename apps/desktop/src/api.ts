@@ -25,7 +25,6 @@ import type {
   AssetCaptureResult,
   ConversationTurn,
   CreateKnowledgeBaseInput,
-  CreateKnowledgeProposalInput,
   ConversationBrief,
   ConversationBriefInput,
   CreateKnowledgeSessionInput,
@@ -38,6 +37,8 @@ import type {
   InboxItemType,
   FileNotebookNoteResult,
   FileSourceResult,
+  KeyResult,
+  KeyResultJob,
   KnowledgeGraph,
   KnowledgeBaseMetadata,
   KnowledgeProposal,
@@ -45,6 +46,7 @@ import type {
   KnowledgeSession,
   KnowledgeSessionSummary,
   KnowledgeUnit,
+  PendingSavedAnswer,
   LectureSummary,
   CreateLectureSummaryInput,
   Overview,
@@ -58,7 +60,6 @@ import type {
   SourceAnalysis,
   UpdateAssertionStatusInput,
   UpdateKnowledgeBaseInput,
-  UpdateKnowledgeProposalInput,
   UpdateKnowledgeSessionInput,
   UpdateNotebookNoteInput,
   WebCaptureInput,
@@ -486,6 +487,9 @@ const turnTerminal: RunTerminal = {
 };
 
 const outputsPath = (baseId: string) => `/knowledge-bases/${encodeURIComponent(baseId)}`;
+const keyResultsPath = (baseId: string) => `/knowledge-bases/${encodeURIComponent(baseId)}/key-results`;
+const keyResultOriginPath = (baseId: string, origin: Pick<KeyResultJob, "originKind" | "originId">) =>
+  `${keyResultsPath(baseId)}/origins/${origin.originKind}/${encodeURIComponent(origin.originId)}`;
 const artifactConversationPath = (baseId: string, conversationId: string) =>
   `${outputsPath(baseId)}/artifact-conversations/${encodeURIComponent(conversationId)}`;
 
@@ -872,15 +876,24 @@ export const knowledgeApi = {
       method: "POST",
       body: JSON.stringify({ knowledgeBaseId }),
     }),
-  createProposal: (sessionId: string, messageId: string, payload: CreateKnowledgeProposalInput = {}) =>
-    request<KnowledgeProposal>(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/proposal`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
   proposals: (knowledgeBaseId: string, status?: KnowledgeProposal["status"]) =>
     request<KnowledgeProposal[]>(`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/proposals${status ? `?status=${status}` : ""}`),
   knowledgeUnits: (knowledgeBaseId: string) =>
     request<KnowledgeUnit[]>(`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/units`),
+  keyResults: (baseId: string, signal: AbortSignal) =>
+    request<KeyResult[]>(keyResultsPath(baseId), { signal }),
+  pendingSavedAnswers: (baseId: string, signal: AbortSignal) =>
+    request<PendingSavedAnswer[]>(`${keyResultsPath(baseId)}/pending-saved-answers`, { signal }),
+  keyResultOrigin: (baseId: string, origin: Pick<KeyResultJob, "originKind" | "originId">, signal: AbortSignal) =>
+    request<KeyResultJob>(keyResultOriginPath(baseId, origin), { signal }),
+  undoKeyResults: (baseId: string, origin: Pick<KeyResultJob, "originKind" | "originId">) =>
+    request<KeyResultJob>(`${keyResultOriginPath(baseId, origin)}/undo`, { method: "POST" }),
+  retryKeyResults: (baseId: string, jobId: string) =>
+    request<KeyResultJob>(`${keyResultsPath(baseId)}/jobs/${encodeURIComponent(jobId)}/retry`, { method: "POST" }),
+  removeKeyResult: (baseId: string, id: string) =>
+    request<{ removedAt: string }>(`${keyResultsPath(baseId)}/${encodeURIComponent(id)}/remove?withUndo=true`, { method: "POST" }),
+  restoreKeyResult: (baseId: string, id: string, removedAt: string) =>
+    request<void>(`${keyResultsPath(baseId)}/${encodeURIComponent(id)}/restore?removedAt=${encodeURIComponent(removedAt)}`, { method: "POST" }),
   outputTypes: (signal: AbortSignal) => request<OutputType[]>("/output-types", { signal }),
   artifacts: (knowledgeBaseId: string, expectedWorkspaceId: string) =>
     request<ArtifactSummary[]>(
@@ -935,9 +948,4 @@ export const knowledgeApi = {
     startRun<Artifact, OutputEvent>(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/restyle/stream`, payload, onEvent, outputTerminal, signal, workspaceId),
   checkOutput: (baseId: string, artifactId: string, workspaceId: string) =>
     request<Artifact>(`${outputsPath(baseId)}/artifacts/${encodeURIComponent(artifactId)}/check`, { method: "POST" }, workspaceId),
-  updateProposal: (id: string, payload: UpdateKnowledgeProposalInput) =>
-    request<KnowledgeProposal>(`/proposals/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      body: JSON.stringify(payload),
-    }),
 };

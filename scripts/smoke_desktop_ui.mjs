@@ -865,14 +865,14 @@ async function run() {
     try {
       await waitForEvaluation(
         cdp,
-        "document.querySelector('.conversation-message.role-assistant .message-sources summary') !== null && [...document.querySelectorAll('button.promote-answer')].some((button) => !button.disabled && button.textContent.includes('Save as knowledge'))",
-        "grounded answer with a Save as knowledge action",
+        "document.querySelector('.conversation-message.role-assistant .message-sources summary') !== null && document.querySelector('.conversation-message.role-assistant .key-results-status') !== null",
+        "grounded answer with a key results status",
         20_000,
       );
     } catch (error) {
       const diagnostics = await cdp.evaluate(`(() => ({
         answers: [...document.querySelectorAll('.conversation-message.role-assistant')].map((item) => item.textContent.replace(/\\s+/g, ' ').trim().slice(0, 600)),
-        promote: [...document.querySelectorAll('button.promote-answer')].map((button) => ({ text: button.textContent.replace(/\\s+/g, ' ').trim(), disabled: button.disabled })),
+        keyResults: [...document.querySelectorAll('.message-actions .key-results-status')].map((item) => item.textContent.trim()),
         errors: [...document.querySelectorAll('.conversation-error')].map((item) => item.textContent.replace(/\\s+/g, ' ').trim()),
       }))()`);
       // What the backend holds tells a stuck answer apart from one the screen did not show.
@@ -897,23 +897,11 @@ async function run() {
     if (!await cdp.evaluate(clickExpression("button", "Close evidence"))) {
       throw new SmokeFailure("The evidence panel could not be closed");
     }
-    if (!await cdp.evaluate(clickExpression("button", "Save as knowledge"))) {
-      throw new SmokeFailure("Grounded answer could not be saved as knowledge");
-    }
     await waitForEvaluation(
       cdp,
-      "[...document.querySelectorAll('button.promote-answer')].some((button) => button.textContent.includes('Saved as knowledge'))",
-      "answer saved as knowledge",
+      "document.querySelector('.message-actions .key-results-status')?.textContent.includes('Key results need an Analysis model')",
+      "key results needing an Analysis model",
     );
-
-    // Saving is the only review step: the answer is trusted knowledge at once, with nothing waiting in Inbox.
-    const proposals = await jsonFrom(`${backendOrigin}/api/knowledge-bases/${encodeURIComponent(knowledgeBase.id)}/proposals`);
-    if (!proposals.some((item) => item.status === "accepted")) {
-      throw new SmokeFailure("The saved answer was not accepted at once");
-    }
-    const units = await jsonFrom(`${backendOrigin}/api/knowledge-bases/${encodeURIComponent(knowledgeBase.id)}/units`);
-    const trustedUnit = units.find((item) => item.status === "trusted" && item.evidenceCount > 0);
-    if (!trustedUnit) throw new SmokeFailure("The saved answer did not create a trusted, evidenced knowledge unit");
 
     const chatTitle = await cdp.evaluate("document.querySelector('.conversation-title > strong')?.textContent.trim()");
     if (!chatTitle || !await cdp.evaluate(clickExpression("button", "Chat actions"))) {
@@ -960,7 +948,7 @@ async function run() {
     await waitForEvaluation(cdp, `${libraryChatOpen} && ${courseSelection(true)}`, "shared source selection persists after reopening the library");
     await waitForEvaluation(
       cdp,
-      "document.querySelector('.message-sources summary') !== null && [...document.querySelectorAll('button.promote-answer')].some((button) => button.textContent.includes('Saved as knowledge'))",
+      "document.querySelector('.message-sources summary') !== null && document.querySelector('.message-actions .key-results-status')?.textContent.includes('Key results need an Analysis model')",
       "saved answer and sources remain visible after the model is removed",
     );
     await waitForEvaluation(
@@ -1093,8 +1081,7 @@ async function run() {
         "filed note showed its row actions and drag handle and reopened through its summary with preserved content",
         "grounded Chat answer persisted with sources that open evidence",
         "Chat actions opened searchable History and reopened a saved answer",
-        "answer saved as knowledge with no Inbox review",
-        "saved answer became a trusted evidenced unit",
+        "grounded answer showed key results waiting for an Analysis model",
         "Studio showed model setup with disabled tiles after the saved answer was reopened",
         "Chat kept All sources and side-by-side voice/send actions at 900 × 640",
         "Sources showed the total and fit at 900 × 640, with Studio available from its rail",

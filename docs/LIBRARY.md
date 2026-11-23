@@ -17,16 +17,22 @@ Opening an empty Chat requests an overview of the library's current sources. Ana
 
 ## Key results
 
-Analysis can keep up to five findings from a saved answer or output. Each result is a sentence backed by original library passages, with the source title, location and quote available through the library API. The Checker must mark the sentence supported. A later answer or output can add checked evidence to the same result.
+Analysis can keep up to five findings from a saved answer or output. Each result is a sentence backed by original library passages. The Checker must mark the sentence supported. A later answer or output can add checked evidence to the same result.
 
-Jobs run one at a time per library in the background. Failed jobs appear in Activity and the API supports Retry. Setting up an Analysis model resumes jobs that were waiting for one. Each trusted saved answer in the library can contribute once. Its stored revisions remain available to the output versions that pinned them.
+**Key results** appears at the top of the Sources list. Its count shows how many results are kept, and long lists start collapsed. Filter contents searches the sentences. Select a result to open Evidence and read the source, locator and quote. The passage picker in Evidence switches between the originals that support the same sentence.
+
+Remove takes one sentence out of the list. Undo in the toast restores it. The kept count under an answer or output has its own Undo, which removes that origin's contribution and preserves other origins' evidence on their results. Failed jobs offer Retry and appear in Activity. Setting up an Analysis model resumes jobs that were waiting for one.
+
+While trusted saved answers await checking, Sources offers a read-only link to view them. Each can contribute once. Their stored revisions remain available to the output versions that pinned them.
 
 The key results API uses `/api/knowledge-bases/{libraryId}/key-results` as its base path.
 
 | Method and suffix | Result |
 | --- | --- |
 | `GET` on the base path | Lists kept sentences, their creation origins and original passages. |
-| `POST /{resultId}/remove` | Removes one sentence and keeps it suppressed when found again. |
+| `GET /pending-saved-answers` | Lists trusted saved answers whose key results jobs have yet to finish. |
+| `POST /{resultId}/remove?withUndo=true` | Removes one sentence and returns the time of that removal. Later distillation keeps the sentence suppressed. |
+| `POST /{resultId}/restore?removedAt=…` | Restores the sentence from that removal while its creating evidence remains. |
 | `GET /origins/{kind}/{originId}` | Returns the job state, kept count and kept IDs. This data also appears on saved Ask messages and output version details. |
 | `POST /origins/{kind}/{originId}/undo` | Removes the sentences created by that origin and deletes its evidence contributions. |
 | `POST /jobs/{jobId}/retry` | Queues a failed job again. |

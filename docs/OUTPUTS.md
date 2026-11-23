@@ -49,7 +49,7 @@ Moving an output conversation to Trash also moves the outputs it owns. The batch
 
 The Checker judges claims against their cited evidence. Each verdict is keyed by claim hash, evidence hash and stage. Coverage and incomplete or unavailable states come from that one snapshot. An incremental edit rechecks changed paragraphs where the format allows, keeps findings on untouched text, and checks the whole part where needed. Retry and sync merge the same way. Saved legacy checks are read into the current shape. Typed edits can be saved with unresolved checks.
 
-Supported claims from new builds, revisions and rebuilds can contribute key results through their library citations. Check again makes supported claims from a typed edit eligible. A revision or rebuild with the same supported claims and passages as its parent skips this work, including a restyle that keeps the checked wording. The version detail API reports its key results job alongside the saved checks. [Key results](LIBRARY.md#key-results)
+Supported claims from new builds, revisions and rebuilds can contribute key results through their library citations. Check again makes supported claims from a typed edit eligible. A revision or rebuild with the same supported claims and passages as its parent skips this work, including a restyle that keeps the checked wording. The reader shows the open version's job status, Retry or kept count with Undo. The scope label still shows saved answers pinned by an older version. [Key results](LIBRARY.md#key-results)
 
 In report and slide readers, hover over or focus a citation number to preview the source title, location and a short quote. Activate the number to open that passage in Evidence.
 

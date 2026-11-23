@@ -1,11 +1,13 @@
 import type {
   Artifact, ArtifactConversationDetail, ArtifactTurnOut, BuildTurnInput, ContentsSource, KnowledgeSession,
-  LibraryContents, LibraryOverview, ModelMenu, OutputScope, OutputType, SessionMessage, SourceDigest,
+  KeyResult, KeyResultJob, LibraryContents, LibraryOverview, ModelMenu, OutputScope, OutputType,
+  SessionMessage, SourceDigest,
 } from "@gunther/contracts";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiRequestError, knowledgeApi } from "../api";
+import { keyResultsChanged } from "../keyResults/events";
 import { announceModelsChanged, OPEN_SETTINGS_EVENT } from "../models/askModel";
 import { libraryScope } from "../outputs/artifactConversations";
 import { makeBase, makeSource, makeTrashItem } from "../test/fixtures";
@@ -20,6 +22,16 @@ vi.mock("../outputs/LazySlides", () => ({ LazySlidesView: () => <p>Slide reader<
 const ws = "workspace";
 const base = makeBase({ id: "study", title: "Reading group" });
 const at = "2026-10-01T00:05:00.000Z";
+const finding: KeyResult = {
+  id: "result-1", text: "Field conditions changed after midday.",
+  origin: { kind: "output", id: "version-1", title: "Field findings", sessionId: null, createdAt: at },
+  evidence: [
+    { id: "passage-1", sourceId: "s1", revisionId: "revision-1", blockId: "block-1", regionIds: [],
+      sourceTitle: "Lab notes", locator: "Page 3", quote: "The air warmed after noon." },
+    { id: "passage-2", sourceId: "s2", revisionId: "revision-2", blockId: "block-2", regionIds: [],
+      sourceTitle: "Field notes", locator: "Page 5", quote: "Humidity fell during the afternoon." },
+  ],
+};
 const selected = (...sourceIds: string[]): OutputScope => ({ ...libraryScope(), mode: "selection", sourceIds });
 const source = (id: string, title: string): ContentsSource => ({
   ...makeSource({ id, title, kind: "note" }), durationSeconds: null, authors: null, year: null,
@@ -465,6 +477,90 @@ it.each([
   setup({ artifacts: [version({ scope })] });
   await userEvent.click(await screen.findByRole("button", { name: /Field findings Report Version 1/ }));
   expect(await screen.findByText(`Using this output’s ${label}`)).toBeVisible();
+});
+
+it("shows key results on the open output version and undoes that version's contribution", async () => {
+  const job: KeyResultJob = {
+    id: "output-job", originKind: "output", originId: "version-1", state: "done",
+    keptCount: 2, keptIds: ["result-1", "result-2"], error: null,
+  };
+  const undo = vi.spyOn(knowledgeApi, "undoKeyResults")
+    .mockResolvedValue({ ...job, keptCount: 0, keptIds: [] });
+  setup({ artifacts: [version({ keyResults: job })] });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: /Field findings Report Version 1/ }));
+  const reader = within(screen.getByRole("article", { name: "Open output" }));
+  expect(await reader.findByText("✓ 2 key results kept")).toBeVisible();
+  await user.click(reader.getByRole("button", { name: "Undo" }));
+  expect(await reader.findByText("Key results undone")).toBeVisible();
+  expect(undo).toHaveBeenCalledExactlyOnceWith(base.id, job);
+});
+
+it("opens every original passage in Evidence and offers Undo after removing a result", async () => {
+  let kept = [finding];
+  vi.spyOn(knowledgeApi, "keyResults").mockImplementation(async () => kept);
+  const remove = vi.spyOn(knowledgeApi, "removeKeyResult").mockImplementation(async () => {
+    kept = [];
+    return { removedAt: "removal-stamp" };
+  });
+  const restore = vi.spyOn(knowledgeApi, "restoreKeyResult").mockImplementation(async () => { kept = [finding]; });
+  vi.spyOn(knowledgeApi, "source").mockImplementation(async (id) => ({
+    ...makeSource({ id }), content: "", assertions: [], webSnapshot: null,
+  }));
+  const structure = vi.spyOn(knowledgeApi, "sourceStructure").mockResolvedValue({
+    sourceId: "s1", revisionId: "revision-1",
+    processing: { state: "ready", jobId: null, revisionId: "revision-1", warning: null },
+    parser: null, nextOffset: null, blocks: [],
+  });
+  const { onNotify } = setup({ artifacts: [version()] });
+  const user = userEvent.setup();
+  await screen.findByRole("button", { name: /Field findings Report Version 1/ });
+  const group = within(screen.getByRole("region", { name: "Key results" }));
+  expect(await group.findByRole("button", { name: "Key results (1)" })).toBeVisible();
+  const row = group.getByRole("button", { name: /Field conditions changed/ });
+  expect(row).toHaveAttribute("data-opens-evidence");
+  expect(row).toHaveTextContent("from Report: Field findings");
+  await user.click(row);
+  const evidence = within(screen.getByRole("complementary", { name: "Evidence" }));
+  expect(evidence.getByText("The air warmed after noon.")).toBeVisible();
+  expect(evidence.getByRole("heading", { name: "Page 3" })).toBeVisible();
+  await user.selectOptions(evidence.getByRole("combobox", { name: "Passage" }), "passage-2");
+  expect(evidence.getByText("Humidity fell during the afternoon.")).toBeVisible();
+  expect(evidence.getByRole("heading", { name: "Page 5" })).toBeVisible();
+  expect(evidence.getByRole("option", { name: /Field notes · Page 5/ })).toBeInTheDocument();
+  expect(structure).toHaveBeenLastCalledWith("s2", 0, "revision-2", null, 500);
+  await user.click(evidence.getByRole("button", { name: "Close evidence" }));
+  await user.click(group.getByRole("button", { name: "Remove" }));
+  expect(await group.findByRole("button", { name: "Key results (0)" })).toBeVisible();
+  expect(remove).toHaveBeenCalledExactlyOnceWith(base.id, finding.id);
+  expect(onNotify).toHaveBeenCalledWith("Key result removed.", expect.objectContaining({ label: "Undo" }));
+  await act(async () => onNotify.mock.calls.find(([message]) => message === "Key result removed.")?.[1].run());
+  expect(await group.findByRole("button", { name: "Key results (1)" })).toBeVisible();
+  expect(restore).toHaveBeenCalledExactlyOnceWith(base.id, finding.id, "removal-stamp");
+});
+
+it("collapses long lists, filters them, and shows a read-only link while saved answers are pending", async () => {
+  const rows = Array.from({ length: 6 }, (_, index): KeyResult => ({
+    ...finding, id: `result-${index}`, text: `Finding ${index}`,
+    origin: { kind: "answer", id: `answer-${index}`, title: null, sessionId: originalSession.id, createdAt: at },
+  }));
+  vi.spyOn(knowledgeApi, "keyResults").mockResolvedValue(rows);
+  const pending = vi.spyOn(knowledgeApi, "pendingSavedAnswers").mockResolvedValue([
+    { id: "saved-1", title: "Prior answer", content: "Stored wording." },
+  ]);
+  setup();
+  const user = userEvent.setup();
+  const group = within(await screen.findByRole("region", { name: "Key results" }));
+  const header = group.getByRole("button", { name: "Key results (6)" });
+  expect(header).toHaveAttribute("aria-expanded", "false");
+  await user.type(screen.getByRole("textbox", { name: "Filter contents" }), "Finding 3");
+  expect(group.getByRole("button", { name: /Finding 3 from your question/ })).toBeVisible();
+  expect(group.queryByRole("button", { name: /Finding 1/ })).not.toBeInTheDocument();
+  await user.click(group.getByText("Saved answers awaiting key results"));
+  expect(group.getByText("Stored wording.")).toBeVisible();
+  pending.mockResolvedValue([]);
+  act(() => keyResultsChanged(base.id));
+  await waitFor(() => expect(group.queryByText("Saved answers awaiting key results")).not.toBeInTheDocument());
 });
 
 it("starts a new tile build with type options and reopens its running card from the tile", async () => {

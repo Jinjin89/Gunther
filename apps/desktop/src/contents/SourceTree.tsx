@@ -35,7 +35,7 @@ const readCollapsed = (baseId: string): Set<string> => {
   } catch { return new Set(); }
 };
 
-export function SourceTree({ baseId, contents, onContents, selection, selectedIds, onScope, activeSourceId, onSource, onTrashed, addSource }: {
+export function SourceTree({ baseId, contents, onContents, selection, selectedIds, onScope, activeSourceId, onSource, onTrashed, addSource, keyResults }: {
   baseId: string;
   contents: Contents | null;
   onContents: (contents: Contents | null) => void;
@@ -46,6 +46,7 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
   onSource: (id: string) => void;
   onTrashed: (entry: TrashItem) => void;
   addSource: ReactNode;
+  keyResults?: (filter: string) => ReactNode;
 }) {
   const [unavailable, setUnavailable] = useState(false);
   const [error, setError] = useState("");
@@ -278,7 +279,7 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
     <div className="contents-top">
       <div className="contents-toolbar">
         <label className="contents-filter"><Search size={14} />
-          <input value={filter} placeholder="Filter by name" aria-label="Filter contents" onChange={(event) => setFilter(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape" && filter) { event.stopPropagation(); setFilter(""); } }} />
+          <input value={filter} placeholder="Filter contents" aria-label="Filter contents" onChange={(event) => setFilter(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape" && filter) { event.stopPropagation(); setFilter(""); } }} />
           {filter && <button type="button" aria-label="Clear filter" onClick={() => setFilter("")}><X size={13} /></button>}
         </label>
         {withChildren.length > 0 && !filtering && <button type="button" className="contents-icon-btn is-visible is-bordered" aria-label={anyOpen ? "Collapse all" : "Expand all"} title={anyOpen ? "Collapse all" : "Expand all"} onClick={toggleAll}>
@@ -297,9 +298,10 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
       {contents && selection.mode === "selected" && selected.size === 0 && <p id="empty-source-scope" className="contents-loading" role="status">Select at least one source</p>}
     </div>
     <div className="contents-scroll">
+      {keyResults?.(filter)}
       {!contents && <p className="contents-loading">{unavailable ? "Sources could not be loaded." : "Loading sources…"}</p>}
       {contents?.sources.length === 0 && <p className="contents-loading">No sources yet.</p>}
-      {contents && filtering && rows.length === 0 && <p className="contents-loading">Nothing matches “{filter.trim()}”.</p>}
+      {contents && filtering && rows.length === 0 && <p className="contents-loading">No sources match “{filter.trim()}”.</p>}
       <DndContext sensors={sensors} collisionDetection={collide} onDragStart={onDragStart} onDragMove={markDrop} onDragOver={markDrop} onDragEnd={onDragEnd} onDragCancel={stopDrag}>
         <div className="contents-list" onKeyDown={keys}>
           {rows.map((row) => {

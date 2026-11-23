@@ -10,16 +10,16 @@ Empty Chat shows the library overview and up to three suggested questions when a
 
 Select the model and effort in the composer. Use All sources or tick individual sources and sections. An empty selection disables Send. Opening saved chat history keeps the current ticks. The Web switch allows public web search when Tavily is configured. Compare and Research are explicit methods. Research frames sub-questions, gathers and grades rounds of evidence, and can stop gathering and write from the material already collected.
 
-Ask needs a configured model. The composer links to Settings when a model or key is needed. A model or required grading failure leaves a retryable question. Optional relevance grading can retain ungraded results. Reconnect runs the same startup reads as opening the page. History and saved answers can load independently, and each failed read has its own Retry. Send requires a usable model, request settings and a reachable service.
+Ask needs a configured model. The composer links to Settings when a model or key is needed. A model or required grading failure leaves a retryable question. Optional relevance grading can retain ungraded results. Reconnect runs the same startup reads as opening the page. History, models and Ask settings each have their own Retry. Send requires a usable model, request settings and a reachable service.
 
 ## Evidence and checking
 
 1. The planner chooses an offered tool or starts the answer. Library lookup uses the selected scope and read-more can expand a numbered source. A repeated source keeps its number in the conversation pool.
 2. The writer sees the usable passages and their citations. The checker audits uncited factual statements, assesses claim support and can look up marked statements. Unsupported or unverified wording and missing evidence stay visible. Partial support, inference and dispute markers remain attached to their sources.
 3. The answer stores the source revision, block or region and supporting text with its citations. Hover over or tab to a citation number for its source title, location and a short quote, then activate it to open Evidence. You can also expand the source count below an answer and choose a source there. Selecting another citation switches the open Evidence panel to that passage. The answer may read a pinned revision through the verified reader. Search and new reads respect current library membership and Trash.
-4. Choose Save as knowledge on a cited answer to publish a trusted knowledge unit. Remove withdraws it from active knowledge. Saved questions and answers use their IDs for retry and promotion.
+4. A saved answer with a library citation queues key results for Analysis. When the answer's Checker coverage is complete, Analysis receives only its supported claims and their original passages. Filing a Home chat queues its eligible answers in the destination library. Research clarification turns, reworks and answers that cite only live web search results are skipped.
 
-A saved answer with a library citation queues key results for Analysis. When the answer's Checker coverage is complete, Analysis receives only its supported claims and their original passages. Filing a Home chat queues its eligible answers in the destination library. Research clarification turns, reworks and answers that cite only live web search results are skipped. [Key results](LIBRARY.md#key-results)
+The answer actions show **Checking key results…** while Analysis works and a kept count when it finds supported results. Undo removes that answer's contribution. A failed job offers Retry, and a job waiting for Analysis links to Models settings. Open the library's Key results group to inspect the original passages. [Key results](LIBRARY.md#key-results)
 
 ## Streaming and trace
 

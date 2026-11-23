@@ -30,7 +30,6 @@ import {
   Plus,
   Search,
   ShieldCheck,
-  Sparkles,
   Square,
   SquarePen,
   UserRound,
@@ -54,12 +53,11 @@ import { SpeakerButton } from "../speech/SpeakerButton";
 import { readAloud } from "../speech/readAloud";
 import { AgentSteps, AnswerBody, LiveAnswer, ResearchPlan, citationNumbers, usedSkill } from "./AnswerBody";
 import { useAnswerRun } from "./useAnswerRun";
-import { useSavedAnswers } from "./savedAnswers";
+import { KeyResultsStatus } from "../keyResults/KeyResultsStatus";
 import { ModelPicker } from "../models/ModelPicker";
 import { BrandMark } from "../design/BrandMark";
 import { createPortal } from "react-dom";
 import { PopMenu } from "../contents/SectionMenu";
-import { EvidencePanel } from "../components/evidence/EvidencePanel";
 import { CitationDetails } from "../components/evidence/CitationButton";
 import { LibraryWelcome } from "./LibraryWelcome";
 import "../session.css";
@@ -76,8 +74,7 @@ interface SessionWorkspaceProps {
   onFocusSources?: () => void;
   chatActions?: Ref<LibraryChatActions>;
   onNotify: (message: string) => void;
-  /** Open a source on its own page. */
-  onOpenSource?: (sourceId: string) => void;
+  onCite: (citation: ConversationCitation | null, index?: number) => void;
 }
 
 function relativeTime(value: string) {
@@ -210,7 +207,22 @@ function AnswerModel({ context }: { context: ConversationContext }) {
   </span>;
 }
 
-export function ConversationMessage({ message, retryDisabled, onRetry, onEdit, onCite, selected, saveAvailable = true, promoting, promoted, branching, onSelect, onCopy, onPromote, onRemove, onBranch, onTrace }: { message: SessionMessage; retryDisabled: boolean; onRetry: () => void; onEdit: () => void; onCite: (citation: ConversationCitation, index: number) => void; selected: boolean; saveAvailable?: boolean; promoting: boolean; promoted: boolean; branching: boolean; onSelect: () => void; onCopy: () => void; onPromote: () => void; onRemove: () => void; onBranch: () => void; onTrace?: (() => void) | undefined }) {
+export function ConversationMessage({ message, libraryId, visible, retryDisabled, onRetry, onEdit, onCite,
+  selected, branching, onSelect, onCopy, onBranch, onTrace }: {
+  message: SessionMessage;
+  libraryId?: string;
+  visible?: boolean;
+  retryDisabled: boolean;
+  onRetry: () => void;
+  onEdit: () => void;
+  onCite: (citation: ConversationCitation, index: number) => void;
+  selected: boolean;
+  branching: boolean;
+  onSelect: () => void;
+  onCopy: () => void;
+  onBranch: () => void;
+  onTrace?: (() => void) | undefined;
+}) {
   const isAssistant = message.role === "assistant";
   // Small talk and follow-ups on the conversation itself need no sources.
   const conversational = noSourcesNeeded(message.context);
@@ -239,7 +251,12 @@ export function ConversationMessage({ message, retryDisabled, onRetry, onEdit, o
           })}</ul>
         </details> : conversational ? null : <span className="no-citation-state"><CircleAlert size={12} />Not from your sources</span>}
         {onTrace && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={(event) => { event.stopPropagation(); onTrace(); }}>Trace</button>}
-        <button className="copy-answer" onClick={(event) => { event.stopPropagation(); onCopy(); }}><Copy size={12} />Copy</button><SpeakerButton message={message} /><button className="branch-answer" disabled={branching} onClick={(event) => { event.stopPropagation(); onBranch(); }}><GitBranch size={12} />{branching ? "Branching…" : "Branch"}</button>{saveAvailable && !(conversational && message.citations.length === 0) && <><button className={`promote-answer ${promoted ? "is-promoted" : ""}`} disabled={promoting || promoted || message.citations.length === 0} title={message.citations.length === 0 ? "Add or retrieve supporting evidence before saving this answer as knowledge." : undefined} onClick={(event) => { event.stopPropagation(); onPromote(); }}><Sparkles size={12} />{promoting && !promoted ? "Saving…" : promoted ? "Saved as knowledge" : message.citations.length === 0 ? "Needs evidence" : "Save as knowledge"}</button>{promoted && <button className="remove-answer" disabled={promoting} title="Take this answer out of your knowledge." onClick={(event) => { event.stopPropagation(); onRemove(); }}>{promoting ? "Removing…" : "Remove"}</button>}</>}</div>
+        <button className="copy-answer" onClick={(event) => { event.stopPropagation(); onCopy(); }}><Copy size={12} />Copy</button>
+        <SpeakerButton message={message} />
+        <button className="branch-answer" disabled={branching} onClick={(event) => { event.stopPropagation(); onBranch(); }}><GitBranch size={12} />{branching ? "Branching…" : "Branch"}</button>
+        {libraryId && message.keyResults && <KeyResultsStatus key={message.keyResults.id} baseId={libraryId}
+          initial={message.keyResults} visible={visible ?? true} />}
+        </div>
         <AnswerModel context={message.context} />
       </footer>}
     </article>
@@ -346,16 +363,13 @@ export function Composer({
   );
 }
 
-const readLabels = {
-  history: "session history", models: "models", settings: "Ask settings", proposals: "saved answers",
-  units: "knowledge units",
-};
+const readLabels = { history: "session history", models: "models", settings: "Ask settings" };
 type StartupRead = keyof typeof readLabels;
 const startupReads = Object.keys(readLabels) as StartupRead[];
 // The current session supplies the durable destination for a send.
 const sendReads = ["history", "models", "settings"] as const;
 
-export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = false, visible = true, onFocusSources, chatActions, onNotify, onOpenSource }: SessionWorkspaceProps) {
+export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = false, visible = true, onFocusSources, chatActions, onNotify, onCite }: SessionWorkspaceProps) {
   const [sessions, setSessions] = useState<KnowledgeSessionSummary[]>([]);
   const [archivedSessions, setArchivedSessions] = useState<KnowledgeSessionSummary[]>([]);
   const [showArchived, setShowArchived] = useState(false);
@@ -378,7 +392,6 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
   const online = !sendReads.some((read) => reads[read]?.error instanceof ServiceUnavailableError);
   const ready = activeSession !== null && activeSession.id === activeId && sendReads.every(readReady);
   const [error, setError] = useState<string | null>(null);
-  const { reloadProposals, reloadUnits, ...answers } = useSavedAnswers(base.id, onNotify, setError, { loadOnMount: false });
   const traces = useTraces();
   const [trace, setTrace] = useState<{ sessionId: string; messageId: string } | null>(null);
   const [briefBusy, setBriefBusy] = useState<string | null>(null);
@@ -390,7 +403,6 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
   /** Whether the reader is at the bottom; only then does new text pull the view along. */
   const followTail = useRef(true);
   const scrollOffset = useRef(0);
-  const [evidence, setEvidence] = useState<{ citation: ConversationCitation; index?: number } | null>(null);
   // Which model answers next, and how hard it thinks: what this conversation picked,
   // else the model of its last answer, else this device's last choice, else the Ask default.
   const { menu: modelMenu, reload: reloadModelMenu } = useModelMenu({ autoLoad: false });
@@ -489,8 +501,6 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
       history: loadHistory,
       models: reloadModelMenu,
       settings: reloadWebSearch,
-      proposals: reloadProposals,
-      units: reloadUnits,
     };
     for (const read of requested.length ? requested : startupReads) {
       if (inFlightReads.current.has(read)) continue;
@@ -505,7 +515,7 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
         if (request.refreshPending && mounted.current) loadWorkspace(read);
       });
     }
-  }, [base.id, reloadModelMenu, reloadWebSearch, reloadProposals, reloadUnits, finishRead, sortSessions]);
+  }, [base.id, reloadModelMenu, reloadWebSearch, finishRead, sortSessions]);
 
   useEffect(() => {
     mounted.current = true;
@@ -559,7 +569,7 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
       setBudget("standard");
       setRenameOpen(false);
       setTrace(null);
-      setEvidence(null);
+      onCite(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not create a session");
     } finally {
@@ -780,7 +790,6 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
   };
 
   const selectedMessage = activeSession?.messages.find((message) => message.id === selectedMessageId) ?? null;
-  const cite = (citation: ConversationCitation, index?: number) => setEvidence({ citation, ...(index === undefined ? {} : { index }) });
   const currentChat = activeSession?.id === activeId ? activeSession : null;
 
   return (
@@ -801,7 +810,7 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
               <div className="ask-brief-panel">
                 <BriefPanel brief={activeSession.brief} updating={briefBusy === activeId} readOnly={!online || activeSession.archived}
                   hasMessages={activeSession.messages.length > 0} citations={selectedMessage?.citations ?? []}
-                  onSave={(brief) => void saveBrief(brief)} onRetry={() => void refreshBrief(activeSession.id)} onOpenCitation={cite} />
+                  onSave={(brief) => void saveBrief(brief)} onRetry={() => void refreshBrief(activeSession.id)} onOpenCitation={onCite} />
               </div>
             </details>}
 
@@ -837,7 +846,14 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
           {online && !loading && !sending && currentChat?.messages.length === 0
             ? <LibraryWelcome key={currentChat.id} base={base} visible={visible && !currentChat.archived} canAsk={canAsk} onAsk={(question) => void send(question)} />
             : <h1 className="gx-sr-only">Ask {base.title}</h1>}
-          {activeSession?.messages.map((message) => <ConversationMessage key={message.id} message={message} retryDisabled={!ready || sending || sourceScopeEmpty || Boolean(activeSession?.archived)} onRetry={() => void send(message.content, message.context.askFailure?.options)} onEdit={() => setDraft(message.content)} onCite={(citation, index) => setEvidence({ citation, index })} selected={selectedMessageId === message.id} saveAvailable={readReady("proposals")} promoting={answers.busyId === message.id} promoted={answers.isSaved(message.id)} branching={branchingMessageId === message.id} onSelect={() => setSelectedMessageId(message.id)} onCopy={() => void copyMessage(message)} onPromote={() => void answers.save(activeSession, message)} onRemove={() => void answers.remove(message)} onBranch={() => void branchFromMessage(message)} onTrace={traces.on ? () => setTrace({ sessionId: activeSession.id, messageId: message.id }) : undefined} />)}
+          {activeSession?.messages.map((message) => <ConversationMessage key={message.id}
+            message={message} libraryId={base.id} visible={visible}
+            retryDisabled={!ready || sending || sourceScopeEmpty || Boolean(activeSession?.archived)}
+            onRetry={() => void send(message.content, message.context.askFailure?.options)}
+            onEdit={() => setDraft(message.content)} onCite={onCite} selected={selectedMessageId === message.id}
+            branching={branchingMessageId === message.id} onSelect={() => setSelectedMessageId(message.id)}
+            onCopy={() => void copyMessage(message)} onBranch={() => void branchFromMessage(message)}
+            onTrace={traces.on ? () => setTrace({ sessionId: activeSession.id, messageId: message.id }) : undefined} />)}
           {sending && asking && <article className="conversation-message role-user"><div className="message-author"><span className="user-mark"><UserRound size={13} /></span><span>You</span></div><div className="message-body"><MessageContent content={asking} /></div></article>}
           {sending && (live ? <LiveAnswer state={live} /> : <div className="thinking-row"><span className="assistant-mark"><BrandMark size={14} busy /></span><span><i /><i /><i /></span><small>Working out what to look up…</small></div>)}
         </div>
@@ -849,7 +865,6 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
           <AnswerTrace {...trace} onCopy={(label, value) => void navigator.clipboard.writeText(value).then(() => onNotify(`${label} copied.`), () => onNotify(`${label} could not be copied.`))} />
         </aside>
       </div>, document.body)}
-      {visible && evidence && <EvidencePanel citation={evidence.citation} index={evidence.index} onClose={() => setEvidence(null)} onOpenSource={onOpenSource ? (id) => { setEvidence(null); onOpenSource(id); } : undefined} />}
       {historyOpen && <div className="mobile-session-drawer" role="dialog" aria-modal="true" aria-label="Session history"><button className="mobile-session-scrim" onClick={() => setHistoryOpen(false)} aria-label="Dismiss session history" /><div className="mobile-session-sheet"><button className="mobile-session-close" autoFocus onClick={() => setHistoryOpen(false)} aria-label="Close session history"><X size={15} /></button><SessionsSidebar base={base} sessions={sessions} archivedSessions={archivedSessions} showArchived={showArchived} activeId={activeId} loading={loading} query={sessionQuery} onQuery={setSessionQuery} onOpen={(id) => { setHistoryOpen(false); setRenameOpen(false); void loadSession(id); }} onPin={(session) => void pinSession(session)} onArchive={(session) => void archiveSession(session)} onToggleArchived={() => void toggleArchived()} onRestore={(session) => void restoreSession(session)} /></div></div>}
     </div>
   );

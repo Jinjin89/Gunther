@@ -46,6 +46,8 @@ interface ToastAction {
   run: () => void;
 }
 
+export type Notify = (message: string, action?: ToastAction) => void;
+
 interface OpenItemState {
   ref: ItemRef;
   from: ItemOrigin;
@@ -153,7 +155,7 @@ export default function App() {
     setBases(await knowledgeApi.knowledgeBases());
   }, []);
 
-  const notify = useCallback((message: string, action?: ToastAction) => {
+  const notify = useCallback<Notify>((message, action) => {
     setToast((current) => ({ id: (current?.id ?? 0) + 1, message, ...(action ? { action } : {}) }));
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     // An offer to undo stays long enough to read and reach.

@@ -177,7 +177,7 @@ describe("answers that followed a skill", () => {
     id: "msg_1", sessionId: "ses_1", role: "assistant" as const, content: "An answer.", citations: [], createdAt: "2026-10-01T08:00:00.000Z",
     context: { sourcesConsidered: 1, assertionsConsidered: 1, verifiedAssertions: 1, retrievalMode: "all" as const, responderMode: "model" as const, modelLabel: "DeepSeek", skill },
   });
-  const show = (skill: Parameters<typeof message>[0]) => render(<ConversationMessage message={message(skill)} retryDisabled={false} onRetry={vi.fn()} onEdit={vi.fn()} onCite={vi.fn()} selected={false} promoting={false} promoted={false} branching={false} onSelect={vi.fn()} onCopy={vi.fn()} onPromote={vi.fn()} onRemove={vi.fn()} onBranch={vi.fn()} />);
+  const show = (skill: Parameters<typeof message>[0]) => render(<ConversationMessage message={message(skill)} retryDisabled={false} onRetry={vi.fn()} onEdit={vi.fn()} onCite={vi.fn()} selected={false} branching={false} onSelect={vi.fn()} onCopy={vi.fn()} onBranch={vi.fn()} />);
 
   it("says which skill was used beside the model", () => {
     show({ name: "compare", version: 1, title: "Compare sources", auto: false });

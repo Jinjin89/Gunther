@@ -1,12 +1,15 @@
-import type { LibraryContents, OutputActivityOpen, TrashItem } from "@gunther/contracts";
+import type { ConversationCitation, LibraryContents, OutputActivityOpen, TrashItem } from "@gunther/contracts";
 import { ArrowLeft, Camera, FileText, Link2, Mic2, NotebookText, Plus } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { KnowledgeBase } from "../atlas";
+import type { Notify } from "../App";
 import { BulkImport } from "../components/BulkImport";
+import { EvidencePanel } from "../components/evidence/EvidencePanel";
 import { PopMenu } from "../contents/SectionMenu";
 import { SourceSummary } from "../contents/SourceSummary";
 import { SourceTree } from "../contents/SourceTree";
 import { outputScope, selectedSources, useSourceSelection } from "../contents/sourceScope";
+import { KeyResultsGroup } from "../keyResults/KeyResultsGroup";
 import { discardOutputEdit } from "../outputs/EditPane";
 import { OpenOutput } from "../outputs/OpenOutput";
 import { StudioColumn } from "../outputs/StudioColumn";
@@ -33,7 +36,7 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
   onOutputActivity, editDirty, onChatVisible }: {
   base: KnowledgeBase; workspaceId: string | null;
   onAdd: (kind: "file" | "image" | "link" | "recording" | "note") => void;
-  onNotify: (message: string) => void;
+  onNotify: Notify;
   onOpenSource: (id: string, queue: string[]) => void;
   onTrashed: (entry: TrashItem) => void;
   outputActivity?: OutputActivityOpen | null | undefined;
@@ -42,6 +45,11 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
   onChatVisible?: (visible: boolean) => void;
 }) {
   const [contents, setContents] = useState<LibraryContents | null>(null);
+  const [evidence, setEvidence] = useState<{
+    citation: ConversationCitation;
+    index?: number | undefined;
+    passages?: ConversationCitation[];
+  } | null>(null);
   const [selection, setSelection] = useSourceSelection(base.id);
   const [middle, setMiddle] = useState<Middle>(() => {
     const id = persistentStorage.getItem(`gunther:open-source:${base.id}`);
@@ -70,10 +78,12 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
   };
   const choose = useCallback((next: Middle) => {
     if (middle.kind === "output" && next.kind === "output" && outputKey(middle.target) === outputKey(next.target)) return;
-    if (discardOutputEdit(dirty)) setMiddle(next);
+    if (discardOutputEdit(dirty)) { setMiddle(next); setEvidence(null); }
   }, [dirty, middle]);
   const openOutput = (target: OutputTarget) => choose({ kind: "output", target });
   const openFullSource = (id: string) => onOpenSource(id, sources.map((source) => source.id));
+  const cite = (citation: ConversationCitation | null, index?: number) =>
+    setEvidence(citation ? { citation, index } : null);
   const trashOutput = async (item: OutputTrashTarget, fromReader = false) => {
     if (!workspaceId) return;
     const selected = target && studio.artifacts.find((version) => version.id === target.artifactId);
@@ -122,7 +132,11 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
       onToggle={() => sourceColumn.setCollapsed(!sourceColumn.collapsed)}>
       <SourceTree baseId={base.id} contents={contents} onContents={setContents} selection={selection} selectedIds={sourceIds}
         onScope={setSelection} activeSourceId={source?.id ?? null} onSource={(id) => choose({ kind: "source", id })}
-        onTrashed={onTrashed} addSource={<>
+        onTrashed={onTrashed} keyResults={(filter) => <KeyResultsGroup baseId={base.id} filter={filter}
+          outputs={studio.artifacts} onNotify={onNotify} onInspect={(passages) => {
+            if (passages[0]) setEvidence({ citation: passages[0], passages });
+          }} />}
+        addSource={<>
           <PopMenu label="Add a source" align="start" triggerClass="gx-btn gx-btn-primary gx-btn-sm" trigger={<><Plus size={14} />Add source</>} items={[
             { label: "Note or pasted text", icon: NotebookText, onSelect: () => onAdd("note") },
             { label: "Document", icon: FileText, onSelect: () => onAdd("file") },
@@ -137,16 +151,16 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
       <div className="library-chat" hidden={!chatVisible}>
         <SessionWorkspace base={contents ? { ...base, sourceCount: sources.length } : base} visible={chatVisible}
           sourceIds={scope.sourceIds} sourceScopeEmpty={scopeEmpty} onFocusSources={focusSources}
-          chatActions={chatActions} onNotify={onNotify} onOpenSource={openFullSource} />
+          chatActions={chatActions} onNotify={onNotify} onCite={cite} />
       </div>
       {!chatVisible && <div className="library-middle-page">
         <div className="library-middle-bar"><button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => choose(chat)}><ArrowLeft size={14} />Back to chat</button></div>
-        {source && <SourceSummary key={source.id} source={source} onOpen={() => openFullSource(source.id)}
+        {source && <SourceSummary key={source.id} source={source} onOpen={() => openFullSource(source.id)} onCite={cite}
           onAsk={(question, submit) => { setMiddle(chat); chatActions.current?.ask(question, submit); }} />}
         {middle.kind === "source" && !source && <p className="library-reading">{contents ? "Source unavailable." : "Loading source…"}</p>}
         {target && workspaceId && <OpenOutput key={outputKey(target)} baseId={base.id} workspaceId={workspaceId}
           target={target} studio={studio} scope={scope} scopeEmpty={scopeEmpty} dirty={dirty} onNotify={onNotify}
-          onOpenSource={openFullSource} onOpen={openOutput} onWideReader={onWideReader}
+          onCite={cite} onOpen={openOutput} onWideReader={onWideReader}
           onTrash={(item) => void trashOutput(item, true)} />}
       </div>}
     </section>
@@ -155,5 +169,7 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
       <StudioColumn studio={studio} scope={scope} scopeEmpty={scopeEmpty} disabled={!workspaceId}
         onOpen={openOutput} onTrash={(item) => void trashOutput(item)} />
     </LibraryColumn>
+    {evidence && <EvidencePanel {...evidence} onClose={() => setEvidence(null)}
+      onOpenSource={(id) => { setEvidence(null); openFullSource(id); }} />}
   </div>;
 }

@@ -2,19 +2,34 @@
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Request, Response
-from sqlalchemy import select
+from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from gunther import key_results
 from gunther.api_common import _service
 from gunther.database import session_scope
 from gunther.library_overview import live_library
-from gunther.models import KeyResult, KeyResultJob, utc_now
-from gunther.schemas import KeyResultJobOut, KeyResultOriginKind, KeyResultOut
+from gunther.models import (
+    KeyResult,
+    KeyResultEvidence,
+    KeyResultJob,
+    KnowledgeUnit,
+    KnowledgeUnitRevision,
+    utc_now,
+)
+from gunther.schemas import ApiModel, KeyResultJobOut, KeyResultOriginKind, KeyResultOut
 
 router = APIRouter(prefix="/knowledge-bases/{base_id}/key-results")
+
+
+class PendingSavedAnswerOut(ApiModel):
+    id: str
+    title: str
+    content: str
 
 
 @contextmanager
@@ -33,14 +48,81 @@ def list_key_results(base_id: str, request: Request) -> list[KeyResultOut]:
         return key_results.list_kept(session, base_id)
 
 
-@router.post("/{result_id}/remove", status_code=204)
-def remove_key_result(base_id: str, result_id: str, request: Request) -> Response:
+@router.get("/pending-saved-answers")
+def pending_saved_answers(base_id: str, request: Request) -> list[PendingSavedAnswerOut]:
+    migrated = select(KeyResultJob.id).where(
+        KeyResultJob.knowledge_base_id == base_id, KeyResultJob.origin_kind == "saved_answer",
+        KeyResultJob.origin_id == KnowledgeUnit.id, KeyResultJob.state == "done",
+    ).exists()
+    revisions = select(KnowledgeUnitRevision.content).where(
+        KnowledgeUnitRevision.unit_id == KnowledgeUnit.id,
+    )
+    head = revisions.where(
+        KnowledgeUnitRevision.id == KnowledgeUnit.head_revision_id,
+    ).scalar_subquery()
+    latest = revisions.order_by(KnowledgeUnitRevision.revision_number.desc()).limit(1)
+    content = func.coalesce(
+        head, latest.scalar_subquery(),
+    )
+    with _library_session(request, base_id) as session:
+        return [
+            PendingSavedAnswerOut(id=unit_id, title=title, content=saved or "")
+            for unit_id, title, saved in session.execute(
+                select(KnowledgeUnit.id, KnowledgeUnit.title, content)
+                .where(
+                    KnowledgeUnit.knowledge_base_id == base_id,
+                    KnowledgeUnit.status == "trusted",
+                    ~migrated,
+                )
+                .order_by(KnowledgeUnit.created_at.desc(), KnowledgeUnit.id)
+            )
+        ]
+
+
+def _result(session: Session, base_id: str, result_id: str) -> KeyResult:
+    result = session.get(KeyResult, result_id)
+    if result is None or result.knowledge_base_id != base_id:
+        raise HTTPException(404, "Key result was not found")
+    return result
+
+
+@router.post(
+    "/{result_id}/remove", status_code=204, responses={200: {"description": "Removal stamp"}},
+)
+def remove_key_result(
+    base_id: str, result_id: str, request: Request,
+    with_undo: Annotated[bool, Query(alias="withUndo")] = False,
+) -> Response:
     with _library_session(request, base_id, write=True) as session:
-        result = session.get(KeyResult, result_id)
-        if result is None or result.knowledge_base_id != base_id:
-            raise HTTPException(404, "Key result was not found")
+        result = _result(session, base_id, result_id)
         if result.status == "kept":
             result.status, result.updated_at = "removed", utc_now()
+            if with_undo:
+                return JSONResponse({"removedAt": result.updated_at.isoformat()})
+        elif with_undo:
+            raise HTTPException(409, "This key result was already removed.")
+    return Response(status_code=204)
+
+
+@router.post("/{result_id}/restore", status_code=204)
+def restore_key_result(
+    base_id: str, result_id: str, request: Request,
+    removed_at: Annotated[str, Query(alias="removedAt")],
+) -> Response:
+    with _library_session(request, base_id, write=True) as session:
+        result = _result(session, base_id, result_id)
+        if result.status == "kept":
+            return Response(status_code=204)
+        # An origin Undo deletes the creating origin's evidence even if the result
+        # was already removed. An older toast must not bring that result back.
+        evidence = select(KeyResultEvidence.id).where(
+            KeyResultEvidence.key_result_id == result.id,
+            KeyResultEvidence.origin_kind == result.created_origin_kind,
+            KeyResultEvidence.origin_id == result.created_origin_id,
+        ).exists()
+        if result.updated_at.isoformat() != removed_at or not session.scalar(select(evidence)):
+            raise HTTPException(409, "This removal can no longer be undone.")
+        result.status, result.updated_at = "kept", utc_now()
     return Response(status_code=204)
 
 

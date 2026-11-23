@@ -16,6 +16,7 @@ from gunther.models import (
     KeyResultEvidence,
     KeyResultJob,
     KnowledgeUnit,
+    KnowledgeUnitRevision,
     SessionMessage,
     Source,
     SourceIndexHead,
@@ -235,6 +236,76 @@ def test_removed_result_stays_suppressed_for_both_same_as_and_exact_text(tmp_pat
             assert len(session.scalars(select(KeyResultEvidence)).all()) == 1
 
 
+def test_remove_with_undo_restores_the_result_and_rejects_an_old_removal(tmp_path: Path):
+    fake = FakeProvider(finding(), json.dumps(checks("supported")))
+    with app_for(tmp_path, fake, ai_summaries="off") as client:
+        base_id, sources, worker = setup(client)
+        origin = old_answer(client, worker, base_id, list(sources.values()))
+        assert worker.run_once(ai=True)
+        [result] = list_results(client, base_id)
+        path = f"{results_path(base_id)}/{result['id']}"
+
+        removed = client.post(f"{path}/remove", headers=SIDECAR, params={"withUndo": True})
+        assert removed.status_code == 200, removed.text
+        stamp = removed.json()["removedAt"]
+        assert isinstance(stamp, str) and stamp
+        assert list_results(client, base_id) == []
+        assert client.post(
+            f"{path}/remove", headers=SIDECAR, params={"withUndo": True},
+        ).status_code == 409
+
+        assert client.post(
+            f"{path}/restore", headers=SIDECAR, params={"removedAt": stamp},
+        ).status_code == 204
+        assert list_results(client, base_id) == [result]
+        assert job_state(client, base_id, origin)["keptIds"] == [result["id"]]
+
+        later = client.post(
+            f"{path}/remove", headers=SIDECAR, params={"withUndo": True},
+        ).raise_for_status().json()["removedAt"]
+        assert later != stamp
+        assert client.post(
+            f"{path}/restore", headers=SIDECAR, params={"removedAt": stamp},
+        ).status_code == 409
+        assert list_results(client, base_id) == []
+        assert client.post(
+            f"{path}/restore", headers=SIDECAR, params={"removedAt": later},
+        ).status_code == 204
+        assert list_results(client, base_id) == [result]
+
+
+def test_restore_rejects_a_result_whose_creating_origin_was_undone(tmp_path: Path):
+    fake = FakeProvider(finding(), json.dumps(checks("supported")))
+    with app_for(tmp_path, fake, ai_summaries="off") as client:
+        base_id, sources, worker = setup(client, {"Trial log": FACT, "Field log": EXTRA})
+        first = old_answer(client, worker, base_id, [sources["Trial log"]])
+        assert worker.run_once(ai=True)
+        [result] = list_results(client, base_id)
+        second = old_answer(client, worker, base_id, list(sources.values()))
+        fake.replies[:] = [
+            json.dumps({"items": [{"same_as": result["id"], "passages": [2]}]}),
+            json.dumps(checks("supported")),
+        ]
+        assert worker.run_once(ai=True)
+        assert job_state(client, base_id, second)["keptIds"] == [result["id"]]
+
+        path = f"{results_path(base_id)}/{result['id']}"
+        stamp = client.post(
+            f"{path}/remove", headers=SIDECAR, params={"withUndo": True},
+        ).raise_for_status().json()["removedAt"]
+        client.post(
+            f"{results_path(base_id)}/origins/answer/{first['id']}/undo", headers=SIDECAR,
+        ).raise_for_status()
+        with worker.sessions() as session:
+            assert list(session.scalars(select(KeyResultEvidence.origin_id).where(
+                KeyResultEvidence.key_result_id == result["id"],
+            ))) == [second["id"]]
+        assert client.post(
+            f"{path}/restore", headers=SIDECAR, params={"removedAt": stamp},
+        ).status_code == 409
+        assert list_results(client, base_id) == []
+
+
 def test_home_queues_on_filing_and_ignores_rework_asking_and_web_only(tmp_path: Path, monkeypatch):
     fake = FakeProvider(reply())
     with app_for(
@@ -348,6 +419,45 @@ def test_trusted_saved_answer_distills_once_and_preserves_its_artifact_seal(tmp_
         assert sealed.raise_for_status().json() == artifact
         with worker.sessions() as session:
             assert session.get(KnowledgeUnit, unit_id).head_revision_id == revision_id
+
+
+def test_pending_saved_answers_show_trusted_head_content_until_distilled(tmp_path: Path):
+    fake = FakeProvider()
+    with app_for(tmp_path, fake, ai_summaries="off") as client:
+        base_id, sources, worker = setup(client)
+
+        def save_answer(title: str) -> dict:
+            answer = old_answer(client, worker, base_id, list(sources.values()), enqueue=False)
+            return client.post(
+                f"/api/sessions/{answer['sessionId']}/messages/{answer['id']}/proposal",
+                headers=SIDECAR, json={"title": title},
+            ).raise_for_status().json()
+
+        title = "Trial result"
+        trusted = save_answer(title)["knowledgeUnitId"]
+        retired = save_answer("Withdrawn result")
+        client.patch(
+            f"/api/proposals/{retired['id']}", headers=SIDECAR, json={"status": "rejected"},
+        ).raise_for_status()
+        head_text = "The trial recorded soil moisture [1]."
+        with worker.sessions.begin() as session:
+            unit = session.get(KnowledgeUnit, trusted)
+            revision = session.get(KnowledgeUnitRevision, unit.head_revision_id)
+            revision.content = head_text
+
+        path = f"{results_path(base_id)}/pending-saved-answers"
+        expected = [{"id": trusted, "title": title, "content": head_text}]
+        assert client.get(path, headers=SIDECAR).raise_for_status().json() == expected
+
+        def distill(_request):
+            assert client.get(path, headers=SIDECAR).raise_for_status().json() == expected
+            return finding()
+
+        fake.replies[:] = [distill, json.dumps(checks("supported"))]
+        assert worker.run_once(ai=True)
+        state = job_state(client, base_id, {"id": trusted}, kind="saved_answer")
+        assert (state["state"], state["keptCount"]) == ("done", 1)
+        assert client.get(path, headers=SIDECAR).raise_for_status().json() == []
 
 
 def test_a_running_job_blocks_its_library_and_expired_ownership_cannot_publish(tmp_path: Path):

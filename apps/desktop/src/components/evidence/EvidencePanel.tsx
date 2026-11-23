@@ -131,12 +131,15 @@ function LibraryEvidence({ citation, onOpenSource }: { citation: ConversationCit
 }
 
 /** The evidence behind one citation, at the right of the screen: the passage, then the original. */
-export function EvidencePanel({ citation, index, onClose, onOpenSource }: {
+export function EvidencePanel({ citation: opened, index, passages, onClose, onOpenSource }: {
   citation: ConversationCitation;
   index?: number | undefined;
+  passages?: ConversationCitation[] | undefined;
   onClose: () => void;
   onOpenSource?: ((sourceId: string) => void) | undefined;
 }) {
+  const [picked, setPicked] = useState<{ openedId: string; id: string }>();
+  const citation = (picked?.openedId === opened.id && passages?.find((item) => item.id === picked.id)) || opened;
   const close = useRef<HTMLButtonElement>(null);
   const { width, handle } = useDragWidth({ storageKey: WIDTH_KEY, min: MIN_WIDTH, max: maxWidth, fallback: DEFAULT_WIDTH });
   const panel = useRef<HTMLElement>(null);
@@ -154,7 +157,7 @@ export function EvidencePanel({ citation, index, onClose, onOpenSource }: {
     document.addEventListener("pointerdown", away);
     return () => document.removeEventListener("pointerdown", away);
   }, []);
-  useEffect(() => { close.current?.focus(); }, [citation.id]);
+  useEffect(() => { close.current?.focus(); }, [opened.id]);
   const web = citation.kind === "web";
   return createPortal(
     <aside ref={panel} className="gx-evidence" role="complementary" aria-label="Evidence" style={{ width: `min(${width}px, 100vw)` }}>
@@ -167,6 +170,13 @@ export function EvidencePanel({ citation, index, onClose, onOpenSource }: {
         </span>
         <button ref={close} type="button" className="gx-icon-button" onClick={onClose} aria-label="Close evidence" title="Close  Esc"><X size={15} /></button>
       </header>
+      {passages && passages.length > 1 && <label className="gx-evidence-passages">Passage
+        <select value={citation.id} onChange={(event) => setPicked({ openedId: opened.id, id: event.target.value })}>
+          {passages.map((passage, at) => <option key={passage.id} value={passage.id}>
+            {at + 1}. {passage.sourceTitle}{passage.locator ? ` · ${passage.locator}` : ""}
+          </option>)}
+        </select>
+      </label>}
       {web ? <WebEvidence citation={citation} /> : <LibraryEvidence citation={citation} onOpenSource={onOpenSource} />}
     </aside>,
     document.body,

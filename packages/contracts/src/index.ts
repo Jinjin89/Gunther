@@ -1124,6 +1124,12 @@ export interface KeyResult {
   evidence: KeyResultEvidence[];
 }
 
+export interface PendingSavedAnswer {
+  id: string;
+  title: string;
+  content: string;
+}
+
 export interface SessionMessage {
   id: string;
   sessionId: string;

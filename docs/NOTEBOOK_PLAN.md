@@ -1,6 +1,6 @@
 # One library screen, Studio types and key results
 
-Status: agreed and final (2026-11-23). Phases 1a, 1b, 2a and 2b are built; the rest is unbuilt. Read [AGENTS.md](../AGENTS.md) first. When a phase ships, move
+Status: agreed and final (2026-11-23). Phases 1a, 1b, 2a, 2b and 3a are built; the rest is unbuilt. Read [AGENTS.md](../AGENTS.md) first. When a phase ships, move
 what it built into the shipped docs ([Outputs](OUTPUTS.md), [Ask](ASK.md), [Library](LIBRARY.md),
 [Studio format](STUDIO_FORMAT.md)) and delete that phase from this file.
 
@@ -98,13 +98,9 @@ Settings, any `needs_model` jobs reset to `queued`.
 - In Ask and Studio, a retrieved usable key result adopts its usable backing `Evidence` passages into the pool. Its sentence goes only into a non-citable orientation block (like `Notes.knowledge` in `outputs.py:582-584`) pointing to those `[n]` numbers—never into `Evidence.text`, so answers and outputs always cite the original passages.
 - Mirror kept key results to `Libraries/<library>/Key results.md` in `library_folders.py` (`WATCHED_MODELS`) and include `keyResults` in the library JSON workbook export (`App.tsx:342-386`).
 
-**Legacy saved answers (`KnowledgeUnit`).** Remove the "Save as knowledge" button. Keep
-`knowledge_units` and `knowledge_unit_revisions` tables intact so `ArtifactUnitBinding` checks
-(`artifact_read.py:94-113`) keep passing. Also keep reading `scope.unit_ids` as notes when
-rebuilding an old output whose stored scope pinned saved answers. Only new selection of saved
-answers goes away, because the Sources tree no longer offers them (show a temporary read-only link
-only while unmigrated trusted units exist). When an Analysis model is ready, run a one-time job to
-distill each `status == "trusted"` unit (`origin_kind = "saved_answer"`).
+**Legacy saved answers (`KnowledgeUnit`).** Keep `knowledge_units` and
+`knowledge_unit_revisions` for `ArtifactUnitBinding` checks. Keep reading `scope.unit_ids`
+as notes when rebuilding an old output whose stored scope pinned saved answers.
 
 ## 4. Screen
 
@@ -154,21 +150,6 @@ Why: removing T shifted cells toward the white-cell lineage [1].
 
 The builder may split a phase into batches. Each batch keeps every test green and is reviewed on
 its own. Codex builds; Claude and the checker review each diff.
-
-### Phase 3a — Key results core and migration
-**Adds:**
-- Migration adding `key_results`, `key_result_evidence` and `key_result_jobs`.
-- Serialized per-library distiller worker in the AI lane with strict `ClaimChecks` gate (`SentenceVerdict.verdict == "supported"` only).
-- Triggers for Ask answers and saved Outputs (ignoring `@home` until filed, `asking`, web citations and text-unchanged restyles).
-- `"✓ N key results kept · Undo"` with merge-safe Undo (only removes results created by that origin and deletes that origin's evidence links).
-- Sources `"Key results (N)"` group with `data-opens-evidence` inspection and Remove.
-- One-time migration distilling `status == "trusted"` `KnowledgeUnit` rows.
-
-**Removes:**
-- "Save as knowledge" button and old saved-answer checkboxes from Sources tree (keeping `knowledge_units`/`knowledge_unit_revisions` rows intact for `ArtifactUnitBinding`).
-
-**Tests (no live model calls):**
-- Backend tests with fake Analysis and Checker models: `inference`/`nonfactual` rejected, `same_as` merge + Undo leaves prior result intact, removed results stay suppressed, `@home` queued only after filing, restyle skipped, trusted `KnowledgeUnit` migration keeps old artifact seals valid; desktop tests for Key results group, Undo and Remove.
 
 ### Phase 3b — Key results retrieval and exports
 **Adds:**

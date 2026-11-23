@@ -1,25 +1,23 @@
 import type { ContentsSource, ConversationCitation, DigestCitation } from "@gunther/contracts";
 import { ArrowUpRight } from "lucide-react";
-import { useState } from "react";
-import { EvidencePanel } from "../components/evidence/EvidencePanel";
 import { DigestCard } from "../items/views/DigestCard";
 import { PaperCard } from "../items/views/PaperCard";
 import { kindIcon } from "./ContentsRow";
 import { addedOn, fileDetail, recordingLength } from "./contentsTree";
 
-export function SourceSummary({ source, onOpen, onAsk }: {
+export function SourceSummary({ source, onOpen, onAsk, onCite }: {
   source: ContentsSource;
   onOpen: () => void;
   onAsk: (question: string, submit: boolean) => void;
+  onCite: (citation: ConversationCitation, index: number) => void;
 }) {
   const Icon = kindIcon[source.kind];
   const file = fileDetail(source);
-  const [evidence, setEvidence] = useState<(ConversationCitation & { ref: number }) | null>(null);
-  const cite = (citation: DigestCitation, revisionId: string) => setEvidence({
+  const cite = (citation: DigestCitation, revisionId: string) => onCite({
     id: `${revisionId}:${citation.blockId}`, sourceId: source.id, sourceTitle: source.title,
     assertionId: null, quote: citation.quote, locator: citation.locator, status: "provisional",
     confidence: 0, sourceRevisionId: revisionId, blockId: citation.blockId, ref: citation.number,
-  });
+  }, citation.number - 1);
   return <article className="library-reading" aria-label="Source summary">
     <header className="library-reading-heading">
       <span className={`gx-kind-icon kind-${source.kind}`}><Icon size={16} /></span>
@@ -37,7 +35,5 @@ export function SourceSummary({ source, onOpen, onAsk }: {
     </dl>
     <DigestCard sourceId={source.id} onCite={cite} onAsk={onAsk} />
     {(source.kind === "paper" || source.mediaType === "application/pdf") && <PaperCard sourceId={source.id} revisionId={null} />}
-    {evidence && <EvidencePanel citation={evidence} index={evidence.ref - 1}
-      onClose={() => setEvidence(null)} onOpenSource={onOpen} />}
   </article>;
 }

@@ -119,7 +119,7 @@ describe("a saved research answer", () => {
     id: "msg_1", sessionId: "ses_1", role: "assistant", content: "An answer.", citations: [], createdAt: "2026-10-02T08:00:00.000Z", context: context(patch),
   });
   it("leaves the source warning off a research clarification", () => {
-    render(<ConversationMessage message={message({ research: research("asking") })} retryDisabled={false} onRetry={vi.fn()} onEdit={vi.fn()} onCite={vi.fn()} selected={false} promoting={false} promoted={false} branching={false} onSelect={vi.fn()} onCopy={vi.fn()} onPromote={vi.fn()} onRemove={vi.fn()} onBranch={vi.fn()} />);
+    render(<ConversationMessage message={message({ research: research("asking") })} retryDisabled={false} onRetry={vi.fn()} onEdit={vi.fn()} onCite={vi.fn()} selected={false} branching={false} onSelect={vi.fn()} onCopy={vi.fn()} onBranch={vi.fn()} />);
     expect(screen.queryByText("Not from your sources")).not.toBeInTheDocument();
   });
 });

@@ -1,4 +1,4 @@
-import type { ConversationTurn, KnowledgeProposal, KnowledgeSession, KnowledgeUnit, SessionMessage } from "@gunther/contracts";
+import type { ConversationTurn, KeyResultJob, KnowledgeSession, SessionMessage } from "@gunther/contracts";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,7 +7,6 @@ import { WEB_PREFERENCE_KEY } from "../models/askModel";
 import { persistentStorage } from "../persistentStorage";
 import { makeBase, makeSource } from "../test/fixtures";
 import { Composer, ConversationMessage, SessionWorkspace } from "./SessionWorkspace";
-import { useSavedAnswers } from "./savedAnswers";
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); window.localStorage.clear(); });
 
@@ -86,7 +85,7 @@ const sessionWithAnswer = (knowledgeBaseId: string): KnowledgeSession => ({
 
 function renderWorkspace(base: ReturnType<typeof makeBase>, reactStrictMode = false) {
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
-  return render(<SessionWorkspace base={base} onNotify={vi.fn()} />, { reactStrictMode });
+  return render(<SessionWorkspace base={base} onNotify={vi.fn()} onCite={vi.fn()} />, { reactStrictMode });
 }
 
 function deferred<T>() {
@@ -335,13 +334,12 @@ it("keeps an offline draft editable and opens saved history on reconnect", async
   expect(send).not.toHaveBeenCalled();
 });
 
-it("restores Web and model settings after reconnect while saved answers load independently", async () => {
+it("restores Web and model settings after reconnect while history loads independently", async () => {
   const user = userEvent.setup();
   const base = makeBase({ id: "offline-library" });
   const session = sessionWithAnswer(base.id);
   const question = "Compare the field notes with current research.";
   const unreachable = new ServiceUnavailableError();
-  const savedAnswers = deferred<KnowledgeProposal[]>();
   const settings = deferred<Awaited<ReturnType<typeof knowledgeApi.health>>>();
   const model = { ref: "provider/field-model", label: "Field model", display: "Field model", provider: "Provider", vision: false, levels: [] };
   persistentStorage.setItem(WEB_PREFERENCE_KEY, "on");
@@ -353,8 +351,6 @@ it("restores Web and model settings after reconnect while saved answers load ind
     models: [model], default: { model: model.ref, effort: "high" }, efforts: [],
   });
   vi.spyOn(knowledgeApi, "health").mockRejectedValueOnce(unreachable).mockReturnValue(settings.promise);
-  vi.spyOn(knowledgeApi, "proposals").mockRejectedValueOnce(unreachable).mockReturnValue(savedAnswers.promise);
-  vi.spyOn(knowledgeApi, "knowledgeUnits").mockRejectedValueOnce(unreachable).mockResolvedValue([{ ...unit("trusted"), knowledgeBaseId: base.id }]);
   const send = vi.spyOn(knowledgeApi, "sendMessageStream").mockResolvedValue({
     session,
     userMessage: { ...answer, id: "question", role: "user", content: question, citations: [] },
@@ -379,42 +375,10 @@ it("restores Web and model settings after reconnect while saved answers load ind
   expect(sendButton).toBeEnabled();
   expect(screen.queryByRole("button", { name: "Save as knowledge" })).not.toBeInTheDocument();
 
-  await act(async () => savedAnswers.resolve([{ ...proposal("accepted"), knowledgeBaseId: base.id }]));
-  expect(await screen.findByRole("button", { name: "Saved as knowledge" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Remove" })).toBeEnabled();
   expect(screen.getByRole("textbox", { name: "Message Gunther" })).toHaveValue(question);
   expect(sendButton).toBeEnabled();
   await user.click(sendButton);
   expect(send).toHaveBeenCalledWith(session.id, expect.objectContaining({ content: question, model: model.ref, web: true }), expect.any(Function), expect.any(AbortSignal));
-});
-
-it("opens saved history and can send when proposals fail, with a retry for just that read", async () => {
-  const user = userEvent.setup();
-  const base = makeBase({ id: "saved-history-library" });
-  const session = sessionWithAnswer(base.id);
-  const proposals = vi.fn(async () => Response.json([{ ...proposal("accepted"), knowledgeBaseId: base.id }]))
-    .mockResolvedValueOnce(Response.json({ detail: "Saved answers temporarily unavailable" }, { status: 503 }));
-  const history = vi.spyOn(knowledgeApi, "sessions").mockResolvedValue([session]);
-  const units = vi.spyOn(knowledgeApi, "knowledgeUnits").mockResolvedValue([]);
-  vi.spyOn(knowledgeApi, "session").mockResolvedValue(session);
-  vi.spyOn(knowledgeApi, "followAnswer").mockResolvedValue(null);
-  vi.spyOn(knowledgeApi, "modelMenu").mockResolvedValue({ models: [], default: null, efforts: [] });
-  vi.stubGlobal("fetch", vi.fn(async (path: string) => path.endsWith("/proposals") ? proposals() : Response.json([])));
-  persistentStorage.setItem(`gunther:ask-draft:${base.id}`, "Which passages are relevant?");
-
-  renderWorkspace(base);
-  const retry = await screen.findByRole("button", { name: "Retry saved answers" });
-  expect(await screen.findByRole("article")).toHaveTextContent("CD3D marks T cells.");
-  expect(screen.queryByRole("button", { name: "Reconnect" })).not.toBeInTheDocument();
-  await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled());
-
-  await user.click(retry);
-  expect(await screen.findByRole("button", { name: "Saved as knowledge" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Retry saved answers" })).not.toBeInTheDocument();
-  expect(screen.getByRole("textbox", { name: "Message Gunther" })).toHaveValue("Which passages are relevant?");
-  expect(history).toHaveBeenCalledTimes(1);
-  expect(units).toHaveBeenCalledTimes(1);
-  expect(proposals).toHaveBeenCalledTimes(2);
 });
 
 it("requires a successful history reload after an early stream close leaves the service unreachable", async () => {
@@ -464,7 +428,7 @@ it("opens Models settings and offers Retry on the saved question that needs a ke
     ...answer.context, interrupted: "failed", modelError: "Ask needs a language model or provider key.",
     askFailure: { needsModel: true, hasTrace: false, options: {} },
   } };
-  render(<ConversationMessage message={message} retryDisabled={false} onRetry={retry} onEdit={vi.fn()} onCite={vi.fn()} selected={false} promoting={false} promoted={false} branching={false} onSelect={vi.fn()} onCopy={vi.fn()} onPromote={vi.fn()} onRemove={vi.fn()} onBranch={vi.fn()} />);
+  render(<ConversationMessage message={message} retryDisabled={false} onRetry={retry} onEdit={vi.fn()} onCite={vi.fn()} selected={false} branching={false} onSelect={vi.fn()} onCopy={vi.fn()} onBranch={vi.fn()} />);
   expect(screen.getByText("Ask needs a language model or provider key.")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Open Settings" }));
   expect(window.localStorage.getItem("gunther:settings-pane")).toBe("models");
@@ -582,152 +546,69 @@ it("detaches the previous Library session when Activity opens another answer", a
   expect(stop).toHaveBeenCalledExactlyOnceWith(second.id);
 });
 
-const proposal = (status: KnowledgeProposal["status"]): KnowledgeProposal => ({
-  id: "prp_1",
-  knowledgeBaseId: "biology",
-  sessionId: "ses_1",
-  messageId: "msg_1",
-  targetChapterId: null,
-  kind: "knowledge_unit",
-  title: "T-cell identity",
-  content: answer.content,
-  status,
-  decisionReason: null,
-  knowledgeUnitId: "unt_1",
-  sourceSessionTitle: "Markers",
-  createdAt: "2026-10-01T08:01:00.000Z",
-  updatedAt: "2026-10-01T08:01:00.000Z",
+const keyResultJob = (state: KeyResultJob["state"], changes: Partial<KeyResultJob> = {}): KeyResultJob => ({
+  id: "job-1", originKind: "answer", originId: answer.id, state, error: null, keptCount: 0, keptIds: [],
+  ...changes,
 });
 
-const unit = (status: KnowledgeUnit["status"]): KnowledgeUnit => ({
-  id: "unt_1",
-  knowledgeBaseId: "biology",
-  title: "T-cell identity",
-  kind: "knowledge_unit",
-  status,
-  content: answer.content,
-  revisionCount: 1,
-  sourceProposalId: "prp_1",
-  sourceSessionId: "ses_1",
-  sourceMessageId: "msg_1",
-  targetChapterId: null,
-  evidenceCount: 1,
-  createdAt: "2026-10-01T08:01:00.000Z",
-  updatedAt: "2026-10-01T08:01:00.000Z",
-});
-
-/** One answer wired the way the workspace wires it. */
-function SavableAnswer({ onNotify, onUnits }: { onNotify: (message: string) => void; onUnits: (units: KnowledgeUnit[]) => void }) {
-  const answers = useSavedAnswers("biology", onNotify, vi.fn());
-  onUnits(answers.units);
-  return <ConversationMessage
-    message={answer}
-    retryDisabled={false}
-    onRetry={vi.fn()}
-    onEdit={vi.fn()}
-    onCite={vi.fn()}
-    selected={false}
-    promoting={answers.busyId === answer.id}
-    promoted={answers.isSaved(answer.id)}
-    branching={false}
-    onSelect={vi.fn()}
-    onCopy={vi.fn()}
-    onPromote={() => void answers.save({ id: "ses_1", focusChapterId: null }, answer)}
-    onRemove={() => void answers.remove(answer)}
-    onBranch={vi.fn()}
-  />;
+function renderAnswer(job: KeyResultJob) {
+  return render(<ConversationMessage message={{ ...answer, keyResults: job }} libraryId="biology"
+    retryDisabled={false} onRetry={vi.fn()} onEdit={vi.fn()} onCite={vi.fn()}
+    selected={false} branching={false} onSelect={vi.fn()} onCopy={vi.fn()} onBranch={vi.fn()} />);
 }
 
-describe("Saving an answer as knowledge", () => {
-  it("saves with one click, shows it saved, and takes it back out with Remove", async () => {
-    const user = userEvent.setup();
-    const onNotify = vi.fn();
-    const units = vi.fn();
-    vi.spyOn(knowledgeApi, "proposals").mockResolvedValue([]);
-    const listUnits = vi.spyOn(knowledgeApi, "knowledgeUnits").mockResolvedValue([]);
-    const create = vi.spyOn(knowledgeApi, "createProposal").mockResolvedValue(proposal("accepted"));
-    const update = vi.spyOn(knowledgeApi, "updateProposal").mockResolvedValue(proposal("rejected"));
-    render(<SavableAnswer onNotify={onNotify} onUnits={units} />);
-
-    expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
-    listUnits.mockResolvedValue([unit("trusted")]);
-    await user.click(screen.getByRole("button", { name: "Save as knowledge" }));
-
-    expect(await screen.findByRole("button", { name: "Saved as knowledge" })).toBeDisabled();
-    expect(create).toHaveBeenCalledWith("ses_1", "msg_1", { targetChapterId: null });
-    expect(onNotify).toHaveBeenLastCalledWith("Saved as knowledge.");
-    await waitFor(() => expect(units).toHaveBeenLastCalledWith([expect.objectContaining({ id: "unt_1" })]));
-
-    listUnits.mockResolvedValue([unit("deprecated")]);
-    await user.click(screen.getByRole("button", { name: "Remove" }));
-
-    expect(await screen.findByRole("button", { name: "Save as knowledge" })).toBeEnabled();
-    expect(update).toHaveBeenCalledWith("prp_1", { status: "rejected", reason: "Removed from knowledge" });
-    expect(onNotify).toHaveBeenLastCalledWith("Removed from knowledge.");
-    expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
-    // Only trusted units are listed, so the removed answer's unit is gone from the list.
-    await waitFor(() => expect(units).toHaveBeenLastCalledWith([]));
-
-    // Saving it again goes through the same single step.
-    update.mockClear();
-    create.mockResolvedValue(proposal("accepted"));
-    await user.click(screen.getByRole("button", { name: "Save as knowledge" }));
-    expect(await screen.findByRole("button", { name: "Saved as knowledge" })).toBeVisible();
-    expect(create).toHaveBeenCalledTimes(2);
-  });
-
-  it("shows a saved answer as saved when the conversation opens", async () => {
-    vi.spyOn(knowledgeApi, "proposals").mockResolvedValue([proposal("accepted")]);
-    vi.spyOn(knowledgeApi, "knowledgeUnits").mockResolvedValue([unit("trusted")]);
-    render(<SavableAnswer onNotify={vi.fn()} onUnits={vi.fn()} />);
-
-    expect(await screen.findByRole("button", { name: "Saved as knowledge" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Remove" })).toBeEnabled();
-  });
-
-  it("treats an answer that was removed earlier as not saved", async () => {
-    vi.spyOn(knowledgeApi, "proposals").mockResolvedValue([proposal("rejected")]);
-    vi.spyOn(knowledgeApi, "knowledgeUnits").mockResolvedValue([unit("deprecated")]);
-    render(<SavableAnswer onNotify={vi.fn()} onUnits={vi.fn()} />);
-
-    await waitFor(() => expect(knowledgeApi.proposals).toHaveBeenCalled());
-    expect(await screen.findByRole("button", { name: "Save as knowledge" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
-  });
-
-  it("says why it could not save, and leaves the answer unsaved", async () => {
-    const user = userEvent.setup();
-    const onError = vi.fn();
-    vi.spyOn(knowledgeApi, "proposals").mockResolvedValue([]);
-    vi.spyOn(knowledgeApi, "knowledgeUnits").mockResolvedValue([]);
-    vi.spyOn(knowledgeApi, "createProposal").mockRejectedValue(new Error("The service is offline"));
-    function Failing() {
-      const answers = useSavedAnswers("biology", vi.fn(), onError);
-      return <button onClick={() => void answers.save({ id: "ses_1", focusChapterId: null }, answer)}>{answers.isSaved("msg_1") ? "Saved" : "Not saved"}</button>;
+describe("Key results under a saved answer", () => {
+  it("polls while queued and running and stops after showing the count", async () => {
+    vi.useFakeTimers();
+    try {
+      const poll = vi.spyOn(knowledgeApi, "keyResultOrigin")
+        .mockResolvedValueOnce(keyResultJob("running"))
+        .mockResolvedValueOnce(keyResultJob("done", { keptCount: 2, keptIds: ["one", "two"] }));
+      renderAnswer(keyResultJob("queued"));
+      expect(screen.getByText("Checking key results…")).toBeVisible();
+      await act(async () => vi.advanceTimersByTimeAsync(2_500));
+      expect(screen.getByText("Checking key results…")).toBeVisible();
+      await act(async () => vi.advanceTimersByTimeAsync(2_500));
+      expect(screen.getByText("✓ 2 key results kept")).toBeVisible();
+      await act(async () => vi.advanceTimersByTimeAsync(10_000));
+      expect(poll).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
     }
-    render(<Failing />);
-
-    await user.click(screen.getByRole("button", { name: "Not saved" }));
-
-    await waitFor(() => expect(onError).toHaveBeenLastCalledWith("The service is offline"));
-    expect(screen.getByRole("button", { name: "Not saved" })).toBeVisible();
   });
 
-  it("requires an open conversation to save an answer", async () => {
-    const user = userEvent.setup();
-    const onNotify = vi.fn();
-    vi.spyOn(knowledgeApi, "proposals").mockResolvedValue([]);
-    vi.spyOn(knowledgeApi, "knowledgeUnits").mockResolvedValue([]);
-    const create = vi.spyOn(knowledgeApi, "createProposal");
-    function Disconnected() {
-      const answers = useSavedAnswers("biology", onNotify, vi.fn());
-      return <button onClick={() => void answers.save(null, answer)}>Save</button>;
-    }
-    render(<Disconnected />);
+  it("undoes the saved answer's contribution", async () => {
+    const undo = vi.spyOn(knowledgeApi, "undoKeyResults").mockResolvedValue(keyResultJob("done"));
+    renderAnswer(keyResultJob("done", { keptCount: 1, keptIds: ["one"] }));
+    expect(screen.getByText("✓ 1 key result kept")).toBeVisible();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByText("Key results undone")).toBeVisible();
+    expect(undo).toHaveBeenCalledWith("biology", expect.objectContaining({ originKind: "answer", originId: answer.id }));
+    expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+  });
 
-    await user.click(screen.getByRole("button", { name: "Save" }));
+  it("keeps the actions quiet when the job found no results", () => {
+    renderAnswer(keyResultJob("done"));
+    expect(screen.queryByText(/key results/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save as knowledge" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+  });
 
-    expect(onNotify).toHaveBeenCalledWith("Reconnect the knowledge service to save this answer.");
-    expect(create).not.toHaveBeenCalled();
+  it("opens Models settings when Analysis is unavailable", async () => {
+    const poll = vi.spyOn(knowledgeApi, "keyResultOrigin");
+    renderAnswer(keyResultJob("needs_model"));
+    expect(screen.getByText("Key results need an Analysis model")).toBeVisible();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Open Models settings" }));
+    expect(persistentStorage.getItem("gunther:settings-pane")).toBe("models");
+    expect(poll).not.toHaveBeenCalled();
+  });
+
+  it("shows the job error and retries that job", async () => {
+    const retry = vi.spyOn(knowledgeApi, "retryKeyResults").mockResolvedValue(keyResultJob("queued"));
+    renderAnswer(keyResultJob("failed", { error: "The checker was unavailable." }));
+    expect(screen.getByText("The checker was unavailable.")).toBeVisible();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Checking key results…")).toBeVisible();
+    expect(retry).toHaveBeenCalledExactlyOnceWith("biology", "job-1");
   });
 });

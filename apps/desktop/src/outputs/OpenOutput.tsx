@@ -3,8 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { Trash2 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ApiRequestError, knowledgeApi } from "../api";
-import { EvidencePanel } from "../components/evidence/EvidencePanel";
 import { CitationDetails } from "../components/evidence/CitationButton";
+import { KeyResultsStatus } from "../keyResults/KeyResultsStatus";
 import { AnswerBody, citationNumbers, verificationNotice } from "../pages/AnswerBody";
 import { ArtifactMenu } from "./ArtifactMenu";
 import { ArtifactMessageList } from "./ArtifactMessages";
@@ -42,10 +42,10 @@ function scopeLabel(scope: OutputScope) {
 }
 
 export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEmpty,
-  dirty, onNotify, onOpenSource, onOpen, onWideReader, onTrash }: {
+  dirty, onNotify, onCite: cite, onOpen, onWideReader, onTrash }: {
   baseId: string; workspaceId: string; target: OutputTarget; studio: ReturnType<typeof useStudio>;
   scope: OutputScope; scopeEmpty: boolean; dirty: { current: boolean };
-  onNotify: (message: string) => void; onOpenSource: (id: string) => void;
+  onNotify: (message: string) => void; onCite: (citation: ConversationCitation, index: number) => void;
   onOpen: (target: OutputTarget) => void;
   onWideReader: (wide: boolean) => void;
   onTrash: (target: OutputTrashTarget) => void;
@@ -58,7 +58,6 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   const [checking, setChecking] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState("");
-  const [evidence, setEvidence] = useState<{ citation: ConversationCitation; index: number } | null>(null);
   const [draft, setDraft] = useState("");
   const [focus, setFocus] = useState<ArtifactTurnInput["focus"]>();
   const [jump, setJump] = useState<{ index: number; nonce: number } | null>(null);
@@ -86,7 +85,6 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   const pending = conversation?.pending;
   const last = conversation?.messages.at(-1);
   const onDirtyChange = useCallback((value: boolean) => { dirty.current = value; }, [dirty]);
-  const cite = (citation: ConversationCitation, index: number) => setEvidence({ citation, index });
 
   useEffect(() => {
     if (!shownId) return;
@@ -272,6 +270,7 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
       ]} />}
     </header>
     {problem && <p role="alert" className="output-error">{problem}</p>}
+    {artifact?.keyResults && <KeyResultsStatus key={artifact.keyResults.id} baseId={baseId} initial={artifact.keyResults} />}
     {(job || activity) && <div className="output-run" role="status">
       <span>{job ? outputActivity(job.live) : activity?.detail || activity?.title}</span>
       <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={job?.stopping} onClick={stop}>Stop</button>
@@ -328,6 +327,5 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
       <label>Refine<textarea ref={refine} value={draft} maxLength={20_000} rows={2} onChange={(event) => setDraft(event.target.value)} /></label>
       <button type="submit" className="gx-btn gx-btn-primary gx-btn-sm" disabled={busy || !draft.trim()}>Refine</button>
     </form>}
-    {evidence && <EvidencePanel {...evidence} onClose={() => setEvidence(null)} onOpenSource={onOpenSource} />}
   </article></CitationDetails.Provider>;
 }
