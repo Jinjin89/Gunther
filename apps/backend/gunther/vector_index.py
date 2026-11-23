@@ -21,12 +21,13 @@ import re
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-from sqlalchemy import bindparam, text
+from sqlalchemy import bindparam, column, text
 from sqlalchemy.orm import Session
 
 TABLE = re.compile(r"block_vectors_(\d+)")
 # One vector per paper (title and abstract), for topics and broad questions.
 PAPER_TABLE = re.compile(r"paper_vectors_(\d+)")
+KEY_RESULT_TABLE = re.compile(r"key_result_vectors_(\d+)")
 MAX_DIMENSIONS = 4096
 # SQLite binds at most 32766 values per statement; stay well under it.
 CHUNK = 10_000
@@ -212,18 +213,25 @@ def _paper_table(dimensions: int) -> str:
 
 
 def store_paper(session: Session, *, source_id: str, model: str, vector: list[float]) -> None:
-    table = _paper_table(len(vector))
+    _store_single(session, _paper_table(len(vector)), "source_id", model, [(source_id, vector)])
+
+
+def _store_single(
+    session: Session, table: str, key: str, model: str, vectors: list[tuple[str, list[float]]],
+) -> None:
+    if not vectors:
+        return
     session.execute(
         text(
             f"CREATE VIRTUAL TABLE IF NOT EXISTS {table} USING vec0("
-            "source_id text primary key, model text, "
-            f"embedding float[{len(vector)}] distance_metric=cosine)"
+            f"{key} text primary key, model text, "
+            f"embedding float[{len(vectors[0][1])}] distance_metric=cosine)"
         )
     )
-    session.execute(text(f"DELETE FROM {table} WHERE source_id = :source"), {"source": source_id})
+    _delete_keys(session, table, key, [item_id for item_id, _ in vectors])
     session.execute(
-        text(f"INSERT INTO {table}(source_id, model, embedding) VALUES (:source, :model, :v)"),
-        {"source": source_id, "model": model, "v": _blob(vector)},
+        text(f"INSERT INTO {table}({key}, model, embedding) VALUES (:id, :model, :v)"),
+        [{"id": item_id, "model": model, "v": _blob(vector)} for item_id, vector in vectors],
     )
 
 
@@ -251,19 +259,71 @@ def nearest_papers(
 ) -> list[tuple[str, float]]:
     """The k papers whose title and abstract are closest to the query."""
 
-    table = _paper_table(len(query))
-    if table not in _tables(session, PAPER_TABLE) or not source_ids:
+    return _nearest_single(
+        session, _paper_table(len(query)), "source_id", PAPER_TABLE, model, query, source_ids, k,
+    )
+
+
+def _nearest_single(
+    session: Session, table: str, key: str, pattern: re.Pattern[str], model: str,
+    query: Sequence[float], ids: Sequence[str], k: int,
+) -> list[tuple[str, float]]:
+    if not ids or table not in _tables(session, pattern):
         return []
     # Keep a set constraint for sqlite-vec even when the scope has a single ID.
     statement = text(
-        f"SELECT source_id, distance FROM {table} WHERE embedding MATCH :query AND k = :k "
-        "AND model = :model AND source_id IN (SELECT value FROM json_each(:sources))"
+        f"SELECT {key}, distance FROM {table} WHERE embedding MATCH :query AND k = :k "
+        f"AND model = :model AND {key} IN (SELECT value FROM json_each(:ids))"
     )
     found: list[tuple[str, float]] = []
-    for sources in _chunks(source_ids):
+    for batch in _chunks(ids):
         rows = session.execute(
             statement,
-            {"query": _blob(query), "k": k, "model": model, "sources": json.dumps(sources)},
+            {"query": _blob(query), "k": k, "model": model, "ids": json.dumps(batch)},
         )
-        found.extend((source_id, 1.0 - distance) for source_id, distance in rows)
+        found.extend((item_id, 1.0 - distance) for item_id, distance in rows)
     return sorted(found, key=lambda item: item[1], reverse=True)[:k]
+
+
+def _delete_keys(session: Session, table: str, key: str, ids: Sequence[str]) -> None:
+    statement = text(f"DELETE FROM {table} WHERE {key} IN :ids").bindparams(
+        bindparam("ids", expanding=True)
+    )
+    for batch in _chunks(ids):
+        session.execute(statement, {"ids": batch})
+
+
+def _key_result_table(dimensions: int) -> str:
+    return table_name(dimensions).replace("block_", "key_result_")
+
+
+def store_key_results(
+    session: Session, *, model: str, vectors: list[tuple[str, list[float]]],
+) -> None:
+    if vectors:
+        _store_single(
+            session, _key_result_table(len(vectors[0][1])), "result_id", model, vectors,
+        )
+
+
+def nearest_key_results(
+    session: Session, *, model: str, query: Sequence[float], ids: Sequence[str], k: int,
+) -> list[tuple[str, float]]:
+    return _nearest_single(
+        session, _key_result_table(len(query)), "result_id", KEY_RESULT_TABLE, model, query, ids, k,
+    )
+
+
+def indexed_key_results(session: Session, model: str):
+    tables = _tables(session, KEY_RESULT_TABLE)
+    if tables:
+        return text(" UNION ALL ".join(
+            f"SELECT result_id FROM {table} WHERE model = :model" for table in tables
+        )).bindparams(model=model).columns(column("result_id")).scalar_subquery()
+    return None
+
+
+def forget_key_results(session: Session, ids: Sequence[str]) -> None:
+    if ids and extension_version(session) is not None:
+        for table in _tables(session, KEY_RESULT_TABLE):
+            _delete_keys(session, table, "result_id", ids)

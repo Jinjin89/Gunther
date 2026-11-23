@@ -133,6 +133,7 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
       <SourceTree baseId={base.id} contents={contents} onContents={setContents} selection={selection} selectedIds={sourceIds}
         onScope={setSelection} activeSourceId={source?.id ?? null} onSource={(id) => choose({ kind: "source", id })}
         onTrashed={onTrashed} keyResults={(filter) => <KeyResultsGroup baseId={base.id} filter={filter}
+          sourceIds={selection.mode === "selected" ? selection.sourceIds : undefined}
           outputs={studio.artifacts} onNotify={onNotify} onInspect={(passages) => {
             if (passages[0]) setEvidence({ citation: passages[0], passages });
           }} />}

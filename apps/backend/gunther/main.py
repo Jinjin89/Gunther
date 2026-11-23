@@ -103,19 +103,31 @@ def _refresh_folders_on_change(
 ) -> None:
     """Ask the library folders to catch up whenever a watched row is written."""
 
+    changed = "library_folders_changed"
+
     @event.listens_for(sessions, "after_flush")
     def _flushed(session: Session, _context: object) -> None:
         if any(
             isinstance(item, WATCHED_MODELS)
             for item in (*session.new, *session.dirty, *session.deleted)
         ):
-            folders.request_sync()
+            session.info[changed] = True
 
     @event.listens_for(sessions, "do_orm_execute")
     def _bulk(state: ORMExecuteState) -> None:
         mapper = state.bind_mapper
         if (state.is_update or state.is_delete) and mapper and mapper.class_ in WATCHED_MODELS:
+            state.session.info[changed] = True
+
+    @event.listens_for(sessions, "after_commit")
+    def _committed(session: Session) -> None:
+        if not session.in_nested_transaction() and session.info.pop(changed, False):
             folders.request_sync()
+
+    @event.listens_for(sessions, "after_rollback")
+    def _rolled_back(session: Session) -> None:
+        if not session.in_nested_transaction():
+            session.info.pop(changed, None)
 
 
 def _connect_models(

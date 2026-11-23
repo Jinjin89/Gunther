@@ -362,13 +362,17 @@ export default function App() {
     notify("Preparing a complete local workbook…");
     try {
       const boundWorkspaceId = await refreshWorkspaceId();
-      const [metadataItems, sourceSummaries, knowledgeUnits, sessionSummaries, proposals, artifactSummaries] = await Promise.all([
+      const [
+        metadataItems, sourceSummaries, knowledgeUnits, sessionSummaries, proposals,
+        artifactSummaries, keyResults,
+      ] = await Promise.all([
         knowledgeApi.knowledgeBases(),
         knowledgeApi.sources(activeBase.id),
         knowledgeApi.knowledgeUnits(activeBase.id),
         knowledgeApi.sessions(activeBase.id, true),
         knowledgeApi.proposals(activeBase.id),
         knowledgeApi.artifacts(activeBase.id, boundWorkspaceId),
+        knowledgeApi.keyResults(activeBase.id),
       ]);
       const [indexedSources, sessions, artifacts] = await Promise.all([
         Promise.all(sourceSummaries.map((source) => knowledgeApi.source(source.id))),
@@ -385,6 +389,7 @@ export default function App() {
         sessions,
         proposals,
         artifacts,
+        keyResults,
         reviewModel: "durable-unified-inbox",
       };
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });

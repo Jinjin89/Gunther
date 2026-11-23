@@ -760,7 +760,7 @@ class KeyResultEvidence(Base):
     key_result_id: Mapped[str] = mapped_column(
         ForeignKey("key_results.id", ondelete="CASCADE"), index=True
     )
-    # Keep the checked provenance even if an original is later permanently deleted.
+    # Preserve the original anchors through reversible Trash.
     source_id: Mapped[str] = mapped_column(String, index=True)
     revision_id: Mapped[str] = mapped_column(String)
     block_id: Mapped[str] = mapped_column(String)

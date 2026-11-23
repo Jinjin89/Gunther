@@ -24,7 +24,7 @@ from pathlib import Path
 from sqlalchemy import and_, case, delete, func, or_, select, tuple_, update
 from sqlalchemy.orm import Session, sessionmaker
 
-from gunther import artifact_workspace, listen_copy, papers, vector_index
+from gunther import artifact_workspace, key_results, listen_copy, papers, vector_index
 from gunther.activity import Activity
 from gunther.answer_runs import AnswerRuns, output_key
 from gunther.artifact_read import artifact_owner
@@ -598,6 +598,7 @@ class TrashService:
                 ArtifactConversation.knowledge_base_id.in_(library_ids),
             ))
         )
+        key_results.purge(session, library_ids, source_ids)
         for library_id in library_ids:
             self._delete_library_records(session, library_id)
         if source_ids:

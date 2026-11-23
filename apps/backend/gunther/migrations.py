@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Engine, MetaData, Table, inspect, select, text
 from sqlalchemy.engine import Connection
 
+from gunther.content import search_tokens
 from gunther.database import connection_transaction
 from gunther.source_identity import source_fingerprint
 
@@ -703,6 +704,34 @@ def _create_key_results(connection: Connection, metadata: MetaData) -> None:
             metadata.tables[name].create(bind=connection, checkfirst=True)
 
 
+def _create_key_result_indexes(connection: Connection, metadata: MetaData) -> None:
+    if "key_results" not in metadata.tables:
+        return
+    connection.exec_driver_sql(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS key_results_fts USING fts5(result_id UNINDEXED, tokens)"
+    )
+    connection.exec_driver_sql(
+        "CREATE TRIGGER IF NOT EXISTS key_results_fts_delete AFTER DELETE ON key_results "
+        "BEGIN DELETE FROM key_results_fts WHERE result_id = old.id; END"
+    )
+    # Earlier origin Undo could leave an old removal stamp on an already removed result.
+    connection.exec_driver_sql(
+        "UPDATE key_results SET updated_at = ? WHERE status = 'removed' AND NOT EXISTS ("
+        "SELECT 1 FROM key_result_evidence AS evidence "
+        "WHERE evidence.key_result_id = key_results.id "
+        "AND evidence.origin_kind = key_results.created_origin_kind "
+        "AND evidence.origin_id = key_results.created_origin_id)",
+        (datetime.now(UTC).replace(tzinfo=None).isoformat(sep=" "),),
+    )
+    connection.exec_driver_sql("DELETE FROM key_results_fts")
+    rows = connection.exec_driver_sql("SELECT id, text FROM key_results WHERE status = 'kept'")
+    while batch := rows.fetchmany(100):
+        connection.exec_driver_sql(
+            "INSERT INTO key_results_fts(result_id, tokens) VALUES (?, ?)",
+            [(result_id, " ".join(search_tokens(sentence))) for result_id, sentence in batch],
+        )
+
+
 # Keep applied entries immutable. New migrations are appended with the next
 # consecutive integer; never edit or reorder an entry already shipped.
 MIGRATIONS: tuple[Migration, ...] = (
@@ -738,6 +767,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(30, "library_overviews", _create_library_overviews),
     Migration(31, "output_trash", _add_output_trash),
     Migration(32, "key_results", _create_key_results),
+    Migration(33, "key_result_indexes", _create_key_result_indexes),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

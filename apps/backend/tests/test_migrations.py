@@ -1,4 +1,5 @@
 import hashlib
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,9 @@ from gunther.migrations import (
 from gunther.models import (
     Artifact,
     Base,
+    KeyResult,
+    KeyResultEvidence,
+    KnowledgeBaseRecord,
     KnowledgeProposal,
     KnowledgeSession,
     KnowledgeUnit,
@@ -90,6 +94,7 @@ def test_empty_database_is_created_and_versioned(tmp_path: Path) -> None:
             (30, "library_overviews"),
             (31, "output_trash"),
             (32, "key_results"),
+            (33, "key_result_indexes"),
         ]
         assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
     finally:
@@ -124,16 +129,51 @@ def test_v31_database_creates_the_key_results_tables(tmp_path: Path) -> None:
         if table.name not in names:
             table.to_metadata(previous)
     try:
-        run_migrations(engine, previous, MIGRATIONS[:-1])
+        run_migrations(engine, previous, MIGRATIONS[:31])
         assert get_schema_version(engine) == 31
         assert not any(inspect(engine).has_table(name) for name in names)
         run_migrations(engine, Base.metadata)
-        assert get_schema_version(engine) == 32
+        assert get_schema_version(engine) == LATEST_SCHEMA_VERSION
         assert all(inspect(engine).has_table(name) for name in names)
         assert ["origin_kind", "origin_id"] in [
             constraint["column_names"]
             for constraint in inspect(engine).get_unique_constraints("key_result_jobs")
         ]
+    finally:
+        engine.dispose()
+
+
+def test_v32_upgrade_indexes_only_kept_key_results(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path)
+    old_stamp = datetime(2000, 1, 1)
+    try:
+        run_migrations(engine, Base.metadata, MIGRATIONS[:32])
+        with session_scope(create_session_factory(engine)) as session:
+            session.add(KnowledgeBaseRecord(id="study", title="Study", question="", description=""))
+            session.flush()
+            for status in ("kept", "removed"):
+                session.add(KeyResult(
+                    id=status, knowledge_base_id="study", text="The trial measured soil moisture.",
+                    status=status, created_origin_kind="answer", created_origin_id=status,
+                    updated_at=old_stamp,
+                ))
+            session.flush()
+            session.add(KeyResultEvidence(
+                id="proof", key_result_id="removed", source_id="source", revision_id="revision",
+                block_id="block", quote="We measured soil moisture.", source_content_hash="a" * 64,
+                origin_kind="answer", origin_id="alternate",
+            ))
+
+        run_migrations(engine, Base.metadata)
+        with session_scope(create_session_factory(engine)) as session:
+            assert session.get(KeyResult, "removed").updated_at > old_stamp
+        with engine.begin() as connection:
+            assert connection.exec_driver_sql(
+                "SELECT result_id FROM key_results_fts WHERE key_results_fts MATCH 'moisture'"
+            ).scalars().all() == ["kept"]
+            assert connection.exec_driver_sql("SELECT count(*) FROM key_results").scalar() == 2
+            connection.exec_driver_sql("DELETE FROM knowledge_bases WHERE id = 'study'")
+            assert connection.exec_driver_sql("SELECT count(*) FROM key_results_fts").scalar() == 0
     finally:
         engine.dispose()
 

@@ -28,14 +28,21 @@ function asCitation(passage: KeyResultEvidence): ConversationCitation {
   };
 }
 
-export function KeyResultsGroup({ baseId, filter, outputs, onInspect, onNotify }: {
+export function KeyResultsGroup({ baseId, filter, outputs, sourceIds, onInspect, onNotify }: {
   baseId: string;
   filter: string;
   outputs: readonly ArtifactSummary[];
+  sourceIds?: readonly string[] | undefined;
   onInspect: (passages: ConversationCitation[]) => void;
   onNotify: Notify;
 }) {
-  const [results, setResults] = useState<KeyResult[]>();
+  const [loaded, setLoaded] = useState<{
+    baseId: string;
+    sourceIds: readonly string[] | undefined;
+    results: KeyResult[];
+  }>();
+  const results = loaded?.baseId === baseId && loaded.sourceIds === sourceIds
+    ? loaded.results : undefined;
   const [pending, setPending] = useState<PendingSavedAnswer[]>([]);
   const [expanded, setExpanded] = useState<boolean>();
   const [revision, setRevision] = useState(0);
@@ -48,31 +55,38 @@ export function KeyResultsGroup({ baseId, filter, outputs, onInspect, onNotify }
     .map((item) => `${item.id}:${item.endedAt}`).sort().join("|");
 
   useEffect(() => {
+    const refresh = () => setRevision((value) => value + 1);
     const change = (event: Event) => {
-      if ((event as CustomEvent<KeyResultsChange>).detail?.baseId === baseId) setRevision((value) => value + 1);
+      if ((event as CustomEvent<KeyResultsChange>).detail?.baseId === baseId) refresh();
     };
     window.addEventListener(KEY_RESULTS_CHANGED_EVENT, change);
-    return () => window.removeEventListener(KEY_RESULTS_CHANGED_EVENT, change);
+    window.addEventListener("gunther:sources-updated", refresh);
+    return () => {
+      window.removeEventListener(KEY_RESULTS_CHANGED_EVENT, change);
+      window.removeEventListener("gunther:sources-updated", refresh);
+    };
   }, [baseId]);
   useEffect(() => {
     const controller = new AbortController();
     void Promise.allSettled([
-      knowledgeApi.keyResults(baseId, controller.signal),
+      knowledgeApi.keyResults(baseId, controller.signal, sourceIds),
       knowledgeApi.pendingSavedAnswers(baseId, controller.signal),
     ]).then(([kept, saved]) => {
       if (controller.signal.aborted) return;
-      if (kept.status === "fulfilled") setResults(kept.value);
+      setLoaded(kept.status === "fulfilled" ? { baseId, sourceIds, results: kept.value } : undefined);
       if (saved.status === "fulfilled") setPending(saved.value);
       setLoadFailed(kept.status === "rejected" || saved.status === "rejected");
     });
     return () => controller.abort();
-  }, [baseId, completed, revision]);
+  }, [baseId, completed, revision, sourceIds]);
 
   const remove = async (result: KeyResult) => {
     setRemoving(true);
     try {
       const { removedAt } = await knowledgeApi.removeKeyResult(baseId, result.id);
-      setResults((current) => current?.filter((row) => row.id !== result.id));
+      setLoaded((current) => current && {
+        ...current, results: current.results.filter((row) => row.id !== result.id),
+      });
       keyResultsChanged(baseId, true);
       onNotify("Key result removed.", {
         label: "Undo",

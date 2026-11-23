@@ -563,6 +563,20 @@ it("collapses long lists, filters them, and shows a read-only link while saved a
   await waitFor(() => expect(group.queryByText("Saved answers awaiting key results")).not.toBeInTheDocument());
 });
 
+it("updates Key results when the selected sources change", async () => {
+  const keyResults = vi.spyOn(knowledgeApi, "keyResults").mockImplementation(async (_base, _signal, ids) =>
+    ids?.includes("s2") === false ? [] : [finding],
+  );
+  setup();
+  const user = userEvent.setup();
+  expect(await screen.findByRole("button", { name: "Key results (1)" })).toBeVisible();
+  await user.click(screen.getByRole("checkbox", { name: "Select Field notes" }));
+  expect(await screen.findByRole("button", { name: "Key results (0)" })).toBeVisible();
+  expect(keyResults).toHaveBeenLastCalledWith(base.id, expect.any(AbortSignal), ["s1", "s3"]);
+  await user.click(screen.getByRole("checkbox", { name: "Select Field notes" }));
+  expect(await screen.findByRole("button", { name: "Key results (1)" })).toBeVisible();
+});
+
 it("starts a new tile build with type options and reopens its running card from the tile", async () => {
   const user = userEvent.setup();
   const { artifacts, create, turn } = setup();

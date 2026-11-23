@@ -1,4 +1,4 @@
-import type { ArtifactSummary } from "@gunther/contracts";
+import type { ArtifactSummary, KeyResult } from "@gunther/contracts";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -84,6 +84,44 @@ it("uses stored metadata and Contents for a library with a former sample ID", as
   const capture = within(await screen.findByRole("dialog", { name: "Capture something" }));
   expect(capture.getByRole("tab", { name: "Note", selected: true })).toBeVisible();
   expect(capture.getByText(savedLibrary.title)).toBeVisible();
+});
+
+it("exports the library's kept usable key results in the workbook JSON", async () => {
+  const finding: KeyResult = {
+    id: "finding", text: "The recorder was calibrated before each run.",
+    origin: { kind: "answer", id: "answer", title: savedSession.title, sessionId: savedSession.id, createdAt: savedLibrary.createdAt },
+    evidence: [{
+      id: "passage", sourceId: "log", revisionId: "revision", blockId: "block", regionIds: ["region"],
+      sourceTitle: "Calibration log", locator: "Page 2", quote: "We calibrated the recorder before each run.",
+    }],
+  };
+  vi.spyOn(knowledgeApi, "activity").mockResolvedValue({ version: 1, items: [] });
+  const keyResults = vi.spyOn(knowledgeApi, "keyResults").mockResolvedValue([finding]);
+  const createObjectURL = vi.fn((_: Blob) => "blob:library-workbook");
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL = createObjectURL;
+    static revokeObjectURL = vi.fn();
+  });
+  const download = vi.fn();
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+    download(this.download);
+  });
+  const user = userEvent.setup();
+  render(<App />);
+
+  const libraries = screen.getByRole("region", { name: "Your libraries" });
+  await user.click(await within(libraries).findByRole("button", { name: savedLibrary.title }));
+  await user.click(await screen.findByRole("button", { name: "Library actions" }));
+  await user.click(screen.getByRole("menuitem", { name: "Export library" }));
+  await waitFor(() => expect(download).toHaveBeenCalledExactlyOnceWith(`${savedLibrary.id}.gunther.json`));
+  expect(keyResults).toHaveBeenCalledWith(savedLibrary.id);
+  const json = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(createObjectURL.mock.calls[0]![0]);
+  });
+  expect(JSON.parse(json).keyResults).toEqual([finding]);
 });
 
 it("moves a Studio card to Trash and restores its batch with Undo", async () => {

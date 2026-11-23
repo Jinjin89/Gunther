@@ -245,8 +245,15 @@ def read_passages(
     sources = key_results.library_sources(
         session, base_id, {c.source_id for c in citations.values()},
     )
+    # Only the current text reading can be tied to the source's stored content hash.
+    # Earlier file readings can still be tied to the immutable original asset.
     pieces = {
-        cite.id: _pieces(session, cite) for cite in citations.values() if cite.source_id in sources
+        cite.id: _pieces(session, cite) for cite in citations.values()
+        if (original := sources.get(cite.source_id)) is not None and (
+            original.asset_id is not None
+            or cite.source_revision_id is None
+            or cite.source_revision_id == original.head_revision_id
+        )
     }
     region_ids: dict[str, list[str]] = defaultdict(list)
     for block_id, element_id in session.execute(

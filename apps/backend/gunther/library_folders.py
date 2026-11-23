@@ -49,11 +49,15 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.orm import Session, aliased, sessionmaker
 
+from gunther import key_results
 from gunther.database import session_scope
 from gunther.models import (
     Assertion,
     Asset,
+    ContentBlock,
     Entity,
+    KeyResult,
+    KeyResultEvidence,
     KnowledgeBaseRecord,
     KnowledgeBaseSource,
     NotebookNote,
@@ -61,6 +65,7 @@ from gunther.models import (
     Source,
     SourceDigest,
     SourcePaper,
+    SourceRevision,
     TopicNode,
     TopicSourceLink,
     TopicSynthesis,
@@ -78,6 +83,9 @@ MANIFEST = PurePosixPath(".gunther/folders.json")
 WATCHED_MODELS = (
     Assertion,
     Asset,
+    ContentBlock,
+    KeyResult,
+    KeyResultEvidence,
     KnowledgeBaseRecord,
     KnowledgeBaseSource,
     NotebookNote,
@@ -85,6 +93,7 @@ WATCHED_MODELS = (
     Source,
     SourceDigest,
     SourcePaper,
+    SourceRevision,
     TopicNode,
     TopicSourceLink,
     TopicSynthesis,
@@ -410,10 +419,11 @@ class LibraryFolders:
                 }))
 
             for library in libraries:
+                folder = library_folder[library.id]
                 self._plan_knowledge(
                     plan,
                     library,
-                    library_folder[library.id],
+                    folder,
                     listed[library.id],
                     summaries,
                     set(digests),
@@ -421,6 +431,19 @@ class LibraryFolders:
                     filed,
                     overviews,
                 )
+                if library.trashed_at is None:
+                    lines = ["# Key results", ""]
+                    for result in key_results.list_kept(session, library.id):
+                        references = dict.fromkeys(
+                            ", ".join(
+                                " ".join(value.split())
+                                for value in (link.source_title, link.locator) if value
+                            )
+                            for link in result.evidence
+                        )
+                        sentence = " ".join(result.text.split())
+                        lines.append(f"- {sentence} · {' · '.join(references)}")
+                    plan.file(folder / "Key results.md", ("\n".join(lines) + "\n").encode())
 
             for source in sources:
                 folder = home[source.id]

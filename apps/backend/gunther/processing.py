@@ -22,7 +22,15 @@ from typing import TYPE_CHECKING
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from gunther import digest, key_result_worker, key_results, library_overview, papers, vector_index
+from gunther import (
+    digest,
+    key_result_index,
+    key_result_worker,
+    key_results,
+    library_overview,
+    papers,
+    vector_index,
+)
 from gunther.activity import Activity
 from gunther.asset_service import AssetService, read_initial_asset
 from gunther.audio_decode import audio_duration_ms
@@ -743,7 +751,11 @@ class ProcessingWorker:
         if claimed:
             self.process(*claimed)
             return True
-        return ai is not False and self._distill_key_results()
+        if ai is not False and self._distill_key_results():
+            return True
+        return ai is not True and key_result_index.backfill_vectors(
+            self.sessions, self.index.embedder,
+        )
 
     def _distill_key_results(self) -> bool:
         gateway = self.assets.knowledge_service.models
@@ -772,6 +784,7 @@ class ProcessingWorker:
             key_result_worker.process(
                 self.sessions, self.activity, job, gateway, JOB_LEASE,
                 lambda: self.stopping.is_set() or lease_lost.is_set(),
+                self.index.embedder,
             )
         return True
 

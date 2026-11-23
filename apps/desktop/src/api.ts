@@ -880,8 +880,11 @@ export const knowledgeApi = {
     request<KnowledgeProposal[]>(`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/proposals${status ? `?status=${status}` : ""}`),
   knowledgeUnits: (knowledgeBaseId: string) =>
     request<KnowledgeUnit[]>(`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/units`),
-  keyResults: (baseId: string, signal: AbortSignal) =>
-    request<KeyResult[]>(keyResultsPath(baseId), { signal }),
+  keyResults: (baseId: string, signal?: AbortSignal, sourceIds?: readonly string[]) =>
+    request<KeyResult[]>(keyResultsPath(baseId), {
+      ...(signal ? { signal } : {}),
+      ...(sourceIds === undefined ? {} : { method: "POST", body: JSON.stringify({ sourceIds }) }),
+    }),
   pendingSavedAnswers: (baseId: string, signal: AbortSignal) =>
     request<PendingSavedAnswer[]>(`${keyResultsPath(baseId)}/pending-saved-answers`, { signal }),
   keyResultOrigin: (baseId: string, origin: Pick<KeyResultJob, "originKind" | "originId">, signal: AbortSignal) =>

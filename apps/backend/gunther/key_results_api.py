@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from gunther import key_results
+from gunther import key_result_index, key_results
 from gunther.api_common import _service
 from gunther.database import session_scope
 from gunther.library_overview import live_library
@@ -32,6 +32,10 @@ class PendingSavedAnswerOut(ApiModel):
     content: str
 
 
+class KeyResultScopeIn(ApiModel):
+    source_ids: list[str]
+
+
 @contextmanager
 def _library_session(request: Request, base_id: str, *, write: bool = False) -> Iterator[Session]:
     with session_scope(_service(request).sessions) as session:
@@ -46,6 +50,14 @@ def _library_session(request: Request, base_id: str, *, write: bool = False) -> 
 def list_key_results(base_id: str, request: Request) -> list[KeyResultOut]:
     with _library_session(request, base_id) as session:
         return key_results.list_kept(session, base_id)
+
+
+@router.post("")
+def list_scoped_key_results(
+    base_id: str, scope: KeyResultScopeIn, request: Request,
+) -> list[KeyResultOut]:
+    with _library_session(request, base_id) as session:
+        return key_results.list_kept(session, base_id, scope.source_ids)
 
 
 @router.get("/pending-saved-answers")
@@ -97,6 +109,7 @@ def remove_key_result(
         result = _result(session, base_id, result_id)
         if result.status == "kept":
             result.status, result.updated_at = "removed", utc_now()
+            key_result_index.forget(session, [result.id])
             if with_undo:
                 return JSONResponse({"removedAt": result.updated_at.isoformat()})
         elif with_undo:
@@ -113,16 +126,13 @@ def restore_key_result(
         result = _result(session, base_id, result_id)
         if result.status == "kept":
             return Response(status_code=204)
-        # An origin Undo deletes the creating origin's evidence even if the result
-        # was already removed. An older toast must not bring that result back.
         evidence = select(KeyResultEvidence.id).where(
             KeyResultEvidence.key_result_id == result.id,
-            KeyResultEvidence.origin_kind == result.created_origin_kind,
-            KeyResultEvidence.origin_id == result.created_origin_id,
         ).exists()
         if result.updated_at.isoformat() != removed_at or not session.scalar(select(evidence)):
             raise HTTPException(409, "This removal can no longer be undone.")
         result.status, result.updated_at = "kept", utc_now()
+        key_result_index.write_fts(session, result.id, result.text)
     return Response(status_code=204)
 
 

@@ -19,7 +19,9 @@ Opening an empty Chat requests an overview of the library's current sources. Ana
 
 Analysis can keep up to five findings from a saved answer or output. Each result is a sentence backed by original library passages. The Checker must mark the sentence supported. A later answer or output can add checked evidence to the same result.
 
-**Key results** appears at the top of the Sources list. Its count shows how many results are kept, and long lists start collapsed. Filter contents searches the sentences. Select a result to open Evidence and read the source, locator and quote. The passage picker in Evidence switches between the originals that support the same sentence.
+**Key results** appears at the top of the Sources list and counts the kept results supported by the current source selection. A result appears when all the passages checked together by at least one origin are eligible and come from selected, live sources with unchanged originals. Unticking one source hides a comparison that depended on it unless another origin checked the sentence using sources that are still selected. Re-reading a file keeps results tied to the same original. If the original text of a note or pasted source changes, results that depended on the earlier text disappear. Restoring a source from Trash brings back the results it still supports.
+
+Long lists start collapsed. Filter contents searches the sentences. Select a result to open Evidence and read the source, locator and quote. The passage picker in Evidence switches between the passages in the currently usable evidence groups.
 
 Remove takes one sentence out of the list. Undo in the toast restores it. The kept count under an answer or output has its own Undo, which removes that origin's contribution and preserves other origins' evidence on their results. Failed jobs offer Retry and appear in Activity. Setting up an Analysis model resumes jobs that were waiting for one.
 
@@ -29,10 +31,11 @@ The key results API uses `/api/knowledge-bases/{libraryId}/key-results` as its b
 
 | Method and suffix | Result |
 | --- | --- |
-| `GET` on the base path | Lists kept sentences, their creation origins and original passages. |
+| `GET` on the base path | Lists the library's kept, usable sentences with their creation origins and original passages. |
+| `POST` on the base path with `sourceIds` | Lists kept sentences whose evidence supports them within the specified source selection. |
 | `GET /pending-saved-answers` | Lists trusted saved answers whose key results jobs have yet to finish. |
 | `POST /{resultId}/remove?withUndo=true` | Removes one sentence and returns the time of that removal. Later distillation keeps the sentence suppressed. |
-| `POST /{resultId}/restore?removedAt=…` | Restores the sentence from that removal while its creating evidence remains. |
+| `POST /{resultId}/restore?removedAt=…` | Restores the sentence from that removal while an evidence group remains. |
 | `GET /origins/{kind}/{originId}` | Returns the job state, kept count and kept IDs. This data also appears on saved Ask messages and output version details. |
 | `POST /origins/{kind}/{originId}/undo` | Removes the sentences created by that origin and deletes its evidence contributions. |
 | `POST /jobs/{jobId}/retry` | Queues a failed job again. |
@@ -58,6 +61,7 @@ The installed desktop defaults to `~/Gunther`. Use the Library folder setting to
   Libraries/<library>/
     library.json
     Overview.md
+    Key results.md
     Sections/<section>.md
     Sources/<source>/
       source.json
@@ -70,8 +74,12 @@ The installed desktop defaults to `~/Gunther`. Use the Library folder setting to
 
 Each source has a home folder. Other library placements use relative links. The folder writer links to managed originals where possible and records its own files. Treat the readable files as exports. Edit the source from Gunther, and use a workspace backup for restore. [Library folder writer](../apps/backend/gunther/library_folders.py) · [Backup](OPERATIONS.md#backup-and-restore)
 
+`Key results.md` is a read-only export with one line per kept, usable result and its source titles and locators. **Export library** in the library actions includes the same results under `keyResults` in the JSON workbook. Both exports use the full live library scope.
+
 ## Trash
 
 Move sources, notes, libraries and outputs into Trash with Undo. Sources kept in another live library stay available there. Trashed sources leave active search and new evidence gathering. Outputs go with their version history. The Trash page shows the output type, version count and when it was moved. Restore inside Trash, or use Delete forever or Empty Trash to remove the items and any now-unused managed originals. The service keeps Trash for 30 days by default and purges expired batches. Saved answers and sealed output versions retain their citation snapshots. [Output Trash](OUTPUTS.md#trash)
+
+Permanently deleting a source removes each key result evidence group that required that source. The sentence stays if another group still supports it.
 
 [Contents API](../apps/backend/gunther/knowledge_api.py) · [Pinned reading](../apps/backend/gunther/evidence_reader.py) · [Trash service](../apps/backend/gunther/trash.py)

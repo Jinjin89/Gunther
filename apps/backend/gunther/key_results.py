@@ -9,10 +9,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import NamedTuple
 
-from sqlalchemy import and_, delete, func, literal, or_, select, update
+from sqlalchemy import and_, case, delete, func, literal, or_, select, tuple_, update
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session, aliased
 
+from gunther import key_result_index
+from gunther.content import search_tokens
+from gunther.document_structure import evidence_eligible
 from gunther.evidence import Evidence
 from gunther.knowledge_index import new_id
 from gunther.models import (
@@ -27,6 +30,8 @@ from gunther.models import (
     KnowledgeUnit,
     SessionMessage,
     Source,
+    SourceIndexHead,
+    SourceRevision,
     utc_now,
 )
 from gunther.schemas import (
@@ -45,16 +50,22 @@ class Original(NamedTuple):
     title: str
     content_hash: str
     asset_id: str | None
+    head_revision_id: str | None
 
 
 def library_sources(
     session: Session, base_id: str, source_ids: Collection[str],
 ) -> dict[str, Original]:
     return {
-        source_id: Original(title, content_hash, asset_id)
-        for source_id, title, content_hash, asset_id in session.execute(
-            select(Source.id, Source.title, Source.content_hash, Source.asset_id)
+        source_id: Original(title, content_hash, asset_id, head_revision_id)
+        for source_id, title, content_hash, asset_id, head_revision_id in session.execute(
+            select(
+                Source.id, Source.title, Source.content_hash, Source.asset_id,
+                SourceIndexHead.revision_id,
+            )
+            .select_from(Source)
             .join(KnowledgeBaseSource, KnowledgeBaseSource.source_id == Source.id)
+            .outerjoin(SourceIndexHead, SourceIndexHead.source_id == Source.id)
             .where(
                 KnowledgeBaseSource.knowledge_base_id == base_id,
                 Source.id.in_(source_ids),
@@ -83,6 +94,9 @@ class CheckedResult:
     text: str
     same_as: str | None
     passages: tuple[Passage, ...]
+
+
+PassageKey = tuple[str, str, str, str, str]
 
 
 def enqueue(session: Session, base_id: str, kind: KeyResultOriginKind, origin_id: str) -> None:
@@ -177,28 +191,116 @@ def owned(job: KeyResultJob, now: datetime, lease: timedelta):
     )
 
 
+def _ids(values: Collection[str]):
+    return select(func.json_each(json.dumps(list(values))).table_valued("value").c.value)
+
+
+def usable_links(*conditions, source_ids: Collection[str] | None = None):
+    """The evidence of complete, usable origin groups. Conditions scope whole groups."""
+    link = KeyResultEvidence
+    original = case(
+        (link.source_asset_id.is_not(None), Source.asset_id == link.source_asset_id),
+        else_=and_(Source.asset_id.is_(None), Source.content_hash == link.source_content_hash),
+    )
+    in_scope = Source.id.in_(_ids(source_ids)) if source_ids is not None else literal(True)
+    usable = and_(
+        Source.trashed_at.is_(None), KnowledgeBaseSource.id.is_not(None), in_scope,
+        evidence_eligible(ContentBlock.kind, ContentBlock.payload_json), original,
+    )
+    checked = (
+        select(
+            link.id, link.key_result_id, link.source_id, link.origin_kind, link.origin_id,
+            func.min(case((usable, 1), else_=0)).over(
+                partition_by=(link.key_result_id, link.origin_kind, link.origin_id)
+            ).label("usable"),
+        )
+        .select_from(link)
+        .join(KeyResult, KeyResult.id == link.key_result_id)
+        .join(KnowledgeBaseRecord, KnowledgeBaseRecord.id == KeyResult.knowledge_base_id)
+        .outerjoin(Source, Source.id == link.source_id)
+        .outerjoin(KnowledgeBaseSource, and_(
+            KnowledgeBaseSource.source_id == Source.id,
+            KnowledgeBaseSource.knowledge_base_id == KeyResult.knowledge_base_id,
+        ))
+        .outerjoin(SourceRevision, and_(
+            SourceRevision.id == link.revision_id, SourceRevision.source_id == Source.id,
+        ))
+        .outerjoin(ContentBlock, and_(
+            ContentBlock.id == link.block_id, ContentBlock.revision_id == SourceRevision.id,
+        ))
+        .where(KnowledgeBaseRecord.trashed_at.is_(None), *conditions)
+        .subquery()
+    )
+    return select(
+        checked.c.id, checked.c.key_result_id, checked.c.source_id,
+        checked.c.origin_kind, checked.c.origin_id,
+    ).where(checked.c.usable == 1).subquery()
+
+
+def _related(base_id: str, source_ids: Collection[str]):
+    links = usable_links(KeyResult.knowledge_base_id == base_id)
+    return select(KeyResult).where(
+        KeyResult.id.in_(select(links.c.key_result_id).where(links.c.source_id.in_(_ids(source_ids))))
+    )
+
+
+def related_removed(
+    session: Session, base_id: str, source_ids: Collection[str],
+) -> list[tuple[str, str]]:
+    return [(result_id, sentence) for result_id, sentence in session.execute(
+        _related(base_id, source_ids).where(KeyResult.status == "removed")
+        .with_only_columns(KeyResult.id, KeyResult.text).order_by(KeyResult.id)
+    )]
+
+
+def _fuse(first: Sequence[str], second: Sequence[str], limit: int) -> list[str]:
+    # Reciprocal rank fusion, as in passage retrieval.
+    scores: dict[str, float] = defaultdict(float)
+    for ranking in (first, second):
+        for rank, result_id in enumerate(ranking):
+            scores[result_id] += 1 / (60 + rank)
+    return sorted(scores, key=scores.__getitem__, reverse=True)[:limit]
+
+
 def related_results(
     session: Session, base_id: str, source_ids: Collection[str],
 ) -> list[KeyResult]:
-    """Filter by library and a shared original source before taking each status's limit."""
-    overlapping = select(KeyResultEvidence.id).where(
-        KeyResultEvidence.key_result_id == KeyResult.id,
-        KeyResultEvidence.source_id.in_(source_ids),
-    ).exists()
-    return [
-        item
-        for status, limit in (("kept", 25), ("removed", 15))
-        for item in session.scalars(
-            select(KeyResult)
-            .where(KeyResult.knowledge_base_id == base_id, KeyResult.status == status, overlapping)
-            .order_by(KeyResult.created_at.desc(), KeyResult.id.desc())
-            .limit(limit)
-        )
-    ]
+    """Rank shared-source results using the query prepared before this session opened."""
+    query: key_result_index.Query | None = session.info.get(key_result_index.QUERY_INFO)
+    if query is None or not source_ids:
+        return []
+    kept_ids = list(session.scalars(
+        _related(base_id, source_ids).where(KeyResult.status == "kept")
+        .with_only_columns(KeyResult.id).order_by(KeyResult.id)
+    ))
+    kept = _fuse(
+        key_result_index.keyword(session, query.terms, kept_ids),
+        key_result_index.semantic(session, query, kept_ids),
+        25,
+    )
+    removed = related_removed(session, base_id, source_ids)
+    terms = set(query.terms)
+    lexical = [(k, len(terms.intersection(search_tokens(sentence)))) for k, sentence in removed]
+    lexical.sort(key=lambda hit: hit[1], reverse=True)
+    removed_ids = {result_id for result_id, _ in removed}
+    suppressed = _fuse(
+        [result_id for result_id, matches in lexical if matches],
+        [result_id for result_id in query.removed_rank if result_id in removed_ids],
+        15,
+    )
+    ranked = kept + suppressed
+    results = {item.id: item for item in session.scalars(
+        select(KeyResult).where(KeyResult.id.in_(ranked))
+    )}
+    return [results[result_id] for result_id in ranked if result_id in results]
 
 
-def _passage_key(passage: Passage | KeyResultEvidence) -> tuple[str, str, str, str]:
-    return passage.source_id, passage.revision_id, passage.block_id, passage.quote
+def _passage_key(passage: Passage | KeyResultEvidence) -> PassageKey:
+    original = (
+        (passage.original.asset_id or passage.original.content_hash) if isinstance(passage, Passage)
+        else (passage.source_asset_id or passage.source_content_hash)
+    )
+    return passage.source_id, passage.revision_id, passage.block_id, passage.quote, original
 
 
 def publish(session: Session, job: KeyResultJob, checked: Sequence[CheckedResult]) -> int:
@@ -216,18 +318,20 @@ def publish(session: Session, job: KeyResultJob, checked: Sequence[CheckedResult
     ))
     by_id = {item.id: item for item in existing}
     by_text = {item.text: item for item in existing}
-    known: dict[str, set[tuple[str, str, str, str]]] = defaultdict(set)
+    known: dict[str, dict[tuple[str, str], set[PassageKey]]] = defaultdict(
+        lambda: defaultdict(set),
+    )
     for link in session.scalars(
         select(KeyResultEvidence).where(KeyResultEvidence.key_result_id.in_(by_id))
     ):
-        known[link.key_result_id].add(_passage_key(link))
+        known[link.key_result_id][link.origin_kind, link.origin_id].add(_passage_key(link))
 
-    added: dict[str, set[tuple[str, str, str, str]]] = defaultdict(set)
+    added: dict[str, set[PassageKey]] = defaultdict(set)
     for item in checked:
         if any(
             (source := current.get(p.source_id)) is None
-            or (source.content_hash, source.asset_id)
-            != (p.original.content_hash, p.original.asset_id)
+            or source.asset_id != p.original.asset_id
+            or (source.asset_id is None and source.content_hash != p.original.content_hash)
             for p in item.passages
         ):
             continue
@@ -242,11 +346,12 @@ def publish(session: Session, job: KeyResultJob, checked: Sequence[CheckedResult
             )
             session.add(result)
             session.flush()
+            key_result_index.write_fts(session, result.id, result.text)
             by_text[item.text] = result
         if result.status != "kept":
             continue
         keys = {_passage_key(p) for p in item.passages}
-        if keys <= known[result.id]:
+        if keys in known[result.id].values():
             continue
         for p in item.passages:
             key = _passage_key(p)
@@ -261,7 +366,7 @@ def publish(session: Session, job: KeyResultJob, checked: Sequence[CheckedResult
                 origin_kind=job.origin_kind, origin_id=job.origin_id,
             ))
             added[result.id].add(key)
-        known[result.id].update(keys)
+        known[result.id][job.origin_kind, job.origin_id] = added[result.id]
         result.updated_at = utc_now()
     return len(added)
 
@@ -271,17 +376,20 @@ def origin_states(
 ) -> dict[str, KeyResultJobOut]:
     if not ids:
         return {}
+    links = usable_links(
+        KeyResultEvidence.origin_kind == kind, KeyResultEvidence.origin_id.in_(ids),
+    )
     jobs: dict[str, KeyResultJob] = {}
     kept: dict[str, list[str]] = defaultdict(list)
     for job, result_id in session.execute(
         select(KeyResultJob, KeyResult.id)
         .select_from(KeyResultJob)
-        .outerjoin(KeyResultEvidence, and_(
-            KeyResultEvidence.origin_kind == KeyResultJob.origin_kind,
-            KeyResultEvidence.origin_id == KeyResultJob.origin_id,
+        .outerjoin(links, and_(
+            links.c.origin_kind == KeyResultJob.origin_kind,
+            links.c.origin_id == KeyResultJob.origin_id,
         ))
         .outerjoin(KeyResult, and_(
-            KeyResult.id == KeyResultEvidence.key_result_id,
+            KeyResult.id == links.c.key_result_id,
             KeyResult.knowledge_base_id == KeyResultJob.knowledge_base_id,
             KeyResult.status == "kept",
         ))
@@ -301,16 +409,18 @@ def origin_states(
 
 
 def undo(session: Session, job: KeyResultJob) -> None:
-    session.execute(
+    # Invalidate any removal toast even if this origin's sentence was already removed.
+    removed = list(session.scalars(
         update(KeyResult)
         .where(
             KeyResult.knowledge_base_id == job.knowledge_base_id,
             KeyResult.created_origin_kind == job.origin_kind,
             KeyResult.created_origin_id == job.origin_id,
-            KeyResult.status == "kept",
         )
         .values(status="removed", updated_at=utc_now())
-    )
+        .returning(KeyResult.id)
+    ))
+    key_result_index.forget(session, removed)
     session.execute(
         delete(KeyResultEvidence).where(
             KeyResultEvidence.key_result_id.in_(
@@ -322,14 +432,49 @@ def undo(session: Session, job: KeyResultJob) -> None:
     )
 
 
-def list_kept(session: Session, base_id: str) -> list[KeyResultOut]:
+def purge(session: Session, base_ids: list[str], source_ids: list[str]) -> None:
+    if not base_ids and not source_ids:
+        return
+    library_results = select(KeyResult.id).where(KeyResult.knowledge_base_id.in_(_ids(base_ids)))
+    link = KeyResultEvidence
+    groups = select(link.key_result_id, link.origin_kind, link.origin_id).where(
+        link.source_id.in_(_ids(source_ids)),
+    ).distinct()
+    affected = list(session.scalars(select(groups.subquery().c.key_result_id).distinct()))
+    key_result_index.forget(session, list(set(affected).union(session.scalars(library_results))))
+    if not affected:
+        return
+    # A group loses its proof if even one required original is permanently deleted.
+    # Snapshot the matching groups before deleting any of their evidence rows.
+    lost = groups.cte().prefix_with("MATERIALIZED")
+    session.execute(delete(link).where(
+        tuple_(link.key_result_id, link.origin_kind, link.origin_id).in_(select(lost)),
+    ))
+    session.execute(delete(KeyResult).where(
+        KeyResult.id.in_(_ids(affected)),
+        ~select(link.id).where(link.key_result_id == KeyResult.id).exists(),
+    ))
+    for result_id, sentence in session.execute(
+        select(KeyResult.id, KeyResult.text).where(
+            KeyResult.status == "kept", KeyResult.id.in_(_ids(affected)),
+            KeyResult.knowledge_base_id.not_in(_ids(base_ids)),
+        )
+    ):
+        key_result_index.write_fts(session, result_id, sentence)
+
+
+def list_kept(
+    session: Session, base_id: str, source_ids: Collection[str] | None = None,
+) -> list[KeyResultOut]:
     results: dict[str, KeyResult] = {}
     evidence: dict[str, list[KeyResultEvidenceOut]] = defaultdict(list)
+    links = usable_links(KeyResult.knowledge_base_id == base_id, source_ids=source_ids)
     for item, link, title, locator in session.execute(
         select(KeyResult, KeyResultEvidence, Source.title, ContentBlock.locator)
         .join(KeyResultEvidence, KeyResult.id == KeyResultEvidence.key_result_id)
-        .outerjoin(Source, Source.id == KeyResultEvidence.source_id)
-        .outerjoin(ContentBlock, ContentBlock.id == KeyResultEvidence.block_id)
+        .join(links, links.c.id == KeyResultEvidence.id)
+        .join(Source, Source.id == KeyResultEvidence.source_id)
+        .join(ContentBlock, ContentBlock.id == KeyResultEvidence.block_id)
         .where(KeyResult.knowledge_base_id == base_id, KeyResult.status == "kept")
         .order_by(KeyResult.created_at.desc(), KeyResult.id.desc(),
                   KeyResultEvidence.created_at, KeyResultEvidence.id)
@@ -341,6 +486,8 @@ def list_kept(session: Session, base_id: str) -> list[KeyResultOut]:
             source_title=title, locator=locator, quote=link.quote,
         ))
 
+    if not results:
+        return []
     ids: dict[str, set[str]] = defaultdict(set)
     for item in results.values():
         ids[item.created_origin_kind].add(item.created_origin_id)

@@ -12,12 +12,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from gunther import key_result_origins, key_results, usage
+from gunther import key_result_index, key_result_origins, key_results, usage
 from gunther.activity import Activity
 from gunther.agent import AskAgent
 from gunther.checks import claim_text
 from gunther.citations import ANY_CITATION, UNSOURCED, collapse_citations, sentence_spans
 from gunther.database import session_scope
+from gunther.knowledge_index import Embedder
 from gunther.llm import AnalysisNeedsModel, ModelError, ModelGateway, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.models import KeyResult, KeyResultJob, KnowledgeBaseRecord, utc_now
@@ -58,7 +59,7 @@ class _Distillation(BaseModel):
 
 def _material(
     session: Session, job: KeyResultJob,
-) -> tuple[list[str], list[key_results.Passage], list[KeyResult]]:
+) -> tuple[list[str], list[key_results.Passage]]:
     claims = key_result_origins.read_claims(session, job)
     by_citation = key_result_origins.read_passages(session, job.knowledge_base_id, claims)
     numbers: dict[key_results.Passage, int] = {}
@@ -71,10 +72,7 @@ def _material(
         if refs:
             header = f" (Table header {claim.table_header})" if claim.table_header else ""
             lines.append(f"{claim.text}{header} " + "".join(f"[{n}]" for n in refs))
-    existing = key_results.related_results(
-        session, job.knowledge_base_id, {p.source_id for p in numbers},
-    ) if numbers else []
-    return lines, list(numbers), existing
+    return lines, list(numbers)
 
 
 def _distill(
@@ -175,7 +173,7 @@ def _finish(
 def process(
     sessions: sessionmaker[Session], activity: Activity,
     job: KeyResultJob, gateway: ModelGateway | None, lease: timedelta,
-    stopped: Callable[[], bool],
+    stopped: Callable[[], bool], embedder: Embedder | None,
 ) -> None:
     with sessions() as session:
         library_title = session.scalar(
@@ -188,8 +186,16 @@ def process(
             if gateway is None or (chosen := gateway.for_role("analysis")) is None:
                 raise AnalysisNeedsModel()
             with sessions() as session:
-                material = _material(session, job)
-            checked = _distill(gateway, chosen, job, *material)
+                lines, passages = _material(session, job)
+                sources = {p.source_id for p in passages}
+                removed = key_results.related_removed(
+                    session, job.knowledge_base_id, sources,
+                ) if sources and embedder else []
+            if passages:
+                query = key_result_index.prepare_query("\n".join(lines), embedder, removed)
+                with sessions(info={key_result_index.QUERY_INFO: query}) as session:
+                    existing = key_results.related_results(session, job.knowledge_base_id, sources)
+                checked = _distill(gateway, chosen, job, lines, passages, existing)
         except AnalysisNeedsModel as exc:
             error, state = str(exc), "needs_model"
         except ModelError as exc:
