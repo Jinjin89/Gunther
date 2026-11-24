@@ -16,6 +16,7 @@
 .library-column-heading h2 { margin: 0; font-size: var(--gx-text-md); font-weight: 620; }
 .library-column.is-collapsed .library-column-heading { justify-content: center; padding-inline: 0; }
 .library-column-body { flex: 1; min-height: 0; }
+.library-sources .library-column-body { display: flex; flex-direction: column; }
 .library-column-body[hidden] { display: none; }
 .library-column-resize { position: absolute; z-index: 4; inset-block: 0; width: 7px; cursor: col-resize; touch-action: none; }
 .library-sources .library-column-resize { right: 0; }

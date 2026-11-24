@@ -7,6 +7,7 @@ import { WEB_PREFERENCE_KEY } from "../models/askModel";
 import { persistentStorage } from "../persistentStorage";
 import { makeBase, makeSource } from "../test/fixtures";
 import { Composer, ConversationMessage, SessionWorkspace } from "./SessionWorkspace";
+import { useLibraryChats } from "./useLibraryChats";
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); window.localStorage.clear(); });
 
@@ -83,9 +84,17 @@ const sessionWithAnswer = (knowledgeBaseId: string): KnowledgeSession => ({
   messages: [answer],
 });
 
-function renderWorkspace(base: ReturnType<typeof makeBase>, reactStrictMode = false) {
+function WorkspaceHarness({ base, inspect = false }: { base: ReturnType<typeof makeBase>; inspect?: boolean }) {
+  const chats = useLibraryChats(base.id, () => {}, () => {});
+  return <>
+    <SessionWorkspace base={base} chats={chats} onNotify={() => {}} onCite={() => {}} />
+    {inspect && <output data-testid="active-session">{JSON.stringify(chats.activeSession)}</output>}
+  </>;
+}
+
+function renderWorkspace(base: ReturnType<typeof makeBase>, reactStrictMode = false, inspect = false) {
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
-  return render(<SessionWorkspace base={base} onNotify={vi.fn()} onCite={vi.fn()} />, { reactStrictMode });
+  return render(<WorkspaceHarness base={base} inspect={inspect} />, { reactStrictMode });
 }
 
 function deferred<T>() {
@@ -116,7 +125,7 @@ describe("Library Chat actions", () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
   });
 
-  it("starts a new chat and opens the previous chat from searchable, pinnable history", async () => {
+  it("starts a new chat without a history action", async () => {
     const user = userEvent.setup();
     const created = { ...second, id: "new", title: "New conversation" };
     const create = vi.spyOn(knowledgeApi, "createSession").mockResolvedValue(created);
@@ -128,27 +137,17 @@ describe("Library Chat actions", () => {
     const actions = screen.getByRole("button", { name: "Chat actions" });
     await user.click(actions);
     expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
-      "New chat", "History", "Rename", "Export Markdown", "Archive",
+      "New chat", "Rename", "Export Markdown", "Archive",
     ]);
     await user.click(screen.getByRole("menuitem", { name: "New chat" }));
     expect(await screen.findByText(created.title)).toBeVisible();
     expect(create).toHaveBeenCalledExactlyOnceWith(base.id, { focusChapterId: null, selectedSourceIds: [] });
     expect(composer).toHaveValue("");
 
-    await user.click(actions);
-    await user.click(screen.getByRole("menuitem", { name: "History" }));
-    const drawer = within(screen.getByRole("dialog", { name: "Session history" }));
-    await user.type(drawer.getByRole("textbox", { name: "Search sessions" }), first.title);
-    expect(drawer.queryByRole("button", { name: /^New conversation/ })).not.toBeInTheDocument();
-    await user.click(drawer.getByRole("button", { name: "Actions for Markers" }));
-    await user.click(drawer.getByRole("menuitem", { name: "Pin session" }));
-    expect(await drawer.findByText("Pinned")).toBeVisible();
-    expect(knowledgeApi.updateSession).toHaveBeenCalledExactlyOnceWith(first.id, { pinned: true });
-    await user.click(drawer.getByRole("button", { name: /^Markers/ }));
-    expect(await screen.findByText(first.title)).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "Session history" })).not.toBeInTheDocument();
   });
 
-  it("renames, archives and restores the active chat through its menu and history", async () => {
+  it("renames and archives the active chat through its menu", async () => {
     const user = userEvent.setup();
     renderWorkspace(base);
     expect(await screen.findByText(first.title)).toBeVisible();
@@ -165,17 +164,7 @@ describe("Library Chat actions", () => {
     await user.click(screen.getByRole("menuitem", { name: "Archive" }));
     expect(await screen.findByText(second.title)).toBeVisible();
     expect(knowledgeApi.updateSession).toHaveBeenLastCalledWith(first.id, { archived: true });
-    await user.click(actions);
-    await user.click(screen.getByRole("menuitem", { name: "History" }));
-    const drawer = within(screen.getByRole("dialog", { name: "Session history" }));
-    await user.click(drawer.getByRole("button", { name: /^View archive/ }));
-    const archived = await drawer.findByRole("button", { name: "Actions for Lab discussion" });
-    await user.click(archived);
-    await user.click(drawer.getByRole("menuitem", { name: "Restore session" }));
-    await waitFor(() => expect(drawer.getByText("No archived sessions yet.")).toBeVisible());
-    expect(knowledgeApi.updateSession).toHaveBeenLastCalledWith(first.id, { archived: false });
-    await user.click(drawer.getByRole("button", { name: /^Lab discussion/ }));
-    expect(await screen.findByText("Lab discussion")).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "Session history" })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Message Gunther" })).toBeEnabled();
   });
 
@@ -206,6 +195,39 @@ describe("Library Chat actions", () => {
     expect(markdown).toContain("> CD3D is a T-cell marker.");
     await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:session-export"), { timeout: 1500 });
   });
+});
+
+it.each(["success", "failure"])("preserves a saved turn and session fields when brief refresh returns %s", async (result) => {
+  const user = userEvent.setup();
+  const base = makeBase({ id: `brief-${result}` });
+  const session = sessionWithAnswer(base.id);
+  const question = { ...answer, id: "question", role: "user" as const, content: "What changed?", citations: [] };
+  const reply = { ...answer, id: "new-answer", content: "The new answer." };
+  const updated = { ...session, title: "Updated title", summary: "Updated summary", messageCount: 3 };
+  vi.spyOn(knowledgeApi, "sessions").mockResolvedValue([session]);
+  vi.spyOn(knowledgeApi, "session").mockResolvedValue(session);
+  vi.spyOn(knowledgeApi, "followAnswer").mockResolvedValue(null);
+  vi.spyOn(knowledgeApi, "modelMenu").mockResolvedValue({ models: [], default: null, efforts: [] });
+  vi.spyOn(knowledgeApi, "sendMessageStream").mockResolvedValue({ session: updated, userMessage: question, assistantMessage: reply });
+  const refresh = vi.spyOn(knowledgeApi, "refreshBrief");
+  if (result === "success") refresh.mockResolvedValue({ ...session.brief!, goal: "A refreshed goal" });
+  else refresh.mockRejectedValue(new Error("Brief unavailable"));
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
+  renderWorkspace(base, false, true);
+
+  const composer = screen.getByRole("textbox", { name: "Message Gunther" });
+  await waitFor(() => expect(composer).toBeEnabled());
+  await user.type(composer, `${question.content}{Enter}`);
+  await waitFor(() => {
+    const active = JSON.parse(screen.getByTestId("active-session").textContent!) as KnowledgeSession;
+    expect(active).toMatchObject({ title: updated.title, summary: updated.summary, messageCount: 3 });
+    expect(active.messages.map((message) => message.id)).toEqual([answer.id, question.id, reply.id]);
+    expect(active.brief).toMatchObject(result === "success" ? { goal: "A refreshed goal", error: null } : { error: "Brief unavailable" });
+  });
+  expect(screen.getByText("The new answer.")).toBeVisible();
+  await user.click(screen.getByText("Brief", { selector: "summary" }));
+  if (result === "success") expect(screen.getByText("A refreshed goal")).toBeVisible();
+  else expect(screen.getByRole("alert")).toHaveTextContent("Couldn’t update the brief");
 });
 
 describe("Library Ask startup selection", () => {

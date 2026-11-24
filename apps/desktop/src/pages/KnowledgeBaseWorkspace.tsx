@@ -16,8 +16,10 @@ import { StudioColumn } from "../outputs/StudioColumn";
 import { type OutputTarget, type OutputTrashTarget, useStudio } from "../outputs/useStudio";
 import { persistentStorage } from "../persistentStorage";
 import { moveToTrash } from "../trash/trash";
+import { LibraryChatsSection } from "./LibraryChatsSection";
 import { LibraryColumn } from "./LibraryColumn";
 import { SessionWorkspace, type LibraryChatActions } from "./SessionWorkspace";
+import { useLibraryChats } from "./useLibraryChats";
 import "./libraryWorkspace.css";
 
 type Middle = { kind: "chat" } | { kind: "source"; id: string } | { kind: "output"; target: OutputTarget };
@@ -88,8 +90,17 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
     if (choose(chat)) chatActions.current?.ask(question, submit);
   };
   const openFullSource = (id: string) => onOpenSource(id, sources.map((source) => source.id));
-  const cite = (citation: ConversationCitation | null, index?: number) =>
-    setEvidence(citation ? { citation, index } : null);
+  const cite = useCallback((citation: ConversationCitation | null, index?: number) =>
+    setEvidence(citation ? { citation, index } : null), []);
+  const clearCitation = useCallback(() => cite(null), [cite]);
+  const returnToChat = useCallback(() => choose(chat), [choose]);
+  const chats = useLibraryChats(base.id, onNotify, clearCitation, returnToChat);
+  const openChat = (id: string) => {
+    if (choose(chat)) void chats.loadSession(id);
+  };
+  const createChat = () => {
+    if (choose(chat)) void chats.createSession();
+  };
   const trashOutput = async (item: OutputTrashTarget, fromReader = false) => {
     if (!workspaceId) return;
     const selected = target && studio.artifacts.find((version) => version.id === target.artifactId);
@@ -122,13 +133,6 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
     onOutputActivity?.(outputActivity);
   }, [choose, onOutputActivity, outputActivity, workspaceId]);
   useEffect(() => { persistentStorage.removeItem(`gunther:open-source:${base.id}`); }, [base.id]);
-  useEffect(() => {
-    const openChat = (event: Event) => {
-      if ((event as CustomEvent<{ libraryId: string }>).detail?.libraryId === base.id) setMiddle(chat);
-    };
-    window.addEventListener("gunther:open-session", openChat);
-    return () => window.removeEventListener("gunther:open-session", openChat);
-  }, [base.id]);
   const chatVisible = middle.kind === "chat";
   useEffect(() => { onChatVisible?.(chatVisible); }, [chatVisible, onChatVisible]);
 
@@ -136,6 +140,7 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
   return <div className="library-workspace" ref={workspace}>
     <LibraryColumn column="sources" workspace={workspace} collapsed={sourceColumn.collapsed}
       onToggle={() => sourceColumn.setCollapsed(!sourceColumn.collapsed)}>
+      <LibraryChatsSection baseId={base.id} chats={chats} onOpen={openChat} onCreate={createChat} />
       <SourceTree baseId={base.id} contents={contents} onContents={setContents} selection={selection} selectedIds={sourceIds}
         onScope={setSelection} activeSourceId={source?.id ?? null} onSource={(id) => choose({ kind: "source", id })}
         onTrashed={onTrashed} keyResults={(filter) => <KeyResultsGroup baseId={base.id} filter={filter}
@@ -157,6 +162,7 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
     <section className="library-middle" aria-label="Library workspace">
       <div className="library-chat" hidden={!chatVisible}>
         <SessionWorkspace base={contents ? { ...base, sourceCount: sources.length } : base} visible={chatVisible}
+          chats={chats}
           sourceIds={scope.sourceIds} sourceScopeEmpty={scopeEmpty} onFocusSources={focusSources}
           chatActions={chatActions} onNotify={onNotify} onCite={cite} />
       </div>

@@ -5,8 +5,9 @@ import type {
 } from "@gunther/contracts";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ApiRequestError, knowledgeApi } from "../api";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiRequestError, ServiceUnavailableError, knowledgeApi } from "../api";
+import { forgetAskSkills } from "../components/search/skills";
 import { keyResultsChanged } from "../keyResults/events";
 import { announceModelsChanged, OPEN_SETTINGS_EVENT } from "../models/askModel";
 import { libraryScope } from "../outputs/artifactConversations";
@@ -180,7 +181,262 @@ beforeEach(() => {
   vi.spyOn(knowledgeApi, "sourceDigest").mockResolvedValue({ sourceId: "s1", state: "off", stale: false, method: null, offReason: "no_key", error: null, digest: null });
 });
 
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { forgetAskSkills(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+describe("Library chats column", () => {
+  it("starts a new chat from the left column", async () => {
+    const user = userEvent.setup();
+    const created = { ...originalSession, id: "chat-new", title: "Fresh discussion" };
+    const create = vi.spyOn(knowledgeApi, "createSession").mockResolvedValue(created);
+    setup();
+
+    await screen.findByRole("button", { name: /^Original discussion/ });
+    await user.click(screen.getByRole("button", { name: "New chat" }));
+    expect(await screen.findByRole("button", { name: /^Fresh discussion/ })).toBeVisible();
+    expect(create).toHaveBeenCalledExactlyOnceWith(base.id, { focusChapterId: null, selectedSourceIds: [] });
+    expect(screen.getByRole("textbox", { name: "Message Gunther" })).toBeEnabled();
+  });
+
+  it.each(["left column", "shortcut", "chat menu"])("clears the draft and skill for a new chat from the %s", async (entry) => {
+    const user = userEvent.setup();
+    forgetAskSkills();
+    const skillsRead = vi.spyOn(knowledgeApi, "askSkills").mockResolvedValue([
+      { command: "research", title: "Deep research", description: "Research a question.", budgets: ["standard", "deep"] },
+    ]);
+    const created = { ...originalSession, id: "chat-new", title: "Fresh discussion" };
+    const create = vi.spyOn(knowledgeApi, "createSession").mockResolvedValue(created);
+    const addListener = vi.spyOn(window, "addEventListener");
+    setup();
+
+    const composer = screen.getByRole("textbox", { name: "Message Gunther" });
+    await waitFor(() => expect(composer).toBeEnabled());
+    await waitFor(() => expect(skillsRead).toHaveBeenCalled());
+    const registrations = addListener.mock.calls.filter(([event]) => event === "gunther:new-session").length;
+    await user.type(composer, "/res{Enter}");
+    await user.click(await screen.findByRole("button", { name: "Deep" }));
+    await user.type(composer, "Unsent draft");
+    expect(addListener.mock.calls.filter(([event]) => event === "gunther:new-session")).toHaveLength(registrations);
+
+    if (entry === "left column") await user.click(screen.getByRole("button", { name: "New chat" }));
+    else if (entry === "shortcut") act(() => window.dispatchEvent(new CustomEvent("gunther:new-session")));
+    else {
+      await user.click(screen.getByRole("button", { name: "Chat actions" }));
+      await user.click(screen.getByRole("menuitem", { name: "New chat" }));
+    }
+    await screen.findByRole("button", { name: /^Fresh discussion/ });
+    expect(create).toHaveBeenCalledOnce();
+    await waitFor(() => expect(composer).toHaveValue(""));
+    expect(screen.queryByRole("button", { name: "Remove /research" })).not.toBeInTheDocument();
+    await user.type(composer, "/res{Enter}");
+    expect(await screen.findByRole("button", { name: "Standard" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("closes the trace and title editor when another chat becomes active", async () => {
+    const user = userEvent.setup();
+    const answer: SessionMessage = {
+      id: "answer", role: "assistant", sessionId: originalSession.id, content: "A saved answer.", createdAt: at,
+      context: { sourcesConsidered: 0, assertionsConsidered: 0, verifiedAssertions: 0, retrievalMode: "all", responderMode: "model" },
+      citations: [],
+    };
+    vi.mocked(knowledgeApi.session).mockImplementation(async (id) => id === secondSession.id
+      ? secondSession : { ...originalSession, messages: [answer], messageCount: 1 });
+    vi.spyOn(knowledgeApi, "developerSettings").mockResolvedValue({ traces: true });
+    vi.spyOn(knowledgeApi, "messageTrace").mockResolvedValue({ version: 1, totalMs: 12, steps: [] });
+    setup();
+
+    await user.click(await screen.findByRole("button", { name: "Trace" }));
+    expect(screen.getByRole("dialog", { name: "Trace" })).toBeVisible();
+    act(() => window.dispatchEvent(new CustomEvent("gunther:open-session", {
+      detail: { libraryId: base.id, sessionId: secondSession.id },
+    })));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Trace" })).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Chat actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+    expect(screen.getByRole("textbox", { name: "Session title" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /^Original discussion/ }));
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Session title" })).not.toBeInTheDocument());
+  });
+
+  it("pins and unpins a chat from its row menu", async () => {
+    const user = userEvent.setup();
+    const update = vi.spyOn(knowledgeApi, "updateSession").mockImplementation(async (id, patch) => {
+      const chat = id === originalSession.id ? originalSession : secondSession;
+      return { ...chat, pinned: patch.pinned ?? chat.pinned };
+    });
+    setup();
+
+    await user.click(await screen.findByRole("button", { name: "Actions for Original discussion" }));
+    await user.click(screen.getByRole("menuitem", { name: "Pin" }));
+    await waitFor(() => expect(update).toHaveBeenCalledExactlyOnceWith(originalSession.id, { pinned: true }));
+    await user.click(screen.getByRole("button", { name: "Actions for Original discussion" }));
+    await user.click(screen.getByRole("menuitem", { name: "Unpin" }));
+    expect(update).toHaveBeenLastCalledWith(originalSession.id, { pinned: false });
+  });
+
+  it("renames a chat from its row menu and discards a canceled edit", async () => {
+    const user = userEvent.setup();
+    const update = vi.spyOn(knowledgeApi, "updateSession").mockImplementation(async (_id, patch) =>
+      ({ ...originalSession, title: patch.title ?? originalSession.title }));
+    setup();
+
+    await user.click(await screen.findByRole("button", { name: "Actions for Original discussion" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+    let title = screen.getByRole("textbox", { name: "Chat title" });
+    await user.clear(title);
+    await user.type(title, "Discard this title{Escape}");
+    expect(update).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Actions for Original discussion" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+    title = screen.getByRole("textbox", { name: "Chat title" });
+    expect(title).toHaveValue("Original discussion");
+    await user.clear(title);
+    await user.type(title, "Renamed discussion{Enter}");
+    expect(await screen.findByRole("button", { name: /^Renamed discussion/ })).toBeVisible();
+    expect(update).toHaveBeenCalledExactlyOnceWith(originalSession.id, { title: "Renamed discussion" });
+  });
+
+  it("archives a chat, restores it from the archived list, and keeps the next chat active", async () => {
+    const user = userEvent.setup();
+    const saved = new Map([originalSession, secondSession].map((chat) => [chat.id, chat]));
+    const update = vi.spyOn(knowledgeApi, "updateSession").mockImplementation(async (id, patch) => {
+      const previous = saved.get(id)!;
+      const chat = { ...previous, archived: patch.archived ?? previous.archived };
+      saved.set(id, chat);
+      return chat;
+    });
+    vi.mocked(knowledgeApi.sessions).mockImplementation(async (_id, includeArchived) =>
+      [...saved.values()].filter((chat) => includeArchived || !chat.archived));
+    vi.mocked(knowledgeApi.session).mockImplementation(async (id) => saved.get(id)!);
+    setup();
+
+    await user.click(await screen.findByRole("button", { name: "Actions for Original discussion" }));
+    await user.click(screen.getByRole("menuitem", { name: "Archive" }));
+    expect(await screen.findByRole("button", { name: /^History discussion/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Original discussion/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Search chats" }));
+    await user.click(screen.getByRole("button", { name: "Archived" }));
+    await user.click(await screen.findByRole("button", { name: "Actions for Original discussion" }));
+    await user.click(screen.getByRole("menuitem", { name: "Restore" }));
+    expect(await screen.findByRole("button", { name: /^Original discussion/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Archived (0)" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Message Gunther" })).toBeEnabled();
+    expect(update).toHaveBeenLastCalledWith(originalSession.id, { archived: false });
+  });
+
+  it("searches chats by title and summary", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.sessions).mockResolvedValue([
+      originalSession,
+      { ...secondSession, summary: "Cell marker notes" },
+    ]);
+    setup();
+
+    await screen.findByRole("button", { name: /^Original discussion/ });
+    await user.click(screen.getByRole("button", { name: "Search chats" }));
+    await user.type(screen.getByRole("textbox", { name: "Search chats" }), "cell marker");
+    expect(screen.getByRole("button", { name: /^History discussion/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Original discussion/ })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("textbox", { name: "Search chats" })).toHaveValue("");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("textbox", { name: "Search chats" })).not.toBeInTheDocument();
+  });
+
+  it("loads archived chats on each disclosure and hides the count until loaded", async () => {
+    const user = userEvent.setup();
+    const archived = [{ ...originalSession, id: "archived-1", title: "First archived", archived: true }];
+    const list = vi.mocked(knowledgeApi.sessions).mockImplementation(async (_id, includeArchived) =>
+      [originalSession, secondSession, ...(includeArchived ? archived : [])]);
+    setup();
+
+    await screen.findByRole("button", { name: /^Original discussion/ });
+    await user.click(screen.getByRole("button", { name: "Search chats" }));
+    const disclosure = screen.getByRole("button", { name: "Archived" });
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    await user.click(disclosure);
+    expect(await screen.findByRole("button", { name: /^First archived/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Archived (1)" })).toHaveAttribute("aria-expanded", "true");
+    await user.click(screen.getByRole("button", { name: "Archived (1)" }));
+    expect(screen.queryByRole("button", { name: /^First archived/ })).not.toBeInTheDocument();
+    archived.push({ ...originalSession, id: "archived-2", title: "Second archived", archived: true });
+    await user.click(screen.getByRole("button", { name: "Archived (1)" }));
+    expect(await screen.findByRole("button", { name: /^Second archived/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Archived (2)" })).toBeVisible();
+    expect(list.mock.calls.filter(([, includeArchived]) => includeArchived)).toHaveLength(2);
+    await user.click(screen.getByRole("textbox", { name: "Search chats" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("button", { name: /^Second archived/ })).not.toBeInTheDocument();
+  });
+
+  it("caps the compact list to pinned chats plus four recent chats and persists collapse", async () => {
+    const user = userEvent.setup();
+    const recent = Array.from({ length: 7 }, (_, index) => ({
+      ...originalSession, id: `recent-${index}`, title: `Recent ${index + 1}`,
+    }));
+    const chats = [
+      { ...originalSession, id: "pinned", title: "Pinned research", pinned: true },
+      { ...secondSession, title: "Branch discussion", parentSessionId: originalSession.id },
+      ...recent,
+      originalSession,
+    ];
+    vi.mocked(knowledgeApi.sessions).mockResolvedValue(chats);
+    vi.mocked(knowledgeApi.session).mockImplementation(async (id) => chats.find((chat) => chat.id === id)!);
+    setup();
+
+    await screen.findByRole("button", { name: /^Pinned research/ });
+    expect(screen.getByTitle("Branched from Original discussion")).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Recent 3/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Recent 5/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "All chats (10)" }));
+    expect(screen.getByRole("button", { name: /^Recent 5/ })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Search chats" }));
+    await user.click(screen.getByRole("textbox", { name: "Search chats" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("button", { name: /^Recent 5/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All chats (10)" })).toHaveAttribute("aria-expanded", "false");
+    await user.click(screen.getByRole("button", { name: "All chats (10)" }));
+    await user.click(screen.getByRole("button", { name: /^Chats/ }));
+    expect(screen.queryByRole("button", { name: /^Pinned research/ })).not.toBeInTheDocument();
+    expect(window.localStorage.getItem(`gunther:library-chats-collapsed:${base.id}`)).toBe("1");
+    await user.click(screen.getByRole("button", { name: /^Chats/ }));
+    expect(screen.getByRole("button", { name: /^Pinned research/ })).toBeVisible();
+    expect(window.localStorage.getItem(`gunther:library-chats-collapsed:${base.id}`)).toBe("0");
+  });
+
+  it("keeps an unsaved output edit when opening a chat is canceled", async () => {
+    const user = userEvent.setup();
+    const confirmLeave = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+    setup({ artifacts: [version()] });
+
+    await user.click(await screen.findByRole("button", { name: /Field findings Report Version 1/ }));
+    await user.click(await screen.findByRole("button", { name: "Output actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit" }));
+    const editor = screen.getByRole("textbox", { name: "Report, as Markdown" });
+    await user.type(editor, " A kept detail.");
+    await user.click(screen.getByRole("button", { name: /^History discussion/ }));
+    expect(editor).toBeInTheDocument();
+    expect(confirmLeave).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: /^History discussion/ }));
+    expect(confirmLeave).toHaveBeenCalledTimes(2);
+    expect(editor).not.toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "Message Gunther" })).toBeEnabled();
+  });
+
+  it("shows the chats read error and retries in the Chats section", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.sessions)
+      .mockRejectedValueOnce(new ServiceUnavailableError())
+      .mockResolvedValue([originalSession, secondSession]);
+    setup();
+
+    expect(await screen.findByText("Could not load chats", { exact: false })).toBeVisible();
+    expect(screen.getByRole("button", { name: "New chat" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("button", { name: /^Original discussion/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: "New chat" })).toBeEnabled();
+  });
+});
 
 it("renders each catalog icon on its Studio tile", async () => {
   // Icon names served by the backend's output_types.py catalog.
@@ -473,9 +729,7 @@ it("shares all sources, blocks an empty selection, and uses section ticks for ea
   expect(field).not.toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "Select Field notes" })).toBeChecked();
   expect(screen.getByRole("checkbox", { name: "Select Review notes" })).not.toBeChecked();
-  await user.click(screen.getByRole("button", { name: "Chat actions" }));
-  await user.click(screen.getByRole("menuitem", { name: "History" }));
-  await user.click(within(screen.getByRole("dialog", { name: "Session history" })).getByRole("button", { name: /^History discussion/ }));
+  await user.click(screen.getByRole("button", { name: /^History discussion/ }));
   await waitFor(() => expect(button).toBeEnabled());
   await user.click(button);
   expect(send).toHaveBeenLastCalledWith(secondSession.id, expect.objectContaining({ selectedSourceIds: ["s1", "s2"], focusChapterId: null }), expect.any(Function), expect.any(AbortSignal));
@@ -519,7 +773,7 @@ it("opens the Chat brief, answer sources, and trace in place", async () => {
 it("opens a source independently of scope and keeps the Chat draft and scroll position", async () => {
   const user = userEvent.setup();
   setup();
-  await screen.findByText(originalSession.title);
+  await screen.findByRole("button", { name: /^Original discussion/ });
   const draft = screen.getByRole("textbox", { name: "Message Gunther" });
   await user.type(draft, "A thought to keep");
   const chatScroll = draft.closest(".session-workspace")!.querySelector<HTMLElement>(".conversation-scroll")!;

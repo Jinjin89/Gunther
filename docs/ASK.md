@@ -2,15 +2,15 @@
 
 Start on Home to search across libraries or ask with selected scope. Chat opens in the middle of a library alongside Sources and Studio. Library chats share the source ticks in the Sources column. File a Home conversation in a library, branch at an answer, or archive it. Open Brief in the Chat header to see or edit the context carried across turns.
 
-The Chat actions menu starts a new chat, opens History, renames the current chat, exports it as Markdown with citations, or archives it. In History, search by title or summary, pin sessions, or use View archive to reopen or restore one. An archived chat stays readable. Restore it to send more questions.
+Library chats live in the **Chats** section at the top of the Sources column. Search there by title or summary, pin or unpin a chat, and open the archived list. The Chat actions menu starts a new chat, renames the current chat, exports it as Markdown with citations, or archives it. An archived chat stays readable. Restore it to send more questions.
 
 Empty Chat shows the library overview and up to three suggested questions when available. Choose one to send it with the current Sources ticks. While the overview is unavailable, Chat shows the library's guiding question, description and source count. Follow the Models link to set up Analysis, or use Retry if the overview failed.
 
 ## Ask a question
 
-Select the model and effort in the composer. Use All sources or tick individual sources and sections. An empty selection disables Send. Opening saved chat history keeps the current ticks. The Web switch allows public web search when Tavily is configured. Compare and Research are explicit methods. Research frames sub-questions, gathers and grades rounds of evidence, and can stop gathering and write from the material already collected.
+Select the model and effort in the composer. Use All sources or tick individual sources and sections. An empty selection disables Send. Opening another chat keeps the current ticks. The Web switch allows public web search when Tavily is configured. Compare and Research are explicit methods. Research frames sub-questions, gathers and grades rounds of evidence, and can stop gathering and write from the material already collected.
 
-Ask needs a configured model. The composer links to Settings when a model or key is needed. A model or required grading failure leaves a retryable question. Optional relevance grading can retain ungraded results. Reconnect runs the same startup reads as opening the page. History, models and Ask settings each have their own Retry. Send requires a usable model, request settings and a reachable service.
+Ask needs a configured model. The composer links to Settings when a model or key is needed. A model or required grading failure leaves a retryable question. Optional relevance grading can retain ungraded results. Reconnect runs the same startup reads as opening the page. Chats, models and Ask settings each have their own Retry. Send requires a usable model, request settings and a reachable service.
 
 ## Evidence and checking
 

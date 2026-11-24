@@ -4,6 +4,7 @@ Capture goes to Inbox or directly to a library. File or move an item from its de
 
 ## Sources, Chat and Studio
 
+- **Chats** lives at the top of the Sources column. It shows pinned chats plus the four most recent others, with a New chat button, search, and an All chats disclosure that includes archived chats. Each row shows its relative update time, pin state, and branch lineage, and its menu can rename, pin or unpin, and archive or restore. The section remembers whether it is collapsed, and reports its own chat loading error with Retry.
 - The Sources column has the library's sections and sources. Create, rename and nest sections. Use a row's drag handle to place or reorder it. A source's actions menu offers Rename, Move to…, Take out of section for placed sources, and Move to Trash with Undo. Each action targets that row and leaves the scope selection intact. A source with no placement remains in the library. Deleting a section clears those placements and keeps the sources. The API uses stable IDs and rejects conflicting orders.
 - Tick sources to choose material for Chat and new Studio outputs. A section tick selects its descendant sources, including those under collapsed sections. All sources includes additions to the library. The library remembers its selection across chats. Select at least one source to send a question or start an output from a selection.
 - Use **Add source** to capture a document, photo or scan, web page, recording, or note or pasted text directly into this library.

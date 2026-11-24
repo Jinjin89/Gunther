@@ -909,24 +909,46 @@ async function run() {
     }
     await waitForEvaluation(
       cdp,
-      `[...document.querySelectorAll('.conversation-header [role="menuitem"]')].map((button) => button.textContent.trim()).join('|') === 'New chat|History|Rename|Export Markdown|Archive'`,
+      `[...document.querySelectorAll('.conversation-header [role="menuitem"]')].map((button) => button.textContent.trim()).join('|') === 'New chat|Rename|Export Markdown|Archive'`,
       "library Chat actions",
     );
-    if (!await cdp.evaluate(clickExpression('[role="menuitem"]', "History"))) {
-      throw new SmokeFailure("Chat History could not be opened");
+    if (!await cdp.evaluate(clickExpression('[role="menuitem"]', "New chat"))) {
+      throw new SmokeFailure("A new chat could not be opened");
     }
     await waitForEvaluation(
       cdp,
-      `document.querySelector('[role="dialog"][aria-label="Session history"] [aria-label="Search sessions"]') !== null`,
-      "searchable Chat history",
+      `document.querySelector('.conversation-title > strong') !== null && document.querySelector('.message-sources summary') === null`,
+      "new chat before reopening the saved chat",
     );
-    if (!await cdp.evaluate(clickExpression('[role="dialog"][aria-label="Session history"] .session-row-main', chatTitle))) {
-      throw new SmokeFailure("The saved chat could not be reopened from History");
+    if (!await cdp.evaluate(clickExpression('[aria-label="Chats"] button', "Search chats"))) {
+      throw new SmokeFailure("The Chats search could not be opened");
     }
     await waitForEvaluation(
       cdp,
-      `!document.querySelector('[role="dialog"][aria-label="Session history"]') && document.querySelector('.message-sources summary') !== null`,
-      "saved answer after reopening from Chat history",
+      `document.querySelector('[aria-label="Chats"] input[aria-label="Search chats"]') !== null`,
+      "Chats search field",
+    );
+    if (!await cdp.evaluate(`(() => {
+      const input = document.querySelector('[aria-label="Chats"] input[aria-label="Search chats"]');
+      if (!input) return false;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(chatTitle)});
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()`)) {
+      throw new SmokeFailure("The saved chat could not be searched for");
+    }
+    await waitForEvaluation(
+      cdp,
+      `[...document.querySelectorAll('[aria-label="Chats"] .library-chat-open:not([aria-current="page"]) > span:first-child')].some((title) => title.textContent.trim() === ${JSON.stringify(chatTitle)})`,
+      "saved chat in Chats search results",
+    );
+    if (!await cdp.evaluate(clickExpression('[aria-label="Chats"] .library-chat-open:not([aria-current="page"]) > span:first-child', chatTitle))) {
+      throw new SmokeFailure("The saved chat could not be reopened from Chats");
+    }
+    await waitForEvaluation(
+      cdp,
+      `document.querySelector('.message-sources summary') !== null`,
+      "saved answer after reopening from Chats",
     );
 
     // The saved answer stays available after removing its model from Settings.

@@ -6,7 +6,6 @@ import type {
   ConversationCitation,
   ConversationContext,
   KnowledgeSession,
-  KnowledgeSessionSummary,
   SessionMessage,
 } from "@gunther/contracts";
 import {
@@ -14,7 +13,6 @@ import {
   ArrowRight,
   ArrowUp,
   Check,
-  ChevronDown,
   ChevronRight,
   CircleAlert,
   Copy,
@@ -22,13 +20,8 @@ import {
   FolderOpen,
   GitBranch,
   Globe2,
-  History,
-  Library,
-  MessageSquareText,
   MoreHorizontal,
-  Pin,
   Plus,
-  Search,
   ShieldCheck,
   Square,
   SquarePen,
@@ -60,6 +53,7 @@ import { createPortal } from "react-dom";
 import { PopMenu } from "../contents/SectionMenu";
 import { CitationDetails } from "../components/evidence/CitationButton";
 import { LibraryWelcome } from "./LibraryWelcome";
+import type { UseLibraryChats } from "./useLibraryChats";
 import "../session.css";
 
 export interface LibraryChatActions {
@@ -68,6 +62,7 @@ export interface LibraryChatActions {
 
 interface SessionWorkspaceProps {
   base: KnowledgeBase;
+  chats: UseLibraryChats;
   sourceIds?: string[];
   sourceScopeEmpty?: boolean;
   visible?: boolean;
@@ -75,15 +70,6 @@ interface SessionWorkspaceProps {
   chatActions?: Ref<LibraryChatActions>;
   onNotify: (message: string) => void;
   onCite: (citation: ConversationCitation | null, index?: number) => void;
-}
-
-function relativeTime(value: string) {
-  const elapsed = Date.now() - new Date(value).getTime();
-  if (elapsed < 60_000) return "Now";
-  if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)}m`;
-  if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)}h`;
-  if (elapsed < 604_800_000) return `${Math.floor(elapsed / 86_400_000)}d`;
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(value));
 }
 
 function renderInline(value: string, onCitation?: () => void) {
@@ -104,92 +90,6 @@ function noSourcesNeeded(context: ConversationContext): boolean {
 
 function MessageContent({ content, onCitation }: { content: string; onCitation?: () => void }) {
   return <>{content.split("\n").map((line, index) => line.trim() ? <p key={index}>{renderInline(line, onCitation)}</p> : <span className="message-spacer" key={index} />)}</>;
-}
-
-function SessionRow({
-  session,
-  active,
-  onOpen,
-  onPin,
-  onArchive,
-  archived = false,
-}: {
-  session: KnowledgeSessionSummary;
-  active: boolean;
-  onOpen: () => void;
-  onPin: () => void;
-  onArchive: () => void;
-  archived?: boolean;
-}) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  return (
-    <div className={`session-row ${active ? "is-active" : ""}`} onKeyDown={(event) => { if (event.key === "Escape") setMenuOpen(false); }}>
-      <button className="session-row-main" onClick={onOpen} aria-current={active ? "page" : undefined}>
-        <MessageSquareText size={14} />
-        <span><strong>{session.title}</strong><small>{session.messageCount ? `${Math.ceil(session.messageCount / 2)} ${session.messageCount === 2 ? "turn" : "turns"}` : "Empty session"}</small></span>
-        <time>{relativeTime(session.updatedAt)}</time>
-      </button>
-      {session.pinned && <Pin className="session-pin-mark" size={10} fill="currentColor" />}
-      <button className="session-more" aria-label={`Actions for ${session.title}`} aria-expanded={menuOpen} aria-haspopup="menu" onClick={() => setMenuOpen((value) => !value)}><MoreHorizontal size={14} /></button>
-      {menuOpen && <div className="session-menu" role="menu" onMouseLeave={() => setMenuOpen(false)}>
-        <button role="menuitem" onClick={() => { onPin(); setMenuOpen(false); }}><Pin size={12} />{session.pinned ? "Unpin" : "Pin session"}</button>
-        <button role="menuitem" onClick={() => { onArchive(); setMenuOpen(false); }}><Archive size={12} />{archived ? "Restore session" : "Archive"}</button>
-      </div>}
-    </div>
-  );
-}
-
-function SessionsSidebar({
-  base,
-  sessions,
-  archivedSessions,
-  showArchived,
-  activeId,
-  loading,
-  query,
-  onQuery,
-  onOpen,
-  onPin,
-  onArchive,
-  onToggleArchived,
-  onRestore,
-}: {
-  base: KnowledgeBase;
-  sessions: KnowledgeSessionSummary[];
-  archivedSessions: KnowledgeSessionSummary[];
-  showArchived: boolean;
-  activeId: string | null;
-  loading: boolean;
-  query: string;
-  onQuery: (value: string) => void;
-  onOpen: (id: string) => void;
-  onPin: (session: KnowledgeSessionSummary) => void;
-  onArchive: (session: KnowledgeSessionSummary) => void;
-  onToggleArchived: () => void;
-  onRestore: (session: KnowledgeSessionSummary) => void;
-}) {
-  const filtered = sessions.filter((session) => `${session.title} ${session.summary}`.toLowerCase().includes(query.toLowerCase()));
-  const pinned = filtered.filter((session) => session.pinned);
-  const recent = filtered.filter((session) => !session.pinned);
-  const filteredArchived = archivedSessions.filter((session) => `${session.title} ${session.summary}`.toLowerCase().includes(query.toLowerCase()));
-  return (
-    <aside className="sessions-sidebar" aria-label="Session history">
-      <div className="sessions-heading">
-        <span className={`base-dot color-${base.color}`} />
-        <span><small>Library</small><strong>{base.title}</strong></span>
-      </div>
-      <label className="session-search"><Search size={13} /><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search sessions" aria-label="Search sessions" />{query && <button onClick={() => onQuery("")} aria-label="Clear search"><X size={11} /></button>}</label>
-      <div className="session-list" aria-busy={loading}>
-        {loading && <div className="session-list-loading"><i /><i /><i /></div>}
-        {!loading && pinned.length > 0 && <section><header><span>Pinned</span><small>{pinned.length}</small></header>{pinned.map((session) => <SessionRow key={session.id} session={session} active={activeId === session.id} onOpen={() => onOpen(session.id)} onPin={() => onPin(session)} onArchive={() => onArchive(session)} />)}</section>}
-        {!loading && <section><header><span>Recent</span><small>{recent.length}</small></header>{recent.map((session) => <SessionRow key={session.id} session={session} active={activeId === session.id} onOpen={() => onOpen(session.id)} onPin={() => onPin(session)} onArchive={() => onArchive(session)} />)}</section>}
-        {!loading && showArchived && <section className="archived-session-section"><header><span>Archived</span><small>{filteredArchived.length}</small></header>{filteredArchived.map((session) => <SessionRow key={session.id} session={session} archived active={activeId === session.id} onOpen={() => onOpen(session.id)} onPin={() => onPin(session)} onArchive={() => onRestore(session)} />)}{filteredArchived.length === 0 && <p>No archived sessions yet.</p>}</section>}
-        {!loading && filtered.length === 0 && !(showArchived && filteredArchived.length) && <div className="no-sessions"><MessageSquareText size={19} /><strong>{query ? "No matching sessions" : "Start a line of inquiry"}</strong><span>{query ? "Try a different phrase." : "Each session keeps its own questions, context, and evidence."}</span></div>}
-      </div>
-      <button className={`archive-toggle ${showArchived ? "is-open" : ""}`} onClick={onToggleArchived}><Archive size={12} /><span>{showArchived ? "Hide archive" : "View archive"}</span>{archivedSessions.length > 0 && <small>{archivedSessions.length}</small>}<ChevronDown size={11} /></button>
-      <footer className="sidebar-scope-summary"><Library size={13} /><strong>{base.sourceCount} {base.sourceCount === 1 ? "source" : "sources"}</strong></footer>
-    </aside>
-  );
 }
 
 /** Which model wrote an answer, at what effort, and anything it has to admit. */
@@ -363,42 +263,35 @@ export function Composer({
   );
 }
 
-const readLabels = { history: "session history", models: "models", settings: "Ask settings" };
+const readLabels = { models: "models", settings: "Ask settings" };
 type StartupRead = keyof typeof readLabels;
 const startupReads = Object.keys(readLabels) as StartupRead[];
 // The current session supplies the durable destination for a send.
-const sendReads = ["history", "models", "settings"] as const;
+const sendReads = ["models", "settings"] as const;
 
-export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = false, visible = true, onFocusSources, chatActions, onNotify, onCite }: SessionWorkspaceProps) {
-  const [sessions, setSessions] = useState<KnowledgeSessionSummary[]>([]);
-  const [archivedSessions, setArchivedSessions] = useState<KnowledgeSessionSummary[]>([]);
-  const [showArchived, setShowArchived] = useState(false);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [activeSession, setActiveSession] = useState<KnowledgeSession | null>(null);
-  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty = false, visible = true, onFocusSources, chatActions, onNotify, onCite }: SessionWorkspaceProps) {
+  const { activeId, activeSession, selectedMessageId, setSelectedMessageId } = chats;
   const [draft, setDraft] = useState("");
   // The skill chosen with `/`; it applies to the next message only.
   const [skill, setSkill] = useState<string | null>(null);
   // How deep a skill that has budgets (research) goes; Standard unless the reader says Deep.
   const [budget, setBudget] = useState<SkillBudget>("standard");
   const askSkills = useAskSkills();
-  const [sessionQuery, setSessionQuery] = useState("");
   const [branchingMessageId, setBranchingMessageId] = useState<string | null>(null);
   const [reads, setReads] = useState<Partial<Record<StartupRead, { pending: boolean; error: Error | null }>>>({});
   const inFlightReads = useRef(new Map<StartupRead, { refreshPending: boolean }>());
   const mounted = useRef(false);
   const readReady = (read: StartupRead) => reads[read]?.pending === false && !reads[read]?.error;
-  const loading = reads.history?.pending ?? true;
-  const online = !sendReads.some((read) => reads[read]?.error instanceof ServiceUnavailableError);
-  const ready = activeSession !== null && activeSession.id === activeId && sendReads.every(readReady);
+  const loading = chats.loading;
+  const online = chats.online && !sendReads.some((read) => reads[read]?.error instanceof ServiceUnavailableError);
+  const ready = activeSession !== null && activeSession.id === activeId
+    && !chats.loading && !chats.readError && sendReads.every(readReady);
   const [error, setError] = useState<string | null>(null);
   const traces = useTraces();
   const [trace, setTrace] = useState<{ sessionId: string; messageId: string } | null>(null);
   const [briefBusy, setBriefBusy] = useState<string | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const creatingSession = useRef(false);
   const scrollPane = useRef<HTMLDivElement>(null);
   /** Whether the reader is at the bottom; only then does new text pull the view along. */
   const followTail = useRef(true);
@@ -420,7 +313,6 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
     setDeviceChoice(next);
   };
 
-  const sortSessions = useCallback((items: KnowledgeSessionSummary[]) => [...items].sort((a, b) => Number(b.pinned) - Number(a.pinned) || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()), []);
   const finishRead = useCallback((read: StartupRead, error: Error | null) => {
     if (mounted.current) setReads((current) => ({ ...current, [read]: { pending: false, error } }));
   }, []);
@@ -430,17 +322,12 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
     onStart() { followTail.current = true; },
     onSaved(id, turn) {
       if (!turn) return;
-      setSessions((current) => sortSessions(current.map((item) => item.id === id ? turn.session : item)));
-      setActiveSession((current) => current?.id === id
-        ? { ...current, ...turn.session, messages: [...current.messages, turn.userMessage, turn.assistantMessage] }
-        : current);
-      setSelectedMessageId(turn.assistantMessage.id);
+      chats.saveTurn(turn);
       void refreshBrief(id);
     },
     onFailure({ question, fresh, readError, stopped, message }) {
-      if (readError instanceof ServiceUnavailableError) finishRead("history", readError);
-      if (fresh) setActiveSession((current) => current?.id === fresh.id
-        ? { ...current, messages: fresh.messages, messageCount: fresh.messageCount } : current);
+      chats.reportReadError(readError);
+      if (fresh) chats.mergeSession(fresh, fresh.messages);
       if (stopped) onNotify(stopped.message);
       if (message) {
         setDraft((current) => current || question);
@@ -451,54 +338,8 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
   const sending = pending !== null;
   const asking = pending?.question;
 
-  const loadSession = useCallback(async (id: string) => {
-    setActiveId(id);
-    setSelectedMessageId(null);
-    setError(null);
-    try {
-      const loaded = await knowledgeApi.session(id);
-      setActiveSession(loaded);
-      const lastAnswer = [...loaded.messages].reverse().find((message) => message.role === "assistant");
-      setSelectedMessageId(lastAnswer?.id ?? null);
-    } catch (reason) {
-      if (reason instanceof ServiceUnavailableError) finishRead("history", reason);
-      setError(reason instanceof Error ? reason.message : "Could not open this session");
-    }
-  }, [finishRead]);
-
-  // Activity can ask for a conversation while the library is already open.
-  useEffect(() => {
-    const heard = (event: Event) => {
-      const detail = (event as CustomEvent<{ libraryId?: string; sessionId?: string }>).detail;
-      if (detail?.libraryId === base.id && detail.sessionId) void loadSession(detail.sessionId);
-    };
-    window.addEventListener("gunther:open-session", heard);
-    return () => window.removeEventListener("gunther:open-session", heard);
-  }, [base.id, loadSession]);
-
   const loadWorkspace = useCallback(function loadWorkspace(...requested: StartupRead[]) {
-    const loadHistory = async () => {
-      let loaded = await knowledgeApi.sessions(base.id);
-      if (!loaded.length) {
-        const created = await knowledgeApi.createSession(base.id, { focusChapterId: null, selectedSourceIds: [] });
-        loaded = [created];
-      }
-      if (!mounted.current) return;
-      setSessions(sortSessions(loaded));
-      const remembered = persistentStorage.getItem(`gunther:active-session:${base.id}`);
-      const first = loaded.find((session) => session.id === remembered) ?? loaded[0]!;
-      const detail = await knowledgeApi.session(first.id);
-      if (!mounted.current) return;
-      setActiveId(detail.id);
-      setActiveSession(detail);
-      const selectedKey = `gunther:selected-message:${base.id}`;
-      const selectedId = persistentStorage.getItem(selectedKey);
-      const answers = detail.messages.filter((message) => message.role === "assistant");
-      setSelectedMessageId(answers.find((answer) => answer.id === selectedId)?.id ?? answers.at(-1)?.id ?? null);
-      if (selectedId) persistentStorage.removeItem(selectedKey);
-    };
     const load: Record<StartupRead, () => Promise<void>> = {
-      history: loadHistory,
       models: reloadModelMenu,
       settings: reloadWebSearch,
     };
@@ -515,7 +356,7 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
         if (request.refreshPending && mounted.current) loadWorkspace(read);
       });
     }
-  }, [base.id, reloadModelMenu, reloadWebSearch, finishRead, sortSessions]);
+  }, [reloadModelMenu, reloadWebSearch, finishRead]);
 
   useEffect(() => {
     mounted.current = true;
@@ -541,9 +382,6 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
     };
   }, [base.id, loadWorkspace]);
 
-  useEffect(() => {
-    if (activeId) persistentStorage.setItem(`gunther:active-session:${base.id}`, activeId);
-  }, [activeId, base.id]);
   // Scroll only the conversation pane (scrollIntoView would move every ancestor too), and only
   // while the reader is at the bottom, so reading earlier messages is never yanked away.
   useEffect(() => {
@@ -553,45 +391,19 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
   useEffect(() => {
     if (visible && scrollPane.current && !followTail.current) scrollPane.current.scrollTop = scrollOffset.current;
   }, [visible]);
-  useEffect(() => { followTail.current = true; }, [activeId]);
-  const createSession = async () => {
-    if (!online || loading || creatingSession.current) return;
-    creatingSession.current = true;
-    setError(null);
-    try {
-      const created = await knowledgeApi.createSession(base.id, { focusChapterId: null, selectedSourceIds: [] });
-      setSessions((current) => sortSessions([created, ...current]));
-      setActiveId(created.id);
-      setActiveSession(created);
-      setSelectedMessageId(null);
-      setDraft("");
-      setSkill(null);
-      setBudget("standard");
-      setRenameOpen(false);
-      setTrace(null);
-      onCite(null);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not create a session");
-    } finally {
-      creatingSession.current = false;
-    }
-  };
-
   useEffect(() => {
-    const onNewSession = () => { void createSession(); };
-    window.addEventListener("gunther:new-session", onNewSession);
-    return () => window.removeEventListener("gunther:new-session", onNewSession);
-  });
+    followTail.current = true;
+    setRenameOpen(false);
+    setTrace(null);
+  }, [activeId]);
+  useEffect(() => {
+    if (!chats.newSessionId) return;
+    setDraft("");
+    setSkill(null);
+    setBudget("standard");
+  }, [chats.newSessionId]);
 
-  const patchSession = async (id: string, patch: Partial<Pick<KnowledgeSessionSummary, "title" | "pinned" | "archived">>) => {
-    const updated = await knowledgeApi.updateSession(id, patch);
-    const updateList = (current: KnowledgeSessionSummary[], archived: boolean) => sortSessions([
-      ...(updated.archived === archived ? [updated] : []), ...current.filter((item) => item.id !== id),
-    ]);
-    setSessions((current) => updateList(current, false));
-    setArchivedSessions((current) => updateList(current, true));
-    setActiveSession((current) => current?.id === id ? { ...current, ...updated } : current);
-  };
+  const patchSession = chats.patchSession;
 
   const renameSession = async () => {
     const title = renameValue.trim();
@@ -604,50 +416,12 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
     }
   };
 
-  const pinSession = async (session: KnowledgeSessionSummary) => {
-    try {
-      await patchSession(session.id, { pinned: !session.pinned });
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not update the session pin");
-    }
-  };
+  const archiveSession = chats.archiveSession;
+  const restoreSession = chats.restoreSession;
 
-  const archiveSession = async (session: KnowledgeSessionSummary) => {
-    try {
-      await patchSession(session.id, { archived: true });
-      const remaining = sessions.filter((item) => item.id !== session.id);
-      if (activeId === session.id) {
-        if (remaining[0]) await loadSession(remaining[0].id);
-        else await createSession();
-      }
-      onNotify("Session archived. Its history is still available from the archive.");
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not archive the session");
-    }
+  const keepBrief = (sessionId: string, brief: ConversationBrief) => {
+    chats.setBrief(sessionId, () => brief);
   };
-
-  const toggleArchived = async () => {
-    const next = !showArchived;
-    setShowArchived(next);
-    if (!next || !online) return;
-    try {
-      const allSessions = await knowledgeApi.sessions(base.id, true);
-      setArchivedSessions(sortSessions(allSessions.filter((session) => session.archived)));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not load archived sessions");
-    }
-  };
-
-  const restoreSession = async (session: KnowledgeSessionSummary) => {
-    try {
-      await patchSession(session.id, { archived: false });
-      onNotify("Session restored to recent history.");
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not restore the session");
-    }
-  };
-
-  const keepBrief = (sessionId: string, brief: ConversationBrief) => setActiveSession((current) => current && current.id === sessionId ? { ...current, brief } : current);
 
   /** Ask the service to fold the last answer into the brief, without waiting for it: the panel says "Updating…" meanwhile. */
   const refreshBrief = async (sessionId: string) => {
@@ -655,7 +429,7 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
     try {
       keepBrief(sessionId, await knowledgeApi.refreshBrief(sessionId));
     } catch (reason) {
-      setActiveSession((current) => current && current.id === sessionId ? { ...current, brief: { goal: "", constraints: [], settled: [], open: [], edited: [], ...current.brief, error: reason instanceof Error ? reason.message : "The brief could not be updated" } } : current);
+      chats.setBrief(sessionId, (brief) => ({ goal: "", constraints: [], settled: [], open: [], edited: [], ...brief, error: reason instanceof Error ? reason.message : "The brief could not be updated" }));
     } finally {
       setBriefBusy((current) => current === sessionId ? null : current);
     }
@@ -727,15 +501,7 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
     setBranchingMessageId(message.id);
     setError(null);
     try {
-      const branch = await knowledgeApi.branchSession(activeSession.id, message.id);
-      setSessions((current) => sortSessions([branch, ...current]));
-      setActiveId(branch.id);
-      setActiveSession(branch);
-      const lastAnswer = [...branch.messages].reverse().find((item) => item.role === "assistant");
-      setSelectedMessageId(lastAnswer?.id ?? null);
-      onNotify("Branched into a new session without changing the original.");
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not branch this session");
+      await chats.branchSession(activeSession.id, message.id);
     } finally {
       setBranchingMessageId(null);
     }
@@ -751,16 +517,15 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
   };
 
   useEffect(() => {
-    if (!trace && !historyOpen && !renameOpen) return;
+    if (!trace && !renameOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (trace) setTrace(null);
-      else if (historyOpen) setHistoryOpen(false);
-      else if (renameOpen) setRenameOpen(false);
+      else setRenameOpen(false);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [trace, historyOpen, renameOpen]);
+  }, [trace, renameOpen]);
 
   const exportSession = async () => {
     if (!activeSession) return;
@@ -815,8 +580,7 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
             </details>}
 
             <PopMenu label="Chat actions" triggerLabel="Chat actions" triggerClass="gx-icon-button" trigger={<MoreHorizontal size={16} />} items={[
-              { label: "New chat", icon: Plus, disabled: !online || loading, onSelect: () => void createSession() },
-              { label: "History", icon: History, onSelect: () => setHistoryOpen(true) },
+              { label: "New chat", icon: Plus, disabled: !online || loading, onSelect: () => void chats.createSession() },
               { label: "Rename", icon: SquarePen, disabled: !online || !currentChat || currentChat.archived, onSelect: () => {
                 if (currentChat) { setRenameValue(currentChat.title); setRenameOpen(true); }
               } },
@@ -833,7 +597,7 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
           scrollOffset.current = pane.scrollTop;
           followTail.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 80;
         }}>
-          {!online && <div className="conversation-error" role="status"><CircleAlert size={14} /><span>Reconnect to the knowledge service to continue.</span><button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={sendReads.some((read) => reads[read]?.pending)} onClick={() => { setError(null); loadWorkspace(); }}>Reconnect</button></div>}
+          {!online && <div className="conversation-error" role="status"><CircleAlert size={14} /><span>Reconnect to the knowledge service to continue.</span><button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={sendReads.some((read) => reads[read]?.pending)} onClick={() => { setError(null); if (!chats.online) void chats.load(); loadWorkspace(); }}>Reconnect</button></div>}
           {startupReads.map((read) => {
             const status = reads[read];
             if (!status?.error) return null;
@@ -865,7 +629,6 @@ export function SessionWorkspace({ base, sourceIds = [], sourceScopeEmpty = fals
           <AnswerTrace {...trace} onCopy={(label, value) => void navigator.clipboard.writeText(value).then(() => onNotify(`${label} copied.`), () => onNotify(`${label} could not be copied.`))} />
         </aside>
       </div>, document.body)}
-      {historyOpen && <div className="mobile-session-drawer" role="dialog" aria-modal="true" aria-label="Session history"><button className="mobile-session-scrim" onClick={() => setHistoryOpen(false)} aria-label="Dismiss session history" /><div className="mobile-session-sheet"><button className="mobile-session-close" autoFocus onClick={() => setHistoryOpen(false)} aria-label="Close session history"><X size={15} /></button><SessionsSidebar base={base} sessions={sessions} archivedSessions={archivedSessions} showArchived={showArchived} activeId={activeId} loading={loading} query={sessionQuery} onQuery={setSessionQuery} onOpen={(id) => { setHistoryOpen(false); setRenameOpen(false); void loadSession(id); }} onPin={(session) => void pinSession(session)} onArchive={(session) => void archiveSession(session)} onToggleArchived={() => void toggleArchived()} onRestore={(session) => void restoreSession(session)} /></div></div>}
     </div>
   );
 }
