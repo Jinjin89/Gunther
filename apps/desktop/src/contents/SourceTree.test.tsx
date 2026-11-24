@@ -34,9 +34,10 @@ const props = () => ({ baseId: "lib", onTrashed: vi.fn(), onSource: vi.fn() });
 function Tree({ baseId, onSource, onTrashed }: ReturnType<typeof props>) {
   const [contents, setContents] = useState<Contents | null>(null);
   const [selection, onScope] = useSourceSelection(baseId);
+  const [open, onOpenChange] = useState(true);
   const ids = selectedSources(selection, contents?.sources.map((item) => item.id) ?? []);
   return <SourceTree baseId={baseId} onSource={onSource} onTrashed={onTrashed} contents={contents} onContents={setContents} selection={selection} selectedIds={ids} onScope={onScope}
-    activeSourceId={null} addSource={<button>Add source</button>} />;
+    activeSourceId={null} open={open} onOpenChange={onOpenChange} />;
 }
 const show = async (contents: Contents = base, extra: Partial<ReturnType<typeof props>> = {}) => {
   vi.spyOn(knowledgeApi, "contents").mockResolvedValue(contents);
@@ -78,6 +79,46 @@ describe("Sources tree", () => {
     const order = [...document.querySelectorAll("[data-row]")].map((row) => row.getAttribute("data-row"));
     expect(order).toEqual(["section:a", "source:outline", "section:l1", "source:rec1", "source:slides1", "section:l2", "source:rec2", "section:b", "empty:b", "unplaced", "source:note", "source:link"]);
     expect(within(rowOf("A blog post about Adam")).getByText("example.org")).toBeVisible();
+    expect(rowOf("Part A")).toHaveClass("is-level-1");
+    expect(within(rowOf("Part A")).getByTitle("2 PDFs · 2 recordings")).toHaveTextContent("4");
+    expect(rowOf("Lecture 1").querySelector<HTMLElement>(".contents-guides")?.style.width).toBe("14px");
+  });
+
+  it("collapses and reopens the Sources section without losing its arrangement", async () => {
+    const user = userEvent.setup();
+    await show();
+    const header = screen.getByRole("button", { name: "Sources" });
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    await user.click(header);
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("heading", { name: "Part A" })).not.toBeInTheDocument();
+    await user.click(header);
+    expect(screen.getByRole("heading", { name: "Part A" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add section" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Collapse all" })).toBeVisible();
+  });
+
+  it("moves a row with the keyboard drag handle", async () => {
+    const user = userEvent.setup();
+    const moved = { ...base, placements: base.placements.map((item) => item.sourceId === "rec2" ? { ...item, sectionId: "b" } : item) };
+    const move = vi.spyOn(knowledgeApi, "moveContents").mockResolvedValue(moved);
+    await show();
+    const row = rowOf("Lecture 2 recording");
+    const destination = rowOf("Part B");
+    document.querySelectorAll<HTMLElement>(".contents-list [data-row]").forEach((element, index) => {
+      vi.spyOn(element, "getBoundingClientRect").mockReturnValue(new DOMRect(0, index * 40, 260, 40));
+    });
+    const handle = within(row).getByRole("button", { name: "Drag Lecture 2 recording" });
+    handle.focus();
+    expect(handle).toHaveFocus();
+    await user.keyboard("[Space]");
+    await waitFor(() => expect(row).toHaveClass("is-dragging"));
+    await user.keyboard("{ArrowDown}{ArrowDown}");
+    await waitFor(() => expect(destination).toHaveClass("is-drop-on"));
+    await user.keyboard("[Space]");
+    await waitFor(() => expect(move).toHaveBeenCalledExactlyOnceWith("lib", {
+      items: [{ kind: "source", id: "rec2" }], parentId: "b", index: null,
+    }));
   });
 
   it("hides what is under a collapsed section, remembers it, and shows the count", async () => {
@@ -85,7 +126,7 @@ describe("Sources tree", () => {
     await show();
     await user.click(screen.getByRole("button", { name: "Collapse Part A" }));
     expect(list().queryByText("Lecture 1 recording")).toBeNull();
-    expect(within(rowOf("Part A")).getByText("2 PDFs · 2 recordings")).toBeVisible();
+    expect(within(rowOf("Part A")).getByTitle("2 PDFs · 2 recordings")).toHaveTextContent("4");
     expect(JSON.parse(window.localStorage.getItem("gunther:contents-collapsed:lib")!)).toEqual(["a"]);
   });
 

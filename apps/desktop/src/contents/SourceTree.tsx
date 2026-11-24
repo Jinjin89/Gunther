@@ -1,7 +1,7 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, pointerWithin, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type DragMoveEvent, type DragStartEvent } from "@dnd-kit/core";
-import { ChevronsDownUp, ChevronsUpDown, Plus, Search, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Plus, Search, X } from "lucide-react";
 import type { ContentsItemRef, LibraryContents as Contents, TrashItem } from "@gunther/contracts";
 import { persistentStorage } from "../persistentStorage";
 import { knowledgeApi } from "../api";
@@ -35,7 +35,7 @@ const readCollapsed = (baseId: string): Set<string> => {
   } catch { return new Set(); }
 };
 
-export function SourceTree({ baseId, contents, onContents, selection, selectedIds, onScope, activeSourceId, onSource, onTrashed, addSource, keyResults }: {
+export function SourceTree({ baseId, contents, onContents, selection, selectedIds, onScope, activeSourceId, onSource, onTrashed, open, onOpenChange }: {
   baseId: string;
   contents: Contents | null;
   onContents: (contents: Contents | null) => void;
@@ -45,9 +45,10 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
   activeSourceId: string | null;
   onSource: (id: string) => void;
   onTrashed: (entry: TrashItem) => void;
-  addSource: ReactNode;
-  keyResults?: (filter: string) => ReactNode;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
+  const bodyId = useId();
   const [unavailable, setUnavailable] = useState(false);
   const [error, setError] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(() => readCollapsed(baseId));
@@ -275,20 +276,22 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
     },
   });
 
-  return <section className="contents" aria-label="Sources">
-    <div className="contents-top">
-      <div className="contents-toolbar">
+  return <section className={`contents${open ? "" : " is-collapsed"}`} aria-label="Sources">
+    <header className="contents-section-header">
+      <button type="button" className="contents-section-title" aria-expanded={open} aria-controls={bodyId} onClick={() => onOpenChange(!open)}>
+        {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<span>Sources</span>
+      </button>
+      {open && withChildren.length > 0 && !filtering && <button type="button" className="contents-icon-btn" aria-label={anyOpen ? "Collapse all" : "Expand all"} title={anyOpen ? "Collapse all" : "Expand all"} onClick={toggleAll}>
+        {anyOpen ? <ChevronsDownUp size={15} /> : <ChevronsUpDown size={15} />}
+      </button>}
+      {open && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" aria-label="Add section" onClick={() => void addSection(null)}><Plus size={13} />Section</button>}
+    </header>
+    <div className="contents-body" id={bodyId} hidden={!open}>
+      <div className="contents-top">
         <label className="contents-filter"><Search size={14} />
           <input value={filter} placeholder="Filter contents" aria-label="Filter contents" onChange={(event) => setFilter(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape" && filter) { event.stopPropagation(); setFilter(""); } }} />
           {filter && <button type="button" aria-label="Clear filter" onClick={() => setFilter("")}><X size={13} /></button>}
         </label>
-        {withChildren.length > 0 && !filtering && <button type="button" className="contents-icon-btn is-visible is-bordered" aria-label={anyOpen ? "Collapse all" : "Expand all"} title={anyOpen ? "Collapse all" : "Expand all"} onClick={toggleAll}>
-          {anyOpen ? <ChevronsDownUp size={15} /> : <ChevronsUpDown size={15} />}
-        </button>}
-        <span className="contents-toolbar-end">
-          <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" aria-label="Add section" onClick={() => void addSection(null)}><Plus size={13} />Section</button>
-        </span>
-      </div>
       {error && <p role="alert" className="contents-error">{error}<button type="button" aria-label="Dismiss" onClick={() => setError("")}><X size={13} /></button></p>}
       <label className="contents-scope">
         <ScopeTick label="All sources" checked={selection.mode === "all"} mixed={selection.mode === "selected" && selected.size > 0}
@@ -296,9 +299,8 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
         <span>All sources</span><small>{contents?.sources.length ?? ""}</small>
       </label>
       {contents && selection.mode === "selected" && selected.size === 0 && <p id="empty-source-scope" className="contents-loading" role="status">Select at least one source</p>}
-    </div>
-    <div className="contents-scroll">
-      {keyResults?.(filter)}
+      </div>
+      <div className="contents-scroll">
       {!contents && <p className="contents-loading">{unavailable ? "Sources could not be loaded." : "Loading sources…"}</p>}
       {contents?.sources.length === 0 && <p className="contents-loading">No sources yet.</p>}
       {contents && filtering && rows.length === 0 && <p className="contents-loading">No sources match “{filter.trim()}”.</p>}
@@ -335,6 +337,7 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
             return <Fragment key={row.key}>
               <SectionRow row={row} dragDisabled={filtering} drop={mark}
                 editing={editing?.kind === "section" && editing.id === row.id}
+                sourceCount={ids.length}
                 scope={{ checked, mixed: !checked && ids.some((id) => selected.has(id)), disabled: !ids.length, onCheck: (value) => check(ids, value) }}
                 actions={sectionActions(node)}
                 onToggle={() => toggle(row.id)}
@@ -355,9 +358,8 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
         </div>
         {dragging && pointer && createPortal(<div className="contents-drag-chip" style={{ left: pointer.x + 14, top: pointer.y + 10 }}>{dragTitle(tree, dragging)}</div>, document.body)}
       </DndContext>
+      </div>
     </div>
-
-    <footer className="contents-add">{addSource}</footer>
 
     {picker && <MovePicker tree={tree} onClose={() => setPicker(null)} {...(picker.mode === "move"
       ? { mode: "move" as const, moving: picker.moving, onChoose: (parentId: string | null) => { setPicker(null); void move(picker.moving, parentId, null); } }

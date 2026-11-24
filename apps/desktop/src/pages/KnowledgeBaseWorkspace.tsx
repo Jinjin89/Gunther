@@ -15,6 +15,7 @@ import { OpenOutput } from "../outputs/OpenOutput";
 import { StudioColumn } from "../outputs/StudioColumn";
 import { type OutputTarget, type OutputTrashTarget, useStudio } from "../outputs/useStudio";
 import { persistentStorage } from "../persistentStorage";
+import { useEscape } from "../shortcuts/shortcuts";
 import { moveToTrash } from "../trash/trash";
 import { LibraryChatsSection } from "./LibraryChatsSection";
 import { LibraryColumn } from "./LibraryColumn";
@@ -31,7 +32,8 @@ function useColumnCollapse(rule: "open" | "narrow" | "reader") {
   const [manual, setManual] = useState<{ rule: typeof rule; collapsed: boolean }>();
   useEffect(() => setManual(undefined), [rule]);
   const collapsed = manual?.rule === rule ? manual.collapsed : rule !== "open";
-  return { collapsed, setCollapsed: (value: boolean) => setManual({ rule, collapsed: value }) };
+  const setCollapsed = useCallback((value: boolean) => setManual({ rule, collapsed: value }), [rule]);
+  return { collapsed, setCollapsed };
 }
 
 export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onOpenSource, onTrashed, outputActivity,
@@ -58,6 +60,7 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
     return id ? { kind: "source", id } : chat;
   });
   const [screenWidth, setScreenWidth] = useState(() => window.innerWidth);
+  const [sourcesOpen, setSourcesOpen] = useState(true);
   const [wideReaderKey, setWideReaderKey] = useState<string | null>(null);
   const ownDirty = useRef(false);
   const dirty = editDirty ?? ownDirty;
@@ -76,6 +79,7 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
   const studioColumn = useColumnCollapse(screenWidth < 1_080 ? "narrow" : "open");
   const focusSources = () => {
     sourceColumn.setCollapsed(false);
+    setSourcesOpen(true);
     window.requestAnimationFrame(() => workspace.current?.querySelector<HTMLInputElement>(".contents-filter input")?.focus());
   };
   const choose = useCallback((next: Middle) => {
@@ -93,13 +97,20 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
   const cite = useCallback((citation: ConversationCitation | null, index?: number) =>
     setEvidence(citation ? { citation, index } : null), []);
   const clearCitation = useCallback(() => cite(null), [cite]);
-  const returnToChat = useCallback(() => choose(chat), [choose]);
+  const closeNarrowLibrary = useCallback(() => {
+    if (screenWidth < 840) sourceColumn.setCollapsed(true);
+  }, [screenWidth, sourceColumn.setCollapsed]);
+  const returnToChat = useCallback(() => {
+    if (!choose(chat)) return false;
+    closeNarrowLibrary();
+    return true;
+  }, [choose, closeNarrowLibrary]);
   const chats = useLibraryChats(base.id, onNotify, clearCitation, returnToChat);
   const openChat = (id: string) => {
-    if (choose(chat)) void chats.loadSession(id);
+    if (returnToChat()) void chats.loadSession(id);
   };
   const createChat = () => {
-    if (choose(chat)) void chats.createSession();
+    if (returnToChat()) void chats.createSession();
   };
   const trashOutput = async (item: OutputTrashTarget, fromReader = false) => {
     if (!workspaceId) return;
@@ -128,6 +139,16 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
     return () => window.removeEventListener("resize", resize);
   }, []);
   useEffect(() => {
+    if (screenWidth >= 840 || sourceColumn.collapsed) return;
+    const closeOutside = (event: PointerEvent) => {
+      const column = workspace.current?.querySelector(".library-sources");
+      if (column && event.target instanceof Node && !column.contains(event.target)) sourceColumn.setCollapsed(true);
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    return () => document.removeEventListener("pointerdown", closeOutside);
+  }, [screenWidth, sourceColumn.collapsed, sourceColumn.setCollapsed]);
+  useEscape(() => sourceColumn.setCollapsed(true), screenWidth < 840 && !sourceColumn.collapsed);
+  useEffect(() => {
     if (!outputActivity || !workspaceId) return;
     choose({ kind: "output", target: outputActivity });
     onOutputActivity?.(outputActivity);
@@ -138,17 +159,17 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
 
   const source = middle.kind === "source" ? sources.find((item) => item.id === middle.id) : undefined;
   return <div className="library-workspace" ref={workspace}>
-    <LibraryColumn column="sources" workspace={workspace} collapsed={sourceColumn.collapsed}
+    <LibraryColumn column="sources" workspace={workspace} collapsed={sourceColumn.collapsed} slideOver={screenWidth < 840}
       onToggle={() => sourceColumn.setCollapsed(!sourceColumn.collapsed)}>
       <LibraryChatsSection baseId={base.id} chats={chats} onOpen={openChat} onCreate={createChat} />
       <SourceTree baseId={base.id} contents={contents} onContents={setContents} selection={selection} selectedIds={sourceIds}
-        onScope={setSelection} activeSourceId={source?.id ?? null} onSource={(id) => choose({ kind: "source", id })}
-        onTrashed={onTrashed} keyResults={(filter) => <KeyResultsGroup baseId={base.id} filter={filter}
-          sourceIds={selection.mode === "selected" ? selection.sourceIds : undefined}
-          outputs={studio.artifacts} onNotify={onNotify} onInspect={(passages) => {
-            if (passages[0]) setEvidence({ citation: passages[0], passages });
-          }} />}
-        addSource={<>
+        open={sourcesOpen} onOpenChange={setSourcesOpen} onScope={setSelection} activeSourceId={source?.id ?? null}
+        onSource={(id) => { if (choose({ kind: "source", id })) closeNarrowLibrary(); }} onTrashed={onTrashed} />
+      <KeyResultsGroup baseId={base.id} sourceIds={selection.mode === "selected" ? selection.sourceIds : undefined}
+        outputs={studio.artifacts} onNotify={onNotify} onInspect={(passages) => {
+          if (passages[0]) setEvidence({ citation: passages[0], passages });
+        }} />
+      <footer className="contents-add">
           <PopMenu label="Add a source" align="start" triggerClass="gx-btn gx-btn-primary gx-btn-sm" trigger={<><Plus size={14} />Add source</>} items={[
             { label: "Note or pasted text", icon: NotebookText, onSelect: () => onAdd("note") },
             { label: "Document", icon: FileText, onSelect: () => onAdd("file") },
@@ -157,7 +178,7 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
             { label: "Recording", icon: Mic2, onSelect: () => onAdd("recording") },
           ]} />
           <BulkImport knowledgeBaseId={base.id} compact />
-        </>} />
+      </footer>
     </LibraryColumn>
     <section className="library-middle" aria-label="Library workspace">
       <div className="library-chat" hidden={!chatVisible}>

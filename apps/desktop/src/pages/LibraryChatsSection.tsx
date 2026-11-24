@@ -47,19 +47,22 @@ function ChatRow({
     onCancelRename();
   };
   if (renaming) {
-    return <form className="library-chat-row is-editing" onSubmit={(event) => {
+    return <form className="library-chat-row is-editing" onKeyDown={(event) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelRename(); }
+    }} onSubmit={(event) => {
       event.preventDefault();
       onRename(title.trim());
     }}>
-      <input autoFocus value={title} aria-label="Chat title" onChange={(event) => setTitle(event.target.value)}
-        onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelRename(); } }} />
+      <input autoFocus value={title} aria-label="Chat title" onChange={(event) => setTitle(event.target.value)} />
       <button type="submit" aria-label="Save chat title">Save</button>
       <button type="button" aria-label="Cancel renaming" onClick={cancelRename}>Cancel</button>
     </form>;
   }
   return (
     <div className={`library-chat-row ${active ? "is-active" : ""} ${session.archived ? "is-archived" : ""}`}
-      onKeyDown={(event) => { if (event.key === "Escape") setMenuOpen(false); }}>
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && menuOpen) { event.stopPropagation(); setMenuOpen(false); }
+      }}>
       <button type="button" className="library-chat-open" onClick={onOpen} aria-current={active ? "page" : undefined}>
         <span>{session.title}</span>
         {parentTitle && <span className="library-chat-branch" title={`Branched from ${parentTitle}`}>
@@ -169,7 +172,7 @@ export function LibraryChatsSection({ baseId, chats, onOpen, onCreate }: {
     <div id="library-chats-body" className="library-chats-body" hidden={collapsed}>
       {searchOpen && <label className="library-chats-search">
         <Search size={12} />
-        <input value={query} placeholder="Search chats" aria-label="Search chats" onChange={(event) => setQuery(event.target.value)}
+        <input autoFocus value={query} placeholder="Search chats" aria-label="Search chats" onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
             if (event.key !== "Escape") return;
             event.stopPropagation();

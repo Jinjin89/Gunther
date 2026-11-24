@@ -4,10 +4,12 @@ import { useEffect, useId, useState } from "react";
 import { useActivity } from "../activity/useActivity";
 import { knowledgeApi } from "../api";
 import type { Notify } from "../App";
+import { persistentStorage } from "../persistentStorage";
 import { KEY_RESULTS_CHANGED_EVENT, keyResultsChanged, type KeyResultsChange } from "./events";
 import "./keyResults.css";
 
-const SHORT_LIST = 5;
+const SHORT_LIST = 3;
+const FILTER_AFTER = 5;
 const dateLabel = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" });
 
 function originLabel(origin: KeyResult["origin"], outputs: readonly ArtifactSummary[]): string {
@@ -28,9 +30,8 @@ function asCitation(passage: KeyResultEvidence): ConversationCitation {
   };
 }
 
-export function KeyResultsGroup({ baseId, filter, outputs, sourceIds, onInspect, onNotify }: {
+export function KeyResultsGroup({ baseId, outputs, sourceIds, onInspect, onNotify }: {
   baseId: string;
-  filter: string;
   outputs: readonly ArtifactSummary[];
   sourceIds?: readonly string[] | undefined;
   onInspect: (passages: ConversationCitation[]) => void;
@@ -44,7 +45,8 @@ export function KeyResultsGroup({ baseId, filter, outputs, sourceIds, onInspect,
   const results = loaded?.baseId === baseId && loaded.sourceIds === sourceIds
     ? loaded.results : undefined;
   const [pending, setPending] = useState<PendingSavedAnswer[]>([]);
-  const [expanded, setExpanded] = useState<boolean>();
+  const [expanded, setExpanded] = useState<{ baseId: string; open: boolean }>();
+  const [filter, setFilter] = useState("");
   const [revision, setRevision] = useState(0);
   const [loadFailed, setLoadFailed] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -107,28 +109,42 @@ export function KeyResultsGroup({ baseId, filter, outputs, sourceIds, onInspect,
     }
   };
 
-  const query = filter.trim().toLocaleLowerCase();
+  const count = results?.length ?? 0;
+  const hasFilter = count > FILTER_AFTER;
+  const query = hasFilter ? filter.trim().toLocaleLowerCase() : "";
   const shown = results?.filter((item) => item.text.toLocaleLowerCase().includes(query)) ?? [];
-  const open = expanded ?? (Boolean(query) || (results?.length ?? 0) <= SHORT_LIST);
+  const storageKey = `gunther:library-kr-collapsed:${baseId}`;
+  const stored = persistentStorage.getItem(storageKey);
+  const remembered = stored === "1" ? false : stored === "0" ? true : undefined;
+  const open = (expanded?.baseId === baseId ? expanded.open : remembered)
+    ?? (count > 0 && count <= SHORT_LIST);
+  const toggle = () => {
+    setExpanded({ baseId, open: !open });
+    persistentStorage.setItem(storageKey, open ? "1" : "0");
+  };
   if (!results && pending.length === 0 && !loadFailed) return null;
   return <section className="key-results-group" aria-label="Key results">
-    {results && <button type="button" aria-expanded={open} aria-controls={listId} onClick={() => setExpanded(!open)}>
-      {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}Key results ({results.length})
-    </button>}
-    {results && <div id={listId} hidden={!open}>
-      {open && query && results.length > 0 && shown.length === 0 && <p className="key-results-empty">No matching key results.</p>}
-      {open && shown.length > 0 && <ul>{shown.map((result) => <li key={result.id} className="key-results-row">
+    <button type="button" aria-expanded={open} aria-controls={listId} onClick={toggle}>
+      {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}Key results{results ? ` (${results.length})` : ""}
+    </button>
+    <div className="key-results-body" id={listId} hidden={!open}>
+      {hasFilter && <input className="key-results-filter" value={filter} aria-label="Filter key results" placeholder="Filter key results"
+        onChange={(event) => setFilter(event.target.value)} onKeyDown={(event) => {
+          if (event.key === "Escape" && filter) { event.stopPropagation(); setFilter(""); }
+        }} />}
+      {query && results && shown.length === 0 && <p className="key-results-empty">No matching key results.</p>}
+      {shown.length > 0 && <ul>{shown.map((result) => <li key={result.id} className="key-results-row">
         <button type="button" className="key-results-inspect" data-opens-evidence disabled={result.evidence.length === 0}
           onClick={() => onInspect(result.evidence.map(asCitation))}>
           <span>{result.text}</span><small>{originLabel(result.origin, outputs)}</small>
         </button>
         <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={removing} onClick={() => void remove(result)}>Remove</button>
       </li>)}</ul>}
-    </div>}
-    {pending.length > 0 && <details className="key-results-saved">
-      <summary>Saved answers awaiting key results</summary>
-      <ul>{pending.map((answer) => <li key={answer.id}><strong>{answer.title}</strong><p>{answer.content}</p></li>)}</ul>
-    </details>}
+      {pending.length > 0 && <details className="key-results-saved">
+        <summary>Saved answers awaiting key results</summary>
+        <ul>{pending.map((answer) => <li key={answer.id}><strong>{answer.title}</strong><p>{answer.content}</p></li>)}</ul>
+      </details>}
+    </div>
     {loadFailed && <p className="key-results-empty" role="status">Could not load all key results.{" "}
       <button type="button" className="contents-inline-btn" onClick={() => setRevision((value) => value + 1)}>Retry</button>
     </p>}

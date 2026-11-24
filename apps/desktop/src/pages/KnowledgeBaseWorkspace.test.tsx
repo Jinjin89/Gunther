@@ -638,7 +638,7 @@ it("asks about a map path in Chat using the current source selection", async () 
   await user.click(screen.getByRole("checkbox", { name: "Select Field notes" }));
   await user.click(await screen.findByRole("button", { name: /Field map Mind map Version 1/ }));
   const reader = within(await screen.findByRole("region", { name: "Mind map" }));
-  expect(screen.getByRole("button", { name: "Expand Sources" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Expand Library" })).toBeVisible();
   await user.click(reader.getByRole("button", { name: "Inspect citation 1" }));
   const evidence = within(screen.getByRole("complementary", { name: "Evidence" }));
   expect(evidence.getByText("Observations were recorded at noon.")).toBeVisible();
@@ -1080,12 +1080,18 @@ it("collapses long lists, filters them, and shows a read-only link while saved a
   const pending = vi.spyOn(knowledgeApi, "pendingSavedAnswers").mockResolvedValue([
     { id: "saved-1", title: "Prior answer", content: "Stored wording." },
   ]);
-  setup();
+  const { view } = setup();
   const user = userEvent.setup();
   const group = within(await screen.findByRole("region", { name: "Key results" }));
   const header = group.getByRole("button", { name: "Key results (6)" });
+  expect(screen.getByRole("region", { name: "Sources" })).not.toContainElement(header);
   expect(header).toHaveAttribute("aria-expanded", "false");
   await user.type(screen.getByRole("textbox", { name: "Filter contents" }), "Finding 3");
+  expect(header).toHaveAttribute("aria-expanded", "false");
+  await user.click(header);
+  expect(window.localStorage.getItem(`gunther:library-kr-collapsed:${base.id}`)).toBe("0");
+  expect(group.getByRole("button", { name: /Finding 1 from your question/ })).toBeVisible();
+  await user.type(group.getByRole("textbox", { name: "Filter key results" }), "Finding 3");
   expect(group.getByRole("button", { name: /Finding 3 from your question/ })).toBeVisible();
   expect(group.queryByRole("button", { name: /Finding 1/ })).not.toBeInTheDocument();
   await user.click(group.getByText("Saved answers awaiting key results"));
@@ -1093,6 +1099,23 @@ it("collapses long lists, filters them, and shows a read-only link while saved a
   pending.mockResolvedValue([]);
   act(() => keyResultsChanged(base.id));
   await waitFor(() => expect(group.queryByText("Saved answers awaiting key results")).not.toBeInTheDocument());
+  view.unmount();
+  setup();
+  const reopened = await screen.findByRole("button", { name: "Key results (6)" });
+  expect(reopened).toHaveAttribute("aria-expanded", "true");
+  await user.click(reopened);
+  expect(window.localStorage.getItem(`gunther:library-kr-collapsed:${base.id}`)).toBe("1");
+});
+
+it.each([0, 1, 3, 4, 5, 6])("uses independent default disclosure and filter rules for %s key results", async (count) => {
+  const rows = Array.from({ length: count }, (_, index): KeyResult => ({ ...finding, id: `result-${index}` }));
+  vi.spyOn(knowledgeApi, "keyResults").mockResolvedValue(rows);
+  setup();
+  const header = await screen.findByRole("button", { name: `Key results (${count})` });
+  const group = within(screen.getByRole("region", { name: "Key results" }));
+  expect(header).toHaveAttribute("aria-expanded", count > 0 && count <= 3 ? "true" : "false");
+  if (header.getAttribute("aria-expanded") === "false") await userEvent.click(header);
+  expect(Boolean(group.queryByRole("textbox", { name: "Filter key results" }))).toBe(count > 5);
 });
 
 it("updates Key results when the selected sources change", async () => {
@@ -1107,6 +1130,9 @@ it("updates Key results when the selected sources change", async () => {
   expect(keyResults).toHaveBeenLastCalledWith(base.id, expect.any(AbortSignal), ["s1", "s3"]);
   await user.click(screen.getByRole("checkbox", { name: "Select Field notes" }));
   expect(await screen.findByRole("button", { name: "Key results (1)" })).toBeVisible();
+  const beforeRefresh = keyResults.mock.calls.length;
+  act(() => window.dispatchEvent(new Event("gunther:sources-updated")));
+  await waitFor(() => expect(keyResults.mock.calls.length).toBeGreaterThan(beforeRefresh));
 });
 
 it("starts a new tile build with type options and reopens its running card from the tile", async () => {
@@ -1187,20 +1213,140 @@ it("collapses the columns at their window thresholds and reopens either rail", a
   expect(screen.getByRole("button", { name: "Slides" })).toBeVisible();
   await user.click(column("Collapse Studio"));
   resizeWindow(840);
-  expect(column("Collapse Sources")).toBeVisible();
+  expect(column("Collapse Library")).toBeVisible();
   resizeWindow(839);
-  expect(column("Expand Sources")).toHaveAttribute("aria-expanded", "false");
+  expect(column("Expand Library")).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByRole("checkbox", { name: "Select Lab notes" })).not.toBeInTheDocument();
-  await user.click(column("Expand Sources"));
+  await user.click(column("Expand Library"));
   expect(screen.getByRole("checkbox", { name: "Select Lab notes" })).toBeChecked();
+  expect(document.querySelector(".library-sources")).toHaveClass("is-narrow");
+  expect(screen.queryByRole("separator", { name: "Resize Library" })).not.toBeInTheDocument();
+});
+
+it("closes the narrow Library drawer on Escape, outside clicks, and selecting a source or chat", async () => {
+  const user = userEvent.setup();
+  resizeWindow(800);
+  setup();
+  const expand = () => screen.getByRole("button", { name: "Expand Library" });
+  await user.click(expand());
+  await screen.findByRole("checkbox", { name: "Select Lab notes" });
+  await user.click(screen.getByRole("button", { name: "Actions for Original discussion" }));
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("menuitem", { name: "Rename" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Collapse Library" })).toHaveAttribute("aria-expanded", "true");
+  const filter = screen.getByRole("textbox", { name: "Filter contents" });
+  await user.type(filter, "Lab");
+  await user.keyboard("{Escape}");
+  expect(filter).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Collapse Library" })).toHaveAttribute("aria-expanded", "true");
+  await user.keyboard("{Escape}");
+  expect(expand()).toHaveAttribute("aria-expanded", "false");
+
+  await user.click(expand());
+  await user.click(screen.getByRole("textbox", { name: "Message Gunther" }));
+  expect(expand()).toHaveAttribute("aria-expanded", "false");
+  await user.click(expand());
+  await user.click(within(screen.getByRole("region", { name: "Sources" })).getByRole("button", { name: /^Lab notes/ }));
+  expect(expand()).toHaveAttribute("aria-expanded", "false");
+  expect(await screen.findByRole("button", { name: "Back to chat" })).toBeVisible();
+  await user.click(expand());
+  await user.click(within(screen.getByRole("region", { name: "Chats" })).getByRole("button", { name: /^History discussion/ }));
+  expect(expand()).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getByRole("textbox", { name: "Message Gunther" })).toBeVisible();
+});
+
+it("reopens Sources when the composer asks to change its scope", async () => {
+  const user = userEvent.setup();
+  setup();
+  await screen.findByRole("checkbox", { name: "Select Lab notes" });
+  await user.click(screen.getByRole("button", { name: "Sources" }));
+  expect(screen.queryByRole("textbox", { name: "Filter contents" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "All sources" }));
+  expect(screen.getByRole("textbox", { name: "Filter contents" })).toBeVisible();
+});
+
+it("handles chat and key result controls before closing the narrow Library drawer on Escape", async () => {
+  const user = userEvent.setup();
+  resizeWindow(800);
+  vi.spyOn(knowledgeApi, "keyResults").mockResolvedValue(Array.from({ length: 6 }, (_, index): KeyResult => ({
+    ...finding, id: `result-${index}`, text: `Finding ${index}`,
+  })));
+  setup();
+
+  await user.click(screen.getByRole("button", { name: "Expand Library" }));
+  await user.click(await screen.findByRole("button", { name: "Search chats" }));
+  expect(screen.getByRole("textbox", { name: "Search chats" })).toHaveFocus();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("textbox", { name: "Search chats" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Collapse Library" })).toHaveAttribute("aria-expanded", "true");
+  await user.click(screen.getByRole("button", { name: "Search chats" }));
+  const search = screen.getByRole("textbox", { name: "Search chats" });
+  await user.type(search, "Original");
+  await user.keyboard("{Escape}");
+  expect(search).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Collapse Library" })).toHaveAttribute("aria-expanded", "true");
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("textbox", { name: "Search chats" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Collapse Library" })).toHaveAttribute("aria-expanded", "true");
+
+  await user.click(screen.getByRole("button", { name: "Actions for Original discussion" }));
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("menuitem", { name: "Rename" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Collapse Library" })).toHaveAttribute("aria-expanded", "true");
+  await user.click(screen.getByRole("button", { name: "Actions for Original discussion" }));
+  await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+  const title = screen.getByRole("textbox", { name: "Chat title" });
+  await user.clear(title);
+  await user.type(title, "Uncommitted title");
+  await user.tab();
+  expect(screen.getByRole("button", { name: "Save chat title" })).toHaveFocus();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("textbox", { name: "Chat title" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Collapse Library" })).toHaveAttribute("aria-expanded", "true");
+
+  const group = within(await screen.findByRole("region", { name: "Key results" }));
+  await user.click(await group.findByRole("button", { name: "Key results (6)" }));
+  const filter = group.getByRole("textbox", { name: "Filter key results" });
+  await user.type(filter, "Finding 3{Escape}");
+  expect(filter).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Collapse Library" })).toHaveAttribute("aria-expanded", "true");
+  await user.keyboard("{Escape}");
+  expect(screen.getByRole("button", { name: "Expand Library" })).toHaveAttribute("aria-expanded", "false");
+});
+
+it("closes inspected evidence before the narrow Library drawer on Escape", async () => {
+  const user = userEvent.setup();
+  resizeWindow(800);
+  vi.spyOn(knowledgeApi, "keyResults").mockResolvedValue([finding]);
+  vi.spyOn(knowledgeApi, "source").mockImplementation(async (id) => ({
+    ...makeSource({ id }), content: "", assertions: [], webSnapshot: null,
+  }));
+  vi.spyOn(knowledgeApi, "sourceStructure").mockResolvedValue({
+    sourceId: "s1", revisionId: "revision-1",
+    processing: { state: "ready", jobId: null, revisionId: "revision-1", warning: null },
+    parser: null, nextOffset: null, blocks: [],
+  });
+  setup();
+  await user.click(screen.getByRole("button", { name: "Expand Library" }));
+  const group = within(await screen.findByRole("region", { name: "Key results" }));
+  await user.click(await group.findByRole("button", { name: /Field conditions changed/ }));
+  expect(screen.getByRole("complementary", { name: "Evidence" })).toBeVisible();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("complementary", { name: "Evidence" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Collapse Library" })).toHaveAttribute("aria-expanded", "true");
+  await user.keyboard("{Escape}");
+  expect(screen.getByRole("button", { name: "Expand Library" })).toHaveAttribute("aria-expanded", "false");
 });
 
 it("resizes the columns from their inner edges and remembers the widths", async () => {
   const user = userEvent.setup();
   setup();
   await screen.findByRole("checkbox", { name: "Select Lab notes" });
-  const sourcesWidth = screen.getByRole("separator", { name: "Resize Sources" });
+  const sourcesWidth = screen.getByRole("separator", { name: "Resize Library" });
   const studioWidth = screen.getByRole("separator", { name: "Resize Studio" });
+  expect(sourcesWidth).toHaveAttribute("aria-valuemin", "200");
+  expect(sourcesWidth).toHaveAttribute("aria-valuemax", "360");
+  expect(sourcesWidth).toHaveAttribute("aria-valuenow", "260");
   const widen = (separator: HTMLElement, key: string) => {
     const before = Number(separator.getAttribute("aria-valuenow"));
     fireEvent.keyDown(separator, { key });
@@ -1210,9 +1356,9 @@ it("resizes the columns from their inner edges and remembers the widths", async 
   };
   const widerSources = widen(sourcesWidth, "ArrowRight");
   const widerStudio = widen(studioWidth, "ArrowLeft");
-  await user.click(screen.getByRole("button", { name: "Collapse Sources" }));
-  await user.click(screen.getByRole("button", { name: "Expand Sources" }));
-  expect(screen.getByRole("separator", { name: "Resize Sources" })).toHaveAttribute("aria-valuenow", String(widerSources));
+  await user.click(screen.getByRole("button", { name: "Collapse Library" }));
+  await user.click(screen.getByRole("button", { name: "Expand Library" }));
+  expect(screen.getByRole("separator", { name: "Resize Library" })).toHaveAttribute("aria-valuenow", String(widerSources));
   expect(window.localStorage.getItem("gunther:library-sources-width")).toBe(String(widerSources));
   expect(window.localStorage.getItem("gunther:library-studio-width")).toBe(String(widerStudio));
 });
@@ -1224,16 +1370,16 @@ it("gives an open slide reader more room below 1200px", async () => {
   setup({ artifacts: [deck] });
   await user.click(await screen.findByRole("button", { name: /Field findings Slides Version 1/ }));
   expect(await screen.findByText("Slide reader")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Collapse Sources" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Collapse Library" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Back to chat" }));
   resizeWindow(1199);
-  expect(screen.getByRole("button", { name: "Collapse Sources" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Collapse Library" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: /Field findings Slides Version 1/ }));
-  await user.click(await screen.findByRole("button", { name: "Expand Sources" }));
+  await user.click(await screen.findByRole("button", { name: "Expand Library" }));
   expect(screen.getByRole("checkbox", { name: "Select Lab notes" })).toBeChecked();
-  await user.click(screen.getByRole("button", { name: "Collapse Sources" }));
+  await user.click(screen.getByRole("button", { name: "Collapse Library" }));
   await user.click(screen.getByRole("button", { name: "Back to chat" }));
-  expect(screen.getByRole("button", { name: "Collapse Sources" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Collapse Library" })).toBeVisible();
 });
 
 it.each([

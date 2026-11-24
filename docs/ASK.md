@@ -1,8 +1,8 @@
 # Ask
 
-Start on Home to search across libraries or ask with selected scope. Chat opens in the middle of a library alongside Sources and Studio. Library chats share the source ticks in the Sources column. File a Home conversation in a library, branch at an answer, or archive it. Open Brief in the Chat header to see or edit the context carried across turns.
+Start on Home to search across libraries or ask with selected scope. Chat opens in the middle of a library alongside Library and Studio. Library chats share the source ticks in the Library column. File a Home conversation in a library, branch at an answer, or archive it. Open Brief in the Chat header to see or edit the context carried across turns.
 
-Library chats live in the **Chats** section at the top of the Sources column. Search there by title or summary, pin or unpin a chat, and open the archived list. The Chat actions menu starts a new chat, renames the current chat, exports it as Markdown with citations, or archives it. An archived chat stays readable. Restore it to send more questions.
+Library chats live in the **Chats** section at the top of the Library column. Search there by title or summary, pin or unpin a chat, and open the archived list. The Chat actions menu starts a new chat, renames the current chat, exports it as Markdown with citations, or archives it. An archived chat stays readable. Restore it to send more questions.
 
 Empty Chat shows the library overview and up to three suggested questions when available. Choose one to send it with the current Sources ticks. While the overview is unavailable, Chat shows the library's guiding question, description and source count. Follow the Models link to set up Analysis, or use Retry if the overview failed.
 

@@ -72,7 +72,8 @@ it("uses stored metadata and Contents for a library with a former sample ID", as
   await user.click(await within(libraries).findByRole("button", { name: savedLibrary.title }));
 
   expect(await screen.findByRole("heading", { name: "Autumn field trip" })).toBeVisible();
-  expect(screen.getByRole("heading", { name: "Sources" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Sources" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "Studio" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Expand Gunther sidebar" })).toBeVisible();
   expect(screen.getByText(savedLibrary.description)).toBeVisible();

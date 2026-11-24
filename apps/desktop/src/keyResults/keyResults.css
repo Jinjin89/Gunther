@@ -10,11 +10,19 @@
 .key-results-status [role="alert"] { color: var(--gx-danger); }
 .output-reader > .key-results-status { margin-bottom: 10px; }
 .key-results-group {
-  border-bottom: 1px solid var(--gx-line);
-  padding: 6px 0 8px;
-  margin-bottom: 8px;
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: auto;
+  padding: 6px 8px;
+  border-top: 1px solid var(--gx-line);
   font-size: var(--gx-text-sm);
 }
+.key-results-group > button { flex: none; text-align: left; }
+.key-results-body { min-height: 0; max-height: 220px; overflow: auto; scrollbar-width: thin; }
+.key-results-body[hidden] { display: none; }
+.key-results-filter { width: 100%; box-sizing: border-box; padding: 5px 8px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-sm); background: var(--gx-surface); color: var(--gx-ink); font: inherit; }
 .key-results-group > button, .key-results-saved summary {
   display: inline-flex;
   align-items: center;

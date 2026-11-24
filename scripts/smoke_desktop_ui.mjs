@@ -991,8 +991,9 @@ async function run() {
     const sourcesFit = await cdp.evaluate(`(() => {
       const tree = document.querySelector('.library-workspace .contents');
       const box = tree.getBoundingClientRect();
-      const footer = tree.querySelector('.contents-add').getBoundingClientRect();
-      return box.top >= 0 && box.bottom <= innerHeight + 1 && footer.bottom <= box.bottom + 1 && box.right <= innerWidth;
+      const column = tree.closest('.library-column-panel').getBoundingClientRect();
+      const footer = document.querySelector('.library-sources .contents-add').getBoundingClientRect();
+      return box.top >= 0 && box.bottom <= innerHeight + 1 && footer.bottom <= column.bottom + 1 && box.right <= innerWidth;
     })()`);
     if (!sourcesFit) throw new SmokeFailure("Source selection does not fit in a narrow window");
     if (!await cdp.evaluate(clickExpression("button", "Expand Studio"))) {
@@ -1002,11 +1003,11 @@ async function run() {
     await resizeViewport(800, 640);
     await waitForEvaluation(
       cdp,
-      `window.innerWidth === 800 && document.querySelector('button[aria-label="Expand Sources"]') !== null`,
-      "Sources rail at the minimum desktop width",
+      `window.innerWidth === 800 && document.querySelector('button[aria-label="Expand Library"]') !== null`,
+      "Library rail at the minimum desktop width",
     );
-    if (!await cdp.evaluate(clickExpression("button", "Expand Sources"))) {
-      throw new SmokeFailure("Sources could not be reopened from its rail");
+    if (!await cdp.evaluate(clickExpression("button", "Expand Library"))) {
+      throw new SmokeFailure("Library could not be reopened from its rail");
     }
     await waitForEvaluation(cdp, "document.querySelector('.contents')?.getClientRects().length > 0", "Sources visible after reopening its rail");
     await wideViewport();
@@ -1102,12 +1103,12 @@ async function run() {
         "successful local retry copy cleared",
         "filed note showed its row actions and drag handle and reopened through its summary with preserved content",
         "grounded Chat answer persisted with sources that open evidence",
-        "Chat actions opened searchable History and reopened a saved answer",
+        "Chats search reopened a saved answer",
         "grounded answer showed key results waiting for an Analysis model",
         "Studio showed model setup with disabled tiles after the saved answer was reopened",
         "Chat kept All sources and side-by-side voice/send actions at 900 × 640",
         "Sources showed the total and fit at 900 × 640, with Studio available from its rail",
-        "Sources collapsed at 800 × 640 and reopened from its rail",
+        "Library collapsed at 800 × 640 and reopened from its rail",
         "section ticks set Chat and Studio scope, blocked empty selection, and persisted on library reopen",
         "Answer style moved to General Settings, persisted and stayed out of Ask/Home composers",
         "capture moved to Trash from Inbox and brought back with Undo",

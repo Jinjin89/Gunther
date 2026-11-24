@@ -8,7 +8,7 @@ import { SectionMenu, SourceMenu, type SectionActions } from "./SectionMenu";
 export const kindIcon: Record<SourceKind, LucideIcon> = {
   note: NotebookText, paper: BookOpenText, link: Link2, file: FileText, image: Camera, table: Table2, recording: AudioLines, course: AudioLines,
 };
-export const INDENT = 20;
+export const INDENT = 14;
 
 export interface DropMark { key: string; position: "before" | "on" | "after"; allowed: boolean }
 
@@ -67,8 +67,8 @@ export function ScopeTick({ label, checked, mixed = false, disabled, onCheck }: 
 }
 
 /** A section heading with its own handle and actions. */
-export function SectionRow({ row, dragDisabled, drop, editing, scope, actions, onToggle, onSave, onCancel }: CommonProps & {
-  editing: boolean; scope: { checked: boolean; mixed: boolean; disabled: boolean; onCheck: (checked: boolean) => void };
+export function SectionRow({ row, dragDisabled, drop, editing, sourceCount, scope, actions, onToggle, onSave, onCancel }: CommonProps & {
+  editing: boolean; sourceCount: number; scope: { checked: boolean; mixed: boolean; disabled: boolean; onCheck: (checked: boolean) => void };
   actions: SectionActions; onToggle: () => void; onSave: (title: string) => void; onCancel: () => void;
 }) {
   const { ref, handle, dragging } = useRowDnd(row, dragDisabled || editing);
@@ -94,7 +94,7 @@ export function SectionRow({ row, dragDisabled, drop, editing, scope, actions, o
         </span>
         {section.description && <span className="contents-note">{section.description}</span>}
       </span>}
-    {!editing && row.collapsed && <small className="contents-count">{row.count}</small>}
+    {!editing && (row.collapsed || level === 1) && <small className="contents-count" title={row.count}>{level === 1 ? sourceCount : row.count}</small>}
     {!editing && <span className="contents-actions"><SectionMenu title={section.title} actions={actions} /></span>}
   </div>;
 }

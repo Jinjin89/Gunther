@@ -35,7 +35,7 @@ import { withoutTrigger } from "../components/search/TriggerMenu";
 import { InterruptedNote, isInterrupted } from "./interrupted";
 import { DictationStatus, MicGlyph } from "../components/Dictation";
 import { useDictatedField } from "../services/useDictatedField";
-import { withShortcut } from "../shortcuts/shortcuts";
+import { useEscape, withShortcut } from "../shortcuts/shortcuts";
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
 import type { KnowledgeBase } from "../atlas";
 import { ServiceUnavailableError, knowledgeApi } from "../api";
@@ -516,16 +516,10 @@ export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty
     }
   };
 
-  useEffect(() => {
-    if (!trace && !renameOpen) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (trace) setTrace(null);
-      else setRenameOpen(false);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [trace, renameOpen]);
+  useEscape(() => {
+    if (trace) setTrace(null);
+    else setRenameOpen(false);
+  }, Boolean(trace || renameOpen));
 
   const exportSession = async () => {
     if (!activeSession) return;
@@ -570,7 +564,7 @@ export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty
             <span><i className={online ? "is-online" : "is-offline"} />{!online ? "Knowledge service unavailable" : activeSession?.archived ? "Archived session · read only" : activeSession ? "Saved to local knowledge service" : ""}{activeSession?.parentSessionId && <><b>·</b><GitBranch size={10} />Branch lineage preserved</>}</span>
           </div>
           <div className="conversation-actions">
-            {activeSession && <details className="ask-brief" onKeyDown={(event) => { if (event.key === "Escape") event.currentTarget.open = false; }}>
+            {activeSession && <details className="ask-brief" onKeyDown={(event) => { if (event.key === "Escape" && event.currentTarget.open) { event.stopPropagation(); event.currentTarget.open = false; } }}>
               <summary className="gx-btn gx-btn-quiet gx-btn-sm">Brief</summary>
               <div className="ask-brief-panel">
                 <BriefPanel brief={activeSession.brief} updating={briefBusy === activeId} readOnly={!online || activeSession.archived}
