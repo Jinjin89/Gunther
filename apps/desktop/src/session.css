@@ -94,32 +94,3 @@
 .composer textarea { font-size: calc(15px * var(--gx-fs, 1)); line-height: 1.6; }
 .scope-chip,
 .composer-note { font-size: calc(12px * var(--gx-fs, 1)); }
-
-.ask-brief { position: relative; }
-.ask-brief > summary { cursor: pointer; list-style: none; }
-.ask-brief > summary::-webkit-details-marker { display: none; }
-.ask-brief-panel {
-  position: absolute;
-  z-index: 48;
-  right: 0;
-  top: calc(100% + 6px);
-  width: min(340px, 44vw);
-  max-height: 65vh;
-  overflow: auto;
-  padding: 12px;
-  border: 1px solid var(--gx-line-2);
-  border-radius: var(--gx-radius-md);
-  background: var(--gx-canvas);
-  box-shadow: var(--gx-shadow-md);
-}
-.ask-brief-panel .brief-section { margin: 0; }
-.ask-brief-panel .section-label { color: var(--gx-faint); font-size: var(--gx-text-xs); font-weight: 650; }
-.ask-trace-overlay { position: fixed; inset: 0; display: flex; justify-content: flex-end; z-index: 100; background: var(--gx-overlay); }
-.ask-trace-sheet {
-  width: min(460px, 100%);
-  padding: 14px;
-  overflow: auto;
-  background: var(--gx-surface);
-  box-shadow: var(--gx-shadow-lg);
-}
-.ask-trace-sheet > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }

@@ -1,4 +1,4 @@
-import type { ConversationBrief, ConversationTurn, KnowledgeSession, KnowledgeSessionSummary, SessionMessage } from "@gunther/contracts";
+import type { ConversationBrief, ConversationBriefInput, ConversationTurn, KnowledgeSession, KnowledgeSessionSummary, SessionMessage } from "@gunther/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ServiceUnavailableError, knowledgeApi } from "../api";
 import { persistentStorage } from "../persistentStorage";
@@ -32,7 +32,9 @@ export interface UseLibraryChats {
   branchSession: (sessionId: string, messageId: string) => Promise<KnowledgeSession | null>;
   saveTurn: (turn: ConversationTurn) => void;
   mergeSession: (session: KnowledgeSession, messages?: SessionMessage[]) => void;
-  setBrief: (sessionId: string, updater: (brief: ConversationBrief | undefined) => ConversationBrief) => void;
+  briefBusy: string | null;
+  refreshBrief: (sessionId: string) => Promise<void>;
+  saveBrief: (sessionId: string, brief: ConversationBriefInput) => Promise<void>;
   reportReadError: (error: unknown) => void;
 }
 
@@ -60,6 +62,7 @@ export function useLibraryChats(
   const [activeSession, setActiveSession] = useState<KnowledgeSession | null>(null);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [newSessionId, setNewSessionId] = useState<string | null>(null);
+  const [briefBusy, setBriefBusy] = useState<string | null>(null);
   const mounted = useRef(false);
   const creatingSession = useRef(false);
   const loadingSessionList = useRef(false);
@@ -220,6 +223,28 @@ export function useLibraryChats(
     setActiveSession((current) => current?.id === sessionId ? { ...current, brief: updater(current.brief) } : current);
   }, []);
 
+  const refreshBrief = useCallback(async (sessionId: string) => {
+    setBriefBusy(sessionId);
+    try {
+      const brief = await knowledgeApi.refreshBrief(sessionId);
+      setBrief(sessionId, () => brief);
+    } catch (reason) {
+      setBrief(sessionId, (brief) => ({ goal: "", constraints: [], settled: [], open: [], edited: [], ...brief,
+        error: messageError(reason, "The brief could not be updated") }));
+    } finally {
+      setBriefBusy((current) => current === sessionId ? null : current);
+    }
+  }, [setBrief]);
+
+  const saveBrief = useCallback(async (sessionId: string, input: ConversationBriefInput) => {
+    try {
+      const brief = await knowledgeApi.editBrief(sessionId, input);
+      setBrief(sessionId, () => brief);
+    } catch (reason) {
+      onNotify(messageError(reason, "The brief could not be saved"));
+    }
+  }, [onNotify, setBrief]);
+
   const mergeSession = useCallback((session: KnowledgeSession, messages?: SessionMessage[]) => {
     setSessions((current) => sortSessions(current.some((item) => item.id === session.id)
       ? current.map((item) => item.id === session.id ? session : item)
@@ -307,7 +332,9 @@ export function useLibraryChats(
     branchSession,
     saveTurn,
     mergeSession,
-    setBrief,
+    briefBusy,
+    refreshBrief,
+    saveBrief,
     reportReadError,
   };
 }

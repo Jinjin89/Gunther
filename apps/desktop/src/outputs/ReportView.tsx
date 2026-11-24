@@ -45,11 +45,12 @@ const QUOTE_LIMIT = 500;
  * section shows a small "Ask about this" beside the selection. Both tell the page what the next
  * message is about.
  */
-export function ReportView({ artifact, onCite, onAsk, goTo, changed }: {
+export function ReportView({ artifact, onCite, onAsk, onPart, goTo, changed }: {
   artifact: Artifact;
   onCite: (citation: ConversationCitation, index: number) => void;
   /** Point at a section (counted from 0), and at the words selected in it when there are some. Without it nothing can be pointed at. */
   onAsk?: ((section: number, quote?: string) => void) | undefined;
+  onPart?: ((index: number | null) => void) | undefined;
   /** Scroll to this section (counted from 0). A new `nonce` scrolls again to the same section. */
   goTo?: { index: number; nonce: number } | null | undefined;
   /** The sections (counted from 0) this version changed. */
@@ -86,6 +87,22 @@ export function ReportView({ artifact, onCite, onAsk, goTo, changed }: {
   useEffect(() => {
     if (goTo) body.current?.querySelector<HTMLElement>(`[data-section="${goTo.index}"]`)?.scrollIntoView?.({ block: "start", behavior: "smooth" });
   }, [goTo?.nonce]);
+
+  useEffect(() => {
+    const box = body.current;
+    if (!onPart || !box || !parts.sections.length || artifact.origin === "legacy") return;
+    const scroller = box.closest<HTMLElement>(".library-middle-page");
+    const sections = [...box.querySelectorAll<HTMLElement>("[data-section]")];
+    const update = () => {
+      const top = scroller?.getBoundingClientRect().top ?? 0;
+      const visible = sections.find((section) => section.getBoundingClientRect().bottom > top) ?? sections.at(-1);
+      onPart(visible ? Number(visible.dataset.section) : null);
+    };
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => { window.removeEventListener("scroll", update, true); window.removeEventListener("resize", update); };
+  }, [artifact.id, artifact.origin, onPart, parts.sections.length]);
 
   // A version from the old builder has no citations; its Markdown is shown as it is.
   if (artifact.origin === "legacy") {

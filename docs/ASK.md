@@ -1,6 +1,6 @@
 # Ask
 
-Start on Home to search across libraries or ask with selected scope. Chat opens in the middle of a library alongside Library and Studio. Library chats share the source ticks in the Library column. File a Home conversation in a library, branch at an answer, or archive it. Open Brief in the Chat header to see or edit the context carried across turns.
+Start on Home to search across libraries or ask with selected scope. Chat opens in the middle of a library alongside Library and the Inspector. Library chats share the source ticks in the Library column. File a Home conversation in a library, branch at an answer, or archive it. Open Brief in the Inspector's Evidence tab to see or edit the context carried across turns. Brief shows when it is updating and offers Retry if its update failed.
 
 Library chats live in the **Chats** section at the top of the Library column. Search there by title or summary, pin or unpin a chat, and open the archived list. The Chat actions menu starts a new chat, renames the current chat, exports it as Markdown with citations, or archives it. An archived chat stays readable. Restore it to send more questions.
 
@@ -27,4 +27,4 @@ Ask uses `POST /api/sessions/{id}/messages/stream`. Attach to existing work at `
 
 Turn handling is in [ask_turns.py](../apps/backend/gunther/ask_turns.py) and [ask_api.py](../apps/backend/gunther/ask_api.py). The [agent](../apps/backend/gunther/agent.py) uses [evidence readers](../apps/backend/gunther/evidence_reader.py), [citations](../apps/backend/gunther/citations.py) and [claim checks](../apps/backend/gunther/claim_checks.py). The [Ask exam](../apps/backend/evals/README.md) runs its fixture turns through the same streaming path.
 
-Enable Keep how answers are made in Developer settings and click Trace below a library answer. Its side panel shows the plan, searches, results, grading, writing and checks, with recorded model requests, replies and timing. Saved answers with local provenance remain readable as stored. [Developer settings](SETTINGS.md#developer)
+Enable Keep how answers are made in Developer settings and click Trace below a library answer, or View trace in its Evidence overview. Trace opens in the Inspector with the plan, searches, results, grading, writing and checks, with recorded model requests, replies and timing. Back to evidence or Escape returns to the Evidence overview. Saved answers with local provenance remain readable as stored. [Developer settings](SETTINGS.md#developer)

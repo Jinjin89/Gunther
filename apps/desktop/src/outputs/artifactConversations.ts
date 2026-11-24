@@ -4,6 +4,11 @@ import { persistentStorage } from "../persistentStorage";
 
 export const EARLIER_WORK = "earlier-work";
 export const libraryScope = (): OutputScope => ({ mode: "library", sourceIds: [], unitIds: [], sessionIds: [] });
+export function scopeLabel(scope: OutputScope) {
+  if (scope.mode === "library") return "the whole library";
+  const counts = [[scope.sourceIds.length, "source"], [scope.unitIds.length, "saved answer"], [scope.sessionIds.length, "discussion"]] as const;
+  return counts.filter(([count]) => count > 0).map(([count, label]) => `${count} ${label}${count === 1 ? "" : "s"}`).join(" · ") || "0 sources";
+}
 export const artifactRequestId = () => globalThis.crypto?.randomUUID?.() ?? `request_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
 const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");

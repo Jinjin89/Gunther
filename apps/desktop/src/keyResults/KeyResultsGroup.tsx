@@ -22,7 +22,7 @@ function originLabel(origin: KeyResult["origin"], outputs: readonly ArtifactSumm
   return origin.kind === "answer" ? `from your question${when}` : `from a saved answer${when}`;
 }
 
-function asCitation(passage: KeyResultEvidence): ConversationCitation {
+export function keyResultCitation(passage: KeyResultEvidence): ConversationCitation {
   return {
     id: passage.id, kind: "library", sourceId: passage.sourceId, sourceTitle: passage.sourceTitle ?? "Source",
     sourceRevisionId: passage.revisionId, blockId: passage.blockId, locator: passage.locator ?? "",
@@ -135,16 +135,16 @@ export function KeyResultsGroup({ baseId, outputs, sourceIds, onInspect, onNotif
       {query && results && shown.length === 0 && <p className="key-results-empty">No matching key results.</p>}
       {shown.length > 0 && <ul>{shown.map((result) => <li key={result.id} className="key-results-row">
         <button type="button" className="key-results-inspect" data-opens-evidence disabled={result.evidence.length === 0}
-          onClick={() => onInspect(result.evidence.map(asCitation))}>
+          onClick={() => onInspect(result.evidence.map(keyResultCitation))}>
           <span>{result.text}</span><small>{originLabel(result.origin, outputs)}</small>
         </button>
         <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={removing} onClick={() => void remove(result)}>Remove</button>
       </li>)}</ul>}
-      {pending.length > 0 && <details className="key-results-saved">
-        <summary>Saved answers awaiting key results</summary>
-        <ul>{pending.map((answer) => <li key={answer.id}><strong>{answer.title}</strong><p>{answer.content}</p></li>)}</ul>
-      </details>}
     </div>
+    {pending.length > 0 && <details className="key-results-saved">
+      <summary>Saved answers awaiting key results</summary>
+      <ul>{pending.map((answer) => <li key={answer.id}><strong>{answer.title}</strong><p>{answer.content}</p></li>)}</ul>
+    </details>}
     {loadFailed && <p className="key-results-empty" role="status">Could not load all key results.{" "}
       <button type="button" className="contents-inline-btn" onClick={() => setRevision((value) => value + 1)}>Retry</button>
     </p>}

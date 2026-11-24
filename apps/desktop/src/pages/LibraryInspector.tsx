@@ -2,6 +2,7 @@ import { BookOpen, PanelRight, X } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useDragWidth } from "../hooks/useDragWidth";
 import { useEscape } from "../shortcuts/shortcuts";
+import { useSlideOverOutside } from "./useSlideOverOutside";
 
 export type InspectorTab = "evidence" | "studio";
 
@@ -32,14 +33,7 @@ export function LibraryInspector({ workspace, screenWidth, collapsed, onCollapse
   const { width, handle } = useDragWidth({ storageKey: "gunther:library-studio-width", min: 280, max, fallback,
     visibleMin: viewingPdf && !manualPdfWidth ? 460 : undefined, side: "right", observe: () => workspace.current });
 
-  useEffect(() => {
-    if (!narrow || collapsed) return;
-    const away = (event: PointerEvent) => {
-      if (event.target instanceof Node && !root.current?.contains(event.target)) onCollapse();
-    };
-    document.addEventListener("pointerdown", away);
-    return () => document.removeEventListener("pointerdown", away);
-  }, [narrow, collapsed, onCollapse]);
+  useSlideOverOutside(workspace, root, narrow && !collapsed, onCollapse);
   useEscape(() => {
     if (tab === "evidence" && detailOpen) onBack();
     else onCollapse();

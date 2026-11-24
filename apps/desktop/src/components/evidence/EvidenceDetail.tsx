@@ -2,6 +2,7 @@ import type { ConversationCitation, ContentBlock, SourceDetail } from "@gunther/
 import { ArrowLeft, ArrowUpRight, ChevronLeft, ChevronRight, FileText, Globe2 } from "lucide-react";
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { knowledgeApi, sourceAssetUrl } from "../../api";
+import { isWebCitation } from "./citationKind";
 import "../../design/evidence.css";
 
 const PdfViewer = lazy(() => import("./PdfViewer"));
@@ -140,7 +141,7 @@ export function EvidenceDetail({ citation, index, passages, onPassage, onOpenSou
   onNext?: (() => void) | undefined;
   onOriginalPdfChange?: ((original: boolean) => void) | undefined;
 }) {
-  const web = citation.kind === "web";
+  const web = isWebCitation(citation);
   return <div className="gx-evidence-detail">
     {onBack && <nav className="gx-evidence-navigation" aria-label="Evidence navigation">
       <button type="button" onClick={onBack}><ArrowLeft size={14} />All {total ?? 0} {total === 1 ? "source" : "sources"}</button>

@@ -2,9 +2,10 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useRef, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ArtifactMenu } from "../outputs/ArtifactMenu";
 import { LibraryInspector, type InspectorTab } from "./LibraryInspector";
 
-function Harness({ width, collapsedAtStart = false }: { width: number; collapsedAtStart?: boolean }) {
+function Harness({ width, collapsedAtStart = false, onMenuChoice = () => {} }: { width: number; collapsedAtStart?: boolean; onMenuChoice?: () => void }) {
   const workspace = useRef<HTMLDivElement>(null);
   const [collapsed, setCollapsed] = useState(collapsedAtStart);
   const [tab, setTab] = useState<InspectorTab>("studio");
@@ -16,7 +17,7 @@ function Harness({ width, collapsedAtStart = false }: { width: number; collapsed
       tab={tab} onTab={(next) => { setTab(next); setCollapsed(false); }} evidenceCount={2} running detailOpen={detail}
       onBack={() => setDetail(false)} originalPdf={originalPdf}
       evidence={<><button type="button" onClick={() => setDetail(true)}>Open detail</button><button type="button" onClick={() => setOriginalPdf(true)}>Original PDF</button>{detail && <p>Passage detail</p>}</>}
-      studio={<p>Studio content</p>} />
+      studio={<><p>Studio content</p><ArtifactMenu label="Artifact actions" items={[{ label: "Choose action", onSelect: onMenuChoice }]} /></>} />
   </div>;
 }
 
@@ -66,5 +67,22 @@ describe("LibraryInspector", () => {
     expect(screen.getByText("Studio content")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Outside" }));
     expect(screen.getByRole("button", { name: "Expand Evidence" })).toBeVisible();
+  });
+
+  it("keeps the Inspector open for its portaled menu and closes for a workspace press", async () => {
+    vi.stubGlobal("innerWidth", 900);
+    const user = userEvent.setup();
+    const choose = vi.fn();
+    render(<Harness width={900} collapsedAtStart onMenuChoice={choose} />);
+    await user.click(screen.getByRole("button", { name: "Expand Studio" }));
+    await user.click(screen.getByRole("button", { name: "Artifact actions" }));
+    const item = screen.getByRole("menuitem", { name: "Choose action" });
+    expect(document.body.contains(item)).toBe(true);
+    expect(screen.getByRole("complementary", { name: "Inspector" })).not.toContainElement(item);
+    await user.click(item);
+    expect(choose).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Collapse Inspector" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Outside" }));
+    expect(screen.getByRole("button", { name: "Expand Studio" })).toBeVisible();
   });
 });

@@ -1,5 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { CitationDetails } from "../components/evidence/CitationButton";
 import { AgentSteps, AnswerBody, citationNumbers, withCitationLinks, withoutMarks } from "./AnswerBody";
@@ -17,6 +18,19 @@ describe("AnswerBody", () => {
     expect(screen.getAllByRole("listitem")).toHaveLength(2);
     await userEvent.click(screen.getByRole("button", { name: "Inspect citation 1" }));
     expect(onCitation).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a focused citation clickable and uses the latest handler after its parent updates", async () => {
+    const before = vi.fn();
+    const after = vi.fn();
+    function Reader() {
+      const [focused, setFocused] = useState(false);
+      return <div onFocus={() => setFocused(true)}><AnswerBody content="A finding [1]." numbers={[1]} onCitation={focused ? after : before} /></div>;
+    }
+    render(<Reader />);
+    await userEvent.click(screen.getByRole("button", { name: "Inspect citation 1" }));
+    expect(before).not.toHaveBeenCalled();
+    expect(after).toHaveBeenCalledExactlyOnceWith(0);
   });
 
   it("previews a clipped citation on hover or focus and opens the evidence on activation", async () => {

@@ -8,7 +8,7 @@ import { KeyResultsStatus } from "../keyResults/KeyResultsStatus";
 import { AnswerBody, citationNumbers, verificationNotice } from "../pages/AnswerBody";
 import { ArtifactMenu } from "./ArtifactMenu";
 import { ArtifactMessageList } from "./ArtifactMessages";
-import { artifactRequestId, EARLIER_WORK, libraryScope } from "./artifactConversations";
+import { artifactRequestId, EARLIER_WORK, libraryScope, scopeLabel } from "./artifactConversations";
 import { withDeckMarker } from "./deck/marker";
 import { discardOutputEdit, EditPane } from "./EditPane";
 import { outputActivity } from "./liveOutput";
@@ -25,27 +25,17 @@ const sameIds = (a: string[], b: string[]) => a.length === b.length && a.every((
 const sameScope = (a: OutputScope, b: OutputScope) => a.mode === b.mode && (
   a.mode === "library" || (sameIds(a.sourceIds, b.sourceIds) && sameIds(a.unitIds, b.unitIds) && sameIds(a.sessionIds, b.sessionIds))
 );
-function scopeLabel(scope: OutputScope) {
-  if (scope.mode === "library") return "the whole library";
-  const counts = [
-    [scope.sourceIds.length, "source"],
-    [scope.unitIds.length, "saved answer"],
-    [scope.sessionIds.length, "discussion"],
-  ] as const;
-  return counts.filter(([count]) => count > 0)
-    .map(([count, label]) => `${count} ${label}${count === 1 ? "" : "s"}`)
-    .join(" · ") || "0 sources";
-}
-
 export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEmpty,
-  dirty, onNotify, onCite: cite, onOpen, onWideReader, onAskChat, onTrash }: {
+  dirty, onNotify, onCite, onOpen, onWideReader, onAskChat, onTrash, onArtifactChange, onPartChange }: {
   baseId: string; workspaceId: string; target: OutputTarget; studio: ReturnType<typeof useStudio>;
   scope: OutputScope; scopeEmpty: boolean; dirty: { current: boolean };
-  onNotify: (message: string) => void; onCite: (citation: ConversationCitation, index: number) => void;
+  onNotify: (message: string) => void; onCite: (artifact: Artifact, index: number) => void;
   onOpen: (target: OutputTarget) => void;
   onWideReader: (wide: boolean) => void;
   onAskChat: (question: string) => void;
   onTrash: (target: OutputTrashTarget) => void;
+  onArtifactChange: (artifact: Artifact | null) => void;
+  onPartChange: (index: number | null) => void;
 }) {
   const [picked, pickVersion] = useState(target.artifactId ?? null);
   const [opened, setOpened] = useState<Artifact | null>(null);
@@ -73,6 +63,7 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   const unavailable = studio.artifactsLoaded && shownId
     && !studio.artifacts.some((item) => item.id === shownId);
   const artifact = opened?.id === shownId && !unavailable ? opened : null;
+  const cite = (_citation: ConversationCitation, index: number) => { if (artifact) onCite(artifact, index); };
   const job = conversationId ? studio.jobs.get(conversationId) : undefined;
   const activity = studio.activities.find((item) => item.open?.view === "library" && item.open.tab === "outputs"
     && (item.open.conversationId ?? item.open.lineageId) === conversationId && item.state === "running");
@@ -87,11 +78,11 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   const pending = conversation?.pending;
   const last = conversation?.messages.at(-1);
   const onDirtyChange = useCallback((value: boolean) => { dirty.current = value; }, [dirty]);
-  const onPart = useCallback((index: number | null) => { partInView.current = index; }, []);
+  const onPart = useCallback((index: number | null) => { partInView.current = index; onPartChange(index); }, [onPartChange]);
 
-  useEffect(() => {
-    setError(""); setFocus(undefined); partInView.current = null;
-  }, [baseId, shownId, workspaceId]);
+  useLayoutEffect(() => { partInView.current = null; onPartChange(null); }, [baseId, shownId, workspaceId, onPartChange]);
+  useEffect(() => { setError(""); setFocus(undefined); }, [baseId, shownId, workspaceId]);
+  useEffect(() => { onArtifactChange(artifact); }, [artifact, onArtifactChange]);
   const { read, follow, reload } = studio;
   useEffect(() => {
     if (!conversationId) return;

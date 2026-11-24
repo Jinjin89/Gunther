@@ -3,6 +3,7 @@ import { AudioLines, BookOpen, CalendarDays, CircleHelp, ClipboardList, FileText
 import { useState, type FormEvent } from "react";
 import { openSettings } from "../components/SettingsLayout";
 import { useModelMenu } from "../models/askModel";
+import { useEscape } from "../shortcuts/shortcuts";
 import { ArtifactMenu } from "./ArtifactMenu";
 import { artifactRequestId } from "./artifactConversations";
 import { outputActivity } from "./liveOutput";
@@ -80,6 +81,7 @@ function cardsOf(studio: ReturnType<typeof useStudio>): Card[] {
 function BuildOptions({ type, disabled, onBuild, onClose }: {
   type: OutputType; disabled: boolean; onBuild: (options: BuildTurnInput) => void; onClose: () => void;
 }) {
+  useEscape(onClose);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (disabled) return;
@@ -96,7 +98,7 @@ function BuildOptions({ type, disabled, onBuild, onClose }: {
     }
     onBuild(options);
   };
-  return <form className="studio-options" aria-label={`${type.label} options`} onSubmit={submit} onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}>
+  return <form className="studio-options" aria-label={`${type.label} options`} onSubmit={submit}>
     <header><strong>{type.label}</strong><button type="button" className="gx-icon-button" aria-label="Close options" onClick={onClose}><X size={15} /></button></header>
     {type.options.includes("focus") && <label>Focus<textarea name="focus" rows={2} maxLength={2_000} autoFocus /></label>}
     {type.options.includes("audience") && <label>Audience<select name="audience"><option value="">Default</option>{artifactAudiences.map((audience) => <option key={audience} value={audience}>{audience[0]!.toUpperCase() + audience.slice(1)}</option>)}</select></label>}

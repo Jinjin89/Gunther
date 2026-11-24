@@ -31,6 +31,13 @@ describe("EvidencePanel", () => {
     expect(screen.getByRole("link", { name: /Open example\.org/ })).toHaveAttribute("href", "https://www.example.org/post");
   });
 
+  it("opens a saved web passage without an explicit kind as a web citation", () => {
+    const { kind: _kind, ...older } = web;
+    render(<EvidenceDetail citation={older} />);
+    expect(screen.getByText("Outside your library")).toBeVisible();
+    expect(screen.getByRole("link", { name: /Open example\.org/ })).toHaveAttribute("href", "https://www.example.org/post");
+  });
+
   it("closes when the page outside it is pressed, but not for its own content or for something that opens a source", async () => {
     const onClose = vi.fn();
     render(<>

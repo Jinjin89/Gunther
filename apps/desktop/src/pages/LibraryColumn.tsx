@@ -2,8 +2,9 @@ import { PanelLeft } from "lucide-react";
 import { useId, type ReactNode, type RefObject } from "react";
 import { useDragWidth } from "../hooks/useDragWidth";
 
-export function LibraryColumn({ workspace, collapsed, slideOver = false, onToggle, children }: {
+export function LibraryColumn({ workspace, columnRef, collapsed, slideOver = false, onToggle, children }: {
   workspace: RefObject<HTMLDivElement | null>;
+  columnRef: RefObject<HTMLDivElement | null>;
   collapsed: boolean;
   slideOver?: boolean;
   onToggle: () => void;
@@ -17,7 +18,7 @@ export function LibraryColumn({ workspace, collapsed, slideOver = false, onToggl
   });
   const toggle = `${collapsed ? "Expand" : "Collapse"} Library`;
 
-  return <div className={`library-column library-sources${collapsed ? " is-collapsed" : ""}${slideOver ? " is-narrow" : ""}`} style={collapsed || slideOver ? undefined : { width }}>
+  return <div ref={columnRef} className={`library-column library-sources${collapsed ? " is-collapsed" : ""}${slideOver ? " is-narrow" : ""}`} style={collapsed || slideOver ? undefined : { width }}>
     <div className="library-column-panel">
       <header className="library-column-heading">
         {!collapsed && <h2>Library</h2>}

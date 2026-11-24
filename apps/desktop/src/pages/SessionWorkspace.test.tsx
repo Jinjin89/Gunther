@@ -87,7 +87,7 @@ const sessionWithAnswer = (knowledgeBaseId: string): KnowledgeSession => ({
 function WorkspaceHarness({ base, inspect = false }: { base: ReturnType<typeof makeBase>; inspect?: boolean }) {
   const chats = useLibraryChats(base.id, () => {}, () => {});
   return <>
-    <SessionWorkspace base={base} chats={chats} onNotify={() => {}} onCite={() => {}} onInspectSources={() => {}} onInspectCitation={() => {}} />
+    <SessionWorkspace base={base} chats={chats} onNotify={() => {}} onInspectSources={() => {}} onInspectCitation={() => {}} />
     {inspect && <output data-testid="active-session">{JSON.stringify(chats.activeSession)}</output>}
   </>;
 }
@@ -225,9 +225,6 @@ it.each(["success", "failure"])("preserves a saved turn and session fields when 
     expect(active.brief).toMatchObject(result === "success" ? { goal: "A refreshed goal", error: null } : { error: "Brief unavailable" });
   });
   expect(screen.getByText("The new answer.")).toBeVisible();
-  await user.click(screen.getByText("Brief", { selector: "summary" }));
-  if (result === "success") expect(screen.getByText("A refreshed goal")).toBeVisible();
-  else expect(screen.getByRole("alert")).toHaveTextContent("Couldn’t update the brief");
 });
 
 describe("Library Ask startup selection", () => {

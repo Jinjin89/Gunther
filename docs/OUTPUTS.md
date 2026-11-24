@@ -45,6 +45,8 @@ Saving seals content and provenance as an immutable version, with a lineage head
 
 The reader and backup verification use the same seal rules. A broken seal or malformed saved outline reports an integrity conflict (HTTP 409). Version edits start from the current head. Open a card in the middle to read the output, see its folded change history and send a Refine message. In older conversations that built several outputs, the change history marks turns that saved a different output. Refine targets that output and uses its own stored scope. When the library ticks differ, the scope bar offers an explicit update for future refinements. The output actions include Versions, Outline where available, Edit, Check again, Style for decks, and Export. Leaving an unsaved Edit asks for confirmation.
 
+The Inspector's Evidence tab follows the open output version and shows its saved scope and checking status. Citations are grouped by source in order of first use; numbered chips open passages and the arrows step through all citations in reading order. Reports and decks with more than twelve citations and at least two sections or slides offer All and This section, following the section or slide in view. Opening an output updates Evidence without switching away from Studio.
+
 [Action gates](../apps/backend/gunther/artifact_actions.py) · [Workspace](../apps/backend/gunther/artifact_workspace.py) · [Version commit](../apps/backend/gunther/artifact_versions.py) · [Verified reads](../apps/backend/gunther/artifact_read.py)
 
 ## Study a card set

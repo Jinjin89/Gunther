@@ -10,3 +10,10 @@
 .evidence-card small { color: var(--gx-faint); font-size: var(--gx-text-xs); }
 .evidence-card-quote { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: var(--gx-muted); line-height: 1.45; }
 .evidence-earlier { border-top: 1px solid var(--gx-line); padding-top: 10px; }
+.evidence-brief { margin-top: 8px; }
+.evidence-brief .brief-section { margin: 8px 0 0; }
+.evidence-filter, .evidence-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.evidence-filter button, .evidence-chips button { border: 1px solid var(--gx-line); border-radius: var(--gx-radius-xs); background: transparent; color: var(--gx-ink); font: inherit; cursor: pointer; padding: 3px 6px; }
+.evidence-filter button[aria-pressed="true"] { background: var(--gx-hover); }
+.evidence-source-group { cursor: default; }
+.evidence-trace { flex: 1; min-height: 0; overflow: auto; padding: 14px; }

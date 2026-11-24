@@ -1,8 +1,6 @@
 import { persistentStorage } from "../persistentStorage";
 import type {
   AskRetryOptions,
-  ConversationBrief,
-  ConversationBriefInput,
   ConversationCitation,
   ConversationContext,
   KnowledgeSession,
@@ -29,7 +27,6 @@ import {
   X,
 } from "lucide-react";
 import { useAutosize } from "../services/useAutosize";
-import { BriefPanel } from "./ConversationBrief";
 import { SkillChip, useAskSkills, useSkillMenu, type SkillBudget } from "../components/search/skills";
 import { withoutTrigger } from "../components/search/TriggerMenu";
 import { InterruptedNote, isInterrupted } from "./interrupted";
@@ -39,8 +36,6 @@ import { useEscape, withShortcut } from "../shortcuts/shortcuts";
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
 import type { KnowledgeBase } from "../atlas";
 import { ServiceUnavailableError, knowledgeApi } from "../api";
-import { AnswerTrace } from "../developer/AnswerTrace";
-import { useTraces } from "../developer/useTraces";
 import { lastAnswerChoice, MODELS_CHANGED_EVENT, readAnswerStyle, usableChoice, useDeviceChoice, useModelMenu, useWebSearch, type AskChoice } from "../models/askModel";
 import { SpeakerButton } from "../speech/SpeakerButton";
 import { readAloud } from "../speech/readAloud";
@@ -49,9 +44,9 @@ import { useAnswerRun } from "./useAnswerRun";
 import { KeyResultsStatus } from "../keyResults/KeyResultsStatus";
 import { ModelPicker } from "../models/ModelPicker";
 import { BrandMark } from "../design/BrandMark";
-import { createPortal } from "react-dom";
 import { PopMenu } from "../contents/SectionMenu";
 import { CitationDetails } from "../components/evidence/CitationButton";
+import { isWebCitation } from "../components/evidence/citationKind";
 import { LibraryWelcome } from "./LibraryWelcome";
 import type { UseLibraryChats } from "./useLibraryChats";
 import "../session.css";
@@ -69,9 +64,11 @@ interface SessionWorkspaceProps {
   onFocusSources?: () => void;
   chatActions?: Ref<LibraryChatActions>;
   onNotify: (message: string) => void;
-  onCite: (citation: ConversationCitation | null, index?: number) => void;
   onInspectSources: (message: SessionMessage) => void;
   onInspectCitation: (message: SessionMessage, index: number) => void;
+  onOpenTrace?: ((message: SessionMessage) => void) | undefined;
+  traceEnabled?: boolean;
+  onOnlineStatus?: ((online: boolean) => void) | undefined;
   onWebStatus?: ((enabled: boolean) => void) | undefined;
 }
 
@@ -127,7 +124,7 @@ export function ConversationMessage({ message, libraryId, visible, retryDisabled
   message.citations.forEach((citation) => {
     const key = citation.sourceId || citation.url || citation.id;
     sources.add(key);
-    if (citation.kind === "web") webSources.add(key);
+    if (isWebCitation(citation)) webSources.add(key);
   });
   return (
     <article className={`conversation-message role-${message.role} ${selected ? "is-selected" : ""} ${isInterrupted(message) ? "is-interrupted" : ""}`} onClick={isAssistant ? onSelect : undefined}>
@@ -264,7 +261,7 @@ const startupReads = Object.keys(readLabels) as StartupRead[];
 // The current session supplies the durable destination for a send.
 const sendReads = ["models", "settings"] as const;
 
-export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty = false, visible = true, onFocusSources, chatActions, onNotify, onCite, onInspectSources, onInspectCitation, onWebStatus }: SessionWorkspaceProps) {
+export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty = false, visible = true, onFocusSources, chatActions, onNotify, onInspectSources, onInspectCitation, onOpenTrace, traceEnabled = false, onOnlineStatus, onWebStatus }: SessionWorkspaceProps) {
   const { activeId, activeSession, selectedMessageId, setSelectedMessageId } = chats;
   const [draft, setDraft] = useState("");
   // The skill chosen with `/`; it applies to the next message only.
@@ -282,9 +279,7 @@ export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty
   const ready = activeSession !== null && activeSession.id === activeId
     && !chats.loading && !chats.readError && sendReads.every(readReady);
   const [error, setError] = useState<string | null>(null);
-  const traces = useTraces();
-  const [trace, setTrace] = useState<{ sessionId: string; messageId: string } | null>(null);
-  const [briefBusy, setBriefBusy] = useState<string | null>(null);
+  useEffect(() => { onOnlineStatus?.(online); }, [online, onOnlineStatus]);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const scrollPane = useRef<HTMLDivElement>(null);
@@ -319,7 +314,7 @@ export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty
     onSaved(id, turn) {
       if (!turn) return;
       chats.saveTurn(turn);
-      void refreshBrief(id);
+      void chats.refreshBrief(id);
     },
     onFailure({ question, fresh, readError, stopped, message }) {
       chats.reportReadError(readError);
@@ -390,7 +385,6 @@ export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty
   useEffect(() => {
     followTail.current = true;
     setRenameOpen(false);
-    setTrace(null);
   }, [activeId]);
   useEffect(() => {
     if (!chats.newSessionId) return;
@@ -414,32 +408,6 @@ export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty
 
   const archiveSession = chats.archiveSession;
   const restoreSession = chats.restoreSession;
-
-  const keepBrief = (sessionId: string, brief: ConversationBrief) => {
-    chats.setBrief(sessionId, () => brief);
-  };
-
-  /** Ask the service to fold the last answer into the brief, without waiting for it: the panel says "Updating…" meanwhile. */
-  const refreshBrief = async (sessionId: string) => {
-    setBriefBusy(sessionId);
-    try {
-      keepBrief(sessionId, await knowledgeApi.refreshBrief(sessionId));
-    } catch (reason) {
-      chats.setBrief(sessionId, (brief) => ({ goal: "", constraints: [], settled: [], open: [], edited: [], ...brief, error: reason instanceof Error ? reason.message : "The brief could not be updated" }));
-    } finally {
-      setBriefBusy((current) => current === sessionId ? null : current);
-    }
-  };
-
-  const saveBrief = async (brief: ConversationBriefInput) => {
-    if (!activeSession) return;
-    const sessionId = activeSession.id;
-    try {
-      keepBrief(sessionId, await knowledgeApi.editBrief(sessionId, brief));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The brief could not be saved");
-    }
-  };
 
   const canAsk = ready && !activeSession?.archived && !sending && !sourceScopeEmpty;
   const send = async (again?: string, retry?: AskRetryOptions) => {
@@ -512,10 +480,7 @@ export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty
     }
   };
 
-  useEscape(() => {
-    if (trace) setTrace(null);
-    else setRenameOpen(false);
-  }, Boolean(trace || renameOpen));
+  useEscape(() => setRenameOpen(false), renameOpen);
 
   const exportSession = async () => {
     if (!activeSession) return;
@@ -544,7 +509,6 @@ export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty
     onNotify("Session exported with its citation trail.");
   };
 
-  const selectedMessage = activeSession?.messages.find((message) => message.id === selectedMessageId) ?? null;
   const currentChat = activeSession?.id === activeId ? activeSession : null;
 
   return (
@@ -560,15 +524,6 @@ export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty
             <span><i className={online ? "is-online" : "is-offline"} />{!online ? "Knowledge service unavailable" : activeSession?.archived ? "Archived session · read only" : activeSession ? "Saved to local knowledge service" : ""}{activeSession?.parentSessionId && <><b>·</b><GitBranch size={10} />Branch lineage preserved</>}</span>
           </div>
           <div className="conversation-actions">
-            {activeSession && <details className="ask-brief" onKeyDown={(event) => { if (event.key === "Escape" && event.currentTarget.open) { event.stopPropagation(); event.currentTarget.open = false; } }}>
-              <summary className="gx-btn gx-btn-quiet gx-btn-sm">Brief</summary>
-              <div className="ask-brief-panel">
-                <BriefPanel brief={activeSession.brief} updating={briefBusy === activeId} readOnly={!online || activeSession.archived}
-                  hasMessages={activeSession.messages.length > 0} citations={selectedMessage?.citations ?? []}
-                  onSave={(brief) => void saveBrief(brief)} onRetry={() => void refreshBrief(activeSession.id)} onOpenCitation={onCite} />
-              </div>
-            </details>}
-
             <PopMenu label="Chat actions" triggerLabel="Chat actions" triggerClass="gx-icon-button" trigger={<MoreHorizontal size={16} />} items={[
               { label: "New chat", icon: Plus, disabled: !online || loading, onSelect: () => void chats.createSession() },
               { label: "Rename", icon: SquarePen, disabled: !online || !currentChat || currentChat.archived, onSelect: () => {
@@ -608,18 +563,12 @@ export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty
             branching={branchingMessageId === message.id} onSelect={() => setSelectedMessageId(message.id)}
             onSources={() => onInspectSources(message)}
             onCopy={() => void copyMessage(message)} onBranch={() => void branchFromMessage(message)}
-            onTrace={traces.on ? () => setTrace({ sessionId: activeSession.id, messageId: message.id }) : undefined} />)}
+            onTrace={traceEnabled && onOpenTrace ? () => onOpenTrace(message) : undefined} />)}
           {sending && asking && <article className="conversation-message role-user"><div className="message-author"><span className="user-mark"><UserRound size={13} /></span><span>You</span></div><div className="message-body"><MessageContent content={asking} /></div></article>}
           {sending && (live ? <LiveAnswer state={live} /> : <div className="thinking-row"><span className="assistant-mark"><BrandMark size={14} busy /></span><span><i /><i /><i /></span><small>Working out what to look up…</small></div>)}
         </div>
         <Composer picker={<ModelPicker menu={modelMenu} choice={askChoice} onChange={chooseModel} disabled={sending || Boolean(activeSession?.archived)} />} web={{ available: webSearch.available, enabled: webSearch.enabled, onChange: webSearch.setEnabled }} value={draft} sending={sending} sourceCount={sourceIds.length} sourceScopeEmpty={sourceScopeEmpty} readOnly={Boolean(activeSession?.archived)} ready={ready} allowDraft={activeSession !== null} offline={!online} skill={skill} onSkillChange={setSkill} budget={budget} onBudgetChange={setBudget} stopLabel={stopLabel} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={onFocusSources} />
       </section>
-      {trace && visible && createPortal(<div className="ask-trace-overlay" role="dialog" aria-modal="true" aria-label="Trace" onClick={() => setTrace(null)}>
-        <aside className="ask-trace-sheet" onClick={(event) => event.stopPropagation()}>
-          <header><strong>Trace</strong><button type="button" className="gx-icon-button" autoFocus aria-label="Close trace" onClick={() => setTrace(null)}><X size={16} /></button></header>
-          <AnswerTrace {...trace} onCopy={(label, value) => void navigator.clipboard.writeText(value).then(() => onNotify(`${label} copied.`), () => onNotify(`${label} could not be copied.`))} />
-        </aside>
-      </div>, document.body)}
     </div>
   );
 }

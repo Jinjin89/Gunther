@@ -785,7 +785,7 @@ async function run() {
     await waitForEvaluation(cdp, "document.querySelector('.composer [data-chip=model]')?.textContent.includes('A model with a long display name')", "long model menu fixture");
     // Chat keeps All sources and the two action buttons usable with Studio collapsed.
     await resizeViewport(900, 640);
-    const studioRailAt900 = `window.innerWidth === 900 && document.querySelector('button[aria-label="Expand Studio"]') !== null`;
+    const studioRailAt900 = `window.innerWidth === 900 && document.querySelector('button[aria-label="Expand Studio"]')?.getClientRects().length > 0`;
     await waitForEvaluation(cdp, studioRailAt900, "narrow Ask window with a Studio rail");
     const composerLayout = await cdp.evaluate(`(() => {
       const composer = document.querySelector('.composer').getBoundingClientRect();
@@ -899,6 +899,18 @@ async function run() {
     );
     if (!await cdp.evaluate(clickExpression("button", "All 1 source"))) {
       throw new SmokeFailure("The evidence list could not be reopened");
+    }
+    await waitForEvaluation(cdp, `document.querySelector('[role="tabpanel"][aria-label="Evidence"] .evidence-brief summary')?.getClientRects().length > 0`, "Brief in the Evidence list");
+    if (!await cdp.evaluate(clickExpression('[role="tabpanel"][aria-label="Evidence"] summary', "Brief"))) {
+      throw new SmokeFailure("The Brief could not be opened inside Evidence");
+    }
+    await waitForEvaluation(cdp, `document.querySelector('[role="tabpanel"][aria-label="Evidence"] .evidence-brief')?.open === true
+      && !document.querySelector('.conversation-header details')`, "Brief in Evidence");
+    if (await cdp.evaluate(clickExpression('.message-actions button', "Trace"))) {
+      await waitForEvaluation(cdp, `document.querySelector('[role="tabpanel"][aria-label="Evidence"] .evidence-trace') !== null`, "Trace in Evidence");
+      if (!await cdp.evaluate(clickExpression('[role="tabpanel"][aria-label="Evidence"] button', "← Back to evidence"))) {
+        throw new SmokeFailure("Trace could not return to Evidence");
+      }
     }
     await waitForEvaluation(
       cdp,

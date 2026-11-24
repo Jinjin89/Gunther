@@ -9,6 +9,10 @@ const PART_LABEL: Record<Part, string> = { goal: "Goal", constraints: "Constrain
 /** What the page sends back: the four parts, nothing the user cannot edit. */
 const inputOf = (brief: ConversationBrief): ConversationBriefInput => ({ goal: brief.goal, constraints: brief.constraints, settled: brief.settled, open: brief.open });
 
+export function hasBriefToShow(brief: ConversationBrief | undefined, updating: boolean, hasMessages: boolean): boolean {
+  return Boolean(updating || hasMessages || brief?.error || brief?.goal || brief?.constraints.length || brief?.settled.length || brief?.open.length);
+}
+
 /** One line: click to edit, Enter saves, Escape or leaving the field cancels. */
 export function Line({ text, label, readOnly, onSave, onRemove, children }: { text: string; label: string; readOnly: boolean; onSave: (text: string) => void; onRemove: () => void; children?: React.ReactNode }) {
   const [editing, setEditing] = useState(false);
@@ -18,7 +22,7 @@ export function Line({ text, label, readOnly, onSave, onRemove, children }: { te
       onChange={(event) => setValue(event.target.value)}
       onBlur={() => setEditing(false)}
       onKeyDown={(event) => {
-        if (event.key === "Escape") setEditing(false);
+        if (event.key === "Escape") { event.stopPropagation(); setEditing(false); }
         if (event.key !== "Enter") return;
         event.preventDefault();
         const next = value.trim();
@@ -49,8 +53,7 @@ export function BriefPanel({ brief, updating, readOnly, hasMessages, citations, 
   const [part, setPart] = useState<Part>("constraints");
   const [adding, setAdding] = useState("");
   const current: ConversationBrief = brief ?? { goal: "", constraints: [], settled: [], open: [], edited: [], error: null };
-  const filled = Boolean(current.goal || current.constraints.length || current.settled.length || current.open.length);
-  if (!filled && !updating && !current.error && !hasMessages) return null;
+  if (!hasBriefToShow(brief, updating, hasMessages)) return null;
   const save = (change: Partial<ConversationBriefInput>) => onSave({ ...inputOf(current), ...change });
   const replace = <T,>(items: T[], at: number, next: T | null) => (next === null ? items.filter((_, index) => index !== at) : items.map((item, index) => (index === at ? next : item)));
   const add = () => {

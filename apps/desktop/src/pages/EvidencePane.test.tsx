@@ -25,7 +25,7 @@ const selected: SessionMessage = { ...answer("selected", [paper, web]), context:
 const session: KnowledgeSession = { id: "chat", knowledgeBaseId: "library", title: "Chat", summary: "", focusChapterId: null,
   selectedSourceIds: [], pinned: false, archived: false, parentSessionId: null, branchedFromMessageId: null,
   messageCount: 2, createdAt: at, updatedAt: at, messages: [previous, selected] };
-const handlers = () => ({ onOpen: vi.fn(), onStep: vi.fn(), onBack: vi.fn(), onOpenSource: vi.fn(), onOriginalPdfChange: vi.fn() });
+const handlers = () => ({ onOpen: vi.fn(), onStep: vi.fn(), onBack: vi.fn(), onOpenSource: vi.fn(), onOriginalPdfChange: vi.fn(), onSourceCount: vi.fn() });
 const props = () => ({ session, selected, chatVisible: true, sources: [source], selectedCount: 1, allSelected: true,
   webEnabled: false, detail: null as EvidenceTarget | null, ...handlers() });
 
@@ -38,6 +38,21 @@ describe("EvidencePane", () => {
     rerender(<EvidencePane {...values} selected={null} allSelected={false} selectedCount={0} webEnabled />);
     expect(screen.getByText("0 of 1 selected")).toBeVisible();
     expect(screen.getByText("Web on")).toBeVisible();
+  });
+
+  it("only offers Brief when there is content, an update, an error, or messages", async () => {
+    const user = userEvent.setup();
+    const values = props();
+    const empty = { ...session, messages: [], messageCount: 0,
+      brief: { goal: "", constraints: [], settled: [], open: [], edited: [], error: null } };
+    const brief = { updating: false, readOnly: false, save: vi.fn(), retry: vi.fn() };
+    const { rerender } = render(<EvidencePane {...values} session={empty} selected={null} brief={brief} />);
+    expect(screen.queryByText("Brief", { selector: "summary" })).toBeNull();
+    rerender(<EvidencePane {...values} session={empty} selected={null} brief={{ ...brief, updating: true }} />);
+    await user.click(screen.getByText("Brief", { selector: "summary" }));
+    expect(screen.getByText("Updating…")).toBeVisible();
+    rerender(<EvidencePane {...values} session={{ ...empty, brief: { ...empty.brief, goal: "A saved goal" } }} selected={null} brief={brief} />);
+    expect(screen.getByText("A saved goal")).toBeVisible();
   });
 
   it("shows saved method and citations in order, with earlier sources folded", async () => {

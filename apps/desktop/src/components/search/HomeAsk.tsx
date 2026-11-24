@@ -6,6 +6,7 @@ import { SpeakerButton } from "../../speech/SpeakerButton";
 import { AgentSteps, AnswerBody, LiveAnswer, ResearchPlan, citationNumbers, usedSkill } from "../../pages/AnswerBody";
 import { EvidencePanel } from "../evidence/EvidencePanel";
 import { CitationDetails } from "../evidence/CitationButton";
+import { isWebCitation } from "../evidence/citationKind";
 import type { LiveAnswerState } from "../../pages/liveAnswer";
 import type { ItemRef } from "../../items/itemRef";
 import { useAutosize } from "../../services/useAutosize";
@@ -51,7 +52,7 @@ function Sources({ citations, onOpen }: { citations: ConversationCitation[]; onO
     {citations.map((citation, index) => <li key={citation.id}>
       <i>{index + 1}</i>
       <button type="button" onClick={() => onOpen(citation, index)} title={citation.quote} aria-label={`Show evidence ${index + 1}: ${citation.sourceTitle}`}>
-        {citation.kind === "web" && <Globe2 size={12} />}<span>{citation.sourceTitle}</span><small>{citation.locator}</small>
+        {isWebCitation(citation) && <Globe2 size={12} />}<span>{citation.sourceTitle}</span><small>{citation.locator}</small>
       </button>
     </li>)}
   </ol>;
