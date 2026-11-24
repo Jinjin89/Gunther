@@ -45,6 +45,8 @@
 .message-spacer { height: 7px; display: block; }
 .message-footer { min-height: 30px; margin: 15px 0 0 30px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
 .message-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.message-sources-button { padding: 4px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--gx-muted); font: inherit; font-size: var(--gx-text-xs); cursor: pointer; }
+.message-sources-button:hover, .message-sources-button:focus-visible { background: var(--gx-hover); color: var(--gx-ink); }
 .copy-answer, .branch-answer { height: 29px; padding: 0 6px; display: flex; align-items: center; gap: 4px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--atlas-faint) !important; font-size: calc(12px * var(--gx-fs, 1)); }
 .copy-answer:hover, .branch-answer:hover:not(:disabled) { border-color: var(--atlas-line); background: var(--atlas-paper-soft); color: var(--atlas-green) !important; }
 .branch-answer:disabled { opacity: .55; }

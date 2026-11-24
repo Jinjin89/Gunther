@@ -44,7 +44,7 @@ import { useTraces } from "../developer/useTraces";
 import { lastAnswerChoice, MODELS_CHANGED_EVENT, readAnswerStyle, usableChoice, useDeviceChoice, useModelMenu, useWebSearch, type AskChoice } from "../models/askModel";
 import { SpeakerButton } from "../speech/SpeakerButton";
 import { readAloud } from "../speech/readAloud";
-import { AgentSteps, AnswerBody, LiveAnswer, ResearchPlan, citationNumbers, usedSkill } from "./AnswerBody";
+import { AgentSteps, AnswerBody, LiveAnswer, ResearchPlan, citationNumbers, noSourcesNeeded, usedSkill } from "./AnswerBody";
 import { useAnswerRun } from "./useAnswerRun";
 import { KeyResultsStatus } from "../keyResults/KeyResultsStatus";
 import { ModelPicker } from "../models/ModelPicker";
@@ -70,6 +70,9 @@ interface SessionWorkspaceProps {
   chatActions?: Ref<LibraryChatActions>;
   onNotify: (message: string) => void;
   onCite: (citation: ConversationCitation | null, index?: number) => void;
+  onInspectSources: (message: SessionMessage) => void;
+  onInspectCitation: (message: SessionMessage, index: number) => void;
+  onWebStatus?: ((enabled: boolean) => void) | undefined;
 }
 
 function renderInline(value: string, onCitation?: () => void) {
@@ -78,14 +81,6 @@ function renderInline(value: string, onCitation?: () => void) {
     if (/^\[\d+\]$/.test(part)) return <sup key={index}>{onCitation ? <button onClick={(event) => { event.stopPropagation(); onCitation(); }} aria-label={`Inspect citation ${part.slice(1, -1)}`}>{part}</button> : part}</sup>;
     return <span key={index}>{part}</span>;
   });
-}
-
-/** A reply that searched nothing and cited nothing needed none: small talk, or a request about an earlier answer. */
-function noSourcesNeeded(context: ConversationContext): boolean {
-  // Research asking the reader something first has searched nothing yet.
-  if (context.research?.state === "asking") return true;
-  if (context.intent) return context.intent === "chat" || context.intent === "followup" || context.intent === "clarify";
-  return !(context.steps?.length);
 }
 
 function MessageContent({ content, onCitation }: { content: string; onCitation?: () => void }) {
@@ -108,7 +103,7 @@ function AnswerModel({ context }: { context: ConversationContext }) {
 }
 
 export function ConversationMessage({ message, libraryId, visible, retryDisabled, onRetry, onEdit, onCite,
-  selected, branching, onSelect, onCopy, onBranch, onTrace }: {
+  selected, branching, onSelect, onSources, onCopy, onBranch, onTrace }: {
   message: SessionMessage;
   libraryId?: string;
   visible?: boolean;
@@ -119,6 +114,7 @@ export function ConversationMessage({ message, libraryId, visible, retryDisabled
   selected: boolean;
   branching: boolean;
   onSelect: () => void;
+  onSources?: (() => void) | undefined;
   onCopy: () => void;
   onBranch: () => void;
   onTrace?: (() => void) | undefined;
@@ -126,10 +122,12 @@ export function ConversationMessage({ message, libraryId, visible, retryDisabled
   const isAssistant = message.role === "assistant";
   // Small talk and follow-ups on the conversation itself need no sources.
   const conversational = noSourcesNeeded(message.context);
-  const sources = new Map<string, number>();
-  message.citations.forEach((citation, index) => {
+  const sources = new Set<string>();
+  const webSources = new Set<string>();
+  message.citations.forEach((citation) => {
     const key = citation.sourceId || citation.url || citation.id;
-    if (!sources.has(key)) sources.set(key, index);
+    sources.add(key);
+    if (citation.kind === "web") webSources.add(key);
   });
   return (
     <article className={`conversation-message role-${message.role} ${selected ? "is-selected" : ""} ${isInterrupted(message) ? "is-interrupted" : ""}`} onClick={isAssistant ? onSelect : undefined}>
@@ -143,13 +141,10 @@ export function ConversationMessage({ message, libraryId, visible, retryDisabled
       {isAssistant && message.context.modelError && <p className="message-model-error" role="note"><CircleAlert size={13} /><span>{message.context.modelError}{message.citations.length > 0 && " The quotes stand in for its answer."}</span></p>}
       {isAssistant && message.context.reasoning && <details className="message-thinking" onClick={(event) => event.stopPropagation()}><summary><ChevronRight size={12} />Thinking</summary><pre>{message.context.reasoning}</pre></details>}
       {isAssistant && <footer className="message-footer">
-        <div className="message-actions">{sources.size > 0 ? <details className="message-sources" onClick={(event) => event.stopPropagation()}>
-          <summary>{sources.size} {sources.size === 1 ? "source" : "sources"}</summary>
-          <ul>{[...sources.values()].map((index) => {
-            const citation = message.citations[index]!;
-            return <li key={citation.id}><button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" data-opens-evidence onClick={() => { onSelect(); onCite(citation, index); }}>{citation.sourceTitle}</button></li>;
-          })}</ul>
-        </details> : conversational ? null : <span className="no-citation-state"><CircleAlert size={12} />Not from your sources</span>}
+        <div className="message-actions">{sources.size > 0 ? <button type="button" className="message-sources-button" data-opens-evidence onClick={(event) => {
+          event.stopPropagation(); onSelect(); onSources?.();
+        }}>{sources.size} {sources.size === 1 ? "source" : "sources"}{webSources.size > 0 ? ` · ${webSources.size} web` : ""}</button>
+          : conversational ? null : <span className="no-citation-state"><CircleAlert size={12} />Not from your sources</span>}
         {onTrace && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={(event) => { event.stopPropagation(); onTrace(); }}>Trace</button>}
         <button className="copy-answer" onClick={(event) => { event.stopPropagation(); onCopy(); }}><Copy size={12} />Copy</button>
         <SpeakerButton message={message} />
@@ -269,7 +264,7 @@ const startupReads = Object.keys(readLabels) as StartupRead[];
 // The current session supplies the durable destination for a send.
 const sendReads = ["models", "settings"] as const;
 
-export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty = false, visible = true, onFocusSources, chatActions, onNotify, onCite }: SessionWorkspaceProps) {
+export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty = false, visible = true, onFocusSources, chatActions, onNotify, onCite, onInspectSources, onInspectCitation, onWebStatus }: SessionWorkspaceProps) {
   const { activeId, activeSession, selectedMessageId, setSelectedMessageId } = chats;
   const [draft, setDraft] = useState("");
   // The skill chosen with `/`; it applies to the next message only.
@@ -300,6 +295,7 @@ export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty
   // else the model of its last answer, else this device's last choice, else the Ask default.
   const { menu: modelMenu, reload: reloadModelMenu } = useModelMenu({ autoLoad: false });
   const { reload: reloadWebSearch, ...webSearch } = useWebSearch({ autoLoad: false });
+  useEffect(() => { onWebStatus?.(webSearch.enabled); }, [onWebStatus, webSearch.enabled]);
   const [deviceChoice, setDeviceChoice] = useDeviceChoice();
   const [pickedChoices, setPickedChoices] = useState<Record<string, AskChoice>>({});
   const askChoice = usableChoice(
@@ -608,8 +604,9 @@ export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty
             message={message} libraryId={base.id} visible={visible}
             retryDisabled={!ready || sending || sourceScopeEmpty || Boolean(activeSession?.archived)}
             onRetry={() => void send(message.content, message.context.askFailure?.options)}
-            onEdit={() => setDraft(message.content)} onCite={onCite} selected={selectedMessageId === message.id}
+            onEdit={() => setDraft(message.content)} onCite={(_citation, index) => onInspectCitation(message, index)} selected={selectedMessageId === message.id}
             branching={branchingMessageId === message.id} onSelect={() => setSelectedMessageId(message.id)}
+            onSources={() => onInspectSources(message)}
             onCopy={() => void copyMessage(message)} onBranch={() => void branchFromMessage(message)}
             onTrace={traces.on ? () => setTrace({ sessionId: activeSession.id, messageId: message.id }) : undefined} />)}
           {sending && asking && <article className="conversation-message role-user"><div className="message-author"><span className="user-mark"><UserRound size={13} /></span><span>You</span></div><div className="message-body"><MessageContent content={asking} /></div></article>}

@@ -87,7 +87,7 @@ const sessionWithAnswer = (knowledgeBaseId: string): KnowledgeSession => ({
 function WorkspaceHarness({ base, inspect = false }: { base: ReturnType<typeof makeBase>; inspect?: boolean }) {
   const chats = useLibraryChats(base.id, () => {}, () => {});
   return <>
-    <SessionWorkspace base={base} chats={chats} onNotify={() => {}} onCite={() => {}} />
+    <SessionWorkspace base={base} chats={chats} onNotify={() => {}} onCite={() => {}} onInspectSources={() => {}} onInspectCitation={() => {}} />
     {inspect && <output data-testid="active-session">{JSON.stringify(chats.activeSession)}</output>}
   </>;
 }

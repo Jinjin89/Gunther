@@ -74,7 +74,7 @@ it("uses stored metadata and Contents for a library with a former sample ID", as
   expect(await screen.findByRole("heading", { name: "Autumn field trip" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Sources" })).toBeVisible();
-  expect(screen.getByRole("heading", { name: "Studio" })).toBeVisible();
+  expect(screen.getByRole("tab", { name: "Studio" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Expand Gunther sidebar" })).toBeVisible();
   expect(screen.getByText(savedLibrary.description)).toBeVisible();
   expect(knowledgeApi.contents).toHaveBeenCalledWith(savedLibrary.id);

@@ -26,6 +26,13 @@ export function citationNumbers(citations: unknown[]): number[] {
   return citations.map((_, index) => index + 1);
 }
 
+/** A conversational reply with no searches or citations did not need sources. */
+export function noSourcesNeeded(context: ConversationContext): boolean {
+  if (context.research?.state === "asking") return true;
+  if (context.intent) return context.intent === "chat" || context.intent === "followup" || context.intent === "clarify";
+  return !(context.steps?.length);
+}
+
 export { withoutMarks };
 
 /**

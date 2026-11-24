@@ -865,7 +865,7 @@ async function run() {
     try {
       await waitForEvaluation(
         cdp,
-        "document.querySelector('.conversation-message.role-assistant .message-sources summary') !== null && document.querySelector('.conversation-message.role-assistant .key-results-status') !== null",
+        "document.querySelector('.conversation-message.role-assistant .message-sources-button') !== null && document.querySelector('.conversation-message.role-assistant .key-results-status') !== null",
         "grounded answer with a key results status",
         20_000,
       );
@@ -885,17 +885,20 @@ async function run() {
         .catch((reason) => ({ requestError: String(reason) }));
       throw new SmokeFailure(`${error instanceof Error ? error.message : String(error)}; diagnostics=${JSON.stringify({ ...diagnostics, saved, activity })}`);
     }
-    if (!await cdp.evaluate(clickExpression(".message-sources summary", "1 source"))
-      || !await cdp.evaluate(clickExpression(".message-sources button[data-opens-evidence]", noteTitle))) {
+    if (!await cdp.evaluate(clickExpression(".message-sources-button", "1 source"))) {
+      throw new SmokeFailure("The answer's sources could not be opened");
+    }
+    await waitForEvaluation(cdp, `document.querySelector('[role="tabpanel"][aria-label="Evidence"] .evidence-card > strong')?.getClientRects().length > 0`, "answer sources in Inspector");
+    if (!await cdp.evaluate(clickExpression('[role="tabpanel"][aria-label="Evidence"] .evidence-card > strong', noteTitle))) {
       throw new SmokeFailure("The answer's source could not be opened");
     }
     await waitForEvaluation(
       cdp,
-      `document.querySelector('[aria-label="Evidence"] > header strong')?.textContent.trim() === ${JSON.stringify(noteTitle)}`,
+      `document.querySelector('[role="tabpanel"][aria-label="Evidence"] .gx-evidence-detail > header strong')?.textContent.trim() === ${JSON.stringify(noteTitle)}`,
       "answer source opens its evidence",
     );
-    if (!await cdp.evaluate(clickExpression("button", "Close evidence"))) {
-      throw new SmokeFailure("The evidence panel could not be closed");
+    if (!await cdp.evaluate(clickExpression("button", "All 1 source"))) {
+      throw new SmokeFailure("The evidence list could not be reopened");
     }
     await waitForEvaluation(
       cdp,
@@ -917,7 +920,7 @@ async function run() {
     }
     await waitForEvaluation(
       cdp,
-      `document.querySelector('.conversation-title > strong') !== null && document.querySelector('.message-sources summary') === null`,
+      `document.querySelector('.conversation-title > strong') !== null && document.querySelector('.message-sources-button') === null`,
       "new chat before reopening the saved chat",
     );
     if (!await cdp.evaluate(clickExpression('[aria-label="Chats"] button', "Search chats"))) {
@@ -947,7 +950,7 @@ async function run() {
     }
     await waitForEvaluation(
       cdp,
-      `document.querySelector('.message-sources summary') !== null`,
+      `document.querySelector('.message-sources-button') !== null`,
       "saved answer after reopening from Chats",
     );
 
@@ -970,7 +973,7 @@ async function run() {
     await waitForEvaluation(cdp, `${libraryChatOpen} && ${courseSelection(true)}`, "shared source selection persists after reopening the library");
     await waitForEvaluation(
       cdp,
-      "document.querySelector('.message-sources summary') !== null && document.querySelector('.message-actions .key-results-status')?.textContent.includes('Key results need an Analysis model')",
+      "document.querySelector('.message-sources-button') !== null && document.querySelector('.message-actions .key-results-status')?.textContent.includes('Key results need an Analysis model')",
       "saved answer and sources remain visible after the model is removed",
     );
     await waitForEvaluation(

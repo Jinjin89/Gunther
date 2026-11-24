@@ -1,0 +1,12 @@
+.evidence-overview { flex: 1; min-height: 0; overflow: auto; padding: 14px; color: var(--gx-muted); font-size: var(--gx-text-xs); }
+.evidence-overview h3 { margin: 0 0 8px; color: var(--gx-ink); font-size: var(--gx-text-sm); font-weight: 650; }
+.evidence-overview p { margin: 6px 0; line-height: 1.5; }
+.evidence-method, .evidence-cited { margin-bottom: 16px; }
+.evidence-method summary, .evidence-earlier summary { cursor: pointer; }
+.evidence-method .message-steps { margin: 8px 0; }
+.evidence-card { display: grid; gap: 4px; width: 100%; margin: 6px 0; padding: 10px; border: 1px solid var(--gx-line); border-radius: var(--gx-radius-sm); background: transparent; color: var(--gx-ink); font: inherit; text-align: left; cursor: pointer; }
+.evidence-card:hover, .evidence-card:focus-visible { background: var(--gx-hover); border-color: var(--gx-line-2); }
+.evidence-card-meta { display: flex; align-items: center; gap: 6px; }
+.evidence-card small { color: var(--gx-faint); font-size: var(--gx-text-xs); }
+.evidence-card-quote { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: var(--gx-muted); line-height: 1.45; }
+.evidence-earlier { border-top: 1px solid var(--gx-line); padding-top: 10px; }

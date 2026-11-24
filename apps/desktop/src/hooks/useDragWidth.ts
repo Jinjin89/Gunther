@@ -9,6 +9,8 @@ interface DragWidthOptions {
   max: () => number;
   /** Used until a width has been chosen, and on double-click. */
   fallback: number;
+  /** Temporarily widen the visible panel without overwriting its saved width. */
+  visibleMin?: number | undefined;
   /** Which side of the workspace the panel is docked to. */
   side?: "left" | "right";
   /** An element whose size changing (besides the window) changes how wide the panel may be. */
@@ -20,7 +22,7 @@ interface DragWidthOptions {
  * keys. Double-click resets it.
  * Spread `handle` on the edge element.
  */
-export function useDragWidth({ storageKey, min, max, fallback, side = "right", observe }: DragWidthOptions) {
+export function useDragWidth({ storageKey, min, max, fallback, visibleMin, side = "right", observe }: DragWidthOptions) {
   const clamp = useCallback((value: number) => Math.min(Math.max(value, min), Math.max(min, max())), [min, max]);
   const [width, setWidth] = useState(() => {
     const stored = Number(persistentStorage.getItem(storageKey));
@@ -43,7 +45,7 @@ export function useDragWidth({ storageKey, min, max, fallback, side = "right", o
       watcher?.disconnect();
     };
   }, []);
-  const shown = clamp(width);
+  const shown = clamp(Math.max(width, visibleMin ?? min));
   const direction = side === "left" ? 1 : -1;
   const commit = useCallback((next: number) => {
     const value = clamp(next);

@@ -1,10 +1,9 @@
-import type { ConversationCitation, LibraryContents, OutputActivityOpen, TrashItem } from "@gunther/contracts";
+import type { ConversationCitation, LibraryContents, OutputActivityOpen, SessionMessage, TrashItem } from "@gunther/contracts";
 import { ArrowLeft, Camera, FileText, Link2, Mic2, NotebookText, Plus } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { KnowledgeBase } from "../atlas";
 import type { Notify } from "../App";
 import { BulkImport } from "../components/BulkImport";
-import { EvidencePanel } from "../components/evidence/EvidencePanel";
 import { PopMenu } from "../contents/SectionMenu";
 import { SourceSummary } from "../contents/SourceSummary";
 import { SourceTree } from "../contents/SourceTree";
@@ -19,6 +18,8 @@ import { useEscape } from "../shortcuts/shortcuts";
 import { moveToTrash } from "../trash/trash";
 import { LibraryChatsSection } from "./LibraryChatsSection";
 import { LibraryColumn } from "./LibraryColumn";
+import { EvidencePane, type EvidenceTarget } from "./EvidencePane";
+import { LibraryInspector, type InspectorTab } from "./LibraryInspector";
 import { SessionWorkspace, type LibraryChatActions } from "./SessionWorkspace";
 import { useLibraryChats } from "./useLibraryChats";
 import "./libraryWorkspace.css";
@@ -49,11 +50,10 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
   onChatVisible?: (visible: boolean) => void;
 }) {
   const [contents, setContents] = useState<LibraryContents | null>(null);
-  const [evidence, setEvidence] = useState<{
-    citation: ConversationCitation;
-    index?: number | undefined;
-    passages?: ConversationCitation[];
-  } | null>(null);
+  const [inspector, setInspector] = useState<{ tab: InspectorTab; detail: EvidenceTarget | null }>({ tab: "studio", detail: null });
+  const [webEnabled, setWebEnabled] = useState(false);
+  const [originalPdf, setOriginalPdf] = useState(false);
+  const clearDetail = useCallback(() => setInspector((current) => current.detail ? { ...current, detail: null } : current), []);
   const [selection, setSelection] = useSourceSelection(base.id);
   const [middle, setMiddle] = useState<Middle>(() => {
     const id = persistentStorage.getItem(`gunther:open-source:${base.id}`);
@@ -76,7 +76,7 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
   const wideReader = readerKey !== null && readerKey === wideReaderKey;
   const onWideReader = useCallback((wide: boolean) => setWideReaderKey(wide ? readerKey : null), [readerKey]);
   const sourceColumn = useColumnCollapse(wideReader && screenWidth < 1_200 ? "reader" : screenWidth < 840 ? "narrow" : "open");
-  const studioColumn = useColumnCollapse(screenWidth < 1_080 ? "narrow" : "open");
+  const inspectorColumn = useColumnCollapse(screenWidth < 1_080 ? "narrow" : "open");
   const focusSources = () => {
     sourceColumn.setCollapsed(false);
     setSourcesOpen(true);
@@ -86,17 +86,14 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
     if (middle.kind === "output" && next.kind === "output" && outputKey(middle.target) === outputKey(next.target)) return true;
     if (!discardOutputEdit(dirty)) return false;
     setMiddle(next);
-    setEvidence(null);
+    clearDetail();
     return true;
-  }, [dirty, middle]);
+  }, [clearDetail, dirty, middle]);
   const openOutput = (target: OutputTarget) => choose({ kind: "output", target });
   const askFromReader = (question: string, submit: boolean) => {
     if (choose(chat)) chatActions.current?.ask(question, submit);
   };
   const openFullSource = (id: string) => onOpenSource(id, sources.map((source) => source.id));
-  const cite = useCallback((citation: ConversationCitation | null, index?: number) =>
-    setEvidence(citation ? { citation, index } : null), []);
-  const clearCitation = useCallback(() => cite(null), [cite]);
   const closeNarrowLibrary = useCallback(() => {
     if (screenWidth < 840) sourceColumn.setCollapsed(true);
   }, [screenWidth, sourceColumn.setCollapsed]);
@@ -105,7 +102,37 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
     closeNarrowLibrary();
     return true;
   }, [choose, closeNarrowLibrary]);
-  const chats = useLibraryChats(base.id, onNotify, clearCitation, returnToChat);
+  const chats = useLibraryChats(base.id, onNotify, clearDetail, returnToChat);
+  const contextKey = middle.kind === "chat" ? `chat:${chats.activeId ?? ""}:${chats.selectedMessageId ?? ""}`
+    : middle.kind === "source" ? `source:${middle.id}` : `output:${outputKey(middle.target)}`;
+  const selectedMessage = chats.activeSession?.id === chats.activeId
+    ? chats.activeSession.messages.find((message) => message.id === chats.selectedMessageId && message.role === "assistant") ?? null : null;
+  const selectTab = useCallback((tab: InspectorTab) => {
+    setInspector((current) => ({ ...current, tab }));
+    inspectorColumn.setCollapsed(false);
+  }, [inspectorColumn.setCollapsed]);
+  const closeInspector = useCallback(() => inspectorColumn.setCollapsed(true), [inspectorColumn.setCollapsed]);
+  const openEvidence = useCallback((citations: ConversationCitation[], index: number, key = contextKey, passageSelector = false, displayIndex?: number) => {
+    if (!citations[index]) return;
+    setInspector({ tab: "evidence", detail: { contextKey: key, citations, index, passageSelector, ...(displayIndex === undefined ? {} : { displayIndex }) } });
+    inspectorColumn.setCollapsed(false);
+  }, [contextKey, inspectorColumn.setCollapsed]);
+  const cite = useCallback((citation: ConversationCitation | null, index?: number) => {
+    if (citation) openEvidence([citation], 0, contextKey, false, index);
+    else clearDetail();
+  }, [clearDetail, contextKey, openEvidence]);
+  const inspectSources = (message: SessionMessage) => {
+    chats.setSelectedMessageId(message.id);
+    setInspector({ tab: "evidence", detail: null });
+    inspectorColumn.setCollapsed(false);
+  };
+  const inspectCitation = (message: SessionMessage, index: number) => {
+    chats.setSelectedMessageId(message.id);
+    openEvidence(message.citations, index, `chat:${message.sessionId}:${message.id}`);
+  };
+  useEffect(() => {
+    setInspector((current) => current.detail && current.detail.contextKey !== contextKey ? { ...current, detail: null } : current);
+  }, [contextKey]);
   const openChat = (id: string) => {
     if (returnToChat()) void chats.loadSession(id);
   };
@@ -159,16 +186,14 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
 
   const source = middle.kind === "source" ? sources.find((item) => item.id === middle.id) : undefined;
   return <div className="library-workspace" ref={workspace}>
-    <LibraryColumn column="sources" workspace={workspace} collapsed={sourceColumn.collapsed} slideOver={screenWidth < 840}
+    <LibraryColumn workspace={workspace} collapsed={sourceColumn.collapsed} slideOver={screenWidth < 840}
       onToggle={() => sourceColumn.setCollapsed(!sourceColumn.collapsed)}>
       <LibraryChatsSection baseId={base.id} chats={chats} onOpen={openChat} onCreate={createChat} />
       <SourceTree baseId={base.id} contents={contents} onContents={setContents} selection={selection} selectedIds={sourceIds}
         open={sourcesOpen} onOpenChange={setSourcesOpen} onScope={setSelection} activeSourceId={source?.id ?? null}
         onSource={(id) => { if (choose({ kind: "source", id })) closeNarrowLibrary(); }} onTrashed={onTrashed} />
       <KeyResultsGroup baseId={base.id} sourceIds={selection.mode === "selected" ? selection.sourceIds : undefined}
-        outputs={studio.artifacts} onNotify={onNotify} onInspect={(passages) => {
-          if (passages[0]) setEvidence({ citation: passages[0], passages });
-        }} />
+        outputs={studio.artifacts} onNotify={onNotify} onInspect={(passages) => openEvidence(passages, 0, contextKey, true)} />
       <footer className="contents-add">
           <PopMenu label="Add a source" align="start" triggerClass="gx-btn gx-btn-primary gx-btn-sm" trigger={<><Plus size={14} />Add source</>} items={[
             { label: "Note or pasted text", icon: NotebookText, onSelect: () => onAdd("note") },
@@ -185,7 +210,8 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
         <SessionWorkspace base={contents ? { ...base, sourceCount: sources.length } : base} visible={chatVisible}
           chats={chats}
           sourceIds={scope.sourceIds} sourceScopeEmpty={scopeEmpty} onFocusSources={focusSources}
-          chatActions={chatActions} onNotify={onNotify} onCite={cite} />
+          chatActions={chatActions} onNotify={onNotify} onCite={cite} onInspectSources={inspectSources}
+          onInspectCitation={inspectCitation} onWebStatus={setWebEnabled} />
       </div>
       {!chatVisible && <div className="library-middle-page">
         <div className="library-middle-bar"><button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => choose(chat)}><ArrowLeft size={14} />Back to chat</button></div>
@@ -198,12 +224,16 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
           onTrash={(item) => void trashOutput(item, true)} />}
       </div>}
     </section>
-    <LibraryColumn column="studio" workspace={workspace} collapsed={studioColumn.collapsed}
-      onToggle={() => studioColumn.setCollapsed(!studioColumn.collapsed)}>
-      <StudioColumn studio={studio} scope={scope} scopeEmpty={scopeEmpty} disabled={!workspaceId}
-        onOpen={openOutput} onTrash={(item) => void trashOutput(item)} />
-    </LibraryColumn>
-    {evidence && <EvidencePanel {...evidence} onClose={() => setEvidence(null)}
-      onOpenSource={(id) => { setEvidence(null); openFullSource(id); }} />}
+    <LibraryInspector workspace={workspace} screenWidth={screenWidth} collapsed={inspectorColumn.collapsed} onCollapse={closeInspector}
+      tab={inspector.tab} onTab={selectTab} evidenceCount={middle.kind === "chat" ? selectedMessage?.citations.length ?? 0 : 0}
+      running={studio.jobs.size > 0 || studio.activities.some((item) => item.state === "running" || item.state === "waiting")}
+      detailOpen={Boolean(inspector.detail)} onBack={clearDetail} originalPdf={originalPdf}
+      evidence={<EvidencePane session={chats.activeSession} selected={middle.kind === "chat" ? selectedMessage : null} chatVisible={chatVisible}
+        sources={sources} selectedCount={sourceIds.length} allSelected={selection.mode === "all"} webEnabled={webEnabled}
+        detail={inspector.detail} onOpen={(citations, index) => openEvidence(citations, index)}
+        onStep={(index) => setInspector((current) => current.detail ? { ...current, detail: { ...current.detail, index } } : current)}
+        onBack={clearDetail} onOpenSource={(id) => { clearDetail(); openFullSource(id); }} onOriginalPdfChange={setOriginalPdf} />}
+      studio={<StudioColumn studio={studio} scope={scope} scopeEmpty={scopeEmpty} disabled={!workspaceId}
+        onOpen={openOutput} onTrash={(item) => void trashOutput(item)} />} />
   </div>;
 }

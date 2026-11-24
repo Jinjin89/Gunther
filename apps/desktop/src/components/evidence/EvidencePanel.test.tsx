@@ -4,7 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { knowledgeApi } from "../../api";
-import { EvidencePanel, hostOf } from "./EvidencePanel";
+import { EvidenceDetail, hostOf } from "./EvidenceDetail";
+import { EvidencePanel } from "./EvidencePanel";
 import { highlightRenderer } from "./highlight";
 
 vi.mock("./PdfViewer", () => ({ default: ({ page, quote }: { page?: number; quote?: string }) => <div data-testid="pdf" data-page={page} data-quote={quote} /> }));
@@ -92,6 +93,28 @@ describe("EvidencePanel", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("only the quote is shown");
     expect(screen.getByText("Second block.")).toBeInTheDocument();
   });
+});
+
+it("shares the citation viewer with inline navigation", async () => {
+  const onBack = vi.fn();
+  const onNext = vi.fn();
+  render(<EvidenceDetail citation={web} index={0} onBack={onBack} position={0} total={2} onNext={onNext} />);
+  expect(screen.getByText("[1 / 2]")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Previous source" })).toBeDisabled();
+  await userEvent.click(screen.getByRole("button", { name: "Next source" }));
+  await userEvent.click(screen.getByRole("button", { name: "All 2 sources" }));
+  expect(onNext).toHaveBeenCalledOnce();
+  expect(onBack).toHaveBeenCalledOnce();
+});
+
+it("reports when an inline original PDF is visible", async () => {
+  vi.mocked(knowledgeApi.source).mockResolvedValue(source({ mediaType: "application/pdf", originalName: "paper.pdf" }));
+  const onOriginalPdfChange = vi.fn();
+  render(<EvidenceDetail citation={library} onOriginalPdfChange={onOriginalPdfChange} />);
+  await userEvent.click(await screen.findByRole("button", { name: /Original · p\. 3/ }));
+  expect(onOriginalPdfChange).toHaveBeenLastCalledWith(true);
+  await userEvent.click(screen.getByRole("button", { name: "Passage" }));
+  expect(onOriginalPdfChange).toHaveBeenLastCalledWith(false);
 });
 
 describe("helpers", () => {
