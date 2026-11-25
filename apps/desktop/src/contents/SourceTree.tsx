@@ -35,10 +35,12 @@ const readCollapsed = (baseId: string): Set<string> => {
   } catch { return new Set(); }
 };
 
-export function SourceTree({ baseId, contents, onContents, selection, selectedIds, onScope, activeSourceId, onSource, onTrashed, open, onOpenChange }: {
+export function SourceTree({ baseId, contents, onContents, loadFailed, onLoadFailedChange, selection, selectedIds, onScope, activeSourceId, onSource, onTrashed, open, onOpenChange }: {
   baseId: string;
   contents: Contents | null;
   onContents: (contents: Contents | null) => void;
+  loadFailed: boolean;
+  onLoadFailedChange: (failed: boolean) => void;
   selection: SourceSelection;
   selectedIds: string[];
   onScope: (selection: SourceSelection) => void;
@@ -49,7 +51,6 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
   onOpenChange: (open: boolean) => void;
 }) {
   const bodyId = useId();
-  const [unavailable, setUnavailable] = useState(false);
   const [error, setError] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(() => readCollapsed(baseId));
   const [filter, setFilter] = useState("");
@@ -86,13 +87,19 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
     }
     onScope({ mode: "selected", sourceIds: [...next] });
   };
+  const only = (ids: string[]) => onScope({ mode: "selected", sourceIds: [...new Set(ids)] });
 
-  const load = useCallback(async () => {
+  const readContents = useCallback(async () => {
     try {
       const next = await knowledgeApi.contents(baseId);
-      onContents(next); setUnavailable(false);
-    } catch { setUnavailable(true); }
-  }, [baseId, onContents]);
+      onLoadFailedChange(false);
+      return next;
+    } catch (reason) {
+      onLoadFailedChange(true);
+      throw reason;
+    }
+  }, [baseId, onLoadFailedChange]);
+  const load = useCallback(() => readContents().then(onContents, () => undefined), [onContents, readContents]);
 
   useEffect(() => {
     void load();
@@ -174,7 +181,7 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
     if (!now || !source || !title || source.title === title) return;
     await change({ ...now, sources: now.sources.map((item) => item.id === id ? { ...item, title } : item) }, async () => {
       await knowledgeApi.renameSource(id, title);
-      return knowledgeApi.contents(baseId);
+      return readContents();
     });
   };
   const cancelEdit = async () => {
@@ -301,7 +308,7 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
       {contents && selection.mode === "selected" && selected.size === 0 && <p id="empty-source-scope" className="contents-loading" role="status">Select at least one source</p>}
       </div>
       <div className="contents-scroll">
-      {!contents && <p className="contents-loading">{unavailable ? "Sources could not be loaded." : "Loading sources…"}</p>}
+      {!contents && <p className="contents-loading">{loadFailed ? "Sources could not be loaded." : "Loading sources…"}</p>}
       {contents?.sources.length === 0 && <p className="contents-loading">No sources yet.</p>}
       {contents && filtering && rows.length === 0 && <p className="contents-loading">No sources match “{filter.trim()}”.</p>}
       <DndContext sensors={sensors} collisionDetection={collide} onDragStart={onDragStart} onDragMove={markDrop} onDragOver={markDrop} onDragEnd={onDragEnd} onDragCancel={stopDrag}>
@@ -323,7 +330,7 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
               return <SourceRow key={row.key} row={row} dragDisabled={filtering} drop={mark}
                 current={activeSourceId === row.id} checked={selected.has(row.id)}
                 editing={editing?.kind === "source" && editing.id === row.id}
-                onSelect={() => onSource(row.id)} onCheck={(checked) => check([row.id], checked)}
+                onSelect={() => onSource(row.id)} onCheck={(checked) => check([row.id], checked)} onOnly={() => only([row.id])}
                 onRename={() => setEditing({ id: row.id, kind: "source", fresh: false })}
                 onSave={(title) => void renameSource(row.id, title)} onCancel={() => setEditing(null)}
                 onMove={() => setPicker({ mode: "move", moving: [{ kind: "source", id: row.id }] })}
@@ -338,7 +345,7 @@ export function SourceTree({ baseId, contents, onContents, selection, selectedId
               <SectionRow row={row} dragDisabled={filtering} drop={mark}
                 editing={editing?.kind === "section" && editing.id === row.id}
                 sourceCount={ids.length}
-                scope={{ checked, mixed: !checked && ids.some((id) => selected.has(id)), disabled: !ids.length, onCheck: (value) => check(ids, value) }}
+                scope={{ checked, mixed: !checked && ids.some((id) => selected.has(id)), disabled: !ids.length, onCheck: (value) => check(ids, value), onOnly: () => only(ids) }}
                 actions={sectionActions(node)}
                 onToggle={() => toggle(row.id)}
                 onSave={(title) => void saveSection(row.id, { title })}

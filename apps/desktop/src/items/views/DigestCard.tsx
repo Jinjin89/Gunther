@@ -33,7 +33,7 @@ function engineLabel(digest: SourceDigest): string {
 export function DigestCard({ sourceId, onWritten, onCite, onAsk }: {
   sourceId: string;
   onWritten?: () => void;
-  onCite?: (citation: DigestCitation, revisionId: string) => void;
+  onCite?: (digest: SourceDigest, citation: DigestCitation) => void;
   onAsk?: (question: string, submit: boolean) => void;
 }) {
   const [status, setStatus] = useState<SourceDigestState | null>(null);
@@ -141,7 +141,7 @@ export function DigestCard({ sourceId, onWritten, onCite, onAsk }: {
             <span>{point.text}</span>
             {onCite ? point.citations.map((citation) => <button key={citation.blockId} type="button"
               className="gx-digest-cite" aria-label={`Inspect citation ${citation.number}`} data-opens-evidence
-              onClick={() => onCite(citation, digest.revisionId)}>{citation.number}</button>)
+              onClick={() => onCite(digest, citation)}>{citation.number}</button>)
               : point.citations.length > 0 && <button
               type="button"
               className={`gx-digest-cite ${expanded ? "is-open" : ""}`}

@@ -56,19 +56,22 @@ export function TitleEditor({ value, label, onSave, onCancel }: { value: string;
     onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} />;
 }
 
-export function ScopeTick({ label, checked, mixed = false, disabled, onCheck }: {
-  label: string; checked: boolean; mixed?: boolean; disabled?: boolean; onCheck: (checked: boolean) => void;
+export function ScopeTick({ label, checked, mixed = false, disabled, onCheck, onOnly }: {
+  label: string; checked: boolean; mixed?: boolean; disabled?: boolean; onCheck: (checked: boolean) => void; onOnly?: () => void;
 }) {
   const box = useRef<HTMLInputElement>(null);
   useEffect(() => { if (box.current) box.current.indeterminate = mixed; }, [mixed]);
   return <input ref={box} type="checkbox" className="contents-check" aria-label={label}
     checked={checked} disabled={disabled} onClick={(event) => event.stopPropagation()}
-    onDoubleClick={(event) => event.stopPropagation()} onChange={(event) => onCheck(event.target.checked)} />;
+    onDoubleClick={(event) => event.stopPropagation()} onChange={(event) => {
+      if (onOnly && "altKey" in event.nativeEvent && event.nativeEvent.altKey) onOnly();
+      else onCheck(event.target.checked);
+    }} />;
 }
 
 /** A section heading with its own handle and actions. */
 export function SectionRow({ row, dragDisabled, drop, editing, sourceCount, scope, actions, onToggle, onSave, onCancel }: CommonProps & {
-  editing: boolean; sourceCount: number; scope: { checked: boolean; mixed: boolean; disabled: boolean; onCheck: (checked: boolean) => void };
+  editing: boolean; sourceCount: number; scope: { checked: boolean; mixed: boolean; disabled: boolean; onCheck: (checked: boolean) => void; onOnly: () => void };
   actions: SectionActions; onToggle: () => void; onSave: (title: string) => void; onCancel: () => void;
 }) {
   const { ref, handle, dragging } = useRowDnd(row, dragDisabled || editing);
@@ -95,7 +98,8 @@ export function SectionRow({ row, dragDisabled, drop, editing, sourceCount, scop
         {section.description && <span className="contents-note">{section.description}</span>}
       </span>}
     {!editing && (row.collapsed || level === 1) && <small className="contents-count" title={row.count}>{level === 1 ? sourceCount : row.count}</small>}
-    {!editing && <span className="contents-actions"><SectionMenu title={section.title} actions={actions} /></span>}
+    {!editing && <span className="contents-actions"><button type="button" className="contents-only" aria-label={`Only sources in ${section.title}`}
+      disabled={scope.disabled} onClick={scope.onOnly}>Only</button><SectionMenu title={section.title} actions={actions} /></span>}
   </div>;
 }
 
@@ -122,9 +126,9 @@ export function EmptyRow({ row, drop, onAddSources, onAddSubsection }: { row: Ro
   </div>;
 }
 
-export function SourceRow({ row, dragDisabled, drop, current, checked, editing, onSelect, onCheck, onRename, onSave, onCancel, onMove, onTakeOut, onTrash }: CommonProps & {
+export function SourceRow({ row, dragDisabled, drop, current, checked, editing, onSelect, onCheck, onOnly, onRename, onSave, onCancel, onMove, onTakeOut, onTrash }: CommonProps & {
   current: boolean; checked: boolean; editing: boolean;
-  onSelect: () => void; onCheck: (checked: boolean) => void;
+  onSelect: () => void; onCheck: (checked: boolean) => void; onOnly: () => void;
   onRename: () => void; onSave: (title: string) => void; onCancel: () => void; onMove: () => void; onTakeOut: () => void; onTrash: () => void;
 }) {
   const { ref, handle, dragging } = useRowDnd(row, dragDisabled || editing);
@@ -136,7 +140,7 @@ export function SourceRow({ row, dragDisabled, drop, current, checked, editing, 
     data-row={row.key}>
     <Guides depth={row.depth} />
     <button {...handle} type="button" className="contents-drag-handle" aria-label={`Drag ${source.title}`}><GripVertical size={14} /></button>
-    <ScopeTick label={`Select ${source.title}`} checked={checked} onCheck={onCheck} />
+    <ScopeTick label={`Select ${source.title}`} checked={checked} onCheck={onCheck} onOnly={onOnly} />
     {editing
       ? <span className="contents-source is-editing"><span className={`gx-kind-icon kind-${source.kind}`}><Icon size={13} /></span><TitleEditor value={source.title} label="Source name" onSave={onSave} onCancel={onCancel} /></span>
       : <button type="button" className="contents-source" data-focus={row.key} aria-current={current || undefined} onClick={onSelect} onKeyDown={(event) => { if (event.key === "F2") { event.preventDefault(); onRename(); } }}>
@@ -145,6 +149,7 @@ export function SourceRow({ row, dragDisabled, drop, current, checked, editing, 
         <span className={`contents-detail${source.processing === "failed" ? " is-failed" : ""}${source.processing === "reading" ? " is-reading" : ""}`}>{rowDetail(source)}</span>
       </button>}
     {!editing && <span className="contents-actions">
+      <button type="button" className="contents-only" aria-label={`Only ${source.title}`} onClick={onOnly}>Only</button>
       <SourceMenu title={source.title} placed={!row.loose} onRename={onRename} onMove={onMove} onTakeOut={onTakeOut} onTrash={onTrash} />
     </span>}
   </div>;

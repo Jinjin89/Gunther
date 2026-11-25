@@ -71,6 +71,7 @@ export function LibraryWelcome({ base, visible, canAsk, onAsk }: {
       <p>{base.question}</p>
       {base.description && <p>{base.description}</p>}
       <small>{sourceCount.toLocaleString()} {sourceCount === 1 ? "source" : "sources"}</small>
+      {sourceCount === 0 && <p>Add a source to start exploring this library.</p>}
       {overview?.state === "writing" && !problem && <small role="status">Writing library overview…</small>}
       {overview?.state === "needs_model" && <small>
         The library overview needs a model.{" "}

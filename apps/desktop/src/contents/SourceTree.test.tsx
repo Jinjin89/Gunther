@@ -33,10 +33,12 @@ const base: Contents = {
 const props = () => ({ baseId: "lib", onTrashed: vi.fn(), onSource: vi.fn() });
 function Tree({ baseId, onSource, onTrashed }: ReturnType<typeof props>) {
   const [contents, setContents] = useState<Contents | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [selection, onScope] = useSourceSelection(baseId);
   const [open, onOpenChange] = useState(true);
   const ids = selectedSources(selection, contents?.sources.map((item) => item.id) ?? []);
-  return <SourceTree baseId={baseId} onSource={onSource} onTrashed={onTrashed} contents={contents} onContents={setContents} selection={selection} selectedIds={ids} onScope={onScope}
+  return <SourceTree baseId={baseId} onSource={onSource} onTrashed={onTrashed} contents={contents} onContents={setContents}
+    loadFailed={loadFailed} onLoadFailedChange={setLoadFailed} selection={selection} selectedIds={ids} onScope={onScope}
     activeSourceId={null} open={open} onOpenChange={onOpenChange} />;
 }
 const show = async (contents: Contents = base, extra: Partial<ReturnType<typeof props>> = {}) => {
@@ -55,6 +57,36 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("Sources tree", () => {
+  it("isolates sources and sections with Only and Alt-click without collapsing them", async () => {
+    const user = userEvent.setup();
+    await show();
+    const tick = (name: string) => screen.getByRole("checkbox", { name: `Select ${name}` });
+    const onlyNote = screen.getByRole("button", { name: "Only My notes on week 3" });
+    onlyNote.focus();
+    expect(onlyNote).toHaveFocus();
+    await user.click(onlyNote);
+    expect(tick("My notes on week 3")).toBeChecked();
+    expect(tick("Lecture 1 recording")).not.toBeChecked();
+    await user.keyboard("{Alt>}");
+    await user.click(tick("Lecture 2 recording"));
+    await user.keyboard("{/Alt}");
+    expect(tick("Lecture 2 recording")).toBeChecked();
+    expect(tick("My notes on week 3")).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Only sources in Part A" }));
+    expect(tick("Course outline.pdf")).toBeChecked();
+    expect(tick("Lecture 1 recording")).toBeChecked();
+    expect(tick("Lecture 2 recording")).toBeChecked();
+    expect(tick("My notes on week 3")).not.toBeChecked();
+    await user.keyboard("{Alt>}");
+    await user.click(screen.getByRole("checkbox", { name: "Select sources in Lecture 1" }));
+    await user.keyboard("{/Alt}");
+    expect(tick("Lecture 1 recording")).toBeChecked();
+    expect(tick("week1-slides.pdf")).toBeChecked();
+    expect(tick("Course outline.pdf")).not.toBeChecked();
+    expect(tick("Lecture 2 recording")).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Collapse Lecture 1" })).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("refreshes duration estimates until audio measurement finishes", async () => {
     vi.useFakeTimers();
     try {
@@ -196,7 +228,7 @@ describe("Sources tree", () => {
     await user.click(scope);
     const row = within(rowOf("Lecture 2 recording"));
     expect(row.getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent)).toEqual([
-      "Drag Lecture 2 recording", expect.stringContaining("Lecture 2 recording"), "Actions for Lecture 2 recording",
+      "Drag Lecture 2 recording", expect.stringContaining("Lecture 2 recording"), "Only Lecture 2 recording", "Actions for Lecture 2 recording",
     ]);
     await user.click(screen.getByRole("button", { name: "Actions for Lecture 2 recording" }));
     await user.click(screen.getByRole("menuitem", { name: "Move to…" }));

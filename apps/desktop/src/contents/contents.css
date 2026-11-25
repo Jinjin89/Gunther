@@ -2,7 +2,7 @@
   display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; height: 30px; padding: 0 10px;
   border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-sm); background: var(--gx-surface); color: var(--gx-faint);
 }
-.contents-filter:focus-within { border-color: var(--gx-line-3); box-shadow: var(--gx-ring); }
+.contents-filter:focus-within { border-color: var(--gx-ink); }
 .contents-filter input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--gx-ink); font: inherit; font-size: var(--gx-text-sm); }
 .contents-filter button { display: grid; place-items: center; border: 0; background: transparent; color: var(--gx-faint); cursor: pointer; padding: 2px; }
 .contents-error {
@@ -18,7 +18,7 @@
   transition: background-color var(--gx-dur-fast) var(--gx-ease), color var(--gx-dur-fast) var(--gx-ease);
 }
 .contents-icon-btn:hover, .contents-icon-btn[aria-expanded="true"] { background: var(--gx-active); color: var(--gx-ink); }
-.contents-icon-btn:focus-visible { outline: 2px solid var(--gx-brand); outline-offset: 1px; }
+.contents-icon-btn:focus-visible { outline: 2px solid var(--gx-ink); outline-offset: 1px; }
 
 /* Rows */
 .contents-list { display: flex; flex-direction: column; padding-bottom: 8px; }
@@ -46,6 +46,9 @@
 
 .contents-actions { display: flex; align-items: center; gap: 1px; margin-left: 6px; flex: none; opacity: 0; transition: opacity var(--gx-dur-fast) var(--gx-ease); }
 .contents-row:hover .contents-actions, .contents-row.is-current .contents-actions, .contents-actions:focus-within, .contents-actions:has([aria-expanded="true"]) { opacity: 1; }
+.contents-only { border: 0; border-radius: var(--gx-radius-xs); padding: 3px 5px; background: transparent; color: var(--gx-muted); font: inherit; font-size: var(--gx-text-xs); cursor: pointer; }
+.contents-only:hover, .contents-only:focus-visible { background: var(--gx-hover); color: var(--gx-ink); }
+.contents-only:disabled { color: var(--gx-ghost); cursor: default; }
 
 /* Section headings */
 .contents-toggle { display: grid; place-items: center; flex: none; width: 20px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--gx-faint); cursor: pointer; border-radius: 5px; }
@@ -88,12 +91,12 @@
   color: var(--gx-ink); font: inherit; text-align: left; cursor: pointer; border-radius: 5px;
 }
 .contents-source:focus-visible { outline: 0; }
-.contents-row:has(.contents-source:focus-visible), .contents-row:has(.contents-main-btn:focus-visible) { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--gx-brand) 70%, transparent); }
+.contents-row:has(.contents-source:focus-visible), .contents-row:has(.contents-main-btn:focus-visible) { box-shadow: inset 0 0 0 1.5px var(--gx-ink); }
 .contents-source .gx-kind-icon { width: 22px; height: 22px; border-radius: 6px; }
 .contents-source strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--gx-text-md); font-weight: 450; }
 .contents-detail { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; color: var(--gx-faint); font-size: var(--gx-text-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .contents-detail.is-failed { color: var(--gx-danger); }
-.contents-detail.is-reading { color: var(--gx-warning); }
+.contents-detail.is-reading { color: var(--gx-muted); }
 @container (width < 290px) {
   .contents-detail:not(.is-reading):not(.is-failed) { display: none; }
 }
@@ -102,7 +105,7 @@
 .contents-title-input {
   flex: 1; min-width: 0; height: 26px; margin-left: 4px; padding: 0 7px; box-sizing: border-box;
   border: 1px solid var(--gx-line-3); border-radius: 6px; background: var(--gx-surface); color: var(--gx-ink);
-  font: inherit; font-size: var(--gx-text-md); font-weight: 500; outline: 0; box-shadow: var(--gx-ring); user-select: text;
+  font: inherit; font-size: var(--gx-text-md); font-weight: 500; outline: 2px solid var(--gx-ink); user-select: text;
 }
 .is-level-1 .contents-title-input { font-family: var(--gx-font-sans); font-size: calc(13px * var(--gx-fs, 1)); }
 .contents-source.is-editing { cursor: auto; }

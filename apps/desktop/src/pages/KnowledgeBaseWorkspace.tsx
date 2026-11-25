@@ -7,7 +7,7 @@ import { BulkImport } from "../components/BulkImport";
 import { PopMenu } from "../contents/SectionMenu";
 import { SourceSummary } from "../contents/SourceSummary";
 import { SourceTree } from "../contents/SourceTree";
-import { outputScope, selectedSources, useSourceSelection } from "../contents/sourceScope";
+import { allSources, outputScope, selectedSources, useSourceSelection } from "../contents/sourceScope";
 import { useTraces } from "../developer/useTraces";
 import { KeyResultsGroup } from "../keyResults/KeyResultsGroup";
 import { discardOutputEdit } from "../outputs/EditPane";
@@ -15,7 +15,7 @@ import { OpenOutput } from "../outputs/OpenOutput";
 import { StudioColumn } from "../outputs/StudioColumn";
 import { type OutputTarget, type OutputTrashTarget, useStudio } from "../outputs/useStudio";
 import { persistentStorage } from "../persistentStorage";
-import { useEscape } from "../shortcuts/shortcuts";
+import { useEscape, useShortcut } from "../shortcuts/shortcuts";
 import { moveToTrash } from "../trash/trash";
 import { LibraryChatsSection } from "./LibraryChatsSection";
 import { LibraryColumn } from "./LibraryColumn";
@@ -52,6 +52,7 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
   onChatVisible?: (visible: boolean) => void;
 }) {
   const [contents, setContents] = useState<LibraryContents | null>(null);
+  const [sourceLoadFailed, setSourceLoadFailed] = useState(false);
   const [inspector, setInspector] = useState<{ tab: InspectorTab; detail: EvidenceTarget | TraceTarget | null }>({ tab: "studio", detail: null });
   const [webEnabled, setWebEnabled] = useState(false);
   const [chatOnline, setChatOnline] = useState(true);
@@ -129,15 +130,23 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
     inspectorColumn.setCollapsed(false);
   }, [inspectorColumn.setCollapsed]);
   const closeInspector = useCallback(() => inspectorColumn.setCollapsed(true), [inspectorColumn.setCollapsed]);
-  const openEvidence = useCallback((citations: ConversationCitation[], index: number, key = contextKey, passageSelector = false, displayIndex?: number) => {
+  const stepEvidence = useCallback((index: number) => setInspector((current) => {
+    const detail = current.detail;
+    return detail && !("kind" in detail) && index >= 0 && index < detail.citations.length
+      ? { ...current, detail: { ...detail, index } } : current;
+  }), []);
+  const evidenceDetail = inspector.tab === "evidence" && !inspectorColumn.collapsed && inspector.detail && !("kind" in inspector.detail)
+    ? inspector.detail : null;
+  useShortcut("mod+\\", () => sourceColumn.setCollapsed(!sourceColumn.collapsed));
+  useShortcut("mod+.", () => inspectorColumn.setCollapsed(!inspectorColumn.collapsed));
+  useShortcut("mod+shift+e", () => selectTab(inspector.tab === "evidence" ? "studio" : "evidence"));
+  useShortcut("[", () => { if (evidenceDetail) stepEvidence(evidenceDetail.index - 1); }, { enabled: Boolean(evidenceDetail), allowInInputs: false });
+  useShortcut("]", () => { if (evidenceDetail) stepEvidence(evidenceDetail.index + 1); }, { enabled: Boolean(evidenceDetail), allowInInputs: false });
+  const openEvidence = useCallback((citations: ConversationCitation[], index: number, key = contextKey, passageSelector = false) => {
     if (!citations[index]) return;
-    setInspector({ tab: "evidence", detail: { contextKey: key, citations, index, passageSelector, ...(displayIndex === undefined ? {} : { displayIndex }) } });
+    setInspector({ tab: "evidence", detail: { contextKey: key, citations, index, passageSelector } });
     inspectorColumn.setCollapsed(false);
   }, [contextKey, inspectorColumn.setCollapsed]);
-  const cite = useCallback((citation: ConversationCitation | null, index?: number) => {
-    if (citation) openEvidence([citation], 0, contextKey, false, index);
-    else clearDetail();
-  }, [clearDetail, contextKey, openEvidence]);
   const inspectSources = (message: SessionMessage) => {
     chats.setSelectedMessageId(message.id);
     setInspector({ tab: "evidence", detail: null });
@@ -203,7 +212,8 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
     <LibraryColumn workspace={workspace} columnRef={libraryColumn} collapsed={sourceColumn.collapsed} slideOver={screenWidth < 840}
       onToggle={() => sourceColumn.setCollapsed(!sourceColumn.collapsed)}>
       <LibraryChatsSection baseId={base.id} chats={chats} onOpen={openChat} onCreate={createChat} />
-      <SourceTree baseId={base.id} contents={contents} onContents={setContents} selection={selection} selectedIds={sourceIds}
+      <SourceTree baseId={base.id} contents={contents} onContents={setContents} loadFailed={sourceLoadFailed} onLoadFailedChange={setSourceLoadFailed}
+        selection={selection} selectedIds={sourceIds}
         open={sourcesOpen} onOpenChange={setSourcesOpen} onScope={setSelection} activeSourceId={source?.id ?? null}
         onSource={(id) => { if (choose({ kind: "source", id })) closeNarrowLibrary(); }} onTrashed={onTrashed} />
       <KeyResultsGroup baseId={base.id} sourceIds={selection.mode === "selected" ? selection.sourceIds : undefined}
@@ -223,13 +233,13 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
       <div className="library-chat" hidden={!chatVisible}>
         <SessionWorkspace base={contents ? { ...base, sourceCount: sources.length } : base} visible={chatVisible}
           chats={chats}
-          sourceIds={scope.sourceIds} sourceScopeEmpty={scopeEmpty} onFocusSources={focusSources}
+          sourceIds={scope.sourceIds} sourceScopeEmpty={scopeEmpty} sourceScopeSelected={selection.mode === "selected"} onFocusSources={focusSources} onClearSources={() => setSelection(allSources)}
           chatActions={chatActions} onNotify={onNotify} onInspectSources={inspectSources} onInspectCitation={inspectCitation}
           onOpenTrace={openTrace} traceEnabled={traces.on} onOnlineStatus={setChatOnline} onWebStatus={setWebEnabled} />
       </div>
       {!chatVisible && <div className="library-middle-page">
         <div className="library-middle-bar"><button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => choose(chat)}><ArrowLeft size={14} />Back to chat</button></div>
-        {source && <SourceSummary key={source.id} source={source} onOpen={() => openFullSource(source.id)} onCite={cite}
+        {source && <SourceSummary key={source.id} source={source} onOpen={() => openFullSource(source.id)} onCite={openEvidence}
           onAsk={askFromReader} />}
         {middle.kind === "source" && !source && <p className="library-reading">{contents ? "Source unavailable." : "Loading source…"}</p>}
         {target && workspaceId && <OpenOutput key={outputKey(target)} baseId={base.id} workspaceId={workspaceId}
@@ -256,9 +266,10 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
         } : undefined}
         traceEnabled={traces.on} onOpenTrace={selectedMessage ? () => openTrace(selectedMessage) : undefined} onNotify={onNotify}
         detail={inspector.detail} onOpen={(citations, index, passageSelector) => openEvidence(citations, index, contextKey, passageSelector)}
-        onStep={(index) => setInspector((current) => current.detail && !("kind" in current.detail) ? { ...current, detail: { ...current.detail, index } } : current)}
+        onStep={stepEvidence}
         onBack={clearDetail} onOpenSource={(id) => { clearDetail(); openFullSource(id); }} onOriginalPdfChange={setOriginalPdf} />}
-      studio={<StudioColumn studio={studio} scope={scope} scopeEmpty={scopeEmpty} disabled={!workspaceId}
+      studio={<StudioColumn studio={studio} scope={scope} scopeEmpty={scopeEmpty} sourceCount={contents?.sources.length ?? null}
+        sourceLoadFailed={sourceLoadFailed} selectedSourceCount={sourceIds.length} disabled={!workspaceId}
         onOpen={openOutput} onTrash={(item) => void trashOutput(item)} />} />
   </div>;
 }

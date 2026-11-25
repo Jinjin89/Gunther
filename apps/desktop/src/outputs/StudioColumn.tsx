@@ -110,8 +110,9 @@ function BuildOptions({ type, disabled, onBuild, onClose }: {
   </form>;
 }
 
-export function StudioColumn({ studio, scope, scopeEmpty, disabled, onOpen, onTrash }: {
-  studio: ReturnType<typeof useStudio>; scope: OutputScope; scopeEmpty: boolean; disabled: boolean;
+export function StudioColumn({ studio, scope, scopeEmpty, sourceCount, sourceLoadFailed, selectedSourceCount, disabled, onOpen, onTrash }: {
+  studio: ReturnType<typeof useStudio>; scope: OutputScope; scopeEmpty: boolean;
+  sourceCount: number | null; sourceLoadFailed: boolean; selectedSourceCount: number; disabled: boolean;
   onOpen: (target: OutputTarget) => void;
   onTrash: (target: OutputTrashTarget) => void;
 }) {
@@ -121,20 +122,18 @@ export function StudioColumn({ studio, scope, scopeEmpty, disabled, onOpen, onTr
   const buildDisabled = disabled || unavailable || !menu?.models.length;
   const cards = cardsOf(studio);
   const optionType = studio.types.find((type) => type.id === optionsId);
+  const canFold = cards.length >= 4;
+  const [disclosure, setDisclosure] = useState({ canFold, open: false });
+  if (disclosure.canFold !== canFold) setDisclosure({ canFold, open: Boolean(optionType) });
   const closeOptions = () => setOptionsId(null);
+  const empty = sourceCount === 0;
   const tilesDisabled = buildDisabled || scopeEmpty;
   const start = (options: BuildTurnInput) => {
     if (tilesDisabled) return;
     closeOptions();
     void studio.build(artifactRequestId(), { ...options, scope });
   };
-  return <aside className="studio-column" aria-label="Studio">
-    {studio.error && <p role="alert">{studio.error}</p>}
-    {unavailable ? <p role="alert">Studio models could not be loaded.</p> : needsModel && <div className="studio-model-note">
-      <p role="status">Studio needs a model.</p>
-      <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => openSettings("models")}>Open Models settings</button>
-    </div>}
-    <div className="studio-tiles">{studio.types.map((type) => {
+  const tiles = <><div className="studio-tiles">{studio.types.map((type) => {
       const Icon = icons[type.icon as keyof typeof icons] ?? FileText;
       const running = cards.find((card) => card.status === "running" && card.target.typeId === type.id && !card.target.lineageId);
       return <div key={type.id} className="studio-tile">
@@ -144,7 +143,29 @@ export function StudioColumn({ studio, scope, scopeEmpty, disabled, onOpen, onTr
       </div>;
     })}</div>
     {optionType && <div className="studio-popover"><BuildOptions key={optionType.id} type={optionType}
-      disabled={tilesDisabled} onBuild={start} onClose={closeOptions} /></div>}
+      disabled={tilesDisabled} onBuild={start} onClose={closeOptions} /></div>}</>;
+  const count = scope.mode === "library" ? sourceCount : selectedSourceCount;
+  const scopeLabel = sourceLoadFailed ? "Source count unavailable"
+    : sourceCount === null ? "Loading sources…"
+    : empty ? "Add sources to build outputs."
+    : `Building from ${scope.mode === "library" ? "all " : ""}${count} ${scope.mode === "selection" ? "selected " : ""}${count === 1 ? "source" : "sources"}`;
+  return <aside className="studio-column" aria-label="Studio">
+    {studio.error && <p role="alert">{studio.error}</p>}
+    <p className="studio-scope">{scopeLabel}</p>
+    {!empty && <>
+      {unavailable ? <p role="alert">Studio models could not be loaded.</p> : needsModel && <div className="studio-model-note">
+        <p role="status">Studio needs a model.</p>
+        <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => openSettings("models")}>Open Models settings</button>
+      </div>}
+      <details className="studio-new" open={!canFold || disclosure.open}>
+        <summary hidden={!canFold} onClick={(event) => {
+          event.preventDefault();
+          if (disclosure.open) closeOptions();
+          setDisclosure({ canFold, open: !disclosure.open });
+        }}>New output</summary>
+        {tiles}
+      </details>
+    </>}
     <ul className="studio-cards">{cards.map((card) => <li key={card.id}>
       <button type="button" className="studio-card-open" onClick={() => onOpen(card.target)}>
         {card.status === "running" ? <LoaderCircle size={16} className="spin" /> : <FileText size={16} />}

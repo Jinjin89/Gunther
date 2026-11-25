@@ -1,4 +1,4 @@
-import type { ContentsSource, ConversationCitation, DigestCitation } from "@gunther/contracts";
+import type { ContentsSource, ConversationCitation, DigestCitation, SourceDigest } from "@gunther/contracts";
 import { ArrowUpRight } from "lucide-react";
 import { DigestCard } from "../items/views/DigestCard";
 import { PaperCard } from "../items/views/PaperCard";
@@ -9,15 +9,20 @@ export function SourceSummary({ source, onOpen, onAsk, onCite }: {
   source: ContentsSource;
   onOpen: () => void;
   onAsk: (question: string, submit: boolean) => void;
-  onCite: (citation: ConversationCitation, index: number) => void;
+  onCite: (citations: ConversationCitation[], index: number) => void;
 }) {
   const Icon = kindIcon[source.kind];
   const file = fileDetail(source);
-  const cite = (citation: DigestCitation, revisionId: string) => onCite({
-    id: `${revisionId}:${citation.blockId}`, sourceId: source.id, sourceTitle: source.title,
-    assertionId: null, quote: citation.quote, locator: citation.locator, status: "provisional",
-    confidence: 0, sourceRevisionId: revisionId, blockId: citation.blockId, ref: citation.number,
-  }, citation.number - 1);
+  const cite = (digest: SourceDigest, clicked: DigestCitation) => {
+    const byNumber = new Map(digest.keyPoints.flatMap((point) =>
+      point.citations.map((citation) => [citation.number, citation] as const)));
+    const citations = [...byNumber.values()].sort((a, b) => a.number - b.number);
+    onCite(citations.map((citation) => ({
+      id: `${digest.revisionId}:${citation.blockId}`, sourceId: source.id, sourceTitle: source.title,
+      assertionId: null, quote: citation.quote, locator: citation.locator, status: "provisional",
+      confidence: 0, sourceRevisionId: digest.revisionId, blockId: citation.blockId, ref: citation.number,
+    })), citations.findIndex((citation) => citation.number === clicked.number));
+  };
   return <article className="library-reading" aria-label="Source summary">
     <header className="library-reading-heading">
       <span className={`gx-kind-icon kind-${source.kind}`}><Icon size={16} /></span>

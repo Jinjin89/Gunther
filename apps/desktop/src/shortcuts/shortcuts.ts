@@ -23,6 +23,11 @@ export const SHORTCUTS = [
   { id: "shortcuts", keys: ["mod+/", "?"], label: "Keyboard shortcuts", group: "General" },
   { id: "close", keys: ["escape"], label: "Close, or go back", group: "General" },
   { id: "back", keys: ["mod+["], label: "Back", group: "General" },
+  { id: "library-column", keys: ["mod+\\"], label: "Toggle Library column", group: "General" },
+  { id: "inspector-column", keys: ["mod+."], label: "Toggle Inspector", group: "General" },
+  { id: "inspector-tab", keys: ["mod+shift+e"], label: "Switch Evidence and Studio", group: "General" },
+  { id: "evidence-previous", keys: ["["], label: "Previous citation in Evidence", group: "General" },
+  { id: "evidence-next", keys: ["]"], label: "Next citation in Evidence", group: "General" },
   { id: "theme", keys: ["mod+shift+l"], label: "Switch light and dark", group: "General" },
   { id: "go-home", keys: ["mod+1"], label: "Home", group: "Go to" },
   { id: "go-libraries", keys: ["mod+2"], label: "Libraries", group: "Go to" },
@@ -96,17 +101,10 @@ export function withShortcut(label: string, id: ShortcutId): string {
   return keys ? `${label}  ${keys}` : label;
 }
 
-const EDITABLE = "input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=range]), textarea, select, [contenteditable='true'], [contenteditable='']";
+const EDITABLE = "input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=range]), textarea, select, [contenteditable]:not([contenteditable='false'])";
 
 function isTypingTarget(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest(EDITABLE));
-}
-
-/** True when a modal surface is open and the event did not start inside it. */
-function isOutsideOpenModal(target: EventTarget | null): boolean {
-  const modals = Array.from(document.querySelectorAll<HTMLElement>("[aria-modal='true']"));
-  if (!modals.length) return false;
-  return !(target instanceof Node && modals.some((modal) => modal.contains(target)));
 }
 
 function matchesCombo(event: KeyboardEvent, combo: string): boolean {
@@ -132,7 +130,7 @@ interface ShortcutOptions {
   enabled?: boolean;
   /** Also fire while typing in a field (modifier shortcuts only, by default). */
   allowInInputs?: boolean;
-  /** Also fire while another modal surface is open. */
+  /** Also fire while a modal surface is open. */
   allowInModal?: boolean;
 }
 
@@ -156,7 +154,7 @@ export function useShortcut(combos: string | readonly string[], handler: (event:
       if (!combo) return;
       const modified = combo.includes("mod+") || combo === "escape";
       if (isTypingTarget(event.target) && !(allowInInputs ?? modified)) return;
-      if (!allowInModal && isOutsideOpenModal(event.target)) return;
+      if (!allowInModal && document.querySelector("[aria-modal='true']")) return;
       event.preventDefault();
       latest.current(event);
     };

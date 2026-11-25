@@ -11,7 +11,7 @@
 .library-chats-body { min-height: 0; overflow-y: auto; display: grid; gap: 2px; padding: 0 8px 8px; }
 .library-chats-body[hidden] { display: none; }
 .library-chats-search { display: flex; align-items: center; gap: 6px; height: 28px; margin-bottom: 4px; padding: 0 8px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-sm); background: var(--gx-surface); color: var(--gx-faint); }
-.library-chats-search:focus-within { border-color: var(--gx-line-3); box-shadow: var(--gx-ring); }
+.library-chats-search:focus-within { border-color: var(--gx-ink); }
 .library-chats-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--gx-ink); font: inherit; font-size: var(--gx-text-xs); }
 .library-chats-search button { display: grid; place-items: center; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; }
 .library-chat-row { position: relative; display: flex; align-items: center; height: 30px; border-radius: 7px; }

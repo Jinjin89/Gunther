@@ -761,7 +761,7 @@ async function run() {
     try {
       await waitForEvaluation(
         cdp,
-        "(() => { const composer = document.querySelector('[aria-label=\"Message Gunther\"]'); const status = document.querySelector('.conversation-title'); return Boolean(composer && !composer.disabled && status?.textContent.includes('Saved to local knowledge service')); })()",
+        "(() => { const composer = document.querySelector('[aria-label=\"Message Gunther\"]'); return Boolean(composer && !composer.disabled && !composer.placeholder.startsWith('Draft') && document.querySelector('.conversation-title > strong')); })()",
         "ready grounded Ask session",
         15_000,
       );
@@ -770,8 +770,7 @@ async function run() {
         const composer = document.querySelector('[aria-label="Message Gunther"]');
         return {
           composer: composer ? { disabled: composer.disabled, placeholder: composer.getAttribute('placeholder') } : null,
-          savedInBody: document.body.innerText.includes('Saved to local knowledge service'),
-          readyExpression: Boolean(composer && !composer.disabled && document.body.innerText.includes('Saved to local knowledge service')),
+          readyExpression: Boolean(composer && !composer.disabled && !composer.placeholder.startsWith('Draft') && document.querySelector('.conversation-title > strong')),
           error: document.querySelector('.conversation-error')?.textContent.replace(/\\s+/g, ' ').trim() ?? null,
           heading: document.querySelector('.conversation-title')?.textContent.replace(/\\s+/g, ' ').trim() ?? null,
           note: document.querySelector('.composer-note')?.textContent.replace(/\\s+/g, ' ').trim() ?? null,

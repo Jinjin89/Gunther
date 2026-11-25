@@ -4,7 +4,7 @@
 .evidence-method, .evidence-cited { margin-bottom: 16px; }
 .evidence-method summary, .evidence-earlier summary { cursor: pointer; }
 .evidence-method .message-steps { margin: 8px 0; }
-.evidence-card { display: grid; gap: 4px; width: 100%; margin: 6px 0; padding: 10px; border: 1px solid var(--gx-line); border-radius: var(--gx-radius-sm); background: transparent; color: var(--gx-ink); font: inherit; text-align: left; cursor: pointer; }
+.evidence-card { display: grid; gap: 4px; width: 100%; margin: 6px 0; padding: 10px; border: 1px solid var(--gx-line); border-radius: var(--gx-radius-sm); background: var(--gx-surface); color: var(--gx-ink); font: inherit; text-align: left; cursor: pointer; }
 .evidence-card:hover, .evidence-card:focus-visible { background: var(--gx-hover); border-color: var(--gx-line-2); }
 .evidence-card-meta { display: flex; align-items: center; gap: 6px; }
 .evidence-card small { color: var(--gx-faint); font-size: var(--gx-text-xs); }

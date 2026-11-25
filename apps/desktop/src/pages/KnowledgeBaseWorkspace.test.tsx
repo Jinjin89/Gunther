@@ -11,6 +11,7 @@ import { forgetAskSkills } from "../components/search/skills";
 import { keyResultsChanged } from "../keyResults/events";
 import { announceModelsChanged, OPEN_SETTINGS_EVENT } from "../models/askModel";
 import { libraryScope } from "../outputs/artifactConversations";
+import { ShortcutSheet } from "../shortcuts/ShortcutSheet";
 import { makeBase, makeSource, makeTrashItem } from "../test/fixtures";
 import { KnowledgeBaseWorkspace } from "./KnowledgeBaseWorkspace";
 
@@ -463,6 +464,85 @@ it("renders each catalog icon on its Studio tile", async () => {
   }
 });
 
+it("updates the Studio scope and clears an explicit source selection", async () => {
+  const user = userEvent.setup();
+  setup();
+  expect(await screen.findByText("Building from all 3 sources")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Only Lab notes" }));
+  expect(screen.getByText("Building from 1 selected source")).toBeVisible();
+  expect(screen.getByRole("button", { name: "1 selected" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Clear source selection" }));
+  expect(screen.getByText("Building from all 3 sources")).toBeVisible();
+  expect(screen.getByRole("checkbox", { name: "All sources" })).toBeChecked();
+  expect(screen.queryByRole("button", { name: "Clear source selection" })).toBeNull();
+});
+
+it("shows an unavailable Studio source count until a contents refresh succeeds", async () => {
+  vi.mocked(knowledgeApi.contents).mockRejectedValueOnce(new Error("Could not read contents"));
+  setup();
+  const studio = within(screen.getByRole("complementary", { name: "Studio" }));
+  expect(await studio.findByText("Source count unavailable")).toBeVisible();
+  expect(screen.getByText("Sources could not be loaded.")).toBeVisible();
+
+  act(() => window.dispatchEvent(new Event("gunther:sources-updated")));
+  expect(await studio.findByText("Building from all 3 sources")).toBeVisible();
+  expect(studio.queryByText("Source count unavailable")).not.toBeInTheDocument();
+});
+
+it("shows empty-library guidance instead of disabled Studio tiles", async () => {
+  vi.mocked(knowledgeApi.contents).mockResolvedValue({ sources: [], sections: [], placements: [] });
+  setup();
+  expect(await screen.findByText("Add sources to build outputs.")).toBeVisible();
+  expect(screen.getByText("Add a source to start exploring this library.")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Report" })).toBeNull();
+});
+
+it("folds the tiles with four outputs and can still build every catalog type", async () => {
+  const user = userEvent.setup();
+  const catalog: OutputType[] = [report, briefing, guide, { ...report, id: "faq", label: "FAQ" }, { ...report, id: "timeline", label: "Timeline" }, slides, flashcards, quiz, mindMap, audioOverview];
+  vi.mocked(knowledgeApi.outputTypes).mockResolvedValue(catalog);
+  const artifacts = Array.from({ length: 4 }, (_, index) => version({ id: `version-${index}`, lineageId: `lineage-${index}`, title: `Saved output ${index}` }));
+  const { turn } = setup({ artifacts });
+  await screen.findByText("Saved output 0", { selector: "strong" });
+  const studio = within(screen.getByRole("complementary", { name: "Studio" }));
+  const disclosure = studio.getByText("New output", { selector: "summary" });
+  expect(disclosure.parentElement).not.toHaveAttribute("open");
+  expect(studio.getByRole("button", { name: "Report" })).not.toBeVisible();
+  await user.click(disclosure);
+  const options = await studio.findByRole("button", { name: "Report options" });
+  options.focus();
+  expect(options).toHaveFocus();
+  for (const type of catalog) {
+    await user.click(await studio.findByRole("button", { name: type.label }));
+    await waitFor(() => expect(turn.mock.calls.some((call) => call[2].build?.type === type.id)).toBe(true));
+  }
+  await user.click(disclosure);
+  expect(disclosure.parentElement).not.toHaveAttribute("open");
+  expect(studio.getByRole("button", { name: "Report" })).not.toBeVisible();
+  expect(studio.getByRole("button", { name: /^Saved output 0 Report/ })).toBeVisible();
+});
+
+it("keeps the open Studio options draft when a fourth card arrives", async () => {
+  const user = userEvent.setup();
+  const saved = (index: number) => version({ id: `version-${index}`, lineageId: `lineage-${index}`, title: `Saved output ${index}` });
+  const artifacts = [saved(1), saved(2), saved(3)];
+  setup({ artifacts });
+  const studio = within(screen.getByRole("complementary", { name: "Studio" }));
+  await studio.findByText("Saved output 3");
+  await user.click(await studio.findByRole("button", { name: "Report options" }));
+  const focus = studio.getByRole("textbox", { name: "Focus" });
+  await user.type(focus, "Compare the observations");
+
+  artifacts.push(saved(4));
+  act(() => window.dispatchEvent(new Event("gunther:trash-updated")));
+  expect(await studio.findByText("Saved output 4")).toBeVisible();
+  expect(studio.getByText("New output", { selector: "summary" }).parentElement).toHaveAttribute("open");
+  expect(studio.getByRole("textbox", { name: "Focus" })).toBe(focus);
+  expect(focus).toBeVisible();
+  expect(focus).toHaveValue("Compare the observations");
+  expect(focus).toHaveFocus();
+});
+
 it("builds an audio overview with the two voices from Studio options", async () => {
   const user = userEvent.setup();
   vi.mocked(knowledgeApi.outputTypes).mockResolvedValue([audioOverview]);
@@ -841,6 +921,79 @@ it("keeps Studio selected when an answer finishes, then opens and steps through 
   expect(within(screen.getByRole("tabpanel", { name: "Evidence" })).getByText("Passage 1")).toBeVisible();
 });
 
+it("handles workspace shortcuts and pauses them in the shortcut sheet", async () => {
+  const user = userEvent.setup();
+  const citations = [1, 2, 3].map((number) => ({ id: `web-${number}`, kind: "web" as const, url: `https://example.org/${number}`,
+    sourceId: "", sourceTitle: `Web source ${number}`, assertionId: null, quote: `Keyboard passage ${number}`,
+    locator: "example.org", status: "provisional" as const, confidence: 0 }));
+  const answer: SessionMessage = { id: "shortcut-answer", sessionId: originalSession.id, role: "assistant", content: "One [1], two [2], and three [3].",
+    citations, createdAt: at, context: { sourcesConsidered: 3, assertionsConsidered: 3, verifiedAssertions: 3, retrievalMode: "all", responderMode: "model" } };
+  vi.mocked(knowledgeApi.session).mockResolvedValue({ ...originalSession, messages: [answer], messageCount: 1 });
+  setup();
+  await screen.findByText("One", { exact: false });
+  expect(screen.queryByText("Saved to local knowledge service")).toBeNull();
+  fireEvent.keyDown(window, { key: "\\", ctrlKey: true });
+  expect(screen.getByRole("button", { name: "Expand Library" })).toBeVisible();
+  fireEvent.keyDown(window, { key: "\\", ctrlKey: true });
+  expect(screen.getByRole("button", { name: "Collapse Library" })).toBeVisible();
+  fireEvent.keyDown(window, { key: ".", ctrlKey: true });
+  expect(screen.getByRole("button", { name: "Expand Studio" })).toBeVisible();
+  fireEvent.keyDown(window, { key: ".", ctrlKey: true });
+  expect(screen.getByRole("button", { name: "Collapse Inspector" })).toBeVisible();
+  fireEvent.keyDown(window, { key: "e", ctrlKey: true, shiftKey: true });
+  expect(screen.getByRole("tab", { name: "Evidence (3)" })).toHaveAttribute("aria-selected", "true");
+  fireEvent.keyDown(window, { key: "e", ctrlKey: true, shiftKey: true });
+  expect(screen.getByRole("tab", { name: "Studio" })).toHaveAttribute("aria-selected", "true");
+  await user.click(screen.getByRole("button", { name: "Inspect citation 1" }));
+  const evidence = within(screen.getByRole("tabpanel", { name: "Evidence" }));
+  expect(evidence.getByText("[1 / 3]")).toBeVisible();
+  fireEvent.keyDown(document.body, { key: "]" });
+  expect(evidence.getByText("[2 / 3]")).toBeVisible();
+  fireEvent.keyDown(document.body, { key: "[" });
+  expect(evidence.getByText("[1 / 3]")).toBeVisible();
+  const composer = screen.getByRole("textbox", { name: "Message Gunther" });
+  await user.type(composer, "]");
+  expect(composer).toHaveValue("]");
+  expect(evidence.getByText("[1 / 3]")).toBeVisible();
+  const editable = document.createElement("div");
+  editable.setAttribute("contenteditable", "plaintext-only");
+  screen.getByRole("region", { name: "Library workspace" }).append(editable);
+  fireEvent.keyDown(editable, { key: "]" });
+  expect(evidence.getByText("[1 / 3]")).toBeVisible();
+
+  fireEvent.keyDown(document.body, { key: "]" });
+  render(<ShortcutSheet open onClose={vi.fn()} />);
+  const close = within(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).getByRole("button", { name: "Close" });
+  expect(close).toHaveFocus();
+  for (const key of ["[", "]"]) {
+    expect(fireEvent.keyDown(close, { key })).toBe(true);
+    expect(evidence.getByText("[2 / 3]")).toBeVisible();
+  }
+  expect(fireEvent.keyDown(close, { key: "\\", ctrlKey: true })).toBe(true);
+  expect(screen.getByRole("button", { name: "Collapse Library" })).toBeVisible();
+  expect(fireEvent.keyDown(close, { key: ".", ctrlKey: true })).toBe(true);
+  expect(screen.getByRole("button", { name: "Collapse Inspector" })).toBeVisible();
+  expect(fireEvent.keyDown(close, { key: "e", ctrlKey: true, shiftKey: true })).toBe(true);
+  expect(screen.getByRole("tab", { name: "Evidence (3)" })).toHaveAttribute("aria-selected", "true");
+});
+
+it.each([
+  [{ archived: true }, "Archived session · read only"],
+  [{ parentSessionId: "earlier-chat" }, "Branch lineage preserved"],
+])("shows the Chat status for %s", async (changes, label) => {
+  vi.mocked(knowledgeApi.session).mockResolvedValue({ ...originalSession, ...changes });
+  setup();
+  expect(await screen.findByText(label)).toBeVisible();
+  expect(document.querySelector(".conversation-title")).toHaveTextContent(label);
+  expect(screen.queryByText("Saved to local knowledge service")).toBeNull();
+});
+
+it("shows the Chat status when the knowledge service is offline", async () => {
+  vi.mocked(knowledgeApi.sessions).mockRejectedValue(new ServiceUnavailableError());
+  setup();
+  expect(await screen.findByText("Knowledge service unavailable")).toBeVisible();
+});
+
 it("changes the selected answer without switching tabs and clears its old detail", async () => {
   const user = userEvent.setup();
   const citation = (id: string) => ({ id, kind: "web" as const, url: `https://example.org/${id}`, sourceId: "",
@@ -871,7 +1024,10 @@ it("keeps Evidence selected when an output opens from Activity", async () => {
     onAdd={onAdd} onTrashed={onTrashed} outputActivity={{ view: "library", libraryId: base.id, tab: "outputs", artifactId: "version-1" }} />);
   expect(await screen.findByRole("article", { name: "Open output" })).toBeVisible();
   expect(screen.getByRole("tab", { name: "Evidence (0)" })).toHaveAttribute("aria-selected", "true");
-  expect(await screen.findByText(/Loading evidence|Nothing cited/)).toBeVisible();
+  await waitFor(() => {
+    const evidence = within(screen.getByRole("tabpanel", { name: "Evidence" }));
+    expect(evidence.getByText("Nothing cited", { exact: true })).toBeVisible();
+  });
 });
 
 it("groups output citations, follows the visible section and steps through the saved version", async () => {
@@ -1021,10 +1177,14 @@ it("shows a digest beside paper metadata, opens its cited revision, and brings i
   const lab = { ...contents.sources[0]!, mediaType: "application/pdf" };
   vi.mocked(knowledgeApi.contents).mockResolvedValue({ ...contents, sources: [lab, ...contents.sources.slice(1)] });
   const quote = "The gauge is emptied each morning.";
+  const previous = { number: 2, blockId: "block-2", quote: "Rainfall is recorded daily.", locator: "Page 2" };
   const digest: SourceDigest = {
     sourceId: lab.id, revisionId: "revision-1", profile: "paper", method: "analysis",
     engine: "Local", model: "Model", suggestedTitle: null, overview: "A daily record of rain.",
-    keyPoints: [{ text: "Daily checks", citations: [{ number: 1, blockId: "block-1", quote, locator: "Page 2" }] }],
+    keyPoints: [
+      { text: "Daily checks", citations: [{ number: 4, blockId: "block-4", quote, locator: "Page 4" }, previous] },
+      { text: "Recording frequency", citations: [previous] },
+    ],
     actionItems: [], openQuestions: ["How are readings recorded?"], terms: ["Rain gauge"],
     markdown: "", updatedAt: at,
   };
@@ -1051,11 +1211,19 @@ it("shows a digest beside paper metadata, opens its cited revision, and brings i
   expect(summary.getByText("Daily checks")).toBeVisible();
   expect(await summary.findByText("A paper about observation.")).toBeVisible();
   expect(summary.queryByRole("heading", { name: "To do" })).not.toBeInTheDocument();
-  await user.click(summary.getByRole("button", { name: "Inspect citation 1" }));
+  await user.click(summary.getByRole("button", { name: "Inspect citation 4" }));
   const evidence = within(screen.getByRole("tabpanel", { name: "Evidence" }));
   expect(evidence.getByText(quote)).toBeVisible();
+  expect(evidence.getByText("[2 / 2]")).toBeVisible();
+  expect(evidence.getByText("4", { selector: "i" })).toBeVisible();
   expect(structure).toHaveBeenCalledWith(lab.id, 0, digest.revisionId, null, 500);
-  await user.click(evidence.getByRole("button", { name: "All 1 source" }));
+  await user.click(evidence.getByRole("button", { name: "Previous source" }));
+  expect(evidence.getByText(previous.quote)).toBeVisible();
+  expect(evidence.getByText("[1 / 2]")).toBeVisible();
+  expect(evidence.getByText("2", { selector: "i" })).toBeVisible();
+  await user.click(evidence.getByRole("button", { name: "Next source" }));
+  expect(evidence.getByText(quote)).toBeVisible();
+  await user.click(evidence.getByRole("button", { name: "All 2 sources" }));
   await user.click(summary.getByRole("button", { name: "Rain gauge" }));
   expect(screen.getByRole("textbox", { name: "Message Gunther" })).toHaveValue("Rain gauge");
   expect(send).not.toHaveBeenCalled();

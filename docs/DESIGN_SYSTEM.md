@@ -18,11 +18,14 @@ Use neutral page surfaces and ink for actions. Green marks Gunther and grounded 
 | `--gx-canvas` | `#ffffff` | `#1f1f1d` | Page |
 | `--gx-sidebar` | `#f9f9f7` | `#1a1a18` | Navigation |
 | `--gx-surface` | `#ffffff` | `#262624` | Cards and panels |
+| `--gx-surface-2` | `#fafaf8` | `#2a2a27` | Secondary surfaces, including the Library Inspector |
 | `--gx-ink` | `#1a1a18` | `#f3f2ee` | Text and primary actions |
 | `--gx-muted` / `--gx-faint` | `#5f5e5a` / `#6b6a65` | `#b9b7af` / `#a3a19a` | Secondary text |
 | `--gx-brand` | `#16745c` | `#5fbf9f` | Brand mark, saved status and focus |
 
 Choose tokens from the CSS when adding surfaces. Use `--gx-hover` and `--gx-active` for hover and selection, `--gx-ghost` for placeholders or disabled states, and `--gx-danger` for errors and destructive actions. Apply the selected Light, Dark or Match system appearance before paint. Use tabular figures for counters and times.
+
+The Library workspace uses `--gx-sidebar` for Library, `--gx-canvas` for the middle, and `--gx-surface-2` with `--gx-surface` cards for Inspector. Their 44 px headers share a hairline; Chat uses neutral ink and focus treatments.
 
 Lucide icons use a neutral stroke and the shared icon sizing. Use a library glyph with its colour and initial to label a library in lists, scope choices and results. Use the brand mark to indicate search or answer activity.
 

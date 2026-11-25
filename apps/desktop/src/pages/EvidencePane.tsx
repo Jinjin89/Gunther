@@ -14,7 +14,6 @@ export interface EvidenceTarget {
   citations: ConversationCitation[];
   index: number;
   passageSelector?: boolean;
-  displayIndex?: number;
 }
 export interface TraceTarget { kind: "trace"; contextKey: string; sessionId: string; messageId: string }
 
@@ -68,7 +67,7 @@ export function EvidencePane({ session, selected, chatVisible, sources, selected
       .then(() => onNotify?.(`${label} copied.`), () => onNotify?.(`${label} could not be copied.`))} />
   </div>;
   const citation = detail?.citations[detail.index];
-  if (detail && citation) return <EvidenceDetail citation={citation} index={detail.displayIndex ?? detail.index}
+  if (detail && citation) return <EvidenceDetail citation={citation} index={sourceId && citation.ref != null ? citation.ref - 1 : detail.index}
     passages={detail.passageSelector ? detail.citations : undefined} onPassage={detail.passageSelector ? onStep : undefined}
     onBack={onBack} position={detail.index} total={detail.citations.length}
     onPrevious={detail.index > 0 ? () => onStep(detail.index - 1) : undefined}

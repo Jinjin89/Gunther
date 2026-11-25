@@ -60,8 +60,10 @@ interface SessionWorkspaceProps {
   chats: UseLibraryChats;
   sourceIds?: string[];
   sourceScopeEmpty?: boolean;
+  sourceScopeSelected?: boolean;
   visible?: boolean;
   onFocusSources?: () => void;
+  onClearSources?: () => void;
   chatActions?: Ref<LibraryChatActions>;
   onNotify: (message: string) => void;
   onInspectSources: (message: SessionMessage) => void;
@@ -100,7 +102,7 @@ function AnswerModel({ context }: { context: ConversationContext }) {
 }
 
 export function ConversationMessage({ message, libraryId, visible, retryDisabled, onRetry, onEdit, onCite,
-  selected, branching, onSelect, onSources, onCopy, onBranch, onTrace }: {
+  selected, latest = false, branching, onSelect, onSources, onCopy, onBranch, onTrace }: {
   message: SessionMessage;
   libraryId?: string;
   visible?: boolean;
@@ -109,6 +111,7 @@ export function ConversationMessage({ message, libraryId, visible, retryDisabled
   onEdit: () => void;
   onCite: (citation: ConversationCitation, index: number) => void;
   selected: boolean;
+  latest?: boolean;
   branching: boolean;
   onSelect: () => void;
   onSources?: (() => void) | undefined;
@@ -127,7 +130,7 @@ export function ConversationMessage({ message, libraryId, visible, retryDisabled
     if (isWebCitation(citation)) webSources.add(key);
   });
   return (
-    <article className={`conversation-message role-${message.role} ${selected ? "is-selected" : ""} ${isInterrupted(message) ? "is-interrupted" : ""}`} onClick={isAssistant ? onSelect : undefined}>
+    <article className={`conversation-message role-${message.role} ${selected ? "is-selected" : ""} ${latest ? "is-latest" : ""} ${isInterrupted(message) ? "is-interrupted" : ""}`} onClick={isAssistant ? onSelect : undefined}>
       <div className="message-author">{isAssistant ? <span className="assistant-mark"><BrandMark size={14} /></span> : <span className="user-mark"><UserRound size={13} /></span>}<span>{isAssistant ? "Gunther" : "You"}</span><time>{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(message.createdAt))}</time></div>
       {isAssistant && <ResearchPlan context={message.context} />}
       {isAssistant && <AgentSteps steps={message.context.steps ?? []} />}
@@ -162,10 +165,12 @@ export function Composer({
   sending,
   sourceCount,
   sourceScopeEmpty = false,
+  sourceScopeSelected = false,
   onChange,
   onSend,
   onStop,
   onSources,
+  onClearSources,
   readOnly,
   ready,
   allowDraft = false,
@@ -192,10 +197,12 @@ export function Composer({
   sending: boolean;
   sourceCount: number;
   sourceScopeEmpty?: boolean;
+  sourceScopeSelected?: boolean;
   onChange: (value: string) => void;
   onSend: () => void;
   onStop: () => void;
   onSources?: (() => void) | undefined;
+  onClearSources?: (() => void) | undefined;
   readOnly: boolean;
   ready: boolean;
   allowDraft?: boolean;
@@ -243,9 +250,9 @@ export function Composer({
         {skill && <div className="composer-skill"><SkillChip command={skill} {...(budget ? { budget } : {})} {...(onBudgetChange ? { onBudgetChange } : {})} onRemove={() => { onSkillChange?.(null); field.current?.focus(); }} /></div>}
         <textarea ref={field} value={value} rows={1} disabled={composerDisabled} onChange={(event) => { onChange(event.target.value); setCaret(event.target.selectionStart ?? event.target.value.length); }} onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? 0)} onKeyDown={onKeyDown} onBlur={slash.dismiss} aria-autocomplete="list" aria-controls={slash.open ? slash.listId : undefined} aria-activedescendant={slash.activeId} placeholder={readOnly ? "Restore this session to continue the conversation." : (offline || (allowDraft && !ready)) ? "Draft a question…" : !ready ? "Opening a durable session…" : "Ask, compare, challenge, or trace a claim…"} aria-label="Message Gunther" onFocus={() => { dictation.claim(); slash.reset(); }} />
         <div className="composer-toolbar">
-          <div className="composer-options">{onSources && <button className="scope-chip" onClick={onSources} aria-describedby={sourceScopeEmpty ? "empty-source-scope" : undefined}>
-            <FolderOpen size={13} /><span>{sourceScopeEmpty || sourceCount ? `${sourceCount} selected` : "All sources"}</span>
-          </button>}{picker}{web && <button type="button" className={`web-toggle ${web.enabled ? "is-on" : ""}`} disabled={!web.available} aria-pressed={web.enabled} onClick={() => web.onChange(!web.enabled)} title={web.available ? (web.enabled ? "Ask may search the web. Click to keep it to your library." : "Ask is limited to your library. Click to let it search the web.") : "Web search is not set up. Add a Tavily key in Settings."}><Globe2 size={13} /><span>Web</span></button>}</div>
+          <div className="composer-options">{onSources && <div className="scope-chip-group"><button type="button" className="scope-chip" onClick={onSources} aria-describedby={sourceScopeEmpty ? "empty-source-scope" : undefined}>
+            <FolderOpen size={13} /><span>{sourceScopeSelected ? `${sourceCount} selected` : "All sources"}</span>
+          </button>{sourceScopeSelected && onClearSources && <button type="button" className="scope-clear" aria-label="Clear source selection" onClick={onClearSources}>Clear</button>}</div>}{picker}{web && <button type="button" className={`web-toggle ${web.enabled ? "is-on" : ""}`} disabled={!web.available} aria-pressed={web.enabled} onClick={() => web.onChange(!web.enabled)} title={web.available ? (web.enabled ? "Ask may search the web. Click to keep it to your library." : "Ask is limited to your library. Click to let it search the web.") : "Web search is not set up. Add a Tavily key in Settings."}><Globe2 size={13} /><span>Web</span></button>}</div>
           <div className="composer-actions"><button type="button" className={`mic-button ${dictation.dictating ? "is-on" : ""} is-${dictation.state}`} disabled={!canSend || sending} onClick={dictation.toggle} aria-pressed={dictation.listening} aria-label={dictation.listening ? "Stop voice input" : "Voice input"} title={dictation.error ?? withShortcut(dictation.listening ? "Stop voice input" : "Speak instead of typing", "dictate")}><MicGlyph state={dictation.state} /></button><button className={`send-button ${sending ? "is-stop" : ""} ${sending && stopLabel !== "Stop" ? "has-label" : ""}`} disabled={!sending && (!canSend || !value.trim() || dictation.dictating)} onClick={sending ? onStop : submit} aria-label={sending ? (stopLabel === "Stop" ? "Stop waiting for response" : stopLabel) : "Send message"}>{sending ? <><Square size={12} fill="currentColor" />{stopLabel !== "Stop" && <span>{stopLabel}</span>}</> : <ArrowUp size={16} />}</button></div>
         </div>
         {slash.menu}
@@ -261,7 +268,7 @@ const startupReads = Object.keys(readLabels) as StartupRead[];
 // The current session supplies the durable destination for a send.
 const sendReads = ["models", "settings"] as const;
 
-export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty = false, visible = true, onFocusSources, chatActions, onNotify, onInspectSources, onInspectCitation, onOpenTrace, traceEnabled = false, onOnlineStatus, onWebStatus }: SessionWorkspaceProps) {
+export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty = false, sourceScopeSelected = false, visible = true, onFocusSources, onClearSources, chatActions, onNotify, onInspectSources, onInspectCitation, onOpenTrace, traceEnabled = false, onOnlineStatus, onWebStatus }: SessionWorkspaceProps) {
   const { activeId, activeSession, selectedMessageId, setSelectedMessageId } = chats;
   const [draft, setDraft] = useState("");
   // The skill chosen with `/`; it applies to the next message only.
@@ -510,6 +517,7 @@ export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty
   };
 
   const currentChat = activeSession?.id === activeId ? activeSession : null;
+  const latestAnswerId = activeSession?.messages.filter((message) => message.role === "assistant").at(-1)?.id;
 
   return (
     <div className="session-workspace">
@@ -521,7 +529,10 @@ export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty
               <button type="submit" aria-label="Save session title"><Check size={13} /></button>
               <button type="button" onClick={() => setRenameOpen(false)} aria-label="Cancel renaming"><X size={13} /></button>
             </form> : <strong>{activeSession?.title ?? (loading ? "Opening session…" : "Conversation unavailable")}</strong>}
-            <span><i className={online ? "is-online" : "is-offline"} />{!online ? "Knowledge service unavailable" : activeSession?.archived ? "Archived session · read only" : activeSession ? "Saved to local knowledge service" : ""}{activeSession?.parentSessionId && <><b>·</b><GitBranch size={10} />Branch lineage preserved</>}</span>
+            {(!online || activeSession?.archived || activeSession?.parentSessionId) && <span>
+              {!online ? <><i className="is-offline" />Knowledge service unavailable</> : activeSession?.archived ? "Archived session · read only" : null}
+              {activeSession?.parentSessionId && <>{(!online || activeSession.archived) && <b>·</b>}<GitBranch size={10} />Branch lineage preserved</>}
+            </span>}
           </div>
           <div className="conversation-actions">
             <PopMenu label="Chat actions" triggerLabel="Chat actions" triggerClass="gx-icon-button" trigger={<MoreHorizontal size={16} />} items={[
@@ -559,7 +570,7 @@ export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty
             message={message} libraryId={base.id} visible={visible}
             retryDisabled={!ready || sending || sourceScopeEmpty || Boolean(activeSession?.archived)}
             onRetry={() => void send(message.content, message.context.askFailure?.options)}
-            onEdit={() => setDraft(message.content)} onCite={(_citation, index) => onInspectCitation(message, index)} selected={selectedMessageId === message.id}
+            onEdit={() => setDraft(message.content)} onCite={(_citation, index) => onInspectCitation(message, index)} selected={selectedMessageId === message.id} latest={message.id === latestAnswerId}
             branching={branchingMessageId === message.id} onSelect={() => setSelectedMessageId(message.id)}
             onSources={() => onInspectSources(message)}
             onCopy={() => void copyMessage(message)} onBranch={() => void branchFromMessage(message)}
@@ -567,7 +578,7 @@ export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty
           {sending && asking && <article className="conversation-message role-user"><div className="message-author"><span className="user-mark"><UserRound size={13} /></span><span>You</span></div><div className="message-body"><MessageContent content={asking} /></div></article>}
           {sending && (live ? <LiveAnswer state={live} /> : <div className="thinking-row"><span className="assistant-mark"><BrandMark size={14} busy /></span><span><i /><i /><i /></span><small>Working out what to look up…</small></div>)}
         </div>
-        <Composer picker={<ModelPicker menu={modelMenu} choice={askChoice} onChange={chooseModel} disabled={sending || Boolean(activeSession?.archived)} />} web={{ available: webSearch.available, enabled: webSearch.enabled, onChange: webSearch.setEnabled }} value={draft} sending={sending} sourceCount={sourceIds.length} sourceScopeEmpty={sourceScopeEmpty} readOnly={Boolean(activeSession?.archived)} ready={ready} allowDraft={activeSession !== null} offline={!online} skill={skill} onSkillChange={setSkill} budget={budget} onBudgetChange={setBudget} stopLabel={stopLabel} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={onFocusSources} />
+        <Composer picker={<ModelPicker menu={modelMenu} choice={askChoice} onChange={chooseModel} disabled={sending || Boolean(activeSession?.archived)} />} web={{ available: webSearch.available, enabled: webSearch.enabled, onChange: webSearch.setEnabled }} value={draft} sending={sending} sourceCount={sourceIds.length} sourceScopeEmpty={sourceScopeEmpty} sourceScopeSelected={sourceScopeSelected} readOnly={Boolean(activeSession?.archived)} ready={ready} allowDraft={activeSession !== null} offline={!online} skill={skill} onSkillChange={setSkill} budget={budget} onBudgetChange={setBudget} stopLabel={stopLabel} onChange={setDraft} onSend={() => void send()} onStop={stopResponse} onSources={onFocusSources} onClearSources={onClearSources} />
       </section>
     </div>
   );
