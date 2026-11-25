@@ -2,11 +2,14 @@ import type { Artifact, ContentsSource, ConversationBriefInput, ConversationCita
 import { useMemo } from "react";
 import { EvidenceDetail, hostOf } from "../components/evidence/EvidenceDetail";
 import { isWebCitation } from "../components/evidence/citationKind";
+import { WebFindActions } from "../components/evidence/WebFindActions";
 import { AnswerTrace } from "../developer/AnswerTrace";
 import { AgentSteps, ResearchPlan, noSourcesNeeded } from "./AnswerBody";
 import { BriefPanel, hasBriefToShow } from "./ConversationBrief";
+import { CitedHeader, SearchEvidence } from "./EvidenceSearch";
 import { OutputEvidence } from "./OutputEvidence";
 import { SourceEvidence } from "./SourceEvidence";
+import { useImportWebFind, webFindOf } from "./useImportWebFind";
 import "./evidencePane.css";
 
 export interface EvidenceTarget {
@@ -20,8 +23,8 @@ export interface TraceTarget { kind: "trace"; contextKey: string; sessionId: str
 const identity = (citation: ConversationCitation) => citation.ref != null ? `ref:${citation.ref}` : `id:${citation.id}`;
 
 export function EvidencePane({ session, selected, chatVisible, sources, selectedCount, allSelected, webEnabled, detail,
-  output, partInView, baseId, sourceId, onSourceCount, brief, traceEnabled, onOpenTrace, onNotify,
-  onOpen, onStep, onBack, onOpenSource, onOriginalPdfChange }: {
+  output, partInView, baseId, workspaceId, sourceId, onSourceCount, brief, traceEnabled, onOpenTrace, onNotify,
+  onOpen, onStep, onBack, onOpenSource, onOpenLibrarySource, onOriginalPdfChange }: {
   session: KnowledgeSession | null;
   selected: SessionMessage | null;
   chatVisible: boolean;
@@ -33,6 +36,7 @@ export function EvidencePane({ session, selected, chatVisible, sources, selected
   output?: Artifact | null;
   partInView?: number | null;
   baseId?: string;
+  workspaceId?: string | null;
   sourceId?: string | null;
   onSourceCount: (id: string, count: number) => void;
   brief?: { updating: boolean; readOnly: boolean; save: (input: ConversationBriefInput) => void; retry: () => void } | undefined;
@@ -43,9 +47,17 @@ export function EvidencePane({ session, selected, chatVisible, sources, selected
   onStep: (index: number) => void;
   onBack: () => void;
   onOpenSource: (id: string) => void;
+  onOpenLibrarySource?: ((id: string) => void) | undefined;
   onOriginalPdfChange: (original: boolean) => void;
 }) {
   const citations = selected?.citations ?? [];
+  const savedCitations = useMemo(() => output?.citations ?? session?.messages.flatMap((message) => message.citations) ?? [], [output, session]);
+  const finds = useMemo(() => [
+    ...savedCitations.filter(isWebCitation).map(webFindOf),
+    ...(output ? output.provenance.searched ?? [] : session?.messages.flatMap((message) => message.context.searched ?? []) ?? [])
+      .filter((hit) => hit.kind === "web"),
+  ], [output, savedCitations, session]);
+  const imports = useImportWebFind({ baseId, workspaceId, finds, onNotify, onOpenSource: onOpenLibrarySource });
   const earlier = useMemo(() => {
     if (!session || !selected) return [];
     const stop = session.messages.findIndex((message) => message.id === selected.id);
@@ -66,25 +78,32 @@ export function EvidencePane({ session, selected, chatVisible, sources, selected
     <AnswerTrace sessionId={detail.sessionId} messageId={detail.messageId} onCopy={(label, value) => void navigator.clipboard.writeText(value)
       .then(() => onNotify?.(`${label} copied.`), () => onNotify?.(`${label} could not be copied.`))} />
   </div>;
-  const citation = detail?.citations[detail.index];
+  const saved = detail?.citations[detail.index];
+  const citation = saved && isWebCitation(saved) ? savedCitations.find((item) => item.id === saved.id) ?? saved : saved;
   if (detail && citation) return <EvidenceDetail citation={citation} index={sourceId && citation.ref != null ? citation.ref - 1 : detail.index}
     passages={detail.passageSelector ? detail.citations : undefined} onPassage={detail.passageSelector ? onStep : undefined}
     onBack={onBack} position={detail.index} total={detail.citations.length}
     onPrevious={detail.index > 0 ? () => onStep(detail.index - 1) : undefined}
     onNext={detail.index + 1 < detail.citations.length ? () => onStep(detail.index + 1) : undefined}
-    onOpenSource={onOpenSource} onOriginalPdfChange={onOriginalPdfChange} />;
+    onOpenSource={onOpenSource} onOriginalPdfChange={onOriginalPdfChange} webImports={imports} />;
 
   const card = (item: ConversationCitation, index: number, list: ConversationCitation[], numbered: boolean) => {
-    const kind = isWebCitation(item) ? "Web" : sources.find((source) => source.id === item.sourceId)?.kind === "paper" ? "Paper" : "Library";
-    const locator = item.locator || (isWebCitation(item) ? hostOf(item.url) : "");
-    return <button type="button" className="evidence-card" key={`${identity(item)}:${index}`} onClick={() => onOpen(list, index)}>
+    const web = isWebCitation(item);
+    const kind = web ? "Web" : sources.find((source) => source.id === item.sourceId)?.kind === "paper" ? "Paper" : "Library";
+    const locator = item.locator || (web ? hostOf(item.url) : "");
+    const key = `${identity(item)}:${index}`;
+    const content = <>
       <span className="evidence-card-meta">{numbered && <strong>[{index + 1}]</strong>}<small>{kind}</small></span>
       <strong>{item.sourceTitle}</strong>
       {locator && <small>{locator}</small>}
       {(item.supportText || item.quote) && <span className="evidence-card-quote">{item.supportText || item.quote}</span>}
-    </button>;
+    </>;
+    return web ? <article className="evidence-card evidence-source-group" key={key}>
+      <button type="button" className="evidence-card-open" onClick={() => onOpen(list, index)}>{content}</button>
+      <WebFindActions find={webFindOf(item)} imports={imports} />
+    </article> : <button type="button" className="evidence-card" key={key} onClick={() => onOpen(list, index)}>{content}</button>;
   };
-  if (output) return <OutputEvidence key={output.id} artifact={output} partInView={partInView ?? null} onOpen={onOpen} />;
+  if (output) return <OutputEvidence key={output.id} artifact={output} partInView={partInView ?? null} imports={imports} onOpen={onOpen} />;
   if (sourceId && baseId) return <SourceEvidence key={`${baseId}:${sourceId}`} baseId={baseId} sourceId={sourceId}
     onCount={onSourceCount} onInspect={(passages) => onOpen(passages, 0, true)} />;
   if (!chatVisible) return <div className="evidence-overview" aria-label="Evidence overview"><p>Loading evidence…</p></div>;
@@ -117,10 +136,12 @@ export function EvidencePane({ session, selected, chatVisible, sources, selected
       {traceEnabled && onOpenTrace && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" aria-label="View trace" onClick={onOpenTrace}>Trace ↗</button>}
     </section>
     <section className="evidence-cited" aria-label="Cited sources">
-      <h3>Cited ({citations.length})</h3>
+      <CitedHeader citations={citations} imports={imports} />
       {citations.length ? citations.map((item, index) => card(item, index, citations, true))
         : <p>{noSourcesNeeded(selected.context) ? "No sources needed" : "Nothing cited"}</p>}
     </section>
+    <SearchEvidence searched={selected.context.searched} keyResultsUsed={selected.context.keyResultsUsed}
+      citations={citations} imports={imports} onOpen={onOpen} />
     {earlier.length > 0 && <details className="evidence-earlier">
       <summary>Earlier in this conversation ({earlier.length})</summary>
       {earlier.map((item, index) => card(item, index, earlier, false))}

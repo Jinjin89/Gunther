@@ -21,6 +21,14 @@ Ask needs a configured model. The composer links to Settings when a model or key
 
 The answer actions show **Checking key results…** while Analysis works and a kept count when it finds supported results. Undo removes that answer's contribution. A failed job offers Retry, and a job waiting for Analysis links to Models settings. Open the library's Key results group to inspect the original passages. [Key results](LIBRARY.md#key-results)
 
+Each saved answer keeps up to 20 uncited search hits, starting with up to 12 web hits and filling the remaining slots with library hits. It records the query, a short excerpt and whether the result was kept during gathering. It also records the checked key results that pointed to passages the answer cites, using the citation numbers in the answer. The saved search list stays out of later model prompts.
+
+In Evidence, expand **Key results used** to see the checked sentences and open their numbered passages. **Also searched, not cited** shows uncited web hits first, followed by library excerpts that open as passages. Each section appears when the answer has entries for it.
+
+On a web card or in its passage view, **+ Add to library** captures the page or its PDF through the library's web capture flow. Use **Add all cited** to import missing cited web sources in order. A blocked page shows the server error with **Retry** and a link to open the page in your browser. When the page is saved in place of a linked PDF, the app shows the capture notice. [Capture guide](CAPTURE.md)
+
+**In library · Open** opens a matching source's summary. The service matches live sources by URL, DOI or arXiv ID. Trash clears the match and Restore brings it back. A Home chat can use the library actions after it is filed.
+
 ## Streaming and trace
 
 Ask uses `POST /api/sessions/{id}/messages/stream`. Attach to existing work at `GET /api/sessions/{id}/answer/stream`, or stop it with `POST /api/sessions/{id}/answer/stop`. Home and Library share the answer listener. The stream reports steps and text, then a stored answer or a terminal failure. Terminal events follow persistence and the Activity update. Clients parse SSE on CR, LF and CRLF line breaks.

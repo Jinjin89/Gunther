@@ -54,7 +54,7 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
   const [contents, setContents] = useState<LibraryContents | null>(null);
   const [sourceLoadFailed, setSourceLoadFailed] = useState(false);
   const [inspector, setInspector] = useState<{ tab: InspectorTab; detail: EvidenceTarget | TraceTarget | null }>({ tab: "studio", detail: null });
-  const [webEnabled, setWebEnabled] = useState(false);
+  const [web, setWeb] = useState({ available: false, enabled: false });
   const [chatOnline, setChatOnline] = useState(true);
   const [originalPdf, setOriginalPdf] = useState(false);
   const clearDetail = useCallback(() => setInspector((current) => current.detail ? { ...current, detail: null } : current), []);
@@ -235,7 +235,7 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
           chats={chats}
           sourceIds={scope.sourceIds} sourceScopeEmpty={scopeEmpty} sourceScopeSelected={selection.mode === "selected"} onFocusSources={focusSources} onClearSources={() => setSelection(allSources)}
           chatActions={chatActions} onNotify={onNotify} onInspectSources={inspectSources} onInspectCitation={inspectCitation}
-          onOpenTrace={openTrace} traceEnabled={traces.on} onOnlineStatus={setChatOnline} onWebStatus={setWebEnabled} />
+          onOpenTrace={openTrace} traceEnabled={traces.on} onOnlineStatus={setChatOnline} onWebStatus={setWeb} />
       </div>
       {!chatVisible && <div className="library-middle-page">
         <div className="library-middle-bar"><button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => choose(chat)}><ArrowLeft size={14} />Back to chat</button></div>
@@ -243,7 +243,7 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
           onAsk={askFromReader} />}
         {middle.kind === "source" && !source && <p className="library-reading">{contents ? "Source unavailable." : "Loading source…"}</p>}
         {target && workspaceId && <OpenOutput key={outputKey(target)} baseId={base.id} workspaceId={workspaceId}
-          target={target} studio={studio} scope={scope} scopeEmpty={scopeEmpty} dirty={dirty} onNotify={onNotify}
+          target={target} studio={studio} scope={scope} scopeEmpty={scopeEmpty} webAvailable={web.available} dirty={dirty} onNotify={onNotify}
           onCite={(version, index) => {
             onArtifactChange(version);
             openEvidence(version.citations, index, `output:${readerKey}:${version.id}`);
@@ -258,8 +258,8 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
       running={studio.jobs.size > 0 || studio.activities.some((item) => item.state === "running" || item.state === "waiting")}
       detailOpen={Boolean(inspector.detail)} onBack={clearDetail} originalPdf={originalPdf}
       evidence={<EvidencePane session={chats.activeSession} selected={middle.kind === "chat" ? selectedMessage : null} chatVisible={chatVisible}
-        sources={sources} selectedCount={sourceIds.length} allSelected={selection.mode === "all"} webEnabled={webEnabled}
-        output={artifact} partInView={partInView} baseId={base.id} sourceId={source?.id ?? null} onSourceCount={onSourceCount}
+        sources={sources} selectedCount={sourceIds.length} allSelected={selection.mode === "all"} webEnabled={web.enabled}
+        output={artifact} partInView={partInView} baseId={base.id} workspaceId={workspaceId} sourceId={source?.id ?? null} onSourceCount={onSourceCount}
         brief={chats.activeSession && chats.activeSession.id === chats.activeId ? {
           updating: chats.briefBusy === chats.activeSession.id, readOnly: !chatOnline || chats.activeSession.archived,
           save: (input) => void chats.saveBrief(chats.activeSession!.id, input), retry: () => void chats.refreshBrief(chats.activeSession!.id),
@@ -267,8 +267,10 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
         traceEnabled={traces.on} onOpenTrace={selectedMessage ? () => openTrace(selectedMessage) : undefined} onNotify={onNotify}
         detail={inspector.detail} onOpen={(citations, index, passageSelector) => openEvidence(citations, index, contextKey, passageSelector)}
         onStep={stepEvidence}
-        onBack={clearDetail} onOpenSource={(id) => { clearDetail(); openFullSource(id); }} onOriginalPdfChange={setOriginalPdf} />}
-      studio={<StudioColumn studio={studio} scope={scope} scopeEmpty={scopeEmpty} sourceCount={contents?.sources.length ?? null}
+        onBack={clearDetail} onOpenSource={(id) => { clearDetail(); openFullSource(id); }}
+        onOpenLibrarySource={(id) => { if (choose({ kind: "source", id }) && screenWidth < 1_080) closeInspector(); }}
+        onOriginalPdfChange={setOriginalPdf} />}
+      studio={<StudioColumn studio={studio} scope={scope} scopeEmpty={scopeEmpty} webAvailable={web.available} sourceCount={contents?.sources.length ?? null}
         sourceLoadFailed={sourceLoadFailed} selectedSourceCount={sourceIds.length} disabled={!workspaceId}
         onOpen={openOutput} onTrash={(item) => void trashOutput(item)} />} />
   </div>;

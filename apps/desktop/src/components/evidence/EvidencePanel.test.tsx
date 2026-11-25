@@ -29,6 +29,7 @@ describe("EvidencePanel", () => {
     expect(screen.getByText("CD3D marks T cells.")).toBeInTheDocument();
     expect(screen.getByText("Outside your library")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Open example\.org/ })).toHaveAttribute("href", "https://www.example.org/post");
+    expect(screen.queryByRole("button", { name: "+ Add to library" })).toBeNull();
   });
 
   it("opens a saved web passage without an explicit kind as a web citation", () => {
@@ -112,6 +113,19 @@ it("shares the citation viewer with inline navigation", async () => {
   await userEvent.click(screen.getByRole("button", { name: "All 2 sources" }));
   expect(onNext).toHaveBeenCalledOnce();
   expect(onBack).toHaveBeenCalledOnce();
+});
+
+it("offers the library action beside the original page when a library handler is supplied", async () => {
+  const openSource = vi.fn();
+  const importOne = vi.fn();
+  const actions = { openSource, importOne, importAll: vi.fn(), batching: false, busy: false };
+  const { rerender } = render(<EvidenceDetail citation={web} webImports={{ ...actions, status: () => ({ status: "idle" }) }} />);
+  await userEvent.click(screen.getByRole("button", { name: "+ Add to library" }));
+  expect(importOne).toHaveBeenCalledWith(expect.objectContaining({ url: web.url, title: web.sourceTitle }));
+  rerender(<EvidenceDetail citation={web} webImports={{ ...actions, status: () => ({ status: "imported", sourceId: "captured" }) }} />);
+  await userEvent.click(screen.getByRole("button", { name: "In library · Open source" }));
+  expect(openSource).toHaveBeenCalledWith("captured");
+  expect(screen.getByRole("link", { name: "Open example.org" })).toHaveAttribute("href", web.url);
 });
 
 it("reports when an inline original PDF is visible", async () => {

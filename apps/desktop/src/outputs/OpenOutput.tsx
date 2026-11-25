@@ -4,6 +4,7 @@ import { Trash2 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ApiRequestError, isTurnResult, knowledgeApi } from "../api";
 import { CitationDetails } from "../components/evidence/CitationButton";
+import { isWebCitation } from "../components/evidence/citationKind";
 import { KeyResultsStatus } from "../keyResults/KeyResultsStatus";
 import { AnswerBody, citationNumbers, verificationNotice } from "../pages/AnswerBody";
 import { ArtifactMenu } from "./ArtifactMenu";
@@ -17,6 +18,7 @@ import { outputViews } from "./OutputViews";
 import { prepareForPrint } from "./printReady";
 import { PrintRoot } from "./PrintRoot";
 import { parseSlides, withAccent, withTheme, type DeckStyle, type DeckTheme } from "./sections";
+import { StudioWebSwitch } from "./StudioWebSwitch";
 import { type OutputListener, type OutputTarget, type OutputTrashTarget, type useStudio } from "./useStudio";
 import "./outputs.css";
 
@@ -25,10 +27,10 @@ const sameIds = (a: string[], b: string[]) => a.length === b.length && a.every((
 const sameScope = (a: OutputScope, b: OutputScope) => a.mode === b.mode && (
   a.mode === "library" || (sameIds(a.sourceIds, b.sourceIds) && sameIds(a.unitIds, b.unitIds) && sameIds(a.sessionIds, b.sessionIds))
 );
-export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEmpty,
+export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEmpty, webAvailable,
   dirty, onNotify, onCite, onOpen, onWideReader, onAskChat, onTrash, onArtifactChange, onPartChange }: {
   baseId: string; workspaceId: string; target: OutputTarget; studio: ReturnType<typeof useStudio>;
-  scope: OutputScope; scopeEmpty: boolean; dirty: { current: boolean };
+  scope: OutputScope; scopeEmpty: boolean; webAvailable: boolean; dirty: { current: boolean };
   onNotify: (message: string) => void; onCite: (artifact: Artifact, index: number) => void;
   onOpen: (target: OutputTarget) => void;
   onWideReader: (wide: boolean) => void;
@@ -46,6 +48,7 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState("");
   const [draft, setDraft] = useState("");
+  const [web, setWeb] = useState(false);
   const [focus, setFocus] = useState<ArtifactTurnInput["focus"]>();
   const [jump, setJump] = useState<{ index: number; nonce: number } | null>(null);
   const partInView = useRef<number | null>(null);
@@ -109,7 +112,8 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   const refineOutput = (text: string) => {
     if (!text.trim() || !artifact || !changeable || busy || editing) return;
     const part = latest ? focus ?? (partInView.current !== null ? { section: partInView.current + 1, selected: false } : undefined) : undefined;
-    void send({ kind: pending ? "answer" : "message", text, ...(part ? { focus: part } : {}) });
+    void send({ kind: pending ? "answer" : "message", text, ...(part ? { focus: part } : {}),
+      ...(webAvailable && web ? { web: true } : {}) });
     setDraft(""); setFocus(undefined);
   };
   const retry = (answer: ArtifactConversationMessage) => {
@@ -262,6 +266,23 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
     }).catch((reason) => { if (alive) setError(message(reason)); });
     return () => { alive = false; };
   }, [baseId, shownId, workspaceId, working]);
+  const hasWebEvidence = Boolean(artifact?.citations.some(isWebCitation)
+    || artifact?.provenance.searched?.some((hit) => hit.kind === "web"));
+  useEffect(() => {
+    if (!shownId || !hasWebEvidence) return;
+    let generation = 0;
+    const refresh = () => {
+      const request = ++generation;
+      void knowledgeApi.artifact(baseId, shownId, workspaceId).then((version) => {
+        if (request !== generation) return;
+        setOpened((current) => current?.id === version.id ? { ...current,
+          citations: version.citations, provenance: { ...current.provenance, searched: version.provenance.searched ?? [] },
+        } : current);
+      }).catch(() => undefined);
+    };
+    window.addEventListener("gunther:sources-updated", refresh);
+    return () => { ++generation; window.removeEventListener("gunther:sources-updated", refresh); };
+  }, [baseId, hasWebEvidence, shownId, workspaceId]);
   const capabilities = type?.capabilities;
   const unitLabel = (kind: OutputKind | null) => studio.types.find((item) => item.shape === kind)?.capabilities?.unitLabel ?? "part";
   const unit = capabilities?.unitLabel ?? "part";
@@ -354,6 +375,7 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
       {focus && <small>About {focus.quote ? `“${focus.quote}”` : `${unit} ${focus.section}`}
         <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => setFocus(undefined)}>Clear</button></small>}
       <label>Refine<textarea ref={refine} value={draft} maxLength={20_000} rows={2} onChange={(event) => setDraft(event.target.value)} /></label>
+      <StudioWebSwitch available={webAvailable} checked={web} onChange={setWeb} />
       <button type="submit" className="gx-btn gx-btn-primary gx-btn-sm" disabled={busy || !draft.trim()}>Refine</button>
     </form>}
   </article></CitationDetails.Provider>;

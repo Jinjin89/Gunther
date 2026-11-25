@@ -2,14 +2,23 @@
 .evidence-overview h3 { margin: 0 0 8px; color: var(--gx-ink); font-size: var(--gx-text-sm); font-weight: 650; }
 .evidence-overview p { margin: 6px 0; line-height: 1.5; }
 .evidence-method, .evidence-cited { margin-bottom: 16px; }
-.evidence-method summary, .evidence-earlier summary { cursor: pointer; }
+.evidence-method summary, .evidence-earlier summary, .evidence-disclosure > summary { cursor: pointer; }
 .evidence-method .message-steps { margin: 8px 0; }
+.evidence-cited-header { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
 .evidence-card { display: grid; gap: 4px; width: 100%; margin: 6px 0; padding: 10px; border: 1px solid var(--gx-line); border-radius: var(--gx-radius-sm); background: var(--gx-surface); color: var(--gx-ink); font: inherit; text-align: left; cursor: pointer; }
-.evidence-card:hover, .evidence-card:focus-visible { background: var(--gx-hover); border-color: var(--gx-line-2); }
+button.evidence-card:hover, .evidence-card:focus-visible, .evidence-card-open:hover { background: var(--gx-hover); border-color: var(--gx-line-2); }
+.evidence-card-open { display: grid; gap: inherit; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.evidence-card strong { overflow-wrap: anywhere; }
 .evidence-card-meta { display: flex; align-items: center; gap: 6px; }
 .evidence-card small { color: var(--gx-faint); font-size: var(--gx-text-xs); }
 .evidence-card-quote { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: var(--gx-muted); line-height: 1.45; }
 .evidence-earlier { border-top: 1px solid var(--gx-line); padding-top: 10px; }
+.evidence-disclosure { margin: 0 0 12px; border-top: 1px solid var(--gx-line); padding-top: 10px; }
+.evidence-disclosure > summary { color: var(--gx-ink); font-weight: 650; }
+.evidence-disclosure > summary small { color: var(--gx-muted); font: inherit; font-weight: 400; }
+.evidence-disclosure ul { padding-inline-start: 18px; }
+.evidence-disclosure li { margin-block: 6px; }
+.evidence-research-notes p { white-space: pre-wrap; }
 .evidence-brief { margin-top: 8px; }
 .evidence-brief .brief-section { margin: 8px 0 0; }
 .evidence-filter, .evidence-chips { display: flex; flex-wrap: wrap; gap: 6px; }

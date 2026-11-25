@@ -7,6 +7,7 @@ import { useEscape } from "../shortcuts/shortcuts";
 import { ArtifactMenu } from "./ArtifactMenu";
 import { artifactRequestId } from "./artifactConversations";
 import { outputActivity } from "./liveOutput";
+import { StudioWebSwitch } from "./StudioWebSwitch";
 import { latestVersions, type OutputTarget, type OutputTrashTarget, type useStudio } from "./useStudio";
 import { readVoices, VoiceFields } from "./VoiceFields";
 
@@ -78,15 +79,17 @@ function cardsOf(studio: ReturnType<typeof useStudio>): Card[] {
   return [...cards.values()].sort((a, b) => b.at.localeCompare(a.at));
 }
 
-function BuildOptions({ type, disabled, onBuild, onClose }: {
-  type: OutputType; disabled: boolean; onBuild: (options: BuildTurnInput) => void; onClose: () => void;
+function BuildOptions({ type, disabled, webAvailable, onBuild, onClose }: {
+  type: OutputType; disabled: boolean; webAvailable: boolean; onBuild: (options: BuildTurnInput) => void; onClose: () => void;
 }) {
   useEscape(onClose);
+  const [web, setWeb] = useState(false);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (disabled) return;
     const data = new FormData(event.currentTarget);
     const options: BuildTurnInput = { type: type.id };
+    if (webAvailable && web) options.web = true;
     for (const field of type.options) {
       if (field === "voices") {
         const voices = readVoices(data);
@@ -106,12 +109,13 @@ function BuildOptions({ type, disabled, onBuild, onClose }: {
     {type.options.includes("language") && <label>Language<input name="language" maxLength={80} placeholder="Automatic" /></label>}
     {type.options.includes("use") && <label>Use<select name="use"><option value="">Default</option><option value="talk">Present</option><option value="read">Read</option></select></label>}
     {type.options.includes("voices") && type.voices && <VoiceFields options={type.voices} />}
+    <StudioWebSwitch available={webAvailable} checked={web} onChange={setWeb} />
     <button type="submit" className="gx-btn gx-btn-primary gx-btn-sm" disabled={disabled}>Build {type.label}</button>
   </form>;
 }
 
-export function StudioColumn({ studio, scope, scopeEmpty, sourceCount, sourceLoadFailed, selectedSourceCount, disabled, onOpen, onTrash }: {
-  studio: ReturnType<typeof useStudio>; scope: OutputScope; scopeEmpty: boolean;
+export function StudioColumn({ studio, scope, scopeEmpty, webAvailable, sourceCount, sourceLoadFailed, selectedSourceCount, disabled, onOpen, onTrash }: {
+  studio: ReturnType<typeof useStudio>; scope: OutputScope; scopeEmpty: boolean; webAvailable: boolean;
   sourceCount: number | null; sourceLoadFailed: boolean; selectedSourceCount: number; disabled: boolean;
   onOpen: (target: OutputTarget) => void;
   onTrash: (target: OutputTrashTarget) => void;
@@ -143,7 +147,7 @@ export function StudioColumn({ studio, scope, scopeEmpty, sourceCount, sourceLoa
       </div>;
     })}</div>
     {optionType && <div className="studio-popover"><BuildOptions key={optionType.id} type={optionType}
-      disabled={tilesDisabled} onBuild={start} onClose={closeOptions} /></div>}</>;
+      disabled={tilesDisabled} webAvailable={webAvailable} onBuild={start} onClose={closeOptions} /></div>}</>;
   const count = scope.mode === "library" ? sourceCount : selectedSourceCount;
   const scopeLabel = sourceLoadFailed ? "Source count unavailable"
     : sourceCount === null ? "Loading sources…"

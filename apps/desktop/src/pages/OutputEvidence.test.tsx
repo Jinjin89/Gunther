@@ -58,3 +58,42 @@ it("groups older web citations by URL even when their kind is absent", () => {
   expect(within(groups[0]!).getByRole("button", { name: "Inspect citation 1" })).toBeVisible();
   expect(within(groups[0]!).getByRole("button", { name: "Inspect citation 2" })).toBeVisible();
 });
+
+it("folds research notes, checked key results and searched passages when present", async () => {
+  const user = userEvent.setup();
+  const open = vi.fn();
+  const saved: Artifact = { ...deck, provenance: { ...deck.provenance,
+    approach: { question: "What changed?", answer: "", purpose: "Compare", structure: "", structureReason: "",
+      pages: null, supplements: [], gaps: ["Later readings were unavailable."], memo: { answer: "Start with the measured changes.", insights: [] },
+      studyMap: { question: "What changed?", contribution: "Measured changes", claims: [], limitations: ["One observation site."] } },
+    keyResultsUsed: [{ id: "checked", text: "Two readings support the result.", refs: [2] }],
+    searched: [
+      { kind: "library", title: "An uncited reading", sourceId: "reading", url: null, locator: "Page 4", snippet: "A close reading.", query: "trial", kept: true },
+      { kind: "web", title: "An uncited page", url: "https://example.org/article", sourceId: null, locator: "example.org", snippet: "Page excerpt.", query: "trial", kept: false },
+    ],
+  } };
+  const { rerender } = render(<OutputEvidence artifact={saved} partInView={null} onOpen={open} />);
+  expect(screen.getByText("Research notes").closest("details")).not.toHaveAttribute("open");
+  expect(screen.getByText("Key results used (1)").closest("details")).not.toHaveAttribute("open");
+  expect(screen.getByText("Also searched, not cited (2)", { exact: false }).closest("details")).not.toHaveAttribute("open");
+  await user.click(screen.getByText("Research notes"));
+  expect(screen.getByText("Start with the measured changes.")).toBeVisible();
+  expect(screen.getByText("Later readings were unavailable.")).toBeVisible();
+  expect(screen.getByText("One observation site.")).toBeVisible();
+  await user.click(screen.getByText("Key results used (1)"));
+  expect(screen.getByText("Two readings support the result.")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Open citation 2 for this key result" }));
+  expect(open).toHaveBeenLastCalledWith(citations, 1);
+  await user.click(screen.getByText("Also searched, not cited (2)", { exact: false }));
+  expect(screen.getByText("2 more (1 online)")).toBeVisible();
+  const web = screen.getByText("An uncited page");
+  const library = screen.getByRole("button", { name: /An uncited reading/ });
+  expect(web.compareDocumentPosition(library) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  await user.click(library);
+  expect(open).toHaveBeenLastCalledWith([expect.objectContaining({ sourceId: "reading", locator: "Page 4", quote: "A close reading." })], 0);
+
+  rerender(<OutputEvidence artifact={deck} partInView={null} onOpen={open} />);
+  expect(screen.queryByText("Research notes")).toBeNull();
+  expect(screen.queryByText(/Key results used/)).toBeNull();
+  expect(screen.queryByText(/Also searched, not cited/)).toBeNull();
+});

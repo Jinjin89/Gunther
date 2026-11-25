@@ -1,7 +1,7 @@
 import type {
-  Artifact, ArtifactAudio, ArtifactConversationDetail, ArtifactTurnOut, BuildTurnInput, ContentsSource, KnowledgeSession,
+  Artifact, ArtifactAudio, ArtifactConversationDetail, ArtifactTurnOut, BuildTurnInput, ContentsSource, ConversationCitation, KnowledgeSession,
   KeyResult, KeyResultJob, LibraryContents, LibraryOverview, ModelMenu, OutputScope, OutputType,
-  SessionMessage, SourceDigest,
+  SearchedHit, SessionMessage, SourceDigest, WebCaptureResult,
 } from "@gunther/contracts";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiRequestError, ServiceUnavailableError, knowledgeApi } from "../api";
 import { forgetAskSkills } from "../components/search/skills";
 import { keyResultsChanged } from "../keyResults/events";
-import { announceModelsChanged, OPEN_SETTINGS_EVENT } from "../models/askModel";
+import { announceModelsChanged, OPEN_SETTINGS_EVENT, WEB_PREFERENCE_KEY, WEB_SEARCH_HINT } from "../models/askModel";
 import { libraryScope } from "../outputs/artifactConversations";
 import { ShortcutSheet } from "../shortcuts/ShortcutSheet";
 import { makeBase, makeSource, makeTrashItem } from "../test/fixtures";
@@ -49,6 +49,16 @@ const contents: LibraryContents = {
   ],
   placements: [{ sourceId: "s1", sectionId: "methods", position: 0 }, { sourceId: "s2", sectionId: "fieldwork", position: 0 }],
 };
+const webCitation = (id: string, title: string, matches?: string): ConversationCitation => ({
+  id, sourceTitle: title, url: `https://example.org/${id}`, kind: "web", sourceId: "",
+  assertionId: null, quote: `A passage from ${title}.`, locator: "example.org", status: "provisional", confidence: 0,
+  ...(matches ? { librarySourceId: matches } : {}),
+});
+const webHit = (citation: ConversationCitation): SearchedHit => ({
+  kind: "web", title: citation.sourceTitle, url: citation.url ?? null, sourceId: null,
+  locator: citation.locator, snippet: citation.quote, query: "field observations", kept: true,
+  librarySourceId: citation.librarySourceId ?? null,
+});
 const report: OutputType = {
   id: "report", label: "Report", shape: "report", description: "A written report", icon: "FileText", options: ["focus", "length"], partLimit: 8, legacyStyles: ["auto", "overview", "field_guide"],
   capabilities: { unitLabel: "section", outline: true, design: false, exports: ["markdown", "pdf", "docx"] },
@@ -87,6 +97,26 @@ const originalSession: KnowledgeSession = {
   branchedFromMessageId: null, createdAt: at, updatedAt: at,
 };
 const secondSession: KnowledgeSession = { ...originalSession, id: "chat-2", title: "History discussion", selectedSourceIds: ["s1"] };
+
+function chatWithEvidence(citations: ConversationCitation[], searched: SearchedHit[] = []): KnowledgeSession {
+  return { ...originalSession, messageCount: 1, messages: [{
+    id: "search-answer", sessionId: originalSession.id, role: "assistant", content: "The report is ready [1].",
+    citations, createdAt: at, context: { sourcesConsidered: 0, assertionsConsidered: 0, verifiedAssertions: 0,
+      retrievalMode: "all", responderMode: "model", searched },
+  }] };
+}
+
+function capturedWeb(item: ContentsSource, url: string, note?: string): WebCaptureResult {
+  return {
+    asset: { id: `asset-${item.id}`, contentHash: "hash", originalName: "article.html", mediaType: "text/html",
+      sizeBytes: 123, downloadUrl: "/asset", createdAt: at },
+    importResult: { source: makeSource({ id: item.id, title: item.title, kind: item.kind, assertionCount: 0, entityCount: 0 }),
+      created: { entities: 0, assertions: 0 }, extractionMode: "local", duplicate: false },
+    snapshot: { originalUrl: url, finalUrl: url, capturedAt: at, status: 200,
+      contentType: "text/html", contentHash: "hash", assetId: `asset-${item.id}` },
+    idempotentReplay: false, ...(note ? { note } : {}),
+  };
+}
 
 function version(changes: Partial<Artifact> = {}): Artifact {
   return {
@@ -921,6 +951,94 @@ it("keeps Studio selected when an answer finishes, then opens and steps through 
   expect(within(screen.getByRole("tabpanel", { name: "Evidence" })).getByText("Passage 1")).toBeVisible();
 });
 
+it("shares an imported URL across cards, opens its summary, and clears it on Trash", async () => {
+  const user = userEvent.setup();
+  const citation = webCitation("trial-page", "Trial web page");
+  const hit = { ...webHit(citation), title: "Another result from the page", url: `${citation.url}#details` };
+  const original = chatWithEvidence([citation], [hit]);
+  vi.mocked(knowledgeApi.session).mockResolvedValue(original);
+  const page = { ...source("captured", "Saved trial article"), kind: "link" as const, processing: "reading" as const };
+  const note = "Saved the web page because its PDF could not be opened.";
+  const capture = vi.spyOn(knowledgeApi, "captureWeb").mockImplementation(async () => {
+    vi.mocked(knowledgeApi.contents).mockResolvedValue({ ...contents, sources: [...contents.sources, page] });
+    return capturedWeb(page, citation.url!, note);
+  });
+  const refreshed = vi.fn();
+  const { onNotify } = setup();
+  await user.click(await screen.findByRole("checkbox", { name: "Select Field notes" }));
+  await user.click(await screen.findByRole("tab", { name: "Evidence (1)" }));
+  const pane = within(screen.getByRole("tabpanel", { name: "Evidence" }));
+  await user.click(pane.getByText("Also searched, not cited (1)", { exact: false }));
+  expect(pane.getByText("1 more (1 online)")).toBeVisible();
+  window.addEventListener("gunther:sources-updated", refreshed, { once: true });
+  await user.click(pane.getAllByRole("button", { name: "+ Add to library" })[0]!);
+  expect(capture).toHaveBeenCalledExactlyOnceWith({ url: citation.url, title: citation.sourceTitle,
+    knowledgeBaseId: base.id, clientCaptureId: expect.any(String) }, ws);
+  expect(refreshed).toHaveBeenCalledOnce();
+  expect(onNotify).toHaveBeenCalledWith(note);
+  expect(await pane.findAllByRole("button", { name: "In library · Open" })).toHaveLength(2);
+  expect(await screen.findByRole("checkbox", { name: `Select ${page.title}` })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Select Field notes" })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Select Lab notes" })).toBeChecked();
+
+  await user.click(pane.getAllByRole("button", { name: "In library · Open" })[1]!);
+  expect(within(screen.getByRole("article", { name: "Source summary" })).getByRole("heading", { name: page.title })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Back to chat" }));
+  await user.click(screen.getByRole("button", { name: "Clear source selection" }));
+  expect(screen.getByRole("checkbox", { name: `Select ${page.title}` })).toBeChecked();
+  await user.click(pane.getByRole("button", { name: /Trial web page/ }));
+  expect(pane.getByRole("button", { name: "In library · Open source" })).toBeVisible();
+  const detailsRead = vi.mocked(knowledgeApi.session).mock.calls.length;
+  const trash = vi.spyOn(knowledgeApi, "trashSource").mockImplementation(async () => {
+    vi.mocked(knowledgeApi.contents).mockResolvedValue(contents);
+    return makeTrashItem({ id: page.id, title: page.title, sourceKind: "link" });
+  });
+  await user.click(screen.getByRole("button", { name: `Actions for ${page.title}` }));
+  await user.click(screen.getByRole("menuitem", { name: "Move to Trash" }));
+  expect(trash).toHaveBeenCalledExactlyOnceWith(page.id);
+  expect(await pane.findByRole("button", { name: "+ Add to library" })).toBeVisible();
+  await waitFor(() => expect(knowledgeApi.session).toHaveBeenCalledTimes(detailsRead + 1));
+  expect(pane.queryByRole("button", { name: /In library/ })).toBeNull();
+  expect(pane.getByRole("link", { name: "Open example.org" })).toHaveAttribute("href", citation.url);
+});
+
+it("imports cited pages in order and leaves a failed page retryable", async () => {
+  const user = userEvent.setup();
+  const first = webCitation("first", "First article");
+  const blocked = webCitation("blocked", "Blocked article");
+  const last = webCitation("last", "Last article");
+  const existing = webCitation("existing", "Saved paper", "s1");
+  vi.mocked(knowledgeApi.session).mockResolvedValue(chatWithEvidence([first, blocked, last, existing]));
+  let finishFirst!: (result: WebCaptureResult) => void;
+  const capture = vi.spyOn(knowledgeApi, "captureWeb")
+    .mockReturnValueOnce(new Promise((resolve) => { finishFirst = resolve; }))
+    .mockRejectedValueOnce(new ApiRequestError("The host refused access to this page.", 502))
+    .mockResolvedValueOnce(capturedWeb(source("third", last.sourceTitle), last.url!))
+    .mockResolvedValueOnce(capturedWeb(source("second", blocked.sourceTitle), blocked.url!));
+  const createSource = vi.spyOn(knowledgeApi, "importSource");
+  const createNote = vi.spyOn(knowledgeApi, "createNote");
+  setup();
+  await user.click(await screen.findByRole("tab", { name: "Evidence (4)" }));
+  const pane = within(screen.getByRole("tabpanel", { name: "Evidence" }));
+  expect(pane.getByRole("button", { name: "In library · Open" })).toBeVisible();
+  await user.click(pane.getByRole("button", { name: "Add all cited (3)" }));
+  expect(pane.getByRole("button", { name: "Adding…" })).toBeDisabled();
+  expect(capture).toHaveBeenCalledOnce();
+  await act(async () => finishFirst(capturedWeb(source("first", first.sourceTitle), first.url!)));
+  expect(capture.mock.calls.map(([payload]) => payload.url)).toEqual([first.url, blocked.url, last.url]);
+  const row = within(pane.getByRole("button", { name: /Blocked article/ }).closest("article")!);
+  expect(row.getByRole("alert")).toHaveTextContent("The host refused access to this page.");
+  expect(row.getByRole("link", { name: "Open" })).toHaveAttribute("href", blocked.url);
+  expect(pane.getAllByRole("button", { name: "In library · Open" })).toHaveLength(3);
+  expect(createSource).not.toHaveBeenCalled();
+  expect(createNote).not.toHaveBeenCalled();
+  await user.click(row.getByRole("button", { name: "Retry" }));
+  expect(row.queryByRole("alert")).toBeNull();
+  expect(row.getByRole("button", { name: "In library · Open" })).toBeVisible();
+  const ids = capture.mock.calls.map(([payload]) => payload.clientCaptureId);
+  expect(new Set(ids).size).toBe(4);
+});
+
 it("handles workspace shortcuts and pauses them in the shortcut sheet", async () => {
   const user = userEvent.setup();
   const citations = [1, 2, 3].map((number) => ({ id: `web-${number}`, kind: "web" as const, url: `https://example.org/${number}`,
@@ -1030,6 +1148,35 @@ it("keeps Evidence selected when an output opens from Activity", async () => {
   });
 });
 
+it("refreshes read-time library links in an open output and its citation detail after Trash", async () => {
+  const user = userEvent.setup();
+  const first = webCitation("online-report", "An online report", "s1");
+  const other = webCitation("online-appendix", "The online appendix", "s1");
+  const saved = version({ citations: [first], content: "# Field findings\n\n## Observations\n\nA result [1]." });
+  saved.provenance.searched = [webHit(other)];
+  const { artifacts } = setup({ artifacts: [saved] });
+  await user.click(await screen.findByRole("button", { name: /Field findings Report Version 1/ }));
+  await user.click(await screen.findByRole("tab", { name: "Evidence (1)" }));
+  const pane = within(screen.getByRole("tabpanel", { name: "Evidence" }));
+  const cited = within(pane.getByRole("region", { name: "Cited sources" }));
+  expect(cited.getByRole("button", { name: "In library · Open" })).toBeVisible();
+  await user.click(pane.getByRole("button", { name: "Inspect citation 1" }));
+  expect(pane.getByRole("button", { name: "In library · Open source" })).toBeVisible();
+  vi.spyOn(knowledgeApi, "trashSource").mockImplementation(async (id) => {
+    artifacts[0] = { ...saved, citations: [{ ...first, librarySourceId: null }],
+      provenance: { ...saved.provenance, searched: [{ ...webHit(other), librarySourceId: null }] } };
+    vi.mocked(knowledgeApi.contents).mockResolvedValue({ ...contents, sources: contents.sources.filter((item) => item.id !== id) });
+    return makeTrashItem({ id, title: "Lab notes" });
+  });
+  await user.click(screen.getByRole("button", { name: "Actions for Lab notes" }));
+  await user.click(screen.getByRole("menuitem", { name: "Move to Trash" }));
+  expect(await pane.findByRole("button", { name: "+ Add to library" })).toBeVisible();
+  expect(knowledgeApi.artifact).toHaveBeenLastCalledWith(base.id, saved.id, ws);
+  await user.click(pane.getByRole("button", { name: "All 1 source" }));
+  await user.click(pane.getByText("Also searched, not cited (1)", { exact: false }));
+  expect(pane.getAllByRole("button", { name: "+ Add to library" })).toHaveLength(2);
+});
+
 it("groups output citations, follows the visible section and steps through the saved version", async () => {
   const user = userEvent.setup();
   const citations = Array.from({ length: 14 }, (_, index) => ({
@@ -1055,7 +1202,7 @@ it("groups output citations, follows the visible section and steps through the s
   expect(groups[0]).toHaveTextContent("Lab notes");
   expect(groups[0]).toHaveTextContent("Passage 1");
   expect(groups[1]).toHaveTextContent("Web record");
-  expect(within(groups[1] as HTMLElement).getAllByRole("button")).toHaveLength(2);
+  expect(within(groups[1] as HTMLElement).getAllByRole("button", { name: /Inspect citation/ })).toHaveLength(2);
   await user.click(within(groups[0] as HTMLElement).getByRole("button", { name: "+1 more" }));
   await user.click(pane.getByRole("button", { name: "Inspect citation 5" }));
   expect(pane.getByText("[5 / 14]")).toBeVisible();
@@ -1569,6 +1716,42 @@ it("starts a new tile build with type options and reopens its running card from 
   artifacts.push(saved);
   await act(async () => complete(done(saved)));
   expect(await screen.findByRole("heading", { name: saved.title })).toBeVisible();
+});
+
+it("uses the shared Tavily availability and sends Web only for opted-in Studio forms", async () => {
+  const user = userEvent.setup();
+  window.localStorage.setItem(WEB_PREFERENCE_KEY, "on");
+  const health = { status: "ok" as const, extractionMode: "local" as const, webSearchMode: "not_configured" as const,
+    transcriptionMode: "not_configured" as const, transcriptionProvider: "none" as const, transcriptionModel: "", summaryMode: "off" as const };
+  const search = vi.spyOn(knowledgeApi, "health").mockResolvedValue(health);
+  const saved = version();
+  const { turn } = setup({ artifacts: [saved], conversations: [conversation("earlier")] });
+  await user.click(await screen.findByRole("button", { name: "Report options" }));
+  const options = within(screen.getByRole("form", { name: "Report options" }));
+  const buildWeb = options.getByRole("switch", { name: "Search the web" });
+  expect(buildWeb).toBeDisabled();
+  expect(buildWeb.closest("label")).toHaveAttribute("title", WEB_SEARCH_HINT);
+  search.mockResolvedValue({ ...health, webSearchMode: "tavily" });
+  act(announceModelsChanged);
+  await waitFor(() => expect(buildWeb).toBeEnabled());
+  expect(buildWeb).not.toBeChecked();
+  await user.click(buildWeb);
+  await user.click(options.getByRole("button", { name: "Build Report" }));
+  await waitFor(() => expect(turn.mock.calls[0]?.[2].build).toEqual({ type: "report", scope: libraryScope(), web: true }));
+
+  await user.click(await screen.findByRole("button", { name: /Field findings Report Version 1/ }));
+  const reader = within(screen.getByRole("article", { name: "Open output" }));
+  const refineWeb = await reader.findByRole("switch", { name: "Search the web" });
+  expect(refineWeb).not.toBeChecked();
+  await user.click(refineWeb);
+  await user.type(reader.getByRole("textbox", { name: "Refine" }), "Look for newer records");
+  await user.click(reader.getByRole("button", { name: "Refine" }));
+  await waitFor(() => expect(turn.mock.calls[1]?.[2]).toMatchObject({ text: "Look for newer records", web: true }));
+  search.mockResolvedValue(health);
+  act(announceModelsChanged);
+  await waitFor(() => expect(refineWeb).toBeDisabled());
+  expect(refineWeb).not.toBeChecked();
+  expect(refineWeb.closest("label")).toHaveAttribute("title", WEB_SEARCH_HINT);
 });
 
 it("retries a failed card with its stored build options and original conversation", async () => {

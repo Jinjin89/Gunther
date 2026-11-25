@@ -116,6 +116,7 @@ export function useDeviceChoice(): [AskChoice | null, (choice: AskChoice) => voi
 
 /** Home's search and Ask share one Web switch, remembered on this device. */
 export const WEB_PREFERENCE_KEY = "gunther:search-web";
+export const WEB_SEARCH_HINT = "Add a Tavily key in Settings → Search to enable web search";
 const WEB_PREFERENCE_EVENT = "gunther:search-web-changed";
 
 /**

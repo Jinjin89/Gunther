@@ -2,7 +2,9 @@ import type { ConversationCitation, ContentBlock, SourceDetail } from "@gunther/
 import { ArrowLeft, ArrowUpRight, ChevronLeft, ChevronRight, FileText, Globe2 } from "lucide-react";
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { knowledgeApi, sourceAssetUrl } from "../../api";
+import { webFindOf, type WebFindImports } from "../../pages/useImportWebFind";
 import { isWebCitation } from "./citationKind";
+import { WebFindActions } from "./WebFindActions";
 import "../../design/evidence.css";
 
 const PdfViewer = lazy(() => import("./PdfViewer"));
@@ -29,7 +31,7 @@ export const hostOf = (url: string | null | undefined): string => {
 const isPdf = (source: SourceDetail) => source.asset?.mediaType === "application/pdf" || /\.pdf$/i.test(source.asset?.originalName ?? "");
 const isImage = (source: SourceDetail) => Boolean(source.asset?.mediaType.startsWith("image/"));
 
-function WebEvidence({ citation }: { citation: ConversationCitation }) {
+function WebEvidence({ citation, imports }: { citation: ConversationCitation; imports: WebFindImports | undefined }) {
   const host = citation.locator || hostOf(citation.url);
   return <>
     <div className="gx-evidence-body">
@@ -40,8 +42,8 @@ function WebEvidence({ citation }: { citation: ConversationCitation }) {
       </section>
     </div>
     <footer className="gx-evidence-foot">
-      {citation.url && <a className="gx-btn gx-btn-primary gx-btn-sm" href={citation.url} target="_blank" rel="noreferrer noopener">Open {host || "the page"}<ArrowUpRight size={13} /></a>}
-      <small><Globe2 size={11} />Outside your library</small>
+      <WebFindActions find={webFindOf(citation)} imports={imports} outsideLabel={`Open ${host || "the page"}`} />
+      {!imports && <small><Globe2 size={11} />Outside your library</small>}
     </footer>
   </>;
 }
@@ -127,7 +129,7 @@ function LibraryEvidence({ citation, onOpenSource, onOriginalPdfChange }: {
 
 /** A citation's shared passage or original viewer, optionally within a source list. */
 export function EvidenceDetail({ citation, index, passages, onPassage, onOpenSource, headerAction, onBack,
-  position, total, onPrevious, onNext, onOriginalPdfChange }: {
+  position, total, onPrevious, onNext, onOriginalPdfChange, webImports }: {
   citation: ConversationCitation;
   index?: number | undefined;
   passages?: readonly ConversationCitation[] | undefined;
@@ -140,6 +142,7 @@ export function EvidenceDetail({ citation, index, passages, onPassage, onOpenSou
   onPrevious?: (() => void) | undefined;
   onNext?: (() => void) | undefined;
   onOriginalPdfChange?: ((original: boolean) => void) | undefined;
+  webImports?: WebFindImports | undefined;
 }) {
   const web = isWebCitation(citation);
   return <div className="gx-evidence-detail">
@@ -164,7 +167,7 @@ export function EvidenceDetail({ citation, index, passages, onPassage, onOpenSou
         </option>)}
       </select>
     </label>}
-    {web ? <WebEvidence citation={citation} /> : <LibraryEvidence citation={citation} onOpenSource={onOpenSource} onOriginalPdfChange={onOriginalPdfChange} />}
+    {web ? <WebEvidence citation={citation} imports={webImports} /> : <LibraryEvidence citation={citation} onOpenSource={onOpenSource} onOriginalPdfChange={onOriginalPdfChange} />}
   </div>;
 }
 

@@ -3,7 +3,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AnswerStoppedError, ServiceUnavailableError, knowledgeApi, type AnswerEvent } from "../api";
-import { WEB_PREFERENCE_KEY } from "../models/askModel";
+import { WEB_PREFERENCE_KEY, WEB_SEARCH_HINT } from "../models/askModel";
 import { persistentStorage } from "../persistentStorage";
 import { makeBase, makeSource } from "../test/fixtures";
 import { Composer, ConversationMessage, SessionWorkspace } from "./SessionWorkspace";
@@ -57,6 +57,7 @@ describe("Session composer durability boundary", () => {
       <Composer value="" sending={false} sourceCount={0} onChange={vi.fn()} onSend={vi.fn()} onStop={vi.fn()} onSources={vi.fn()} readOnly={false} ready web={{ available: false, enabled: false, onChange }} />,
     );
     expect(screen.getByRole("button", { name: "Web" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Web" })).toHaveAttribute("title", WEB_SEARCH_HINT);
     rerender(
       <Composer value="" sending={false} sourceCount={0} onChange={vi.fn()} onSend={vi.fn()} onStop={vi.fn()} onSources={vi.fn()} readOnly={false} ready web={{ available: true, enabled: false, onChange }} />,
     );

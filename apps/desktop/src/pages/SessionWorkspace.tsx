@@ -36,7 +36,7 @@ import { useEscape, withShortcut } from "../shortcuts/shortcuts";
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
 import type { KnowledgeBase } from "../atlas";
 import { ServiceUnavailableError, knowledgeApi } from "../api";
-import { lastAnswerChoice, MODELS_CHANGED_EVENT, readAnswerStyle, usableChoice, useDeviceChoice, useModelMenu, useWebSearch, type AskChoice } from "../models/askModel";
+import { lastAnswerChoice, MODELS_CHANGED_EVENT, readAnswerStyle, usableChoice, useDeviceChoice, useModelMenu, useWebSearch, WEB_SEARCH_HINT, type AskChoice } from "../models/askModel";
 import { SpeakerButton } from "../speech/SpeakerButton";
 import { readAloud } from "../speech/readAloud";
 import { AgentSteps, AnswerBody, LiveAnswer, ResearchPlan, citationNumbers, noSourcesNeeded, usedSkill } from "./AnswerBody";
@@ -71,7 +71,7 @@ interface SessionWorkspaceProps {
   onOpenTrace?: ((message: SessionMessage) => void) | undefined;
   traceEnabled?: boolean;
   onOnlineStatus?: ((online: boolean) => void) | undefined;
-  onWebStatus?: ((enabled: boolean) => void) | undefined;
+  onWebStatus?: ((status: { available: boolean; enabled: boolean }) => void) | undefined;
 }
 
 function renderInline(value: string, onCitation?: () => void) {
@@ -252,7 +252,7 @@ export function Composer({
         <div className="composer-toolbar">
           <div className="composer-options">{onSources && <div className="scope-chip-group"><button type="button" className="scope-chip" onClick={onSources} aria-describedby={sourceScopeEmpty ? "empty-source-scope" : undefined}>
             <FolderOpen size={13} /><span>{sourceScopeSelected ? `${sourceCount} selected` : "All sources"}</span>
-          </button>{sourceScopeSelected && onClearSources && <button type="button" className="scope-clear" aria-label="Clear source selection" onClick={onClearSources}>Clear</button>}</div>}{picker}{web && <button type="button" className={`web-toggle ${web.enabled ? "is-on" : ""}`} disabled={!web.available} aria-pressed={web.enabled} onClick={() => web.onChange(!web.enabled)} title={web.available ? (web.enabled ? "Ask may search the web. Click to keep it to your library." : "Ask is limited to your library. Click to let it search the web.") : "Web search is not set up. Add a Tavily key in Settings."}><Globe2 size={13} /><span>Web</span></button>}</div>
+          </button>{sourceScopeSelected && onClearSources && <button type="button" className="scope-clear" aria-label="Clear source selection" onClick={onClearSources}>Clear</button>}</div>}{picker}{web && <button type="button" className={`web-toggle ${web.enabled ? "is-on" : ""}`} disabled={!web.available} aria-pressed={web.enabled} onClick={() => web.onChange(!web.enabled)} title={web.available ? (web.enabled ? "Ask may search the web. Click to keep it to your library." : "Ask is limited to your library. Click to let it search the web.") : WEB_SEARCH_HINT}><Globe2 size={13} /><span>Web</span></button>}</div>
           <div className="composer-actions"><button type="button" className={`mic-button ${dictation.dictating ? "is-on" : ""} is-${dictation.state}`} disabled={!canSend || sending} onClick={dictation.toggle} aria-pressed={dictation.listening} aria-label={dictation.listening ? "Stop voice input" : "Voice input"} title={dictation.error ?? withShortcut(dictation.listening ? "Stop voice input" : "Speak instead of typing", "dictate")}><MicGlyph state={dictation.state} /></button><button className={`send-button ${sending ? "is-stop" : ""} ${sending && stopLabel !== "Stop" ? "has-label" : ""}`} disabled={!sending && (!canSend || !value.trim() || dictation.dictating)} onClick={sending ? onStop : submit} aria-label={sending ? (stopLabel === "Stop" ? "Stop waiting for response" : stopLabel) : "Send message"}>{sending ? <><Square size={12} fill="currentColor" />{stopLabel !== "Stop" && <span>{stopLabel}</span>}</> : <ArrowUp size={16} />}</button></div>
         </div>
         {slash.menu}
@@ -297,7 +297,8 @@ export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty
   // else the model of its last answer, else this device's last choice, else the Ask default.
   const { menu: modelMenu, reload: reloadModelMenu } = useModelMenu({ autoLoad: false });
   const { reload: reloadWebSearch, ...webSearch } = useWebSearch({ autoLoad: false });
-  useEffect(() => { onWebStatus?.(webSearch.enabled); }, [onWebStatus, webSearch.enabled]);
+  useEffect(() => { onWebStatus?.({ available: webSearch.available, enabled: webSearch.enabled }); },
+    [onWebStatus, webSearch.available, webSearch.enabled]);
   const [deviceChoice, setDeviceChoice] = useDeviceChoice();
   const [pickedChoices, setPickedChoices] = useState<Record<string, AskChoice>>({});
   const askChoice = usableChoice(

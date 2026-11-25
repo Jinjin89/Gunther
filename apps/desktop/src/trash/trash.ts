@@ -8,8 +8,13 @@ export type TrashTarget =
 /** Everything a Trash change can touch, so every open list refreshes. */
 const TRASH_EVENTS = ["gunther:inbox-updated", "gunther:sources-updated", "gunther:trash-updated"];
 
-export function announceTrashChange() {
-  for (const name of TRASH_EVENTS) window.dispatchEvent(new CustomEvent(name));
+export interface SourceUpdate { trashedSourceId?: string }
+
+export function announceTrashChange(trashedSourceId?: string) {
+  for (const name of TRASH_EVENTS) {
+    const detail = name === "gunther:sources-updated" && trashedSourceId ? { trashedSourceId } : undefined;
+    window.dispatchEvent(new CustomEvent<SourceUpdate>(name, detail ? { detail } : undefined));
+  }
 }
 
 export async function moveToTrash(target: TrashTarget): Promise<TrashItem> {
@@ -24,7 +29,7 @@ export async function moveToTrash(target: TrashTarget): Promise<TrashItem> {
         : await knowledgeApi.trashOutput(target.libraryId, target.id, target.workspaceId);
       break;
   }
-  announceTrashChange();
+  announceTrashChange(entry.kind === "source" ? entry.id : undefined);
   return entry;
 }
 

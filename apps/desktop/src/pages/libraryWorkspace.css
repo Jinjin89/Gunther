@@ -114,7 +114,7 @@
 }
 .studio-options > header { display: flex; align-items: center; justify-content: space-between; }
 .studio-options label, .output-refine label { display: grid; gap: 4px; }
-.studio-options input, .studio-options select, .studio-options textarea, .output-refine textarea {
+.studio-options input:not([type="checkbox"]), .studio-options select, .studio-options textarea, .output-refine textarea {
   width: 100%;
   padding: 6px 8px;
   border: 1px solid var(--gx-line-2);
@@ -123,6 +123,9 @@
   color: var(--gx-ink);
   font: inherit;
 }
+.studio-options .studio-web-switch, .output-refine .studio-web-switch { display: flex; align-items: center; gap: 6px; width: fit-content; }
+.studio-web-switch input { accent-color: var(--gx-ink); }
+.studio-web-switch:has(:disabled) { color: var(--gx-muted); }
 .studio-options textarea, .output-refine textarea { resize: vertical; }
 .studio-options > button, .output-refine > button { justify-self: start; }
 .studio-cards { margin: 14px 0 0; padding: 0; list-style: none; border-top: 1px solid var(--gx-line); }

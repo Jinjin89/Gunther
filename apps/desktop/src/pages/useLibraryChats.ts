@@ -1,6 +1,7 @@
 import type { ConversationBrief, ConversationBriefInput, ConversationTurn, KnowledgeSession, KnowledgeSessionSummary, SessionMessage } from "@gunther/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ServiceUnavailableError, knowledgeApi } from "../api";
+import { isWebCitation } from "../components/evidence/citationKind";
 import { persistentStorage } from "../persistentStorage";
 
 export interface UseLibraryChats {
@@ -284,6 +285,31 @@ export function useLibraryChats(
     void load();
     return () => { mounted.current = false; };
   }, [load]);
+
+  const hasWebEvidence = activeSession?.id === activeId && activeSession.messages.some((message) =>
+    message.citations.some(isWebCitation) || message.context.searched?.some((hit) => hit.kind === "web"));
+  useEffect(() => {
+    if (!activeId || !hasWebEvidence) return;
+    let generation = 0;
+    const refresh = () => {
+      const request = ++generation;
+      void knowledgeApi.session(activeId).then((detail) => {
+        if (request !== generation) return;
+        const byId = new Map(detail.messages.map((message) => [message.id, message]));
+        setActiveSession((current) => current?.id === detail.id ? {
+          ...current,
+          messages: current.messages.map((message) => {
+            const fresh = byId.get(message.id);
+            // Merge the refreshed evidence into saved messages without displacing a new turn.
+            return fresh ? { ...message, citations: fresh.citations,
+              context: { ...message.context, searched: fresh.context.searched ?? [] } } : message;
+          }),
+        } : current);
+      }).catch((reason) => { if (request === generation) reportReadError(reason); });
+    };
+    window.addEventListener("gunther:sources-updated", refresh);
+    return () => { ++generation; window.removeEventListener("gunther:sources-updated", refresh); };
+  }, [activeId, hasWebEvidence, reportReadError]);
 
   useEffect(() => {
     const heard = (event: Event) => {

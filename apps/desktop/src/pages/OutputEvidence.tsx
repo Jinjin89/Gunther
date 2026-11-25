@@ -2,13 +2,17 @@ import type { Artifact, ConversationCitation } from "@gunther/contracts";
 import { useMemo, useState } from "react";
 import { hostOf } from "../components/evidence/EvidenceDetail";
 import { isWebCitation } from "../components/evidence/citationKind";
+import { WebFindActions } from "../components/evidence/WebFindActions";
 import { scopeLabel } from "../outputs/artifactConversations";
 import { splitDesign, splitDocument } from "../outputs/sections";
 import { verificationNotice } from "./AnswerBody";
+import { CitedHeader, SearchEvidence } from "./EvidenceSearch";
+import { webFindOf, type WebFindImports } from "./useImportWebFind";
 
-export function OutputEvidence({ artifact, partInView, onOpen }: {
+export function OutputEvidence({ artifact, partInView, imports, onOpen }: {
   artifact: Artifact;
   partInView: number | null;
+  imports?: WebFindImports | undefined;
   onOpen: (citations: ConversationCitation[], index: number) => void;
 }) {
   const [onlyPart, setOnlyPart] = useState(false);
@@ -32,13 +36,21 @@ export function OutputEvidence({ artifact, partInView, onOpen }: {
   const checked = artifact.sections.length > 0 && artifact.sections.every((section) => section.checked);
   const status = artifact.sections.map((section) => verificationNotice(section.coverage)).find(Boolean)
     ?? (checked ? "Sources checked" : artifact.sections.some((section) => section.checked) ? "Source check incomplete" : "Not checked");
+  const approach = artifact.provenance.approach;
+  const memo = approach?.memo?.answer?.trim();
+  const gaps = [...new Set([...(approach?.gaps ?? []), ...(approach?.studyMap?.limitations ?? [])].filter((item) => item.trim()))];
   return <div className="evidence-overview" aria-label="Evidence overview">
+    {(memo || gaps.length > 0) && <details className="evidence-disclosure evidence-research-notes">
+      <summary>Research notes</summary>
+      {memo && <p>{memo}</p>}
+      {gaps.length > 0 && <ul>{gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul>}
+    </details>}
     <section className="evidence-method" aria-label="Output details">
       <h3>Output details</h3>
       <p>Scope: {artifact.scope ? scopeLabel(artifact.scope) : "not recorded"} · {status} · Version {artifact.versionNumber}</p>
     </section>
     <section className="evidence-cited" aria-label="Cited sources">
-      <h3>Cited ({artifact.citations.length})</h3>
+      <CitedHeader citations={artifact.citations} imports={imports} />
       {canFilter && <div className="evidence-filter" role="group" aria-label="Citation scope">
         <button type="button" aria-pressed={!onlyPart} onClick={() => setOnlyPart(false)}>All</button>
         <button type="button" aria-pressed={onlyPart} onClick={() => setOnlyPart(true)}>This section</button>
@@ -55,8 +67,11 @@ export function OutputEvidence({ artifact, partInView, onOpen }: {
             {shown.length < indices.length && <button type="button" onClick={() => setExpanded((current) => new Set(current).add(key))}>+{indices.length - shown.length} more</button>}
           </div>
           {(citation.quote || citation.supportText) && <span className="evidence-card-quote">{citation.quote || citation.supportText}</span>}
+          {isWebCitation(citation) && <WebFindActions find={webFindOf(citation)} imports={imports} />}
         </article>;
       })}
     </section>
+    <SearchEvidence searched={artifact.provenance.searched} keyResultsUsed={artifact.provenance.keyResultsUsed}
+      citations={artifact.citations} imports={imports} onOpen={onOpen} />
   </div>;
 }

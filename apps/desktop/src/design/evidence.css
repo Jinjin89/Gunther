@@ -50,6 +50,10 @@
 .gx-evidence-foot { min-height: 54px; padding: 10px 16px 10px 18px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: none; border-top: 1px solid var(--gx-line); }
 .gx-evidence-foot small { display: inline-flex; align-items: center; gap: 5px; color: var(--gx-faint); font-size: var(--gx-text-xs); text-transform: capitalize; }
 .gx-evidence-foot .gx-btn { text-decoration: none; }
+.gx-web-find-actions { min-width: 0; }
+.gx-web-find-buttons { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.gx-web-find-buttons .gx-btn { text-decoration: none; }
+.gx-web-find-actions .gx-web-find-error { margin: 4px 0 0; color: var(--gx-danger); overflow-wrap: anywhere; }
 
 /* The PDF viewer */
 .gx-pdf { min-height: 0; flex: 1; display: flex; flex-direction: column; }
