@@ -23,10 +23,11 @@ describe("MarkdownView", () => {
     expect(screen.getByRole("button", { name: "Copy code" })).toBeInTheDocument();
   });
 
-  it("shows complete standalone legacy SVG as a code block", () => {
+  it("shows complete standalone legacy SVG as a picture with its original source available", () => {
     const svg = '<svg viewBox="0 0 10 10"><rect width="10" height="10" /></svg>';
     const { container } = render(<MarkdownView source={svg} />);
-    expect(screen.getByText("svg")).toBeVisible();
+    expect(screen.getByRole("img", { name: "SVG diagram" })).toHaveAttribute("src", expect.stringMatching(/^blob:/));
+    fireEvent.click(screen.getByRole("button", { name: "Code" }));
     expect(container.querySelector("pre code")?.textContent).toBe(svg);
     expect(container.querySelector('svg[viewBox="0 0 10 10"]')).toBeNull();
   });

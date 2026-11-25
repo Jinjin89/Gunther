@@ -1,4 +1,5 @@
 import { type CSSProperties, type ComponentProps, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { PictureCardsContext } from "../components/markdown/rich/PictureCard";
 import { AnswerBody } from "../pages/AnswerBody";
 import { fitFor, overflowsFace, rememberFit, settleFit, useFit } from "./slideFit";
 import { compositionFor, type DeckStyle, type DeckTheme } from "./sections";
@@ -200,8 +201,8 @@ export function SlideFace(props: ComponentProps<typeof LegacySlideFace> & {
   deckStyle?: DeckStyle | null | undefined;
 }) {
   const { attrs, deckTheme, first, page, design, deckStyle, ...legacy } = props;
-  if (props.designVersion === 2) {
-    return <DeckSlide body={props.body} layout={props.layout} attrs={attrs} theme={deckTheme ?? "paper"} accent={props.accent} first={first ?? props.title} design={design} style={deckStyle} numbers={props.numbers} sources={props.sources} page={page} onCite={props.onCite} onFitChange={props.onFitChange} />;
-  }
-  return <LegacySlideFace {...legacy} />;
+  const face = props.designVersion === 2
+    ? <DeckSlide body={props.body} layout={props.layout} attrs={attrs} theme={deckTheme ?? "paper"} accent={props.accent} first={first ?? props.title} design={design} style={deckStyle} numbers={props.numbers} sources={props.sources} page={page} onCite={props.onCite} onFitChange={props.onFitChange} />
+    : <LegacySlideFace {...legacy} />;
+  return <PictureCardsContext.Provider value={false}>{face}</PictureCardsContext.Provider>;
 }

@@ -5,20 +5,12 @@ import remarkMath from "remark-math";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { mapMarkdown } from "./mapMarkdown";
+import { hasSingleSvgRoot } from "./svg";
 
 const LINE_ENDING = /\r\n?|\n/;
-const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
 /** Micromark consumes the leading BOM before counting source offsets. */
 export const sourceForPositions = (value: unknown) => String(value).replace(/^\uFEFF/, "");
-
-function isSvg(value: string): boolean {
-  if (!/^<svg(?=[\s/>])/.test(value)) return false;
-  const document = new DOMParser().parseFromString(value, "image/svg+xml");
-  const root = document.documentElement;
-  return document.childNodes.length === 1 && root.localName === "svg"
-    && (root.namespaceURI === SVG_NAMESPACE || root.namespaceURI === null);
-}
 
 function remarkLegacySvg() {
   return (tree: Root, file: { value: unknown }) => {
@@ -33,7 +25,7 @@ function remarkLegacySvg() {
       } else {
         return;
       }
-      if (isSvg(value)) return { type: "code", lang: "svg", value };
+      if (/^<svg(?=[\s/>])/.test(value) && hasSingleSvgRoot(value)) return { type: "code", lang: "svg", value };
     });
   };
 }

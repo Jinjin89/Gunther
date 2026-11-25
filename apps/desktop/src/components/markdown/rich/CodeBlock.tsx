@@ -12,9 +12,30 @@ const FOLD_AFTER = 25;
 const PREVIEW_LINES = 20;
 export const PrintCodeContext = createContext(false);
 
-export function CodeBlock({ code, language, closed }: CodeBlockProps) {
-  const printing = useContext(PrintCodeContext);
+export function CopyCodeButton({ code, label = "Copy code" }: { code: string; label?: string }) {
   const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1_400);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+    } catch {
+      // Clipboard access can be denied; the code stays selectable.
+    }
+  };
+  const title = copied ? "Copied" : label;
+  return <button type="button" onClick={(event) => { event.stopPropagation(); void copy(); }} aria-label={title} title={title}>
+    {copied ? <Check size={12} /> : <Copy size={12} />}
+  </button>;
+}
+
+export function CodeBlock({ code, language, closed, showHeader = true }: CodeBlockProps & { showHeader?: boolean }) {
+  const printing = useContext(PrintCodeContext);
   const [expanded, setExpanded] = useState(false);
   const [highlight, setHighlight] = useState<{ code: string; language: string; tokens: ThemedToken[][] }>();
   const codeId = useId();
@@ -30,21 +51,6 @@ export function CodeBlock({ code, language, closed }: CodeBlockProps) {
     return () => { active = false; };
   }, [closed, code, language]);
 
-  useEffect(() => {
-    if (!copied) return;
-    const timer = window.setTimeout(() => setCopied(false), 1_400);
-    return () => window.clearTimeout(timer);
-  }, [copied]);
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-    } catch {
-      // Clipboard access can be denied; the code stays selectable.
-    }
-  };
-
   const breaks = [...code.matchAll(/\r\n?|\n/g)];
   const lineCount = breaks.length + 1;
   const canFold = !printing && closed && lineCount > FOLD_AFTER;
@@ -54,11 +60,9 @@ export function CodeBlock({ code, language, closed }: CodeBlockProps) {
 
   return (
     <figure className="gx-md-code">
-      {!printing && <figcaption>
+      {!printing && showHeader && <figcaption>
         <span>{language || "Code"}</span>
-        <button type="button" onClick={(event) => { event.stopPropagation(); void copy(); }} aria-label={copied ? "Copied" : "Copy code"} title={copied ? "Copied" : "Copy code"}>
-          {copied ? <Check size={12} /> : <Copy size={12} />}
-        </button>
+        <CopyCodeButton code={code} />
       </figcaption>}
       <pre id={codeId}><code>{tokens?.length === lineCount
         ? tokens.slice(0, folded ? PREVIEW_LINES : lineCount).map((line, index) => <Fragment key={index}>

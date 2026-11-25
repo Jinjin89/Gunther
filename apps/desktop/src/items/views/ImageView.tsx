@@ -1,8 +1,7 @@
-import { Check, CircleAlert, Copy, Download, Maximize2, Minimize2, ScanText, X, ZoomIn } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { Check, CircleAlert, Copy, Download, ScanText, ZoomIn } from "lucide-react";
+import { useMemo, useState } from "react";
 import { sourceAssetUrl } from "../../api";
-import { useEscape } from "../../shortcuts/shortcuts";
+import { ImageLightbox } from "../../components/ImageLightbox";
 import { formatBytes, mediaTypeLabel } from "../sourceContent";
 import type { FileReadingProps } from "./DocumentView";
 import { ContextNote, PlainText } from "./ReaderViews";
@@ -10,31 +9,6 @@ import { ContextNote, PlainText } from "./ReaderViews";
 interface Region {
   text: string;
   box: [number, number, number, number] | null;
-}
-
-function Lightbox({ url, title, onClose }: { url: string; title: string; onClose: () => void }) {
-  const [actualSize, setActualSize] = useState(false);
-  const closeButton = useRef<HTMLButtonElement>(null);
-  useEscape(onClose);
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
-    closeButton.current?.focus();
-    return () => previous?.focus?.();
-  }, []);
-  return createPortal(
-    <div className="gx-lightbox" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div className="gx-lightbox-bar">
-        <span>{title}</span>
-        <button type="button" onClick={() => setActualSize((value) => !value)} aria-label={actualSize ? "Fit to window" : "Actual size"} title={actualSize ? "Fit to window" : "Actual size"}>{actualSize ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</button>
-        <a href={url} download aria-label="Download original" title="Download original"><Download size={15} /></a>
-        <button ref={closeButton} type="button" onClick={onClose} aria-label="Close" title="Close  Esc"><X size={16} /></button>
-      </div>
-      <div className={`gx-lightbox-stage ${actualSize ? "is-actual" : ""}`} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-        <img src={url} alt={title} onClick={() => setActualSize((value) => !value)} />
-      </div>
-    </div>,
-    document.body,
-  );
 }
 
 export function ImageBody({ source, file, structure }: FileReadingProps) {
@@ -119,7 +93,7 @@ export function ImageBody({ source, file, structure }: FileReadingProps) {
             : "Looking for text in this image…"}</p>
         )}
       </section>
-      {open && url && <Lightbox url={url} title={source.title} onClose={() => setOpen(false)} />}
+      {open && url && <ImageLightbox url={url} title={source.title} onClose={() => setOpen(false)} />}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useState, type ComponentProps, ty
 import type { Components, UrlTransform } from "react-markdown";
 import { sourceAssetUrl } from "../../../api";
 import { CodeBlock, type CodeBlockProps } from "./CodeBlock";
+import { PictureCard } from "./PictureCard";
 
 const SAFE_LINK = /^(https?:|mailto:)/i;
 const EMBEDDED_IMAGE = /^data:(image\/(?:png|jpe?g|gif|webp))(?=[;,])/i;
@@ -41,6 +42,8 @@ export function MarkdownLink({ href, children, title }: ComponentProps<"a">) {
 
 const blockRenderers = new Map<string, ComponentType<CodeBlockProps>>([
   ["default", CodeBlock],
+  ["svg", PictureCard],
+  ["mermaid", PictureCard],
 ]);
 
 export const richComponents = {

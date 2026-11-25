@@ -118,6 +118,13 @@ describe("a slide face", () => {
     expect(fitOf(container)).toBe("1");
   });
 
+  it("keeps diagram source on the slide", () => {
+    const svg = '<svg viewBox="0 0 10 10"><rect width="10" height="10" /></svg>';
+    const { container } = render(<SlideFace body={`\`\`\`svg\n${svg}\n\`\`\``} title={false} numbers={[]} />);
+    expect(container.querySelector("pre code")?.textContent).toBe(svg);
+    expect(container.querySelector("img")).toBeNull();
+  });
+
   it("renders every line when a legacy comparison no longer has a table", () => {
     const body = "## The findings in brief\n\n- First finding [1]\n- Second finding [2]";
     const plain = render(<SlideFace body={body} title={false} numbers={[1, 2]} />);

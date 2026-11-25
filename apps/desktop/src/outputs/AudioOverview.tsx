@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { knowledgeApi, sourceAssetUrl } from "../api";
 import { openSettings } from "../components/SettingsLayout";
 import { AnswerBody, citationNumbers } from "../pages/AnswerBody";
-import { saveBlob } from "./deck/download";
+import { saveBlob } from "../saveBlob";
 import type { ReaderProps } from "./OutputViews";
 import { splitDocument } from "./sections";
 import { readVoices, VoiceFields } from "./VoiceFields";

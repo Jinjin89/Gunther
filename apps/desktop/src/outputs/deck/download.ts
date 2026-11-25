@@ -1,18 +1,7 @@
 import type { Artifact } from "@gunther/contracts";
 import { sourceAssetUrl } from "../../api";
+import { saveBlob } from "../../saveBlob";
 import { getBrandTheme } from "./brandStore";
-
-/** Save a file the way the app's downloads do: a link with `download`, which the desktop shell turns into a save dialog. */
-export function saveBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-}
 
 const fileBase = (artifact: Artifact) => (artifact.title.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 60) || artifact.kind) + `-v${artifact.versionNumber}`;
 const sourcesOf = (artifact: Artifact) => artifact.citations.map((citation) => [citation.sourceTitle, citation.locator].filter(Boolean).join(" · "));
