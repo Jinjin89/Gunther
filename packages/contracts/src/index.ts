@@ -935,6 +935,7 @@ export interface WebCaptureResult {
   importResult: ImportResult;
   snapshot: WebSnapshot;
   idempotentReplay: boolean;
+  note?: string | null;
 }
 
 export interface FileNotebookNoteResult {
@@ -996,6 +997,26 @@ export interface ConversationCitation {
   anchor?: ContentBlock["anchor"];
   /** Its number in the conversation's source pool: `[ref]` in every answer of the conversation. Older answers have none and count from 1. */
   ref?: number | null;
+  /** Live match in the library at read time. */
+  librarySourceId?: string | null;
+}
+
+export interface SearchedHit {
+  kind: "library" | "web";
+  title: string;
+  url: string | null;
+  sourceId: string | null;
+  locator: string;
+  snippet: string;
+  query: string;
+  kept: boolean;
+  librarySourceId?: string | null;
+}
+
+export interface UsedKeyResult {
+  id: string;
+  text: string;
+  refs: number[];
 }
 
 export interface ConversationContext {
@@ -1023,6 +1044,8 @@ export interface ConversationContext {
   /** What it did to answer: the searches it ran, in order. */
   steps?: AgentStep[];
   webSearched?: boolean;
+  searched?: SearchedHit[];
+  keyResultsUsed?: UsedKeyResult[];
   /** The checker ran on this answer. */
   checked?: boolean;
   /** One note per `[p:n]` (partly supported) in the text, in order: what that source does not cover. */
@@ -1362,6 +1385,8 @@ export interface ArtifactProvenance {
   /** Made by the Artifacts agent: what it told the user, and the parts this version changed. */
   reply?: string | null;
   changes?: ArtifactChange[] | null;
+  searched?: SearchedHit[];
+  keyResultsUsed?: UsedKeyResult[];
 }
 
 /** What a deck is for: a talk (few words, speaker notes) or reading on its own. */

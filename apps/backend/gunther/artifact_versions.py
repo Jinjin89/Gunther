@@ -169,6 +169,11 @@ def commit_version(
                 parent, lineage_id, version_number = None, new_id("arl"), 1
             if len(content.encode("utf-8")) > MAX_OUTPUT_BYTES:
                 raise ValueError(f"The output is larger than the {MAX_OUTPUT_BYTES:,}-byte limit")
+            citations = [
+                {key: value for key, value in item.items()
+                 if key not in {"library_source_id", "librarySourceId"}}
+                for item in citations
+            ]
             skilled = made_by or {}
             if kind == "slides" and isinstance(skilled.get("skill"), dict):
                 from gunther.slide_review import invalidate_reviews
@@ -215,12 +220,14 @@ def commit_version(
                 request=skilled.get("request") if conversation_id else None,
                 reply=skilled.get("reply") if conversation_id else None,
                 changes=skilled.get("changes"),
+                searched=skilled.get("searched", []),
+                key_results_used=skilled.get("key_results_used", []),
             )
             if provenance.conversation_id:
                 conversation = session.get(ArtifactConversation, provenance.conversation_id)
                 if conversation is not None and conversation.trashed_at is not None:
                     raise LookupError("The output's conversation was not found")
-            sealed = provenance.model_dump()
+            sealed = provenance.model_dump(exclude={"searched": {"__all__": {"library_source_id"}}})
             if skilled.get("work") is not None:
                 # The artifact's work as it was made: sealed with the version, not sent out.
                 sealed["work"] = skilled["work"]

@@ -32,6 +32,7 @@ from gunther.artifact_workspace import (
 )
 from gunther.citations import check_citations
 from gunther.evidence import Tool
+from gunther.library_lookup import SearchHit
 from gunther.llm import Turn
 from gunther.output_shapes import SHAPES
 from gunther.outputs import ACCENTS, BuiltOutput, Planned, Pool, Spec, _marked
@@ -414,16 +415,21 @@ class ArtifactActions:
                 if "searches" in c.budget.exhausted
                 else "That search was already done."
             )
-        found = tool.run(query)
+        results = tool.run(query)
+        found = results
         if tool.grade and found:
             found = AskAgent(c.gateway).relevant(c.model, c.text, query, found[:40])
         kept: list[int] = []
+        admitted: set[int] = set()
         for item in found:
             held = self.pool.known.get(item.key)
             if held is None and len(self.pool) < self.pool.limit:
                 held = self.pool.adopt(item)
-            if held is not None and held.ref is not None and held.ref not in kept:
-                kept.append(held.ref)
+            if held is not None and held.ref is not None:
+                admitted.add(id(item))
+                if held.ref not in kept:
+                    kept.append(held.ref)
+        c.searched.extend(SearchHit(item, query, id(item) in admitted) for item in results)
         numbering = self._numbering()
         shown = ranges([numbering.view(n) or n for n in kept])
         label = f"Searched {tool.where} for “{query}” · {len(kept)} found"

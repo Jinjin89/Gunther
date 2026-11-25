@@ -1051,6 +1051,8 @@ def test_a_version_from_the_old_builder_stays_readable_sealed_and_bound_to_its_l
             supersedes=first_id,
             title="Field guide",
         )
+        with sessions() as session:
+            original_seal = session.get(Artifact, first_id).manifest_hash
 
         detail = client.get(f"/api/knowledge-bases/{base_id}/artifacts/{first_id}", headers=headers)
         assert detail.status_code == 200
@@ -1059,7 +1061,7 @@ def test_a_version_from_the_old_builder_stays_readable_sealed_and_bound_to_its_l
         assert first["workspaceId"] == workspace_id
         assert first["versionNumber"] == 1
         assert first["supersedesArtifactId"] is None
-        assert len(first["manifestHash"]) == 64
+        assert first["manifestHash"] == original_seal
         assert first["acceptedUnitIds"] == [unit_id]
         assert first["unitSnapshots"][0]["unitId"] == unit_id
         assert first["unitSnapshots"][0]["revisionNumber"] == 1
@@ -1078,7 +1080,7 @@ def test_a_version_from_the_old_builder_stays_readable_sealed_and_bound_to_its_l
             None,
             None,
         )
-        # Its provenance is the version 1 shape, exactly.
+        # The reader supplies empty search provenance to the original version 1 shape.
         assert first["provenance"] == {
             "schemaVersion": 1,
             "generator": "gunther.local-template.v1",
@@ -1088,6 +1090,8 @@ def test_a_version_from_the_old_builder_stays_readable_sealed_and_bound_to_its_l
             "acceptedOnly": True,
             "acceptedUnitIds": [unit_id],
             "revisionIds": [first["unitSnapshots"][0]["revisionId"]],
+            "searched": [],
+            "keyResultsUsed": [],
         }
 
         listed = client.get(f"/api/knowledge-bases/{base_id}/artifacts", headers=headers)

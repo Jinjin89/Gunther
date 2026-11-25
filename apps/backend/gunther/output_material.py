@@ -20,6 +20,7 @@ from gunther.evidence_reader import (
     read_snapshot,
     readable_blocks,
 )
+from gunther.library_lookup import SearchHit
 from gunther.models import (
     ContentBlock,
     DocumentElement,
@@ -336,6 +337,7 @@ class OutputMaterialService:
     def _studio_reading(
         self, session: Session, revisions: Mapping[str, str | None], pool: Pool, *,
         pinned: Sequence[Evidence] = (), most: int = 900,
+        searched: list[SearchHit] | None = None,
     ) -> list[str]:
         """Every selected source read whole into the pool, in its own order, as passages of
         consecutive blocks under one heading (about 1,400 characters each). The studio reads
@@ -456,7 +458,7 @@ class OutputMaterialService:
                     extraction_warnings=warnings,
                     source_metadata=source_metadata,
                 )
-                pool.adopt(
+                held = pool.adopt(
                     Evidence(
                         kind="library",
                         title=source.title,
@@ -471,18 +473,22 @@ class OutputMaterialService:
                         extraction_warnings=tuple(warnings),
                     )
                 )
+                if searched is not None:
+                    searched.append(SearchHit(held, "", True))
         return gaps
 
     @staticmethod
     def _studio_web(
         web: Tool | None, reason: str | None, query: str, pool: Pool, per_section: int,
+        *, searched: list[SearchHit],
     ) -> dict[str, str] | None:
         if web and query and len(pool) < pool.limit:
             try:
-                for item in web.run(query)[:per_section]:
-                    if len(pool) >= pool.limit:
-                        break
-                    pool.adopt(item)
+                for index, item in enumerate(web.run(query)):
+                    kept = index < per_section and len(pool) < pool.limit
+                    if kept:
+                        pool.adopt(item)
+                    searched.append(SearchHit(item, query, kept))
             except ToolFailure as error:
                 reason = str(error)
         if reason:

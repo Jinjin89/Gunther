@@ -14,6 +14,7 @@ from gunther import key_results
 from gunther.artifact_manifest import artifact_manifest_hash
 from gunther.checks import complete, coverage_of, issue_view, read_verdicts
 from gunther.database import session_scope
+from gunther.library_lookup import annotate_library_sources
 from gunther.models import (
     Artifact,
     ArtifactAudio,
@@ -245,6 +246,12 @@ def artifact_detail(
     summary = _summary(artifact, provenance.accepted_unit_ids, saved)
     scope = json.loads(artifact.scope_json)
     inputs = json.loads(artifact.inputs_json)
+    citations = [
+        ConversationCitationOut.model_validate(item) for item in json.loads(artifact.citations_json)
+    ]
+    annotate_library_sources(
+        session, artifact.knowledge_base_id, [*citations, *provenance.searched],
+    )
     sections = []
     if artifact.origin != "legacy":
         if check_records is None:
@@ -259,10 +266,7 @@ def artifact_detail(
         outline=[
             OutlineItem.model_validate(item) for item in json.loads(artifact.outline_json)
         ],
-        citations=[
-            ConversationCitationOut.model_validate(item)
-            for item in json.loads(artifact.citations_json)
-        ],
+        citations=citations,
         scope=OutputScope.model_validate(scope) if scope else None,
         inputs=OutputInputsOut(
             sources=len(inputs.get("sources", [])),

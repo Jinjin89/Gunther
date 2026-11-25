@@ -1,9 +1,11 @@
 """Explicit Studio builds and refinements through the artifact conversation API."""
 
+import json
 import threading
 
 import pytest
 from fake_models import FakeProvider, is_orchestrating, is_sentence_checking, output_replies
+from sqlalchemy import select
 from test_artifact_agent import conversations, done, kept, script, turn, versions_of
 from test_outputs import (
     OUTLINE,
@@ -19,15 +21,17 @@ from test_outputs import (
     wait_for,
     workspace,
 )
+from test_search_and_build import saved_web_snapshot, web_hit
 from test_studio_pipeline import DECK, PASSAGES, request_text, router
 
 from evals.sse import read_events
-from gunther import usage
+from gunther import key_results, usage
 from gunther.answer_runs import Stopped
-from gunther.artifact_workspace import approach_state, dump_workspace
-from gunther.evidence import Tool
-from gunther.models import Artifact, ArtifactConversation
-from gunther.schemas import BuildOutputInput
+from gunther.artifact_manifest import artifact_manifest_hash
+from gunther.artifact_workspace import approach_state, dump_workspace, evidence_from_citation
+from gunther.evidence import KeyResultMatch, Tool
+from gunther.models import Artifact, ArtifactConversation, ContentBlock, SourceIndexHead
+from gunther.schemas import BuildOutputInput, ConversationCitationOut
 
 
 def create(client, base_id, identifier="studio"):
@@ -244,6 +248,158 @@ def test_explicit_build_uses_the_selected_type_scope_and_options(
     assert searches == ["Summarize the cooling trial"]
     if shape == "report":
         assert fake.requests and not fake.write_lock_failures, fake.write_lock_failures
+
+
+def test_studio_search_provenance_is_sealed_enriched_and_kept_out_of_later_prompts(
+    tmp_path, monkeypatch,
+):
+    def reply(request):
+        if "Write the report" in request_text(request):
+            return "# Findings\n\n## Results\nThe web result [3]. The trial record [1]."
+        return router(request)
+
+    fake = FakeProvider(reply)
+    web = [web_hit(f"Build web result {n}", f"https://example.org/{n}") for n in range(9)]
+    with app_for(tmp_path, fake, ai_summaries="off") as client:
+        base, sources = library(client, notes={
+            "Trial": "The trial records a measured temperature.",
+            "Uncited reading": "The second reading gives some background.",
+            "Captured": "An imported reading.",
+        })
+        service = client.app.state.knowledge_service
+        captured = sources["Captured"]
+        trial = sources["Trial"]
+        with service.sessions.begin() as session:
+            saved_web_snapshot(session, captured, web[0].url, web[1].url)
+            revision = session.get(SourceIndexHead, trial).revision_id
+            block = session.scalar(select(ContentBlock).where(ContentBlock.revision_id == revision))
+            evidence = evidence_from_citation(ConversationCitationOut(
+                id="checked_trial", source_id=trial, source_title="Trial", quote=block.content,
+                locator=block.locator, status="provisional", confidence=1,
+                source_revision_id=revision, block_id=block.id,
+            ))
+        match = KeyResultMatch("checked", "The trial records temperature.", ((evidence,),))
+        monkeypatch.setattr(key_results, "retrieve", lambda *args, **kwargs: [match])
+        tool = Tool("search_web", "Recorded hits", lambda _: web, "web", grade=True)
+        monkeypatch.setattr(service, "_web_tool", lambda enabled: (tool if enabled else None, None))
+        library_queries = []
+
+        def search_library(query):
+            library_queries.append(query)
+            return []
+
+        library_tool = Tool("search_library", "Recorded passages", search_library, "your library")
+        monkeypatch.setattr(service, "_output_search_tool", lambda *_: library_tool)
+        cid = create(client, base)["id"]
+        saved = done(turn(client, base, cid, "", "build", build={
+            "type": "report", "web": True, "focus": "Find the trial record",
+            "scope": {"mode": "selection", "sourceIds": [trial, sources["Uncited reading"]]},
+        }))["artifact"]
+        path, headers = route(base, saved["id"]), workspace(client)
+
+        def detail():
+            return client.get(path, headers=headers).raise_for_status().json()
+
+        assert [(citation["kind"], citation.get("librarySourceId"))
+                for citation in saved["citations"]] == [("web", captured), ("library", None)]
+        assert saved["provenance"]["keyResultsUsed"] == [
+            {"id": "checked", "text": match.sentence, "refs": [2]},
+        ]
+        searched = saved["provenance"]["searched"]
+        web_searched = [hit for hit in searched if hit["kind"] == "web"]
+        assert [hit["url"] for hit in web_searched] == [hit.url for hit in web[1:]]
+        assert web_searched[0]["librarySourceId"] == captured
+        assert all(hit["kept"] for hit in web_searched[:-1]) and not web_searched[-1]["kept"]
+        assert library_queries == []
+        assert [(hit["sourceId"], hit["query"], hit["kept"])
+                for hit in searched if hit["kind"] == "library"] == [
+            (sources["Uncited reading"], "", True),
+        ]
+
+        with service.sessions() as session:
+            row = session.get(Artifact, saved["id"])
+            sealed = row.provenance_json
+            assert "library_source_id" not in sealed + row.citations_json
+            assert row.manifest_hash == artifact_manifest_hash(row.__getattribute__)
+        assert detail()["provenance"]["searched"] == searched
+
+        client.post(f"/api/sources/{captured}/trash", headers=headers).raise_for_status()
+        trashed = detail()
+        assert "librarySourceId" not in trashed["citations"][0]
+        assert "librarySourceId" not in trashed["provenance"]["searched"][0]
+        assert trashed["manifestHash"] == saved["manifestHash"]
+        client.post(f"/api/trash/source/{captured}/restore", headers=headers).raise_for_status()
+        assert detail()["provenance"]["searched"] == searched
+
+        sent = len(fake.requests)
+        fake.replies[:] = [script([{"actions": [{"do": "reply", "text": "Saved."}]}])]
+        assert done(turn(client, base, cid, "Did it finish?"))["outcome"] == "replied"
+        prompts = "\n".join(request_text(request) for request in fake.requests[sent:])
+        assert web[0].title in prompts
+        assert all(hit.title not in prompts for hit in web[1:])
+
+        with service.sessions.begin() as session:
+            row = session.get(Artifact, saved["id"])
+            assert row.provenance_json == sealed
+            tampered = json.loads(sealed)
+            tampered["searched"][0]["title"] = "Changed"
+            row.provenance_json = json.dumps(tampered)
+        assert client.get(path, headers=headers).status_code == 409
+
+        # Earlier version-2 artifacts sealed the payload before these two fields existed.
+        with service.sessions.begin() as session:
+            row = session.get(Artifact, saved["id"])
+            old = json.loads(sealed)
+            del old["searched"], old["key_results_used"]
+            row.provenance_json = json.dumps(old)
+            row.manifest_hash = artifact_manifest_hash(row.__getattribute__)
+        legacy = detail()["provenance"]
+        assert legacy["searched"] == legacy["keyResultsUsed"] == []
+
+
+def test_studio_records_current_rejection_for_a_previously_held_hit(tmp_path, monkeypatch):
+    fake = FakeProvider(output_replies(OUTLINE, REPORT))
+    hit = web_hit("Earlier outside result", "https://example.org/held")
+    queries = []
+
+    def search(query):
+        queries.append(query)
+        return [hit]
+
+    with app_for(tmp_path, fake, ai_summaries="off") as client:
+        base, _ = library(client)
+        cid = create(client, base)["id"]
+        first = done(turn(client, base, cid, "", "build", build={"type": "report"}))
+        assert first["outcome"] == "saved"
+        service = client.app.state.knowledge_service
+        web = Tool("search_web", "Recorded hits", search, "web", grade=True)
+        monkeypatch.setattr(service, "_web_tool", lambda enabled: (web if enabled else None, None))
+
+        fake.replies[:] = [script([
+            {"actions": [
+                {"do": "search_web", "query": "first lookup"},
+                {"do": "reply", "text": "Finished the lookup."},
+            ]},
+        ], output_replies(OUTLINE, REPORT, relevant=[1]))]
+        lookup = done(turn(client, base, cid, "Look up more background", web=True))
+        assert lookup["outcome"] == "replied"
+        state, _ = kept(client, cid)
+        assert hit.url in [citation["url"] for citation in state.pool]
+
+        fake.replies[:] = [script([
+            {"actions": [
+                {"do": "search_web", "query": "refinement sources"},
+                {"do": "plan", "change": "title", "heading": "Reviewed findings"},
+            ]},
+            {"actions": [{"do": "save", "text": "Renamed the report."}]},
+        ], output_replies(OUTLINE, REPORT, relevant=[]))]
+        revised = done(turn(client, base, cid, "Recheck the background and rename it", web=True))
+        assert revised["outcome"] == "saved"
+        assert queries == ["first lookup", "refinement sources"]
+        [result] = revised["artifact"]["provenance"]["searched"]
+        assert (result["url"], result["query"], result["kept"]) == (
+            hit.url, "refinement sources", False,
+        )
 
 
 def test_retry_reuses_a_failed_builds_memo_and_story(tmp_path):

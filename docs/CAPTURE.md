@@ -10,6 +10,14 @@ The worker reads the original and publishes the result as described in [Library]
 
 Activity shows concurrent work, progress, failed jobs and the source or conversation that a job belongs to. Open a row to return to it. Stop interrupts work that can be stopped. Dismissing completed Activity leaves the source or result in place. [Activity routes](../apps/backend/gunther/activity_api.py)
 
+## Web pages and PDFs
+
+Choose Web page and paste a public PDF URL to save the original and queue a reading. Web capture accepts PDFs up to 64 MB. A page that declares a PDF through `citation_pdf_url` or an alternate PDF link also imports the original when Gunther can fetch it. The capture records the URL you entered and the final PDF URL.
+
+Capture checks transfer framing and rejects partial PDF responses. If the linked PDF is unavailable or its transfer fails, capture saves the web page and records a notice on the receipt. If the page itself is unavailable, the capture returns an error. Ask requests text formats when it reads a public page.
+
+Saving either recorded URL in the same library reuses the existing source. An exact retry with the same request ID returns the source and any fallback notice, even after restart. Changing the request while reusing that ID returns a conflict. Moving the source to Trash lets you capture it again with a fresh request.
+
 ## Recordings
 
 - Desktop keeps unacknowledged audio in a durable spool and sends numbered, hashed chunks to a recording session. The server ledger records the accepted prefix. An import stages its audio and verifies the manifest before retrying an outstanding suffix. Transcript edits, moments and the chosen destination are stored in a revisioned checkpoint. The desktop draft reader also restores saved text when older transcript state is incomplete. [Draft storage](../apps/desktop/src/services/recordingDrafts.ts) · [Audio spool](../apps/desktop/src/services/recordingSpool.ts)

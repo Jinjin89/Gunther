@@ -69,10 +69,13 @@ from gunther.evidence import (
     ToolFailure,
     key_result_block,
     key_result_lines,
+    key_result_refs,
 )
+from gunther.library_lookup import SearchHit, pack_key_results, pack_searched, track_search
 from gunther.llm import Completion, ModelError, ModelGateway, ModelInfo, Turn
 from gunther.model_profiles import Effort
 from gunther.run_budget import BudgetedGateway, RunBudget
+from gunther.schemas import SearchedHitOut, UsedKeyResultOut
 
 if TYPE_CHECKING:
     from gunther.skillbook import AskSkill
@@ -121,6 +124,8 @@ class AgentResult:
     coverage: dict[str, Any] | None = None
     budget_usage: dict[str, Any] | None = None
     rework: bool = False
+    searched: list[SearchedHitOut] = field(default_factory=list)
+    key_results_used: list[UsedKeyResultOut] = field(default_factory=list)
 
 
 class Action(BaseModel):
@@ -493,6 +498,7 @@ class AskAgent(ClaimChecks, AskResearch):
         notes: list[str] = []
         seen: set[tuple[str, str]] = set()
         matches: dict[str, KeyResultMatch] = {}
+        searched: list[SearchHit] = []
         added = 0
         researching = stopped = False
 
@@ -576,6 +582,7 @@ class AskAgent(ClaimChecks, AskResearch):
             for tool, query, found in results:
                 fresh = repeated = 0
                 for item in found:
+                    searched.append(SearchHit(item, query, id(item) in kept))
                     if id(item) not in kept:
                         continue
                     if item.key in known:
@@ -809,9 +816,10 @@ class AskAgent(ClaimChecks, AskResearch):
         )
         if accounting:
             accounting.phase = "finalize"
+        key_results = key_result_refs(matches.values(), held)
         written = _write_prompt(
             question, toolbox, held, steps, rework, brief, work if researching else None,
-            orientation=key_result_lines(matches.values(), held),
+            orientation=key_result_lines(key_results),
         )
         turns = [*recent, Turn("user", written)]
         try:
@@ -889,10 +897,11 @@ class AskAgent(ClaimChecks, AskResearch):
                     coverage = check._coverage if check else coverage
                     checked = coverage.get("status") == "complete"
         if not rework:
+            lookup_tools = tuple(track_search(tool, searched) for tool in toolbox.tools)
             text = self.look_up(
                 model,
                 text,
-                toolbox,
+                replace(toolbox, tools=lookup_tools),
                 adopt,
                 steps,
                 notes,
@@ -930,9 +939,10 @@ class AskAgent(ClaimChecks, AskResearch):
             sources=[f"[{n}] {by_ref[ref].title} (pool {ref})" for n, ref in enumerate(used, 1)],
             uncited=[f"[{item.ref}] {item.title}" for item in held if item.ref not in used],
         )
+        cited = [by_ref[ref] for ref in used]
         return AgentResult(
             content=text,
-            evidence=[by_ref[ref] for ref in used],
+            evidence=cited,
             steps=steps,
             model=model,
             effort=effort,
@@ -947,6 +957,10 @@ class AskAgent(ClaimChecks, AskResearch):
             research=research_state("stopped_early" if stopped else "done")
             if researching
             else None,
+            searched=pack_searched(searched, cited, known.keys()),
+            key_results_used=[
+                result for result in pack_key_results(key_results, cited) if result.refs
+            ],
         )
 
     def _failed_items(

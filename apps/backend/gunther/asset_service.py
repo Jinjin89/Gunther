@@ -968,6 +968,8 @@ class AssetService:
         knowledge_base_id: str | None,
         notes: str,
         expected_size: int | None = None,
+        fingerprint: str | None = None,
+        initialize_source: Callable[[Session, Source], None] | None = None,
     ) -> AssetCaptureOut:
         temporary, content_hash, size = await self._receive(
             stream,
@@ -1021,11 +1023,12 @@ class AssetService:
                 knowledge_base_id=knowledge_base_id,
             ),
             asset_id=asset.id,
-            fingerprint=asset_capture_fingerprint(
+            fingerprint=fingerprint or asset_capture_fingerprint(
                 title, kind, notes, file_name=upload_name, media_type=upload_type,
                 content_hash=content_hash,
             ),
-            find_existing_capture=find_earlier_queued_source,
+            initialize_source=initialize_source,
+            find_existing_capture=find_earlier_queued_source if fingerprint is None else None,
         )
         return AssetCaptureOut(asset=self._out(asset), import_result=imported)
 

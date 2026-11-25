@@ -37,6 +37,7 @@ from gunther.artifact_workspace import (
 )
 from gunther.citations import check_citations
 from gunther.evidence import Evidence, Tool
+from gunther.library_lookup import SearchHit, track_search
 from gunther.llm import ModelInfo
 from gunther.model_profiles import Effort
 from gunther.output_document import assemble_output, project_outline
@@ -138,6 +139,7 @@ class WorkSteps:
         read_material: Callable[[Pool], Notes] | None = None,
         evidence_allowed: Callable[[Evidence], bool] | None = None,
         report_v2: bool = True,
+        searched: list[SearchHit] | None = None,
     ) -> None:
         if agents.kind != work.spec.kind:
             raise ValueError(f"Studio for {agents.kind} cannot write a {work.spec.kind} work.")
@@ -149,6 +151,7 @@ class WorkSteps:
         self.read_material = read_material
         self.evidence_allowed = evidence_allowed
         self.report_v2 = report_v2
+        self.searched = searched if searched is not None else []
         self.model = model
         self.effort = effort
         self.emit: Events = emit or _no_events
@@ -557,10 +560,17 @@ class WorkSteps:
             refs = [ref for ref in refs if ref in pool.by_ref()]
             if len(refs) < 2 and not (self._deck and index == 0):
                 query = " ".join(filter(None, (item.heading, item.goal, instruction)))
-                refs += agents._research_section(
-                    self.model, query, [query[:300]], tool, self.pool,
-                    agents.limits.per_section, self.emit, index,
+                hits: list[SearchHit] = []
+                found = agents._research_section(
+                    self.model, query, [query[:300]], track_search(tool, hits),
+                    self.pool, agents.limits.per_section, self.emit, index,
                 )
+                by_ref = self.pool.by_ref()
+                admitted = {by_ref[ref].key for ref in found}
+                self.searched.extend(
+                    replace(hit, kept=hit.item.key in admitted) for hit in hits
+                )
+                refs += found
                 pool = self._part_pool()
             self.emit({"type": "section", "index": index, "state": "writing"})
             parts = [work.parts[i.id].text if i.id in work.parts else "" for i in work.outline]

@@ -44,6 +44,7 @@ from gunther.artifact_workspace import (
     store_pool,
 )
 from gunther.evidence import Evidence, Tool, ToolFailure
+from gunther.library_lookup import SearchHit
 from gunther.llm import ModelError, ModelGateway, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.output_types import output_type_for
@@ -189,6 +190,7 @@ class TurnContext:
     limits: AgentLimits = field(default_factory=AgentLimits)
     effort_for_decisions: Effort | None = "low"
     evidence_allowed: Callable[[Evidence], bool] | None = None
+    searched: list[SearchHit] = field(default_factory=list)
 
 
 class ArtifactAgent(ArtifactActions, ArtifactTurnResults):
@@ -278,6 +280,7 @@ class ArtifactAgent(ArtifactActions, ArtifactTurnResults):
             read_material=c.studio_reading if planning else None,
             evidence_allowed=c.evidence_allowed,
             report_v2=saved is None or saved.lstrip().startswith("<!-- report: v2 -->"),
+            searched=c.searched,
         )
 
     def _view(self) -> str:

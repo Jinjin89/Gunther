@@ -20,6 +20,7 @@ from gunther.artifact_workspace import evidence_from_citation
 from gunther.ask_research import Notes as Work
 from gunther.database import session_scope
 from gunther.evidence import Evidence, Toolbox
+from gunther.library_lookup import annotate_library_sources
 from gunther.llm import ModelError, Turn
 from gunther.model_profiles import Effort
 from gunther.models import (
@@ -44,8 +45,10 @@ from gunther.schemas import (
     KeyResultJobOut,
     KnowledgeSessionOut,
     KnowledgeSessionSummaryOut,
+    SearchedHitOut,
     SessionMessageOut,
     UpdateKnowledgeSessionInput,
+    UsedKeyResultOut,
 )
 from gunther.service_records import HOME_SCOPE, _id, _timestamp
 from gunther.skillbook import AskSkill, ask_skills
@@ -85,6 +88,8 @@ class _Answer:
     skill: AskSkill | None = None
     research: dict | None = None
     rework: bool = False
+    searched: list[SearchedHitOut] = field(default_factory=list)
+    key_results_used: list[UsedKeyResultOut] = field(default_factory=list)
 
 
 # Reasoning is kept for the model that wrote it; past this it is cut.
@@ -184,24 +189,31 @@ class AskTurns:
             selectinload(KnowledgeSession.branch),
         )
 
-    def _message_out(
-        self, message: SessionMessage, results: KeyResultJobOut | None = None,
-    ) -> SessionMessageOut:
-        citations = [
-            ConversationCitationOut.model_validate(item)
-            for item in json.loads(message.citations_json or "[]")
+    def _messages_out(
+        self, session: Session, base_id: str, messages: list[SessionMessage],
+        states: dict[str, KeyResultJobOut] | None = None,
+    ) -> list[SessionMessageOut]:
+        shown = [
+            SessionMessageOut(
+                id=message.id,
+                session_id=message.session_id,
+                role=message.role,
+                content=message.content,
+                citations=[
+                    ConversationCitationOut.model_validate(item)
+                    for item in json.loads(message.citations_json or "[]")
+                ],
+                context=ConversationContextOut.model_validate_json(message.context_json or "{}"),
+                created_at=_timestamp(message.created_at),
+                key_results=states.get(message.id) if states else None,
+            )
+            for message in messages
         ]
-        context_payload = json.loads(message.context_json or "{}")
-        return SessionMessageOut(
-            id=message.id,
-            session_id=message.session_id,
-            role=message.role,
-            content=message.content,
-            citations=citations,
-            context=ConversationContextOut.model_validate(context_payload),
-            created_at=_timestamp(message.created_at),
-            key_results=results,
+        annotate_library_sources(
+            session, base_id,
+            (item for message in shown for item in (*message.citations, *message.context.searched)),
         )
+        return shown
 
     def _session_summary(self, knowledge_session: KnowledgeSession) -> KnowledgeSessionSummaryOut:
         return KnowledgeSessionSummaryOut(
@@ -280,10 +292,10 @@ class AskTurns:
             )
             return KnowledgeSessionOut(
                 **self._session_summary(knowledge_session).model_dump(),
-                messages=[
-                    self._message_out(message, states.get(message.id))
-                    for message in knowledge_session.messages
-                ],
+                messages=self._messages_out(
+                    session, knowledge_session.knowledge_base_id, knowledge_session.messages,
+                    states,
+                ),
                 brief=self._brief_out(briefs.load(knowledge_session.brief_json)),
             )
 
@@ -485,7 +497,7 @@ class AskTurns:
             )
             return KnowledgeSessionOut(
                 **self._session_summary(branch).model_dump(),
-                messages=[self._message_out(message) for message in branch.messages],
+                messages=self._messages_out(session, branch.knowledge_base_id, branch.messages),
             )
 
     def file_home_session(
@@ -631,6 +643,8 @@ class AskTurns:
             work=result.work,
             effort_label=completion.effort_label if completion else None,
             reasoning=completion.reasoning if completion else None,
+            searched=result.searched,
+            key_results_used=result.key_results_used,
         )
 
     def create_session_turn(
@@ -788,6 +802,8 @@ class AskTurns:
             style=payload.style if payload.style in STYLES else DEFAULT_STYLE,
             steps=[step.out() for step in response.steps],
             web_searched=any(step.tool == "search_web" for step in response.steps),
+            searched=response.searched,
+            key_results_used=response.key_results_used,
             checked=response.checked,
             support_notes=list(response.support_notes),
             coverage=response.coverage,
@@ -843,12 +859,14 @@ class AskTurns:
             if kept is not None:
                 self._keep_trace(session, assistant_message.id, kept)
             results = key_results.origin_states(session, "answer", [assistant_message.id])
+            user_out, assistant_out = self._messages_out(
+                session, knowledge_session.knowledge_base_id, [user_message, assistant_message],
+                results,
+            )
             return ConversationTurnOut(
                 session=self._session_summary(knowledge_session),
-                user_message=self._message_out(user_message),
-                assistant_message=self._message_out(
-                    assistant_message, results.get(assistant_message.id),
-                ),
+                user_message=user_out,
+                assistant_message=assistant_out,
             )
 
     def _keep_trace(self, session: Session, message_id: str, kept: trace.Trace) -> None:

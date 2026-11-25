@@ -311,6 +311,8 @@ def forget_works(workspace: Workspace, lineages: set[str]) -> bool:
 def evidence_from_citation(citation: ConversationCitationOut) -> Evidence:
     """A saved citation as a passage a model may cite again, under the number it has."""
 
+    if citation.library_source_id is not None:
+        citation = citation.model_copy(update={"library_source_id": None})
     return Evidence(
         kind=citation.kind,
         title=citation.source_title,

@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 EVIDENCE_CHARS = 900
 # What the writer and the checker read of a source that was read further.
 CONTEXT_CHARS = 6000
+EvidenceKey = tuple[str, str, str]
+KeyResultRefs = dict[str, tuple[str, dict[EvidenceKey, int]]]
 
 
 @dataclass(frozen=True)
@@ -36,10 +38,14 @@ class Evidence:
     extraction_warnings: tuple[dict[str, Any], ...] = ()
 
     @property
-    def key(self) -> tuple[str, str, str]:
-        citation = (
+    def citation(self) -> Any:
+        return (
             self.payload[0] if isinstance(self.payload, tuple) and self.payload else self.payload
         )
+
+    @property
+    def key(self) -> EvidenceKey:
+        citation = self.citation
         source = getattr(citation, "source_id", "")
         revision = getattr(citation, "source_revision_id", "")
         block = getattr(citation, "block_id", "")
@@ -53,9 +59,7 @@ class Evidence:
 
     @property
     def source_key(self) -> str:
-        citation = (
-            self.payload[0] if isinstance(self.payload, tuple) and self.payload else self.payload
-        )
+        citation = self.citation
         return str(
             getattr(citation, "work_identifier", "")
             or getattr(citation, "source_id", "")
@@ -71,22 +75,28 @@ class KeyResultMatch:
     groups: tuple[tuple[Evidence, ...], ...]
 
 
-def key_result_lines(
+def key_result_refs(
     matches: Iterable[KeyResultMatch], pool: Sequence[Evidence],
-) -> tuple[str, ...]:
+) -> KeyResultRefs:
     """Point to complete evidence groups that made it into the numbered pool."""
     numbered = {item.key: item.ref for item in pool if item.ref is not None}
-    lines = []
+    results: KeyResultRefs = {}
     for match in matches:
-        refs = dict.fromkeys(
-            numbered[item.key]
+        refs = {
+            item.key: numbered[item.key]
             for group in match.groups if all(item.key in numbered for item in group)
             for item in group
-        )
+        }
         if refs:
-            pointers = ", ".join(f"[{ref}]" for ref in refs)
-            lines.append(f"- {match.sentence} See {pointers}.")
-    return tuple(lines)
+            results[match.id] = (match.sentence, refs)
+    return results
+
+
+def key_result_lines(results: KeyResultRefs) -> tuple[str, ...]:
+    return tuple(
+        f"- {text} See {', '.join(f'[{ref}]' for ref in refs.values())}."
+        for text, refs in results.values()
+    )
 
 
 def key_result_block(lines: Sequence[str]) -> list[str]:

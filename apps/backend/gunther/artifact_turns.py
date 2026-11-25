@@ -25,7 +25,8 @@ from gunther.artifact_versions import (
     output_version,
 )
 from gunther.database import session_scope
-from gunther.evidence import Evidence, key_result_lines
+from gunther.evidence import Evidence, KeyResultRefs, key_result_lines, key_result_refs
+from gunther.library_lookup import SearchHit, pack_key_results, pack_searched
 from gunther.llm import ModelError, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.models import ArtifactConversation, ArtifactMessage, utc_now
@@ -45,6 +46,8 @@ from gunther.schemas import (
     CreateArtifactConversationInput,
     OutputModelOut,
     OutputScope,
+    SearchedHitOut,
+    UsedKeyResultOut,
 )
 from gunther.service_records import _id
 
@@ -252,6 +255,8 @@ class ArtifactTurns:
             return self._published_turn_out(published)
         model, effort = self._output_model(payload.model, payload.effort)
         material = None
+        searched: list[SearchHit] = []
+        key_results_read: KeyResultRefs = {}
         if needs_conversation:
             assert build_scope is not None
             with session_scope(self.sessions) as session:
@@ -385,16 +390,21 @@ class ArtifactTurns:
                                 continue
                             for item in group:
                                 made.adopt(item)
+                                searched.append(SearchHit(item, query, True))
                             pinned.update(fresh)
                             # Later steps of this turn read and cite these pinned readings too.
                             pinned_keys.update(fresh)
                             remaining -= len(fresh)
                     reading_gaps = self._studio_reading(
                         session, material.source_revisions, made, pinned=list(pinned.values()),
+                        searched=searched,
                     )
+                orientation = key_result_refs(matches, made.items)
+                for result_id, (sentence, refs) in orientation.items():
+                    key_results_read.setdefault(result_id, (sentence, {}))[1].update(refs)
                 return replace(
                     material.notes, extraction_gaps=tuple(reading_gaps),
-                    key_results=key_result_lines(matches, made.items),
+                    key_results=key_result_lines(orientation),
                 )
 
             def studio(
@@ -415,6 +425,7 @@ class ArtifactTurns:
                 if (build is not None or payload.rebuild) and web_enabled:
                     warning = self._studio_web(
                         web, web_reason, spec.brief or spec.title or "", made, limits.per_section,
+                        searched=searched,
                     )
                     if warning:
                         agents.skipped.append(warning)
@@ -474,6 +485,7 @@ class ArtifactTurns:
                     seeds=material.seeds[: limits.seed],
                     emit=emit,
                     limits=agent_limits,
+                    searched=searched,
                 )
             )
             try:
@@ -522,10 +534,15 @@ class ArtifactTurns:
         artifact = message = None
         if result is not None and result.save is not None:
             try:
+                cited = [
+                    workspaces.evidence_from_citation(item) for item in result.save.built.citations
+                ]
                 artifact, message = self._save_turn_version(
                     base_id, workspace_id, conversation_id, payload, model, effort, result,
                     workspace, brief, scope, material.inputs, material.snapshots, heads, emit, keep,
                     fingerprint,
+                    searched=pack_searched(searched, cited),
+                    key_results_used=pack_key_results(key_results_read, cited),
                 )
             except Exception as error:
                 preserve_on_failure = True
@@ -609,6 +626,9 @@ class ArtifactTurns:
         emit: Callable[[dict], None],
         keep: Callable[[Session, ArtifactOut, workspaces.Workspace], ArtifactMessageOut],
         fingerprint: str,
+        *,
+        searched: list[SearchedHitOut],
+        key_results_used: list[UsedKeyResultOut],
     ) -> tuple[ArtifactOut, ArtifactMessageOut | None]:
         """Seal the artifact a turn finished as a version, and make its work match it."""
 
@@ -682,6 +702,8 @@ class ArtifactTurns:
                 "request": payload.text,
                 "reply": request.summary,
                 "changes": request.changes,
+                "searched": searched,
+                "key_results_used": key_results_used,
                 "work": record.model_dump(mode="json"),
             },
             publish=publish,

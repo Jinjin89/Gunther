@@ -348,6 +348,7 @@ class WebCaptureOut(ApiModel):
     import_result: ImportResultOut
     snapshot: WebSnapshotOut
     idempotent_replay: bool = False
+    note: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class FileNotebookNoteOut(ApiModel):
@@ -612,6 +613,25 @@ class ConversationCitationOut(ApiModel):
     # Its number in the conversation's source pool: `[ref]` in an answer, the same in
     # every answer of the conversation. Older answers have none and count from 1.
     ref: int | None = None
+    library_source_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class SearchedHitOut(ApiModel):
+    kind: Literal["library", "web"]
+    title: str
+    url: str | None
+    source_id: str | None
+    locator: str
+    snippet: str
+    query: str
+    kept: bool
+    library_source_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class UsedKeyResultOut(ApiModel):
+    id: str
+    text: str
+    refs: list[int]
 
 
 class ConversationContextOut(ApiModel):
@@ -635,6 +655,8 @@ class ConversationContextOut(ApiModel):
     intent: Literal["chat", "followup", "library", "web", "both", "clarify"] | None = None
     steps: list[dict[str, object]] = Field(default_factory=list)
     web_searched: bool = False
+    searched: list[SearchedHitOut] = Field(default_factory=list)
+    key_results_used: list[UsedKeyResultOut] = Field(default_factory=list)
     # The checker ran on this answer; one note per [p:n] in the text, in order, on what
     # that source does not cover.
     checked: bool = False
@@ -842,6 +864,8 @@ class ArtifactProvenanceOut(ApiModel):
     accepted_only: bool
     accepted_unit_ids: list[str]
     revision_ids: list[str]
+    searched: list[SearchedHitOut] = Field(default_factory=list)
+    key_results_used: list[UsedKeyResultOut] = Field(default_factory=list)
 
 
 class OutputModelOut(ApiModel):

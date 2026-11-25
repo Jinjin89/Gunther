@@ -8,14 +8,15 @@ from pathlib import Path
 import pytest
 from fake_models import FakeProvider, assertion_payload, gateway
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import event, select
+from sqlalchemy.orm import sessionmaker
 
-from gunther import web_capture
+from gunther import asset_service, web_capture
 from gunther.config import Settings
 from gunther.database import session_scope
 from gunther.extraction import ModelExtractor
 from gunther.main import create_app
-from gunther.models import WebSnapshot
+from gunther.models import Asset, Source, WebSnapshot
 from gunther.web_capture import (
     PinnedHttpFetcher,
     PublicWebUrlPolicy,
@@ -110,6 +111,339 @@ def create_base(client: TestClient, title: str = "Genome research") -> str:
     )
     assert response.status_code == 201
     return response.json()["id"]
+
+
+@pytest.fixture
+def document_pdf() -> bytes:
+    from test_asset_capture import pdf_bytes
+
+    return pdf_bytes("A result in the original document.")
+
+
+@pytest.mark.parametrize("content_type", ["application/pdf", "application/octet-stream"])
+def test_direct_pdf_creates_a_snapshot_and_queues_the_file_reading(
+    tmp_path: Path, document_pdf: bytes, content_type: str,
+) -> None:
+    url = "https://example.com/download"
+    fetcher = ScriptedFetcher({
+        url: WebFetchResponse(200, {"Content-Type": content_type}, document_pdf),
+    })
+    with make_client(tmp_path, fetcher, processing_worker_enabled=False) as client:
+        response = client.post(
+            "/api/captures/web", json={"url": url, "clientCaptureId": "pdf-capture_1234"},
+        )
+        assert response.status_code == 201, response.text
+        captured = response.json()
+        source = captured["importResult"]["source"]
+        asset = captured["asset"]
+        snapshot = captured["snapshot"]
+        assert source["kind"] == "file"
+        assert source["asset"]["id"] == snapshot["assetId"] == asset["id"]
+        assert asset["mediaType"] == "application/pdf"
+        assert asset["originalName"] == "download.pdf"
+        assert client.get(asset["downloadUrl"]).content == document_pdf
+        assert snapshot["originalUrl"] == snapshot["finalUrl"] == url
+        assert snapshot["contentType"] == content_type
+        expected_hash = hashlib.sha256(document_pdf).hexdigest()
+        assert snapshot["contentHash"] == asset["contentHash"] == expected_hash
+        assert "note" not in captured
+
+        with session_scope(client.app.state.knowledge_service.sessions) as session:
+            stored = session.scalars(select(WebSnapshot)).one()
+            assert stored.source_id == source["id"]
+            assert stored.client_capture_id == "pdf-capture_1234"
+            assert stored.request_fingerprint
+
+        assert client.app.state.processing_worker.run_once(ai=False)
+        reading = client.get(f"/api/sources/{source['id']}/document").raise_for_status().json()
+        [text] = [
+            e for e in reading["elements"] if "A result in the original document." in e["content"]
+        ]
+        assert text["anchor"]["page"] == 1
+        assert client.get(f"/api/sources/{source['id']}").json()["webSnapshot"] == snapshot
+
+
+@pytest.mark.parametrize("metadata", [
+    b'<meta name="citation_pdf_url" content="files/report.pdf">',
+    b'<link rel="alternate" type="application/pdf" href="files/report.pdf">',
+], ids=["citation", "alternate"])
+def test_declared_pdf_is_resolved_from_the_page_and_fetched_through_redirects(
+    tmp_path: Path, document_pdf: bytes, metadata: bytes,
+) -> None:
+    url = "https://example.com/articles/report"
+    linked = "https://example.com/articles/files/report.pdf"
+    final = "https://cdn.example.net/report.pdf"
+    resolver = FakeResolver({"cdn.example.net": ["1.1.1.1"]})
+    fetcher = ScriptedFetcher({
+        url: html_response(b"<title>Research report</title>" + metadata + b"<p>Landing page.</p>"),
+        linked: WebFetchResponse(302, {"Location": final}, b""),
+        final: WebFetchResponse(200, {"Content-Type": "application/pdf"}, document_pdf),
+    })
+    with make_client(tmp_path, fetcher, resolver, processing_worker_enabled=False) as client:
+        captured = client.post("/api/captures/web", json={"url": url}).raise_for_status().json()
+        assert captured["importResult"]["source"]["title"] == "Research report"
+        assert captured["importResult"]["source"]["kind"] == "file"
+        assert client.get(captured["asset"]["downloadUrl"]).content == document_pdf
+        assert captured["snapshot"]["originalUrl"] == url
+        assert captured["snapshot"]["finalUrl"] == final
+        assert "note" not in captured
+
+    assert [target.url for target in fetcher.calls] == [url, linked, final]
+    assert [target.address for target in fetcher.calls] == [PUBLIC_IP, PUBLIC_IP, "1.1.1.1"]
+    assert all(target.allow_pdf for target in fetcher.calls)
+    assert resolver.calls == [("example.com", 443), ("example.com", 443), ("cdn.example.net", 443)]
+
+
+@pytest.mark.parametrize("linked_response", [
+    WebFetchResponse(401, {}, b""),
+    WebFetchResponse(403, {}, b""),
+    WebFetchResponse(404, {}, b""),
+    TimeoutError(),
+    WebFetchResponse(200, {"Content-Type": "application/pdf"}, b"<p>Sign in.</p>"),
+], ids=["unauthorized", "forbidden", "missing", "timeout", "non-pdf"])
+def test_unavailable_linked_pdf_saves_the_page_with_a_note(
+    tmp_path: Path, linked_response: WebFetchResponse | Exception,
+) -> None:
+    url = "https://example.com/report"
+    linked = "https://example.com/report.pdf"
+    body = (
+        b'<meta name="citation_pdf_url" content="/report.pdf">'
+        b'<link rel="alternate" type="application/pdf" href="/other.pdf">'
+        b"<p>The public reading.</p>"
+    )
+    fetcher = ScriptedFetcher({url: html_response(body), linked: linked_response})
+    with make_client(tmp_path, fetcher, processing_worker_enabled=False) as client:
+        captured = client.post("/api/captures/web", json={"url": url}).raise_for_status().json()
+        assert captured["importResult"]["source"]["kind"] == "link"
+        assert client.get(captured["asset"]["downloadUrl"]).content == body
+        assert captured["snapshot"]["originalUrl"] == captured["snapshot"]["finalUrl"] == url
+        assert captured["note"] == "Saved the web page; the linked PDF needed separate access."
+
+    assert [target.url for target in fetcher.calls] == [url, linked]
+
+
+@pytest.mark.parametrize("status", [200, 206], ids=["short-body", "partial-status"])
+def test_incomplete_pdf_fails_directly_and_falls_back_from_a_page(
+    tmp_path: Path, document_pdf: bytes, status: int,
+) -> None:
+    url = "https://example.com/report"
+    pdf_url = f"{url}.pdf"
+    body = document_pdf[:len(document_pdf) // 2]
+    expected = len(document_pdf) if status == 200 else len(body)
+    page = b'<link rel="alternate" type="application/pdf" href="/report.pdf"><p>Public text.</p>'
+    fetcher = ScriptedFetcher({
+        url: html_response(page),
+        pdf_url: WebFetchResponse(
+            status, {"Content-Type": "application/pdf", "Content-Length": str(expected)}, body,
+        ),
+    })
+    with make_client(tmp_path, fetcher, processing_worker_enabled=False) as client:
+        rejected = client.post("/api/captures/web", json={"url": pdf_url})
+        assert rejected.status_code == 502
+        assert ("Content-Length" if status == 200 else "partial PDF") in rejected.json()["detail"]
+        with session_scope(client.app.state.knowledge_service.sessions) as session:
+            assert session.scalar(select(WebSnapshot)) is None
+            assert session.scalar(select(Source)) is None
+            assert session.scalar(select(Asset)) is None
+
+        fallback = client.post("/api/captures/web", json={"url": url}).raise_for_status().json()
+        assert fallback["importResult"]["source"]["kind"] == "link"
+        assert fallback["snapshot"]["finalUrl"] == url
+        assert client.get(fallback["asset"]["downloadUrl"]).content == page
+        assert fallback["note"] == "Saved the web page; the linked PDF needed separate access."
+
+
+def test_fallback_receipt_keeps_its_notice_on_replay_and_url_reuse(tmp_path: Path) -> None:
+    url = "https://example.com/report"
+    fetcher = ScriptedFetcher({
+        url: html_response(b'<meta name="citation_pdf_url" content="/report.pdf"><p>Public.</p>'),
+        f"{url}.pdf": WebFetchResponse(403, {}, b""),
+    })
+    with make_client(tmp_path, fetcher, processing_worker_enabled=False) as client:
+        payload = {
+            "url": url,
+            "knowledgeBaseId": create_base(client),
+            "clientCaptureId": "fallback-capture-1234",
+        }
+        first = client.post("/api/captures/web", json=payload).raise_for_status().json()
+        assert first["note"] == "Saved the web page; the linked PDF needed separate access."
+
+    unavailable = ScriptedFetcher({})
+    with make_client(tmp_path, unavailable, processing_worker_enabled=False) as restarted:
+        replay = restarted.post("/api/captures/web", json=payload).raise_for_status().json()
+        assert replay["idempotentReplay"] is True
+        assert replay["note"] == first["note"]
+        reused_payload = {**payload, "clientCaptureId": "fallback-reuse-1234"}
+        reused = restarted.post("/api/captures/web", json=reused_payload).raise_for_status().json()
+        assert reused["idempotentReplay"] is False
+        assert reused["note"] == first["note"]
+        replay = restarted.post("/api/captures/web", json=reused_payload).raise_for_status().json()
+        assert replay["idempotentReplay"] is True
+        assert replay["note"] == first["note"]
+    assert unavailable.calls == []
+
+
+@pytest.mark.parametrize("redirect", [False, True])
+def test_private_linked_pdf_is_refused_by_the_public_url_policy(
+    tmp_path: Path, redirect: bool,
+) -> None:
+    url = "https://example.com/report"
+    private = "http://127.0.0.1/report.pdf"
+    link = "https://example.com/report.pdf" if redirect else private
+    body = f'<meta name="citation_pdf_url" content="{link}"><p>Public.</p>'.encode()
+    fetcher = ScriptedFetcher({
+        url: html_response(body),
+        link: WebFetchResponse(302, {"Location": private}, b""),
+    })
+    with make_client(tmp_path, fetcher, processing_worker_enabled=False) as client:
+        captured = client.post("/api/captures/web", json={"url": url}).raise_for_status().json()
+        assert captured["importResult"]["source"]["kind"] == "link"
+        assert captured["note"]
+    assert [target.url for target in fetcher.calls] == ([url, link] if redirect else [url])
+
+
+def test_library_reuses_the_live_source_by_original_and_final_url(tmp_path: Path) -> None:
+    url = "https://example.com/report"
+    final = "https://example.com/article"
+    alias = "https://example.com/redirect"
+    redirect = WebFetchResponse(302, {"Location": final}, b"")
+    fetcher = ScriptedFetcher({
+        url: redirect, alias: redirect, final: html_response(b"<p>The reading.</p>"),
+    })
+    with make_client(tmp_path, fetcher, processing_worker_enabled=False) as client:
+        library = create_base(client)
+        other_library = create_base(client, "Other research")
+        first = client.post(
+            "/api/captures/web",
+            json={"url": url, "knowledgeBaseId": library, "clientCaptureId": "original-receipt"},
+        ).raise_for_status().json()
+        assert first["importResult"]["duplicate"] is False
+        source_id = first["importResult"]["source"]["id"]
+        payloads = [
+            {
+                "url": repeated_url,
+                "knowledgeBaseId": library,
+                "title": "Another title",
+                "clientCaptureId": f"reused-receipt-{index}",
+            }
+            for index, repeated_url in enumerate([f"{url}#reading", final, alias])
+        ]
+        for payload in payloads:
+            capture = client.post("/api/captures/web", json=payload).raise_for_status().json()
+            assert capture["importResult"]["duplicate"] is True
+            assert capture["idempotentReplay"] is False
+            assert capture["importResult"]["source"]["id"] == source_id
+            assert capture["snapshot"] == first["snapshot"]
+        sources = client.get(f"/api/knowledge-bases/{library}/sources").raise_for_status().json()
+        assert [source["id"] for source in sources] == [source_id]
+    assert [target.url for target in fetcher.calls] == [url, final, alias, final]
+
+    unavailable = ScriptedFetcher({})
+    with make_client(tmp_path, unavailable, processing_worker_enabled=False) as restarted:
+        changed_requests = (
+            {"url": "https://example.com/other"},
+            {"knowledgeBaseId": other_library},
+        )
+        for payload in payloads:
+            replay = restarted.post("/api/captures/web", json=payload).raise_for_status().json()
+            assert replay["idempotentReplay"] is True
+            assert replay["importResult"]["duplicate"] is True
+            assert replay["importResult"]["source"]["id"] == source_id
+            assert replay["snapshot"] == first["snapshot"]
+            for change in changed_requests:
+                conflict = restarted.post("/api/captures/web", json={**payload, **change})
+                assert conflict.status_code == 409
+    assert unavailable.calls == []
+
+
+def test_capture_skips_a_source_moving_to_trash_during_receipt_reuse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://example.com/report"
+    fetcher = ScriptedFetcher({url: html_response(b"<p>The reading.</p>")})
+    with make_client(tmp_path, fetcher, processing_worker_enabled=False) as client:
+        payload = {"url": url, "knowledgeBaseId": create_base(client)}
+        first = client.post("/api/captures/web", json=payload).raise_for_status().json()
+        old_source_id = first["importResult"]["source"]["id"]
+        engine = client.app.state.knowledge_service.sessions.kw["bind"]
+
+        with engine.begin() as pending_trash:
+            # Stage a real Trash request and hold its commit until capture attempts a write.
+            with monkeypatch.context() as patch:
+                patch.setattr(
+                    client.app.state.trash_service, "sessions",
+                    sessionmaker(bind=pending_trash, join_transaction_mode="rollback_only"),
+                )
+                client.post(f"/api/sources/{old_source_id}/trash").raise_for_status()
+            assert client.get(f"/api/sources/{old_source_id}").json()["trashedAt"] is None
+
+            def commit_trash(_connection, _cursor, statement, _params, _context, _many):
+                if pending_trash.in_transaction() and (
+                    statement == "BEGIN IMMEDIATE" or statement.startswith("INSERT INTO revisions")
+                ):
+                    pending_trash.commit()
+
+            retry = {**payload, "clientCaptureId": "capture-during-trash"}
+            event.listen(engine, "before_cursor_execute", commit_trash)
+            try:
+                captured = client.post("/api/captures/web", json=retry).raise_for_status().json()
+            finally:
+                event.remove(engine, "before_cursor_execute", commit_trash)
+            assert not pending_trash.in_transaction()
+
+        assert captured["importResult"]["duplicate"] is False
+        new_source_id = captured["importResult"]["source"]["id"]
+        assert new_source_id != old_source_id
+        assert client.get(f"/api/sources/{old_source_id}").json()["trashedAt"]
+        replay = client.post("/api/captures/web", json=retry).raise_for_status().json()
+        assert replay["idempotentReplay"] is True
+        assert replay["importResult"]["source"]["id"] == new_source_id
+        assert [target.url for target in fetcher.calls] == [url, url]
+
+
+def test_trashed_pdf_can_be_captured_again_and_dedupe_is_library_scoped(
+    tmp_path: Path, document_pdf: bytes,
+) -> None:
+    url = "https://example.com/report.pdf"
+    fetcher = ScriptedFetcher({
+        url: WebFetchResponse(200, {"Content-Type": "application/pdf"}, document_pdf),
+    })
+    with make_client(tmp_path, fetcher, processing_worker_enabled=False) as client:
+        library = create_base(client)
+        other_library = create_base(client, "Other research")
+        payload = {"url": url, "knowledgeBaseId": library}
+        first = client.post("/api/captures/web", json=payload).raise_for_status().json()
+        other = client.post(
+            "/api/captures/web", json={**payload, "knowledgeBaseId": other_library},
+        ).raise_for_status().json()
+
+        source_id = first["importResult"]["source"]["id"]
+        client.post(f"/api/sources/{source_id}/trash").raise_for_status()
+        recaptured = client.post("/api/captures/web", json=payload).raise_for_status().json()
+        assert recaptured["importResult"]["duplicate"] is False
+        assert other["importResult"]["duplicate"] is False
+        assert len({c["importResult"]["source"]["id"] for c in (first, other, recaptured)}) == 3
+        assert first["asset"]["id"] == recaptured["asset"]["id"] == other["asset"]["id"]
+        assert client.get(f"/api/sources/{source_id}").json()["trashedAt"]
+        assert len(fetcher.calls) == 3
+
+
+def test_oversize_pdf_leaves_no_capture(
+    tmp_path: Path, document_pdf: bytes, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(asset_service, "MAX_PDF_INPUT_BYTES", len(document_pdf) - 1)
+    url = "https://example.com/report.pdf"
+    fetcher = ScriptedFetcher({
+        url: WebFetchResponse(200, {"Content-Type": "application/pdf"}, document_pdf),
+    })
+    with make_client(tmp_path, fetcher, processing_worker_enabled=False) as client:
+        response = client.post("/api/captures/web", json={"url": url})
+        assert response.status_code == 413
+        assert "PDF response is too large" in response.json()["detail"]
+        with session_scope(client.app.state.knowledge_service.sessions) as session:
+            assert session.scalar(select(WebSnapshot)) is None
+            assert session.scalar(select(Source)) is None
+            assert session.scalar(select(Asset)) is None
 
 
 def test_article_figures_are_retained_once_and_private_image_urls_are_not_fetched(tmp_path):
@@ -521,6 +855,7 @@ def test_large_body_invalid_type_and_fetch_failure_are_safe(tmp_path: Path) -> N
             WebCaptureFetchError("connection failed"),
             502,
         ),
+        ("https://example.com/blocked", WebFetchResponse(403, {}, b""), 502),
     ]
     for index, (url, result, expected_status) in enumerate(cases):
         case_root = tmp_path / str(index)
@@ -529,11 +864,14 @@ def test_large_body_invalid_type_and_fetch_failure_are_safe(tmp_path: Path) -> N
         with make_client(case_root, fetcher) as client:
             response = client.post("/api/captures/web", json={"url": url})
             assert response.status_code == expected_status
+            assert response.json()["detail"]
             asset_root = case_root / "assets"
             assert not asset_root.exists() or not any(asset_root.rglob("*"))
 
 
 class StreamResponse:
+    status = 200
+
     def __init__(self, data: bytes, headers: dict[str, str]) -> None:
         self.stream = io.BytesIO(data)
         self.headers = {key.casefold(): value for key, value in headers.items()}
@@ -547,6 +885,22 @@ class StreamResponse:
 
 class StreamConnection:
     sock = None
+
+
+@pytest.mark.parametrize("compressed", [False, True])
+def test_transfer_rejects_short_fixed_length_bodies(compressed: bool) -> None:
+    body = b"%PDF-1.4\n"
+    wire = gzip.compress(body) if compressed else body
+    headers = {"Content-Type": "application/pdf", "Content-Length": str(len(wire) + 1)}
+    if compressed:
+        headers["Content-Encoding"] = "gzip"
+    with pytest.raises(WebCaptureFetchError, match="Content-Length"):
+        _decode_transfer_body(
+            StreamResponse(wire, headers),  # type: ignore[arg-type]
+            StreamConnection(),  # type: ignore[arg-type]
+            deadline=time.monotonic() + 1,
+            allow_pdf=True,
+        )
 
 
 def test_compressed_and_expanded_response_limits_are_independent(monkeypatch) -> None:
@@ -566,6 +920,47 @@ def test_compressed_and_expanded_response_limits_are_independent(monkeypatch) ->
             StreamResponse(compressed, {"Content-Encoding": "gzip"}),  # type: ignore[arg-type]
             StreamConnection(),  # type: ignore[arg-type]
             deadline=time.monotonic() + 1,
+        )
+
+
+@pytest.mark.parametrize(("content_type", "compressed"), [
+    ("application/pdf", False),
+    ("application/octet-stream", False),
+    ("application/octet-stream", True),
+])
+def test_pdf_transfer_uses_pdf_limit_for_mime_and_split_magic_bytes(
+    content_type: str, compressed: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = b"%PDF-1.4\n" + b"x" * 120
+    monkeypatch.setattr(web_capture, "MAX_WIRE_BYTES", 16)
+    monkeypatch.setattr(web_capture, "MAX_RESPONSE_BYTES", 32)
+    monkeypatch.setattr(web_capture, "READ_CHUNK_BYTES", 3)
+    monkeypatch.setattr(asset_service, "MAX_PDF_INPUT_BYTES", len(body))
+    wire = gzip.compress(body) if compressed else body
+    headers = {"Content-Type": content_type, "Content-Length": str(len(wire))}
+    if compressed:
+        headers["Content-Encoding"] = "gzip"
+    assert _decode_transfer_body(
+        StreamResponse(wire, headers),  # type: ignore[arg-type]
+        StreamConnection(),  # type: ignore[arg-type]
+        deadline=time.monotonic() + 1,
+        allow_pdf=True,
+    ) == body
+
+    with pytest.raises(WebCaptureTooLargeError):
+        _decode_transfer_body(
+            StreamResponse(wire, headers),  # type: ignore[arg-type]
+            StreamConnection(),  # type: ignore[arg-type]
+            deadline=time.monotonic() + 1,
+        )
+
+    monkeypatch.setattr(asset_service, "MAX_PDF_INPUT_BYTES", len(body) - 1)
+    with pytest.raises(WebCaptureTooLargeError):
+        _decode_transfer_body(
+            StreamResponse(wire, headers),  # type: ignore[arg-type]
+            StreamConnection(),  # type: ignore[arg-type]
+            deadline=time.monotonic() + 1,
+            allow_pdf=True,
         )
 
 
@@ -603,23 +998,9 @@ def test_cancelled_idempotency_waiter_does_not_leak_the_capture_lock() -> None:
 def test_production_http_fetcher_uses_pinned_ip_and_original_host(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    class Response:
-        status = 200
-
-        @staticmethod
-        def getheaders() -> list[tuple[str, str]]:
-            return [("Content-Type", "text/plain")]
-
-        @staticmethod
-        def getheader(_name: str) -> str | None:
-            return None
-
-        @staticmethod
-        def read(_size: int) -> bytes:
-            if captured.get("read"):
-                return b""
-            captured["read"] = True
-            return b"pinned"
+    class Response(StreamResponse):
+        def getheaders(self) -> list[tuple[str, str]]:
+            return list(self.headers.items())
 
     class Connection:
         sock = None
@@ -632,7 +1013,7 @@ def test_production_http_fetcher_uses_pinned_ip_and_original_host(monkeypatch) -
 
         @staticmethod
         def getresponse() -> Response:
-            return Response()
+            return Response(b"pinned", {"Content-Type": "text/plain"})
 
         @staticmethod
         def close() -> None:
@@ -647,12 +1028,19 @@ def test_production_http_fetcher_uses_pinned_ip_and_original_host(monkeypatch) -
         address=PUBLIC_IP,
         request_target="/page",
         host_header="example.com",
+        allow_pdf=True,
     )
-    response = PinnedHttpFetcher().fetch(target, timeout_seconds=10)
+    fetcher = PinnedHttpFetcher()
+    response = fetcher.fetch(target, timeout_seconds=10)
     assert response.body == b"pinned"
     assert captured["connection"] == (PUBLIC_IP, 80, 5.0)
     assert captured["request"][:2] == ("GET", "/page")  # type: ignore[index]
     assert captured["request"][2]["Host"] == "example.com"  # type: ignore[index]
+    assert "application/pdf" in captured["request"][2]["Accept"]  # type: ignore[index]
+    assert fetch_public_page(target.url, PublicWebUrlPolicy(FakeResolver()), fetcher) == (
+        "pinned", None,
+    )
+    assert "application/pdf" not in captured["request"][2]["Accept"]  # type: ignore[index]
 
 
 def test_https_connection_pins_tcp_ip_but_uses_hostname_for_tls(monkeypatch) -> None:

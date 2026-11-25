@@ -10,8 +10,9 @@ import socket
 import ssl
 import time
 import zlib
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -20,9 +21,11 @@ from typing import Protocol
 from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
+from gunther import asset_service
 from gunther.asset_service import (
     MAX_EXTRACTED_CHARACTERS,
     AssetService,
@@ -31,18 +34,26 @@ from gunther.asset_service import (
     _ReadableHtml,
 )
 from gunther.database import session_scope
-from gunther.models import Asset, KnowledgeBaseRecord, Source, WebSnapshot
+from gunther.models import (
+    Asset,
+    KnowledgeBaseRecord,
+    KnowledgeBaseSource,
+    Revision,
+    Source,
+    WebSnapshot,
+)
 from gunther.portable_documents import IMAGE_LIMIT, html_document, image_type
 from gunther.schemas import (
+    AssetCaptureOut,
     CreateSourceInput,
     ImportCountsOut,
     ImportResultOut,
-    SourceSummaryOut,
     WebCaptureInput,
     WebCaptureOut,
     WebSnapshotOut,
 )
 from gunther.service import KnowledgeService
+from gunther.source_identity import source_fingerprint
 
 CONNECT_TIMEOUT_SECONDS = 5.0
 TOTAL_TIMEOUT_SECONDS = 15.0
@@ -51,8 +62,16 @@ MAX_WEB_URL_LENGTH = 4_096
 MAX_WIRE_BYTES = 8 * 1024 * 1024
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 READ_CHUNK_BYTES = 64 * 1024
+PDF_MEDIA_TYPE = "application/pdf"
+PDF_HEADER = b"%PDF-"
+PDF_FALLBACK_NOTE = "Saved the web page; the linked PDF needed separate access."
 ALLOWED_CONTENT_TYPES = frozenset({"text/html", "application/xhtml+xml", "text/plain"})
 REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+_CAPTURE_REUSED = "web_capture_reused"
+_CAPTURE_PDF_FALLBACK = "web_capture_pdf_fallback"
+_CAPTURE_REQUEST_CONFLICT = (
+    "clientCaptureId is already associated with a different web capture request"
+)
 _RESERVED_HOST_SUFFIXES = (
     ".internal",
     ".invalid",
@@ -112,6 +131,7 @@ class ResolvedWebTarget:
     address: str
     request_target: str
     host_header: str
+    allow_pdf: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +155,8 @@ class _WebCaptureIntent:
 
 @dataclass(frozen=True, slots=True)
 class WebFetchResponse:
+    """One response with the transfer and content encodings decoded."""
+
     status: int
     headers: Mapping[str, str]
     body: bytes
@@ -149,11 +171,10 @@ class WebFetchResponse:
 
 @dataclass(frozen=True, slots=True)
 class _PageReading:
-    content_type: str
-    media_type: str
     decoded: str
     text: str
     title: str | None
+    pdf_url: str | None = None
 
 
 class WebResolver(Protocol):
@@ -209,7 +230,7 @@ def _public_address(value: str) -> str:
     return str(address)
 
 
-def _normalize_web_url(raw_url: str) -> _NormalizedWebUrl:
+def normalize_web_url(raw_url: str) -> _NormalizedWebUrl:
     """Canonicalize the request URL without doing DNS or making a network request."""
 
     value = raw_url.strip()
@@ -283,7 +304,7 @@ def _normalize_web_url(raw_url: str) -> _NormalizedWebUrl:
 
 
 def _capture_intent(payload: WebCaptureInput) -> _WebCaptureIntent:
-    normalized_url = _normalize_web_url(payload.requested_url).url
+    normalized_url = normalize_web_url(payload.requested_url).url
     title = payload.title.strip() if payload.title and payload.title.strip() else None
     notes = payload.notes.strip()
     knowledge_base_id = (
@@ -318,7 +339,7 @@ class PublicWebUrlPolicy:
         self.resolver = resolver
 
     def resolve(self, raw_url: str) -> ResolvedWebTarget:
-        normalized = _normalize_web_url(raw_url)
+        normalized = normalize_web_url(raw_url)
         try:
             literal_address = ipaddress.ip_address(normalized.host)
         except ValueError:
@@ -367,25 +388,59 @@ class _PinnedHttpsConnection(http.client.HTTPSConnection):
         self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
 
 
+def _media_type(content_type: str) -> str:
+    return content_type.partition(";")[0].strip().casefold()
+
+
+def _fixed_body_length(status: int, header: Callable[[str], str | None]) -> int | None:
+    if 100 <= status < 200 or status in (204, 304):
+        return 0
+    transfer = header("Transfer-Encoding")
+    if transfer is not None:
+        if transfer.lower() != "chunked":
+            raise WebCaptureFetchError("The response uses an unsupported Transfer-Encoding")
+        # The HTTP decoder checks chunked framing and ignores Content-Length.
+        return None
+    declared = header("Content-Length")
+    if declared is None:
+        return None
+    try:
+        size = int(declared)
+    except ValueError as error:
+        raise WebCaptureFetchError("The response Content-Length is invalid") from error
+    if size < 0:
+        raise WebCaptureFetchError("The response Content-Length is invalid")
+    return size
+
+
+def _check_body_length(expected: int | None, received: int) -> None:
+    if expected is not None and received != expected:
+        raise WebCaptureFetchError("The web response did not match its Content-Length")
+
+
+def _content_encoding(header: str | None) -> str:
+    return (header or "").strip().casefold() or "identity"
+
+
 def _decode_transfer_body(
     response: http.client.HTTPResponse,
     connection: http.client.HTTPConnection,
     *,
     deadline: float,
+    allow_pdf: bool = False,
 ) -> bytes:
-    declared = response.getheader("Content-Length")
-    if declared is not None:
-        try:
-            declared_size = int(declared)
-        except ValueError as error:
-            raise WebCaptureFetchError("The response Content-Length is invalid") from error
-        if declared_size < 0:
-            raise WebCaptureFetchError("The response Content-Length is invalid")
-        if declared_size > MAX_WIRE_BYTES:
-            raise WebCaptureTooLargeError("The compressed web response is too large")
+    pdf_limit = asset_service.MAX_PDF_INPUT_BYTES
+    is_pdf = allow_pdf and _media_type(response.getheader("Content-Type") or "") == PDF_MEDIA_TYPE
+    sniffing = allow_pdf and not is_pdf
+    declared_size = _fixed_body_length(response.status, response.getheader)
+    wire_limit = pdf_limit if is_pdf else MAX_WIRE_BYTES
+    if sniffing:
+        wire_limit = max(wire_limit, pdf_limit)
+    if declared_size is not None and declared_size > wire_limit:
+        raise WebCaptureTooLargeError("The compressed web response is too large")
 
-    encoding = (response.getheader("Content-Encoding") or "identity").strip().casefold()
-    if encoding in {"", "identity"}:
+    encoding = _content_encoding(response.getheader("Content-Encoding"))
+    if encoding == "identity":
         decompressor = None
     elif encoding == "gzip":
         decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
@@ -403,25 +458,44 @@ def _decode_transfer_body(
         if connection.sock is not None:
             connection.sock.settimeout(max(0.001, remaining))
         chunk = response.read(READ_CHUNK_BYTES)
-        if not chunk:
-            break
+        finished = not chunk
         wire_size += len(chunk)
-        if wire_size > MAX_WIRE_BYTES:
+
+        # Read only enough decoded bytes to distinguish a PDF with a generic Content-Type.
+        if sniffing and chunk:
+            needed = len(PDF_HEADER) - len(decoded)
+            if decompressor is None:
+                decoded.extend(chunk[:needed])
+                chunk = chunk[needed:]
+            else:
+                decoded.extend(decompressor.decompress(chunk, needed))
+                chunk = decompressor.unconsumed_tail
+            is_pdf = decoded.startswith(PDF_HEADER)
+            sniffing = not is_pdf and PDF_HEADER.startswith(decoded)
+
+        wire_limit = pdf_limit if is_pdf else MAX_WIRE_BYTES
+        if sniffing and not finished:
+            wire_limit = max(wire_limit, pdf_limit)
+        if max(wire_size, declared_size or 0) > wire_limit:
             raise WebCaptureTooLargeError("The compressed web response is too large")
+        decoded_limit = pdf_limit if is_pdf else MAX_RESPONSE_BYTES
+        if finished:
+            break
         if decompressor is None:
             decoded.extend(chunk)
         else:
-            budget = MAX_RESPONSE_BYTES - len(decoded)
-            decoded.extend(decompressor.decompress(chunk, budget + 1))
+            budget = decoded_limit - len(decoded)
+            decoded.extend(decompressor.decompress(chunk, max(1, budget + 1)))
             if decompressor.unconsumed_tail:
                 raise WebCaptureTooLargeError("The expanded web response is too large")
-        if len(decoded) > MAX_RESPONSE_BYTES:
+        if len(decoded) > decoded_limit:
             raise WebCaptureTooLargeError("The expanded web response is too large")
 
+    _check_body_length(declared_size, wire_size)
     if decompressor is not None:
-        budget = MAX_RESPONSE_BYTES - len(decoded)
+        budget = decoded_limit - len(decoded)
         decoded.extend(decompressor.flush(budget + 1))
-        if len(decoded) > MAX_RESPONSE_BYTES:
+        if len(decoded) > decoded_limit:
             raise WebCaptureTooLargeError("The expanded web response is too large")
         if not decompressor.eof or decompressor.unused_data:
             raise WebCaptureFetchError("The compressed web response is malformed")
@@ -442,6 +516,9 @@ class PinnedHttpFetcher:
     ) -> WebFetchResponse:
         deadline = time.monotonic() + timeout_seconds
         connect_timeout = min(CONNECT_TIMEOUT_SECONDS, timeout_seconds)
+        accept = "text/html, application/xhtml+xml, text/plain;q=0.9"
+        if target.allow_pdf:
+            accept += f", {PDF_MEDIA_TYPE}"
         connection: http.client.HTTPConnection
         if target.scheme == "https":
             connection = _PinnedHttpsConnection(
@@ -462,7 +539,7 @@ class PinnedHttpFetcher:
                 headers={
                     "Host": target.host_header,
                     "User-Agent": "Gunther-WebCapture/1.0",
-                    "Accept": "text/html, application/xhtml+xml, text/plain;q=0.9",
+                    "Accept": accept,
                     "Accept-Encoding": "gzip, deflate",
                     "Connection": "close",
                 },
@@ -472,7 +549,9 @@ class PinnedHttpFetcher:
             for name, value in response.getheaders():
                 key = name.casefold()
                 headers[key] = f"{headers[key]}, {value}" if key in headers else value
-            body = _decode_transfer_body(response, connection, deadline=deadline)
+            body = _decode_transfer_body(
+                response, connection, deadline=deadline, allow_pdf=target.allow_pdf,
+            )
             return WebFetchResponse(status=response.status, headers=headers, body=body)
         except WebCaptureError:
             raise
@@ -484,15 +563,27 @@ class PinnedHttpFetcher:
             connection.close()
 
 
-class _HtmlTitle(HTMLParser):
+class _HtmlMetadata(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.depth = 0
         self.parts: list[str] = []
+        self.pdf_url: str | None = None
 
-    def handle_starttag(self, tag: str, _attrs: list[tuple[str, str | None]]) -> None:
-        if tag.casefold() == "title":
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "title":
             self.depth += 1
+        if self.pdf_url is not None or tag not in {"meta", "link"}:
+            return
+        attributes = dict(attrs)
+        if tag == "meta" and (attributes.get("name") or "").casefold() == "citation_pdf_url":
+            self.pdf_url = (attributes.get("content") or "").strip() or None
+        if (
+            tag == "link"
+            and "alternate" in (attributes.get("rel") or "").casefold().split()
+            and _media_type(attributes.get("type") or "") == PDF_MEDIA_TYPE
+        ):
+            self.pdf_url = (attributes.get("href") or "").strip() or None
 
     def handle_endtag(self, tag: str) -> None:
         if tag.casefold() == "title" and self.depth:
@@ -518,13 +609,18 @@ def _redirect_url(
     location = (response.header("location") or "").strip()
     if not location:
         raise WebCaptureFetchError("The redirect response has no Location header")
-    redirected_url = urljoin(target.url, location)
+    try:
+        redirected_url = urljoin(target.url, location)
+    except ValueError as error:
+        raise WebCaptureValidationError("The redirect URL is invalid") from error
     if len(redirected_url) > MAX_WEB_URL_LENGTH:
         raise WebCaptureValidationError("The redirect URL is too long")
     return redirected_url
 
 
-def _read_page(response: WebFetchResponse) -> _PageReading:
+def _checked_response_type(
+    response: WebFetchResponse, *, allow_pdf: bool = False,
+) -> tuple[str, str]:
     if not 200 <= response.status < 300:
         raise WebCaptureFetchError(f"The web page returned HTTP status {response.status}")
     content_type = (response.header("content-type") or "").strip()
@@ -532,25 +628,35 @@ def _read_page(response: WebFetchResponse) -> _PageReading:
         raise WebCaptureValidationError("The response Content-Type is too long")
     if any(ord(character) < 32 for character in content_type):
         raise WebCaptureValidationError("The response Content-Type is invalid")
-    media_type = content_type.split(";", 1)[0].strip().casefold()
-    if media_type not in ALLOWED_CONTENT_TYPES:
-        raise WebCaptureValidationError("Only HTML, XHTML, and plain-text pages can be captured")
     if not response.body:
         raise WebCaptureValidationError("The web response is empty")
-    if len(response.body) > MAX_RESPONSE_BYTES:
+    media_type = (
+        PDF_MEDIA_TYPE if response.body.startswith(PDF_HEADER) else _media_type(content_type)
+    )
+    if allow_pdf and media_type == PDF_MEDIA_TYPE:
+        if response.status == 206 or response.header("Content-Range") is not None:
+            raise WebCaptureFetchError("The web server returned a partial PDF")
+        if len(response.body) > asset_service.MAX_PDF_INPUT_BYTES:
+            raise WebCaptureTooLargeError("The PDF response is too large")
+    elif len(response.body) > MAX_RESPONSE_BYTES:
         raise WebCaptureTooLargeError("The expanded web response is too large")
+    return content_type or media_type, media_type
+
+
+def _read_page(response: WebFetchResponse, content_type: str, media_type: str) -> _PageReading:
+    if media_type not in ALLOWED_CONTENT_TYPES:
+        raise WebCaptureValidationError("Only HTML, XHTML, and plain-text pages can be read")
     match = re.search(r"(?:^|;)\s*charset\s*=\s*[\"']?([^;\s\"']+)", content_type, re.I)
     charset = match[1] if match and len(match[1]) <= 40 else None
     decoded, _ = _decode_text(response.body, declared_encoding=charset)
     if media_type == "text/plain":
-        return _PageReading(content_type, media_type, decoded, decoded.strip(), None)
-    title_parser = _HtmlTitle()
-    title_parser.feed(decoded)
+        return _PageReading(decoded, decoded.strip(), None)
+    metadata = _HtmlMetadata()
+    metadata.feed(decoded)
     readable_parser = _ReadableHtml()
     readable_parser.feed(decoded)
     return _PageReading(
-        content_type, media_type, decoded, readable_parser.text().strip(),
-        title_parser.title() or None,
+        decoded, readable_parser.text().strip(), metadata.title() or None, metadata.pdf_url,
     )
 
 
@@ -560,11 +666,12 @@ def _fetch_response(
     fetcher: WebFetcher,
     *,
     deadline: float,
+    allow_pdf: bool = False,
 ) -> tuple[ResolvedWebTarget, WebFetchResponse]:
     for redirect_count in range(MAX_REDIRECTS + 1):
         if time.monotonic() >= deadline:
             raise WebCaptureTimeoutError("The web page timed out")
-        target = policy.resolve(url)
+        target = replace(policy.resolve(url), allow_pdf=allow_pdf)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise WebCaptureTimeoutError("The web page timed out")
@@ -578,6 +685,10 @@ def _fetch_response(
             raise WebCaptureFetchError("The web page could not be fetched") from error
         if time.monotonic() >= deadline:
             raise WebCaptureTimeoutError("The web page timed out")
+        if _content_encoding(response.header("Content-Encoding")) == "identity":
+            _check_body_length(
+                _fixed_body_length(response.status, response.header), len(response.body),
+            )
         redirected = _redirect_url(target, response, redirect_count)
         if redirected is None:
             return target, response
@@ -595,12 +706,14 @@ def fetch_public_page(
     """Read the text and title of a public page for Ask."""
 
     _, response = _fetch_response(url, policy, fetcher, deadline=time.monotonic() + timeout)
-    page = _read_page(response)
+    page = _read_page(response, *_checked_response_type(response))
     return page.text, page.title
 
 
 def _asset_file_name(final_url: str, media_type: str) -> str:
     candidate = Path(unquote(urlsplit(final_url).path)).name.strip() or "snapshot"
+    if media_type == PDF_MEDIA_TYPE:
+        return candidate if Path(candidate).suffix.casefold() == ".pdf" else f"{candidate}.pdf"
     desired_suffix = ".txt" if media_type == "text/plain" else ".html"
     if not Path(candidate).suffix:
         candidate += desired_suffix
@@ -643,6 +756,31 @@ def _release_capture_lock(capture_id: str, lock: Lock) -> None:
     _drop_capture_lock_user(capture_id, lock)
 
 
+@asynccontextmanager
+async def _capture_lock(key: str | None) -> AsyncIterator[None]:
+    if key is None:
+        yield
+        return
+    lock = await _acquire_capture_lock(key)
+    try:
+        yield
+    finally:
+        _release_capture_lock(key, lock)
+
+
+def _record_snapshot_event(
+    session: Session, snapshot: WebSnapshot, *, action: str, key: str, reason: str,
+) -> None:
+    session.add(Revision(
+        id=f"{action}:{key}",
+        target_type="web_snapshot",
+        target_id=snapshot.id,
+        action=action,
+        actor="user",
+        reason=reason,
+    ))
+
+
 class WebCaptureService:
     def __init__(
         self,
@@ -668,86 +806,134 @@ class WebCaptureService:
             asset_id=snapshot.asset_id,
         )
 
-    def _find_snapshot(self, client_capture_id: str) -> WebSnapshot | None:
+    def _find_receipt(self, client_capture_id: str) -> tuple[WebSnapshot, str | None] | None:
         with session_scope(self.knowledge.sessions) as session:
-            return session.scalar(
+            snapshot = session.scalar(
                 select(WebSnapshot).where(
                     WebSnapshot.client_capture_id == client_capture_id
                 )
             )
+            if snapshot is not None:
+                return snapshot, snapshot.request_fingerprint
+            alias = session.get(Revision, f"{_CAPTURE_REUSED}:{client_capture_id}")
+            if alias is None:
+                return None
+            snapshot = session.get(WebSnapshot, alias.target_id)
+            if snapshot is None:
+                raise WebCaptureConflictError("clientCaptureId belongs to a deleted web capture")
+            if alias.reason is None:
+                raise WebCaptureFetchError("The stored web capture receipt is incomplete")
+            return snapshot, alias.reason
+
+    def _reuse_library_snapshot(
+        self, intent: _WebCaptureIntent, client_capture_id: str | None, *urls: str,
+    ) -> WebCaptureOut | None:
+        knowledge_base_id = intent.knowledge_base_id
+        if knowledge_base_id is None:
+            return None
+        with session_scope(self.knowledge.sessions) as session:
+            if client_capture_id is not None:
+                # Keep eligibility stable until the new receipt is committed.
+                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            library = session.get(KnowledgeBaseRecord, knowledge_base_id)
+            if library is None or library.trashed_at is not None:
+                raise LookupError(f"Knowledge Base {knowledge_base_id} was not found")
+            snapshot = session.scalar(
+                select(WebSnapshot)
+                .join(Source)
+                .join(KnowledgeBaseSource, KnowledgeBaseSource.source_id == Source.id)
+                .where(
+                    KnowledgeBaseSource.knowledge_base_id == knowledge_base_id,
+                    Source.trashed_at.is_(None),
+                    or_(WebSnapshot.original_url.in_(urls), WebSnapshot.final_url.in_(urls)),
+                )
+                .order_by(WebSnapshot.captured_at, WebSnapshot.id)
+                .limit(1)
+            )
+            if snapshot is None:
+                return None
+            if client_capture_id is not None:
+                _record_snapshot_event(
+                    session, snapshot, action=_CAPTURE_REUSED,
+                    key=client_capture_id, reason=intent.fingerprint,
+                )
+                # Check the primary receipt while holding the write transaction.
+                session.flush()
+                if session.scalar(select(WebSnapshot.id).where(
+                    WebSnapshot.client_capture_id == client_capture_id,
+                )) is not None:
+                    raise WebCaptureConflictError(_CAPTURE_REQUEST_CONFLICT)
+            return self._duplicate_result(session, snapshot)
 
     def _replay(
         self,
-        snapshot: WebSnapshot,
+        receipt: tuple[WebSnapshot, str | None],
         intent: _WebCaptureIntent,
     ) -> WebCaptureOut:
-        if snapshot.request_fingerprint is None:
+        snapshot, fingerprint = receipt
+        if fingerprint is None:
             # v8 rows predate persisted request intent. Retain their URL-only
             # replay behavior instead of fabricating title/notes/filing intent
             # from Source data that may have changed after the capture.
             same_request = (
-                _normalize_web_url(snapshot.original_url).url == intent.normalized_url
+                normalize_web_url(snapshot.original_url).url == intent.normalized_url
             )
         else:
-            same_request = snapshot.request_fingerprint == intent.fingerprint
+            same_request = fingerprint == intent.fingerprint
         if not same_request:
-            raise WebCaptureConflictError(
-                "clientCaptureId is already associated with a different web capture request"
-            )
+            raise WebCaptureConflictError(_CAPTURE_REQUEST_CONFLICT)
         with session_scope(self.knowledge.sessions) as session:
-            asset = session.get(Asset, snapshot.asset_id)
-            source = session.get(Source, snapshot.source_id)
-            if asset is None or source is None:
-                raise WebCaptureFetchError("The stored web capture is incomplete")
-        detail = self.knowledge.get_source(snapshot.source_id)
-        summary = SourceSummaryOut.model_validate(detail.model_dump())
+            return self._duplicate_result(session, snapshot, idempotent_replay=True)
+
+    def _duplicate_result(
+        self, session: Session, snapshot: WebSnapshot, *, idempotent_replay: bool = False,
+    ) -> WebCaptureOut:
+        asset = session.get(Asset, snapshot.asset_id)
+        source = session.get(Source, snapshot.source_id)
+        if asset is None or source is None:
+            raise WebCaptureFetchError("The stored web capture is incomplete")
+        fallback = session.get(Revision, f"{_CAPTURE_PDF_FALLBACK}:{snapshot.id}")
         return WebCaptureOut(
             asset=self.assets._out(asset),
             import_result=ImportResultOut(
-                source=summary,
+                source=self.knowledge._source_summary(session, source),
                 created=ImportCountsOut(entities=0, assertions=0),
                 extraction_mode=self.knowledge.extraction_mode,
                 duplicate=True,
             ),
             snapshot=self._snapshot_out(snapshot),
-            idempotent_replay=True,
+            idempotent_replay=idempotent_replay,
+            note=fallback.reason if fallback else None,
         )
 
     async def _fetch(
-        self, url: str, *, timeout: float,
+        self, url: str, *, deadline: float, allow_pdf: bool = False,
     ) -> tuple[ResolvedWebTarget, WebFetchResponse]:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise WebCaptureTimeoutError("The web capture timed out")
         try:
             return await asyncio.wait_for(
                 asyncio.to_thread(
                     _fetch_response, url, self.policy, self.fetcher,
-                    deadline=time.monotonic() + timeout,
+                    deadline=deadline, allow_pdf=allow_pdf,
                 ),
-                timeout=timeout,
+                timeout=remaining,
             )
         except TimeoutError as error:
             raise WebCaptureTimeoutError("The web capture timed out") from error
 
     @staticmethod
-    def _source_content(
-        snapshot_id: str,
-        original_url: str,
-        final_url: str,
-        captured_at: datetime,
-        response: WebFetchResponse,
-        content_type: str,
-        readable: str,
-        notes: str,
-        content_hash: str,
-    ) -> str:
+    def _source_content(snapshot: WebSnapshot, readable: str, notes: str) -> str:
         metadata = (
             "# Web snapshot\n\n"
-            f"Original URL: {original_url}\n"
-            f"Final URL: {final_url}\n"
-            f"Captured at: {_timestamp(captured_at)}\n"
-            f"HTTP status: {response.status}\n"
-            f"Content type: {content_type}\n"
-            f"SHA-256: {content_hash}\n"
-            f"Snapshot ID: {snapshot_id}"
+            f"Original URL: {snapshot.original_url}\n"
+            f"Final URL: {snapshot.final_url}\n"
+            f"Captured at: {_timestamp(snapshot.captured_at)}\n"
+            f"HTTP status: {snapshot.status}\n"
+            f"Content type: {snapshot.content_type}\n"
+            f"SHA-256: {snapshot.content_hash}\n"
+            f"Snapshot ID: {snapshot.id}"
         )
         sections = [metadata]
         if notes.strip():
@@ -757,26 +943,68 @@ class WebCaptureService:
             sections.append(f"## Captured content\n\n{readable.strip()[:available]}")
         return "\n\n".join(sections)[:1_000_000]
 
-    async def _capture_unlocked(self, payload: WebCaptureInput) -> WebCaptureOut:
-        intent = _capture_intent(payload)
-        requested_url = intent.normalized_url
-        if payload.client_capture_id:
-            existing = self._find_snapshot(payload.client_capture_id)
-            if existing:
-                return self._replay(existing, intent)
+    @staticmethod
+    def _link_snapshot(
+        session: Session, source: Source, snapshot: WebSnapshot, *, note: str | None = None,
+    ) -> None:
+        if source.asset_id is None:
+            raise RuntimeError("The captured Source is missing its Asset")
+        # Source creation holds the write transaction, which serializes this check with reuse.
+        if snapshot.client_capture_id and session.get(
+            Revision, f"{_CAPTURE_REUSED}:{snapshot.client_capture_id}",
+        ) is not None:
+            raise WebCaptureConflictError(_CAPTURE_REQUEST_CONFLICT)
+        snapshot.source_id = source.id
+        snapshot.asset_id = source.asset_id
+        session.add(snapshot)
+        if note is not None:
+            _record_snapshot_event(
+                session, snapshot, action=_CAPTURE_PDF_FALLBACK, key=snapshot.id, reason=note,
+            )
 
-        if intent.knowledge_base_id:
-            with session_scope(self.knowledge.sessions) as session:
-                library = session.get(KnowledgeBaseRecord, intent.knowledge_base_id)
-                if library is None or library.trashed_at is not None:
-                    raise LookupError(f"Knowledge Base {intent.knowledge_base_id} was not found")
+    async def _save_pdf(
+        self,
+        body: bytes,
+        file_name: str,
+        title: str,
+        intent: _WebCaptureIntent,
+        snapshot: WebSnapshot,
+    ) -> AssetCaptureOut:
+        async def stream() -> AsyncIterator[bytes]:
+            yield body
 
-        target, response = await self._fetch(requested_url, timeout=TOTAL_TIMEOUT_SECONDS)
-        page = await asyncio.to_thread(_read_page, response)
-        content_type = page.content_type
+        def initialize_source(session: Session, source: Source) -> None:
+            self._link_snapshot(session, source, snapshot)
+
+        # Web snapshots have their own source identity. Identical bytes still share an Asset.
+        return await self.assets.capture(
+            stream(),
+            title=title,
+            kind="file",
+            file_name=file_name,
+            media_type=PDF_MEDIA_TYPE,
+            knowledge_base_id=intent.knowledge_base_id,
+            notes=intent.notes,
+            expected_size=len(body),
+            fingerprint=source_fingerprint(title, "file", snapshot.id),
+            initialize_source=initialize_source,
+        )
+
+    async def _save_page(
+        self,
+        response: WebFetchResponse,
+        page: _PageReading,
+        media_type: str,
+        file_name: str,
+        title: str,
+        intent: _WebCaptureIntent,
+        snapshot: WebSnapshot,
+        *,
+        note: str | None,
+    ) -> AssetCaptureOut:
         document = (
-            html_document(page.decoded, target.url)
-            if page.media_type != "text/plain"
+            html_document(page.decoded, snapshot.final_url)
+            if media_type != "text/plain"
             else None
         )
         if document is not None:
@@ -795,9 +1023,7 @@ class WebCaptureService:
                     break
                 attempted.add(url)
                 try:
-                    _, fetched = await self._fetch(
-                        url, timeout=min(TOTAL_TIMEOUT_SECONDS, deadline - time.monotonic()),
-                    )
+                    _, fetched = await self._fetch(url, deadline=deadline)
                     if (
                         not 200 <= fetched.status < 300
                         or len(fetched.body) > IMAGE_LIMIT
@@ -825,48 +1051,16 @@ class WebCaptureService:
                 images="partial" if missing else "preserved",
                 missingImages=missing,
             )
-        captured_at = datetime.now(UTC).replace(tzinfo=None)
-        content_hash = hashlib.sha256(response.body).hexdigest()
-        snapshot_id = f"wbs_{uuid4().hex}"
-        title = (intent.title or page.title or target.host).strip()[:160]
         asset = await self.assets.preserve_bytes(
-            response.body,
-            file_name=_asset_file_name(target.url, page.media_type),
-            media_type=content_type,
+            response.body, file_name=file_name, media_type=snapshot.content_type,
         )
-        source_content = self._source_content(
-            snapshot_id,
-            requested_url,
-            target.url,
-            captured_at,
-            response,
-            content_type,
-            page.text,
-            intent.notes,
-            content_hash,
-        )
-        snapshots: list[WebSnapshot] = []
 
-        def link_snapshot(_session, source: Source) -> None:
+        def initialize_source(session: Session, source: Source) -> None:
             source.asset_id = asset.id
-            snapshot = WebSnapshot(
-                id=snapshot_id,
-                source_id=source.id,
-                asset_id=asset.id,
-                client_capture_id=payload.client_capture_id,
-                request_fingerprint=intent.fingerprint,
-                original_url=requested_url,
-                final_url=target.url,
-                captured_at=captured_at,
-                status=response.status,
-                content_type=content_type,
-                content_hash=content_hash,
-            )
-            _session.add(snapshot)
-            snapshots.append(snapshot)
+            self._link_snapshot(session, source, snapshot, note=note)
             if document is not None:
                 self.knowledge.index.publish(
-                    _session,
+                    session,
                     source,
                     document.chunks(),
                     parser="gunther-html-v1",
@@ -876,46 +1070,94 @@ class WebCaptureService:
                     document=document,
                 )
 
-        try:
-            imported = await asyncio.to_thread(
-                self.knowledge.import_source,
-                CreateSourceInput(
-                    title=title,
-                    kind="link",
-                    content=source_content,
-                    knowledge_base_id=intent.knowledge_base_id,
-                ),
-                initialize_source=link_snapshot,
-            )
-        except IntegrityError:
-            if payload.client_capture_id:
-                existing = self._find_snapshot(payload.client_capture_id)
-                if existing:
-                    return self._replay(existing, intent)
-            raise
-        if not snapshots:
-            raise RuntimeError("The captured Source was not linked to its web snapshot")
-        snapshot = snapshots[0]
-
-        detail = self.knowledge.get_source(imported.source.id)
-        summary = SourceSummaryOut.model_validate(detail.model_dump())
-        return WebCaptureOut(
-            asset=self.assets._out(asset),
-            import_result=ImportResultOut(
-                source=summary,
-                created=imported.created,
-                extraction_mode=imported.extraction_mode,
-                duplicate=imported.duplicate,
+        imported = await asyncio.to_thread(
+            self.knowledge.import_source,
+            CreateSourceInput(
+                title=title,
+                kind="link",
+                content=self._source_content(snapshot, page.text, intent.notes),
+                knowledge_base_id=intent.knowledge_base_id,
             ),
-            snapshot=self._snapshot_out(snapshot),
-            idempotent_replay=False,
+            initialize_source=initialize_source,
         )
+        return AssetCaptureOut(asset=self.assets._out(asset), import_result=imported)
+
+    async def _capture_unlocked(
+        self, intent: _WebCaptureIntent, client_capture_id: str | None,
+    ) -> WebCaptureOut:
+        library_id = intent.knowledge_base_id
+        requested_url = intent.normalized_url
+        if existing := self._reuse_library_snapshot(intent, client_capture_id, requested_url):
+            return existing
+
+        deadline = time.monotonic() + TOTAL_TIMEOUT_SECONDS
+        target, response = await self._fetch(requested_url, deadline=deadline, allow_pdf=True)
+        landing_url = target.url
+        content_type, media_type = _checked_response_type(response, allow_pdf=True)
+        page = None
+        note = None
+        if media_type != PDF_MEDIA_TYPE:
+            page = await asyncio.to_thread(_read_page, response, content_type, media_type)
+            if page.pdf_url:
+                try:
+                    pdf_target, pdf = await self._fetch(
+                        urljoin(landing_url, page.pdf_url), deadline=deadline, allow_pdf=True,
+                    )
+                    pdf_type, pdf_media = _checked_response_type(pdf, allow_pdf=True)
+                    if pdf.status == 200 and pdf.body.startswith(PDF_HEADER):
+                        target, response = pdf_target, pdf
+                        content_type, media_type = pdf_type, pdf_media
+                except (ValueError, WebCaptureError):
+                    pass
+                if media_type != PDF_MEDIA_TYPE:
+                    note = PDF_FALLBACK_NOTE
+
+        # Network reads can overlap. Serialize the final library check and save so
+        # captures arriving through different URLs can converge on the same source.
+        async with _capture_lock(f"library:{library_id}" if library_id else None):
+            if existing := self._reuse_library_snapshot(
+                intent, client_capture_id, requested_url, landing_url, target.url,
+            ):
+                return existing
+
+            snapshot = WebSnapshot(
+                id=f"wbs_{uuid4().hex}",
+                client_capture_id=client_capture_id,
+                request_fingerprint=intent.fingerprint,
+                original_url=requested_url,
+                final_url=target.url,
+                captured_at=datetime.now(UTC).replace(tzinfo=None),
+                status=response.status,
+                content_type=content_type,
+                content_hash=hashlib.sha256(response.body).hexdigest(),
+            )
+            file_name = _asset_file_name(target.url, media_type)
+            title = intent.title or (page.title if page else None)
+            if media_type == PDF_MEDIA_TYPE:
+                title = (title or Path(file_name).stem or target.host).strip()[:160]
+                captured = await self._save_pdf(response.body, file_name, title, intent, snapshot)
+            else:
+                assert page is not None
+                title = (title or target.host).strip()[:160]
+                captured = await self._save_page(
+                    response, page, media_type, file_name, title, intent, snapshot, note=note,
+                )
+            return WebCaptureOut(
+                asset=captured.asset,
+                import_result=captured.import_result,
+                snapshot=self._snapshot_out(snapshot),
+                note=note,
+            )
 
     async def capture(self, payload: WebCaptureInput) -> WebCaptureOut:
-        if not payload.client_capture_id:
-            return await self._capture_unlocked(payload)
-        lock = await _acquire_capture_lock(payload.client_capture_id)
-        try:
-            return await self._capture_unlocked(payload)
-        finally:
-            _release_capture_lock(payload.client_capture_id, lock)
+        intent = _capture_intent(payload)
+        client_capture_id = payload.client_capture_id
+        async with _capture_lock(client_capture_id):
+            if client_capture_id and (existing := self._find_receipt(client_capture_id)):
+                return self._replay(existing, intent)
+            try:
+                return await self._capture_unlocked(intent, client_capture_id)
+            except (IntegrityError, WebCaptureConflictError):
+                if client_capture_id and (existing := self._find_receipt(client_capture_id)):
+                    return self._replay(existing, intent)
+                raise
