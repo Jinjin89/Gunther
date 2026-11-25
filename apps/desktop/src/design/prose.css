@@ -174,6 +174,11 @@ button.gx-md-task:active { transform: scale(0.88); }
 }
 .gx-md-code-toggle:hover { background: var(--gx-hover); color: var(--gx-ink); }
 .gx-md-code-toggle:focus-visible { outline-offset: -2px; }
+.gx-md-math-display { max-width: 100%; margin: 0.9em 0; padding: 0.25em 0; overflow-x: auto; }
+.gx-md-math-display > span { display: block; width: max-content; min-width: 100%; }
+.gx-md-math-display > code { display: block; width: max-content; white-space: pre; }
+.gx-md-math-display .katex-display { margin: 0; }
+.gx-md-math-display:focus-visible { outline-offset: 2px; }
 .gx-md-picture {
   min-width: 0;
   margin: 1.1em 0 1.3em;

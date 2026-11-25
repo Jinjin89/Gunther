@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -73,16 +73,32 @@ describe("AnswerBody", () => {
     expect(screen.getByText("unverified")).toBeInTheDocument();
   });
 
-  it("leaves citation syntax and spacing in fenced code, inline code and math", () => {
+  it("leaves citation syntax and spacing in fenced code, inline code and math", async () => {
     const code = "arr[1]  =  arr[7]\n[?]";
     const content = `A result [1] uses \`arr[1]\` and $$x[1]$$.\n\n~~~python\n${code}\n~~~\n\n$$\nx[1] + y[?]\n\n$$`;
     const { container } = render(<AnswerBody content={content} numbers={[1]} onCitation={vi.fn()} />);
     expect(screen.getAllByRole("button", { name: "Inspect citation 1" })).toHaveLength(1);
     expect(screen.getByText("arr[1]", { selector: "code" })).toBeVisible();
-    const [fence, formula] = container.querySelectorAll("pre code");
-    expect(fence?.textContent).toBe(code);
-    expect(formula?.textContent).toBe("x[1] + y[?]\n");
+    expect(container.querySelector("pre code")?.textContent).toBe(code);
+    await waitFor(() => expect([...container.querySelectorAll(".katex annotation")].map((node) => node.textContent)).toEqual(["x[1]", "x[1] + y[?]\n"]));
     expect(screen.queryByText("unverified")).toBeNull();
+  });
+
+  it("typesets inline math, a display formula and a math fence", async () => {
+    const content = "Inline $$x^2$$.\n\n$$\nx^2\n$$\n\n```math\nx^2\n```";
+    const { container } = render(<AnswerBody content={content} numbers={[]} />);
+    await waitFor(() => expect(container.querySelectorAll(".katex")).toHaveLength(3));
+    expect(container.querySelector("p .katex .katex-mathml")).toBeInTheDocument();
+    expect(container.querySelectorAll(".gx-md-math-display .katex-display")).toHaveLength(2);
+    expect([...container.querySelectorAll(".katex annotation")].map((node) => node.textContent)).toEqual(["x^2", "x^2", "x^2"]);
+  });
+
+  it("shows the original TeX and KaTeX's error for a malformed formula", async () => {
+    const tex = String.raw`\frac{x}{`;
+    render(<AnswerBody content={`An incomplete formula $$${tex}$$.`} numbers={[]} />);
+    const error = await screen.findByTitle(/KaTeX parse error: Unexpected end of input/);
+    expect(error).toHaveClass("katex-error");
+    expect(error.textContent).toBe(tex);
   });
 
   it("looks at the original spelling of citations in continued Markdown text", () => {

@@ -44,6 +44,8 @@ Motion signals a change or work in progress. The fast, regular and slow tokens a
 - Library Contents shows sections and source rows. A source opens in its own detail page from Contents, search or Inbox. The detail toolbar handles navigation and Trash. Use the stable source identity when opening or updating a row.
 - Source pages give the original and its reading a single home. Use the matching reader for notes, recordings, captured web pages, documents, photos and tables. Display reading status, evidence and filing options beside the content where available.
 - Markdown uses React Markdown and GFM. Render text and trusted local evidence through their readers, and use links for remote images. CodeMirror provides the Markdown editing commands. The saved content is portable Markdown.
+- Code blocks use a mono font, a language label and a Copy action. Syntax colours follow the app theme. Closed blocks over 25 lines show the first 20 with a **Show all** control. Print shows every line with the light palette.
+- Picture cards use a white canvas and preserve the drawing's intrinsic size as a maximum. Mermaid uses the neutral palette in both themes. Keep Picture and Code visible, and reveal Copy, Save and Expand on hover or keyboard focus.
 - Moving to Trash offers Undo. Restore is available from Trash. Delete forever and Empty Trash require inline confirmation. [Library and Trash](LIBRARY.md#trash)
 
 ## Keyboard

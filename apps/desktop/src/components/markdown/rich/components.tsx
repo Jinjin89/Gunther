@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useState, type ComponentProps, ty
 import type { Components, UrlTransform } from "react-markdown";
 import { sourceAssetUrl } from "../../../api";
 import { CodeBlock, type CodeBlockProps } from "./CodeBlock";
+import { MathFormula } from "./MathFormula";
 import { PictureCard } from "./PictureCard";
 
 const SAFE_LINK = /^(https?:|mailto:)/i;
@@ -44,6 +45,7 @@ const blockRenderers = new Map<string, ComponentType<CodeBlockProps>>([
   ["default", CodeBlock],
   ["svg", PictureCard],
   ["mermaid", PictureCard],
+  ["math", function DisplayMath({ code }) { return <MathFormula tex={code} displayMode />; }],
 ]);
 
 export const richComponents = {
@@ -89,5 +91,7 @@ export const richComponents = {
     const body = Array.isArray(classes) && classes.includes("math-display") ? text : text.replace(/\n$/, "");
     return <Block code={body} language={label} closed={code.properties.dataFenceClosed !== false} />;
   },
-  code: ({ children }) => <code className="gx-md-inline-code">{children}</code>,
+  code: ({ className, children }) => className?.split(/\s+/).includes("math-inline")
+    ? <MathFormula tex={String(children ?? "")} />
+    : <code className="gx-md-inline-code">{children}</code>,
 } satisfies Components;

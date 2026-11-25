@@ -24,6 +24,26 @@ Select the model and effort in the composer. Use All sources or tick individual 
 
 Ask needs a configured model. The composer links to Settings when a model or key is needed. A model or required grading failure leaves a retryable question. Optional relevance grading can retain ungraded results. Reconnect runs the same startup reads as opening the page. Chats, models and Ask settings each have their own Retry. Send requires a usable model, request settings and a reachable service.
 
+## Answer format
+
+Gunther saves answers as Markdown. Answers and notes share the rendering rules below.
+
+| For | Write | Gunther shows |
+| --- | --- | --- |
+| Code | A fenced block with a language, such as `` ```python `` or `` ~~~python `` | Code with a language label and Copy. Supported languages get syntax colours. Long blocks can be expanded. |
+| Picture | An `` ```svg `` block with one self-contained, unprefixed `<svg>` root. Gunther asks the writer to include a `viewBox`. Drawings sized with `width` and `height` alone also render. | A picture card with Picture, Code, Copy, Save and Expand. |
+| Diagram | A `` ```mermaid `` block | A picture card drawn by Mermaid. |
+| Math | `$$…$$` inline, opening and closing `$$` on separate lines for a display formula, or a `` ```math `` block for display | KaTeX typesets the formula. Wide display formulas scroll sideways. |
+| Other fence | A fenced block with any other language label or with the label left blank | A code block that preserves the source. |
+
+A single `$` stays a dollar sign, so `$5 and $10` display as prices. Place citations and Checker marks such as `[?]` in the prose before or after a block. Citation handling and claim checks skip code, math and pictures.
+
+Picture cards keep the original size as a maximum. Both themes use a white canvas and the same neutral Mermaid palette. Mermaid runs in strict mode. Gunther sanitizes SVG drawings, removes external references, and displays the cleaned result as a local blob image. **Save** uses that cleaned SVG. KaTeX disables commands that can load resources or add HTML.
+
+Use fenced SVG for new drawings. An older standalone HTML block containing one valid, unprefixed `<svg>` can also become a picture. Other HTML displays as text. Read-aloud uses the answer structure to describe diagrams in words.
+
+The desktop shares the Markdown components across answer and note views. The backend uses the same format in its writer instructions, citation checks and narration. [Desktop Markdown](../apps/desktop/src/components/markdown/rich) · [Writer instructions](../apps/backend/gunther/agent.py) · [Markup parser](../apps/backend/gunther/markup.py) · [Citations](../apps/backend/gunther/citations.py) · [Read-aloud](../apps/backend/gunther/tts_narration.py)
+
 ## Evidence and checking
 
 1. The planner chooses an offered tool or starts the answer. Library lookup uses the selected scope and read-more can expand a numbered source. A repeated source keeps its number in the conversation pool.
