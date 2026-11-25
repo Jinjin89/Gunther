@@ -21,6 +21,7 @@ const citation: ConversationCitation = { id: "cit_1", sourceId: "src_1", sourceT
   quote: "Roofs were cooler.", locator: "p. 2", status: "verified", confidence: 0.9, ref: 1 };
 const owningList = [citation];
 const citations = new Map([[1, { citations: owningList, index: 0 }]]);
+const emptyNote = "Nothing noted yet — Gunther keeps the goal, what's settled and what's open here as you talk.";
 const panel = (props: Partial<Parameters<typeof BriefPanel>[0]> = {}) => {
   const handlers = { onSave: vi.fn(), onRetry: vi.fn(), onOpenCitation: vi.fn() };
   return { ...render(<BriefPanel brief={brief} updating={false} readOnly={false} hasMessages citations={citations} {...handlers} {...props} />), ...handlers };
@@ -52,12 +53,29 @@ describe("The conversation brief", () => {
     expect(screen.queryByRole("heading", { name: "Goal" })).toBeNull();
     expect(screen.queryByRole("heading", { name: /^Constraints/ })).toBeNull();
     expect(screen.getByRole("heading", { name: /^Open/ })).toBeVisible();
+    expect(screen.queryByText(emptyNote)).toBeNull();
     await user.click(screen.getByRole("button", { name: "Edit" }));
     expect(screen.getByRole("heading", { name: "Goal" })).toBeVisible();
     for (const label of ["Set a goal…", "+ Add constraint", "+ Add conclusion", "+ Add open question"]) {
       expect(screen.getByRole("button", { name: label })).toBeVisible();
     }
     expect(screen.queryByRole("combobox")).toBeNull();
+  });
+
+  it("explains an empty brief in read mode and shows add rows when editing", async () => {
+    const user = userEvent.setup();
+    panel({ brief: undefined });
+    expect(screen.getByText(emptyNote)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Collapse Brief" }));
+    expect(screen.getByText(emptyNote)).toBeVisible();
+    expect(screen.queryByText("0 constraints · 0 settled · 0 open")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.queryByText(emptyNote)).toBeNull();
+    for (const label of ["Set a goal…", "+ Add constraint", "+ Add conclusion", "+ Add open question"]) {
+      expect(screen.getByRole("button", { name: label })).toBeVisible();
+    }
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.getByText(emptyNote)).toBeVisible();
   });
 
   it("shows the answer's saved changes, including in the collapsed preview", async () => {
@@ -172,13 +190,16 @@ describe("The conversation brief", () => {
 
   it("shows update status and Retry even while the brief is collapsed", async () => {
     const user = userEvent.setup();
-    const { rerender, onRetry } = panel({ updating: true });
+    const empty = { ...brief, goal: "", constraints: [], settled: [], open: [] };
+    const { rerender, onRetry } = panel({ brief: empty, updating: true });
     await user.click(screen.getByRole("button", { name: "Collapse Brief" }));
     expect(screen.getByRole("status")).toHaveTextContent("Updating…");
-    rerender(<BriefPanel brief={{ ...brief, error: "Model is down" }} updating={false} readOnly={false} hasMessages citations={citations}
+    expect(screen.queryByText(emptyNote)).toBeNull();
+    rerender(<BriefPanel brief={{ ...empty, error: "Model is down" }} updating={false} readOnly={false} hasMessages citations={citations}
       onSave={vi.fn()} onRetry={onRetry} onOpenCitation={vi.fn()} />);
     const alert = screen.getByRole("alert");
     expect(alert).toBeVisible();
+    expect(screen.queryByText(emptyNote)).toBeNull();
     expect(alert.previousElementSibling).toBe(screen.getByRole("heading", { name: "Brief" }).closest("header"));
     expect(alert).toHaveTextContent("Couldn’t update the brief · Retry");
     await user.click(screen.getByRole("button", { name: "Retry" }));

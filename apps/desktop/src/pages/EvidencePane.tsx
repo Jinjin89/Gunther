@@ -1,6 +1,6 @@
 import type { Artifact, ContentsSource, ConversationBriefInput, ConversationCitation, ConversationContext, KnowledgeSession, SessionMessage } from "@gunther/contracts";
 import { useMemo, useRef, useState } from "react";
-import { EvidenceDetail } from "../components/evidence/EvidenceDetail";
+import { EvidenceDetail, ShowInAnswerButton } from "../components/evidence/EvidenceDetail";
 import { isWebCitation } from "../components/evidence/citationKind";
 import { WebFindActions } from "../components/evidence/WebFindActions";
 import { kindCounts } from "../contents/contentsTree";
@@ -210,10 +210,11 @@ export function EvidencePane({ session, selected, chatVisible, sources, selected
         {quote && <span className="evidence-card-quote">{quote}</span>}
       </span>
     </>;
-    return isWebCitation(item) ? <article className="evidence-card evidence-source-group" key={key}>
+    return <article className="evidence-card evidence-source-group" key={key}>
       <button type="button" className="evidence-card-open evidence-citation" onClick={() => onOpen(list, index)}>{content}</button>
-      <WebFindActions find={webFindOf(item)} imports={imports} />
-    </article> : <button type="button" className="evidence-card evidence-citation" key={key} onClick={() => onOpen(list, index)}>{content}</button>;
+      {numbered && <ShowInAnswerButton index={index} />}
+      {isWebCitation(item) && <WebFindActions find={webFindOf(item)} imports={imports} />}
+    </article>;
   };
   return <div className="evidence-overview evidence-bands" aria-label="Evidence overview">
     {briefPanel}

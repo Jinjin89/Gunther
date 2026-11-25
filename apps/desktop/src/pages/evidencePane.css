@@ -24,6 +24,7 @@ button.evidence-card:hover, .evidence-card:focus-visible, .evidence-card:has(.ev
 .brief-heading .gx-btn-sm { min-height: 24px; padding: 0 8px; }
 .brief-heading .gx-icon-button, .brief-row-actions .gx-icon-button { width: 24px; height: 24px; }
 .brief-collapse[aria-expanded="true"] svg { transform: rotate(180deg); }
+.brief-section .brief-empty { margin: 0; color: var(--gx-muted); }
 .brief-section .brief-error { margin: 6px 0 0; color: var(--gx-danger); }
 .brief-error button { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
 .brief-section .brief-change { margin: 6px 0 0; color: var(--gx-muted); font-size: var(--gx-text-xs); line-height: 1.4; font-variant-numeric: tabular-nums; }

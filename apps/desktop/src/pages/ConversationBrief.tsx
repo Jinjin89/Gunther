@@ -19,10 +19,6 @@ const SETTLED_PREVIEW = 3;
 const EDITED_TITLE = "Edited by you — Gunther keeps your wording";
 const EMPTY_BRIEF: ConversationBrief = { goal: "", constraints: [], settled: [], open: [], edited: [], error: null };
 
-function hasBriefToShow(brief: ConversationBrief, updating: boolean, hasMessages: boolean): boolean {
-  return Boolean(updating || hasMessages || brief.error || brief.lastChange || brief.goal || brief.constraints.length || brief.settled.length || brief.open.length);
-}
-
 function replace<T>(items: T[], at: number, next: T | null): T[] {
   return [...items.slice(0, at), ...(next === null ? [] : [next]), ...items.slice(at + 1)];
 }
@@ -78,7 +74,8 @@ export function BriefPanel({ brief = EMPTY_BRIEF, selectedMessageId, updating, r
   const cancelledRef = useRef(false);
   const editControl = useRef<HTMLButtonElement>(null);
   const bodyId = useId();
-  if (!hasBriefToShow(brief, updating, hasMessages)) return null;
+  const hasContent = Boolean(brief.goal || brief.constraints.length || brief.settled.length || brief.open.length);
+  if (!(hasContent || updating || hasMessages || brief.error || brief.lastChange)) return null;
 
   const change = !selectedMessageId || selectedMessageId === brief.throughMessageId ? brief.lastChange : null;
   const olderAnswerId = brief.throughMessageId && selectedMessageId !== brief.throughMessageId ? selectedMessageId : undefined;
@@ -93,6 +90,8 @@ export function BriefPanel({ brief = EMPTY_BRIEF, selectedMessageId, updating, r
   ].filter(Boolean).join(" · ") : "";
   const summary = changes && <p className="brief-change">After the last answer: {changes}</p>;
   const inEditMode = editing && !readOnly;
+  const emptyNote = !hasContent && !inEditMode && !updating && !brief.error
+    && <p className="brief-empty">Nothing noted yet — Gunther keeps the goal, what's settled and what's open here as you talk.</p>;
   const returnFocus = () => editControl.current?.focus();
   const startField = (key: string, value = "") => {
     cancelledRef.current = false;
@@ -224,10 +223,10 @@ export function BriefPanel({ brief = EMPTY_BRIEF, selectedMessageId, updating, r
     </header>
     {brief.error && !updating && <p className="brief-error" role="alert" title={brief.error}>Couldn’t update the brief · <button type="button" onClick={onRetry}>Retry</button></p>}
     {!collapsed && summary}
-    <div id={bodyId} className="brief-content" hidden={collapsed}>{!collapsed && STAGES.map(renderStage)}</div>
+    <div id={bodyId} className="brief-content" hidden={collapsed}>{!collapsed && <>{emptyNote}{STAGES.map(renderStage)}</>}</div>
     {collapsed && <div className="brief-preview">
       {brief.goal && <p className="brief-text" title={editedTitle("goal", brief.goal)}>{brief.goal}</p>}
-      <p className="brief-count">{brief.constraints.length} {brief.constraints.length === 1 ? "constraint" : "constraints"} · {brief.settled.length} settled · {brief.open.length} open</p>
+      {emptyNote || <p className="brief-count">{brief.constraints.length} {brief.constraints.length === 1 ? "constraint" : "constraints"} · {brief.settled.length} settled · {brief.open.length} open</p>}
       {summary}
     </div>}
   </section>;

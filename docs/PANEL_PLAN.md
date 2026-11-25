@@ -348,7 +348,7 @@ The Inspector tabs and shared Evidence layout ship for Scope, selected answers, 
 
 ### Batch B4 — Citation Detail and Show in Answer (Done)
 
-Citation detail ships with source-kind marks, passage chips and a Show in answer action in the header. The numbered Cited cards can add the shared `ShowInAnswerButton` in a follow-up. [Ask Evidence](ASK.md#evidence-and-checking) · [Design System](DESIGN_SYSTEM.md)
+Citation detail ships with source-kind marks and passage chips. Show in answer appears in the detail header and on numbered Cited cards. [Ask Evidence](ASK.md#evidence-and-checking) · [Design System](DESIGN_SYSTEM.md)
 
 ---
 

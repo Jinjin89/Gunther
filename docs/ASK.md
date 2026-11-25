@@ -12,6 +12,8 @@ Before an answer is selected, Evidence shows the current **Scope**, including th
 
 The **Brief** card in the Inspector's Evidence tab keeps the goal, constraints, settled conclusions and open questions across turns. It opens expanded and remembers when you collapse it. A long Settled list starts with its newest three conclusions. Choose **Show all** to see the rest. Source numbers open the saved passages, including citations from earlier answers. The card quotes your agreement when Gunther recorded it and offers **Retry** if a Brief update failed.
 
+An empty Brief explains what it keeps. Choose **Edit** to add the first goal, constraint, conclusion or open question.
+
 For the latest answer included in the Brief, **After the last answer** summarizes the changes, even when the card is collapsed. **New** marks added lines and an updated goal. Open includes a **Closed** list for questions that answer closed. Select an earlier answer to see its conclusions marked **from this answer** and kept visible alongside the newest three.
 
 Choose **Edit**, then select a line or use the add button in its stage. Enter or leaving the field saves your text, and Shift+Enter adds a line break while drafting. Escape cancels the active edit. Press Escape again or choose **Done** to return to reading. Use the check beside an open question to move it to Settled and phrase the conclusion. In read mode, **Ask →** puts an open question in the composer for you to review and send.
@@ -33,7 +35,7 @@ For the selected library answer, **Answer check** summarizes the saved claim ver
 
 An open citation shows the source kind and location when available. Press `[` or `]` outside a text field to step through citations, or `Esc` to return to the overview. When several passages are grouped, choose a chip for two to five passages or use the menu for six or more. Choose **Original** to view an available PDF at the cited page.
 
-In a citation opened from the selected library answer, **Show in answer** scrolls to the first matching number and briefly outlines it. In a narrow workspace it also closes the Inspector slide-over and focuses the citation.
+Choose **Show in answer** on a numbered **Cited** card or in its detail header to scroll to the first matching number in the selected answer and briefly outline it. In a narrow workspace it also closes the Inspector slide-over and focuses the citation.
 
 The answer actions show **Checking key results…** while Analysis works and a kept count when it finds supported results. Undo removes that answer's contribution. A failed job offers Retry, and a job waiting for Analysis links to Models settings. Open the library's Key results group to inspect the original passages. [Key results](LIBRARY.md#key-results)
 

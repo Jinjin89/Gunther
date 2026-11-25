@@ -2,6 +2,7 @@ import type { ContentsSource, ConversationCitation, KnowledgeSession, SessionMes
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { AnswerCitationNavigation } from "../components/evidence/EvidenceDetail";
 import { makeSource } from "../test/fixtures";
 import { EvidencePane, type EvidenceTarget } from "./EvidencePane";
 
@@ -109,7 +110,10 @@ describe("EvidencePane", () => {
     const user = userEvent.setup();
     const values = props();
     const trace = vi.fn();
-    render(<EvidencePane {...values} traceEnabled onOpenTrace={trace} />);
+    const showInAnswer = vi.fn();
+    render(<AnswerCitationNavigation.Provider value={{ detailIndex: undefined, showInAnswer }}>
+      <EvidencePane {...values} traceEnabled onOpenTrace={trace} />
+    </AnswerCitationNavigation.Provider>);
     const check = within(screen.getByRole("region", { name: "Answer check" }));
     const coverage = check.getByText("1 of 2 claims verified · 1 partial");
     expect(coverage.closest("details")).not.toHaveAttribute("open");
@@ -134,11 +138,18 @@ describe("EvidencePane", () => {
     expect(webCard).toHaveTextContent("Web · example.org");
     expect(within(webCard).getByText("[2]")).toBeVisible();
     expect(webCard).not.toHaveTextContent("Partly supported");
+    const paperJump = within(paperCard.closest("article")!).getByRole("button", { name: "Show in answer" });
+    const webJump = within(webCard.closest("article")!).getByRole("button", { name: "Show in answer" });
+    await user.click(paperJump);
+    await user.click(webJump);
+    expect(showInAnswer.mock.calls).toEqual([[0], [1]]);
+    expect(values.onOpen).not.toHaveBeenCalled();
     await user.click(webCard);
     expect(values.onOpen).toHaveBeenCalledWith(selected.citations, 1);
     const earlierSources = screen.getByText("Earlier in this conversation");
     expect(earlierSources.closest("details")).not.toHaveAttribute("open");
     await user.click(earlierSources);
+    expect(within(earlierSources.closest("details")!).queryByRole("button", { name: "Show in answer" })).toBeNull();
     const earlierCard = screen.getByRole("button", { name: /Earlier paper/ });
     expect(earlierCard).not.toHaveTextContent("Source text");
     await user.click(earlierCard);
