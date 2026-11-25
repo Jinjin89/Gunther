@@ -465,6 +465,12 @@ async function run() {
     });
     backendLogs = boundedLog(backend);
     await waitForHttp(`${backendOrigin}/api/health`, backend, backendLogs);
+    // Keep the fixture answer's trace so the Evidence journey exercises it.
+    const traceSettings = await fetch(`${backendOrigin}/api/settings/developer`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ traces: true }), signal: AbortSignal.timeout(5_000),
+    });
+    if (!traceSettings.ok) throw new SmokeFailure(`Could not enable fixture tracing (${traceSettings.status})`);
 
     await runCommand("npm", ["run", "typecheck", "--workspace", "@gunther/desktop"], {
       cwd: root,
@@ -887,30 +893,39 @@ async function run() {
     if (!await cdp.evaluate(clickExpression(".message-sources-button", "1 source"))) {
       throw new SmokeFailure("The answer's sources could not be opened");
     }
-    await waitForEvaluation(cdp, `document.querySelector('[role="tabpanel"][aria-label="Evidence"] .evidence-card > strong')?.getClientRects().length > 0`, "answer sources in Inspector");
-    if (!await cdp.evaluate(clickExpression('[role="tabpanel"][aria-label="Evidence"] .evidence-card > strong', noteTitle))) {
+    const evidencePanel = '[role="tabpanel"][aria-label="Evidence"]:not([hidden])';
+    const citationOpener = `${evidencePanel} [aria-label="Cited sources"] button.evidence-card-open`;
+    await waitForEvaluation(cdp, `document.querySelector(${JSON.stringify(citationOpener)})?.getClientRects().length > 0`, "answer sources in Inspector");
+    if (!await cdp.evaluate(clickExpression(citationOpener, noteTitle))) {
       throw new SmokeFailure("The answer's source could not be opened");
     }
     await waitForEvaluation(
       cdp,
-      `document.querySelector('[role="tabpanel"][aria-label="Evidence"] .gx-evidence-detail > header strong')?.textContent.trim() === ${JSON.stringify(noteTitle)}`,
+      `document.querySelector('${evidencePanel} .gx-evidence-detail .gx-evidence-title > strong')?.textContent.trim() === ${JSON.stringify(noteTitle)}`,
       "answer source opens its evidence",
     );
-    if (!await cdp.evaluate(clickExpression("button", "All 1 source"))) {
+    if (!await cdp.evaluate(`(() => {
+      const back = document.querySelector('${evidencePanel} nav[aria-label="Evidence navigation"] > button:first-of-type');
+      if (!back?.getClientRects().length) return false;
+      back.click();
+      return true;
+    })()`)) {
       throw new SmokeFailure("The evidence list could not be reopened");
     }
-    await waitForEvaluation(cdp, `document.querySelector('[role="tabpanel"][aria-label="Evidence"] .evidence-brief summary')?.getClientRects().length > 0`, "Brief in the Evidence list");
-    if (!await cdp.evaluate(clickExpression('[role="tabpanel"][aria-label="Evidence"] summary', "Brief"))) {
-      throw new SmokeFailure("The Brief could not be opened inside Evidence");
+    const briefOpen = `document.querySelector('${evidencePanel} section[aria-label="Brief"] button[aria-label="Collapse Brief"][aria-expanded="true"]')?.getClientRects().length > 0
+      && !document.querySelector('.conversation-header details')`;
+    await waitForEvaluation(cdp, briefOpen, "expanded Brief in the Evidence list");
+    const viewTrace = `${evidencePanel} [aria-label="Answer check"] button[aria-label="View trace"]`;
+    await waitForEvaluation(cdp, `document.querySelector('${viewTrace}')?.getClientRects().length > 0`, "View trace in Answer check");
+    if (!await cdp.evaluate(clickExpression(viewTrace, "View trace"))) {
+      throw new SmokeFailure("Trace could not be opened from Answer check");
     }
-    await waitForEvaluation(cdp, `document.querySelector('[role="tabpanel"][aria-label="Evidence"] .evidence-brief')?.open === true
-      && !document.querySelector('.conversation-header details')`, "Brief in Evidence");
-    if (await cdp.evaluate(clickExpression('.message-actions button', "Trace"))) {
-      await waitForEvaluation(cdp, `document.querySelector('[role="tabpanel"][aria-label="Evidence"] .evidence-trace') !== null`, "Trace in Evidence");
-      if (!await cdp.evaluate(clickExpression('[role="tabpanel"][aria-label="Evidence"] button', "← Back to evidence"))) {
-        throw new SmokeFailure("Trace could not return to Evidence");
-      }
+    const tracePanel = `${evidencePanel} .evidence-trace[aria-label="Trace"]`;
+    await waitForEvaluation(cdp, `document.querySelector('${tracePanel} .trace-steps > li')?.getClientRects().length > 0`, "saved Trace in Evidence");
+    if (!await cdp.evaluate(clickExpression(`${tracePanel} button`, "← Back to evidence"))) {
+      throw new SmokeFailure("Trace could not return to Evidence");
     }
+    await waitForEvaluation(cdp, briefOpen, "Evidence list after Trace");
     await waitForEvaluation(
       cdp,
       "document.querySelector('.message-actions .key-results-status')?.textContent.includes('Key results need an Analysis model')",
