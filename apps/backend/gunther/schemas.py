@@ -14,7 +14,7 @@ from pydantic import (
 )
 from pydantic.json_schema import SkipJsonSchema
 
-from gunther.brief import SettledItem
+from gunther.brief import BriefChange, SettledItem
 from gunther.model_profiles import Effort
 from gunther.output_shapes import OutputExport
 from gunther.output_types import (
@@ -755,6 +755,8 @@ class BriefOut(ApiModel):
     open: list[str] = Field(default_factory=list)
     edited: list[str] = Field(default_factory=list)
     error: str | None = None
+    through_message_id: str | None = None
+    last_change: BriefChange | None = None
 
 
 class KnowledgeSessionOut(KnowledgeSessionSummaryOut):

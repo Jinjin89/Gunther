@@ -1186,6 +1186,15 @@ export interface BriefSettled {
   refs: number[];
   by: "you" | "sources";
   because: string;
+  /** Assistant message that settled this line (null for older briefs or manual additions). */
+  messageId?: string | null;
+}
+
+export interface BriefChange {
+  messageId: string;
+  goalChanged: boolean;
+  added: { constraints: string[]; settled: string[]; open: string[] };
+  removed: { constraints: string[]; open: string[] };
 }
 
 /** What the conversation is for. `edited` names lines the user wrote ("goal", "open:<text>"…); `error` is why the last update failed. */
@@ -1196,6 +1205,8 @@ export interface ConversationBrief {
   open: string[];
   edited: string[];
   error: string | null;
+  throughMessageId?: string | null;
+  lastChange?: BriefChange | null;
 }
 
 export type ConversationBriefInput = Pick<ConversationBrief, "goal" | "constraints" | "settled" | "open">;

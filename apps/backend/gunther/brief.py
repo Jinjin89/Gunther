@@ -14,10 +14,10 @@ import json
 import logging
 import re
 from collections.abc import Collection, Sequence
-from dataclasses import dataclass, field
-from typing import Literal
+from dataclasses import dataclass, field, replace
+from typing import Annotated, Literal, TypedDict
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import AliasChoices, BaseModel, Field, ValidationError, WithJsonSchema
 
 from gunther import usage
 from gunther.llm import ModelError, ModelGateway, ModelInfo
@@ -30,6 +30,7 @@ ANSWER_CHARS = 8_000
 EDITED_MARK = "(edited by the user)"
 GOAL_PATH = "goal"
 OPEN_MAX = 8
+SETTLED_MAX = 12
 
 BRIEF_KEEPER = """You are the memory step of Gunther, a research assistant. Keep a short brief \
 of this conversation: the user's goal, their constraints (what to include or exclude, for whom, \
@@ -52,6 +53,12 @@ class SettledItem(BaseModel):
     refs: list[int] = Field(default_factory=list, max_length=8)
     by: Literal["you", "sources"]
     because: str = Field(default="", max_length=300)
+    # Keep server-owned provenance out of the schema shown to the keeper.
+    message_id: Annotated[str | None, WithJsonSchema(None, mode="validation")] = Field(
+        default=None,
+        validation_alias=AliasChoices("message_id", "messageId"),
+        serialization_alias="messageId",
+    )
 
 
 class Brief(BaseModel):
@@ -59,19 +66,44 @@ class Brief(BaseModel):
 
     goal: str = Field(default="", max_length=300)
     constraints: list[str] = Field(default_factory=list, max_length=8)
-    settled: list[SettledItem] = Field(default_factory=list, max_length=12)
+    settled: list[SettledItem] = Field(default_factory=list, max_length=SETTLED_MAX)
     open: list[str] = Field(default_factory=list, max_length=OPEN_MAX)
+
+
+class _SettledEditInput(SettledItem):
+    message_id: str | None = Field(default=None, alias="messageId")
+
+
+class BriefEditInput(Brief):
+    settled: list[_SettledEditInput] = Field(default_factory=list, max_length=SETTLED_MAX)
+
+
+class _RemovedLines(TypedDict):
+    constraints: list[str]
+    open: list[str]
+
+
+class _AddedLines(_RemovedLines):
+    settled: list[str]
+
+
+class BriefChange(BaseModel):
+    message_id: str = Field(serialization_alias="messageId")
+    goal_changed: bool = Field(serialization_alias="goalChanged")
+    added: _AddedLines
+    removed: _RemovedLines
 
 
 @dataclass
 class Stored:
     """A brief as kept: with which lines the user edited, how far it is folded in, and
-    why the last update failed (if it did)."""
+    what the folded answer changed or why an update failed."""
 
     brief: Brief = field(default_factory=Brief)
     edited: list[str] = field(default_factory=list)
     through: str | None = None
     error: str | None = None
+    last_change: BriefChange | None = None
 
 
 def constraint_path(text: str) -> str:
@@ -95,13 +127,16 @@ def load(raw: str | None) -> Stored:
         edited = [str(path) for path in data.get("edited") or []]
         through = data.get("through")
         error = data.get("error")
+        change = data.get("last_change")
+        last_change = BriefChange.model_validate(change) if change is not None else None
     except (ValueError, ValidationError, AttributeError, TypeError):
         return Stored()
     return Stored(
-        brief,
-        edited,
-        through if isinstance(through, str) else None,
-        error if isinstance(error, str) else None,
+        brief=brief,
+        edited=edited,
+        through=through if isinstance(through, str) else None,
+        error=error if isinstance(error, str) else None,
+        last_change=last_change,
     )
 
 
@@ -112,6 +147,7 @@ def dump(stored: Stored) -> str:
             "edited": stored.edited,
             "through": stored.through,
             "error": stored.error,
+            "last_change": stored.last_change.model_dump() if stored.last_change else None,
         },
         ensure_ascii=False,
     )
@@ -156,6 +192,35 @@ def _same(left: str, right: str) -> bool:
     return " ".join(left.split()).casefold() == " ".join(right.split()).casefold()
 
 
+def _matching_settled(items: Sequence[SettledItem], text: str) -> SettledItem | None:
+    return next((item for item in items if _same(item.text, text)), None)
+
+
+def diff_brief(before: Brief, after: Brief, message_id: str) -> BriefChange | None:
+    """Record the visible changes made by one answer in their brief order."""
+
+    def added_lines(previous: Sequence[str], current: Sequence[str]) -> list[str]:
+        return [text for text in current if not any(_same(text, old) for old in previous)]
+
+    goal_changed = bool(after.goal) and not _same(before.goal, after.goal)
+    added: _AddedLines = {
+        "constraints": added_lines(before.constraints, after.constraints),
+        "settled": added_lines(
+            [item.text for item in before.settled], [item.text for item in after.settled]
+        ),
+        "open": added_lines(before.open, after.open),
+    }
+    removed: _RemovedLines = {
+        "constraints": added_lines(after.constraints, before.constraints),
+        "open": added_lines(after.open, before.open),
+    }
+    if not (goal_changed or any(added.values()) or any(removed.values())):
+        return None
+    return BriefChange(
+        message_id=message_id, goal_changed=goal_changed, added=added, removed=removed
+    )
+
+
 def unique(texts: Sequence[str], taken: Sequence[str] = ()) -> list[str]:
     kept: list[str] = []
     for text in texts:
@@ -163,6 +228,24 @@ def unique(texts: Sequence[str], taken: Sequence[str] = ()) -> list[str]:
         if text and not any(_same(text, other) for other in (*taken, *kept)):
             kept.append(text)
     return kept
+
+
+def edit_settled(before: Brief, items: Sequence[SettledItem]) -> list[SettledItem]:
+    """Keep supplied answer IDs that already belong to the brief."""
+
+    saved_ids = {item.message_id for item in before.settled if item.message_id is not None}
+    settled = []
+    for item in items:
+        text = " ".join(item.text.split())
+        if not text:
+            continue
+        origin = item.message_id if item.message_id in saved_ids else None
+        settled.append(
+            SettledItem(
+                text=text, refs=item.refs, by=item.by, because=item.because, message_id=origin
+            )
+        )
+    return settled
 
 
 def edited_paths(before: Stored, after: Brief) -> list[str]:
@@ -237,6 +320,7 @@ def merge(
     pool_refs: Collection[int],
     said: str = "",
     supported_claims: Sequence[str] | None = None,
+    answered_id: str | None = None,
 ) -> Brief:
     """The model's new brief with the user's own lines kept as written, and first.
     ``said`` is the user's latest message, where an agreement must be found."""
@@ -246,17 +330,15 @@ def merge(
     kept_constraints = [t for t in old.brief.constraints if constraint_path(t) in mine]
     kept_settled = [i for i in old.brief.settled if settled_path(i.text) in mine]
     kept_open = [t for t in old.brief.open if open_path(t) in mine]
-    settled = [
-        item
-        for item in fresh.settled
-        if not any(_same(item.text, own.text) for own in kept_settled)
-    ]
+    settled = kept_settled.copy()
+    for item in fresh.settled:
+        if _matching_settled(kept_settled, item.text) is not None:
+            continue
+        previous = _matching_settled(old.brief.settled, item.text)
+        origin = previous.message_id if previous is not None else answered_id
+        settled.append(item.model_copy(update={"message_id": origin}))
     constraints = unique([*kept_constraints, *fresh.constraints])
-    open_items = unique(
-        [*kept_open, *fresh.open],
-        taken=[item.text for item in [*kept_settled, *settled]],
-    )
-    settled = [*kept_settled, *settled]
+    open_items = unique([*kept_open, *fresh.open], taken=[item.text for item in settled])
     goal = old.brief.goal if GOAL_PATH in mine and old.brief.goal else fresh.goal
     return Brief(
         goal=goal.strip(),
@@ -282,6 +364,8 @@ class BriefKeeper:
         answer: str,
         pool_refs: Collection[int],
         supported_claims: Sequence[str] | None = None,
+        *,
+        answered_id: str,
     ) -> Stored:
         """The brief with this exchange folded in; on a model failure, the old brief with
         the reason, so the page can offer a retry."""
@@ -302,6 +386,14 @@ class BriefKeeper:
             )
         except ModelError as error:
             logger.info("The brief could not be updated: %s", error)
-            return Stored(stored.brief, stored.edited, stored.through, str(error))
-        merged = merge(stored, fresh, pool_refs, question, supported_claims)
-        return Stored(merged, stored.edited, stored.through, None)
+            return replace(stored, error=str(error))
+        merged = merge(
+            stored, fresh, pool_refs, question, supported_claims, answered_id=answered_id
+        )
+        return replace(
+            stored,
+            brief=merged,
+            through=answered_id,
+            error=None,
+            last_change=diff_brief(stored.brief, merged, answered_id),
+        )

@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Literal
 
@@ -308,6 +308,8 @@ class AskTurns:
             open=stored.brief.open,
             edited=stored.edited,
             error=stored.error,
+            through_message_id=stored.through,
+            last_change=stored.last_change,
         )
 
     def _brief_session(self, session: Session, session_id: str) -> KnowledgeSession:
@@ -393,31 +395,33 @@ class AskTurns:
         chosen = self.models.for_role("ask") if self.models else None
         model = chosen[0] if chosen else (self.models.get(used) if self.models else None)
         if model is None or self.models is None:
-            stored.error = "Set up a model under Settings → Models to keep a brief."
-            return self._save_brief(session_id, stored, expect=stored.brief)
-        _, check_effort = self.agent_efforts or ASK_EFFORTS
-        with usage.job("analysis", "brief", ref=session_id):
-            updated = briefs.BriefKeeper(self.models, check_effort).update(
-                model, stored, question, answer, pool_refs, supported_claims=supported
+            updated = replace(
+                stored, error="Set up a model under Settings → Models to keep a brief."
             )
-        if updated.error is None:
-            updated.through = answered_id
-        return self._save_brief(session_id, updated, expect=stored.brief, was=stored.edited)
+        else:
+            _, check_effort = self.agent_efforts or ASK_EFFORTS
+            with usage.job("analysis", "brief", ref=session_id):
+                updated = briefs.BriefKeeper(self.models, check_effort).update(
+                    model, stored, question, answer, pool_refs,
+                    supported_claims=supported,
+                    answered_id=answered_id,
+                )
+        return self._save_brief(session_id, updated, expect=stored)
 
     def _save_brief(
-        self,
-        session_id: str,
-        stored: briefs.Stored,
-        expect: briefs.Brief,
-        was: list[str] | None = None,
+        self, session_id: str, stored: briefs.Stored, expect: briefs.Stored
     ) -> BriefOut:
-        """Keep a brief, unless the user edited it while a model was working on it: then
-        theirs stays and the next question catches up."""
+        """Publish only if the brief has neither been edited nor folded further."""
 
         with session_scope(self.sessions) as session:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
             knowledge_session = self._brief_session(session, session_id)
             current = briefs.load(knowledge_session.brief_json)
-            if current.brief != expect or (was is not None and current.edited != was):
+            if (
+                current.brief != expect.brief
+                or current.edited != expect.edited
+                or current.through != expect.through
+            ):
                 return self._brief_out(current)
             knowledge_session.brief_json = briefs.dump(stored)
             return self._brief_out(stored)
@@ -426,21 +430,16 @@ class AskTurns:
         """Save the user's edit; the lines they changed are theirs from now on."""
 
         with session_scope(self.sessions) as session:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
             knowledge_session = self._brief_session(session, session_id)
             before = briefs.load(knowledge_session.brief_json)
             tidy = briefs.Brief(
                 goal=" ".join(brief.goal.split()),
                 constraints=briefs.unique(brief.constraints),
-                settled=[
-                    item.model_copy(update={"text": " ".join(item.text.split())})
-                    for item in brief.settled
-                    if item.text.strip()
-                ],
+                settled=briefs.edit_settled(before.brief, brief.settled),
                 open=briefs.unique(brief.open),
             )
-            stored = briefs.Stored(
-                tidy, briefs.edited_paths(before, tidy), before.through, before.error
-            )
+            stored = replace(before, brief=tidy, edited=briefs.edited_paths(before, tidy))
             knowledge_session.brief_json = briefs.dump(stored)
             return self._brief_out(stored)
 

@@ -31,11 +31,15 @@ Paths in the table are relative to [apps/backend/gunther](../apps/backend/gunthe
 3. Studio builds use the library's current source selection. A targeted refinement uses the lineage head's stored scope or an explicit refinement scope stored with that lineage in the conversation. The output binds its material, builds or edits the work, checks the claims and stages a candidate version. The version commit owns the seal, lineage head and associated conversation writes. Opening a saved version verifies its seal before projecting sections and checks.
 4. Live audio and durable recording uploads use separate transports. Recording completion uses the server byte ledger and checkpoint.
 
+The Library Inspector reads scope from the live Sources selection, output coverage from the opened version's section checks, and search details from saved provenance. Source Evidence uses the source-scoped key results endpoint and opens the original passages it returns.
+
 Ask and Outputs share the run registry for Stop and Follow. Their completion events follow the durable save and Activity update. A library Activity link opens the workspace with the linked chat, run or version in the middle when the link carries a target. Output keys identify a conversation, or a lineage for an unattached restyle or visual review. Studio shares a process-wide pool of 12 workers across builds for fan-out such as reading long material, checking parts and designing slides. Each call keeps its own worker limit. Calls made from a Studio worker run inline. Ask runs independently of this pool. [Run registry](../apps/backend/gunther/answer_runs.py) · [Studio requests](../apps/backend/gunther/studio/requests.py)
 
 ## Storage
 
 Ask commits a turn's source selection and section focus before answering. Model and web calls in Ask, Studio, and Analysis run after the sessions that prepared their inputs have closed. Retrieval opens read sessions as needed during a run. Final messages, output versions, and Analysis results are published in short write transactions.
+
+After folding an answer into the conversation Brief, Ask saves the answer ID, the changes to the Brief, and the originating answer for each newly settled line in the session's existing Brief JSON. If an answer leaves the Brief unchanged, Ask advances the cursor and clears the change record. Failed updates and manual edits keep the last successful cursor and change record. Older briefs load with their existing cursor and empty provenance for changes and individual lines.
 
 The Analysis lane claims durable key results jobs by origin. The database allows one running job per library. The worker reads the saved claim and original passage material, closes the session, then calls Analysis and the Checker. It checks ownership again before publishing sentences, evidence and job completion in one transaction. Undo uses each row's origin to keep contributions from earlier jobs.
 

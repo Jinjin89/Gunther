@@ -8,7 +8,7 @@ from fastapi.responses import Response, StreamingResponse
 from gunther.answer_runs import AnswerRun, Stopped
 from gunther.api_common import _answer_runs, _service, _sse
 from gunther.ask_turns import AskFailure
-from gunther.brief import Brief
+from gunther.brief import BriefEditInput
 from gunther.schemas import (
     AskSkillOut,
     BriefOut,
@@ -118,7 +118,7 @@ def refresh_session_brief(session_id: str, request: Request) -> BriefOut:
 
 
 @router.patch("/sessions/{session_id}/brief", response_model=BriefOut)
-def edit_session_brief(session_id: str, payload: Brief, request: Request) -> BriefOut:
+def edit_session_brief(session_id: str, payload: BriefEditInput, request: Request) -> BriefOut:
     try:
         return _service(request).edit_brief(session_id, payload)
     except LookupError as error:
